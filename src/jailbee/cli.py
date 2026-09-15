@@ -1910,9 +1910,11 @@ def new_cmd(
             on_detach=_autostart_detach_handler(
                 cfg,
                 incus,
-                _resolve_config_path_or_none(config),
-                opts.name or derive_container_name(cfg, opts.container_branch),
-                autostart_override,
+                config_path=_resolve_config_path_or_none(config),
+                full_name=opts.name or derive_container_name(cfg, opts.container_branch),
+                # `opts.mirror_endpoint`, not a fresh lookup: see the handler.
+                mirror_endpoint=opts.mirror_endpoint,
+                override=autostart_override,
             ),
         )
     except ValueError as e:
@@ -3206,8 +3208,10 @@ def _resolve_autostart_override(
 def _autostart_detach_handler(
     cfg: "Config",
     incus: "IncusType",
+    *,
     config_path: Path | None,
     full_name: str,
+    mirror_endpoint: tuple[str, int] | None,
     override: Literal["wait", "no_wait"] | None,
 ) -> "Callable[[Autostart, str, str], None]":
     """The `on_detach` callback the foreground commands hand down.
@@ -3216,6 +3220,15 @@ def _autostart_detach_handler(
     do not run them: `lifecycle` must not import `cli`, and only the CLI knows
     where the config file is and how to spawn a worker. This closes over that
     knowledge and is the one place any of it is spelled out.
+
+    ``mirror_endpoint`` is the caller's own — the *same* value its blocking
+    stages ran with, deliberately not re-derived here. `new_cmd` drops the
+    endpoint when the mirror's CA cert is missing and the net mode is loose
+    ("half a mirror is not a mirror"), and `_mirror_endpoint_or_none` does no
+    CA check: recomputing would pin `jailbee-registry-mirror.incus` into
+    /etc/hosts for the deferred stages only, for a proxy the container has no
+    CA for. The boundary this task exists to make seamless must not be where
+    the container's environment changes.
 
     ``override`` travels into the job file because the supervisor re-plans
     from it: handed ``None`` after a ``--no-wait`` split, it would compute
@@ -3231,7 +3244,7 @@ def _autostart_detach_handler(
             autostart=block,
             from_trigger=trigger,
             repo_dir=repo_dir,
-            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+            mirror_endpoint=mirror_endpoint,
             override=override,
         )
 
@@ -3404,7 +3417,14 @@ def start(
         no_autostart=no_autostart,
         override=autostart_override,
         on_detach=_autostart_detach_handler(
-            cfg, incus, _resolve_config_path_or_none(config), name, autostart_override
+            cfg,
+            incus,
+            config_path=_resolve_config_path_or_none(config),
+            full_name=name,
+            # `_post_start_actions` derives its own from the same call, so the
+            # blocking and deferred stages see the same endpoint.
+            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+            override=autostart_override,
         ),
     )
     _clear_superseded_boot_job(cfg, name)
@@ -3504,7 +3524,14 @@ def restart(
         no_autostart=no_autostart,
         override=autostart_override,
         on_detach=_autostart_detach_handler(
-            cfg, incus, _resolve_config_path_or_none(config), name, autostart_override
+            cfg,
+            incus,
+            config_path=_resolve_config_path_or_none(config),
+            full_name=name,
+            # `_post_start_actions` derives its own from the same call, so the
+            # blocking and deferred stages see the same endpoint.
+            mirror_endpoint=_mirror_endpoint_or_none(cfg, incus),
+            override=autostart_override,
         ),
     )
     _clear_superseded_boot_job(cfg, name)

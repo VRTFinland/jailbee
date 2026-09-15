@@ -121,6 +121,38 @@ def test_new_without_the_flags_leaves_the_override_unset(tmp_path, mocker):
     assert new_container.call_args.args[2].autostart_override is None
 
 
+def test_new_hands_the_supervisor_the_endpoint_the_blocking_stages_ran_with(tmp_path, mocker):
+    """`new_cmd` drops the mirror endpoint when its CA cert is missing and the
+    net mode is loose — "half a mirror is not a mirror". Re-deriving it for the
+    hand-off (`_mirror_endpoint_or_none` does no CA check) would pin
+    `jailbee-registry-mirror.incus` into /etc/hosts for the deferred stages
+    only, against a proxy the container has no CA for."""
+    from jailbee.global_config import GlobalConfig
+
+    _setup_new(tmp_path, mocker)
+    gcfg = GlobalConfig()
+    # No `ca/ca.crt` under it, which is the whole point.
+    object.__setattr__(gcfg.docker_registry_mirror, "data_dir", tmp_path / "registry")
+    mocker.patch("jailbee.cli._load_global", return_value=gcfg)
+    mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
+    mocker.patch(
+        "jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.5", 3128)
+    )
+    # What the real helper would return here: it never looks at the CA.
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=("10.0.0.5", 3128))
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+    new_container = _new_container_that_detaches(mocker)
+
+    result = runner.invoke(app, ["new", "feat-a", "--mount", "--no-attach", "--net", "loose"])
+
+    assert result.exit_code == 0, result.output
+    # Pin that the CA-missing branch is the one that ran, so the two
+    # assertions below cannot pass because the mirror was never wanted.
+    assert "Mirror CA cert not found" in result.output
+    assert new_container.call_args.args[2].mirror_endpoint is None
+    assert spawn.call_args.kwargs["mirror_endpoint"] is None
+
+
 def test_new_wait_and_no_wait_are_mutually_exclusive(tmp_path, mocker):
     _setup_new(tmp_path, mocker)
     mocker.patch("jailbee.lifecycle.new_container", return_value="myrepo-feat-a")
@@ -243,7 +275,11 @@ def test_start_no_wait_reaches_both_the_planner_and_the_spawner(tmp_path, mocker
     assert spawn.call_args.kwargs["override"] == "no_wait"
 
 
-def test_restart_wait_keeps_every_stage_in_the_foreground(tmp_path, mocker):
+def test_restart_wait_reaches_the_planner_as_the_override(tmp_path, mocker):
+    """`run_autostart` is mocked here, so this pins the kwarg and nothing
+    more. That `override="wait"` really keeps every stage in the foreground
+    is test_apply.py's `test_restart_one_runs_every_stage_in_the_foreground`,
+    which drives the real planner."""
     run_autostart = _setup_boot(tmp_path, mocker, detached=False)
     mocker.patch("jailbee.cli._spawn_autostart_worker")
 

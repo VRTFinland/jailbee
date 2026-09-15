@@ -1339,7 +1339,9 @@ def new_container(
         # run: everything after it — the entire `on_start` trigger included —
         # belongs to whoever takes the hand-off, so this process must not run
         # it as well. `run_detached` resumes from the trigger it is told.
-        detached_from: str | None = "on_create" if create_plan.detached else None
+        detached_from: str | None = (
+            AutostartTrigger.ON_CREATE.value if create_plan.detached else None
+        )
         if detached_from is None:
             # `incus.start` above transitioned the container into the running
             # state, so on_start steps apply on this first launch too.
@@ -1353,7 +1355,7 @@ def new_container(
                 override=opts.autostart_override,
             )
             if start_plan.detached:
-                detached_from = "on_start"
+                detached_from = AutostartTrigger.ON_START.value
         if detached_from is not None and on_detach is not None:
             on_detach(effective_cfg.autostart, detached_from, repo_dir)
 
