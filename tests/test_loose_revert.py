@@ -338,10 +338,14 @@ def test_dead_autostart_pid_does_not_block_the_revert(tmp_path, mocker):
 def test_live_autostart_pid_still_blocks_the_revert(tmp_path, mocker):
     incus = mocker.Mock()
     incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
-    incus.config_get.side_effect = lambda name, key: (
-        "424242" if key == "user.jailbee.autostart_in_progress" else ""
-    )
+    values = {
+        "user.jailbee.autostart_in_progress": "424242",
+        "user.jailbee.loose_until": "2020-01-01T00:00:00+00:00",
+        "user.jailbee.loose_revert_to": "strict",
+    }
+    incus.config_get.side_effect = lambda name, key: values.get(key, "")
     mocker.patch("jailbee.background.worker_alive", return_value=True)
+    mocker.patch("jailbee.loose_revert.current_network_mode", return_value="loose")
     switch = mocker.patch("jailbee.loose_revert.switch_network")
 
     cfg = make_cfg(tmp_path, container_prefix="demo")
@@ -354,9 +358,13 @@ def test_legacy_flag_value_one_still_blocks_the_revert(tmp_path, mocker):
     """A container stamped by an older jailbee carries "1", not a pid."""
     incus = mocker.Mock()
     incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
-    incus.config_get.side_effect = lambda name, key: (
-        "1" if key == "user.jailbee.autostart_in_progress" else ""
-    )
+    values = {
+        "user.jailbee.autostart_in_progress": "1",
+        "user.jailbee.loose_until": "2020-01-01T00:00:00+00:00",
+        "user.jailbee.loose_revert_to": "strict",
+    }
+    incus.config_get.side_effect = lambda name, key: values.get(key, "")
+    mocker.patch("jailbee.loose_revert.current_network_mode", return_value="loose")
     switch = mocker.patch("jailbee.loose_revert.switch_network")
 
     cfg = make_cfg(tmp_path, container_prefix="demo")
