@@ -98,7 +98,7 @@ class AutostartStepError(RuntimeError):
         )
 
 
-class AutostartCancelled(Exception):
+class AutostartCancelledError(Exception):
     """A detached autostart run was asked to stop — `jailbee autostart cancel`.
 
     Deliberately an ordinary `Exception` rather than `SystemExit`: on its way
@@ -117,7 +117,7 @@ class AutostartCancelled(Exception):
 
 @contextmanager
 def _cancel_on_sigterm(container: str) -> Iterator[None]:
-    """Turn SIGTERM into :class:`AutostartCancelled` for the duration of a run.
+    """Turn SIGTERM into :class:`AutostartCancelledError` for the duration of a run.
 
     `jailbee autostart cancel` signals the supervisor, and SIGTERM's default
     action terminates the process without unwinding: `run_stage`'s ``finally``
@@ -157,7 +157,7 @@ def _cancel_on_sigterm(container: str) -> Iterator[None]:
 
     def handler(signum: int, frame: FrameType | None) -> None:
         signal.signal(signal.SIGTERM, previous)
-        raise AutostartCancelled(container=container, signum=signum)
+        raise AutostartCancelledError(container=container, signum=signum)
 
     installed = False
     try:
@@ -408,7 +408,7 @@ def run_detached(
     is still safe — the pid in the key stops existing.
 
     Cancellable for its whole length: SIGTERM — what `jailbee autostart
-    cancel` sends — raises :class:`AutostartCancelled` instead of killing the
+    cancel` sends — raises :class:`AutostartCancelledError` instead of killing the
     process outright, so the stage's mounts come off, its network mode is put
     back, the flag is cleared and the caller can mark the run cancelled. See
     :func:`_cancel_on_sigterm`.
@@ -472,12 +472,12 @@ def run_detached(
 
 def _detach_mounts(
     cfg: Config, incus: Incus, container: str, mounted: list[str]
-) -> AutostartCancelled | None:
+) -> AutostartCancelledError | None:
     """Undo ``mounted`` in reverse, warning and continuing on failure.
 
     Log-and-continue, because a missing or already-removed device must not
     mask the underlying step failure or block the rest of the cleanup — with
-    one exception, which is why this returns something. `AutostartCancelled`
+    one exception, which is why this returns something. `AutostartCancelledError`
     is an ordinary `Exception` (deliberately: the worker's `except Exception`
     has to catch it), so a SIGTERM arriving *during* the cleanup would be
     warned about and dropped, and the caller would carry on to the next stage
@@ -488,11 +488,11 @@ def _detach_mounts(
     before letting the cancellation out. Nothing will raise it a second time:
     the handler puts the previous handling back before it raises.
     """
-    cancelled: AutostartCancelled | None = None
+    cancelled: AutostartCancelledError | None = None
     for m in reversed(mounted):
         try:
             remove_optional_mount(cfg, incus, container, m)
-        except AutostartCancelled as e:
+        except AutostartCancelledError as e:
             cancelled = e
         except Exception as e:
             warn(f"Failed to unmount '{m}' from {container}: {e}")
@@ -665,7 +665,7 @@ def _run_chain_serially(
             on_progress(stage.stage, step.name, "start")
         try:
             _apply_step(cfg, incus, container, step, repo_dir)
-        except AutostartCancelled:
+        except AutostartCancelledError:
             # A cancellation is not a step failure, and `continue_on_error`
             # must never swallow one: leave the step's progress entry
             # dangling (`jailbee autostart status` reads that as interrupted,
@@ -805,9 +805,7 @@ def _run_chains_in_parallel(
                     tmux.interrupt_step(incus, container, handle)
                     in_flight.pop(name)
                     timed_out = step_by_name[name]
-                    _finish_step(
-                        cfg, incus, container, timed_out, -1, stage, on_progress, started
-                    )
+                    _finish_step(cfg, incus, container, timed_out, -1, stage, on_progress, started)
                     # The exit-code branch above, for the other way a step can
                     # fail: `continue_on_error` covers a timeout too. The
                     # serial driver has always honoured it there (a
@@ -937,7 +935,7 @@ def _apply_step(
                 exit_code=e.exit_code,
                 original=e,
             ) from e
-        except AutostartCancelled:
+        except AutostartCancelledError:
             # The `finally` below is about to unmount this step's devices, and
             # the stage's is about to flip the network back — under a step
             # still running, which is the one thing the stage design promises

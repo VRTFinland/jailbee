@@ -231,9 +231,7 @@ def test_run_detached_restores_the_network_with_compare_and_swap(tmp_path, mocke
     assert run_stages.call_args.kwargs["cas_restore"] is True
 
 
-def test_run_detached_resuming_on_create_also_runs_every_on_start_stage(
-    tmp_path, mocker, make_cfg
-):
+def test_run_detached_resuming_on_create_also_runs_every_on_start_stage(tmp_path, mocker, make_cfg):
     """Once detached, everything after the boundary is the supervisor's — the
     later trigger's blocking half included."""
     from jailbee import autostart as autostart_mod
@@ -264,9 +262,7 @@ def test_run_detached_honours_a_no_wait_override(tmp_path, mocker, make_cfg):
 
     run_stages = mocker.patch("jailbee.autostart.run_stages")
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
-    block = Autostart.model_validate(
-        {"on_start": [_stage("one"), _stage("two"), _stage("three")]}
-    )
+    block = Autostart.model_validate({"on_start": [_stage("one"), _stage("two"), _stage("three")]})
 
     autostart_mod.run_detached(
         _cfg_with(make_cfg, tmp_path, block),
@@ -282,9 +278,7 @@ def test_run_detached_reports_each_stage_through_on_phase(tmp_path, mocker, make
 
     mocker.patch("jailbee.autostart.run_stages")
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
-    block = Autostart.model_validate(
-        {"on_start": [_stage("a", detach=True), _stage("b")]}
-    )
+    block = Autostart.model_validate({"on_start": [_stage("a", detach=True), _stage("b")]})
     seen: list[str] = []
 
     autostart_mod.run_detached(
@@ -327,7 +321,7 @@ def test_run_detached_installs_a_cancel_handler_only_for_the_run(tmp_path, mocke
     assert installed is not before
     # Driven directly rather than signalling the test process — same call the
     # interpreter would make.
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         installed(signal.SIGTERM, None)  # type: ignore[operator]  # it is the handler we installed
     assert signal.getsignal(signal.SIGTERM) is before
 
@@ -386,7 +380,7 @@ def test_a_cancelled_run_unwinds_the_stage_it_was_on(tmp_path, mocker, make_cfg)
         }
     )
 
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), incus, _spec(tmp_path, block)
         )
@@ -451,7 +445,7 @@ def test_a_cancelled_single_chain_stage_interrupts_its_step_first(tmp_path, mock
         }
     )
 
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
         )
@@ -488,7 +482,7 @@ def test_the_cancel_handler_disarms_itself_on_the_first_signal(tmp_path, mocker,
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
 
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
         )
@@ -498,7 +492,7 @@ def test_the_cancel_handler_disarms_itself_on_the_first_signal(tmp_path, mocker,
 
 def test_a_cancellation_during_the_unmount_stops_the_run(tmp_path, mocker, make_cfg):
     """The stage's cleanup unmounts warn-and-continue, and
-    `AutostartCancelled` is an ordinary `Exception` — so a SIGTERM arriving
+    `AutostartCancelledError` is an ordinary `Exception` — so a SIGTERM arriving
     while a mount comes off was warned about and dropped: the `finally`
     completed and `run_stages` went on to the *next stage* of a run the user
     had just cancelled. The cleanup must still finish (the handler is
@@ -516,7 +510,9 @@ def test_a_cancellation_during_the_unmount_stops_the_run(tmp_path, mocker, make_
     mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.autostart.add_optional_mount")
-    mocker.patch("jailbee.tmux.run_step", side_effect=lambda _i, _c, *, name, **kw: ran.append(name))
+    mocker.patch(
+        "jailbee.tmux.run_step", side_effect=lambda _i, _c, *, name, **kw: ran.append(name)
+    )
 
     def cancel_while_unmounting(_cfg, _incus, _container, mount):
         unmounted.append(mount)
@@ -541,7 +537,7 @@ def test_a_cancellation_during_the_unmount_stops_the_run(tmp_path, mocker, make_
         }
     )
 
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
         )
@@ -588,7 +584,7 @@ def test_a_cancellation_is_not_swallowed_by_continue_on_error(tmp_path, mocker, 
         }
     )
 
-    with pytest.raises(autostart_mod.AutostartCancelled):
+    with pytest.raises(autostart_mod.AutostartCancelledError):
         autostart_mod.run_detached(
             _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
         )
@@ -700,7 +696,7 @@ def test_worker_marks_the_row_failed_and_keeps_it_when_a_stage_raises(tmp_path, 
 
 def test_worker_marks_a_cancelled_run_failed_with_the_reason(tmp_path, mocker, make_cfg):
     """A cancelled run must not leave a row that still reads as in flight —
-    which is why `AutostartCancelled` is an ordinary `Exception` and lands in
+    which is why `AutostartCancelledError` is an ordinary `Exception` and lands in
     the worker's `except Exception` like any other failure."""
     import signal
 
@@ -986,9 +982,7 @@ def test_boot_worker_does_not_spawn_a_second_supervisor(tmp_path, mocker, make_c
 
     from jailbee.cli import app
 
-    block = Autostart.model_validate(
-        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
-    )
+    block = Autostart.model_validate({"on_start": [_stage("schema"), _stage("deps", detach=True)]})
     _cfg, _incus, ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
 
@@ -1081,9 +1075,7 @@ def test_the_container_is_attachable_during_the_continuation(tmp_path, mocker, m
     from jailbee.cli import app
     from jailbee.db.models import JOB_BOOT
 
-    block = Autostart.model_validate(
-        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
-    )
+    block = Autostart.model_validate({"on_start": [_stage("schema"), _stage("deps", detach=True)]})
     cfg, _incus, _ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
     attached: list[str] = []
 
@@ -1116,9 +1108,7 @@ def test_a_failed_deferred_stage_leaves_a_row_that_never_gates_an_attach(
     from jailbee.cli import app
     from jailbee.db.models import JOB_AUTOSTART, JOB_BOOT
 
-    block = Autostart.model_validate(
-        {"on_start": [_stage("schema"), _stage("deps", detach=True)]}
-    )
+    block = Autostart.model_validate({"on_start": [_stage("schema"), _stage("deps", detach=True)]})
     cfg, _incus, _ran = _bg_worker_env(tmp_path, mocker, make_cfg, block)
 
     def blow_up_past_the_boundary(cfg_, incus_, name, stages, repo_dir, **kw):
@@ -1183,9 +1173,7 @@ def test_new_worker_continues_past_the_boundary_in_process(tmp_path, mocker, mak
     job = tmp_path / "job.json"
     job.write_text(
         json.dumps(
-            bg.op_to_job(
-                opts, container_name="myrepo-feat-a", log_path=str(tmp_path / "w.log")
-            )
+            bg.op_to_job(opts, container_name="myrepo-feat-a", log_path=str(tmp_path / "w.log"))
         )
     )
 

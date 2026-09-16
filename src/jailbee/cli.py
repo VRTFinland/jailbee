@@ -2479,15 +2479,13 @@ def _autostart_worker(
     on_phase, on_progress = _autostart_reporters(engine, name, Path(spec.progress_path))
 
     try:
-        autostart_mod.run_detached(
-            cfg, incus, spec, on_phase=on_phase, on_progress=on_progress
-        )
+        autostart_mod.run_detached(cfg, incus, spec, on_phase=on_phase, on_progress=on_progress)
     except Exception as e:
         # A cancellation is a deliberate stop, not a crash: its message already
         # says what happened, and a stack trace in the worker log would read as
         # a bug in jailbee. Every other failure still gets its traceback — the
         # log is the only place a detached failure's origin is recorded.
-        if not isinstance(e, autostart_mod.AutostartCancelled):
+        if not isinstance(e, autostart_mod.AutostartCancelledError):
             traceback.print_exc()
         msg = str(e)  # see `_new_worker`: `e` is unbound after the block
         _track_job(
@@ -3377,9 +3375,7 @@ def _resolve_boot_background(cfg: "Config", *, background: bool, no_background: 
     return cfg.boot.background
 
 
-def _resolve_autostart_override(
-    *, wait: bool, no_wait: bool
-) -> Literal["wait", "no_wait"] | None:
+def _resolve_autostart_override(*, wait: bool, no_wait: bool) -> Literal["wait", "no_wait"] | None:
     """Turn `--wait` / `--no-wait` into the planner's override.
 
     ``None`` means "whatever the config's `detach:` says" — deliberately not
@@ -8925,8 +8921,7 @@ AutostartNameArg = Annotated[
     str,
     typer.Argument(
         help=(
-            "Container whose detached autostart run to act on, named in full "
-            "or by its short name."
+            "Container whose detached autostart run to act on, named in full or by its short name."
         ),
         autocompletion=completion.complete_container,
     ),
