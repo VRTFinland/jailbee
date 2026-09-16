@@ -496,6 +496,61 @@ def test_the_cancel_handler_disarms_itself_on_the_first_signal(tmp_path, mocker,
     assert after == [before]
 
 
+def test_a_cancellation_during_the_unmount_stops_the_run(tmp_path, mocker, make_cfg):
+    """The stage's cleanup unmounts warn-and-continue, and
+    `AutostartCancelled` is an ordinary `Exception` — so a SIGTERM arriving
+    while a mount comes off was warned about and dropped: the `finally`
+    completed and `run_stages` went on to the *next stage* of a run the user
+    had just cancelled. The cleanup must still finish (the handler is
+    one-shot, so nothing raises it again), but the run must not continue.
+    """
+    import signal
+
+    import pytest
+
+    from jailbee import autostart as autostart_mod
+
+    ran: list[str] = []
+    unmounted: list[str] = []
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.autostart.add_optional_mount")
+    mocker.patch("jailbee.tmux.run_step", side_effect=lambda _i, _c, *, name, **kw: ran.append(name))
+
+    def cancel_while_unmounting(_cfg, _incus, _container, mount):
+        unmounted.append(mount)
+        if len(unmounted) > 1:
+            return  # the handler is one-shot; a second call is not a cancel
+        handler = signal.getsignal(signal.SIGTERM)
+        handler(signal.SIGTERM, None)  # type: ignore[operator]  # the supervisor's own handler
+
+    mocker.patch("jailbee.autostart.remove_optional_mount", side_effect=cancel_while_unmounting)
+
+    block = Autostart.model_validate(
+        {
+            "on_start": [
+                {
+                    "stage": "deps",
+                    "detach": True,
+                    "mounts": ["cache", "npm"],
+                    "steps": [{"name": "s1", "run": "true"}],
+                },
+                {"stage": "build", "steps": [{"name": "s2", "run": "true"}]},
+            ]
+        }
+    )
+
+    with pytest.raises(autostart_mod.AutostartCancelled):
+        autostart_mod.run_detached(
+            _cfg_with(make_cfg, tmp_path, block), mocker.MagicMock(), _spec(tmp_path, block)
+        )
+
+    assert ran == ["s1"], "the cancelled run must not start the next stage"
+    # …and the cleanup the cancellation interrupted still ran to the end.
+    assert unmounted == ["npm", "cache"]
+
+
 def test_a_cancellation_is_not_swallowed_by_continue_on_error(tmp_path, mocker, make_cfg):
     """The serial driver turns a failing step into a warning when the step
     says `continue_on_error`. A cancellation is not a failing step, and must

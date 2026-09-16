@@ -470,6 +470,35 @@ def run_detached(
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
 
 
+def _detach_mounts(
+    cfg: Config, incus: Incus, container: str, mounted: list[str]
+) -> AutostartCancelled | None:
+    """Undo ``mounted`` in reverse, warning and continuing on failure.
+
+    Log-and-continue, because a missing or already-removed device must not
+    mask the underlying step failure or block the rest of the cleanup — with
+    one exception, which is why this returns something. `AutostartCancelled`
+    is an ordinary `Exception` (deliberately: the worker's `except Exception`
+    has to catch it), so a SIGTERM arriving *during* the cleanup would be
+    warned about and dropped, and the caller would carry on to the next stage
+    of a run the user just cancelled.
+
+    It is returned rather than raised so the caller can finish the rest of
+    its cleanup — the network restore, which `_cancel_on_sigterm` promises —
+    before letting the cancellation out. Nothing will raise it a second time:
+    the handler puts the previous handling back before it raises.
+    """
+    cancelled: AutostartCancelled | None = None
+    for m in reversed(mounted):
+        try:
+            remove_optional_mount(cfg, incus, container, m)
+        except AutostartCancelled as e:
+            cancelled = e
+        except Exception as e:
+            warn(f"Failed to unmount '{m}' from {container}: {e}")
+    return cancelled
+
+
 def run_stages(
     cfg: Config,
     incus: Incus,
@@ -538,13 +567,7 @@ def run_stage(
             mounted.append(m)
         _run_chains(cfg, incus, container, stage, repo_dir, on_progress=on_progress)
     finally:
-        for m in reversed(mounted):
-            try:
-                remove_optional_mount(cfg, incus, container, m)
-            except Exception as e:
-                # Log-and-continue: a missing/already-removed device shouldn't
-                # mask the underlying step failure or block subsequent cleanup.
-                warn(f"Failed to unmount '{m}' from {container}: {e}")
+        cancelled = _detach_mounts(cfg, incus, container, mounted)
         if switched_to is not None and entry_mode is not None:
             now_mode = current_network_mode(cfg, incus, container) if cas_restore else switched_to
             if now_mode == switched_to:
@@ -559,6 +582,11 @@ def run_stage(
                     f"    ↳ leaving network as '{now_mode}' — changed since "
                     f"stage '{stage.stage}' started"
                 )
+        if cancelled is not None:
+            # Raised only now, so the cleanup this `finally` exists for — the
+            # unmounts above and the network restore — completes first. See
+            # `_detach_mounts` for why it is not raised where it happened.
+            raise cancelled
 
 
 def _run_chains(
@@ -796,15 +824,16 @@ def _finish_step(
     around the individual step exactly as `_apply_step` does it, including
     the warn-and-continue cleanup.
     """
-    for m in reversed(step.mounts):
-        try:
-            remove_optional_mount(cfg, incus, container, m)
-        except Exception as e:
-            warn(f"Failed to unmount '{m}' from {container}: {e}")
+    cancelled = _detach_mounts(cfg, incus, container, list(step.mounts))
     elapsed = time.monotonic() - started.get(step.name, time.monotonic())
     info(f"    ↳ {step.name}: {elapsed:.1f}s (exit {rc})")
     if on_progress is not None:
         on_progress(stage.stage, step.name, "ok" if rc == 0 else "fail")
+    if cancelled is not None:
+        # Out into the driver's `except BaseException`, which interrupts the
+        # steps still in flight before the stage unwinds — the same route a
+        # cancellation takes anywhere else in this driver.
+        raise cancelled
 
 
 def _apply_step(
@@ -889,13 +918,7 @@ def _apply_step(
             tmux.interrupt_window(incus, container, tmux.window_for(step.name))
             raise
     finally:
-        for m in reversed(mounted):
-            try:
-                remove_optional_mount(cfg, incus, container, m)
-            except Exception as e:
-                # Log-and-continue: a missing/already-removed device shouldn't
-                # mask the underlying step failure or block subsequent cleanup.
-                warn(f"Failed to unmount '{m}' from {container}: {e}")
+        cancelled = _detach_mounts(cfg, incus, container, mounted)
         if prev_network is not None:
             try:
                 switch_network(cfg, incus, container, prev_network, mirror_endpoint=mirror_endpoint)
@@ -903,6 +926,11 @@ def _apply_step(
                 warn(f"Failed to restore network to '{prev_network}' on {container}: {e}")
         elapsed = time.monotonic() - t0
         info(f"    ↳ {step.name}: {elapsed:.1f}s")
+        if cancelled is not None:
+            # Same reason as `run_stage`'s: a cancellation swallowed here
+            # would let the *chain* advance to its next step. Raised last so
+            # this step's own cleanup and elapsed line still happen.
+            raise cancelled
 
 
 def maybe_warn_no_gui() -> None:
