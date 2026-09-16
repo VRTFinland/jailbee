@@ -185,6 +185,14 @@ class AutostartStage(BaseModel):
         ),
     )
 
+    @field_validator("network", mode="before")
+    @classmethod
+    def _no_offline(cls, v: object) -> object:
+        # The same guard `AutostartStep.network` carries. The stage is where
+        # `network:` belongs now, so a user moving one up from a step must
+        # not trade the explanation for a bare Literal error.
+        return _reject_offline(v)
+
     @model_validator(mode="after")
     def _one_shape_only(self) -> AutostartStage:
         if self.chains and self.steps:

@@ -3108,6 +3108,17 @@ def test_autostart_step_network_rejects_offline() -> None:
         AutostartStep.model_validate({"name": "x", "run": "true", "network": "offline"})
 
 
+def test_autostart_stage_network_rejects_offline() -> None:
+    """The stage is where `network:` now belongs, so a user migrating a step
+    up to one must not get a *worse* message than the step gave them."""
+    from jailbee.config import AutostartStage
+
+    with pytest.raises(ValidationError, match="was removed"):
+        AutostartStage.model_validate(
+            {"stage": "deps", "network": "offline", "steps": [{"name": "x", "run": "true"}]}
+        )
+
+
 def test_autostart_step_network_still_accepts_strict_and_loose() -> None:
     from jailbee.config import AutostartStep
 
