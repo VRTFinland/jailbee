@@ -158,6 +158,34 @@ def test_duplicate_stage_name_is_rejected(tmp_path, mocker):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
+def test_duplicate_chain_name_within_a_stage_is_rejected(tmp_path, mocker):
+    """Load-bearing, not cosmetic: `_run_chains_in_parallel` keys both its
+    chain table and its cursors by chain name, so two chains sharing one
+    would collapse into a single chain and the other's steps would never
+    run — silently, with the stage reporting success."""
+    from jailbee.config.errors import ConfigError
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    config_yaml = yaml.dump(
+        {
+            "autostart": {
+                "on_start": [
+                    {
+                        "stage": "deps",
+                        "chains": [
+                            {"name": "a", "steps": [{"name": "one", "run": "true"}]},
+                            {"name": "a", "steps": [{"name": "two", "run": "true"}]},
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    repo = _write_repo(tmp_path, config_yaml=config_yaml)
+    with pytest.raises(ConfigError, match=r"duplicate autostart.on_start\[deps\] chain name: 'a'"):
+        load_config(repo / ".jailbee" / "config.yaml")
+
+
 def test_stage_mounts_validated_against_optional_mounts(tmp_path, make_cfg):
     cfg = make_cfg(
         tmp_path,
