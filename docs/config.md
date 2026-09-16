@@ -775,8 +775,10 @@ written: `user.jailbee.loose_until` (ISO8601 expiry) and
 The existing `jailbee-net-refresh.timer` (already runs every 60 s) reverts
 the container when the deadline passes — unless `user.jailbee.autostart_in_progress`
 is set, in which case the check is deferred to the next tick so an
-autostart step can finish its own network swap without racing the
-timer.
+autostart stage can finish its own network swap without racing the
+timer. See [Security](security.md#autostart-and-the-network-exposure-window)
+for what carries that flag for a *detached* stage, and why a dead
+supervisor can no longer pin a container loose.
 
 `jailbee net strict <c>` always clears the labels.
 
@@ -1256,31 +1258,223 @@ terminfo file into every container so the entry resolves naturally.
 
 IDE and browser launch decisions live in `jetbrains.autostart`,
 `browsers.<name>.autostart` and `apps.<name>.autostart` (not here). The
-`autostart` block describes the shell steps that run inside the container
-during startup.
+`autostart` block describes the shell work that runs inside the container
+during startup, organized into **stages** of **chains** of **steps**.
 
 Top-level keys:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `on_create` | list[Step] | `[]` | Steps run once after `jailbee new` provisions the container. |
-| `on_start` | list[Step] | `[]` | Steps run on every stopped→running transition: both `jailbee new` (after `on_create`) and `jailbee start`. Put one-shot setup in `on_create` and recurring launches (dev servers, etc.) in `on_start` — don't duplicate. |
+| `on_create` | list[Step] \| list[Stage] | `[]` | Run once after `jailbee new` provisions the container. Either a flat list of steps (legacy) or a list of stages — see below. Mixing both shapes in the same trigger is a config error. |
+| `on_start` | list[Step] \| list[Stage] | `[]` | Run on every stopped→running transition: both `jailbee new` (after `on_create`) and `jailbee start`/`restart`. Put one-shot setup in `on_create` and recurring launches (dev servers, etc.) in `on_start` — don't duplicate. Same two shapes as `on_create`. |
 | `step_timeout` | int | `600` | Default per-step timeout in seconds (overridable per step). |
 | `env` | map | `{}` | Global env merged into every step (per-step `env` wins on key collisions). |
+
+#### Stages and chains
+
+A **stage** is one milestone of a run. Stages execute in list order — a
+stage starts only once the previous one has fully finished. **A stage owns
+the network profile and the mounts for all of its chains**: it switches the
+network once on entry and restores it once on exit, attaches its
+`optional_mounts` once and detaches them once, and nothing inside its
+chains may touch either — that's what makes running several chains at once
+safe, since no chain can swap the profile or drop a mount out from under a
+sibling.
+
+A stage's **chains** run in parallel with each other; a chain's own
+**steps** run one at a time, in order. Put two steps in the same chain when
+one depends on the other; put them in different chains (or different
+stages) when they don't.
+
+**When one chain's step fails** (and that step doesn't set
+`continue_on_error`), every chain stops *launching* further steps —
+not just the one that failed — but steps already in flight in other
+chains are left to run to completion rather than interrupted; a
+half-finished install is worse than a finished one. The stage then fails
+once those in-flight steps have exited.
+
+```yaml
+- stage: name              # required, unique within the trigger
+  network: null            # strict|loose|null — switched once for the whole stage
+  mounts: []                # optional_mounts keys, attached for the whole stage
+  detach: false             # see "Detaching a run" below
+  chains:                   # OR `steps:` — not both
+    - name: backend
+      steps:
+        - { name: migrate, run: "pnpm db:migrate" }
+        - { name: server, run: "pnpm start", background: true }
+    - name: frontend
+      steps:
+        - { name: assets, run: "pnpm build:assets" }
+```
+
+`steps:` on a stage is shorthand for a single chain named `main` — the
+common case of one stage doing one thing in order:
+
+```yaml
+- stage: install
+  network: loose
+  steps:
+    - { name: deps, run: "pnpm install" }
+```
+
+is exactly:
+
+```yaml
+- stage: install
+  network: loose
+  chains:
+    - name: main
+      steps:
+        - { name: deps, run: "pnpm install" }
+```
+
+A stage that sets both `chains` and `steps` is a config error. A chain is
+`{name, steps}` — `name` unique within its stage, `steps` the same Step
+schema as the flat form (below), run in list order. `jailbee autostart
+status` reports progress by stage and step, not by chain — a chain's name
+exists to keep chains apart in the config and doesn't appear in that
+output.
 
 Each step is `{name, run, ...}`:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `name` | string | required | Identifier; unique within the trigger. |
+| `name` | string | required | Identifier; unique across the **whole trigger** (not just its chain) — step names are tmux window names, and with parallel chains a colliding name can kill a running sibling's window. |
 | `run` | string | required | Shell command run as the dev user. Always `cd`'d into `working_dir` first. |
-| `network` | `strict`/`loose`/`null` | `null` | Swap the container's net profile to this mode for the step's duration; restored after. `null` keeps the current profile. |
-| `mounts` | list[string] | `[]` | `optional_mounts` keys to attach for the step's duration. Validated against `optional_mounts`. |
+| `network` | `strict`/`loose`/`null` | `null` | Legacy, flat form only — see [Deprecated: step-level `network`/`mounts`](#deprecated-step-level-networkmounts) below. Set on the enclosing stage instead. |
+| `mounts` | list[string] | `[]` | Legacy, flat form only — see the deprecation note below. Set on the enclosing stage instead. |
 | `env` | map | `{}` | Per-step env (merged on top of `autostart.env`). |
 | `working_dir` | string | `""` | Path relative to `repo_dir`. Empty = `repo_dir` itself. |
 | `background` | bool | `false` | Run in a detached tmux window; do not wait for completion. Attach via `jailbee tmux <container>` to see output. |
 | `timeout` | int | `null` (= `step_timeout`) | Per-step timeout override in seconds. |
-| `continue_on_error` | bool | `false` | If `true`, a non-zero exit warns instead of aborting subsequent steps. |
+| `continue_on_error` | bool | `false` | If `true`, a non-zero exit warns instead of aborting subsequent steps in its chain. |
+
+`jailbee config validate` additionally rejects: a duplicate stage name
+within one trigger, a duplicate chain name within one stage, a duplicate
+step name anywhere in one trigger (see `name` above), and a step name that
+collides with an autostarting agent's own tmux window name (see [Generic
+agent support](agents.md)).
+
+#### Detaching a run
+
+`detach: true` on a stage means: this stage, and every stage after it in
+the same trigger, run in a background supervisor process instead of
+blocking `jailbee new`/`jailbee start`/`jailbee restart`. The first stage
+marked `detach: true` wins — repeating it on a later stage is legal but
+redundant. Everything before it still runs in the foreground and blocks as
+before, so the CLI hands you the session (shell, tmux, or just the prompt
+back, per `after_new`/`--attach`) right after the last blocking stage
+finishes, while the rest continues in the background.
+
+`--wait` (run every stage in the foreground, ignoring `detach: true` — the
+pre-1.4 behaviour) and `--no-wait` (run only the first stage before handing
+over, whatever the config says) on `jailbee new`/`jailbee start`/`jailbee
+restart` override this per invocation; the two are mutually exclusive. See
+[Commands](commands.md) for `jailbee autostart status`/`cancel`, which
+inspect and stop a detached run, and [Security](security.md#autostart-and-the-network-exposure-window)
+for what a stage's network switch means while it's running unattended.
+
+A config with no `detach: true` anywhere behaves exactly as before: every
+stage blocks, in order, and there is nothing to inspect afterwards.
+
+**Two known gaps, both narrow:**
+
+- **`jailbee destroy` carries no guard against a detached run.** `stop`
+  refuses while a supervisor is still working unless `--force` is given,
+  and `restart` refuses too with no `--force` at all; `destroy` does not
+  check either way, so destroying a container mid-run tears it down out
+  from under its own supervisor. Cancel the run first (`jailbee autostart
+  cancel`) if you want a clean stop.
+- **On `jailbee new --background`, GUI autostart apps launch after every
+  deferred stage finishes, not at the attach boundary.** The worker that
+  keeps running the deferred stages in-process is the same one that would
+  launch them, so they wait behind the whole detached run rather than
+  coming up as soon as the session itself would be usable.
+
+#### The reserved `agents` stage
+
+`jailbee` generates one autostart step per agent with `autostart: true`
+(see [Generic agent support](agents.md)) and needs somewhere to put them.
+The stage named `agents` is reserved for exactly this, but **only in the
+stage form** — a flat step literally named `agents` is just an ordinary
+step; the reserved name means nothing there, because a flat config's step
+names are user data, not a namespace `jailbee` claims.
+
+- **Written explicitly** — `{stage: agents, ...}` in your `on_start` list —
+  it may not carry `chains`/`steps` of its own (`jailbee config validate`
+  rejects that as an error): `jailbee` fills it with the generated
+  per-agent launch steps, one chain named `main`. Its own `network` and
+  `mounts` are yours to set and are kept as written. When it is the
+  *first* stage in the trigger to carry `detach: true` (and no `--wait`/
+  `--no-wait` override is in play), that flag behaves differently from an
+  ordinary stage: instead of deferring the agent launch itself, it keeps
+  the agents stage blocking — so the CLI still hands you a session with
+  the agent already up — and defers everything *after* it instead. If an
+  *earlier* stage already carries `detach: true`, the agents stage simply
+  falls inside that deferred region like any other stage after the
+  boundary, and its own `detach` (if set) changes nothing.
+- **Left unwritten**, `jailbee` inserts it itself at the *effective attach
+  boundary within `on_start`* — immediately before whatever `on_start`
+  stage would otherwise be deferred, or at the very end of `on_start`'s
+  stages when nothing in `on_start` itself detaches. Within `on_start`
+  alone, that is the latest point that still runs before the session is
+  handed over.
+
+**If `on_create` already deferred something, none of the above applies.**
+A `detach: true` stage in `on_create` (or `--no-wait` splitting it) hands
+the session over before `on_start` is even reached in the foreground —
+`on_start` then runs *entirely* in the background supervisor that resumes
+it, agents stage included, regardless of where you put it or what its own
+`detach` says. In that case the agent's tmux window is created shortly
+*after* you attach, not before — the same as every other `on_start` stage.
+
+An explicit `stage: agents` is dropped entirely whenever there is nothing
+to fill it with — not only under `on_create` (which never launches an
+agent at all), but also under `on_start` when no agent currently has
+`autostart: true`. If the dropped stage carried `detach: true`, that flag
+moves to whichever stage takes its place, so the split point you drew
+doesn't silently vanish.
+
+Which window `jailbee tmux` (or `--attach tmux`) lands on is chosen **by
+name**, not by tmux's own "most recently created" default — so the agent
+stage's position only decides *when* its window is created relative to the
+hand-off, not which window ends up focused.
+
+#### Deprecated: step-level `network`/`mounts`
+
+A step's own `network`/`mounts` are **legal only in the flat form** — the
+pre-stage shape jailbee still reads and runs exactly as before. Inside a
+stage they are a config error: move them to the enclosing stage, which is
+the level that now owns both.
+
+```diff
+ - stage: install
++  network: loose
+   steps:
+     - name: deps
+       run: "pnpm install"
+-      network: loose
+```
+
+A flat step that still sets `network` or `mounts` loads and runs exactly
+as before — `jailbee new`, `jailbee apply` and every other command are
+unaffected. `jailbee config validate` alone reports it, naming the
+(implicit) enclosing stage's key to move it to; that reported issue still
+makes `jailbee config validate` itself exit non-zero, so a CI check gated
+on it fails until you move the key, even though nothing else does. Removal
+is planned for **2.0.0**.
+
+#### Legacy compatibility: the flat form
+
+A flat list of steps under `on_create`/`on_start` keeps working exactly as
+it always has — nothing needs converting. Internally, `jailbee` normalizes
+it into stages before running it: consecutive steps that share the same
+`network` collapse into one implicit single-chain stage, named after the
+first step in that run. This is the one observable behaviour change: a run
+of several steps sharing a network mode switches the profile **once**
+rather than once per step. Ordering, per-step `mounts` (still honoured, if
+deprecated), and everything else about a flat config are unaffected.
 
 #### Where do my autostart steps run?
 
@@ -1321,7 +1515,9 @@ autostart config comes from a1b2c3d4e5f6 (feat/x), not your checkout:
 ```
 
 Step names are trigger-qualified (`on_create[build]` vs `on_start[build]`)
-because the same name can exist under both triggers as distinct steps.
+because the same name can exist under both triggers as distinct steps. A
+[stage](#stages-and-chains) is named the same way but in angle brackets
+(`on_create<setup>`), because a stage and a step may carry the same name.
 
 ##### The privilege check is a separate comparison
 
@@ -1349,14 +1545,14 @@ noted in the line.
 
 Two kinds of widening are reported, and they are weighed differently:
 
-- **a step attaching an `optional_mounts` entry** the baseline's same-named
-  step does not — these are typically personal credential directories
-  (`~/.aws`, `~/.m2`), and the step's command line comes from the same branch.
-  This **always asks for confirmation**, defaulting to **no**; declining
-  aborts the whole `jailbee new` with nothing created. Attaching a mount is what
-  *creates* the asset — a credential directory the container would not
-  otherwise hold — and no network mode protects against it.
-- **a step widening network access** from `strict` to `loose`. This asks only
+- **a step or stage attaching an `optional_mounts` entry** the baseline does
+  not attach — these are typically personal credential directories
+  (`~/.aws`, `~/.m2`), and the command lines that run while it is attached
+  come from the same branch. This **always asks for confirmation**, defaulting
+  to **no**; declining aborts the whole `jailbee new` with nothing created.
+  Attaching a mount is what *creates* the asset — a credential directory the
+  container would not otherwise hold — and no network mode protects against it.
+- **a step or stage widening network access** from `strict` to `loose`. This asks only
   for an **untrusted head**: `jailbee new --pr N` where the PR's head lives in a
   **fork** (`isCrossRepository`) — code nobody with push access to your repo has
   vouched for. Everything else warns and proceeds. Once the container runs the
@@ -1373,9 +1569,22 @@ Two kinds of widening are reported, and they are weighed differently:
 
 In both cases a brand-new step counts as widening, since the baseline has no
 counterpart to compare against. Everything else a step controls (`run`, `env`,
-`working_dir`, `background`, `timeout`, `continue_on_error`) only warns: it is
-container-internal, and adds nothing beyond the code execution a cloned branch
-inherently has.
+`working_dir`, `background`, `timeout`, `continue_on_error`), and a stage's
+`detach` and chain layout, only warns: it is container-internal, and adds
+nothing beyond the code execution a cloned branch inherently has. A chain
+layout warns as `~ on_create<setup>: chains changed`, which covers a chain
+renamed, re-split, or moving a step the two configs share — including a step
+moved from one stage to another, which does change the mode and mounts it runs
+with. A step that exists on one side only is left to its own `+`/`-` line
+instead, so renaming a step inside a stage does not also report the stage.
+
+In the stage form, `network` and `mounts` live on the stage — a step inside one
+may not carry either — so that is where both the diff and the ⚠ line name them
+(`on_start<warmup>`), rather than repeating them on each of the stage's steps.
+Underneath, the two forms are matched step by step and compared on the mode and
+mounts each step *effectively* runs with. So moving an unchanged `loose` step
+into a `loose` stage is neither a widening nor a reported change: the only line
+it produces is the new stage itself.
 
 `--yes`/`-y` accepts without asking (in addition to its original job of
 skipping the "branch already exists" prompt). `--no-autostart` skips the branch

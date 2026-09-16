@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee import tmux
 from jailbee.incus import IncusError
 from jailbee.tmux import SENTINEL_DIR, SESSION_NAME, ensure_session
 
@@ -438,3 +439,111 @@ def _extract_sentinel(call) -> str:
     m = re.search(r"step_[A-Za-z0-9_-]+_\d+_\d+\.exit", joined)
     assert m is not None, joined
     return m.group(0)
+
+
+def test_launch_step_creates_window_and_returns_handle(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    handle = tmux.launch_step(
+        incus,
+        "c1",
+        name="uv-sync",
+        command="uv sync",
+        env={"A": "b"},
+        cwd="/home/dev/repo",
+        background=False,
+        timeout=300,
+    )
+    assert handle.name == "uv-sync"
+    assert handle.window == "uv-sync"
+    assert handle.sentinel.startswith(tmux.SENTINEL_DIR)
+    assert handle.background is False
+    joined = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list)
+    assert "tmux new-window" in joined
+    # No blocking wait: launching must return immediately.
+    assert "tmux wait-for" not in joined.replace("wait-for -S", "")
+
+
+def test_poll_steps_returns_finished_exit_codes_and_clears_sentinels(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    h1 = tmux.launch_step(
+        incus, "c1", name="a", command="true", env={}, cwd="/r", background=False, timeout=300
+    )
+    h2 = tmux.launch_step(
+        incus, "c1", name="b", command="true", env={}, cwd="/r", background=False, timeout=300
+    )
+    incus.exec.reset_mock()
+    incus.exec.return_value = f"{h1.sentinel} 0\n"
+
+    done = tmux.poll_steps(incus, "c1", [h1, h2])
+
+    assert done == {"a": 0}
+    joined = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list)
+    assert "rm -f" in joined
+
+
+def test_poll_steps_ignores_background_handles(mocker):
+    """A background handle is skipped by the ``not h.background`` guard on
+    its own — even when it carries a (hypothetically) non-empty sentinel,
+    which would otherwise make it look pending. Built directly rather than
+    via `launch_step` (which always hands back `sentinel=""` for background
+    steps) so this guard, not the empty-sentinel guard, is what's under
+    test."""
+    incus = mocker.Mock()
+    handle = tmux.StepHandle(
+        name="srv",
+        window="srv",
+        sentinel=f"{SENTINEL_DIR}/srv.exit",
+        background=True,
+        deadline=0.0,
+    )
+    assert tmux.poll_steps(incus, "c1", [handle]) == {}
+    incus.exec.assert_not_called()
+
+
+def test_launch_step_background_raises_when_the_step_dies_immediately(mocker):
+    """Same early-death probe `run_step` has — a background step that exits
+    inside the probe window is a config error, not a running service."""
+    incus = mocker.Mock()
+    incus.exec.return_value = ""  # probe wait-for returns → signal received → died
+    with pytest.raises(tmux.TmuxStepError) as e:
+        tmux.launch_step(
+            incus,
+            "c1",
+            name="srv",
+            command="false",
+            env={},
+            cwd="/r",
+            background=True,
+            timeout=300,
+        )
+    assert e.value.reason == "died_early"
+
+
+def test_launch_step_background_returns_a_handle_when_the_step_survives_the_probe(mocker):
+    """The other half of `launch_step`'s background branch: when the probe
+    times out (still alive) rather than returning, `launch_step` must not
+    raise — it hands back a fire-and-forget handle with an empty sentinel
+    (`poll_steps` relies on that emptiness, alongside `background=True`, to
+    skip it) and the window it created carries the early-death EXIT trap."""
+    incus = mocker.Mock()
+    # kill-window OK, new-window OK, probe wait-for times out (= still alive)
+    incus.exec.side_effect = ["", "", IncusError("exit 124: timeout")]
+    handle = tmux.launch_step(
+        incus,
+        "c1",
+        name="srv",
+        command="sleep 9",
+        env={},
+        cwd="/r",
+        background=True,
+        timeout=300,
+    )
+    assert handle.name == "srv"
+    assert handle.window == "srv"
+    assert handle.background is True
+    assert handle.sentinel == ""
+    new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
+    assert "trap" in new_window_args
+    assert "tmux wait-for -S" in new_window_args

@@ -43,6 +43,8 @@ from jailbee.config.loader import (
 from jailbee.config.models_agents import (
     AgentConfig,
     Autostart,
+    AutostartChain,
+    AutostartStage,
     AutostartStep,
     ClaudeAgentConfig,
     DockerRegistryMirrorRepoConfig,
@@ -128,6 +130,8 @@ __all__ = [
     "AgentConfig",
     "AppEntry",
     "Autostart",
+    "AutostartChain",
+    "AutostartStage",
     "AutostartStep",
     "BootConfig",
     "BrowserConfig",

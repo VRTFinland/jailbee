@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee import table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -44,6 +44,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
+    from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
 
 
@@ -421,11 +422,15 @@ def wait_for_background_ready(
     table:
 
     * row gone          -> ready; return (returns instantly when already done)
-    * create + autostart -> ready; return (container is already started, so
-      shell/tmux can attach while autostart steps still run — see
-      :data:`background.ATTACHABLE_CREATE_PHASES`)
+    * attachable        -> ready; return (a create or boot that reached the
+      autostart phase, or any detached autostart supervisor: the container is
+      already started, so shell/tmux can attach while its steps still run —
+      see :func:`background.attachable`)
     * phase == failed   -> raise ValueError carrying the recorded error
     * worker pid dead   -> raise ValueError (stale op, worker crashed)
+
+    The last two do not apply to an `autostart`-kind row: a failed or killed
+    supervisor still leaves a container that is up and attachable.
 
     On each phase change, ``on_phase(phase)`` is invoked so the caller can
     update a spinner. ``sleep`` is injectable for deterministic testing.
@@ -446,25 +451,34 @@ def wait_for_background_ready(
             return
         if row.op_kind == background.JOB_DESTROY and background.worker_alive(row.pid):
             raise ValueError(f"'{short}' is being destroyed")
-        if row.phase in background.TERMINAL_PHASES:
+        # A detached autostart supervisor never gates an attach — not when it
+        # failed a stage, and not when its worker was killed. The container is
+        # up, running and usable by construction: the supervisor only exists
+        # because the blocking stages finished and handed the session over.
+        # Refusing a shell over a failed deferred stage would be the exact
+        # behaviour this job kind was added to prevent; `jailbee ls` reports
+        # the failed row, and `jailbee job log` has the detail.
+        supervising = row.op_kind == background.JOB_AUTOSTART
+        if row.phase in background.TERMINAL_PHASES and not supervising:
             # An unknown kind (a row written by a newer jailbee) falls back to
-            # "creation", the kind that predates the column.
+            # "creation", the kind that predates the column. `autostart` is
+            # listed for completeness — the guard above returns before a failed
+            # supervisor can reach this — so a future non-attach caller of this
+            # function gets the right noun rather than "creation".
             verb = {
                 background.JOB_DESTROY: "destroy",
                 background.JOB_BOOT: "boot",
+                background.JOB_AUTOSTART: "autostart",
             }.get(row.op_kind, "creation")
             raise ValueError(
                 f"background {verb} of '{short}' failed: {row.error_msg or 'unknown error'}"
             )
-        if not background.worker_alive(row.pid):
+        if not background.worker_alive(row.pid) and not supervising:
             raise ValueError(f"background worker for '{short}' is gone (last phase: {row.phase})")
         if on_phase is not None and row.phase != last_phase:
             on_phase(row.phase)
             last_phase = row.phase
-        if (
-            row.op_kind in background.ATTACHABLE_OP_KINDS
-            and row.phase in background.ATTACHABLE_CREATE_PHASES
-        ):
+        if background.attachable(row.op_kind, row.phase):
             return
         sleep(POLL_INTERVAL_SEC)
 
@@ -551,6 +565,12 @@ class NewContainerOptions:
     # credential on its first run. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     claude_group: str | None = None
+    # `jailbee new --wait` / `--no-wait`: force every autostart stage into the
+    # foreground, or defer everything after the first stage to the detached
+    # supervisor, whatever `detach:` says. None leaves the decision to the
+    # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
+    # `assume_yes`.
+    autostart_override: Literal["wait", "no_wait"] | None = None
 
 
 @dataclass(frozen=True)
@@ -830,6 +850,7 @@ def new_container(
     *,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
+    on_detach: Callable[[Autostart, str, str], None] | None = None,
 ) -> str:
     """Create a new container from the golden image. Returns container name.
 
@@ -852,6 +873,13 @@ def new_container(
     target branch's autostart config widens privileges (network access, or a
     host mount it attaches). The detached background worker injects one that
     always declines, so it never blocks on stdin; tests inject their own.
+
+    ``on_detach(autostart_block, trigger, repo_dir)``, if given, is invoked
+    once when a stage deferred the rest of the run — the caller then decides
+    who finishes it (the CLI spawns `_autostart-worker`; a background worker
+    carries on in-process). ``lifecycle`` must not import ``cli``, which is
+    why this arrives as a callback rather than a direct call. Without it the
+    deferred stages are simply not run.
     """
 
     def _phase(label: str) -> None:
@@ -1298,24 +1326,38 @@ def new_container(
             f"→ Running autostart "
             f"[dim](tip: 'jailbee tmux {short}' in another terminal to follow live)[/dim]"
         )
-        run_autostart(
+        create_plan = run_autostart(
             effective_cfg,
             incus,
             name,
             AutostartTrigger.ON_CREATE,
             repo_dir=repo_dir,
             mirror_endpoint=opts.mirror_endpoint,
+            override=opts.autostart_override,
         )
-        # `incus.start` above transitioned the container into the running
-        # state, so on_start steps apply on this first launch too.
-        run_autostart(
-            effective_cfg,
-            incus,
-            name,
-            AutostartTrigger.ON_START,
-            repo_dir=repo_dir,
-            mirror_endpoint=opts.mirror_endpoint,
+        # A stage deferred in `on_create` moves the boundary for the whole
+        # run: everything after it — the entire `on_start` trigger included —
+        # belongs to whoever takes the hand-off, so this process must not run
+        # it as well. `run_detached` resumes from the trigger it is told.
+        detached_from: str | None = (
+            AutostartTrigger.ON_CREATE.value if create_plan.detached else None
         )
+        if detached_from is None:
+            # `incus.start` above transitioned the container into the running
+            # state, so on_start steps apply on this first launch too.
+            start_plan = run_autostart(
+                effective_cfg,
+                incus,
+                name,
+                AutostartTrigger.ON_START,
+                repo_dir=repo_dir,
+                mirror_endpoint=opts.mirror_endpoint,
+                override=opts.autostart_override,
+            )
+            if start_plan.detached:
+                detached_from = AutostartTrigger.ON_START.value
+        if detached_from is not None and on_detach is not None:
+            on_detach(effective_cfg.autostart, detached_from, repo_dir)
 
     return name
 

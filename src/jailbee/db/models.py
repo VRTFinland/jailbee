@@ -123,6 +123,10 @@ JOB_DESTROY = "destroy"
 # `jailbee start` and `jailbee restart` share one kind: both boot a container
 # and then run the same autostart, which is the part worth detaching.
 JOB_BOOT = "boot"
+# A detached autostart supervisor: the container is already up and its
+# blocking stages are done, so unlike a create or a boot this job never
+# gates attaching — it only reports how far the deferred stages got.
+JOB_AUTOSTART = "autostart"
 
 
 class BackgroundJob(SQLModel, table=True):

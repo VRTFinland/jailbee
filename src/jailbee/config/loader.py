@@ -23,6 +23,7 @@ from jailbee.config.common import (
     merge_apps_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
+from jailbee.config.models_agents import AutostartStage
 from jailbee.config.models_columns import (
     _COLUMN_DEFAULT,
     _columns_already_sanitized,
@@ -356,13 +357,66 @@ def _build_config_from_dict(
                 f"absolute or start with '~', got: {cache.container_path}"
             )
 
+    from jailbee.autostart_plan import AGENTS_STAGE, normalize_stages
+
     for trigger_name in ("on_create", "on_start"):
-        steps = getattr(cfg.autostart, trigger_name)
+        entries = getattr(cfg.autostart, trigger_name)
+        # The reserved `agents` stage only exists in the stage form — see
+        # `jailbee.autostart_plan.plan_autostart`. Normalizing a flat trigger
+        # can synthesize an implicit stage named after its first step (e.g. a
+        # step literally called `agents`), which must NOT trip this check.
+        is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
+        stages = normalize_stages(entries)
+        seen_stage_names: set[str] = set()
+        # Step names are tmux window names and `tmux.run_step` kills an
+        # existing window of that name before creating its own. With
+        # parallel chains a collision kills a *running* step in a sibling
+        # chain, so uniqueness is load-bearing, not cosmetic.
         seen_step_names: set[str] = set()
-        for step in steps:
-            if step.name in seen_step_names:
-                raise ConfigError(f"duplicate autostart.{trigger_name} step name: '{step.name}'")
-            seen_step_names.add(step.name)
+        for stage in stages:
+            if stage.stage in seen_stage_names:
+                raise ConfigError(f"duplicate autostart.{trigger_name} stage name: '{stage.stage}'")
+            seen_stage_names.add(stage.stage)
+            if is_stage_form and stage.stage == AGENTS_STAGE and (stage.chains or stage.steps):
+                raise ConfigError(
+                    f"autostart.{trigger_name} stage 'agents' may not carry `chains`/`steps` "
+                    f"of its own: its steps are generated from the `agents` config, which "
+                    f"would overwrite whatever this stage holds"
+                )
+            seen_chain_names: set[str] = set()
+            for chain in stage.all_chains():
+                if chain.name in seen_chain_names:
+                    raise ConfigError(
+                        f"duplicate autostart.{trigger_name}[{stage.stage}] chain name: "
+                        f"'{chain.name}'"
+                    )
+                seen_chain_names.add(chain.name)
+                for step in chain.steps:
+                    if step.name in seen_step_names:
+                        raise ConfigError(
+                            f"duplicate autostart.{trigger_name} step name: '{step.name}'"
+                        )
+                    seen_step_names.add(step.name)
+
+    # Each autostarting agent contributes a generated step whose name is the
+    # agent's, and a step name is a tmux window name. A user step of the same
+    # name would kill the agent's window (or be killed by it) — the hazard
+    # docs/agents.md describes, promoted from a warning to an error now that
+    # parallel chains make it fatal rather than untidy.
+    agent_window_names = {
+        n
+        for n, agent in cfg.agents.items()
+        if agent.enabled and agent.autostart and agent.command.strip()
+    }
+    for stage in normalize_stages(cfg.autostart.on_start):
+        for chain in stage.all_chains():
+            for step in chain.steps:
+                if step.name in agent_window_names:
+                    raise ConfigError(
+                        f"autostart.on_start step name '{step.name}' is reserved by the "
+                        f"'{step.name}' agent, which autostarts into a tmux window of that "
+                        f"name — rename the step"
+                    )
 
     return cfg
 

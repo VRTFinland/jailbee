@@ -21,7 +21,7 @@ from prompt_toolkit.output import DummyOutput
 
 from jailbee.config_edit import render
 from jailbee.config_edit import state as st
-from jailbee.config_edit.layers import raw_for, read_layers, resolve
+from jailbee.config_edit.layers import Origin, raw_for, read_layers, resolve
 from jailbee.config_edit.schema import repo_specs
 
 # A miscounted keystroke sequence in this file doesn't fail an assertion — it
@@ -76,8 +76,16 @@ class _CapturingOutput(DummyOutput):
 
 
 def _index_of_section(specs, name: str) -> int:
-    """How many `j` presses from the top of the section list reach `name`."""
-    state = st.open_editor(layer="repo", specs=specs, origins={}, layer_raw={})
+    """How many `j` presses from the top of the section list reach `name`.
+
+    The origins map is the all-defaults one `layers.resolve` produces over
+    two empty layers, spelled out here rather than read off disk: `sections`
+    needs only `state.specs`, but `open_editor` refuses a map that does not
+    cover every spec, because `render._entry_level` reads "absent from
+    `origins`" as "this path is inside an entry".
+    """
+    origins = {spec.path: Origin("default", spec.default) for spec in specs}
+    state = st.open_editor(layer="repo", specs=specs, origins=origins, layer_raw={})
     return st.sections(state).index(name)
 
 
@@ -1599,3 +1607,50 @@ def test_a_stale_staged_path_is_reported_rather_than_taking_the_editor_down(tmp_
     assert "host_mounts.1.host: index out of range" in editor.message
     assert editor.message_style == "class:error"
     assert editor.state.staged  # the session, and the staged work, survive
+
+
+_TWO_SHAPE_TRIGGER = {
+    "autostart": {
+        "on_start": [
+            {"stage": "build", "chains": [{"name": "deps", "steps": []}]},
+            {"network": "loose"},
+        ]
+    }
+}
+"""A stage-form trigger whose second entry is half-written.
+
+`network:` is declared on `AutostartStep` *and* on `AutostartStage`, so the
+entry identifies nothing on its own — only the list it sits in does.
+"""
+
+
+def test_the_esc_gate_validates_an_entry_against_the_shape_its_siblings_have(tmp_path):
+    """`Editor.back` passes the enclosing collection to `validate_entry`.
+
+    Drop that third argument at the call site and the whole suite still
+    passes, while a user halfway through writing a stage is told `name` is
+    required — a field `AutostartStage` does not have. Exactly the
+    mis-addressing this task filed against the `config validate` warnings,
+    one layer up.
+    """
+    editor = _editor(tmp_path, repo=_TWO_SHAPE_TRIGGER)
+    _descend(editor, "autostart", "on_start", 1)
+
+    editor.back()
+
+    assert "incomplete" in editor.message
+    assert "stage: " in editor.message, editor.message
+    assert "name: " not in editor.message
+
+
+def test_the_esc_gate_still_names_a_step_field_in_a_flat_trigger(tmp_path):
+    """The mirror image, so the assertion above pins a discrimination rather
+    than just a different string."""
+    flat = {"autostart": {"on_start": [{"name": "first", "run": "echo hi"}, {"network": "loose"}]}}
+    editor = _editor(tmp_path, repo=flat)
+    _descend(editor, "autostart", "on_start", 1)
+
+    editor.back()
+
+    assert "incomplete" in editor.message
+    assert "name: " in editor.message, editor.message

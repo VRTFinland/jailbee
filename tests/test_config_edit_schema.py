@@ -526,3 +526,199 @@ def test_rebase_prefixes_every_path_and_clears_the_advanced_filter():
     ]
     assert all(not s.advanced for s in got)
     assert [s.label for s in got] == ["host", "container", "readonly"]
+
+
+def test_a_union_of_model_lists_is_one_drill_down_collection():
+    """`list[A] | list[B]` is one collection in two shapes, not a scalar.
+
+    `autostart.on_create` / `on_start` became
+    `list[AutostartStep] | list[AutostartStage]` when stages were added, and
+    the union arm of `classify` had nothing for it: both fell through to
+    `SCALAR_UNION`. `test_every_config_field_classifies` stayed green — that
+    is a known kind — while the editor lost the drill-down entirely, offered
+    a one-line text prompt seeded with the `repr` of its own entries, and
+    answered "that key is not a collection" to `n`/`x`/`J`/`K`.
+    """
+    from jailbee.config.models_agents import AutostartStage, AutostartStep
+
+    result = classify(list[AutostartStep] | list[AutostartStage])
+
+    assert result.kind is FieldKind.MODEL_LIST
+    assert result.item_model is AutostartStep
+    assert result.item_models == (AutostartStep, AutostartStage)
+
+
+def test_autostart_triggers_are_drill_downs_in_the_repo_tree():
+    """The end-to-end shape of the above, as the editor reads it."""
+    from jailbee.config_edit.schema import repo_specs
+
+    specs = {s.path: s for s in repo_specs()}
+
+    for path in (("autostart", "on_create"), ("autostart", "on_start")):
+        assert specs[path].kind is FieldKind.MODEL_LIST, path
+        assert is_drilldown(specs[path]), path
+
+
+@pytest.mark.parametrize(
+    ("annotation"),
+    [
+        list[_Item] | str,
+        list[_Item] | list[str],
+        str | int,
+    ],
+)
+def test_a_union_that_is_not_all_model_lists_stays_a_scalar_union(annotation):
+    """Only a union of *model* lists is a collection.
+
+    Anything else — a model list beside a scalar, or beside a list of
+    strings — has no single form to draw, and guessing an arm would be worse
+    than the honest `SCALAR_UNION`.
+    """
+    assert classify(annotation).kind is FieldKind.SCALAR_UNION
+
+
+def _autostart_spec():
+    from jailbee.config_edit.schema import repo_specs
+
+    return next(s for s in repo_specs() if s.path == ("autostart", "on_start"))
+
+
+def test_entry_model_reads_an_entry_s_own_keys():
+    """A written entry says which shape it is: `run` is a step's, `stage` a
+    stage's, and neither model would accept the other's key."""
+    from jailbee.config.models_agents import AutostartStage, AutostartStep
+    from jailbee.config_edit.schema import entry_model
+
+    spec = _autostart_spec()
+
+    assert entry_model(spec, {"name": "a", "run": "echo", "mounts": ["c"]}) is AutostartStep
+    assert entry_model(spec, {"stage": "build", "chains": []}) is AutostartStage
+
+
+def test_entry_model_takes_a_new_entry_s_shape_from_its_siblings():
+    """`add_entry` appends `{}`, which identifies nothing on its own.
+
+    Falling back to the first arm would open a *step* form on a list of
+    stages — and the loader rejects a trigger that mixes the two, so the
+    user would fill the form in and only learn at save time.
+    """
+    from jailbee.config.models_agents import AutostartStage, AutostartStep
+    from jailbee.config_edit.schema import entry_model
+
+    spec = _autostart_spec()
+    stages = [{"stage": "build", "chains": []}, {}]
+    steps = [{"name": "a", "run": "echo"}, {}]
+
+    assert entry_model(spec, {}, stages) is AutostartStage
+    assert entry_model(spec, {}, steps) is AutostartStep
+    assert entry_model(spec, {}, []) is AutostartStep
+
+
+def test_entry_model_ignores_an_entry_that_fits_both_arms():
+    """`network:` is declared on the step *and* on the stage, so an entry
+    holding only that is no evidence — the siblings decide instead."""
+    from jailbee.config.models_agents import AutostartStage
+    from jailbee.config_edit.schema import entry_model
+
+    spec = _autostart_spec()
+    ambiguous = {"network": "loose"}
+
+    assert entry_model(spec, ambiguous, [{"stage": "build"}, ambiguous]) is AutostartStage
+
+
+def test_entry_model_is_the_item_model_for_an_ordinary_collection():
+    from jailbee.config_edit.schema import entry_model, repo_specs
+
+    spec = next(s for s in repo_specs() if s.path == ("host_mounts",))
+
+    assert entry_model(spec, {"host": "/x"}) is HostMount
+
+
+def _mentions_model(annotation) -> bool:
+    """Whether a `BaseModel` subclass appears anywhere in this annotation.
+
+    Recursive because the model is rarely the annotation itself: it is the
+    item type of a list, the value type of a dict, one arm of a union, or
+    one of those inside another.
+    """
+    from jailbee.config_edit.schema import _is_model, _strip_annotated
+
+    ann = _strip_annotated(annotation)
+    if _is_model(ann):
+        return True
+    from typing import get_args
+
+    return any(_mentions_model(arg) for arg in get_args(ann))
+
+
+_MODEL_KINDS = {FieldKind.MODEL_LIST, FieldKind.MODEL_MAP, FieldKind.SUBMODEL}
+
+
+def test_every_model_bearing_field_classifies_to_a_model_kind():
+    """The closure `test_every_config_field_classifies` is not.
+
+    That one asserts only that `classify` does not *raise*, so it stayed
+    green the day `autostart.on_create` became
+    `list[AutostartStep] | list[AutostartStage]` and started classifying as
+    `SCALAR_UNION` — a known kind, and a text prompt where a drill-down
+    belongs. Degrading into a *wrong* kind is the failure mode that matters,
+    and it is invisible to a "does it classify" test.
+
+    A field whose annotation mentions a model has a form to draw, so it must
+    land on one of the three kinds that draw one. Nothing else in the schema
+    mentions a model: `OPAQUE`'s only instance (`ScratchConfig.config`,
+    `dict[str, object]`) mentions none, and neither do the scalar unions
+    (`net.after`, `golden.java`, `golden.node`). This is the general form of
+    the regression this task found, and it is what stops the next
+    model-bearing field from silently becoming a text prompt.
+    """
+    degraded = []
+    for model in walk_models(Config, GlobalConfig, ClaudeAgentConfig):
+        for name, info in model.model_fields.items():
+            if not _mentions_model(info.annotation):
+                continue
+            kind = classify(info.annotation).kind
+            if kind not in _MODEL_KINDS:
+                degraded.append(f"{model.__name__}.{name} -> {kind.value}")
+    assert degraded == []
+
+
+def test_the_model_bearing_closure_actually_has_fields_to_check():
+    """A vacuous closure passes forever. This pins that it is not one."""
+    checked = [
+        f"{model.__name__}.{name}"
+        for model in walk_models(Config, GlobalConfig, ClaudeAgentConfig)
+        for name, info in model.model_fields.items()
+        if _mentions_model(info.annotation)
+    ]
+    assert len(checked) > 10
+    assert "Autostart.on_start" in checked
+
+
+def test_an_optional_union_of_model_lists_keeps_every_arm():
+    """`classify`'s single-arm branch must not drop `item_models`.
+
+    It rebuilds `Classified` field by field, so a field added to that
+    dataclass is lost there by construction unless it is passed on. No
+    config field has this shape today — `A | B | None` flattens, so a union
+    of model lists reaches the multi-arm branch instead — but wrapping the
+    union in an `Annotated` (which pydantic does all over) stops the
+    flattening and routes it straight through the branch that would drop it.
+    Losing `item_models` there would silently take the collection back to a
+    single-shape one: `entry_model` would stop discriminating and every
+    entry would draw the first arm's form.
+    """
+    from typing import Annotated
+
+    class _A(BaseModel):
+        a: int = 0
+
+    class _B(BaseModel):
+        b: int = 0
+
+    result = classify(Annotated[list[_A] | list[_B], "meta"] | None)
+
+    assert result.kind is FieldKind.MODEL_LIST
+    assert result.optional is True
+    assert result.item_model is _A
+    assert result.item_models == (_A, _B)

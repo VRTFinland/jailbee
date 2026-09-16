@@ -219,7 +219,11 @@ class Editor:
             return
         view = st.screen(self.state)
         if view.kind == "entry" and view.collection is not None:
-            error = validate_entry(view.collection, st.own(self.state, view.entry_path))
+            error = validate_entry(
+                view.collection,
+                st.own(self.state, view.entry_path),
+                st.own(self.state, view.collection.path),
+            )
             if error is not None and not self.message.startswith(_ENTRY_INVALID):
                 self.notice(f"{_ENTRY_INVALID}{error}", style="class:error")
                 return

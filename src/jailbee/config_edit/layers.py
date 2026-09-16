@@ -29,7 +29,7 @@ from jailbee.config import ConfigError, load_config_from_layers, resolve_browser
 # routing exactly — a key on one side of the boundary merges by
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
 from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
-from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted
+from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted, entry_model
 from jailbee.config_writer import DELETE, KeyPath, YamlChange
 from jailbee.global_config import validate_global_raw
 
@@ -367,7 +367,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
     return None
 
 
-def validate_entry(spec: FieldSpec, value: object) -> str | None:
+def validate_entry(spec: FieldSpec, value: object, collection: object = None) -> str | None:
     """The first thing wrong with one collection entry, or `None`.
 
     Early feedback, not a second gate: `validate` still runs the real loader
@@ -379,11 +379,17 @@ def validate_entry(spec: FieldSpec, value: object) -> str | None:
     Kept here rather than in a new `validation.py`: it is six lines and pulls
     in nothing `layers` does not already reach. Spec 10.7's suggested split
     still stands for the day `validate` itself grows.
+
+    `collection` is the list the entry lives in, needed only for a
+    `list[A] | list[B]` field, where an entry too empty to identify itself
+    is identified by its siblings — see `schema.entry_model`. Optional, so
+    the single-model callers stay as they were.
     """
-    if spec.item_model is None:
+    model = entry_model(spec, value, collection)
+    if model is None:
         return None
     try:
-        spec.item_model.model_validate(value)
+        model.model_validate(value)
     except ValidationError as e:
         first = e.errors()[0]
         where = ".".join(str(part) for part in first["loc"]) or spec.label

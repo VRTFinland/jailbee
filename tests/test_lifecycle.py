@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee.autostart_plan import AutostartPlan
 from jailbee.config import CONTAINER_USERNAME, NewConfig, PoolSpec, SharedCache, load_config
 from jailbee.incus import IncusError
 from jailbee.lifecycle import (
@@ -25,6 +26,11 @@ from jailbee.lifecycle import (
 from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# What `run_autostart` returns when nothing is deferred. Tests that stub it
+# out with a `side_effect` must still return a plan: `new_container` reads
+# `.detached` to decide whether to hand off to the supervisor.
+_EMPTY_PLAN = AutostartPlan(blocking=[], detached=[])
 
 
 def test_format_bytes():
@@ -3097,6 +3103,7 @@ def test_new_container_runs_both_on_create_and_on_start(tmp_path, mocker):
 
     def _record(_cfg, _incus, _name, trigger, **_kw):
         triggers.append(trigger)
+        return _EMPTY_PLAN
 
     mocker.patch(
         "jailbee.autostart.run_autostart",
@@ -3205,6 +3212,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
 
     def _record(*_a, **kw):
         captured_kwargs.append(kw)
+        return _EMPTY_PLAN
 
     mocker.patch(
         "jailbee.autostart.run_autostart",
@@ -3255,7 +3263,7 @@ def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, 
     )
     mocker.patch(
         "jailbee.autostart.run_autostart",
-        side_effect=lambda *a, **kw: events.append("autostart"),
+        side_effect=lambda *a, **kw: (events.append("autostart"), _EMPTY_PLAN)[1],
     )
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.docker_daemon.apply_docker_proxy")
@@ -5325,7 +5333,7 @@ def test_new_container_ensure_agents_runs_before_autostart(make_cfg, tmp_path, m
     )
     mocker.patch(
         "jailbee.autostart.run_autostart",
-        side_effect=lambda *a, **kw: calls.append("autostart"),
+        side_effect=lambda *a, **kw: (calls.append("autostart"), _EMPTY_PLAN)[1],
     )
 
     new_container(cfg, incus, _new_opts(autostart=True))
@@ -5983,6 +5991,88 @@ def test_wait_for_background_ready_raises_when_worker_dead(make_cfg, tmp_path, m
     with pytest.raises(ValueError, match="worker"):
         wait_for_background_ready(cfg, full, sleep=sleep)
     sleep.assert_not_called()
+
+
+def _autostart_row(cfg, full: str, *, pid: int, failed: bool = False) -> None:
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import background
+    from jailbee.db import get_engine
+    from jailbee.db.models import JOB_AUTOSTART
+
+    with Session(get_engine()) as s:
+        background.start_job(
+            s,
+            container_name=full,
+            container_prefix=cfg.container_prefix,
+            branch=None,
+            pid=pid,
+            log_path="/l",
+            now=datetime.now(UTC),
+            op_kind=JOB_AUTOSTART,
+        )
+        if failed:
+            background.fail_job(s, full, "a deferred stage blew up", now=datetime.now(UTC))
+        else:
+            background.set_phase(s, full, "deps", now=datetime.now(UTC))
+
+
+def _never_sleep(_s: float) -> None:
+    """A poll loop that reaches here would spin forever: the supervisor rows
+    below never change, so "not attachable" means "never returns". Raising
+    turns that hang into a failure."""
+    raise AssertionError("waited on a supervisor instead of attaching")
+
+
+def test_wait_for_background_ready_attaches_over_a_failed_supervisor(
+    make_cfg, tmp_path, monkeypatch
+):
+    """A failed *deferred* stage must not cost the user a shell: the container
+    is up and usable — that is the whole reason the autostart kind exists."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-s"
+
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242, failed=True)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
+
+
+def test_wait_for_background_ready_attaches_over_a_dead_supervisor(make_cfg, tmp_path, monkeypatch):
+    """Same for a killed supervisor: its container is still running."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-k"
+
+    from jailbee import background
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242)
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: False)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
+
+
+def test_wait_for_background_ready_attaches_over_a_live_supervisor(make_cfg, tmp_path, monkeypatch):
+    """And it never waits one out — the deferred stages run behind the shell."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path / "myrepo")
+    cfg.repo_root.mkdir()
+    full = f"{cfg.container_prefix}-feat-l"
+
+    from jailbee import background
+    from jailbee.lifecycle import wait_for_background_ready
+
+    _autostart_row(cfg, full, pid=4242)
+    monkeypatch.setattr(background, "worker_alive", lambda _pid: True)
+
+    wait_for_background_ready(cfg, full, sleep=_never_sleep)
 
 
 def test_wait_for_background_ready_returns_instantly_when_no_row(make_cfg, tmp_path, monkeypatch):

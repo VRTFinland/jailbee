@@ -97,7 +97,7 @@ optional_mounts:
     description: "AWS creds for ECR pulls"
 ```
 
-Named, not attached by default. Attach per-container with `jailbee new --mount aws` or per-autostart-step with `mounts: [aws]`. `description` shows in `jailbee new --help` listings.
+Named, not attached by default. Attach per-container with `jailbee new --mount aws`, or for an autostart run with `mounts: [aws]` on a **stage** (attached for the whole stage, detached when it ends) — or, in the legacy flat form only, on an individual step. `description` shows in `jailbee new --help` listings.
 
 ## `host_devices`
 
@@ -258,7 +258,10 @@ Two hardcoded modes, not user-extendable:
 | `strict` | Default-deny ACL on `incusbr0`. Only `egress_allow` destinations reachable. |
 | `loose` | Wider egress on dedicated `jailbee-loose` bridge. |
 
-Per-container default: `defaults.network`. Per-step override: `autostart.<trigger>[].network` (restored after the step).
+Per-container default: `defaults.network`. Per-stage override:
+`autostart.<trigger>[].network` on a **stage** (restored once the stage's
+chains finish) — the legacy per-step `network` still works too, but only
+outside a stage; see `## autostart` below.
 
 ## `defaults`
 
@@ -423,23 +426,49 @@ path would otherwise become an argument to the first), while `args`
 
 IDE and browser launches are controlled by `jetbrains.autostart` /
 `browsers.<name>.autostart` (and, for a plain GUI app, `apps.<name>.autostart`),
-not here. The `autostart` block describes the in-container shell steps.
+not here. The `autostart` block describes the in-container shell work, as
+**stages** of **chains** of **steps**.
 
 ```yaml
 autostart:
-  on_create: []         # list of Step
-  on_start: []          # list of Step
+  on_create: []         # list of Stage (or, legacy, list of Step — do not mix)
+  on_start: []          # list of Stage (or, legacy, list of Step — do not mix)
   step_timeout: 600     # default per-step timeout in seconds
   env: {}               # global env merged into every step
 ```
 
-Step schema:
+**Write new configs in the stage form.** A stage owns the network profile
+and the mounts for everything it runs; a stage's chains run in parallel,
+a chain's steps run in order:
 
 ```yaml
-- name: dev                    # required, unique within trigger
+- stage: setup                 # required, unique within the trigger
+  network: loose                # strict|loose|null — switched once for the whole stage
+  mounts: []                    # optional_mounts keys, attached for the whole stage
+  detach: false                 # true: this stage + everything after it moves to the background
+  chains:                       # OR `steps:` below — never both
+    - name: deps
+      steps:
+        - { name: install, run: "pnpm install" }
+    - name: assets
+      steps:
+        - { name: build-assets, run: "pnpm build:assets" }
+```
+
+`steps:` on a stage is shorthand for one chain named `main` — use it for
+the common case of a stage that just runs things in order:
+
+```yaml
+- stage: dev
+  steps:
+    - { name: server, run: "pnpm dev", background: true }
+```
+
+A stage may set `chains` or `steps`, never both. Step schema (unchanged):
+
+```yaml
+- name: dev                    # required, unique across the WHOLE trigger, not just its chain
   run: "pnpm dev"              # required, shell command as dev user
-  network: null                # strict|loose|null (null keeps current)
-  mounts: []                   # optional_mounts keys to attach for this step
   env: {}                      # per-step env (merged on top of autostart.env)
   working_dir: ""              # relative to repo_dir; empty = repo_dir itself
   background: false            # detach in tmux window; don't wait
@@ -447,7 +476,65 @@ Step schema:
   continue_on_error: false     # non-zero exit warns instead of aborting
 ```
 
+**Do not set `network` or `mounts` on a step inside a stage** — that is a
+config error now (`jailbee config validate` names the enclosing stage).
+Put them on the stage instead, as in the `setup` example above. Those two
+step keys still exist and still work in the **legacy flat form** below —
+deprecated, removed in 2.0.0, and `jailbee config validate` warns on every
+one it finds — but a stage never accepts them, so generate the stage form
+and this never comes up.
+
+`jailbee config validate` also rejects: a duplicate stage name in one
+trigger, a duplicate chain name in one stage, a duplicate step name
+anywhere in one trigger, and a step name that collides with an
+autostarting agent's own launch-window name (see `agents:` below).
+
+**The reserved `agents` stage** (stage form only) is where `jailbee` puts
+the generated per-agent launch steps for every `agents.<name>.autostart:
+true`. Leave it out and `jailbee` inserts one itself at the right spot; if
+you write `{stage: agents, ...}` yourself (to pin its position, `network`,
+`mounts` or `detach`), it must not carry `chains`/`steps` of its own —
+`jailbee` fills those in. It only ever gets filled under `on_start`; an
+explicit one under `on_create` is simply dropped (agents never autostart at
+creation time).
+
+**Legacy flat form** — a plain list of Step under `on_create`/`on_start`,
+with no `stage:` keys anywhere, still works exactly as before and is what
+`jailbee config init` and older repos may already have:
+
+```yaml
+- name: dev                    # required, unique within trigger
+  run: "pnpm dev"              # required, shell command as dev user
+  network: null                # strict|loose|null (null keeps current) — deprecated here too
+  mounts: []                   # optional_mounts keys to attach for this step — deprecated
+  env: {}
+  working_dir: ""
+  background: false
+  timeout: null
+  continue_on_error: false
+```
+
+Don't hand-write new flat-form entries with `network`/`mounts` — write the
+stage form instead. An existing flat config keeps running unchanged
+(consecutive steps sharing the same `network` are internally folded into
+one implicit stage, switching the profile once instead of once per step —
+the only behavioural difference from before).
+
 Steps run inside a container-local tmux session named `autostart`. Attach with `jailbee tmux <container>`. Sync steps' output stays visible after completion (`remain-on-exit on`). Background steps keep running until the container stops.
+
+**Detaching a run.** A stage marked `detach: true` — and everything after
+it — moves to a background supervisor once the CLI would otherwise wait
+for it, so `jailbee new`/`start`/`restart` hand back the session (or a
+shell/tmux attach) after the last blocking stage rather than after every
+stage. `jailbee autostart status <container>` / `jailbee autostart cancel
+<container>` inspect and stop a detached run; `--wait` (foreground
+everything) / `--no-wait` (hand off after the first stage) override the
+config per invocation on `new`/`start`/`restart`. `jailbee job log
+<container>` prints the supervisor's own output — there's no separate
+autostart log command. Two narrow gaps worth knowing: `jailbee destroy`
+does not refuse while a detached run is in flight (`stop`/`restart` do),
+and on `jailbee new --background` autostart GUI apps launch after every
+deferred stage finishes rather than right at the hand-off.
 
 **Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the JailBee repo.
 
@@ -695,12 +782,24 @@ existing container and running `jailbee apply` attaches the mount and
 widens egress but never installs the binary, so the autostart window fails
 with exit 127 until the container is recreated. `<agent>` and
 `install-<agent>` are also effectively reserved autostart tmux window
-names: a step of either name has its window killed when the agent runs,
-and nothing checks for the collision. The `install-<agent>` step is bounded
-by `autostart.step_timeout` (default 600s) and its window survives the run,
-so a failed or stuck install is read with `jailbee tmux`. Installs also run
-under `jailbee new --no-autostart` — they are infrastructure, not user
-autostart steps — while the agent's own launch window is skipped there.
+names: a step of either name has its window killed when the agent runs.
+`jailbee config validate` rejects a hand-written step named after an
+autostarting agent (a config error, not just a warning — with parallel
+chains a collision can kill a *running* sibling step); `install-<agent>` is
+not checked, so still avoid that name yourself. The `install-<agent>` step
+is bounded by `autostart.step_timeout` (default 600s) and its window
+survives the run, so a failed or stuck install is read with `jailbee tmux`.
+Installs also run under `jailbee new --no-autostart` — they are
+infrastructure, not user autostart steps — while the agent's own launch
+window is skipped there.
+
+Every autostarting agent's launch step is generated for you, into
+`on_start`. In the stage form (see `## autostart` above), it lands in the
+reserved `agents` stage — write one yourself to pin its position/network/
+mounts/detach, or leave it out and `jailbee` places it right before
+whatever would otherwise be deferred. In the legacy flat form, generated
+steps are simply appended after your own `on_start` steps; there is no
+reserved slot there, and a step named `agents` is ordinary.
 
 ```yaml
 agents:

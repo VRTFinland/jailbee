@@ -646,4 +646,8 @@ def _restart_one(
         AutostartTrigger.ON_START,
         repo_dir=repo_dir,
         mirror_endpoint=mirror_endpoint,
+        # `apply` is a maintenance command: its exit code has to mean
+        # "every container is back up and its stages ran". Detaching here
+        # would spawn one supervisor per container and make it lie.
+        override="wait",
     )

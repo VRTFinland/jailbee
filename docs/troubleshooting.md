@@ -130,6 +130,37 @@ Not configured by `jailbee init`. NVIDIA passthrough needs extra Incus setup on
 the host (drivers + `nvidia.runtime` / device wiring) that JailBee does not
 manage — configure it directly on the Incus profile/instance.
 
+### Autostart stages never finished
+
+A `jailbee new`/`start`/`restart` returned control (or the job seems to sit
+forever), but you're not sure the container's autostart actually finished —
+or it clearly didn't.
+
+1. **`jailbee ls`'s JOB column.** `autostart:<stage>` means a detached
+   supervisor is on that stage right now. Once the supervisor has died, the
+   `autostart:` prefix drops and it reads just `<stage> (worker gone)` —
+   the bare stage name it was on when it died, not `autostart:<stage>
+   (worker gone)`.
+2. **`jailbee autostart status <name>`.** One row per step, grouped by
+   stage. A step shown as `running` under a live worker is genuinely in
+   flight; the same state under a dead one is rendered `interrupted` — it
+   was cut off and will never report a result, since nothing routes an
+   aborted step through the normal finish path.
+3. **`jailbee job log <name> [--follow]`.** The supervisor's own output —
+   there is no separate `jailbee autostart log`.
+4. **`(worker gone)`** always means the supervisor process is dead, however
+   the run ended. `jailbee job clear <name>` acknowledges the record
+   without touching the container, which is left exactly as the run left
+   it (network mode, mounts, whatever steps did finish).
+
+`jailbee autostart cancel <name>` stops a run that's still alive rather than
+waiting it out: SIGTERM unwinds the stage in flight (interrupts the running
+step, detaches the stage's mounts, restores the network) before marking the
+job failed. It refuses once the worker is already gone — `jailbee job
+clear` is the tool for that case, not `cancel`. See
+[Detaching a run](config.md#detaching-a-run) and
+[Security](security.md#autostart-and-the-network-exposure-window).
+
 ## Removing JailBee
 
 There is no `jailbee uninstall` command; teardown is manual. Some resources are

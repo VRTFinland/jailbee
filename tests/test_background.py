@@ -142,6 +142,20 @@ def test_worker_alive_true_for_self_false_for_dead() -> None:
     assert background.worker_alive(2**31 - 1) is False
 
 
+def test_worker_alive_is_false_for_a_pid_too_large_for_the_syscall() -> None:
+    """A number that cannot be a pid is not a live process — and must not
+    raise. The pid reaching here comes from a container label
+    (`user.jailbee.autostart_in_progress`) or a job row, so a garbage value
+    is reachable; `os.kill` answers an out-of-range one with `OverflowError`
+    rather than `ProcessLookupError`, and an escaping exception makes
+    `loose_revert` skip that container on *every* tick — leaving it loose
+    forever, the failure this probe exists to prevent.
+    """
+    from jailbee import background
+
+    assert background.worker_alive(2**64) is False
+
+
 def test_start_job_records_op_kind_destroy() -> None:
     from jailbee import background
     from jailbee.db.models import JOB_CREATE, JOB_DESTROY, BackgroundJob
@@ -281,6 +295,52 @@ def test_job_label_create_job_in_starting_is_unaffected_by_kind(mocker) -> None:
 
     mocker.patch.object(background, "worker_alive", return_value=True)
     assert background.job_label(background.PHASE_STARTING, 1234, kind=JOB_CREATE) == "starting"
+
+
+def test_job_label_dead_autostart_job_keeps_the_worker_gone_suffix(mocker) -> None:
+    """Same rule as `destroying`: the friendlier form is only for a live
+    worker, so an orphaned supervisor still says where it stopped."""
+    from jailbee import background
+    from jailbee.db.models import JOB_AUTOSTART
+
+    mocker.patch.object(background, "worker_alive", return_value=False)
+    assert background.job_label("deps", 1234, kind=JOB_AUTOSTART) == "deps (worker gone)"
+
+
+def test_job_label_failed_autostart_job_is_the_bare_phase(mocker) -> None:
+    from jailbee import background
+    from jailbee.db.models import JOB_AUTOSTART
+
+    mocker.patch.object(background, "worker_alive", return_value=True)
+    assert background.job_label(background.PHASE_FAILED, 1234, kind=JOB_AUTOSTART) == "failed"
+
+
+def test_attachable_create_and_boot_only_from_the_autostart_phase() -> None:
+    """`attachable` replaced two inlined set memberships — a create or a boot
+    must still be unattachable before its container is up."""
+    from jailbee import background
+    from jailbee.db.models import JOB_BOOT, JOB_CREATE
+
+    for kind in (JOB_CREATE, JOB_BOOT):
+        assert background.attachable(kind, background.PHASE_AUTOSTART) is True
+        assert background.attachable(kind, background.PHASE_STARTING) is False
+        assert background.attachable(kind, background.PHASE_CLONING) is False
+
+
+def test_attachable_is_false_for_a_destroy_in_any_phase() -> None:
+    """Waiting a destroy out is all a caller can do."""
+    from jailbee import background
+    from jailbee.db.models import JOB_DESTROY
+
+    assert background.attachable(JOB_DESTROY, background.PHASE_AUTOSTART) is False
+    assert background.attachable(JOB_DESTROY, background.PHASE_DELETING) is False
+
+
+def test_attachable_is_false_for_an_unknown_kind() -> None:
+    """A row written by a newer jailbee must not unlock an attach by accident."""
+    from jailbee import background
+
+    assert background.attachable("something-new", background.PHASE_AUTOSTART) is False
 
 
 def test_job_label_or_empty_is_empty_for_no_job() -> None:

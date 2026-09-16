@@ -1340,3 +1340,146 @@ def test_reanchor_drops_as_many_crumbs_as_the_layers_have_lost():
 
     assert got.trail == ("autostart", "on_create")
     assert st.screen(got).kind == "collection"
+
+
+# --- stages: a trigger is a collection whose entries nest two levels deeper ---
+
+_STAGE_RAW = {
+    "autostart": {
+        "on_start": [
+            {
+                "stage": "build",
+                "network": "loose",
+                "chains": [
+                    {"name": "deps", "steps": [{"name": "deps-fetch", "run": "echo a"}]},
+                    {
+                        "name": "assets",
+                        "steps": [
+                            {"name": "assets-fetch", "run": "echo b"},
+                            {"name": "assets-build", "run": "echo c"},
+                        ],
+                    },
+                ],
+            }
+        ]
+    }
+}
+"""One trigger in the stage form: trigger ▸ stage ▸ chain ▸ step, four levels."""
+
+
+def _stage_editor(**kw):
+    """An editor over the *real* repo specs, so the union annotation is real.
+
+    `SPECS` above models `autostart.on_create` as a plain `list[AutostartStep]`
+    and would not exercise `list[AutostartStep] | list[AutostartStage]` at all.
+    """
+    from jailbee.config_edit.schema import repo_specs
+
+    return _open(_STAGE_RAW, specs=repo_specs(), **kw)
+
+
+def _labels(state):
+    return [s.label for s in st.screen(state).specs]
+
+
+def test_a_trigger_of_stages_opens_as_a_collection():
+    """It classified as `SCALAR_UNION` once, which made this screen a text
+    prompt seeded with the `repr` of the list."""
+    got = _stage_editor(trail=("autostart", "on_start"))
+
+    view = st.screen(got)
+    assert view.kind == "collection"
+    assert st.entries(got, view.collection) == (0,)
+
+
+def test_a_stage_entry_draws_the_stage_form():
+    got = _stage_editor(trail=("autostart", "on_start", 0))
+
+    assert st.screen(got).kind == "entry"
+    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps"]
+
+
+def test_the_trail_reaches_a_step_through_its_stage_and_its_chain():
+    """Three drill-downs deep, which is one more level than any collection
+    had before stages."""
+    got = _stage_editor(trail=("autostart", "on_start", 0, "chains", 0, "steps", 0))
+
+    view = st.screen(got)
+    assert view.kind == "entry"
+    assert _labels(got)[:2] == ["name", "run"]
+    assert view.entry_path == ("autostart", "on_start", 0, "chains", 0, "steps", 0)
+    assert view.specs[1].path == ("autostart", "on_start", 0, "chains", 0, "steps", 0, "run")
+
+
+def test_a_chain_collection_is_reachable_from_its_stage():
+    got = _stage_editor(trail=("autostart", "on_start", 0, "chains"))
+
+    view = st.screen(got)
+    assert view.kind == "collection"
+    assert st.entries(got, view.collection) == (0, 1)
+
+
+def test_a_new_entry_in_a_trigger_of_stages_draws_a_stage_form():
+    """`add_entry` appends `{}`; the siblings are what say it is a stage.
+
+    A step form here is not merely the wrong fields: the loader rejects a
+    trigger mixing flat steps and stages, so the entry could only be filled
+    in and then fail at save.
+    """
+    base = _stage_editor(trail=("autostart", "on_start"))
+    spec = st.screen(base).collection
+
+    staged, crumb = st.add_entry(base, spec)
+    got = st.enter_crumb(staged, crumb)
+
+    assert crumb == 1
+    assert _labels(got) == ["stage", "network", "mounts", "detach", "chains", "steps"]
+
+
+def test_a_new_entry_in_a_flat_trigger_still_draws_a_step_form():
+    """The legacy shape keeps its own form — the discrimination goes both ways."""
+    from jailbee.config_edit.schema import repo_specs
+
+    flat = {"autostart": {"on_create": [{"name": "legacy", "run": "echo hi"}]}}
+    base = _open(flat, specs=repo_specs(), trail=("autostart", "on_create"))
+    spec = st.screen(base).collection
+
+    staged, crumb = st.add_entry(base, spec)
+
+    assert _labels(st.enter_crumb(staged, crumb))[:2] == ["name", "run"]
+
+
+def test_reordering_one_chain_s_steps_leaves_its_sibling_chain_alone():
+    """The structural edit must land at the depth the screen is standing at."""
+    trail = ("autostart", "on_start", 0, "chains", 1, "steps")
+    base = _stage_editor(trail=trail)
+
+    got = st.move_entry(base, st.screen(base).collection, 0, 1)
+
+    assert set(got.staged) == {trail}, "the swap must be staged at the steps it swapped"
+    assert [s["name"] for s in st.own(got, trail)] == ["assets-build", "assets-fetch"]
+    sibling = ("autostart", "on_start", 0, "chains", 0, "steps")
+    assert [s["name"] for s in st.own(got, sibling)] == ["deps-fetch"]
+
+
+def test_open_editor_refuses_an_origins_map_that_misses_a_spec():
+    """The pairing `render._entry_level` depends on, enforced rather than documented.
+
+    It reads "absent from `origins`" as "this path is inside an entry", so a
+    partial map would silently relabel a top-level row and make `_now` read
+    the open layer where it should read the resolved value — a wrong answer
+    printed confidently. `layers.resolve` is total (pinned in
+    `test_config_edit_layers.py`); anything else is a session that cannot
+    exist, and gets said so at construction.
+    """
+    layer_set = _layers()
+    origins = dict(resolve(SPECS, layer_set))
+    del origins[("ssh", "enabled")]
+
+    with pytest.raises(ValueError, match=r"ssh\.enabled"):
+        st.open_editor(
+            layer="repo",
+            specs=SPECS,
+            origins=origins,
+            layer_raw=raw_for(layer_set, "repo"),
+        )

@@ -79,6 +79,12 @@ class Classified:
     `choices` is authoritative for `CHOICE` (the value must be one of
     them) and only a hint for `SCALAR_UNION`, where a free-text arm
     coexists with the literals — see `classify`.
+
+    `item_models` is populated only for a `MODEL_LIST` whose annotation is
+    a union of several list types (`list[A] | list[B]`): the entries of one
+    such list are described by whichever arm fits each of them, which
+    `entry_model` decides. It is empty for every single-model collection,
+    where `item_model` alone is the answer.
     """
 
     kind: FieldKind
@@ -86,6 +92,7 @@ class Classified:
     item_model: type[BaseModel] | None = None
     optional: bool = False
     secret: bool = False
+    item_models: tuple[type[BaseModel], ...] = ()
 
 
 def _strip_annotated(annotation: object) -> object:
@@ -109,6 +116,25 @@ def _is_model(annotation: object) -> TypeGuard[type[BaseModel]]:
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
 
 
+def _model_list_arms(arms: Sequence[object]) -> tuple[type[BaseModel], ...] | None:
+    """`arms` as model item types when *every* arm is a `list[SomeModel]`.
+
+    `None` otherwise, which is the signal to carry on classifying: a union
+    mixing a model list with anything else is not one collection in two
+    shapes, and guessing which arm to draw a form for would be worse than
+    the honest `SCALAR_UNION`.
+    """
+    out: list[type[BaseModel]] = []
+    for arm in arms:
+        if get_origin(arm) is not list:
+            return None
+        item = _strip_annotated(get_args(arm)[0])
+        if not _is_model(item):
+            return None
+        out.append(item)
+    return tuple(out) if len(out) > 1 else None
+
+
 def classify(annotation: object) -> Classified:
     """Map a pydantic field annotation onto a `FieldKind`.
 
@@ -124,8 +150,34 @@ def classify(annotation: object) -> Classified:
         rest = [a for a in args if a is not type(None)]
         optional = len(rest) != len(args)
         if len(rest) == 1:
+            # Every field of `inner` is carried through, `item_models`
+            # included. Unreachable for that one today — `A | B | None`
+            # flattens, so a union of model lists never arrives here wrapped
+            # in an `Optional` — but a constructor that drops new state by
+            # construction is the wrong thing to leave behind.
             inner = classify(rest[0])
-            return Classified(inner.kind, inner.choices, inner.item_model, True, inner.secret)
+            return Classified(
+                inner.kind,
+                inner.choices,
+                inner.item_model,
+                True,
+                inner.secret,
+                inner.item_models,
+            )
+        list_arms = _model_list_arms(rest)
+        if list_arms is not None:
+            # `list[A] | list[B]` — one collection whose entries may take
+            # either shape (`autostart.on_create`: flat steps or stages).
+            # Without this it fell through to `SCALAR_UNION` below and the
+            # whole drill-down disappeared: the list rendered as one text
+            # line seeded with the `repr` of its own entries, and `n`/`x`/
+            # `J`/`K` answered "that key is not a collection".
+            return Classified(
+                FieldKind.MODEL_LIST,
+                item_model=list_arms[0],
+                optional=optional,
+                item_models=list_arms,
+            )
         # A union of two or more non-None arms: a scalar with several
         # accepted spellings (`bool | Literal["auto"]`, `bool | str`,
         # `str | int`). Its literal arms become suggestions; the open arm
@@ -213,6 +265,9 @@ class FieldSpec:
     optional: bool = False
     secret: bool = False
     advanced: bool = True
+    item_models: tuple[type[BaseModel], ...] = ()
+    """Every shape this collection's entries may take, for a `list[A] | list[B]`
+    field; empty when `item_model` is the only one. `entry_model` reads it."""
 
 
 def to_raw(value: object) -> object:
@@ -313,9 +368,68 @@ def _walk(
                 optional=found.optional,
                 secret=found.secret,
                 advanced=path not in BASIC_FIELDS,
+                item_models=found.item_models,
             )
         )
     return out
+
+
+def _arm_for(models: Sequence[type[BaseModel]], value: object) -> type[BaseModel] | None:
+    """The one arm of `models` whose fields cover every key of `value`.
+
+    `None` when the answer is not unique — an empty entry (nothing to go
+    on), a non-mapping, or a key set that fits more than one arm. An
+    `autostart` entry holding only `network:` fits both `AutostartStep` and
+    `AutostartStage`, and picking the first would draw a step form over
+    what may well be a stage.
+    """
+    if not isinstance(value, dict) or not value:
+        return None
+    keys = {str(key) for key in value}
+    fits = [model for model in models if keys <= set(model.model_fields)]
+    return fits[0] if len(fits) == 1 else None
+
+
+def entry_model(
+    spec: FieldSpec, entry: object = None, collection: object = None
+) -> type[BaseModel] | None:
+    """Which model describes one entry of `spec`'s collection.
+
+    `spec.item_model` for every ordinary collection, and `None` for a
+    secret map (which has no entry form at all). The interesting case is a
+    `list[A] | list[B]` field, where the entries of *one* list all share a
+    shape but the annotation does not say which: `autostart.on_start` is
+    either a flat list of `AutostartStep` or a list of `AutostartStage`,
+    and the loader rejects a mix.
+
+    The entry's own keys answer it whenever it has any. A freshly added
+    entry has none — `add_entry` appends `{}` deliberately, so that unset
+    keys keep following jailbee's defaults — so the **siblings** answer for
+    it: `n` on a list of stages must open a stage form, or the user fills
+    in a step and the save fails on a mixed trigger. An empty list falls
+    back to the first arm.
+
+    Three cases reach that sibling fall-through, not one. The empty entry
+    is the ordinary one. The second is an entry holding only keys *both*
+    models declare (`network:`, `mounts:`), which is no evidence rather
+    than a fit. The third is an entry no arm accepts at all — a hand-typed
+    `stpes:` in the file — which falls through the siblings to
+    `item_models[0]` and draws a step form over it. That is the honest
+    answer: the key belongs to no shape, the loader will reject it by name
+    on the next load, and guessing an arm from a typo would only move where
+    the user is told.
+    """
+    if len(spec.item_models) < 2:
+        return spec.item_model
+    chosen = _arm_for(spec.item_models, entry)
+    if chosen is not None:
+        return chosen
+    if isinstance(collection, list):
+        for sibling in collection:
+            chosen = _arm_for(spec.item_models, sibling)
+            if chosen is not None:
+                return chosen
+    return spec.item_model
 
 
 def dotted(path: KeyPath) -> str:

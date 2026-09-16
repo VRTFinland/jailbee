@@ -272,9 +272,26 @@ def field_pane(state: EditorState) -> Pane:
     return Pane(fragments, state.index)
 
 
+def _entry_level(state: EditorState, spec: FieldSpec) -> bool:
+    """Whether `spec` is a field *inside* an entry rather than a top-level key.
+
+    Two ways to be one, and both must count. The obvious way is the entry
+    form itself (`screen().kind == "entry"`). The other is a **collection
+    nested inside an entry** — `agents.<name>.shared`, and now
+    `autostart.on_start.<i>.chains` and its `steps` — whose own screen is a
+    collection, not an entry. `layers.resolve` keys `origins` on the
+    top-level specs alone, so such a path is simply absent from it; the old
+    `origins.get(...) or "default"` fallback therefore reported `(default)`
+    over a screen listing four entries, and the `Now:` line above it read
+    `[]`. Absence from `origins` is the exact test: `resolve` writes one key
+    per `state.specs` path and every rebased path is outside that set.
+    """
+    return screen(state).kind == "entry" or spec.path not in state.origins
+
+
 def _origin_source(state: EditorState, spec: FieldSpec) -> str:
     """Which layer a row's value comes from — an entry has only "set"/"default"."""
-    if screen(state).kind == "entry":
+    if _entry_level(state, spec):
         return entry_origin(state, spec.path)
     origin = state.origins.get(spec.path)
     return origin.source if origin is not None else "default"
@@ -292,8 +309,11 @@ def _now(state: EditorState, spec: FieldSpec) -> object:
     saved-layer origin, falling back to the item model's default. Used by
     both `field_pane` and `help_pane` so the row and the pane beneath it
     can never show two different answers for "what is this set to".
+
+    A collection nested inside an entry is entry-level too, even though its
+    own screen is a collection — see `_entry_level`.
     """
-    if screen(state).kind == "entry":
+    if _entry_level(state, spec):
         return own(state, spec.path)
     origin = state.origins.get(spec.path)
     return origin.value if origin is not None else spec.default
