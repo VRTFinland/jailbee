@@ -354,6 +354,34 @@ def test_live_autostart_pid_still_blocks_the_revert(tmp_path, mocker):
     assert switch.call_count == 0
 
 
+def test_an_out_of_range_autostart_pid_does_not_break_the_tick(tmp_path, mocker):
+    """A pid too large for `os.kill` must not pin the container loose.
+
+    The flag's value is a container label, so a garbage number is
+    reachable. `os.kill` answers an out-of-range pid with `OverflowError`,
+    which is neither of the two exceptions `worker_alive` handled — it
+    escaped into `check_and_revert_loose`'s per-container `except
+    Exception`, so the container was skipped on every tick and stayed loose
+    for good. Same class of hole as a flag with no owning process.
+    """
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [{"name": "c1", "profiles": ["demo-base"]}]
+    values = {
+        "user.jailbee.autostart_in_progress": str(2**64),
+        "user.jailbee.loose_until": "2020-01-01T00:00:00+00:00",
+        "user.jailbee.loose_revert_to": "strict",
+    }
+    incus.config_get.side_effect = lambda name, key: values.get(key, "")
+    mocker.patch("jailbee.loose_revert.current_network_mode", return_value="loose")
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    results = check_and_revert_loose(cfg, incus, now=datetime.now(UTC))
+
+    assert switch.call_count == 1
+    assert [r.error for r in results] == [None]
+
+
 def test_legacy_flag_value_one_still_blocks_the_revert(tmp_path, mocker):
     """A container stamped by an older jailbee carries "1", not a pid."""
     incus = mocker.Mock()

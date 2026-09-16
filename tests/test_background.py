@@ -142,6 +142,20 @@ def test_worker_alive_true_for_self_false_for_dead() -> None:
     assert background.worker_alive(2**31 - 1) is False
 
 
+def test_worker_alive_is_false_for_a_pid_too_large_for_the_syscall() -> None:
+    """A number that cannot be a pid is not a live process — and must not
+    raise. The pid reaching here comes from a container label
+    (`user.jailbee.autostart_in_progress`) or a job row, so a garbage value
+    is reachable; `os.kill` answers an out-of-range one with `OverflowError`
+    rather than `ProcessLookupError`, and an escaping exception makes
+    `loose_revert` skip that container on *every* tick — leaving it loose
+    forever, the failure this probe exists to prevent.
+    """
+    from jailbee import background
+
+    assert background.worker_alive(2**64) is False
+
+
 def test_start_job_records_op_kind_destroy() -> None:
     from jailbee import background
     from jailbee.db.models import JOB_CREATE, JOB_DESTROY, BackgroundJob

@@ -317,6 +317,13 @@ def worker_alive(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
+    except OverflowError:
+        # Out of range for the syscall's pid_t, so it cannot name a process.
+        # Not hypothetical: `loose_revert._autostart_holds` parses this pid
+        # out of a container label, and an escaping exception there is caught
+        # per-container — skipping that container on every tick and leaving it
+        # loose forever, which is the unsafe direction.
+        return False
     except PermissionError:
         # Exists but owned by another user — still "alive" for our purposes.
         return True
