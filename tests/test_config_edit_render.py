@@ -618,3 +618,62 @@ def test_help_pane_on_a_collection_counts_this_layers_own_entries(tmp_path):
     text = _text(help_pane(_collection_state(layers), layers))
 
     assert "In this layer: 1 entry" in text
+
+
+_NESTED_COLLECTION_TEXT = """\
+autostart:
+  on_start:
+    - stage: build
+      chains:
+        - name: deps
+          steps:
+            - name: deps-fetch
+              run: echo a
+            - name: deps-verify
+              run: echo b
+"""
+
+
+def _nested_collection_state(tmp_path, trail):
+    """A state standing on a collection *inside* an entry, over real specs."""
+    layers = _layers(tmp_path, repo_text=_NESTED_COLLECTION_TEXT)
+    return _state(layers, specs=repo_specs(), trail=trail), layers
+
+
+def test_help_pane_on_a_collection_inside_an_entry_reports_the_entry_s_own_origin(tmp_path):
+    """`layers.resolve` keys `origins` on top-level paths only.
+
+    A collection nested in an entry — `agents.<name>.shared`, and now
+    `autostart.on_start.<i>.chains` and its `steps` — is therefore absent from
+    it, and the `origins.get(...) or "default"` fallback reported `(default)`
+    with `Now: []` over a screen listing two entries. Three lines of the same
+    pane contradicting each other, with nothing to say which was right.
+    """
+    state, layers = _nested_collection_state(tmp_path, ("autostart", "on_start", 0, "chains"))
+
+    text = _text(help_pane(state, layers))
+
+    assert "In this layer: 1 entry" in text
+    assert "(default)" not in text
+    assert "Now: [1] (set)" in text
+
+
+def test_help_pane_on_a_nested_collection_the_entry_does_not_set_says_default(tmp_path):
+    """The other half: `steps` really is unset on a stage that uses `chains`,
+    and must still say so."""
+    state, layers = _nested_collection_state(tmp_path, ("autostart", "on_start", 0, "steps"))
+
+    text = _text(help_pane(state, layers))
+
+    assert "In this layer: 0 entries" in text
+    assert "(default)" in text
+
+
+def test_help_pane_on_a_top_level_collection_still_names_its_layer(tmp_path):
+    """The fix must not turn `(repo)`/`(global)` into `set`/`default` on the
+    screens that do have a layer to name."""
+    layers = _layers(tmp_path, global_text=_INHERITED_TEXT)
+
+    text = _text(help_pane(_collection_state(layers), layers))
+
+    assert "(global)" in text
