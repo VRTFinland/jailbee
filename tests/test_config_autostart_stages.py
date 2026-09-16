@@ -204,12 +204,19 @@ def test_step_name_may_match_an_agent_that_does_not_autostart(tmp_path, mocker):
 
 
 def test_step_level_network_is_deprecated_but_still_valid(tmp_path, make_cfg):
+    """The notice lives in `deprecation_notices`, not `validate_runtime`.
+
+    Both are printed by `jailbee config validate`, but only the latter is
+    read by `branch_config.load_branch_autostart` as "this config does not
+    fit this host" — and a deprecated spelling fits fine (see
+    `tests/test_branch_config.py::test_a_branch_using_the_legacy_per_step_network_is_accepted`).
+    """
     cfg = make_cfg(
         tmp_path,
         autostart={"on_start": [{"name": "a", "run": "true", "network": "loose"}]},
     )
-    issues = cfg.validate_runtime()
-    assert any("deprecated" in i and "network" in i for i in issues)
+    assert any("deprecated" in n and "network" in n for n in cfg.deprecation_notices())
+    assert not any("deprecated" in i for i in cfg.validate_runtime())
     # Deprecated, not broken: the value is untouched.
     assert cfg.autostart.on_start[0].network == "loose"
 

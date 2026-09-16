@@ -588,11 +588,22 @@ def config_validate(config: ConfigOption = None) -> None:
         error_plain(str(e))
         raise typer.Exit(1) from e
 
-    if not issues:
-        success("Runtime paths OK")
-        return
+    # Deprecated-but-working spellings are a separate list on purpose (see
+    # `Config.deprecation_notices`): `branch_config` treats a runtime issue as
+    # "this config does not work on this host" and a deprecation is not that.
+    # This command is where both reach the user, so it prints them together
+    # and still exits non-zero on either — docs/config.md promises a CI check
+    # gated on `jailbee config validate` fails until the key is moved.
+    notices = cfg.deprecation_notices()
 
-    for issue in issues:
+    if not issues:
+        # Said even when a deprecation notice follows: the paths really are
+        # fine, and the notice is about a key's spelling, not its target.
+        success("Runtime paths OK")
+        if not notices:
+            return
+
+    for issue in issues + notices:
         # `warn_plain`, not `warn`: a runtime issue names the thing it is
         # about in square brackets — `host_mounts[0].host`,
         # `autostart.on_start[deps-fetch].network` — and Rich reads those as

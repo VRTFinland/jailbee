@@ -411,6 +411,44 @@ def test_graft_introducing_validation_issues_is_rejected(mocker, tmp_path):
     assert load_branch_autostart(cfg, "refs/heads/f", source_label="f") is None
     assert warned.call_count == 1
     assert "nope" in warned.call_args[0][0]
+    # `mounts=["nope"]` is also a *deprecated* spelling, and this test's
+    # subject is the unknown mount alone: a rejection driven by the
+    # deprecation would pass the assertion above while meaning something
+    # else entirely (and would be the Critical bug this file's
+    # `..._legacy_per_step_network...` test pins).
+    assert "deprecated" not in warned.call_args[0][0]
+
+
+def test_a_branch_using_the_legacy_per_step_network_is_accepted(mocker, tmp_path):
+    """The pre-stage spelling must not cost a branch its autostart config.
+
+    Step-level `network:`/`mounts:` are deprecated, and the notice for them
+    used to be a `validate_runtime()` issue — which is the list
+    `load_branch_autostart` diffs to decide whether the branch's config
+    *fits this host*. Every config written before the stage form uses that
+    spelling, so every one of them was silently dropped on `jailbee new
+    <branch>` and replaced by the host checkout's autostart.
+    """
+    from jailbee.config import Autostart, AutostartStep
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    branch_cfg = cfg.model_copy(
+        update={
+            "autostart": Autostart(
+                on_create=[AutostartStep(name="build", run="make", network="loose")]
+            )
+        }
+    )
+    mocker.patch("jailbee.git.show_file_at_ref", return_value="autostart: {}")
+    mocker.patch("jailbee.config.load_config_from_text", return_value=branch_cfg)
+    warned = mocker.patch("jailbee.tui.warn_plain")
+
+    result = load_branch_autostart(cfg, "refs/heads/f", source_label="f")
+
+    assert result is not None, "a deprecated spelling must not reject the branch config"
+    assert [s.name for s in result.cfg.autostart.on_create] == ["build"]
+    assert warned.call_count == 0
 
 
 def test_preexisting_host_validation_issues_do_not_block_the_graft(mocker, tmp_path):

@@ -813,18 +813,11 @@ class Config(BaseModel):
                                     f"autostart.{trigger_name}[{step.name}].mounts "
                                     f"references unknown optional_mount: '{m}'"
                                 )
-                        if step.network is not None:
-                            issues.append(
-                                f"autostart.{trigger_name}[{step.name}].network is "
-                                f"deprecated and will be removed in 2.0.0 — move it to the "
-                                f"enclosing stage's `network:`"
-                            )
-                        if step.mounts:
-                            issues.append(
-                                f"autostart.{trigger_name}[{step.name}].mounts is "
-                                f"deprecated and will be removed in 2.0.0 — move them to "
-                                f"the enclosing stage's `mounts:`"
-                            )
+        # NOTE: the deprecation of a step's own `network:`/`mounts:` is
+        # deliberately NOT reported here — see `deprecation_notices`. Anything
+        # this method returns is read by `branch_config.load_branch_autostart`
+        # as "this config does not work on this host", and a deprecated
+        # spelling works fine.
         if self.loose_auto_revert.enabled:
             # The schema types `after` as `str | int` and stops there, so an
             # unparseable value (or one over the 24h cap) loads cleanly and
@@ -986,6 +979,49 @@ class Config(BaseModel):
                 "This repo-level block can be deleted."
             )
         return issues
+
+    def deprecation_notices(self) -> list[str]:
+        """Advisories about spellings that still work but are on their way out.
+
+        Kept apart from :meth:`validate_runtime` because the two answer
+        different questions, and one caller can only use the first:
+        ``branch_config.load_branch_autostart`` grafts a branch's autostart
+        onto the host config and rejects the graft when it *introduces* a
+        runtime issue — "this branch config does not fit your host". A
+        deprecated key fits fine; it is simply old. While these notices lived
+        in ``validate_runtime`` every pre-stage branch config — the only
+        shape that existed before stages — was silently dropped on
+        ``jailbee new <branch>``.
+
+        `jailbee config validate` prints both lists, so what the user sees is
+        unchanged (including its non-zero exit: see docs/config.md).
+
+        ``golden.python`` and the deprecated ``dashboard:`` block stay in
+        ``validate_runtime``: they are host-level keys no branch graft can
+        change, so they can never differ between the two configs. The rule
+        for a *new* notice is the one this split exists for — if a branch's
+        `autostart:` block can produce it, it belongs here.
+        """
+        from jailbee.autostart_plan import normalize_stages
+
+        notices: list[str] = []
+        for trigger_name in ("on_create", "on_start"):
+            for stage in normalize_stages(getattr(self.autostart, trigger_name)):
+                for chain in stage.all_chains():
+                    for step in chain.steps:
+                        if step.network is not None:
+                            notices.append(
+                                f"autostart.{trigger_name}[{step.name}].network is "
+                                f"deprecated and will be removed in 2.0.0 — move it to the "
+                                f"enclosing stage's `network:`"
+                            )
+                        if step.mounts:
+                            notices.append(
+                                f"autostart.{trigger_name}[{step.name}].mounts is "
+                                f"deprecated and will be removed in 2.0.0 — move them to "
+                                f"the enclosing stage's `mounts:`"
+                            )
+        return notices
 
     def _validate_apps(self) -> list[str]:
         """Name and collision checks for `apps:` entries."""
