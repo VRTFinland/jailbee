@@ -193,32 +193,45 @@ def _declared_stages(
     return {_STAGE_KEY.format(trigger=trigger, name=s.stage): s for s in normalize_stages(entries)}
 
 
-def _chain_layout(stage: AutostartStage) -> tuple[tuple[str, int], ...]:
-    """The stage's parallel shape: each chain's name and how many steps it runs.
+def _chain_layout(
+    stage: AutostartStage, common: frozenset[str]
+) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
+    """The stage's parallel layout: per chain, its name, its step count, and
+    which of the steps *both* configs have it runs.
 
     Read through `all_chains()`, so the `steps:` shorthand and an explicit
     single chain named `main` compare equal: they *are* the same stage.
 
-    Deliberately the *shape*, not the step names. Names here would make every
-    renamed step inside a stage add a `chains changed` line on top of the `+`/
-    `-` step lines that already say it — true but empty. The cost is that an
-    exchange of steps between two equally-sized chains is invisible, since a
-    plain move changes a count; that is an ordering change, container-internal
-    like `run`, and no privilege signal reads this.
+    `common` — the step names present on both sides — is what lets this both
+    catch and ignore the right things. A step that exists on one side only is
+    a rename or an add/remove, already said by its own `+`/`-` line, so
+    leaving it out keeps a renamed step from adding an empty `chains changed`
+    line. A step both sides have is a step that *moved*, which nothing else
+    records: neither the counts (an exchange preserves them) nor the step
+    fields (its body did not change) nor the stage fields. Across two stages
+    such a move changes the step's effective network and mounts, so silence
+    there would answer "nothing changed" to a branch that changed what a step
+    runs with.
     """
-    return tuple((c.name, len(c.steps)) for c in stage.all_chains())
+    return tuple(
+        (c.name, len(c.steps), tuple(s.name for s in c.steps if s.name in common))
+        for c in stage.all_chains()
+    )
 
 
-def _stage_fields(host: AutostartStage, branch: AutostartStage) -> tuple[str, ...]:
+def _stage_fields(
+    host: AutostartStage, branch: AutostartStage, common: frozenset[str]
+) -> tuple[str, ...]:
     """The stage-owned fields that differ, plus `chains` for a re-layout."""
     fields = [
         name
         for name in type(branch).model_fields
         if name not in _STAGE_STRUCTURE_FIELDS and getattr(host, name) != getattr(branch, name)
     ]
-    if _chain_layout(host) != _chain_layout(branch):
-        # Same steps, different chains: a change in what runs in parallel,
-        # which no step-level field records.
+    if _chain_layout(host, common) != _chain_layout(branch, common):
+        # Same steps, different chains: a change in what runs in parallel —
+        # or, across stages, in what a step runs *with*. Neither the step
+        # fields nor the stage fields record it.
         fields.append("chains")
     return tuple(fields)
 
@@ -380,8 +393,19 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
         host_entries = getattr(host, trigger)
         branch_entries = getattr(branch, trigger)
 
+        host_grants = _grants(host_entries, trigger)
+        branch_grants = _grants(branch_entries, trigger)
+        host_steps = _steps_by_name(host_entries, trigger)
+        branch_steps = _steps_by_name(branch_entries, trigger)
+        # Raw step names both configs carry — what `_chain_layout` tracks a
+        # move of. The keys are trigger-qualified and the trigger is fixed
+        # here, so intersecting them is the same set.
+        common = frozenset(s.name for s in host_steps.values()) & frozenset(
+            s.name for s in branch_steps.values()
+        )
+
         # Stage level: the structure, and the side effects a stage owns.
-        # Listed before the steps so the rendering reads top-down.
+        # Appended before the steps so the rendering reads top-down.
         host_stages = _declared_stages(host_entries, trigger)
         branch_stages = _declared_stages(branch_entries, trigger)
         added.extend(key for key in branch_stages if key not in host_stages)
@@ -390,17 +414,12 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
             h_stage = host_stages.get(key)
             if h_stage is None:
                 continue
-            stage_fields = _stage_fields(h_stage, b_stage)
+            stage_fields = _stage_fields(h_stage, b_stage, common)
             if stage_fields:
                 changed.append(StepChange(name=key, fields=stage_fields))
 
-        host_grants = _grants(host_entries, trigger)
-        branch_grants = _grants(branch_entries, trigger)
-
         # Step level: the work a step does — plus `network`/`mounts` while the
         # branch keeps them on its steps. See `_step_fields`.
-        host_steps = _steps_by_name(host_entries, trigger)
-        branch_steps = _steps_by_name(branch_entries, trigger)
         for key in branch_steps:
             if key not in host_steps:
                 added.append(key)

@@ -1133,3 +1133,126 @@ def test_moving_a_step_between_chains_is_still_reported():
     dev = diff_autostart(host, branch)
 
     assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]
+
+
+# --- fix round 2 -----------------------------------------------------------
+
+
+def _chains(stage: str, chains: dict[str, list[str]], **kw: object) -> AutostartStage:
+    from jailbee.config import AutostartChain
+
+    return AutostartStage(  # type: ignore[arg-type]  # kwargs are field values
+        stage=stage,
+        chains=[
+            AutostartChain(name=name, steps=[_step(n) for n in names])
+            for name, names in chains.items()
+        ],
+        **kw,
+    )
+
+
+def test_exchanging_steps_between_two_stages_is_reported():
+    """The equal-size exchange, across stages — where it changes what each
+    step runs *with*.
+
+    `x` moves from the `loose` stage to the `strict` one and `y` the other
+    way. Counts match, no stage field changed, both step bodies are unchanged,
+    and the step level does not speak about `network` in the stage form — so
+    without tracking which of the common steps each chain runs, the whole diff
+    would say nothing at all.
+    """
+    host = Autostart(
+        on_create=[
+            _stage("A", steps=[_step("x")], network="loose"),
+            _stage("B", steps=[_step("y")], network="strict"),
+        ]
+    )
+    branch = Autostart(
+        on_create=[
+            _stage("A", steps=[_step("y")], network="loose"),
+            _stage("B", steps=[_step("x")], network="strict"),
+        ]
+    )
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.any_change is True
+    assert [(c.name, c.fields) for c in dev.changed] == [
+        ("on_create<A>", ("chains",)),
+        ("on_create<B>", ("chains",)),
+    ]
+
+
+def test_exchanging_steps_between_two_equally_sized_chains_is_reported():
+    """The same exchange inside one stage: ordering only, but still a change."""
+    host = Autostart(on_create=[_chains("setup", {"one": ["a", "b"], "two": ["c", "d"]})])
+    branch = Autostart(on_create=[_chains("setup", {"one": ["a", "c"], "two": ["b", "d"]})])
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]
+
+
+def test_an_exchange_does_not_move_a_grant_even_when_it_is_silent():
+    """Grants are keyed per step and carry the stage's effective values, so
+    the widening follows the step wherever the chain layout puts it."""
+    host = Autostart(
+        on_create=[
+            _stage("A", steps=[_step("x")], network="strict"),
+            _stage("B", steps=[_step("y")], network="loose"),
+        ]
+    )
+    branch = Autostart(
+        on_create=[
+            _stage("A", steps=[_step("y")], network="strict"),
+            _stage("B", steps=[_step("x")], network="loose"),
+        ]
+    )
+
+    # `x` now runs in the loose stage and did not before — the gate sees it
+    # through the grant, not through the layout.
+    assert diff_autostart(host, branch).widening_steps == ("on_create<B>",)
+
+
+def test_a_flat_branch_keeping_a_stage_hosts_mounts_is_silent():
+    """The mounts mirror of the migration case: effective, not stored.
+
+    A step inside a stage may not carry `mounts`, so the host step's stored
+    value is `[]` while the stage attaches `aws`. Comparing stored values
+    would announce `mounts changed` for a branch that attaches exactly what
+    the host already did.
+    """
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])])
+    branch = Autostart(on_create=[_step("build", mounts=["aws"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.changed == ()
+    assert dev.attached_mounts == ()
+
+
+def test_a_flat_branch_dropping_a_stage_hosts_mounts_names_the_step():
+    """The other half: when the effective mounts really do differ, say so."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])])
+    branch = Autostart(on_create=[_step("build")])
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create[build]", ("mounts",))]
+    assert dev.attached_mounts == ()  # dropping a mount narrows, never widens
+
+
+def test_adding_a_step_to_a_stage_names_the_stage_that_gained_it():
+    """The step count still earns its place in the layout.
+
+    A step added on one side only leaves the common-step names untouched, so
+    the count is the only thing that says *which* stage grew — worth a line
+    when a trigger has several stages and the `+` line alone cannot say.
+    """
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.added == ("on_create[b]",)
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]

@@ -1571,7 +1571,12 @@ In both cases a brand-new step counts as widening, since the baseline has no
 counterpart to compare against. Everything else a step controls (`run`, `env`,
 `working_dir`, `background`, `timeout`, `continue_on_error`), and a stage's
 `detach` and chain layout, only warns: it is container-internal, and adds
-nothing beyond the code execution a cloned branch inherently has.
+nothing beyond the code execution a cloned branch inherently has. A chain
+layout warns as `~ on_create<setup>: chains changed`, which covers a chain
+renamed, re-split, or moving a step the two configs share — including a step
+moved from one stage to another, which does change the mode and mounts it runs
+with. A step that exists on one side only is left to its own `+`/`-` line
+instead, so renaming a step inside a stage does not also report the stage.
 
 In the stage form, `network` and `mounts` live on the stage — a step inside one
 may not carry either — so that is where both the diff and the ⚠ line name them
