@@ -20,7 +20,7 @@ import shlex
 import signal
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from jailbee import tmux
 from jailbee.autostart_plan import AGENTS_STAGE as AGENTS_STAGE
@@ -626,6 +626,29 @@ def _run_chains(
         )
 
 
+class _StepInvocation(NamedTuple):
+    """How one step is handed to tmux: its env, its cwd, its deadline."""
+
+    env: dict[str, str]
+    cwd: str
+    timeout: int
+
+
+def _step_invocation(cfg: Config, step: AutostartStep, repo_dir: str) -> _StepInvocation:
+    """Resolve a step's env/cwd/timeout against the trigger-wide defaults.
+
+    One function because there are two drivers: `_apply_step` (serial) and
+    `_run_chains_in_parallel.launch_next` computed this identically and
+    independently, which is exactly how the two paths drift apart — a step's
+    behaviour must not depend on how many chains its stage happens to have.
+    """
+    return _StepInvocation(
+        env={**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir},
+        cwd=repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}",
+        timeout=step.timeout if step.timeout is not None else cfg.autostart.step_timeout,
+    )
+
+
 def _run_chain_serially(
     cfg: Config,
     incus: Incus,
@@ -709,9 +732,7 @@ def _run_chains_in_parallel(
             return
         step = chain.steps[i]
         cursors[chain.name] = i + 1
-        timeout = step.timeout if step.timeout is not None else cfg.autostart.step_timeout
-        env = {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir}
-        cwd = repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}"
+        env, cwd, timeout = _step_invocation(cfg, step, repo_dir)
         step_by_name[step.name] = step
         chain_by_step[step.name] = chain.name
         started[step.name] = time.monotonic()
@@ -783,10 +804,23 @@ def _run_chains_in_parallel(
                 if now >= handle.deadline:
                     tmux.interrupt_step(incus, container, handle)
                     in_flight.pop(name)
+                    timed_out = step_by_name[name]
                     _finish_step(
-                        cfg, incus, container, step_by_name[name], -1, stage, on_progress, started
+                        cfg, incus, container, timed_out, -1, stage, on_progress, started
                     )
-                    record_failure(name, reason="timeout")
+                    # The exit-code branch above, for the other way a step can
+                    # fail: `continue_on_error` covers a timeout too. The
+                    # serial driver has always honoured it there (a
+                    # `TmuxStepError(reason="timeout")` becomes an
+                    # `AutostartStepError` like any other), and the same YAML
+                    # must not behave differently just because its stage has a
+                    # second chain.
+                    if timed_out.continue_on_error:
+                        warn(f"Step '{name}' timed out (continue_on_error)")
+                        if failure is None:
+                            launch_next(by_name[chain_by_step[name]])
+                    else:
+                        record_failure(name, reason="timeout")
 
             if in_flight:
                 time.sleep(_POLL_INTERVAL_SEC)
@@ -882,9 +916,7 @@ def _apply_step(
             add_optional_mount(cfg, incus, container, m)
             mounted.append(m)
 
-        env = {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir}
-        cwd = repo_dir if not step.working_dir else f"{repo_dir}/{step.working_dir}"
-        timeout = step.timeout if step.timeout is not None else cfg.autostart.step_timeout
+        env, cwd, timeout = _step_invocation(cfg, step, repo_dir)
 
         try:
             tmux.run_step(

@@ -217,6 +217,126 @@ def test_continue_on_error_keeps_its_chain_going_in_parallel(tmp_path, make_cfg,
     assert launched == ["a1", "b1", "a2"]
 
 
+# --- the two drivers must agree: continue_on_error × timeout -------------
+#
+# The same YAML must behave the same way whichever driver runs it, and the
+# only thing that picks a driver is how many chains the stage happens to
+# have. A step that *times out* under `continue_on_error: true` is the one
+# crossing the two paths never covered: the serial path maps the timeout
+# onto `AutostartStepError` and honours `continue_on_error`, while the
+# parallel path enforces its deadlines itself. The pair below asserts one
+# outcome for one config.
+
+
+def _timeout_tolerant_chain(second_chain: bool):
+    """`a1` times out under `continue_on_error`; `a2` must still run."""
+    chains = [
+        {
+            "name": "a",
+            "steps": [
+                {"name": "a1", "run": "sleep 99", "continue_on_error": True},
+                {"name": "a2", "run": "true"},
+            ],
+        }
+    ]
+    if second_chain:
+        chains.append({"name": "b", "steps": [{"name": "b1", "run": "true"}]})
+    return _stage(stage="deps", chains=chains)
+
+
+def test_a_timeout_under_continue_on_error_advances_the_chain_serially(
+    tmp_path, make_cfg, mocker, incus
+):
+    ran: list[str] = []
+
+    def fake_run_step(incus_, container, *, name, **kw):
+        ran.append(name)
+        if name == "a1":
+            raise TmuxStepError("boom", step_name="a1", reason="timeout", exit_code=None)
+
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.run_step", side_effect=fake_run_step)
+
+    cfg = make_cfg(tmp_path)
+    autostart.run_stage(
+        cfg, incus, "c1", _timeout_tolerant_chain(second_chain=False), "/home/dev/repo"
+    )
+
+    assert ran == ["a1", "a2"]
+
+
+def test_a_timeout_under_continue_on_error_advances_the_chain_in_parallel(
+    tmp_path, make_cfg, mocker, incus
+):
+    """Same config, one extra chain — and therefore the polling driver.
+
+    Before the fix the timed-out step failed the whole stage *and* stalled
+    its chain (`a2` never launched), so a config's behaviour depended on
+    how many chains its stage happened to carry.
+    """
+    launched: list[str] = []
+
+    def fake_launch(incus_, container, *, name, **kw):
+        launched.append(name)
+        return StepHandle(
+            name=name,
+            window=name,
+            sentinel=f"/tmp/{name}",
+            background=False,
+            deadline=0.0 if name == "a1" else 1e9,
+        )
+
+    interrupt = mocker.patch("jailbee.tmux.interrupt_step")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=fake_launch)
+    mocker.patch("jailbee.tmux.poll_steps", side_effect=_scripted_poll([{}, {"b1": 0, "a2": 0}]))
+
+    cfg = make_cfg(tmp_path)
+    autostart.run_stage(
+        cfg, incus, "c1", _timeout_tolerant_chain(second_chain=True), "/home/dev/repo"
+    )
+
+    assert launched == ["a1", "b1", "a2"]
+    assert interrupt.call_args.args[2].name == "a1"  # the timed-out step was stopped
+
+
+def test_a_timeout_without_continue_on_error_still_fails_the_stage_in_parallel(
+    tmp_path, make_cfg, mocker, incus
+):
+    """The other half of the same branch: `continue_on_error` is what makes
+    a timeout survivable, not the timeout path itself."""
+
+    def fake_launch(incus_, container, *, name, **kw):
+        return StepHandle(
+            name=name,
+            window=name,
+            sentinel=f"/tmp/{name}",
+            background=False,
+            deadline=0.0 if name == "a1" else 1e9,
+        )
+
+    mocker.patch("jailbee.tmux.interrupt_step")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.tmux.launch_step", side_effect=fake_launch)
+    mocker.patch("jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"b1": 0}]))
+
+    cfg = make_cfg(tmp_path)
+    stage = _stage(
+        stage="deps",
+        chains=[
+            {"name": "a", "steps": [{"name": "a1", "run": "sleep 99"}]},
+            {"name": "b", "steps": [{"name": "b1", "run": "true"}]},
+        ],
+    )
+    with pytest.raises(autostart.AutostartStepError) as e:
+        autostart.run_stage(cfg, incus, "c1", stage, "/home/dev/repo")
+
+    assert "timed out" in str(e.value)
+
+
 # --- the serial driver ---------------------------------------------------
 
 
