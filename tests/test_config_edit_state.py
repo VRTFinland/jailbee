@@ -1476,7 +1476,7 @@ def test_open_editor_refuses_an_origins_map_that_misses_a_spec():
     origins = dict(resolve(SPECS, layer_set))
     del origins[("ssh", "enabled")]
 
-    with pytest.raises(ValueError, match="ssh.enabled"):
+    with pytest.raises(ValueError, match=r"ssh\.enabled"):
         st.open_editor(
             layer="repo",
             specs=SPECS,

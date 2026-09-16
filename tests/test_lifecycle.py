@@ -6043,9 +6043,7 @@ def test_wait_for_background_ready_attaches_over_a_failed_supervisor(
     wait_for_background_ready(cfg, full, sleep=_never_sleep)
 
 
-def test_wait_for_background_ready_attaches_over_a_dead_supervisor(
-    make_cfg, tmp_path, monkeypatch
-):
+def test_wait_for_background_ready_attaches_over_a_dead_supervisor(make_cfg, tmp_path, monkeypatch):
     """Same for a killed supervisor: its container is still running."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     cfg = make_cfg(tmp_path / "myrepo")
@@ -6061,9 +6059,7 @@ def test_wait_for_background_ready_attaches_over_a_dead_supervisor(
     wait_for_background_ready(cfg, full, sleep=_never_sleep)
 
 
-def test_wait_for_background_ready_attaches_over_a_live_supervisor(
-    make_cfg, tmp_path, monkeypatch
-):
+def test_wait_for_background_ready_attaches_over_a_live_supervisor(make_cfg, tmp_path, monkeypatch):
     """And it never waits one out — the deferred stages run behind the shell."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     cfg = make_cfg(tmp_path / "myrepo")

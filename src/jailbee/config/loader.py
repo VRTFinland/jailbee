@@ -375,9 +375,7 @@ def _build_config_from_dict(
         seen_step_names: set[str] = set()
         for stage in stages:
             if stage.stage in seen_stage_names:
-                raise ConfigError(
-                    f"duplicate autostart.{trigger_name} stage name: '{stage.stage}'"
-                )
+                raise ConfigError(f"duplicate autostart.{trigger_name} stage name: '{stage.stage}'")
             seen_stage_names.add(stage.stage)
             if is_stage_form and stage.stage == AGENTS_STAGE and (stage.chains or stage.steps):
                 raise ConfigError(

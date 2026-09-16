@@ -166,8 +166,7 @@ def test_config_validate_keeps_the_step_name_in_a_deprecation_warning(tmp_path) 
     """
     repo = _setup_repo_with_columns(
         tmp_path,
-        "autostart:\n  on_create:\n    - name: legacy\n"
-        "      run: echo hi\n      network: loose\n",
+        "autostart:\n  on_create:\n    - name: legacy\n      run: echo hi\n      network: loose\n",
     )
 
     result = CliRunner().invoke(

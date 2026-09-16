@@ -509,8 +509,14 @@ def test_launch_step_background_raises_when_the_step_dies_immediately(mocker):
     incus.exec.return_value = ""  # probe wait-for returns → signal received → died
     with pytest.raises(tmux.TmuxStepError) as e:
         tmux.launch_step(
-            incus, "c1", name="srv", command="false", env={}, cwd="/r",
-            background=True, timeout=300,
+            incus,
+            "c1",
+            name="srv",
+            command="false",
+            env={},
+            cwd="/r",
+            background=True,
+            timeout=300,
         )
     assert e.value.reason == "died_early"
 
@@ -525,8 +531,14 @@ def test_launch_step_background_returns_a_handle_when_the_step_survives_the_prob
     # kill-window OK, new-window OK, probe wait-for times out (= still alive)
     incus.exec.side_effect = ["", "", IncusError("exit 124: timeout")]
     handle = tmux.launch_step(
-        incus, "c1", name="srv", command="sleep 9", env={}, cwd="/r",
-        background=True, timeout=300,
+        incus,
+        "c1",
+        name="srv",
+        command="sleep 9",
+        env={},
+        cwd="/r",
+        background=True,
+        timeout=300,
     )
     assert handle.name == "srv"
     assert handle.window == "srv"

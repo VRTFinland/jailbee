@@ -142,9 +142,7 @@ def test_failing_chain_does_not_launch_more_steps_but_lets_siblings_finish(
         ],
     )
     with pytest.raises(autostart.AutostartStepError):
-        autostart.run_stage(
-            cfg, incus, "c1", stage, "/home/dev/repo", on_progress=_record(events)
-        )
+        autostart.run_stage(cfg, incus, "c1", stage, "/home/dev/repo", on_progress=_record(events))
 
     assert "a2" not in launched  # failed chain does not advance
     assert ("deps", "a1", "fail") in events
@@ -217,7 +215,7 @@ def test_continue_on_error_keeps_its_chain_going_in_parallel(tmp_path, make_cfg,
     assert launched == ["a1", "b1", "a2"]
 
 
-# --- the two drivers must agree: continue_on_error × timeout -------------
+# --- the two drivers must agree: continue_on_error x timeout -------------
 #
 # The same YAML must behave the same way whichever driver runs it, and the
 # only thing that picks a driver is how many chains the stage happens to
@@ -399,9 +397,7 @@ def _serial_net_stage(mocker, make_cfg, tmp_path, *, entry_modes, stage_network)
     return cfg, stage, switch
 
 
-def test_cas_restore_is_skipped_when_the_user_changed_the_mode(
-    tmp_path, make_cfg, mocker, incus
-):
+def test_cas_restore_is_skipped_when_the_user_changed_the_mode(tmp_path, make_cfg, mocker, incus):
     """Compare-and-swap: a detached stage must not overwrite a mode the user
     chose with `jailbee net` while it was running."""
     cfg, stage, switch = _serial_net_stage(
@@ -600,9 +596,7 @@ def test_on_progress_reports_terminal_states_in_parallel(tmp_path, make_cfg, moc
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
     mocker.patch("jailbee.tmux.ensure_session")
     mocker.patch("jailbee.tmux.launch_step", side_effect=_fake_launch)
-    mocker.patch(
-        "jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"a1": 0, "b1": 1}])
-    )
+    mocker.patch("jailbee.tmux.poll_steps", side_effect=_scripted_poll([{"a1": 0, "b1": 1}]))
 
     cfg = make_cfg(tmp_path)
     stage = _stage(
@@ -668,9 +662,7 @@ def test_each_step_is_announced_before_it_runs_in_parallel(
 # --- the driver's own failure modes --------------------------------------
 
 
-def test_an_unexpected_error_interrupts_the_steps_left_in_flight(
-    tmp_path, make_cfg, mocker, incus
-):
+def test_an_unexpected_error_interrupts_the_steps_left_in_flight(tmp_path, make_cfg, mocker, incus):
     """`run_stage`'s `finally` unmounts and flips the profile next. Anything
     still running in tmux at that moment would have the ground moved under
     it, so the driver interrupts what it launched before propagating."""
@@ -728,9 +720,7 @@ def test_a_poll_result_for_an_untracked_step_is_ignored(tmp_path, make_cfg, mock
 # --- run_autostart's planner hand-off ------------------------------------
 
 
-def test_run_autostart_forwards_the_cli_overrides_to_the_planner(
-    tmp_path, make_cfg, mocker, incus
-):
+def test_run_autostart_forwards_the_cli_overrides_to_the_planner(tmp_path, make_cfg, mocker, incus):
     """`--wait` / `--no-wait` and the on_create->on_start detach hand-off are
     the planner's inputs; dropping either keyword here is invisible until a
     container silently blocks (or silently doesn't)."""

@@ -161,9 +161,7 @@ def plan_autostart(
     steps = list(agent_steps)
     is_stage_form = bool(entries) and isinstance(entries[0], AutostartStage)
 
-    explicit = (
-        [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE] if is_stage_form else []
-    )
+    explicit = [i for i, s in enumerate(stages) if s.stage == AGENTS_STAGE] if is_stage_form else []
     if explicit:
         i = explicit[0]
         if steps:

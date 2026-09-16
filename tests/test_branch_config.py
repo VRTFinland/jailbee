@@ -1001,9 +1001,7 @@ def test_a_stage_level_mount_already_in_the_baseline_does_not_prompt(mocker, tmp
 
     verdict = assess_escalation(
         cfg,
-        Autostart(
-            on_create=[_stage("setup", steps=[_step("build", run="other")], mounts=["aws"])]
-        ),
+        Autostart(on_create=[_stage("setup", steps=[_step("build", run="other")], mounts=["aws"])]),
         untrusted=False,
     )
 
@@ -1067,9 +1065,7 @@ def test_the_reverse_migration_is_silent_too():
 def test_a_stages_network_is_named_once_not_once_per_step():
     """The stage level says it; the steps inside it must not repeat it."""
     host = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")])])
-    branch = Autostart(
-        on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="loose")]
-    )
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="loose")])
 
     dev = diff_autostart(host, branch)
 
@@ -1135,7 +1131,9 @@ def test_a_stepless_rename_that_also_attaches_a_mount_is_still_caught():
 def test_a_stepless_stage_does_not_absorb_a_stepped_stages_grant():
     """The fallback only ever matches another *stepless* stage."""
     host = Autostart(on_create=[_stage("work", steps=[_step("build")], network="loose")])
-    branch = Autostart(on_create=[_stage("open", network="loose"), _stage("work", steps=[_step("build")])])
+    branch = Autostart(
+        on_create=[_stage("open", network="loose"), _stage("work", steps=[_step("build")])]
+    )
 
     assert diff_autostart(host, branch).widening_steps == ("on_create<open>",)
 

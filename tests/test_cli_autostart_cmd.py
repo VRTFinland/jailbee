@@ -99,9 +99,7 @@ def test_status_groups_the_steps_by_stage_under_a_phase_and_pid_header(tmp_path,
     assert out.count("deps") == 1
 
 
-def test_status_calls_an_unterminated_step_running_while_the_worker_lives(
-    tmp_path, mocker
-) -> None:
+def test_status_calls_an_unterminated_step_running_while_the_worker_lives(tmp_path, mocker) -> None:
     """A `start` with no `ok`/`fail` is genuinely in flight under a live worker.
 
     Mutation: render every dangling `start` as interrupted and this fails.

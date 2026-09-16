@@ -850,7 +850,7 @@ def new_container(
     *,
     on_phase: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
-    on_detach: Callable[["Autostart", str, str], None] | None = None,
+    on_detach: Callable[[Autostart, str, str], None] | None = None,
 ) -> str:
     """Create a new container from the golden image. Returns container name.
 

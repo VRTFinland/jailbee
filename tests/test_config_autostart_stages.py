@@ -40,7 +40,7 @@ def test_steps_shorthand_becomes_one_chain_named_main():
 
 
 def test_stage_rejects_both_chains_and_steps():
-    with pytest.raises(ValidationError, match="chains.*or.*steps"):
+    with pytest.raises(ValidationError, match=r"chains.*or.*steps"):
         AutostartStage.model_validate(
             {
                 "stage": "x",
@@ -135,7 +135,7 @@ def test_duplicate_step_name_across_chains_in_one_trigger_is_rejected(tmp_path, 
         }
     )
     repo = _write_repo(tmp_path, config_yaml=config_yaml)
-    with pytest.raises(ConfigError, match="duplicate autostart.on_start step name: 'build'"):
+    with pytest.raises(ConfigError, match=r"duplicate autostart\.on_start step name: 'build'"):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
@@ -154,7 +154,7 @@ def test_duplicate_stage_name_is_rejected(tmp_path, mocker):
         }
     )
     repo = _write_repo(tmp_path, config_yaml=config_yaml)
-    with pytest.raises(ConfigError, match="duplicate autostart.on_start stage name: 'deps'"):
+    with pytest.raises(ConfigError, match=r"duplicate autostart\.on_start stage name: 'deps'"):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
@@ -267,7 +267,7 @@ def test_agents_stage_with_own_steps_is_rejected(tmp_path, mocker):
         }
     )
     repo = _write_repo(tmp_path, config_yaml=config_yaml)
-    with pytest.raises(ConfigError, match="stage 'agents'.*generated from the `agents` config"):
+    with pytest.raises(ConfigError, match=r"stage 'agents'.*generated from the `agents` config"):
         load_config(repo / ".jailbee" / "config.yaml")
 
 

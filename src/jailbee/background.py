@@ -417,7 +417,7 @@ class AutostartJob:
     """One detached autostart run, as handed to `_autostart-worker`."""
 
     container_name: str
-    autostart: "Autostart"
+    autostart: Autostart
     from_trigger: str
     repo_dir: str
     mirror_endpoint: tuple[str, int] | None
@@ -429,7 +429,7 @@ class AutostartJob:
 def autostart_job_to_dict(
     *,
     container_name: str,
-    autostart: "Autostart",
+    autostart: Autostart,
     from_trigger: str,
     repo_dir: str,
     mirror_endpoint: tuple[str, int] | None,

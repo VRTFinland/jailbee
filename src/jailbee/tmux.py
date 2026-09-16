@@ -300,9 +300,7 @@ def launch_step(
                 _runuser(f"timeout {BACKGROUND_PROBE_SEC} tmux wait-for {shlex.quote(probe_sig)}"),
             )
         except IncusError:
-            return StepHandle(
-                name=name, window=window, sentinel="", background=True, deadline=0.0
-            )
+            return StepHandle(name=name, window=window, sentinel="", background=True, deadline=0.0)
         raise TmuxStepError(
             f"background step '{name}' died within "
             f"{BACKGROUND_PROBE_SEC}s — check `jailbee tmux <container>`",
@@ -327,9 +325,7 @@ def launch_step(
     )
 
 
-def _new_window(
-    incus: Incus, container: str, window: str, shell_cmd: str, env_flags: str
-) -> None:
+def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_flags: str) -> None:
     """Create one tmux window running ``shell_cmd`` in a login shell."""
     inner = f"bash -lc {shlex.quote(shell_cmd)}"
     incus.exec(
@@ -352,9 +348,7 @@ def poll_steps(incus: Incus, container: str, handles: Sequence[StepHandle]) -> d
         return {}
     quoted = " ".join(shlex.quote(h.sentinel) for h in pending)
     script = (
-        f"for f in {quoted}; do "
-        f'if [ -f "$f" ]; then echo "$f $(cat "$f")"; rm -f "$f"; fi; '
-        f"done"
+        f'for f in {quoted}; do if [ -f "$f" ]; then echo "$f $(cat "$f")"; rm -f "$f"; fi; done'
     )
     out = incus.exec(container, _runuser(script))
 
@@ -398,5 +392,5 @@ def interrupt_window(incus: Incus, container: str, window: str) -> None:
 
 
 def interrupt_step(incus: Incus, container: str, handle: StepHandle) -> None:
-    """Send C-c to a step's window. Best-effort, used on timeout."""
+    """Send C-c to a step's window. Best-effort, used on timeout and cancellation."""
     interrupt_window(incus, container, handle.window)

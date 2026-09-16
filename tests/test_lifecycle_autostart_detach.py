@@ -66,8 +66,7 @@ def test_run_autostart_keeps_the_flag_set_when_stages_remain(tmp_path, make_cfg,
     autostart.run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
     assert not any(
-        c.args[1] == "user.jailbee.autostart_in_progress"
-        for c in incus.config_unset.call_args_list
+        c.args[1] == "user.jailbee.autostart_in_progress" for c in incus.config_unset.call_args_list
     )
 
 

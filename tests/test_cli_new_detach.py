@@ -135,9 +135,7 @@ def test_new_hands_the_supervisor_the_endpoint_the_blocking_stages_ran_with(tmp_
     object.__setattr__(gcfg.docker_registry_mirror, "data_dir", tmp_path / "registry")
     mocker.patch("jailbee.cli._load_global", return_value=gcfg)
     mocker.patch("jailbee.docker_daemon.mirror_wanted", return_value=True)
-    mocker.patch(
-        "jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.5", 3128)
-    )
+    mocker.patch("jailbee.docker_daemon.compute_mirror_endpoint", return_value=("10.0.0.5", 3128))
     # What the real helper would return here: it never looks at the CA.
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=("10.0.0.5", 3128))
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
@@ -231,9 +229,7 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
     mocker.patch("jailbee.autostart.inject_github_token")
     run_autostart = mocker.patch(
         "jailbee.autostart.run_autostart",
-        return_value=AutostartPlan(
-            blocking=[], detached=[_stage("deps")] if detached else []
-        ),
+        return_value=AutostartPlan(blocking=[], detached=[_stage("deps")] if detached else []),
     )
     return run_autostart
 
