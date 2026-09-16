@@ -350,6 +350,17 @@ def run_autostart(
     # ``finally`` so a stage failure still releases the lock — but only
     # when nothing is left to run: with detached stages pending, the
     # supervisor owns the flag from here and re-stamps it with its own pid.
+    #
+    # "Pending" means *actually handed off*, which is why the hand-off is
+    # recorded only once ``run_stages`` has returned: a blocking stage that
+    # raises never reaches the hand-off — the exception propagates past every
+    # caller's ``on_detach`` (`lifecycle.new_container`,
+    # `cli._post_start_actions`), so no supervisor is ever spawned. Keeping
+    # the flag then leaves the literal ``"1"`` behind with no owning process,
+    # and `loose_revert._autostart_holds` honours that forever: the container
+    # is exempt from TTL auto-revert for the rest of its life. That is the
+    # hole in the unsafe direction the pid stamping exists to prevent.
+    handed_off = False
     incus.config_set(container, "user.jailbee.autostart_in_progress", "1")
     try:
         run_stages(
@@ -361,8 +372,9 @@ def run_autostart(
             mirror_endpoint=mirror_endpoint,
             on_progress=on_progress,
         )
+        handed_off = bool(plan.detached)
     finally:
-        if not plan.detached:
+        if not handed_off:
             incus.config_unset(container, "user.jailbee.autostart_in_progress")
 
     success("Autostart complete" if not plan.detached else "Autostart: handing off to background")

@@ -8,6 +8,8 @@ the `--wait` / `--no-wait` override survives the `--background` job file.
 
 from __future__ import annotations
 
+import pytest
+
 from jailbee.autostart_plan import AutostartPlan, AutostartTrigger
 
 
@@ -78,6 +80,41 @@ def test_run_autostart_clears_the_flag_when_nothing_detaches(tmp_path, make_cfg,
     cfg = _cfg_with(make_cfg, tmp_path, {"on_start": [{"name": "a", "run": "true"}]})
 
     autostart.run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
+
+    incus.config_unset.assert_any_call("c1", "user.jailbee.autostart_in_progress")
+
+
+def test_a_failing_blocking_stage_clears_the_flag_even_with_stages_pending(
+    tmp_path, make_cfg, mocker
+):
+    """Stages pending is not the same as stages handed off.
+
+    When a blocking stage raises, the exception propagates past every
+    caller's `on_detach` (`lifecycle.new_container`,
+    `cli._post_start_actions`) and no supervisor is ever spawned — so
+    nobody re-stamps the flag with a pid, and nobody clears it. The
+    literal "1" left behind is read by `loose_revert._autostart_holds` as
+    "held" unconditionally, exempting the container from TTL auto-revert
+    for good.
+    """
+    from jailbee import autostart
+
+    mocker.patch("jailbee.tmux.ensure_session")
+    mocker.patch("jailbee.autostart.run_stages", side_effect=RuntimeError("boom"))
+    incus = mocker.MagicMock()
+    cfg = _cfg_with(
+        make_cfg,
+        tmp_path,
+        {
+            "on_start": [
+                {"stage": "schema", "steps": [{"name": "m", "run": "true"}]},
+                {"stage": "deps", "detach": True, "steps": [{"name": "d", "run": "true"}]},
+            ]
+        },
+    )
+
+    with pytest.raises(RuntimeError):
+        autostart.run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
     incus.config_unset.assert_any_call("c1", "user.jailbee.autostart_in_progress")
 
