@@ -37,10 +37,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jailbee.autostart_plan import normalize_stages
+from jailbee.config import AutostartStage
+
 if TYPE_CHECKING:
     from jailbee.config import Autostart, AutostartStep, Config
 
 _TRIGGERS = ("on_create", "on_start")
+
+# How a unit is named in the rendered diff and in the privilege verdict.
+# Two namespaces, two bracket shapes, on purpose: `normalize_stages` names an
+# implicit stage after its *first step*, so a flat block's stage names and its
+# step names routinely coincide. `[` and `<` sit at the same offset in every
+# key, so no step key can ever equal a stage key however the two are spelled.
+_STEP_KEY = "{trigger}[{name}]"
+_STAGE_KEY = "{trigger}<{name}>"
+
+# `stage` is the key itself; `chains`/`steps` hold the steps, which are diffed
+# at the step level. Everything else on an `AutostartStage` is stage-owned and
+# compared here, enumerated (not listed) so a new field forces a decision
+# rather than being silently ignored — as at the step level.
+_STAGE_STRUCTURE_FIELDS = frozenset({"stage", "chains", "steps"})
 
 
 def _config_text_at_ref(repo_root: Path, ref: str) -> tuple[str, str] | None:
@@ -62,10 +79,11 @@ def _config_text_at_ref(repo_root: Path, ref: str) -> tuple[str, str] | None:
 
 @dataclass(frozen=True)
 class StepChange:
-    """One step that exists in both configs but differs.
+    """One step — or one stage — that exists in both configs but differs.
 
-    `name` is trigger-qualified (`"on_create[build]"`) because the same step
-    name may appear under both triggers and they are distinct steps.
+    `name` is trigger-qualified (`"on_create[build]"` for a step,
+    `"on_create<setup>"` for a stage) because the same name may appear under
+    both triggers and they are distinct units.
     """
 
     name: str
@@ -94,20 +112,23 @@ class AutostartDeviation:
     knows nothing about.
 
     Two of the differences are the branch reaching past the container it
-    already controls:
+    already controls. In the flat form the reach is a step's; in the stage
+    form a step may not carry either (`AutostartStage` rejects it) and the
+    reach is the stage's, so these two name whichever level owns it:
 
-    - `widening_steps`: steps that run with `network: loose` where the other
-      block's same-named step does not (including a brand-new step).
-    - `attached_mounts`: names of `optional_mounts` a step attaches that the
-      other block's same-named step does not. `_apply_step` binds each named
+    - `widening_steps`: units that run with `network: loose` where the other
+      block does not (including a brand-new one).
+    - `attached_mounts`: names of `optional_mounts` attached that the other
+      block's counterpart does not attach. The executor binds each named
       optional mount — typically a personal credential directory such as
-      `~/.aws` or `~/.m2` — into the container for the step's duration, so a
-      step that adds one gets a host path mounted into a container whose
-      command line the same branch writes.
+      `~/.aws` or `~/.m2` — into the container for the step's or stage's
+      duration, so adding one gets a host path mounted into a container whose
+      command lines the same branch writes.
 
     Everything else a step controls (`run`, `env`, `working_dir`, `background`,
-    `timeout`, `continue_on_error`) is container-internal: it adds nothing
-    beyond the code execution a cloned branch inherently has.
+    `timeout`, `continue_on_error`), and a stage's `detach` and chain layout,
+    is container-internal: it adds nothing beyond the code execution a cloned
+    branch inherently has.
     """
 
     added: tuple[str, ...] = ()
@@ -123,46 +144,181 @@ class AutostartDeviation:
 
     @property
     def widens_network(self) -> bool:
-        """True when at least one step widens network access to `loose`."""
+        """True when at least one step or stage widens network access to `loose`."""
         return bool(self.widening_steps)
 
 
-def _by_name(steps: list[AutostartStep], trigger: str) -> dict[str, AutostartStep]:
-    # Step names are unique per trigger — enforced at load time in
-    # `config._build_config_from_dict`.
-    return {f"{trigger}[{s.name}]": s for s in steps}
+def _is_stage_form(entries: list[AutostartStep] | list[AutostartStage]) -> bool:
+    """True when the trigger *declares* stages rather than a flat step list.
+
+    Not the same as "has stages": `normalize_stages` gives every flat block
+    implicit stages too. Only a declared stage is a name the repo chose, and
+    only a declared stage owns `network`/`mounts` — an implicit one merely
+    inherited them from the steps it collapsed.
+    """
+    return bool(entries) and isinstance(entries[0], AutostartStage)
+
+
+def _steps_by_name(
+    entries: list[AutostartStep] | list[AutostartStage], trigger: str
+) -> dict[str, AutostartStep]:
+    """Every step the trigger runs, in either form, keyed by step name.
+
+    Step names are unique per trigger — enforced at load time in
+    `config._build_config_from_dict` — so the key identifies a step across
+    both configs *and* across the two forms: a step keeps its name when a
+    repo migrates a flat block into stages, which is exactly why matching
+    happens here and not by stage name.
+    """
+    return {
+        _STEP_KEY.format(trigger=trigger, name=step.name): step
+        for stage in normalize_stages(entries)
+        for chain in stage.all_chains()
+        for step in chain.steps
+    }
+
+
+def _declared_stages(
+    entries: list[AutostartStep] | list[AutostartStage], trigger: str
+) -> dict[str, AutostartStage]:
+    """The trigger's stages, keyed by name — empty for a flat block.
+
+    A flat block's implicit stages are deliberately excluded: their names are
+    an artefact of `normalize_stages` (the first step's name), so reporting
+    them as added/removed/changed would turn every ordinary flat-form diff
+    into a duplicate of its own step lines.
+    """
+    if not _is_stage_form(entries):
+        return {}
+    return {_STAGE_KEY.format(trigger=trigger, name=s.stage): s for s in normalize_stages(entries)}
+
+
+def _chain_layout(stage: AutostartStage) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Which chain each step runs in — the parallelism, without the step bodies.
+
+    Read through `all_chains()`, so the `steps:` shorthand and an explicit
+    single chain named `main` compare equal: they *are* the same stage.
+    """
+    return tuple((c.name, tuple(s.name for s in c.steps)) for c in stage.all_chains())
+
+
+def _stage_fields(host: AutostartStage, branch: AutostartStage) -> tuple[str, ...]:
+    """The stage-owned fields that differ, plus `chains` for a re-layout."""
+    fields = [
+        name
+        for name in type(branch).model_fields
+        if name not in _STAGE_STRUCTURE_FIELDS and getattr(host, name) != getattr(branch, name)
+    ]
+    if _chain_layout(host) != _chain_layout(branch):
+        # Same steps, different chains: a change in what runs in parallel,
+        # which no step-level field records.
+        fields.append("chains")
+    return tuple(fields)
+
+
+@dataclass(frozen=True)
+class _Grant:
+    """The container-scoped reach of one autostart unit.
+
+    `key` matches the unit against the other config; `label` names it to the
+    user. They differ for a declared stage, and that split is the whole point:
+
+    - matching is per **step**, because step names survive a flat↔stage
+      migration and stage names do not. Comparing stage names would call a
+      repo's move to stages a widening (the stage is "new"), and would miss a
+      step whose `loose` run got absorbed into an already-`loose` stage.
+    - the label is the **stage**, because in the stage form the grant is the
+      stage's: it holds for every chain it runs, and naming its five steps
+      instead would be five lines about one decision.
+    """
+
+    key: str
+    label: str
+    network: str | None
+    mounts: tuple[str, ...]
+
+
+def _grants(entries: list[AutostartStep] | list[AutostartStage], trigger: str) -> dict[str, _Grant]:
+    """What each unit of `entries` reaches outside the container.
+
+    One entry per step, carrying the *effective* network and mounts — the
+    stage's in the stage form (steps may not carry either: `AutostartStage`
+    rejects it), the step's own in the flat form (where `normalize_stages`
+    lifts them onto an implicit stage that spans exactly the steps sharing
+    them, so the two agree by construction).
+    """
+    grants: dict[str, _Grant] = {}
+    declared = _is_stage_form(entries)
+    for stage in normalize_stages(entries):
+        stage_key = _STAGE_KEY.format(trigger=trigger, name=stage.stage)
+        steps = [step for chain in stage.all_chains() for step in chain.steps]
+        if declared and not steps:
+            # A stage with no steps still switches the profile and attaches
+            # its mounts, so it reaches outside the container with no step to
+            # hang that on. Give it a unit of its own rather than lose it.
+            grants[stage_key] = _Grant(
+                key=stage_key,
+                label=stage_key,
+                network=stage.network,
+                mounts=tuple(stage.mounts),
+            )
+        for step in steps:
+            key = _STEP_KEY.format(trigger=trigger, name=step.name)
+            grants[key] = _Grant(
+                key=key,
+                label=stage_key if declared else key,
+                network=stage.network if stage.network is not None else step.network,
+                mounts=tuple(stage.mounts) + tuple(step.mounts),
+            )
+    return grants
 
 
 def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
-    """Compare two autostart blocks. Pure — no git, no Incus, no filesystem."""
+    """Compare two autostart blocks. Pure — no git, no Incus, no filesystem.
+
+    Handles both forms on either side, including a flat host against a stage
+    branch: both are normalized through `autostart_plan.normalize_stages`, and
+    the three comparisons below each run at the level that owns what they
+    measure — stages for the side effects a stage owns, steps for the work a
+    step does, and grants for the reach outside the container.
+    """
     added: list[str] = []
     removed: list[str] = []
     changed: list[StepChange] = []
-    widening_steps: list[str] = []
+    widening: list[str] = []
     attached_mounts: set[str] = set()
 
     for trigger in _TRIGGERS:
-        host_steps = _by_name(getattr(host, trigger), trigger)
-        branch_steps = _by_name(getattr(branch, trigger), trigger)
+        host_entries = getattr(host, trigger)
+        branch_entries = getattr(branch, trigger)
 
+        # Stage level: the structure, and the side effects a stage owns.
+        # Listed before the steps so the rendering reads top-down.
+        host_stages = _declared_stages(host_entries, trigger)
+        branch_stages = _declared_stages(branch_entries, trigger)
+        added.extend(key for key in branch_stages if key not in host_stages)
+        removed.extend(key for key in host_stages if key not in branch_stages)
+        for key, b_stage in branch_stages.items():
+            h_stage = host_stages.get(key)
+            if h_stage is None:
+                continue
+            stage_fields = _stage_fields(h_stage, b_stage)
+            if stage_fields:
+                changed.append(StepChange(name=key, fields=stage_fields))
+
+        # Step level: unchanged, and unchanged by the form — in the stage form
+        # a step's `network`/`mounts` are always unset, so nothing here can
+        # double-report what the stage level already said.
+        host_steps = _steps_by_name(host_entries, trigger)
+        branch_steps = _steps_by_name(branch_entries, trigger)
         for key in branch_steps:
             if key not in host_steps:
                 added.append(key)
         for key in host_steps:
             if key not in branch_steps:
                 removed.append(key)
-
         for key, b_step in branch_steps.items():
             h_step = host_steps.get(key)
-            # Widening: loose on the branch that the host did not already
-            # grant. Covers both a changed step and a brand-new one.
-            if b_step.network == "loose" and (h_step is None or h_step.network != "loose"):
-                widening_steps.append(key)
-            # Escalation: an optional_mount the host's same-named step does not
-            # attach — a host path bound into a container the branch scripts.
-            # A brand-new step has no host counterpart, so every mount it names
-            # counts.
-            attached_mounts |= set(b_step.mounts) - set(h_step.mounts if h_step is not None else ())
             if h_step is None:
                 continue
             fields = tuple(
@@ -172,6 +328,23 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
             )
             if fields:
                 changed.append(StepChange(name=key, fields=fields))
+
+        # Grant level: the reach outside the container, matched per step.
+        host_grants = _grants(host_entries, trigger)
+        branch_grants = _grants(branch_entries, trigger)
+        for key, b_grant in branch_grants.items():
+            h_grant = host_grants.get(key)
+            # Widening: loose on the branch that the host did not already
+            # grant. Covers a changed unit and a brand-new one alike.
+            if b_grant.network == "loose" and (h_grant is None or h_grant.network != "loose"):
+                widening.append(b_grant.label)
+            # Escalation: an optional_mount the host's counterpart does not
+            # attach — a host path bound into a container the branch scripts.
+            # A brand-new unit has no counterpart, so every mount it names
+            # counts.
+            attached_mounts |= set(b_grant.mounts) - set(
+                h_grant.mounts if h_grant is not None else ()
+            )
 
     # Block-level fields are hand-compared, unlike the step-level diff which
     # enumerates `model_fields`. `test_branch_config` pins the field set so a
@@ -194,7 +367,10 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
         removed=tuple(removed),
         changed=tuple(changed),
         block_changes=tuple(block_changes),
-        widening_steps=tuple(widening_steps),
+        # `dict.fromkeys`, not `set`: one declared stage is the label for every
+        # step it widens, so the same name arrives once per step — deduplicated
+        # in first-seen order, which is the order the stages run in.
+        widening_steps=tuple(dict.fromkeys(widening)),
         attached_mounts=tuple(sorted(attached_mounts)),
     )
 
@@ -210,10 +386,10 @@ def format_deviation(dev: AutostartDeviation, *, source: str) -> str:
     checkout — printing it here too would let the two disagree in the one place
     the user reads them.
 
-    Plain text, not Rich markup: step names are trigger-qualified
-    (`on_create[build]`) and `source` may carry a branch name like
-    `feat/[wip]`, so callers must print the result without markup parsing —
-    `tui.warn_plain`, not `tui.warn`.
+    Plain text, not Rich markup: names are trigger-qualified
+    (`on_create[build]` for a step, `on_create<setup>` for a stage) and
+    `source` may carry a branch name like `feat/[wip]`, so callers must print
+    the result without markup parsing — `tui.warn_plain`, not `tui.warn`.
     """
     lines = [f"autostart config comes from {source}, not your checkout:"]
     for name in dev.added:
@@ -270,14 +446,19 @@ class EscalationVerdict:
 def _can_widen(autostart: Autostart) -> bool:
     """True when `autostart` holds anything that *could* be a widening.
 
-    A block with no `loose` step and no step mounts cannot widen against any
-    baseline, so the baseline need not be read at all — this keeps the common
-    `jailbee new` off the git path entirely.
+    A block that runs nothing `loose` and attaches no mount cannot widen
+    against any baseline, so the baseline need not be read at all — this keeps
+    the common `jailbee new` off the git path entirely.
+
+    Asked of the same `_grants` the diff uses, so the fast path cannot answer
+    "nothing to see" about a form the diff would have had something to say
+    about — in the stage form the reach is the stage's, and a stage with no
+    steps of its own still has one.
     """
     return any(
-        step.network == "loose" or step.mounts
+        grant.network == "loose" or grant.mounts
         for trigger in _TRIGGERS
-        for step in getattr(autostart, trigger)
+        for grant in _grants(getattr(autostart, trigger), trigger).values()
     )
 
 

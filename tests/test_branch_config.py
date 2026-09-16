@@ -9,7 +9,7 @@ from jailbee.branch_config import (
     format_escalation,
     load_branch_autostart,
 )
-from jailbee.config import Autostart, AutostartStep
+from jailbee.config import Autostart, AutostartStage, AutostartStep
 
 
 def _step(name: str, **kw: object) -> AutostartStep:
@@ -682,3 +682,307 @@ def test_absent_baseline_config_on_a_reachable_ref_stays_quiet(mocker, tmp_path)
 
     warned.assert_not_called()
     assert "checkout" in verdict.baseline_source
+
+
+# --- the stage form --------------------------------------------------------
+#
+# A stage owns the container-scoped side effects (`network`, `mounts`) for all
+# of its chains, and `AutostartStage` forbids a step inside it from carrying
+# either. So a stage-form config's widening lives entirely at the stage level,
+# and the gate has to read it there — while still matching the two sides *per
+# step*, because step names survive a flat↔stage migration and stage names do
+# not.
+
+
+def _stage(name: str, *, steps: list[AutostartStep] | None = None, **kw: object) -> AutostartStage:
+    return AutostartStage(stage=name, steps=list(steps or []), **kw)  # type: ignore[arg-type]  # kwargs are field values
+
+
+def test_stage_form_branch_against_a_flat_host_does_not_raise():
+    """The defect: `_by_name` read `.name` off an `AutostartStage`."""
+    host = Autostart(on_create=[_step("build")])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.any_change is True
+    assert dev.widening_steps == ("on_create<setup>",)
+
+
+def test_stage_level_loose_is_a_widening():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.widening_steps == ("on_create<setup>",)
+    assert dev.widens_network is True
+
+
+def test_the_same_stage_without_loose_is_not_a_widening():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build", run="a")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build", run="b")])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.widens_network is False
+    assert dev.any_change is True  # the step's `run` still changed
+
+
+def test_a_stage_reports_once_however_many_steps_it_widens():
+    """The grant is the stage's, so it is named once — not per step."""
+    host = Autostart(on_create=[_step("a"), _step("b")])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="loose")])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_create<setup>",)
+
+
+def test_a_stepless_stage_can_still_widen():
+    """A stage with no steps still switches the profile and attaches mounts."""
+    host = Autostart(on_create=[_step("build")])
+    branch = Autostart(
+        on_create=[
+            _stage("open", network="loose", mounts=["aws"]),
+            _stage("work", steps=[_step("build")]),
+        ]
+    )
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.widening_steps == ("on_create<open>",)
+    assert dev.attached_mounts == ("aws",)
+
+
+def test_stage_mounts_are_reported_as_attached():
+    host = Autostart(on_create=[_step("build")])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.attached_mounts == ("aws",)
+    assert dev.widens_network is False
+
+
+def test_mounts_the_host_stage_already_attaches_are_not_reported():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build", run="a")], mounts=["aws"])])
+    branch = Autostart(
+        on_create=[_stage("setup", steps=[_step("build", run="b")], mounts=["aws", "m2"])]
+    )
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.attached_mounts == ("m2",)  # only the added one
+
+
+def test_stage_branch_inheriting_a_flat_hosts_loose_is_not_a_widening():
+    """Migrating a flat `loose` step into a `loose` stage grants nothing new."""
+    host = Autostart(on_create=[_step("build", network="loose")])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+
+    assert diff_autostart(host, branch).widening_steps == ()
+
+
+def test_flat_branch_inheriting_a_stage_hosts_loose_is_not_a_widening():
+    """The other direction: units are matched per step, not by stage name."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+    branch = Autostart(on_create=[_step("build", network="loose")])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.widening_steps == ()
+    assert dev.removed == ("on_create<setup>",)  # the stage itself is gone
+
+
+def test_flat_branch_widening_beyond_a_stage_host_is_caught():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="strict")])
+    branch = Autostart(on_create=[_step("a", network="strict"), _step("b", network="loose")])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_create[b]",)
+
+
+def test_a_flat_step_widening_inside_an_existing_loose_run_is_still_caught():
+    """Regression guard: comparing normalized stages *by name* would lose this.
+
+    Both sides start with a `loose` step, so the branch collapses `x` and `y`
+    into one implicit stage named `x`, whose name and network match the host's
+    first stage exactly. `y`'s widening is only visible per step.
+    """
+    host = Autostart(on_create=[_step("x", network="loose"), _step("y", network="strict")])
+    branch = Autostart(on_create=[_step("x", network="loose"), _step("y", network="loose")])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_create[y]",)
+
+
+def test_on_start_stages_are_diffed_too():
+    host = Autostart(on_start=[_stage("serve", steps=[_step("run-it")])])
+    branch = Autostart(on_start=[_stage("serve", steps=[_step("run-it")], network="loose")])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_start<serve>",)
+
+
+def test_renaming_a_stage_reads_as_an_add_and_a_remove():
+    """A stage has no identity beyond its name; its steps are diffed separately."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")])])
+    branch = Autostart(on_create=[_stage("prepare", steps=[_step("build")])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.added == ("on_create<prepare>",)
+    assert dev.removed == ("on_create<setup>",)
+    assert dev.changed == ()  # the step neither moved nor changed
+
+
+def test_the_steps_shorthand_equals_a_single_main_chain():
+    """`steps:` *is* one chain named `main` — rewriting it is not a change."""
+    from jailbee.config import AutostartChain
+
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a")])])
+    branch = Autostart(
+        on_create=[
+            AutostartStage(stage="setup", chains=[AutostartChain(name="main", steps=[_step("a")])])
+        ]
+    )
+
+    assert diff_autostart(host, branch).any_change is False
+
+
+def test_reparallelising_a_stages_chains_is_reported():
+    """Same steps, different chains — nothing the step-level diff can see."""
+    from jailbee.config import AutostartChain
+
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")])])
+    branch = Autostart(
+        on_create=[
+            AutostartStage(
+                stage="setup",
+                chains=[
+                    AutostartChain(name="one", steps=[_step("a")]),
+                    AutostartChain(name="two", steps=[_step("b")]),
+                ],
+            )
+        ]
+    )
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]
+
+
+def test_a_stages_detach_flag_is_reported():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("a")], detach=True)])
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("detach",))]
+
+
+def test_format_deviation_distinguishes_a_stage_from_a_step_of_the_same_name():
+    """`normalize_stages` names an implicit stage after its first step, so the
+    two namespaces can collide — the rendering must not."""
+    host = Autostart(on_create=[_step("build")])
+    branch = Autostart(
+        on_create=[_stage("build", steps=[_step("build"), _step("seed")], network="loose")]
+    )
+
+    text = format_deviation(diff_autostart(host, branch), source="f")
+
+    assert text == (
+        "autostart config comes from f, not your checkout:\n"
+        "  + on_create<build>\n"
+        "  + on_create[seed]"
+    )
+
+
+def test_format_deviation_names_a_stages_changed_network():
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+
+    text = format_deviation(diff_autostart(host, branch), source="f")
+
+    assert text == (
+        "autostart config comes from f, not your checkout:\n  ~ on_create<setup>: network changed"
+    )
+
+
+def test_a_stage_form_block_that_cannot_widen_reads_no_git(mocker, tmp_path):
+    """The `_can_widen` fast path must understand stages too."""
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    show = mocker.patch("jailbee.git.show_file_at_ref")
+
+    verdict = assess_escalation(
+        cfg, Autostart(on_create=[_stage("setup", steps=[_step("build")])]), untrusted=True
+    )
+
+    show.assert_not_called()
+    assert verdict.any_widening is False
+
+
+def test_a_stage_level_loose_is_measured_against_the_baseline(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    show = _baseline(mocker, cfg, Autostart(on_create=[_step("build")]))
+
+    verdict = assess_escalation(
+        cfg,
+        Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")]),
+        untrusted=True,
+    )
+
+    show.assert_called()  # the fast path did not swallow it
+    assert verdict.widening_steps == ("on_create<setup>",)
+    assert verdict.prompts is True
+
+
+def test_a_stage_level_mount_prompts(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    _baseline(mocker, cfg, Autostart(on_create=[_step("build")]))
+
+    verdict = assess_escalation(
+        cfg,
+        Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])]),
+        untrusted=False,
+    )
+
+    assert verdict.attached_mounts == ("aws",)
+    assert verdict.prompts is True
+
+
+def test_a_stage_level_mount_already_in_the_baseline_does_not_prompt(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    _baseline(
+        mocker, cfg, Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])])
+    )
+
+    verdict = assess_escalation(
+        cfg,
+        Autostart(
+            on_create=[_stage("setup", steps=[_step("build", run="other")], mounts=["aws"])]
+        ),
+        untrusted=False,
+    )
+
+    assert verdict.attached_mounts == ()
+    assert verdict.prompts is False
+
+
+def test_format_escalation_names_a_stage(mocker, tmp_path):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, default_branch="dev")
+    _baseline(mocker, cfg, Autostart())
+
+    verdict = assess_escalation(
+        cfg,
+        Autostart(on_start=[_stage("warmup", steps=[_step("prime")], network="loose")]),
+        untrusted=True,
+    )
+
+    assert "on_start<warmup>" in format_escalation(verdict)

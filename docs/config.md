@@ -1515,7 +1515,9 @@ autostart config comes from a1b2c3d4e5f6 (feat/x), not your checkout:
 ```
 
 Step names are trigger-qualified (`on_create[build]` vs `on_start[build]`)
-because the same name can exist under both triggers as distinct steps.
+because the same name can exist under both triggers as distinct steps. A
+[stage](#stages-and-chains) is named the same way but in angle brackets
+(`on_create<setup>`), because a stage and a step may carry the same name.
 
 ##### The privilege check is a separate comparison
 
@@ -1543,14 +1545,14 @@ noted in the line.
 
 Two kinds of widening are reported, and they are weighed differently:
 
-- **a step attaching an `optional_mounts` entry** the baseline's same-named
-  step does not — these are typically personal credential directories
-  (`~/.aws`, `~/.m2`), and the step's command line comes from the same branch.
-  This **always asks for confirmation**, defaulting to **no**; declining
-  aborts the whole `jailbee new` with nothing created. Attaching a mount is what
-  *creates* the asset — a credential directory the container would not
-  otherwise hold — and no network mode protects against it.
-- **a step widening network access** from `strict` to `loose`. This asks only
+- **a step or stage attaching an `optional_mounts` entry** the baseline does
+  not attach — these are typically personal credential directories
+  (`~/.aws`, `~/.m2`), and the command lines that run while it is attached
+  come from the same branch. This **always asks for confirmation**, defaulting
+  to **no**; declining aborts the whole `jailbee new` with nothing created.
+  Attaching a mount is what *creates* the asset — a credential directory the
+  container would not otherwise hold — and no network mode protects against it.
+- **a step or stage widening network access** from `strict` to `loose`. This asks only
   for an **untrusted head**: `jailbee new --pr N` where the PR's head lives in a
   **fork** (`isCrossRepository`) — code nobody with push access to your repo has
   vouched for. Everything else warns and proceeds. Once the container runs the
@@ -1567,9 +1569,16 @@ Two kinds of widening are reported, and they are weighed differently:
 
 In both cases a brand-new step counts as widening, since the baseline has no
 counterpart to compare against. Everything else a step controls (`run`, `env`,
-`working_dir`, `background`, `timeout`, `continue_on_error`) only warns: it is
-container-internal, and adds nothing beyond the code execution a cloned branch
-inherently has.
+`working_dir`, `background`, `timeout`, `continue_on_error`), and a stage's
+`detach` and chain layout, only warns: it is container-internal, and adds
+nothing beyond the code execution a cloned branch inherently has.
+
+In the stage form, `network` and `mounts` live on the stage — a step inside one
+may not carry either — so that is where the check reads them, and the ⚠ line
+names the stage (`on_start<warmup>`) rather than each of its steps. The two
+forms are still compared step by step underneath, so migrating a `loose` step
+into a `loose` stage is correctly *not* a widening: the same step ran `loose`
+before and after.
 
 `--yes`/`-y` accepts without asking (in addition to its original job of
 skipping the "branch already exists" prompt). `--no-autostart` skips the branch
