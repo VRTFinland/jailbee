@@ -127,7 +127,24 @@ def open_editor(
     this module keeps no opinion on how the layers were read, but a fixture
     that pairs a hand-built `origins` with an unrelated `layer_raw` is
     describing a session that cannot exist.
+
+    `origins` must cover **every** spec, and this refuses the session
+    otherwise rather than degrading quietly. `layers.resolve` guarantees it
+    — one key per spec, `Origin("default", ...)` when neither layer supplies
+    the value — and `render._entry_level` now reads that totality as a fact:
+    it treats a path absent from `origins` as a field inside an entry, which
+    is what lets a nested collection's help pane say `set`/`default` instead
+    of inventing a layer. A partial map would silently relabel top-level
+    rows and make `render._now` read the open layer where it should read the
+    resolved one, which is a wrong answer printed confidently.
     """
+    missing = [dotted(spec.path) for spec in specs if spec.path not in origins]
+    if missing:
+        raise ValueError(
+            "origins must cover every spec (use layers.resolve); missing: "
+            + ", ".join(missing[:5])
+            + (f" (+{len(missing) - 5} more)" if len(missing) > 5 else "")
+        )
     return EditorState(
         layer=layer, specs=tuple(specs), origins=origins, layer_raw=layer_raw, staged={}
     )

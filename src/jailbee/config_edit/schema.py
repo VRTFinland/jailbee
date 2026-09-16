@@ -150,8 +150,20 @@ def classify(annotation: object) -> Classified:
         rest = [a for a in args if a is not type(None)]
         optional = len(rest) != len(args)
         if len(rest) == 1:
+            # Every field of `inner` is carried through, `item_models`
+            # included. Unreachable for that one today — `A | B | None`
+            # flattens, so a union of model lists never arrives here wrapped
+            # in an `Optional` — but a constructor that drops new state by
+            # construction is the wrong thing to leave behind.
             inner = classify(rest[0])
-            return Classified(inner.kind, inner.choices, inner.item_model, True, inner.secret)
+            return Classified(
+                inner.kind,
+                inner.choices,
+                inner.item_model,
+                True,
+                inner.secret,
+                inner.item_models,
+            )
         list_arms = _model_list_arms(rest)
         if list_arms is not None:
             # `list[A] | list[B]` — one collection whose entries may take
@@ -396,6 +408,16 @@ def entry_model(
     it: `n` on a list of stages must open a stage form, or the user fills
     in a step and the save fails on a mixed trigger. An empty list falls
     back to the first arm.
+
+    Three cases reach that sibling fall-through, not one. The empty entry
+    is the ordinary one. The second is an entry holding only keys *both*
+    models declare (`network:`, `mounts:`), which is no evidence rather
+    than a fit. The third is an entry no arm accepts at all — a hand-typed
+    `stpes:` in the file — which falls through the siblings to
+    `item_models[0]` and draws a step form over it. That is the honest
+    answer: the key belongs to no shape, the loader will reject it by name
+    on the next load, and guessing an arm from a typo would only move where
+    the user is told.
     """
     if len(spec.item_models) < 2:
         return spec.item_model

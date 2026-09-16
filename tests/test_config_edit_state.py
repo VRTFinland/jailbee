@@ -1460,3 +1460,26 @@ def test_reordering_one_chain_s_steps_leaves_its_sibling_chain_alone():
     assert [s["name"] for s in st.own(got, trail)] == ["assets-build", "assets-fetch"]
     sibling = ("autostart", "on_start", 0, "chains", 0, "steps")
     assert [s["name"] for s in st.own(got, sibling)] == ["deps-fetch"]
+
+
+def test_open_editor_refuses_an_origins_map_that_misses_a_spec():
+    """The pairing `render._entry_level` depends on, enforced rather than documented.
+
+    It reads "absent from `origins`" as "this path is inside an entry", so a
+    partial map would silently relabel a top-level row and make `_now` read
+    the open layer where it should read the resolved value — a wrong answer
+    printed confidently. `layers.resolve` is total (pinned in
+    `test_config_edit_layers.py`); anything else is a session that cannot
+    exist, and gets said so at construction.
+    """
+    layer_set = _layers()
+    origins = dict(resolve(SPECS, layer_set))
+    del origins[("ssh", "enabled")]
+
+    with pytest.raises(ValueError, match="ssh.enabled"):
+        st.open_editor(
+            layer="repo",
+            specs=SPECS,
+            origins=origins,
+            layer_raw=raw_for(layer_set, "repo"),
+        )
