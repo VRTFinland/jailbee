@@ -232,12 +232,13 @@ accept a picker when `NAME` is omitted with a TTY.
 The autostart run, not the boot itself, is what makes these slow, so
 `--background` is worth reaching for on a container with heavy `on_start`
 work. The job appears in `jailbee ls` as `starting` → `autostart:<stage>`
-(`<stage>` names whichever stage the run is on), and `jailbee shell`/`tmux`
-on it waits until the container is up and attachable rather than until
-every stage has finished — see [`jailbee autostart
-status|cancel`](#jailbee-autostart-statuscancel-name) below for exactly
-when that is. A second background boot of the same container is refused
-while the first is still live.
+(`<stage>` names whichever stage a *detached* continuation is on — while
+still blocking it's just `autostart`), and `jailbee shell`/`tmux` on it
+waits only until the container is up and about to start running
+`on_start` — the same point the phase first reads `autostart` — not until
+any stage, blocking or detached, has actually finished. A second
+background boot of the same container is refused while the first is still
+live.
 
 `jailbee restart` reboots a running container and falls back to a plain start
 on a stopped one; `jailbee start` never reboots — on a running container it
@@ -265,11 +266,13 @@ Inspect and stop a container's **detached** autostart run — the part of
 | `jailbee autostart cancel <name>` | SIGTERM to the supervisor, which unwinds the stage it's on: best-effort interrupt of the step in flight (does not wait for it to die), the stage's optional mounts come off, its network mode is restored (compare-and-swap — a mode you set by hand meanwhile stands), and `user.jailbee.autostart_in_progress` is cleared. The job row survives, marked failed with the cancellation as its reason, until `jailbee job clear` drops it. Refuses when the worker is already gone, naming `jailbee job clear` instead. |
 
 `jailbee ls`'s **JOB** column renders a live detached run as
-`autostart:<stage>` (`autostart:<stage> (worker gone)` once the supervisor
-has died); `jailbee job log <name> [--follow]` prints its output — there is
-no separate `jailbee autostart log`. `jailbee net <mode> <name>` only warns
-while a detached run is live, since its own restore is compare-and-swap and
-therefore cannot undo a mode you just chose.
+`autostart:<stage>`. Once the supervisor has died the `autostart:` prefix
+drops — it reads the bare `<stage> (worker gone)`, the stage it was on when
+it died, not `autostart:<stage> (worker gone)`. `jailbee job log <name>
+[--follow]` prints its output — there is no separate `jailbee autostart
+log`. `jailbee net <mode> <name>` only warns while a detached run is live,
+since its own restore is compare-and-swap and therefore cannot undo a mode
+you just chose.
 
 ### `jailbee destroy [NAME]`
 

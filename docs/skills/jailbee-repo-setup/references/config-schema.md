@@ -536,7 +536,7 @@ does not refuse while a detached run is in flight (`stop`/`restart` do),
 and on `jailbee new --background` autostart GUI apps launch after every
 deferred stage finishes rather than right at the hand-off.
 
-**Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the JailBee repo. (Known gap: that comparison currently expects the flat step form — a branch or checkout using the stage form with a `network: loose` or `mounts`-bearing stage makes it error instead of diffing.)
+**Source, in clone mode:** `jailbee new <branch>` reads this block from the target branch's committed `.jailbee/config.yaml` at the commit it clones, not from the operator's checkout. Every other key in this document stays operator-controlled regardless of branch. A branch step that widens `network` to `loose` prompts for confirmation (`--yes` skips); no committed config, or one that fails validation, falls back to the operator's own autostart. See `docs/config.md#where-does-the-autostart-config-come-from` in the JailBee repo.
 
 ## `push`
 

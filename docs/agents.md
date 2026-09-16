@@ -79,19 +79,24 @@ is placed into `on_start` for you — you never write it by hand. In the
 **stage form** of `autostart` (see [Stages and chains](config.md#stages-and-chains)),
 `jailbee` uses a reserved stage named `agents` to hold them: write one
 yourself to control its position, `network`, `mounts` or `detach`, or leave
-it out and `jailbee` inserts it at the latest point that still runs before
-the session is handed to you. Full rules — what an explicit `stage: agents`
-may and may not carry, and why it's a no-op under `on_create` — live in
+it out and `jailbee` inserts it at the latest point *within `on_start`*
+that still runs before the session is handed to you. That positioning is
+moot, though, once `on_create` has already deferred anything: the whole of
+`on_start`, agents stage included, then runs after the hand-off regardless
+of where it sits or what its own `detach` says. Full rules — what an
+explicit `stage: agents` may and may not carry, why it's a no-op under
+`on_create`, and the `on_create`-already-detached case — live in
 [The reserved `agents` stage](config.md#the-reserved-agents-stage). In the
 legacy flat form there is no reserved slot: a step literally named `agents`
 is just an ordinary step, and the generated steps are appended after all of
 your own `on_start` steps regardless.
 
 Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
-on is chosen **by name** — the last enabled agent, `claude` sorted last
-among them — not by tmux's own "most recently created" default. So the
-`agents` stage's position only controls *when* the agent's window comes up
-relative to the hand-off, not which window ends up focused once you're in.
+on is chosen **by name** — the last *autostarting* agent (one with
+`autostart: true`), `claude` sorted last among them — not by tmux's own
+"most recently created" default. So the `agents` stage's position only
+controls *when* the agent's window comes up relative to the hand-off, not
+which window ends up focused once you're in.
 
 ## 2. Enabling a preset
 

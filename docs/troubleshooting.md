@@ -137,8 +137,10 @@ forever), but you're not sure the container's autostart actually finished —
 or it clearly didn't.
 
 1. **`jailbee ls`'s JOB column.** `autostart:<stage>` means a detached
-   supervisor is on that stage right now; `autostart:<stage> (worker gone)`
-   means it died mid-stage and left the record behind.
+   supervisor is on that stage right now. Once the supervisor has died, the
+   `autostart:` prefix drops and it reads just `<stage> (worker gone)` —
+   the bare stage name it was on when it died, not `autostart:<stage>
+   (worker gone)`.
 2. **`jailbee autostart status <name>`.** One row per step, grouped by
    stage. A step shown as `running` under a live worker is genuinely in
    flight; the same state under a dead one is rendered `interrupted` — it

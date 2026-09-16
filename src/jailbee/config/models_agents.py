@@ -121,8 +121,8 @@ class AutostartChain(BaseModel):
         min_length=1,
         description=(
             "Identifier for this chain, unique within its stage. Chains in one stage run "
-            "in parallel, so the name is what `jailbee autostart status` reports progress "
-            "against."
+            "in parallel. `jailbee autostart status` reports progress by stage and step, "
+            "not by this name."
         ),
     )
     steps: list[AutostartStep] = Field(

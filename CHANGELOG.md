@@ -84,6 +84,12 @@ before editing `## Unreleased`.
   only when the histories have actually diverged. The `Merge branch 'X' from
   container Y` line is therefore absent when the host branch was simply behind.
   Set `pull.ff: never` to keep the old behaviour, or pass `--no-ff` for one run.
+- **A flat `autostart` list now switches the network profile once per run
+  of consecutive steps sharing a mode, not once per step.** Existing
+  `on_create`/`on_start` lists are internally folded into stages behind the
+  scenes; a run of several `network: loose` steps in a row previously
+  swapped strict↔loose around each one and now swaps once for the whole
+  run. Ordering and per-step `mounts` are unaffected.
 
 ### Fixed
 

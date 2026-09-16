@@ -1286,6 +1286,13 @@ A stage's **chains** run in parallel with each other; a chain's own
 one depends on the other; put them in different chains (or different
 stages) when they don't.
 
+**When one chain's step fails** (and that step doesn't set
+`continue_on_error`), every chain stops *launching* further steps —
+not just the one that failed — but steps already in flight in other
+chains are left to run to completion rather than interrupted; a
+half-finished install is worse than a finished one. The stage then fails
+once those in-flight steps have exited.
+
 ```yaml
 - stage: name              # required, unique within the trigger
   network: null            # strict|loose|null — switched once for the whole stage
@@ -1323,9 +1330,11 @@ is exactly:
 ```
 
 A stage that sets both `chains` and `steps` is a config error. A chain is
-`{name, steps}` — `name` unique within its stage (it's what `jailbee
-autostart status` reports progress against), `steps` the same Step schema
-as the flat form (below), run in list order.
+`{name, steps}` — `name` unique within its stage, `steps` the same Step
+schema as the flat form (below), run in list order. `jailbee autostart
+status` reports progress by stage and step, not by chain — a chain's name
+exists to keep chains apart in the config and doesn't appear in that
+output.
 
 Each step is `{name, run, ...}`:
 
@@ -1406,16 +1415,26 @@ names are user data, not a namespace `jailbee` claims.
   falls inside that deferred region like any other stage after the
   boundary, and its own `detach` (if set) changes nothing.
 - **Left unwritten**, `jailbee` inserts it itself at the *effective attach
-  boundary* — immediately before whatever would otherwise be deferred, or
-  at the very end of the trigger's stages when nothing detaches. That is
-  the latest point that still runs before the session is handed over, so
-  the agent's tmux window exists by the time you attach.
+  boundary within `on_start`* — immediately before whatever `on_start`
+  stage would otherwise be deferred, or at the very end of `on_start`'s
+  stages when nothing in `on_start` itself detaches. Within `on_start`
+  alone, that is the latest point that still runs before the session is
+  handed over.
 
-Either way, the agent stage's steps only ever come from `on_start` —
-`on_create` never launches an agent, so an explicit `stage: agents` written
-under `on_create` has nothing to fill it with and is dropped entirely (if
-it carried `detach: true`, that flag moves to whichever stage takes its
-place, so the split point you drew doesn't silently vanish).
+**If `on_create` already deferred something, none of the above applies.**
+A `detach: true` stage in `on_create` (or `--no-wait` splitting it) hands
+the session over before `on_start` is even reached in the foreground —
+`on_start` then runs *entirely* in the background supervisor that resumes
+it, agents stage included, regardless of where you put it or what its own
+`detach` says. In that case the agent's tmux window is created shortly
+*after* you attach, not before — the same as every other `on_start` stage.
+
+An explicit `stage: agents` is dropped entirely whenever there is nothing
+to fill it with — not only under `on_create` (which never launches an
+agent at all), but also under `on_start` when no agent currently has
+`autostart: true`. If the dropped stage carried `detach: true`, that flag
+moves to whichever stage takes its place, so the split point you drew
+doesn't silently vanish.
 
 Which window `jailbee tmux` (or `--attach tmux`) lands on is chosen **by
 name**, not by tmux's own "most recently created" default — so the agent
@@ -1438,9 +1457,13 @@ the level that now owns both.
 -      network: loose
 ```
 
-`jailbee config validate` reports a **non-fatal deprecation** for a flat
-step that still sets `network` or `mounts`, naming the (implicit) enclosing
-stage's key to move it to. Removal is planned for **2.0.0**.
+A flat step that still sets `network` or `mounts` loads and runs exactly
+as before — `jailbee new`, `jailbee apply` and every other command are
+unaffected. `jailbee config validate` alone reports it, naming the
+(implicit) enclosing stage's key to move it to; that reported issue still
+makes `jailbee config validate` itself exit non-zero, so a CI check gated
+on it fails until you move the key, even though nothing else does. Removal
+is planned for **2.0.0**.
 
 #### Legacy compatibility: the flat form
 
@@ -1475,13 +1498,6 @@ runs the branch's startup steps. Every other key (mounts, network defaults,
 `cpu`/`memory`, `container_prefix`, and host-level keys like
 `docker_registry_mirror`, `ls`, `dashboard`) still comes from the checkout you
 run `jailbee new` from; a branch cannot change how the operator runs containers.
-
-> **Known gap: the diff below assumes the flat step form.** It compares
-> entries by a `.name` attribute that only `Step` has; a checkout or branch
-> whose `on_create`/`on_start` uses the stage form, and that could widen
-> access (a stage setting `network: loose` or `mounts`), currently makes
-> `jailbee new` error instead of rendering the diff. Stick to the flat form
-> for any trigger you rely on this comparison for until this is fixed.
 
 If the branch's autostart deviates from your checkout's, `jailbee new` prints a
 compact diff naming what it read from — the branch ref (`refs/heads/feat/x`)

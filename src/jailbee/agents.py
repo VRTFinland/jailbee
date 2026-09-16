@@ -81,8 +81,10 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
 def enabled_agent_specs(cfg: Config) -> list[AgentSpec]:
     """Specs for every enabled agent: others by name, then `claude` last.
 
-    `claude` last preserves today's tmux behaviour — its window is the
-    most-recently-created one, which is what `jailbee tmux` focuses.
+    `claude` last preserves today's tmux behaviour: `_attach_tmux` selects
+    the *last* generated launch step's window by name
+    (`tmux.select_window`), so whichever spec this function orders last is
+    the one `jailbee tmux` lands in — not tmux's own creation-order default.
 
     A single sorted pass over `cfg.agents`, keyed on `n == "claude"` to put
     claude at the end, rather than one pass for the other agents plus a

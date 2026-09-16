@@ -258,8 +258,10 @@ def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
 
     Appended (not prepended) to on_start so user steps finish first, and
-    ordered with `claude` last so it stays the most-recently-created window —
-    `jailbee tmux` focuses the last one.
+    ordered with `claude` last (see `agents.enabled_agent_specs`) because
+    `_attach_tmux` selects the *last* one of these by name
+    (`tmux.select_window`) when it lands you in the session — not because
+    tmux itself would otherwise focus the most-recently-created window.
 
     Each step's network is left unset (`None`): the agent's egress hosts
     are already folded into `effective_egress_allow()` when the agent is
@@ -322,9 +324,10 @@ def run_autostart(
     autostart-driven ``strict → loose → strict`` round-trip.
     """
     # The synthetic per-agent steps (empty when no agent has autostart on)
-    # are the planner's to place — claude sorts last so its window is the
-    # most-recently-created and `jailbee tmux` lands in it. The
-    # github-token step is NOT injected here: it's infrastructure, not a
+    # are the planner's to place — claude sorts last (`enabled_agent_specs`)
+    # because `_attach_tmux` selects the last one of these by name when it
+    # lands you in the session. The github-token step is NOT injected here:
+    # it's infrastructure, not a
     # user autostart command, so it's written by ``inject_github_token``
     # independently of --no-autostart.
     agent_steps = agent_autostart_steps(cfg) if trigger == AutostartTrigger.ON_START else []

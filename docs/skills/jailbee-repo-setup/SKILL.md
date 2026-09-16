@@ -104,7 +104,10 @@ container:
 
 For an emulator inside the container instead, add `host_devices: [{ path: /dev/kvm }]`.
 
-For mounts only some containers need (e.g. AWS for ECR pulls during a specific autostart step), use `optional_mounts` and reference them from the step:
+For mounts only some containers need (e.g. AWS for ECR pulls during
+provisioning), use `optional_mounts` and attach one from the enclosing
+autostart **stage** — a stage owns its mounts for the whole time its work
+runs, not an individual step (see [`autostart`](references/config-schema.md#autostart)):
 
 ```yaml
 optional_mounts:
@@ -116,9 +119,11 @@ optional_mounts:
 
 autostart:
   on_create:
-    - name: docker-login
-      run: "aws ecr get-login-password | docker login --password-stdin ..."
+    - stage: docker-login
       mounts: [aws]
+      steps:
+        - name: login
+          run: "aws ecr get-login-password | docker login --password-stdin ..."
 ```
 
 ### `host_ports` — forwarding a host TCP/UDP service into every container
@@ -188,17 +193,28 @@ The default network mode is `strict`, which blocks everything except what's list
 
 **Do NOT auto-add `github.com`.** That's a deliberate design choice — strict mode keeps `git push` blocked so unattended agents can't surprise-push. The user switches to loose mode (`jailbee net loose <name>`) when they actually want to push or fetch.
 
-If the user installs deps with `pnpm/uv/cargo` at *autostart* time (not at runtime), the autostart step can switch network per-step:
+If the user installs deps with `pnpm/uv/cargo` at *autostart* time (not at
+runtime), give the install its own **stage** with `network: loose` — a
+stage switches the profile once for everything in it and restores it on
+exit, so a later stage is back to strict without saying so:
 
 ```yaml
 autostart:
   on_create:
-    - name: install-deps
-      run: "uv sync"
-      network: loose          # only for this step
-    - name: build
-      run: "make build"       # back to strict (defaults)
+    - stage: install-deps
+      network: loose            # only for this stage
+      steps:
+        - name: install-deps
+          run: "uv sync"
+    - stage: build
+      steps:                    # network: null (default) — back to strict
+        - name: build
+          run: "make build"
 ```
+
+Do **not** put `network`/`mounts` on an individual step inside a stage —
+`jailbee config validate` (and every other command that loads the config)
+rejects that; those two keys only exist on the stage now.
 
 ### `golden.stacks` — pin the version and stage the runtime in one field
 
@@ -266,10 +282,13 @@ rejects that combination with a `ConfigError`.
 `on_create` runs once when `jailbee new <name>` provisions the container. `on_start` runs every time the container goes stopped→running (including on the *initial* `jailbee new`, after `on_create`).
 
 Rule of thumb:
-- **`on_create`**: one-time setup. `uv sync`, `pnpm install`, `make dev-env`, DB initialisation. Often needs `network: loose` because strict-mode `egress_allow` rarely includes every package mirror.
+- **`on_create`**: one-time setup. `uv sync`, `pnpm install`, `make dev-env`, DB initialisation. Often needs a `network: loose` **stage** because strict-mode `egress_allow` rarely includes every package mirror.
 - **`on_start`**: recurring launches. Backend dev server, frontend hot-reload, watchers. Usually `background: true` so the step finishes immediately and the process keeps running in a detached tmux window.
 
-A typical pattern:
+A typical pattern, written in the stage form (see
+[`autostart`](references/config-schema.md#autostart) for the full
+stage/chain schema — write new configs this way, not the legacy flat list
+of steps):
 
 ```yaml
 jetbrains:
@@ -281,14 +300,18 @@ browsers:
 autostart:
   step_timeout: 600
   on_create:
-    - name: install-deps
-      run: "pnpm install"
-      network: loose
+    - stage: install-deps
+      network: loose        # the whole stage runs loose; restored on exit
+      steps:
+        - name: install-deps
+          run: "pnpm install"
   on_start:
-    - name: dev
-      run: "pnpm dev"
-      working_dir: frontend
-      background: true
+    - stage: dev
+      steps:
+        - name: dev
+          run: "pnpm dev"
+          working_dir: frontend
+          background: true
 ```
 
 > `jetbrains.autostart` and `browsers.<name>.autostart` (and, for a plain
@@ -413,13 +436,20 @@ jailbee config show             # print merged effective config (sanity check)
 jailbee doctor                  # host-level (incus running, bridges, uid delegation, …)
 ```
 
-`jailbee config validate` will reject:
+These checks run on **every** config load, not only `jailbee config
+validate` — `jailbee new`, `jailbee ls`, `jailbee apply`, all of them fail
+the same way on a bad config. `jailbee config validate` is just the
+fastest way to see the error without doing anything else. Rejected:
 - Unknown YAML keys (the schema is fail-closed)
 - Bad `container_prefix` (regex mismatch)
 - Invalid `egress_allow` entries
 - Reserved `provision_env` keys
-- Duplicate autostart step names within a trigger
-- Non-existent `optional_mounts` referenced from a step
+- A stage setting both `chains` and `steps`, or a step inside a stage
+  setting `network`/`mounts` (move them to the enclosing stage)
+- Duplicate autostart stage names within a trigger, duplicate chain names
+  within a stage, or duplicate step names anywhere in one trigger
+- A step named the same as an autostarting agent's own tmux window
+- Non-existent `optional_mounts` referenced from a stage or (legacy) a step
 - Bad `host_ports` entries — name regex/length, an out-of-range port, a
   non-IP `host_address`/`container_address`, or a `direction`/`to_host`/
   `bind` key (only the to-container direction is configurable)
