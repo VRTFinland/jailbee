@@ -1574,11 +1574,12 @@ counterpart to compare against. Everything else a step controls (`run`, `env`,
 nothing beyond the code execution a cloned branch inherently has.
 
 In the stage form, `network` and `mounts` live on the stage — a step inside one
-may not carry either — so that is where the check reads them, and the ⚠ line
-names the stage (`on_start<warmup>`) rather than each of its steps. The two
-forms are still compared step by step underneath, so migrating a `loose` step
-into a `loose` stage is correctly *not* a widening: the same step ran `loose`
-before and after.
+may not carry either — so that is where both the diff and the ⚠ line name them
+(`on_start<warmup>`), rather than repeating them on each of the stage's steps.
+Underneath, the two forms are matched step by step and compared on the mode and
+mounts each step *effectively* runs with. So moving an unchanged `loose` step
+into a `loose` stage is neither a widening nor a reported change: the only line
+it produces is the new stage itself.
 
 `--yes`/`-y` accepts without asking (in addition to its original job of
 skipping the "branch already exists" prompt). `--no-autostart` skips the branch

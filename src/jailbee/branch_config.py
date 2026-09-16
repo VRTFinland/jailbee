@@ -193,13 +193,20 @@ def _declared_stages(
     return {_STAGE_KEY.format(trigger=trigger, name=s.stage): s for s in normalize_stages(entries)}
 
 
-def _chain_layout(stage: AutostartStage) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """Which chain each step runs in — the parallelism, without the step bodies.
+def _chain_layout(stage: AutostartStage) -> tuple[tuple[str, int], ...]:
+    """The stage's parallel shape: each chain's name and how many steps it runs.
 
     Read through `all_chains()`, so the `steps:` shorthand and an explicit
     single chain named `main` compare equal: they *are* the same stage.
+
+    Deliberately the *shape*, not the step names. Names here would make every
+    renamed step inside a stage add a `chains changed` line on top of the `+`/
+    `-` step lines that already say it — true but empty. The cost is that an
+    exchange of steps between two equally-sized chains is invisible, since a
+    plain move changes a count; that is an ordering change, container-internal
+    like `run`, and no privilege signal reads this.
     """
-    return tuple((c.name, tuple(s.name for s in c.steps)) for c in stage.all_chains())
+    return tuple((c.name, len(c.steps)) for c in stage.all_chains())
 
 
 def _stage_fields(host: AutostartStage, branch: AutostartStage) -> tuple[str, ...]:
@@ -230,12 +237,16 @@ class _Grant:
     - the label is the **stage**, because in the stage form the grant is the
       stage's: it holds for every chain it runs, and naming its five steps
       instead would be five lines about one decision.
+
+    `stepless` marks the one unit that has no step to match on, so its `key`
+    is its stage name after all — see `_stepless_counterpart`.
     """
 
     key: str
     label: str
     network: str | None
     mounts: tuple[str, ...]
+    stepless: bool = False
 
 
 def _grants(entries: list[AutostartStep] | list[AutostartStage], trigger: str) -> dict[str, _Grant]:
@@ -261,6 +272,7 @@ def _grants(entries: list[AutostartStep] | list[AutostartStage], trigger: str) -
                 label=stage_key,
                 network=stage.network,
                 mounts=tuple(stage.mounts),
+                stepless=True,
             )
         for step in steps:
             key = _STEP_KEY.format(trigger=trigger, name=step.name)
@@ -271,6 +283,82 @@ def _grants(entries: list[AutostartStep] | list[AutostartStage], trigger: str) -
                 mounts=tuple(stage.mounts) + tuple(step.mounts),
             )
     return grants
+
+
+def _step_value(step: AutostartStep, grant: _Grant, field: str) -> object:
+    """The value to compare one step field on, across both forms.
+
+    `network` and `mounts` come from the step's grant — the stage's in the
+    stage form, the step's own in the flat form — because a step inside a
+    stage may not carry either, so its stored value says nothing about what it
+    actually runs with. Every other field is the step's own.
+    """
+    if field == "network":
+        return grant.network
+    if field == "mounts":
+        return grant.mounts
+    return getattr(step, field)
+
+
+def _step_fields(
+    host: AutostartStep,
+    branch: AutostartStep,
+    host_grant: _Grant,
+    branch_grant: _Grant,
+    *,
+    stage_owned: bool,
+) -> tuple[str, ...]:
+    """The step fields that differ, at the level that owns each of them.
+
+    `network` and `mounts` are the two that move between levels:
+
+    - they are compared *as they take effect* (`_step_value`), never as
+      stored. A step inside a stage may not carry either, so its stored value
+      says nothing about what it runs with — and a raw diff would announce a
+      `network` change for a step moved unchanged into a stage carrying the
+      same mode, which is exactly the flat→stage migration this feature
+      exists to enable.
+    - they are not reported here at all once the branch declares stages
+      (`stage_owned`): the stage owns them and the stage level names them, so
+      repeating it on every step of that stage is a double-report the flat
+      form does not have. The grant level still measures them in both forms —
+      no privilege signal depends on this choice, only the rendering does.
+    """
+    skip = {"name", "network", "mounts"} if stage_owned else {"name"}
+    return tuple(
+        name
+        for name in type(branch).model_fields
+        if name not in skip
+        and _step_value(host, host_grant, name) != _step_value(branch, branch_grant, name)
+    )
+
+
+def _stepless_counterpart(host_grants: dict[str, _Grant], branch: _Grant) -> _Grant | None:
+    """A host stepless stage granting exactly what `branch` grants, if any.
+
+    Every other unit is matched by step name, which survives a rename of the
+    stage around it. A stepless stage has no step, so its key is its own name —
+    and renaming one would otherwise read as a brand-new stage that both widens
+    and attaches mounts. `attached_mounts` is the always-prompts, default-no
+    path that aborts `jailbee new` with nothing created, so a cosmetic rename
+    would block container creation.
+
+    The fallback is deliberately an *exact* grant match: same network, same
+    mounts (order-insensitive — reordering a mount list grants nothing). A
+    rename that also changes what the stage grants finds no counterpart and is
+    reported in full. The structural `+`/`-` stage lines are still printed
+    either way, exactly as for a renamed stage that does have steps.
+    """
+    return next(
+        (
+            g
+            for g in host_grants.values()
+            if g.stepless
+            and g.network == branch.network
+            and sorted(g.mounts) == sorted(branch.mounts)
+        ),
+        None,
+    )
 
 
 def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
@@ -306,9 +394,11 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
             if stage_fields:
                 changed.append(StepChange(name=key, fields=stage_fields))
 
-        # Step level: unchanged, and unchanged by the form — in the stage form
-        # a step's `network`/`mounts` are always unset, so nothing here can
-        # double-report what the stage level already said.
+        host_grants = _grants(host_entries, trigger)
+        branch_grants = _grants(branch_entries, trigger)
+
+        # Step level: the work a step does — plus `network`/`mounts` while the
+        # branch keeps them on its steps. See `_step_fields`.
         host_steps = _steps_by_name(host_entries, trigger)
         branch_steps = _steps_by_name(branch_entries, trigger)
         for key in branch_steps:
@@ -321,19 +411,21 @@ def diff_autostart(host: Autostart, branch: Autostart) -> AutostartDeviation:
             h_step = host_steps.get(key)
             if h_step is None:
                 continue
-            fields = tuple(
-                name
-                for name in type(b_step).model_fields
-                if name != "name" and getattr(h_step, name) != getattr(b_step, name)
+            fields = _step_fields(
+                h_step,
+                b_step,
+                host_grants[key],
+                branch_grants[key],
+                stage_owned=_is_stage_form(branch_entries),
             )
             if fields:
                 changed.append(StepChange(name=key, fields=fields))
 
         # Grant level: the reach outside the container, matched per step.
-        host_grants = _grants(host_entries, trigger)
-        branch_grants = _grants(branch_entries, trigger)
         for key, b_grant in branch_grants.items():
-            h_grant = host_grants.get(key)
+            h_grant = host_grants.get(key) or (
+                _stepless_counterpart(host_grants, b_grant) if b_grant.stepless else None
+            )
             # Widening: loose on the branch that the host did not already
             # grant. Covers a changed unit and a brand-new one alike.
             if b_grant.network == "loose" and (h_grant is None or h_grant.network != "loose"):

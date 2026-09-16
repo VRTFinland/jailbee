@@ -986,3 +986,150 @@ def test_format_escalation_names_a_stage(mocker, tmp_path):
     )
 
     assert "on_start<warmup>" in format_escalation(verdict)
+
+
+# --- fix round 1: the two over-reporting directions ------------------------
+
+
+def test_moving_an_unchanged_loose_step_into_a_loose_stage_is_silent():
+    """The flat→stage migration this feature exists to enable.
+
+    The step still runs `loose`; only where that is written moved. A raw
+    field diff would compare the flat step's `network: loose` against the
+    stage-form step's `None` and announce `network changed`.
+    """
+    host = Autostart(on_create=[_step("build", network="loose")])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.changed == ()
+    assert dev.widening_steps == ()
+    assert dev.added == ("on_create<setup>",)  # the stage itself is genuinely new
+
+
+def test_moving_an_unchanged_mounted_step_into_a_mounted_stage_is_silent():
+    host = Autostart(on_create=[_step("build", mounts=["aws"])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("build")], mounts=["aws"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.changed == ()
+    assert dev.attached_mounts == ()
+
+
+def test_the_reverse_migration_is_silent_too():
+    """Stage host, flat branch: effective values match, so nothing changed."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("build")], network="loose")])
+    branch = Autostart(on_create=[_step("build", network="loose")])
+
+    assert diff_autostart(host, branch).changed == ()
+
+
+def test_a_stages_network_is_named_once_not_once_per_step():
+    """The stage level says it; the steps inside it must not repeat it."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")])])
+    branch = Autostart(
+        on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="loose")]
+    )
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("network",))]
+
+
+def test_a_flat_branch_still_names_an_effective_network_change_per_step():
+    """Against a stage host, the flat branch keeps `network` on its steps —
+    so that is where the change is named, measured against what the host's
+    stage actually granted."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("a"), _step("b")], network="strict")])
+    branch = Autostart(on_create=[_step("a", network="strict"), _step("b", network="loose")])
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create[b]", ("network",))]
+    assert dev.widening_steps == ("on_create[b]",)
+
+
+def test_renaming_a_stepless_stage_is_not_a_widening():
+    """A stepless stage is keyed by its own name, having no step to match on.
+
+    Without an exact-grant fallback a cosmetic rename would report a widening
+    *and* an attached mount — and `attached_mounts` always prompts, defaulting
+    to no, which aborts `jailbee new` with nothing created.
+    """
+    host = Autostart(on_create=[_stage("open", network="loose", mounts=["aws"])])
+    branch = Autostart(on_create=[_stage("start", network="loose", mounts=["aws"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.widening_steps == ()
+    assert dev.attached_mounts == ()
+    # The rename itself is still reported — it is a real structural change.
+    assert dev.added == ("on_create<start>",)
+    assert dev.removed == ("on_create<open>",)
+
+
+def test_reordering_a_stepless_stages_mounts_is_not_an_attachment():
+    host = Autostart(on_create=[_stage("open", mounts=["aws", "m2"])])
+    branch = Autostart(on_create=[_stage("open-2", mounts=["m2", "aws"])])
+
+    assert diff_autostart(host, branch).attached_mounts == ()
+
+
+def test_a_stepless_rename_that_also_widens_is_still_caught():
+    host = Autostart(on_create=[_stage("open", network="strict", mounts=["aws"])])
+    branch = Autostart(on_create=[_stage("start", network="loose", mounts=["aws"])])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_create<start>",)
+
+
+def test_a_stepless_rename_that_also_attaches_a_mount_is_still_caught():
+    host = Autostart(on_create=[_stage("open", network="loose", mounts=["aws"])])
+    branch = Autostart(on_create=[_stage("start", network="loose", mounts=["aws", "m2"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.attached_mounts == ("aws", "m2")  # no counterpart at all, so both count
+    assert dev.widening_steps == ("on_create<start>",)
+
+
+def test_a_stepless_stage_does_not_absorb_a_stepped_stages_grant():
+    """The fallback only ever matches another *stepless* stage."""
+    host = Autostart(on_create=[_stage("work", steps=[_step("build")], network="loose")])
+    branch = Autostart(on_create=[_stage("open", network="loose"), _stage("work", steps=[_step("build")])])
+
+    assert diff_autostart(host, branch).widening_steps == ("on_create<open>",)
+
+
+def test_renaming_a_step_inside_a_stage_does_not_also_report_the_chains():
+    """The `+`/`-` step lines already say it; `chains changed` adds nothing."""
+    host = Autostart(on_create=[_stage("setup", steps=[_step("old")])])
+    branch = Autostart(on_create=[_stage("setup", steps=[_step("new")])])
+
+    dev = diff_autostart(host, branch)
+
+    assert dev.changed == ()
+    assert dev.added == ("on_create[new]",)
+    assert dev.removed == ("on_create[old]",)
+
+
+def test_moving_a_step_between_chains_is_still_reported():
+    """Shape, not names: a move changes a chain's step count."""
+    from jailbee.config import AutostartChain
+
+    def _two_chains(first: list[str], second: list[str]) -> AutostartStage:
+        return AutostartStage(
+            stage="setup",
+            chains=[
+                AutostartChain(name="one", steps=[_step(n) for n in first]),
+                AutostartChain(name="two", steps=[_step(n) for n in second]),
+            ],
+        )
+
+    host = Autostart(on_create=[_two_chains(["a", "b"], ["c"])])
+    branch = Autostart(on_create=[_two_chains(["a"], ["b", "c"])])
+
+    dev = diff_autostart(host, branch)
+
+    assert [(c.name, c.fields) for c in dev.changed] == [("on_create<setup>", ("chains",))]
