@@ -155,6 +155,29 @@ def test_config_validate_keeps_bracketed_text_in_a_validator_message(tmp_path) -
     assert "[a-z0-9][a-z0-9-]*" in result.stderr
 
 
+def test_config_validate_keeps_the_step_name_in_a_deprecation_warning(tmp_path) -> None:
+    """The runtime-issue list has the same bracket hazard as the fatal path.
+
+    `validate_runtime` names the offender in brackets —
+    `autostart.on_create[legacy].network`. Printed through `warn`, Rich reads
+    that as a style tag and deletes it, leaving
+    "autostart.on_create.network is deprecated" — which in a trigger holding
+    several steps points at none of them. `warn_plain` is what keeps it.
+    """
+    repo = _setup_repo_with_columns(
+        tmp_path,
+        "autostart:\n  on_create:\n    - name: legacy\n"
+        "      run: echo hi\n      network: loose\n",
+    )
+
+    result = CliRunner().invoke(
+        app, ["config", "validate", "--config", str(repo / ".jailbee" / "config.yaml")]
+    )
+
+    assert result.exit_code == 2, result.stdout
+    assert "autostart.on_create[legacy].network is deprecated" in result.stdout
+
+
 def test_config_validate_fails_on_a_repo_column_typo(tmp_path) -> None:
     """The repo-layer mirror of `test_config_validate_fails_on_a_global_column_typo`:
     ordinary loading (`load_config`) now recovers from a typo in a repo's

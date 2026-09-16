@@ -593,7 +593,15 @@ def config_validate(config: ConfigOption = None) -> None:
         return
 
     for issue in issues:
-        warn(issue)
+        # `warn_plain`, not `warn`: a runtime issue names the thing it is
+        # about in square brackets — `host_mounts[0].host`,
+        # `autostart.on_start[deps-fetch].network` — and Rich reads those as
+        # style tags and silently deletes them. The autostart deprecation
+        # notices then arrive as "autostart.on_create.network is
+        # deprecated", naming no step, which in a trigger with several is
+        # exactly the half of the message that matters. Same call
+        # `branch_config` already makes for the identical strings.
+        warn_plain(issue)
     raise typer.Exit(2)
 
 
