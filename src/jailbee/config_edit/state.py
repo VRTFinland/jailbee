@@ -18,6 +18,7 @@ from jailbee.config_edit.schema import (
     FieldKind,
     build_specs,
     dotted,
+    entry_model,
     is_drilldown,
     rebase,
     to_raw,
@@ -183,8 +184,14 @@ def screen(state: EditorState) -> Screen:
                 # prompt (`app.Editor.enter`) — there is no form to descend
                 # into, so the trail cannot go deeper than the map itself.
                 return Screen("collection", (), spec)
+            collection_path = prefix
             prefix = (*prefix, state.trail[i + 1])
-            pool = rebase(build_specs(spec.item_model), prefix)
+            # Per entry, not per field: a `list[A] | list[B]` collection
+            # (`autostart.on_start`) draws a step form or a stage form
+            # depending on what this entry — or, for a new one, its siblings
+            # — turned out to be.
+            item = entry_model(spec, own(state, prefix), own(state, collection_path))
+            pool = rebase(build_specs(item or spec.item_model), prefix)
             holder, entry_path = spec, prefix
             i += 2
             continue
