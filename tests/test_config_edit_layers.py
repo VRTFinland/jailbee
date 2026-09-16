@@ -540,3 +540,68 @@ def test_validate_entry_is_none_for_a_spec_with_no_item_model():
     )
 
     assert layers.validate_entry(spec, "anything at all") is None
+
+
+def _on_start_spec():
+    return next(s for s in repo_specs() if s.path == ("autostart", "on_start"))
+
+
+def test_validate_entry_identifies_a_two_shape_entry_from_the_list_it_is_in():
+    """The `collection` argument is what makes the Esc gate name the right field.
+
+    `autostart.on_start` is `list[AutostartStep] | list[AutostartStage]`, and
+    an entry holding only `network:` fits both models — both declare it — so
+    the entry itself is no evidence. Its siblings are. Without the third
+    argument the gate falls back to the first arm and tells a user halfway
+    through writing a *stage* that `name` is required, which is a field the
+    stage model does not have.
+    """
+    spec = _on_start_spec()
+    half_written = {"network": "loose"}
+    stages = [{"stage": "build", "chains": []}, half_written]
+
+    error = layers.validate_entry(spec, half_written, stages)
+
+    assert error is not None
+    assert error.startswith("stage: "), error
+
+
+def test_validate_entry_identifies_a_flat_step_from_its_siblings_too():
+    """The same list, in the legacy shape, must report the step's own field."""
+    spec = _on_start_spec()
+    half_written = {"network": "loose"}
+    steps = [{"name": "first", "run": "echo hi"}, half_written]
+
+    error = layers.validate_entry(spec, half_written, steps)
+
+    assert error is not None
+    assert error.startswith("name: "), error
+
+
+def test_validate_entry_reads_an_unambiguous_entry_without_its_siblings():
+    """A written `stage:` identifies itself, so the argument is optional."""
+    spec = _on_start_spec()
+
+    assert layers.validate_entry(spec, {"stage": "build", "chains": []}) is None
+
+
+def test_resolve_answers_for_every_spec(tmp_path):
+    """Totality, not coverage — `render._entry_level` now reads it as a fact.
+
+    A path absent from `origins` is taken to mean "this is a field inside an
+    entry", which is what lets a nested collection's help pane say
+    `set`/`default` instead of inventing a layer. `resolve` is what makes
+    that true: one key per spec, `Origin("default", ...)` when neither layer
+    supplies the value. A partial map would relabel top-level rows, so
+    `state.open_editor` refuses one — and this pins the producer so that
+    refusal can never fire on a real session.
+    """
+    _write(tmp_path / "global.yaml", "gpg:\n  enabled: true\n")
+    _write(tmp_path / "repo.yaml", "defaults:\n  cpu: 8\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    from jailbee.config_edit.schema import global_specs
+
+    for specs in (repo_specs(), global_specs()):
+        origins = layers.resolve(specs, got)
+        assert set(origins) == {s.path for s in specs}

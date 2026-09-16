@@ -632,3 +632,93 @@ def test_entry_model_is_the_item_model_for_an_ordinary_collection():
     spec = next(s for s in repo_specs() if s.path == ("host_mounts",))
 
     assert entry_model(spec, {"host": "/x"}) is HostMount
+
+
+def _mentions_model(annotation) -> bool:
+    """Whether a `BaseModel` subclass appears anywhere in this annotation.
+
+    Recursive because the model is rarely the annotation itself: it is the
+    item type of a list, the value type of a dict, one arm of a union, or
+    one of those inside another.
+    """
+    from jailbee.config_edit.schema import _is_model, _strip_annotated
+
+    ann = _strip_annotated(annotation)
+    if _is_model(ann):
+        return True
+    from typing import get_args
+
+    return any(_mentions_model(arg) for arg in get_args(ann))
+
+
+_MODEL_KINDS = {FieldKind.MODEL_LIST, FieldKind.MODEL_MAP, FieldKind.SUBMODEL}
+
+
+def test_every_model_bearing_field_classifies_to_a_model_kind():
+    """The closure `test_every_config_field_classifies` is not.
+
+    That one asserts only that `classify` does not *raise*, so it stayed
+    green the day `autostart.on_create` became
+    `list[AutostartStep] | list[AutostartStage]` and started classifying as
+    `SCALAR_UNION` — a known kind, and a text prompt where a drill-down
+    belongs. Degrading into a *wrong* kind is the failure mode that matters,
+    and it is invisible to a "does it classify" test.
+
+    A field whose annotation mentions a model has a form to draw, so it must
+    land on one of the three kinds that draw one. Nothing else in the schema
+    mentions a model: `OPAQUE`'s only instance (`ScratchConfig.config`,
+    `dict[str, object]`) mentions none, and neither do the scalar unions
+    (`net.after`, `golden.java`, `golden.node`). This is the general form of
+    the regression this task found, and it is what stops the next
+    model-bearing field from silently becoming a text prompt.
+    """
+    degraded = []
+    for model in walk_models(Config, GlobalConfig, ClaudeAgentConfig):
+        for name, info in model.model_fields.items():
+            if not _mentions_model(info.annotation):
+                continue
+            kind = classify(info.annotation).kind
+            if kind not in _MODEL_KINDS:
+                degraded.append(f"{model.__name__}.{name} -> {kind.value}")
+    assert degraded == []
+
+
+def test_the_model_bearing_closure_actually_has_fields_to_check():
+    """A vacuous closure passes forever. This pins that it is not one."""
+    checked = [
+        f"{model.__name__}.{name}"
+        for model in walk_models(Config, GlobalConfig, ClaudeAgentConfig)
+        for name, info in model.model_fields.items()
+        if _mentions_model(info.annotation)
+    ]
+    assert len(checked) > 10
+    assert "Autostart.on_start" in checked
+
+
+def test_an_optional_union_of_model_lists_keeps_every_arm():
+    """`classify`'s single-arm branch must not drop `item_models`.
+
+    It rebuilds `Classified` field by field, so a field added to that
+    dataclass is lost there by construction unless it is passed on. No
+    config field has this shape today — `A | B | None` flattens, so a union
+    of model lists reaches the multi-arm branch instead — but wrapping the
+    union in an `Annotated` (which pydantic does all over) stops the
+    flattening and routes it straight through the branch that would drop it.
+    Losing `item_models` there would silently take the collection back to a
+    single-shape one: `entry_model` would stop discriminating and every
+    entry would draw the first arm's form.
+    """
+    from typing import Annotated
+
+    class _A(BaseModel):
+        a: int = 0
+
+    class _B(BaseModel):
+        b: int = 0
+
+    result = classify(Annotated[list[_A] | list[_B], "meta"] | None)
+
+    assert result.kind is FieldKind.MODEL_LIST
+    assert result.optional is True
+    assert result.item_model is _A
+    assert result.item_models == (_A, _B)
