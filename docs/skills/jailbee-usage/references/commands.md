@@ -21,7 +21,7 @@ Common conventions:
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`)](#setup--host)
 - [Config (`config show|validate|init|edit`)](#config)
-- [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`)](#create--lifecycle)
+- [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
 - [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
@@ -171,6 +171,8 @@ use `jailbee git retarget`.
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
 | `--background` / `-b` | Provision detached; return immediately. Track via `jailbee ls` JOB column, or `jailbee job ls`. Overrides `new.background`. `--no-background` forces foreground. Can't combine with `--attach shell`/`--attach tmux`, `--tmux`, or `--shell`, which force foreground on their own; `--attach none` / `--no-attach` are fine to combine. The ref resolution (incl. autofetch) and the branch-autostart check run **in the foreground first**, so a confirmation is asked in your terminal rather than declined by the stdin-less worker; declining creates nothing. With no TTY, pass `--yes`. |
 | `--attach <mode>` / `--tmux` / `--shell` / `--no-attach` | What to do once the container is up: `--attach shell\|tmux\|none`, or the `--tmux` / `--shell` shorthands. Overrides the `after_new` config key. All four are mutually exclusive. `--attach shell`/`--attach tmux` (and the `--tmux`/`--shell` shorthands) also force foreground provisioning, so `--tmux` works in a repo with `new.background: true` without adding `--no-background`; `--attach none` / `--no-attach` don't need to, since there's nothing to attach to. `--tmux` lands in the autostart tmux session (created on demand, and focused on the `claude` window when `claude.autostart` is set). |
+| `--wait` | Run every `autostart` stage in the foreground, ignoring any `detach: true` (the pre-1.4 behaviour). Mutually exclusive with `--no-wait`. |
+| `--no-wait` | Run only the first `autostart` stage before handing the session over; every later stage runs in the background regardless of the config's own `detach:`. Mutually exclusive with `--wait`. |
 
 Clone source: defaults to the **upstream** tip (`origin/<default>`), controlled by
 `new.clone_from` (`origin`|`local`) and `new.autofetch`. Submodules are brought
@@ -213,24 +215,61 @@ See [Configuration](../../../config.md#where-does-the-autostart-config-come-from
 
 ### `jailbee start|stop|restart [NAME]`
 
-`start` and `restart` re-run autostart (`on_start` steps). `stop` halts. All
+`start` and `restart` re-run autostart (`on_start`). `stop` halts. All
 accept a picker when `NAME` is omitted with a TTY.
 
 | Flag (`start` / `restart`) | Effect |
 |---|---|
 | `--no-autostart` | Boot only — no `on_start` steps. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
 | `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
+| `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
+| `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |
+
+| Flag (`stop`) | Effect |
+|---|---|
+| `--force` | Pull the plug instead of a clean shutdown, and skip the check for a detached autostart run still in flight — that run is cut off mid-step. |
 
 The autostart run, not the boot itself, is what makes these slow, so
 `--background` is worth reaching for on a container with heavy `on_start`
-steps. The job appears in `jailbee ls` as `starting` → `autostart`, and
-`jailbee shell`/`tmux` on it waits until the container is up (the `autostart`
-phase) rather than until every step has finished. A second background boot of
-the same container is refused while the first is still live.
+work. The job appears in `jailbee ls` as `starting` → `autostart:<stage>`
+(`<stage>` names whichever stage the run is on), and `jailbee shell`/`tmux`
+on it waits until the container is up and attachable rather than until
+every stage has finished — see [`jailbee autostart
+status|cancel`](#jailbee-autostart-statuscancel-name) below for exactly
+when that is. A second background boot of the same container is refused
+while the first is still live.
 
 `jailbee restart` reboots a running container and falls back to a plain start
 on a stopped one; `jailbee start` never reboots — on a running container it
 fails, rather than quietly restarting it.
+
+**Guard against a detached run.** `stop` refuses while a container's
+autostart is still running in a detached supervisor, naming
+`jailbee autostart cancel` (`--force` skips the check, at the cost of
+cutting the run off mid-step). `restart` refuses the same way and has
+**no** `--force` escape — a restart also stops the container first, so it
+carries the identical exposure; cancel the run before retrying. Neither
+guard fires for a run that is already blocking the foreground (nothing can
+race a stage the CLI itself is waiting on).
+
+### `jailbee autostart status|cancel <name>`
+
+Inspect and stop a container's **detached** autostart run — the part of
+`on_create`/`on_start` that kept going in a background supervisor after a
+`detach: true` stage handed the session back (see
+[Configuration: Detaching a run](../../../config.md#detaching-a-run)).
+
+| Command | Notes |
+|---|---|
+| `jailbee autostart status <name>` | One row per step, grouped by stage, in the order the run reached them. A step recorded as started but never finished renders `running` while the worker is alive and `interrupted` once it's dead (it was cut off and will never report a result). Notes below the table point at `jailbee job clear` once the worker is gone. |
+| `jailbee autostart cancel <name>` | SIGTERM to the supervisor, which unwinds the stage it's on: best-effort interrupt of the step in flight (does not wait for it to die), the stage's optional mounts come off, its network mode is restored (compare-and-swap — a mode you set by hand meanwhile stands), and `user.jailbee.autostart_in_progress` is cleared. The job row survives, marked failed with the cancellation as its reason, until `jailbee job clear` drops it. Refuses when the worker is already gone, naming `jailbee job clear` instead. |
+
+`jailbee ls`'s **JOB** column renders a live detached run as
+`autostart:<stage>` (`autostart:<stage> (worker gone)` once the supervisor
+has died); `jailbee job log <name> [--follow]` prints its output — there is
+no separate `jailbee autostart log`. `jailbee net <mode> <name>` only warns
+while a detached run is live, since its own restore is compare-and-swap and
+therefore cannot undo a mode you just chose.
 
 ### `jailbee destroy [NAME]`
 
@@ -243,6 +282,11 @@ fails, rather than quietly restarting it.
 
 A container mid-background-destroy refuses attach (`jailbee shell` reports it's being
 destroyed).
+
+Unlike `stop`/`restart`, `destroy` has **no guard** against a detached
+autostart run — destroying a container mid-run tears it down out from
+under its own supervisor. Cancel first with `jailbee autostart cancel` if
+that matters to you.
 
 **The destroy guard.** Before the confirmation above, JailBee assesses what the
 destroy would discard: a dirty working tree, a changed submodule, commits
@@ -307,9 +351,12 @@ that path.
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
 **AHEAD ±** / **↑** (commits ahead of base, 3-dot/"PR view"), **MERGE** (see
 below). The **JOB** column shows in-flight and failed
-background-job phases (`jailbee new`/`jailbee destroy --background`); see `jailbee job`
-below to inspect or clear one. **TTL** appears only while a container is in
-loose mode. Stopped/mount-mode containers show `—` in the four git columns.
+background-job phases (`jailbee new`/`jailbee destroy --background`), and
+renders a detached autostart run as `autostart:<stage>` (`<stage>` is
+whichever stage the supervisor is on) — see `jailbee job` and `jailbee
+autostart status|cancel` below to inspect or clear one. **TTL** appears
+only while a container is in loose mode. Stopped/mount-mode containers show
+`—` in the four git columns.
 
 The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
 columns. **IP** and **MEM** are *not* in it — reach either from `ls` with
@@ -508,7 +555,7 @@ layout.
 | Command | Notes |
 |---|---|
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
-| `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job |
+| `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job — including a detached autostart supervisor's; there is no separate `jailbee autostart log` |
 | `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
 
 A `failed` job is a database record, not a container state: the container
@@ -1035,6 +1082,12 @@ its base."
 | `jailbee net refresh [--json]` | Re-resolve `egress_allow` hostnames, merge into the per-repo pool, push ACL + `/etc/hosts`. Useful after CDN IP rotation. |
 | `jailbee net status` | Refresh-timer health, registered repos, per-repo pool sizes, per-container loose expiry, and (new) an "Egress overrides" section listing every host-local override on this host. |
 | `jailbee net unregister [--repo <path>]` | Remove the repo from the refresh registry. `jailbee apply` re-registers. |
+
+Switching a container's network while a detached autostart run is live
+(`jailbee ls` showing `autostart:<stage>`) warns and proceeds rather than
+refusing — a detached stage's own restore is compare-and-swap, so it
+cannot clobber a mode you set by hand afterwards. See [`jailbee autostart
+status|cancel`](#jailbee-autostart-statuscancel-name) above.
 
 ### Egress overrides — `jailbee net egress`
 

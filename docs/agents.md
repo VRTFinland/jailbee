@@ -64,8 +64,34 @@ window is a different matter: that one is an autostart step, and
 > **`<agent>` and `install-<agent>` are effectively reserved tmux window
 > names.** Both windows are killed and re-created on each run, so an
 > `autostart.on_start` step you name `codex` or `install-codex` will have its
-> window killed out from under it when the `codex` agent runs. Nothing checks
-> for the collision — pick a different step name.
+> window killed out from under it when the `codex` agent runs. `jailbee
+> config validate` catches the `<agent>` collision — a step named the same
+> as an autostarting agent is a config error, since with parallel chains
+> (see [Stages and chains](config.md#stages-and-chains)) it could kill a
+> *running* sibling step, not just an idle window. `install-<agent>` is not
+> checked (installs run outside the trigger's own steps) — still pick a
+> different name.
+
+### Where the generated launch steps go
+
+Every autostarting agent's launch step (the `exec <command>` window above)
+is placed into `on_start` for you — you never write it by hand. In the
+**stage form** of `autostart` (see [Stages and chains](config.md#stages-and-chains)),
+`jailbee` uses a reserved stage named `agents` to hold them: write one
+yourself to control its position, `network`, `mounts` or `detach`, or leave
+it out and `jailbee` inserts it at the latest point that still runs before
+the session is handed to you. Full rules — what an explicit `stage: agents`
+may and may not carry, and why it's a no-op under `on_create` — live in
+[The reserved `agents` stage](config.md#the-reserved-agents-stage). In the
+legacy flat form there is no reserved slot: a step literally named `agents`
+is just an ordinary step, and the generated steps are appended after all of
+your own `on_start` steps regardless.
+
+Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
+on is chosen **by name** — the last enabled agent, `claude` sorted last
+among them — not by tmux's own "most recently created" default. So the
+`agents` stage's position only controls *when* the agent's window comes up
+relative to the hand-off, not which window ends up focused once you're in.
 
 ## 2. Enabling a preset
 

@@ -58,6 +58,12 @@ before editing `## Unreleased`.
 - **`jailbee git pull` gains `--ff`/`--no-ff`**, the same tri-state shape
   `jailbee git push --merge` already had, backed by a new `pull.ff` config key
   (`never`/`auto`/`always`, default `auto`). See the behaviour change below.
+- `autostart` stages and chains: a stage owns the container's network
+  profile and optional mounts, its chains run in parallel, and a stage
+  marked `detach: true` (plus everything after it) finishes in a
+  background supervisor while `jailbee new` / `jailbee start` hand you the
+  session. `jailbee autostart status` / `cancel` inspect and stop it;
+  `--wait` / `--no-wait` override the config per run.
 
 ### Changed
 
@@ -153,6 +159,11 @@ before editing `## Unreleased`.
   pre-1.0 `.gie/` directory**: the deprecation notice for that directory went
   to stdout, ahead of the JSON. It now goes to stderr, like every other
   advisory and like the matching notice for a legacy `chrome:` block.
+
+### Deprecated
+
+- `network` and `mounts` on an individual `autostart` step. Move them to
+  the enclosing stage; they are removed in 2.0.0.
 
 ## 1.3.1 - 2026-09-10
 

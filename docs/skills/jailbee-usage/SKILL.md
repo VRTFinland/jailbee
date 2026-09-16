@@ -159,7 +159,9 @@ Useful flags: `--no-autostart` (skip the repo's autostart steps — fastest, low
 risk), `--no-clone` (bare container, no repo), `--name` (override the derived
 container name), `--memory`/`--cpu`/`--net` (one-off resource/network overrides),
 `--background`/`-b` (provision detached, see below), `--tmux`/`--shell` (attach
-to tmux / a shell once it's up; forces foreground).
+to tmux / a shell once it's up; forces foreground), `--wait`/`--no-wait`
+(override an `autostart` stage's `detach: true` for this run — see
+[Background operations](#background-operations) below).
 
 Submodules come along automatically (offline) and round-trip through pull/push;
 the host repo's submodules must be initialised first or `jailbee new` hard-fails with
@@ -665,8 +667,13 @@ otherwise fight over.
   (one-off, e.g. `jailbee exec feat-foo -- pnpm test`). If `<name>` is omitted where a
   TTY exists, you get a picker.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
-  autostart, and both take `--background`/`-b` to detach that run (see
-  [Background operations](#background-operations)). `jailbee destroy <name>
+  autostart, and both take `--background`/`-b` to detach that run and
+  `--wait`/`--no-wait` to override a `detach: true` autostart stage for this
+  run (see [Background operations](#background-operations) and
+  [Autostart stages that keep running after the hand-off](#autostart-stages-that-keep-running-after-the-hand-off)).
+  `stop` refuses while a detached autostart run is in flight (`--force`
+  skips the check); `restart` refuses too, with no `--force` — cancel the
+  run with `jailbee autostart cancel <name>` first. `jailbee destroy <name>
   --force`, or `jailbee destroy --all` (whole repo,
   one confirmation), or `jailbee destroy` with no args for an interactive checkbox.
   Add `--background`/`-b` to detach. Before the usual confirmation, JailBee
@@ -763,8 +770,9 @@ jailbee restart feat-foo -b            # reboot + autostart, detached
 ```
 
 `jailbee ls` shows a **JOB** column with the live phase (`creating` → `cloning` →
-`autostart`, or `starting` → `autostart` for a boot, or `destroying` / `failed`);
-it clears when the container is ready.
+`autostart:<stage>`, or `starting` → `autostart:<stage>` for a boot, or
+`destroying` / `failed`) — `<stage>` is whichever autostart stage a
+detached run is currently on; it clears when the container is ready.
 A failed background job leaves the container intact for inspection (`jailbee shell`,
 then destroy). `jailbee shell`/`tmux` on an in-flight container **wait** for it to
 finish, then attach — for a create and a boot alike, the wait ends early at
@@ -785,6 +793,42 @@ acknowledged (the dashboards expose the same action as "Clear failed job").
 A failed *boot* record clears itself: the next `jailbee start`/`jailbee restart`
 that completes supersedes that boot and drops the row. A failed create's record
 does not — the container's setup never finished, so it stays until acknowledged.
+
+### Autostart stages that keep running after the hand-off
+
+`autostart`'s `on_create`/`on_start` can be written as **stages**, and a
+stage marked `detach: true` — plus every stage after it — runs in a
+background supervisor once the CLI would otherwise wait for it, so
+`jailbee new`/`start`/`restart` hand you the session after the *last
+blocking* stage rather than after every one. This applies whether or not
+`--background`/`-b` was used: it's a property of the config (or the
+`--wait`/`--no-wait` override below), independent of whether the whole
+command ran in the foreground or was backgrounded.
+
+- `jailbee autostart status <name>` — one row per step, grouped by stage,
+  for the run a detached supervisor is (or was) working through.
+- `jailbee autostart cancel <name>` — SIGTERM the supervisor; it unwinds
+  the stage it's on (interrupts the running step, best-effort; detaches the
+  stage's mounts; restores the network) before marking the job failed with
+  the cancellation as its reason. Refuses once the worker is already gone
+  — `jailbee job clear <name>` is what drops that record.
+- `--wait` / `--no-wait` on `new`/`start`/`restart` override `detach: true`
+  for one run: `--wait` runs every stage in the foreground (the pre-1.4
+  behaviour), `--no-wait` hands off after the first stage regardless of
+  what the config says. Mutually exclusive.
+- `jailbee stop` refuses while a detached run is in flight (`--force`
+  cuts it off along with the confirmation); `jailbee restart` refuses too,
+  with **no** `--force` escape hatch — cancel the run first. `jailbee net`
+  only warns and proceeds: a detached stage's own network restore is
+  compare-and-swap, so a mode you set by hand while it's running stands.
+- `jailbee destroy` does **not** guard against a detached run — destroying
+  mid-run tears the container down out from under its own supervisor.
+
+`jailbee job log <name> [--follow]` prints a detached run's supervisor
+output — there's no separate `jailbee autostart log`. See
+[Configuration](../../config.md#detaching-a-run) for the full stage/chain
+schema and [Security](../../security.md#autostart-and-the-network-exposure-window)
+for the network-exposure details.
 
 ## Reviewing a pull request
 

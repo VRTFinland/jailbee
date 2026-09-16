@@ -112,6 +112,38 @@ boundary — ACL plus whatever forwards are open — can be read off one
 command, and `jailbee doctor` separately reports `host_ports` entries that
 are declared in config but missing from a running container.
 
+### Autostart and the network exposure window
+
+An `autostart` stage that sets `network: loose` widens the container's
+egress for as long as *the whole stage* runs — every chain, every step in
+it — not just for one step's duration the way the deprecated step-level
+`network` did. A stage with several parallel chains genuinely needs this:
+nothing may flip the profile out from under a chain that's still running,
+so the switch and its restore bracket the stage as a unit. See [Stages and
+chains](config.md#stages-and-chains).
+
+`user.jailbee.autostart_in_progress` is what keeps `jailbee-net-refresh`'s
+TTL revert from racing a stage's own network swap (see
+[`loose_auto_revert`](config.md#loose_auto_revert)). For a **detached**
+stage the flag carries the supervisor's own pid rather than a bare `"1"`,
+so a supervisor that dies mid-run without reaching its own cleanup —
+killed, OOM, a host reboot — stops pinning the container loose:
+`jailbee-net-refresh` sees no live process behind the pid and reverts on
+schedule instead of leaving the container exposed indefinitely. A `"1"`
+written by an older `jailbee` (before the pid was tracked) still reads as
+held, so an in-flight run started before an upgrade isn't reverted out from
+under itself.
+
+Restoring the entry network mode after a detached stage is
+**compare-and-swap**: the supervisor re-reads the container's current mode
+first and only restores if it's still the mode *this stage* set. Run
+`jailbee net strict`/`jailbee net loose` by hand while a detached stage is
+mid-run and your choice stands — the stage's own restore, whenever it
+finally happens, silently no-ops instead of clobbering it (`jailbee net`
+itself only warns and proceeds; it does not refuse). The foreground path
+has no such race to guard against — nothing can run concurrently with a
+stage the CLI is blocking on — so it keeps the old unconditional restore.
+
 ## Egress overrides
 
 `jailbee net egress add` widens a container's, or a repo's, strict-mode
