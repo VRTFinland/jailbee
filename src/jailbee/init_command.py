@@ -22,6 +22,8 @@ from jailbee.profiles import (
     profile_names,
 )
 from jailbee.ssh_seed import seed_ssh_dir
+from jailbee.systemd import systemd_user_dir as systemd_user_dir
+from jailbee.systemd import write_if_changed
 from jailbee.tui import (
     ChooseCredentialFn,
     choose_shared_credential,
@@ -694,17 +696,6 @@ NET_REFRESH_TIMER = "jailbee-net-refresh.timer"
 NET_REFRESH_SERVICE = "jailbee-net-refresh.service"
 
 
-def systemd_user_dir() -> Path:
-    """Where the user's systemd units live.
-
-    Deliberately `~/.config`, not `$XDG_CONFIG_HOME`: systemd --user reads
-    the former unless *it* was started with the variable set, and jailbee
-    cannot know that. Shared with `setup_command`, whose probe must look
-    exactly where `install_systemd_units` writes.
-    """
-    return Path.home() / ".config" / "systemd" / "user"
-
-
 def install_systemd_units() -> None:
     """Install the singleton jailbee-net-refresh timer + service.
 
@@ -732,9 +723,9 @@ def install_systemd_units() -> None:
 
     service_rendered = service_template.replace("{jailbee_bin}", shlex.quote(jailbee_bin))
 
-    changed = _write_if_changed(
+    changed = write_if_changed(
         units_dir / NET_REFRESH_SERVICE, service_rendered
-    ) | _write_if_changed(units_dir / NET_REFRESH_TIMER, timer_template)
+    ) | write_if_changed(units_dir / NET_REFRESH_TIMER, timer_template)
     if changed:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
 
@@ -743,11 +734,3 @@ def install_systemd_units() -> None:
         check=True,
     )
     info(f"Enabled refresh timer: {NET_REFRESH_TIMER}")
-
-
-def _write_if_changed(path: Path, content: str) -> bool:
-    """Write ``content`` to ``path`` only if different. Returns True if written."""
-    if path.exists() and path.read_text() == content:
-        return False
-    path.write_text(content)
-    return True

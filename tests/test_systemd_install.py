@@ -7,9 +7,60 @@ of its own rather than the session-wide one.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
+import pytest
 from pytest_mock import MockerFixture
+
+
+def test_systemd_user_dir_ignores_xdg_config_home(
+    private_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.systemd import systemd_user_dir
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(private_home / "elsewhere"))
+
+    assert systemd_user_dir() == private_home / ".config" / "systemd" / "user"
+
+
+def test_write_if_changed_atomically_preserves_existing_mode(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.systemd import write_if_changed
+
+    target = tmp_path / "unit.service"
+    target.write_text("old")
+    target.chmod(0o640)
+    old_inode = target.stat().st_ino
+    fsync = mocker.spy(os, "fsync")
+    replace = mocker.spy(os, "replace")
+
+    assert write_if_changed(target, "new") is True
+
+    assert target.read_text() == "new"
+    assert target.stat().st_ino != old_inode
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    fsync.assert_called_once()
+    source, destination = replace.call_args.args
+    assert Path(source).parent == target.parent
+    assert Path(destination) == target
+
+
+def test_write_if_changed_leaves_identical_file_untouched(tmp_path: Path) -> None:
+    from jailbee.systemd import write_if_changed
+
+    target = tmp_path / "unit.service"
+    target.write_text("same")
+    old_inode = target.stat().st_ino
+
+    assert write_if_changed(target, "same") is False
+
+    assert target.stat().st_ino == old_inode
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_install_writes_units_to_xdg_config(
