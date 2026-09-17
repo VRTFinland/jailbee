@@ -14,13 +14,30 @@ from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import IssueGithubReadError, IssueSnapshot
 from jailbee.issue_manifest import (
-    MAX_MANIFEST_BYTES, MAX_MANIFESTS, MAX_OFFER_ACTIONS,
-    CommentAction, CreateAction, EditAction, ExistingIssue, IssueAction,
-    IssueManifest, IssueManifestError, LabelsAction, StateAction, parse_manifest,
+    MAX_MANIFEST_BYTES,
+    MAX_MANIFESTS,
+    MAX_OFFER_ACTIONS,
+    CommentAction,
+    CreateAction,
+    EditAction,
+    ExistingIssue,
+    IssueAction,
+    IssueManifest,
+    IssueManifestError,
+    LabelsAction,
+    StateAction,
+    parse_manifest,
 )
 from jailbee.outbox_io import (
-    ContainerIdentity, IssueJournal, JournalAction, JournalError, JournalStore,
-    container_identity, journal_key, proposal_digest, read_text_outbox,
+    ContainerIdentity,
+    IssueJournal,
+    JournalAction,
+    JournalError,
+    JournalStore,
+    container_identity,
+    journal_key,
+    proposal_digest,
+    read_text_outbox,
 )
 
 if TYPE_CHECKING:
@@ -92,8 +109,13 @@ class OutboxSnapshot:
 
     @property
     def manifest_names(self) -> tuple[str, ...]:
-        return tuple(sorted(name for name in self.files
-                            if name.endswith(".json") and not name.endswith(".progress.json")))
+        return tuple(
+            sorted(
+                name
+                for name in self.files
+                if name.endswith(".json") and not name.endswith(".progress.json")
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -136,8 +158,11 @@ class PreparedBatch:
 def read_issue_outbox(incus: Incus, container: str, *, uid: int | None) -> OutboxSnapshot:
     """Read proposal text without accepting container-owned progress."""
     files = read_text_outbox(
-        incus, container, f"/home/{CONTAINER_USERNAME}/.jailbee/issue-outbox",
-        uid=uid, max_file_bytes=MAX_MANIFEST_BYTES,
+        incus,
+        container,
+        f"/home/{CONTAINER_USERNAME}/.jailbee/issue-outbox",
+        uid=uid,
+        max_file_bytes=MAX_MANIFEST_BYTES,
     )
     return OutboxSnapshot(MappingProxyType(files))
 
@@ -165,16 +190,23 @@ def _expected_fields(action: IssueAction) -> dict[str, object]:
 def _differences(action: IssueAction, snapshot: IssueSnapshot, context: str) -> list[str]:
     differences = []
     for field, expected in _expected_fields(action).items():
-        actual = (frozenset(label.casefold() for label in snapshot.labels)
-                  if field == "labels" else getattr(snapshot, field))
+        actual = (
+            frozenset(label.casefold() for label in snapshot.labels)
+            if field == "labels"
+            else getattr(snapshot, field)
+        )
         if actual != expected:
             differences.append(f"{context}: expected.{field} differs from the current issue")
     return differences
 
 
 def _load_proposals(
-    outbox: OutboxSnapshot, names: Sequence[str], targets: Mapping[str, RepoTarget],
-    identity: ContainerIdentity, store: JournalStore, refusals: list[str],
+    outbox: OutboxSnapshot,
+    names: Sequence[str],
+    targets: Mapping[str, RepoTarget],
+    identity: ContainerIdentity,
+    store: JournalStore,
+    refusals: list[str],
 ) -> list[tuple[IssueManifest, str, IssueJournal | None]]:
     proposals = []
     if len(outbox.manifest_names) > MAX_MANIFESTS or len(names) > MAX_MANIFESTS:
@@ -195,10 +227,13 @@ def _load_proposals(
         for index, action in enumerate(manifest.actions):
             if action.repo not in targets:
                 known = ", ".join(repr(path) for path in sorted(targets)) or "[none]"
-                refusals.append(f"{name} action {index}: forbidden repo path {action.repo!r}; "
-                                f"known paths: {known}")
-        digest = proposal_digest(name, outbox.files[name],
-                                 {body: outbox.files[body] for body in manifest.body_files})
+                refusals.append(
+                    f"{name} action {index}: forbidden repo path {action.repo!r}; "
+                    f"known paths: {known}"
+                )
+        digest = proposal_digest(
+            name, outbox.files[name], {body: outbox.files[body] for body in manifest.body_files}
+        )
         try:
             journal = store.load(journal_key(identity, name))
             if journal is not None:
@@ -214,8 +249,11 @@ def _load_proposals(
                         target = targets.get(action.repo)
                         if target is not None and target.slug != receipt.repo:
                             raise JournalError("journal repo differs from the host-resolved repo")
-                        if (isinstance(action, CreateAction) and receipt.state == "applied"
-                                and receipt.issue is None):
+                        if (
+                            isinstance(action, CreateAction)
+                            and receipt.state == "applied"
+                            and receipt.issue is None
+                        ):
                             raise JournalError("applied create journal receipt has no issue number")
         except JournalError as exc:
             refusals.append(f"{name}: {exc}")
@@ -227,8 +265,10 @@ def _load_proposals(
 
 
 def _resolve_labels(
-    action: CreateAction | LabelsAction, canonical: Mapping[str, str] | None,
-    context: str, refusals: list[str],
+    action: CreateAction | LabelsAction,
+    canonical: Mapping[str, str] | None,
+    context: str,
+    refusals: list[str],
 ) -> tuple[str, ...]:
     additions = action.labels if isinstance(action, CreateAction) else action.add
     for label in additions:
@@ -246,13 +286,24 @@ def _resolve_labels(
     for label in action.add:
         if label.casefold() in expected:
             refusals.append(f"{context}: addition {label!r} is already present in expected labels")
-    return tuple(canonical.get(label.casefold(), label) for label in action.expected_labels
-                 if label.casefold() not in removed) + added
+    return (
+        tuple(
+            canonical.get(label.casefold(), label)
+            for label in action.expected_labels
+            if label.casefold() not in removed
+        )
+        + added
+    )
 
 
 def prepare_batch(
-    cfg: Config, incus: Incus, container: str, selected_names: Sequence[str], *,
-    uid: int | None, journal_store: JournalStore,
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    selected_names: Sequence[str],
+    *,
+    uid: int | None,
+    journal_store: JournalStore,
 ) -> PreparedBatch:
     """Resolve and validate an offer using only host-authorized, read-only inputs."""
     outbox = read_issue_outbox(incus, container, uid=uid)
@@ -297,7 +348,8 @@ def prepare_batch(
                 refs[action.ref] = issue
                 if status == "pending":
                     created[action.ref] = IssueSnapshot(
-                        0, action.title, action.body, action.labels, "open", "", False)
+                        0, action.title, action.body, action.labels, "open", "", False
+                    )
             elif isinstance(action.target, ExistingIssue):
                 issue = ResolvedIssue(action.target.number)
             else:
@@ -335,17 +387,23 @@ def prepare_batch(
 
             if status == "pending":
                 for field in _expected_fields(action):
-                    mutation_key = ((repo.slug, issue.number, field) if issue.number is not None
-                                    else (manifest.name, issue.ref or "", field))
+                    mutation_key = (
+                        (repo.slug, issue.number, field)
+                        if issue.number is not None
+                        else (manifest.name, issue.ref or "", field)
+                    )
                     if mutation_key in mutations:
-                        refusals.append(f"{context}: conflict on {field} with {mutations[mutation_key]}")
+                        refusals.append(
+                            f"{context}: conflict on {field} with {mutations[mutation_key]}"
+                        )
                     mutations[mutation_key] = context
             actions.append(ResolvedAction(index, action, repo, issue, status, labels))
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
     if refusals:
         raise IssueGateError("\n".join(refusals))
-    return PreparedBatch(container, cfg.repo_root, identity, login, outbox,
-                         tuple(prepared), MappingProxyType(issues))
+    return PreparedBatch(
+        container, cfg.repo_root, identity, login, outbox, tuple(prepared), MappingProxyType(issues)
+    )
 
 
 def revalidate_batch(batch: PreparedBatch) -> None:
@@ -355,8 +413,11 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     refusals = []
     for manifest in batch.manifests:
         for resolved in manifest.actions:
-            if (resolved.status != "pending" or resolved.issue.number is None
-                    or not _expected_fields(resolved.action)):
+            if (
+                resolved.status != "pending"
+                or resolved.issue.number is None
+                or not _expected_fields(resolved.action)
+            ):
                 continue
             key = (resolved.repo.slug, resolved.issue.number)
             context = f"{manifest.manifest.name} action {resolved.index}"
@@ -381,13 +442,24 @@ def _prose(label: str, text: str | None) -> list[str]:
 
 
 def _action_lines(
-    name: str, index: int, action: IssueAction, issue: ResolvedIssue,
-    receipt: JournalAction | None, labels: tuple[str, ...] | None,
+    name: str,
+    index: int,
+    action: IssueAction,
+    issue: ResolvedIssue,
+    receipt: JournalAction | None,
+    labels: tuple[str, ...] | None,
 ) -> list[str]:
-    kind = ("create" if isinstance(action, CreateAction) else
-            "edit" if isinstance(action, EditAction) else
-            "comment" if isinstance(action, CommentAction) else
-            "labels" if isinstance(action, LabelsAction) else "state")
+    kind = (
+        "create"
+        if isinstance(action, CreateAction)
+        else "edit"
+        if isinstance(action, EditAction)
+        else "comment"
+        if isinstance(action, CommentAction)
+        else "labels"
+        if isinstance(action, LabelsAction)
+        else "state"
+    )
     target = f"#{issue.number}" if issue.number is not None else f"ref {issue.ref}"
     status = _status(receipt)
     display = "applied; skip" if status == "applied" else status
@@ -403,7 +475,9 @@ def _action_lines(
             lines.append(f"  create ref: {action.ref}")
         lines.extend(_prose("title", action.title))
         lines.extend(_prose("body", action.body))
-        lines.append(f"  labels: {', '.join(action.labels if labels is None else labels) or '[empty]'}")
+        lines.append(
+            f"  labels: {', '.join(action.labels if labels is None else labels) or '[empty]'}"
+        )
     elif isinstance(action, EditAction):
         if action.has_expected_title:
             lines.extend(_prose("title before", action.expected_title))
@@ -414,8 +488,13 @@ def _action_lines(
     elif isinstance(action, CommentAction):
         lines.extend(_prose("body", action.body))
     elif isinstance(action, LabelsAction):
-        added = action.add if labels is None else tuple(
-            label for label in labels if label.casefold() in {x.casefold() for x in action.add})
+        added = (
+            action.add
+            if labels is None
+            else tuple(
+                label for label in labels if label.casefold() in {x.casefold() for x in action.add}
+            )
+        )
         lines.append(f"  remove: {', '.join(action.remove) or '[empty]'}")
         lines.append(f"  add: {', '.join(added) or '[empty]'}")
         if labels is not None:
@@ -438,9 +517,16 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
             if resolved.repo != previous:
                 lines.append(f"Repository: {resolved.repo.path} ({resolved.repo.slug})")
                 previous = resolved.repo
-            lines.extend(_action_lines(prepared.manifest.name, resolved.index,
-                                       resolved.action, resolved.issue,
-                                       receipts.get(resolved.index), resolved.labels))
+            lines.extend(
+                _action_lines(
+                    prepared.manifest.name,
+                    resolved.index,
+                    resolved.action,
+                    resolved.issue,
+                    receipts.get(resolved.index),
+                    resolved.labels,
+                )
+            )
     return lines
 
 
@@ -456,8 +542,9 @@ def show_lines(manifest: IssueManifest, journal: IssueJournal | None) -> list[st
             lines.append(f"Repository: {action.repo}")
             previous = action.repo
         if isinstance(action, CreateAction):
-            issue = ResolvedIssue(receipt.issue if receipt and receipt.state == "applied" else None,
-                                  action.ref)
+            issue = ResolvedIssue(
+                receipt.issue if receipt and receipt.state == "applied" else None, action.ref
+            )
             refs[action.ref] = issue
         elif isinstance(action.target, ExistingIssue):
             issue = ResolvedIssue(action.target.number)
