@@ -10,11 +10,12 @@ def test_host_submodule_paths_returns_top_relative_paths_recursively(tmp_path, m
     repo_root = tmp_path / "repo"
 
     def run_capture(cwd, args):
+        assert isinstance(cwd, str)
         assert args[-1] == r"^submodule\..*\.path$"
         paths = {
-            repo_root: "submodule.a.path libs/a\n",
-            repo_root / "libs/a": "submodule.b.path vendor/b\n",
-            repo_root / "libs/a/vendor/b": "",
+            str(repo_root): "submodule.a.path libs/a\n",
+            str(repo_root / "libs/a"): "submodule.b.path vendor/b\n",
+            str(repo_root / "libs/a/vendor/b"): "",
         }
         return (bool(paths[cwd]), paths[cwd])
 
@@ -28,10 +29,11 @@ def test_host_submodule_paths_omits_uninitialized_declared_checkout(tmp_path, mo
     repo_root = tmp_path / "repo"
 
     def run_capture(cwd, _args):
+        assert isinstance(cwd, str)
         paths = {
-            repo_root: "submodule.a.path libs/a\nsubmodule.missing.path libs/missing\n",
-            repo_root / "libs/a": "",
-            repo_root / "libs/missing": "",
+            str(repo_root): "submodule.a.path libs/a\nsubmodule.missing.path libs/missing\n",
+            str(repo_root / "libs/a"): "",
+            str(repo_root / "libs/missing"): "",
         }
         return (bool(paths[cwd]), paths[cwd])
 

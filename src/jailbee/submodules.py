@@ -912,7 +912,7 @@ def host_submodule_paths(repo_root: Path) -> list[str]:
     """Top-relative initialized host submodule paths, recursively."""
 
     def run(directory: str, args: list[str]) -> tuple[bool, str]:
-        return git.run_capture(Path(directory), args)
+        return git.run_capture(directory, args)
 
     paths = (
         Path(directory).relative_to(repo_root).as_posix()
