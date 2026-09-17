@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -98,6 +99,41 @@ def _publish_via_hook(mocker, published):
         return published
 
     return mocker.patch("jailbee.sync.publish_branch_from_container", side_effect=fake_publish)
+
+
+@pytest.mark.parametrize("is_update", [False, True])
+def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
+    from subprocess import CompletedProcess
+
+    labels = {"user.jailbee.base_branch": "main", "user.jailbee.branch": "feat/foo"}
+    if is_update:
+        labels.update({"user.jailbee.pr": "123", "user.jailbee.pr_branch": "feat/foo", "user.jailbee.pr_author": "true"})
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo"))
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    commands = []
+
+    def run(cmd, **kwargs):
+        assert kwargs["cwd"] == tmp_path
+        if cmd[0] == "git":
+            assert cmd == ["git", "remote", "get-url", "origin"]
+            return CompletedProcess(cmd, 0, "https://github.com/acme/widgets", "")
+        commands.append(cmd)
+        if cmd[:3] == ["gh", "pr", "create"]:
+            return CompletedProcess(cmd, 0, "https://github.com/acme/widgets/pull/123", "")
+        return CompletedProcess(
+            cmd, 0, '{"number":123,"url":"https://github.com/acme/widgets/pull/123"}', ""
+        )
+
+    mocker.patch("subprocess.run", side_effect=run)
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert commands[0][:3] == ["gh", "pr", "view" if is_update else "create"]
+    assert all("--repo" in cmd for cmd in commands)
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/widgets" for cmd in commands)
 
 
 def test_create_pr_happy_path(mocker, tmp_path):
