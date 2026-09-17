@@ -307,8 +307,24 @@ def _member_account(
 
 
 def live_session_prefixes(found: Sequence[Member]) -> list[str]:
-    """Members that look like they have a Claude Code session running."""
-    return engine.live_session_prefixes(found)
+    """Members that look like they have a Claude Code session running.
+
+    Claude Code writes `<config home>/sessions/<pid>.json` per session, which
+    is why this lives here and not in the engine: the layout is Claude's, and
+    another agent records a running session somewhere else or not at all. The
+    engine only ever asks `AccountAdapter.sessions`.
+
+    The PIDs belong to container namespaces the host cannot check, so a
+    leftover file reads as live — this is a warning input, never a refusal.
+    """
+    busy: list[str] = []
+    for member in found:
+        try:
+            if any((member.config_home / "sessions").glob("*.json")):
+                busy.append(member.container_prefix)
+        except OSError:
+            continue
+    return sorted(busy)
 
 
 def _login_block(raw: str | None) -> dict[str, Any] | None:

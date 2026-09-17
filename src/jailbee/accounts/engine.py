@@ -342,23 +342,6 @@ def members(
     return sorted(found, key=lambda m: m.container_prefix), sorted(unreachable)
 
 
-def live_session_prefixes(found: Sequence[Member]) -> list[str]:
-    """Members that look like they have a Claude Code session running.
-
-    Claude Code writes `<config home>/sessions/<pid>.json` per session. The
-    PIDs belong to container namespaces the host cannot check, so a leftover
-    file reads as live — this is a warning input, never a refusal.
-    """
-    busy: list[str] = []
-    for member in found:
-        try:
-            if any((member.config_home / "sessions").glob("*.json")):
-                busy.append(member.container_prefix)
-        except OSError:
-            continue
-    return sorted(busy)
-
-
 def _fsync_dir(path: Path) -> None:
     """Make a rename in `path` durable.
 
