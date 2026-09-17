@@ -384,7 +384,9 @@ class JournalStore:
         return next((action for action in journal.actions if action.index == index), None)
 
     @staticmethod
-    def _with_action(journal: IssueJournal, action: JournalAction | None, index: int) -> IssueJournal:
+    def _with_action(
+        journal: IssueJournal, action: JournalAction | None, index: int
+    ) -> IssueJournal:
         actions = [existing for existing in journal.actions if existing.index != index]
         if action is not None:
             actions.append(action)

@@ -175,9 +175,7 @@ def test_proposal_digest_length_prefixes_exact_manifest_and_referenced_bodies():
 
     assert result == expected
     assert proposal_digest("ab", "c", {}) != proposal_digest("a", "bc", {})
-    assert proposal_digest("x", "y", {"ab": "c"}) != proposal_digest(
-        "x", "y", {"a": "bc"}
-    )
+    assert proposal_digest("x", "y", {"ab": "c"}) != proposal_digest("x", "y", {"a": "bc"})
 
 
 def test_proposal_digest_changes_only_for_proposal_inputs():
@@ -293,9 +291,7 @@ def test_failed_atomic_replace_leaves_last_valid_journal(tmp_path, mocker):
         ),
     ],
 )
-def test_journal_load_rejects_invalid_schema_and_key_mismatches(
-    tmp_path, mutation, match
-):
+def test_journal_load_rejects_invalid_schema_and_key_mismatches(tmp_path, mutation, match):
     key = journal_key(_identity(), "001.json")
     store = JournalStore(tmp_path)
     store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
