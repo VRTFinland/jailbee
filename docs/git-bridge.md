@@ -338,8 +338,9 @@ would otherwise land on a tree left in merge state. Targets are separate
 containers and do not share that constraint, so **a target that stops does not
 stop the ones after it**. Every target prints what landed, what stopped it,
 what was not attempted, and the command that resumes where it left off — that
-report is the reason several sources are allowed at all. A run with several
-targets closes with a roll-up naming the state of each one:
+report is the reason several sources are allowed at all. With several targets
+each block is headed by a rule naming its target, and the run closes with a
+roll-up of the state of every one of them:
 
 ```
 Summary: 1 of 2 targets complete

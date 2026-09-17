@@ -492,6 +492,32 @@ def test_git_merge_roll_up_reports_a_plain_run_as_a_transport(merge_repo, mocker
     assert "merged c1" not in flat
 
 
+def test_git_merge_heads_each_target_block_when_there_are_several(merge_repo, mocker):
+    """Several targets print several blocks in a row; each says which one it is.
+
+    Without a heading the next target's per-source lines follow the previous
+    target's resume recipe with nothing between them.
+    """
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "t1", "--into", "t2"])
+
+    assert result.exit_code == 0, result.output
+    flat = flat_output(result.output)
+    assert "── into t1 ─" in flat
+    assert "── into t2 ─" in flat
+
+
+def test_git_merge_into_a_single_target_has_no_heading(merge_repo, mocker):
+    """One target needs no boundary: there is nothing for it to be a boundary to."""
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert "── into" not in flat_output(result.output)
+
+
 def test_git_merge_into_a_single_target_prints_no_roll_up(merge_repo, mocker):
     """One target is already summarised by its own block; a roll-up would repeat it."""
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())

@@ -6298,6 +6298,7 @@ def _merge_sources_into_target(
     *,
     branch: str | None,
     plain: bool,
+    heading: bool,
 ) -> _TargetOutcome:
     """Merge every source into one target, stopping at the first failure.
 
@@ -6310,9 +6311,21 @@ def _merge_sources_into_target(
     Prints as it goes: each source's own result, then the target's summary and
     resume recipe, whatever the outcome. A run that stops halfway is only
     usable if the user can see the boundary.
+
+    `heading` draws a rule naming the target first, in the style of the
+    submodule report's. The caller passes it only for a run with several
+    targets, where one target's per-source lines otherwise follow the previous
+    target's resume recipe with nothing between them; a single target needs no
+    boundary because there is nothing for it to be a boundary to.
     """
     from jailbee import git as git_helpers
     from jailbee import sync
+    from jailbee.tui import console
+
+    if heading:
+        # markup=False/highlight=False as everywhere else here: a container
+        # name is user data, and Rich would eat square brackets in it.
+        console.print(f"\n── into {target} ".ljust(36, "─"), markup=False, highlight=False)
 
     merged: list[str] = []
     failure: _MergeFailure | None = None
@@ -6616,7 +6629,9 @@ def git_merge(
         raise typer.Exit(2)
 
     outcomes = [
-        _merge_sources_into_target(cfg, incus, resolved, target, branch=branch, plain=plain)
+        _merge_sources_into_target(
+            cfg, incus, resolved, target, branch=branch, plain=plain, heading=len(targets) > 1
+        )
         for target in targets
     ]
     if len(outcomes) > 1:
