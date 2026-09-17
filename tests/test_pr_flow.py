@@ -171,7 +171,7 @@ def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker
         body=None,
         description=False,
         ai_on=True,
-        offer_regen=False,
+        foreign_head=True,
     )
     assert result is None
     confirm.assert_not_called()
@@ -209,7 +209,7 @@ def test_container_label_state_raises_on_a_malformed_pr_label(mocker):
     """FIX 5 regression: a non-numeric `user.jailbee.pr` must fail closed, not
     silently read as `number=None` (== "no PR"), which would turn OFF every
     guard keyed on `pr_label` (--as rejection, the foreign-force
-    confirmation, offer_regen) for a container that plainly has a PR."""
+    confirmation, foreign_head) for a container that plainly has a PR."""
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda name, key: {"user.jailbee.pr": "not-a-number"}.get(key)
 
@@ -726,27 +726,97 @@ def test_the_update_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     pending.assert_not_called()
 
 
-def test_a_foreign_pr_is_not_rewritten_from_the_outbox(tmp_path, mocker):
-    """`offer_regen=False` means "do not silently rewrite this author's
-    description", and a manifest is a *stronger* reason to honour that: the
-    text was written by an agent, and a `pr: null` manifest is eligible for a
-    stranger's PR number under `_eligible_for`."""
+def test_a_foreign_pr_takes_a_description_that_names_it_after_confirming(tmp_path, mocker):
+    """A PR jailbee did not open is still often the user's own, adopted with
+    `jailbee pr --pr N`. Dropping the description its agent wrote for that very
+    number was the bug; the guard is a narrowed lookup plus one question."""
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
-    edit = _update_edit(tmp_path, mocker, use_outbox=True, offer_regen=False)
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
+
+    assert edit is not None and (edit.title, edit.body) == ("feat: x", "Body.")
+    assert edit.source is not None and edit.source.manifest == "002-d.json"
+    assert pending.call_args.kwargs["numbered_only"] is True
+    assert confirm.call_count == 1
+
+
+def test_a_declined_foreign_description_consumes_nothing(tmp_path, mocker):
+    """Declining refuses *this text*, not the run: nothing is returned to
+    `edit_pr`, so `record_outbox_consumption` is never reached and the manifest
+    stays pending for `jailbee review apply`."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
 
     assert edit is None
-    pending.assert_not_called()
+
+
+def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_path, mocker):
+    """`--description` is what the user typed; refusing the manifest's text must
+    not refuse that too."""
+    from jailbee.pr_ai import PrText
+
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="regen", body="Fresh.", branch="b"),
+    )
+
+    edit = _update_edit(
+        tmp_path,
+        mocker,
+        use_outbox=True,
+        foreign_head=True,
+        description=True,
+    )
+
+    assert edit is not None and (edit.title, edit.body) == ("regen", "Fresh.")
+    assert edit.source is None  # nothing from the outbox was consumed
+
+
+def test_a_foreign_description_is_never_applied_off_a_tty(tmp_path, mocker):
+    """The question has no answer when there is nobody to ask, and an
+    unattended run may not decide it on the user's behalf."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    confirm = mocker.patch("typer.confirm")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
+
+    assert edit is None
+    confirm.assert_not_called()
+
+
+def test_an_authored_pr_asks_nothing_before_using_the_outbox(tmp_path, mocker):
+    """The confirmation belongs to the foreign head alone: jailbee's own PR
+    carries the description its own container wrote, as it always did."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm")
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, for_pr=77)
+
+    assert edit is not None and edit.source is not None
+    assert pending.call_args.kwargs["numbered_only"] is False
+    confirm.assert_not_called()
 
 
 def test_an_explicit_title_still_applies_to_a_foreign_pr(tmp_path, mocker):
     """The outbox gate above must not swallow what the user typed themselves."""
-    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True, offer_regen=False)
+    edit = _update_edit(
+        tmp_path, mocker, title="typed", use_outbox=True, foreign_head=True
+    )
 
     assert edit is not None and (edit.title, edit.body) == ("typed", None)
+    pending.assert_not_called()
 
 
 def test_a_pre_resolved_outbox_hint_is_not_looked_up_again(tmp_path, mocker):
@@ -952,7 +1022,7 @@ def _apply_updates(tmp_path, mocker, **kwargs):
         "description": False,
         "ready": None,
         "ai_on": True,
-        "offer_regen": True,
+        "foreign_head": False,
         "url": "https://x/pull/1234",
     }
     call.update(kwargs)

@@ -482,6 +482,28 @@ def _outbox_source(manifest="002-description.json", branch="feat/x"):
     )
 
 
+def _description_only_outbox(mocker, name="002-description.json"):
+    """An outbox holding one manifest whose only action is a description.
+
+    The offer narrows itself to comments, so this manifest contributes nothing
+    to publish — it exists to be *mentioned*.
+    """
+    import json
+
+    from jailbee.pr_outbox import Outbox
+
+    text = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "actions": [{"type": "description", "body": "Body."}],
+        }
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={name: text}))
+
+
 def test_no_outbox_restores_the_claude_run(mocker, tmp_path):
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
@@ -795,6 +817,53 @@ def test_pr_update_explicit_title_edits(mocker, tmp_path):
     assert edit.call_args.kwargs["body"] is None
     assert "title updated" in result.output.lower()
     assert "description refreshed" not in result.output.lower()
+
+
+def test_pr_names_the_description_an_explicit_title_outranked(mocker, tmp_path):
+    """`--title`/`--body` win outright, and the manifest is deliberately never
+    looked up — so the offer is the only place left that can say a staged
+    description went unused."""
+    _update_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.edit_pr")
+    _description_only_outbox(mocker, name="003-desc.json")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "New title"])
+
+    assert result.exit_code == 0, result.output
+    assert "003-desc.json still holds a description" in result.output
+
+
+def test_pr_says_nothing_about_a_description_it_consumed(mocker, tmp_path):
+    """The note must not fire for the ordinary path: the description landed, the
+    sidecar records it, and the offer re-reads the outbox after that record."""
+    import json
+
+    from jailbee.pr_outbox import Outbox
+
+    _update_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.edit_pr")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source("004-d.json"))
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    text = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "actions": [{"type": "description", "body": "Body."}],
+        }
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={"004-d.json": text, "004-d.json.progress.json": '{"applied": [0], "urls": {}}'}
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "still holds a description" not in result.output
 
 
 def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tmp_path):
@@ -1540,11 +1609,11 @@ def test_pr_already_adopted_container_skips_gh_and_prompt(mocker, tmp_path):
     assert publish.call_args.kwargs["publish_name"] == "alice/worktime-stomp"
 
 
-def test_pr_leaves_an_adopted_foreign_prs_description_alone(mocker, tmp_path):
-    """A `jailbee new --pr 456` container publishes to someone else's PR head,
-    so `offer_regen` is False. Its own agent's manifest must not rewrite that
-    author's title and body with no confirmation and no undo — the outbox is a
-    stronger reason to honour that guard, not a reason to bypass it."""
+def test_pr_applies_an_adopted_prs_description_after_one_confirmation(mocker, tmp_path):
+    """An adopted PR is as often the user's own — opened from another container
+    and bound with `jailbee pr --pr N` — as it is a stranger's, and the
+    container's agent wrote this description for that very number. It is
+    applied, once the one question about it is answered."""
     _review_setup(
         mocker,
         tmp_path,
@@ -1554,15 +1623,51 @@ def test_pr_leaves_an_adopted_foreign_prs_description_alone(mocker, tmp_path):
         },
     )
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=True)
     edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    pending.assert_not_called()
+    # Narrowed to manifests that name this PR: a `pr: null` one is about the PR
+    # this container would open, which is not this one.
+    assert pending.call_args.kwargs["numbered_only"] is True
+    assert edit.call_args.kwargs["body"] == "Body."
+    record.assert_called_once()
+    # Rich wraps the success line, so match on the receipt's manifest name.
+    assert "002-description.json" in result.output
+
+
+def test_pr_leaves_an_adopted_foreign_prs_description_alone_when_declined(mocker, tmp_path):
+    """The question is the guard. Answering no leaves the author's title and
+    body as they were, and consumes nothing — the manifest is still there for
+    `jailbee review apply`."""
+    _review_setup(
+        mocker,
+        tmp_path,
+        extra_labels={
+            "user.jailbee.pr_adopted": "1",
+            "user.jailbee.pr_branch": "alice/worktime-stomp",
+        },
+    )
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+    _description_only_outbox(mocker)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
     edit.assert_not_called()
     record.assert_not_called()
+    # The run's one word about the description it did not use. Without it the
+    # manifest passes through the whole command unmentioned.
+    assert "002-description.json still holds a description" in result.output
+    assert "review apply" in result.output
 
 
 def test_pr_adopted_push_failure_points_at_pr_refresh(mocker, tmp_path):

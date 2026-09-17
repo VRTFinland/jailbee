@@ -511,17 +511,56 @@ def test_stale_head_blocks_a_review_but_not_a_reply(mocker, make_cfg, tmp_path):
     assert resolve_target(cfg, incus, "c", reply, force=False).stale is True  # informational only
 
 
-def test_null_pr_manifest_resolves_without_a_pr(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import parse_manifest, resolve_target
+def _null_pr_manifest():
+    from jailbee.pr_outbox import parse_manifest
 
-    incus = _target_setup(mocker, tmp_path)
-    manifest = parse_manifest(
+    return parse_manifest(
         "002-d.json",
         _manifest_text(pr=None, head_sha=None, actions=[{"type": "description", "body": "B"}]),
         {},
     )
 
-    assert resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False).pr is None
+
+def test_null_pr_manifest_resolves_without_a_pr_when_none_is_bound(mocker, make_cfg, tmp_path):
+    """No PR label: the description really is about one that does not exist
+    yet, and the caller defers it to `jailbee pr`."""
+    from jailbee.pr_outbox import resolve_target
+
+    incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.branch": "feat/foo"})
+    find = mocker.patch("jailbee.pr.find_pr_for_branch")
+
+    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
+    # The branch lookup is not a binding: adopting a PR is the user's decision.
+    find.assert_not_called()
+
+
+def test_null_pr_manifest_binds_to_the_containers_own_pr(mocker, make_cfg, tmp_path):
+    """The container has a PR bound — jailbee opened it, or `jailbee pr --pr N`
+    adopted it — so the description its agent wrote is about that PR. Without
+    this, an adopted container's `pr: null` description is publishable by
+    neither command."""
+    from jailbee.pr_outbox import resolve_target
+
+    incus = _target_setup(mocker, tmp_path)  # user.jailbee.pr = 1234
+
+    target = resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False)
+
+    assert target.pr is not None and target.pr.number == 1234
+    assert target.stale is False
+
+
+def test_null_pr_manifest_stays_unresolved_when_two_prs_are_bound(mocker, make_cfg, tmp_path):
+    """A stacked container owns two PRs and the manifest names neither; guessing
+    which one the description is for is not this gate's call."""
+    from jailbee.pr_outbox import resolve_target
+
+    incus = _target_setup(
+        mocker,
+        tmp_path,
+        labels={"user.jailbee.pr": "1234", "user.jailbee.stacked_pr": "1300"},
+    )
+
+    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
 
 
 def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():
@@ -1656,6 +1695,61 @@ def test_pending_pr_text_accepts_a_null_pr_manifest_on_the_update_path(mocker, m
     found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234)
 
     assert found is not None
+
+
+def test_numbered_only_still_accepts_a_manifest_naming_the_pr(mocker, make_cfg, tmp_path):
+    """A container that names the number has said which PR it meant; that the
+    PR was adopted rather than opened by jailbee does not unsay it."""
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    _host_repo(mocker)
+    text = _description_manifest(pr=1234, head_sha="abc1234")
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
+
+    found = pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    )
+
+    assert found is not None and found.manifest == "001-d.json"
+
+
+def test_numbered_only_withholds_a_null_pr_manifest_and_says_so(mocker, make_cfg, tmp_path, capsys):
+    """`pr: null` means "the PR this container would open", which on a foreign
+    head is not this PR. It is withheld — and named, because the run would have
+    used it had the manifest carried the number."""
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    _host_repo(mocker)
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-d.json": _description_manifest()}),
+    )
+
+    found = pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    )
+
+    assert found is None
+    captured = capsys.readouterr()
+    assert "001-d.json" in captured.out + captured.err
+
+
+def test_numbered_only_says_nothing_about_another_prs_manifest(mocker, make_cfg, tmp_path, capsys):
+    """A review container legitimately carries manifests for other PRs; those
+    were never this run's to use, so naming them would be noise, not news."""
+    from jailbee.pr_outbox import Outbox, pending_pr_text
+
+    _host_repo(mocker)
+    text = _description_manifest(pr=999, head_sha="abc1234")
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
+
+    found = pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    )
+
+    assert found is None
+    captured = capsys.readouterr()
+    assert "001-d.json" not in captured.out + captured.err
 
 
 # --- The proposed branch name is untrusted input --------------------------
