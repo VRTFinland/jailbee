@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jailbee import procstat
 
 
@@ -139,3 +141,128 @@ def test_read_container_pids_is_empty_without_a_cgroup_file(tmp_path):
         )
         == []
     )
+
+
+def make_sampler(tmp_path, ticks):
+    """A sampler on a fake filesystem, with a scripted monotonic clock."""
+    clock = iter(ticks)
+    return procstat.ActivitySampler(
+        proc_root=tmp_path / "proc",
+        cgroup_root=tmp_path / "cgroup",
+        clock=lambda: next(clock),
+    )
+
+
+def stage_container(tmp_path, *, name="gie-demo", init_pid=500, pids=()):
+    """Put a container's init cgroup and one busy cgroup in place."""
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, init_pid, f"/lxc.payload.{name}/init.scope")
+    write_cgroup_procs(cg, f"/lxc.payload.{name}/system.slice/work.service", list(pids))
+
+
+def test_first_sample_primes_and_reports_nothing(tmp_path):
+    """A delta needs two readings. The first call must not invent one."""
+    stage_container(tmp_path, pids=[600])
+    write_stat(tmp_path / "proc", 600, comm="claude", utime=100, stime=0)
+    sampler = make_sampler(tmp_path, [10.0])
+
+    out = sampler.sample([procstat.SampleInput("gie-demo", 500, 1_000_000_000)])
+
+    assert out["gie-demo"].cpu_percent is None
+    assert out["gie-demo"].processes == ()
+
+
+def test_container_percent_comes_from_the_usage_delta(tmp_path):
+    """1.82 s of CPU time burned over 1 s of wall time is 182% of one core."""
+    stage_container(tmp_path, pids=[])
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item_before = procstat.SampleInput("gie-demo", 500, 5_000_000_000)
+    item_after = procstat.SampleInput("gie-demo", 500, 6_820_000_000)
+
+    sampler.sample([item_before])
+    out = sampler.sample([item_after])
+
+    assert out["gie-demo"].cpu_percent == pytest.approx(182.0)
+
+
+def test_processes_are_aggregated_by_name_with_a_count(tmp_path):
+    """Eight pytest workers are one answer to "what is it doing", not eight."""
+    stage_container(tmp_path, pids=[600, 601, 602])
+    proc = tmp_path / "proc"
+    for pid in (600, 601, 602):
+        write_stat(proc, pid, comm="pytest", utime=0, stime=0, starttime=5)
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item = procstat.SampleInput("gie-demo", 500, None)
+    sampler.sample([item])
+    for pid in (600, 601, 602):
+        # 50 ticks over 1 s is 50% of one core each, at the usual 100 Hz.
+        write_stat(proc, pid, comm="pytest", utime=procstat.CLOCK_TICKS // 2, stime=0, starttime=5)
+
+    out = sampler.sample([item])
+
+    assert [(p.comm, p.count) for p in out["gie-demo"].processes] == [("pytest", 3)]
+    assert out["gie-demo"].processes[0].percent == pytest.approx(150.0)
+
+
+def test_an_idling_process_is_below_the_threshold(tmp_path):
+    """The threshold IS the feature: "working, not idling"."""
+    stage_container(tmp_path, pids=[600])
+    proc = tmp_path / "proc"
+    write_stat(proc, 600, comm="sshd", utime=0, stime=0, starttime=5)
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item = procstat.SampleInput("gie-demo", 500, None)
+    sampler.sample([item])
+    write_stat(proc, 600, comm="sshd", utime=1, stime=0, starttime=5)  # ~1% of a core
+
+    assert sampler.sample([item])["gie-demo"].processes == ()
+
+
+def test_a_recycled_pid_is_not_credited_with_the_old_counter(tmp_path):
+    """Same pid, different starttime: a different process. Without the guard
+    it inherits the dead process's cumulative ticks and renders an absurd
+    percentage."""
+    stage_container(tmp_path, pids=[600])
+    proc = tmp_path / "proc"
+    write_stat(proc, 600, comm="claude", utime=10_000, stime=0, starttime=5)
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item = procstat.SampleInput("gie-demo", 500, None)
+    sampler.sample([item])
+    write_stat(proc, 600, comm="bash", utime=0, stime=0, starttime=9999)
+
+    assert sampler.sample([item])["gie-demo"].processes == ()
+
+
+def test_a_restarted_container_does_not_report_negative_cpu(tmp_path):
+    """A restart zeroes the container's cumulative usage."""
+    stage_container(tmp_path, pids=[])
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    sampler.sample([procstat.SampleInput("gie-demo", 500, 9_000_000_000)])
+
+    out = sampler.sample([procstat.SampleInput("gie-demo", 500, 1_000_000)])
+
+    assert out["gie-demo"].cpu_percent is None
+
+
+def test_container_percent_survives_an_unreadable_cgroup(tmp_path):
+    """The two halves are deliberately independent: CPU comes from Incus's
+    own usage counter, so a host whose cgroup files cannot be read still
+    gets a working CPU column — only DOING goes dark."""
+    sampler = make_sampler(tmp_path, [10.0, 11.0])  # nothing staged: no /proc, no cgroups
+    sampler.sample([procstat.SampleInput("gie-demo", 500, 1_000_000_000)])
+
+    out = sampler.sample([procstat.SampleInput("gie-demo", 500, 2_000_000_000)])
+
+    assert out["gie-demo"].cpu_percent == pytest.approx(100.0)
+    assert out["gie-demo"].processes == ()
+
+
+def test_a_stopped_container_is_reported_empty(tmp_path):
+    """No init pid, no usage — and no file reads attempted."""
+    sampler = make_sampler(tmp_path, [10.0, 11.0])
+    item = procstat.SampleInput("gie-stopped", None, None)
+    sampler.sample([item])
+
+    out = sampler.sample([item])
+
+    assert out["gie-stopped"].cpu_percent is None
+    assert out["gie-stopped"].processes == ()

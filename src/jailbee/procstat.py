@@ -20,6 +20,8 @@ host's real /proc.
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -160,3 +162,145 @@ def read_container_pids(
             except ValueError:
                 continue
     return pids
+
+
+@dataclass(frozen=True)
+class ProcessActivity:
+    """One busy program inside a container, over the last sampling window."""
+
+    comm: str
+    percent: float  # of one core, so N cores saturated reads as N*100
+    count: int  # processes of this name that actually burned CPU
+
+
+@dataclass(frozen=True)
+class ContainerActivity:
+    """What one container was doing between two readings."""
+
+    cpu_percent: float | None
+    processes: tuple[ProcessActivity, ...] = ()
+
+
+@dataclass(frozen=True)
+class SampleInput:
+    """Everything the sampler needs about one container.
+
+    Deliberately not ``ContainerInfo``: keeping jailbee's model out of this
+    module is what lets the tests drive it from a fake filesystem.
+    """
+
+    name: str
+    init_pid: int | None
+    cpu_usage_ns: int | None
+
+
+@dataclass(frozen=True)
+class _Reading:
+    cpu_usage_ns: int | None
+    processes: dict[int, ProcSample]
+
+
+class ActivitySampler:
+    """Holds one reading so the next one can be a rate.
+
+    One sampler per front-end, for the life of that front-end. Not
+    thread-safe: every caller either samples from a single thread, or (the
+    dashboards' pre-gather) samples before its worker thread starts.
+    """
+
+    def __init__(
+        self,
+        *,
+        proc_root: Path = PROC_ROOT,
+        cgroup_root: Path = CGROUP_ROOT,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._proc_root = proc_root
+        self._cgroup_root = cgroup_root
+        self._clock = clock
+        self._prev: dict[str, _Reading] = {}
+        self._prev_at: float | None = None
+
+    def sample(self, items: Sequence[SampleInput]) -> dict[str, ContainerActivity]:
+        """Read every container now, and report rates against the last read.
+
+        The first call on a fresh sampler returns empty results: it has
+        primed, not failed. Callers that must render immediately therefore
+        call this twice, ``PRIME_INTERVAL_SECONDS`` apart.
+        """
+        now = self._clock()
+        elapsed = None if self._prev_at is None else now - self._prev_at
+        readings: dict[str, _Reading] = {}
+        out: dict[str, ContainerActivity] = {}
+        for item in items:
+            reading = self._read(item)
+            readings[item.name] = reading
+            out[item.name] = _diff(self._prev.get(item.name), reading, elapsed)
+        self._prev = readings
+        self._prev_at = now
+        return out
+
+    def _read(self, item: SampleInput) -> _Reading:
+        processes: dict[int, ProcSample] = {}
+        if item.init_pid is not None:
+            pids = read_container_pids(
+                item.init_pid,
+                item.name,
+                proc_root=self._proc_root,
+                cgroup_root=self._cgroup_root,
+            )
+            for pid in pids:
+                sample = read_process(pid, proc_root=self._proc_root)
+                if sample is not None:
+                    processes[pid] = sample
+        return _Reading(cpu_usage_ns=item.cpu_usage_ns, processes=processes)
+
+
+def _diff(prev: _Reading | None, cur: _Reading, elapsed: float | None) -> ContainerActivity:
+    if prev is None or elapsed is None or elapsed <= 0:
+        return ContainerActivity(cpu_percent=None)
+    return ContainerActivity(
+        cpu_percent=_cpu_percent(prev.cpu_usage_ns, cur.cpu_usage_ns, elapsed),
+        processes=_process_activity(prev.processes, cur.processes, elapsed),
+    )
+
+
+def _cpu_percent(prev_ns: int | None, cur_ns: int | None, elapsed: float) -> float | None:
+    if prev_ns is None or cur_ns is None:
+        return None
+    delta = cur_ns - prev_ns
+    if delta < 0:
+        # The container restarted and its cumulative counter went back to
+        # zero. "Unknown" is the honest answer; a negative rate is not.
+        return None
+    return delta / (elapsed * 1_000_000_000) * 100
+
+
+def _process_activity(
+    prev: dict[int, ProcSample], cur: dict[int, ProcSample], elapsed: float
+) -> tuple[ProcessActivity, ...]:
+    """Per-name CPU shares over the window, busiest first.
+
+    Aggregated before the threshold is applied: eight pytest workers at 3%
+    each are one program doing 24% of a core's work, and reporting them
+    individually would both bury the answer and hide it under the cut.
+    """
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for pid, sample in cur.items():
+        before = prev.get(pid)
+        if before is None or before.starttime != sample.starttime:
+            continue  # new this window, or a recycled pid wearing an old counter
+        delta = sample.ticks - before.ticks
+        if delta <= 0:
+            continue
+        percent = delta / CLOCK_TICKS / elapsed * 100
+        totals[sample.comm] = totals.get(sample.comm, 0.0) + percent
+        counts[sample.comm] = counts.get(sample.comm, 0) + 1
+    active = [
+        ProcessActivity(comm=comm, percent=percent, count=counts[comm])
+        for comm, percent in totals.items()
+        if percent >= ACTIVE_PROCESS_MIN_PERCENT
+    ]
+    active.sort(key=lambda p: (-p.percent, p.comm))
+    return tuple(active)
