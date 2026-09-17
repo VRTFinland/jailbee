@@ -9000,13 +9000,16 @@ def test_ls_works_in_a_directory_with_no_config(tmp_path, monkeypatch, mocker):
     mention scratch work in a scratch directory, and the container prefix
     they operate on is derived from the directory name — not merely "no
     error was raised"."""
-    _scratch_cwd(tmp_path, monkeypatch, mocker, git=True)
+    from jailbee.config.loader import _scratch_prefix
+
+    repo = _scratch_cwd(tmp_path, monkeypatch, mocker, git=True)
+    prefix = _scratch_prefix(repo)  # slug plus a digest of the path
     incus_mock = mocker.patch("jailbee.incus.Incus")
     incus_mock.return_value.list_containers.return_value = [
         {
-            "name": "tutkimus-feat-x",
+            "name": f"{prefix}-feat-x",
             "status": "Running",
-            "profiles": ["default", "tutkimus-base", "tutkimus-binds", "tutkimus-net-strict"],
+            "profiles": ["default", f"{prefix}-base", f"{prefix}-binds", f"{prefix}-net-strict"],
             "state": None,
             "config": {},
         }
@@ -9016,9 +9019,9 @@ def test_ls_works_in_a_directory_with_no_config(tmp_path, monkeypatch, mocker):
     result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.stdout
-    # Only reachable if `cfg.container_prefix` was synthesized as "tutkimus"
-    # (slugified from the directory name) — a config load failure would have
-    # exited 1 before any container was ever filtered or printed.
+    # Only reachable if `cfg.container_prefix` was synthesized from the
+    # directory — a config load failure would have exited 1 before any
+    # container was ever filtered or printed.
     assert "feat-x" in result.stdout
 
 

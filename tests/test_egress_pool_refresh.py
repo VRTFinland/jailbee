@@ -10,6 +10,7 @@ import pytest
 from pytest_mock import MockerFixture
 from sqlmodel import Session, select
 
+from jailbee.config.loader import _scratch_prefix
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 
 
@@ -555,9 +556,13 @@ def test_refresh_all_keeps_a_synthetic_row_with_no_config_file(
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = tmp_path / "tutkimus"
     (repo / ".git").mkdir(parents=True)
+    # The synthesized prefix is the slug plus a digest of the path, so the row
+    # has to carry the derived value — a bare "tutkimus" would take the
+    # prefix-changed branch instead (`test_refresh_all_skips_on_prefix_mismatch`).
+    prefix = _scratch_prefix(repo)
     db_session.add(
         RegisteredRepo(
-            container_prefix="tutkimus",
+            container_prefix=prefix,
             repo_root=str(repo),
             registered_at=datetime.now(UTC),
             synthetic_config=True,
@@ -569,7 +574,7 @@ def test_refresh_all_keeps_a_synthetic_row_with_no_config_file(
 
     refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
 
-    assert db_session.get(RegisteredRepo, "tutkimus") is not None
+    assert db_session.get(RegisteredRepo, prefix) is not None
     assert refresh_pool.call_count == 1
 
 

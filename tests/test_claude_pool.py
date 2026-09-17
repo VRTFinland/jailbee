@@ -10,6 +10,7 @@ import pytest
 
 from jailbee import claude_pool
 from jailbee.claude_pool import Identity, Slot
+from jailbee.config.loader import _scratch_prefix
 from jailbee.global_config import GlobalConfig
 from tests.conftest import make_cfg
 
@@ -450,18 +451,19 @@ def test_members_include_a_registered_scratch_repo(tmp_path: Path, mocker) -> No
     cfg = _cfg(tmp_path, group="work")
     scratch = tmp_path / "tutkimus"
     scratch.mkdir()  # a real directory, deliberately without .jailbee/
-    _register("tutkimus", scratch)
+    scratch_prefix = _scratch_prefix(scratch)  # slug plus a digest of the path
+    _register(scratch_prefix, scratch)
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
     found, unreachable = claude_pool.members(cfg, gcfg)
 
     assert unreachable == []
-    assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, "tutkimus"])
+    assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, scratch_prefix])
     # The member's config home comes from the *synthesized* config, so it is
     # the default shared dir for that prefix — proof the loader ran rather
     # than the prefix merely being echoed back.
-    member = next(m for m in found if m.container_prefix == "tutkimus")
-    assert member.config_home == xdg_data_home() / "jailbee" / "shared" / "tutkimus" / "claude"
+    member = next(m for m in found if m.container_prefix == scratch_prefix)
+    assert member.config_home == xdg_data_home() / "jailbee" / "shared" / scratch_prefix / "claude"
 
 
 def test_members_still_names_a_registered_directory_that_is_gone(tmp_path: Path, mocker) -> None:

@@ -8,6 +8,7 @@ deep-merge. See `common.deep_merge()` and docs/config.md for details.
 from __future__ import annotations
 
 import functools
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -660,15 +661,56 @@ named `scratch`.
 """
 
 
+_PATH_DIGEST_LEN = 6
+"""Hex characters of the path digest appended to a synthesized prefix.
+
+Six gives 16.7M buckets, so a host would need thousands of scratch
+directories before a birthday collision is worth thinking about, while
+keeping the prefix short enough to read in `incus list`.
+"""
+
+
+def _scratch_prefix(repo_root: Path) -> str:
+    """`<slug>-<path digest>` — the identity of a directory with no config file.
+
+    The slug alone is not an identity: it comes from the directory *name*, so
+    `~/a/test-repo` and `~/b/test-repo` derived one prefix and therefore shared
+    profiles, container names, an egress ACL and a single `RegisteredRepo` row,
+    each silently overwriting the other. Appending a digest of the path makes
+    the prefix unique per directory while keeping the slug readable at the
+    front.
+
+    The digest is taken of the *resolved* path, so reaching one directory
+    through a symlink does not mint a second identity. It is a pure function of
+    that path — never of load order or database state — because the prefix
+    names Incus objects that must resolve the same way on every invocation.
+
+    The consequence, which is the same mechanism seen from the other side:
+    *moving* a scratch directory changes its identity, orphaning the containers
+    and profiles created under the old path.
+    """
+    slug = slugify_prefix(repo_root.name)
+    if not slug:
+        raise ConfigError(
+            f"Cannot derive a container prefix from the directory name "
+            f"{repo_root.name!r} ({repo_root}). Run `jailbee config init` here "
+            f"and set `container_prefix:` explicitly."
+        )
+    digest = hashlib.sha256(str(repo_root.resolve()).encode()).hexdigest()[:_PATH_DIGEST_LEN]
+    return f"{slug}-{digest}"
+
+
 def scratch_repo_layer(repo_root: Path, scratch: ScratchConfig) -> dict[str, object]:
     """The repo layer a directory with no config file gets.
 
     Two keys are set here rather than left to `_build_config_from_dict`:
     `container_prefix`, whose derivation from `repo_root.name` would reject a
-    name like `Tutkimus_A` and advise setting the key in a file that does not
-    exist; and `golden.alias`, whose derived `<prefix>-base` would give every
-    scratch directory its own image. The user's `scratch.config` merges on top
-    with the usual `deep_merge` rules, so both remain overridable.
+    name like `Tutkimus_A`, advise setting the key in a file that does not
+    exist, and give two same-named directories one identity (see
+    `_scratch_prefix`); and `golden.alias`, whose derived `<prefix>-base` would
+    give every scratch directory its own image. The user's `scratch.config`
+    merges on top with the usual `deep_merge` rules, so both remain
+    overridable.
 
     The unguarded builder: it neither consults `scratch.enabled` nor refuses a
     root directory, because it takes the `ScratchConfig` as an argument and has
@@ -677,15 +719,8 @@ def scratch_repo_layer(repo_root: Path, scratch: ScratchConfig) -> dict[str, obj
     no command in that directory would ever load is worse than printing
     nothing.
     """
-    prefix = slugify_prefix(repo_root.name)
-    if not prefix:
-        raise ConfigError(
-            f"Cannot derive a container prefix from the directory name "
-            f"{repo_root.name!r} ({repo_root}). Run `jailbee config init` here "
-            f"and set `container_prefix:` explicitly."
-        )
     base: dict[str, object] = {
-        "container_prefix": prefix,
+        "container_prefix": _scratch_prefix(repo_root),
         "golden": {"alias": SCRATCH_BASE_ALIAS},
     }
     return deep_merge(base, scratch.config)

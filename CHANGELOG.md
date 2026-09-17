@@ -30,6 +30,28 @@ before editing `## Unreleased`.
   alike. `jailbee apply` picks them up with no image rebuild. See
   [docs/config.md](https://jailbee.gisgro.io/docs/config/#containerpath).
 
+### Changed
+
+- **A scratch directory's `container_prefix` is now unique to its path.**
+  A directory with no `.jailbee/config.yaml` derived its prefix from the
+  directory *name* alone, so two of them under different parents —
+  `~/a/test-repo` and `~/b/test-repo` — resolved to one identity: the same
+  profile set, the same container names, the same egress ACL, and a single
+  registry row, each directory silently overwriting the other's. The prefix
+  is now `<slug>-<digest>`, where the digest is six hex characters of
+  `sha256` over the directory's resolved path (`test-repo-4f2ab1`); reaching
+  a directory through a symlink still gives the same prefix, and repos with
+  a config file are unaffected.
+
+  **Scratch containers created before this release are orphaned by the
+  change** — their prefix no longer matches any directory. `jailbee
+  dashboard` lists them as their own group under the old prefix; nothing
+  removes them automatically, and the removal recipe is in
+  [`docs/config.md`](https://jailbee.gisgro.io/docs/config/#removing-a-scratch-directorys-containers).
+  The shared `jailbee-scratch-base` image is not affected and does not need
+  rebuilding. The same applies from now on whenever a scratch directory is
+  *moved*: its identity follows the path.
+
 ## 1.4.0 - 2026-09-15
 
 ### Added

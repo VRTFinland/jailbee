@@ -18,6 +18,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from jailbee.config.loader import _scratch_prefix
 
 runner = CliRunner()
 
@@ -65,9 +66,10 @@ def test_destroy_in_a_scratch_directory_destroys_the_container(tmp_path, monkeyp
     directory tracebacked. Asserts the container was actually destroyed, not
     merely that the command exited 0 — the latter would pass against a
     `destroy` that found nothing to do."""
-    _scratch_cwd(tmp_path, monkeypatch, mocker)
+    repo = _scratch_cwd(tmp_path, monkeypatch, mocker)
+    prefix = _scratch_prefix(repo)
     incus = mocker.patch("jailbee.incus.Incus").return_value
-    incus.list_containers.return_value = [_payload("tutkimus-feat-a")]
+    incus.list_containers.return_value = [_payload(f"{prefix}-feat-a", prefix=prefix)]
     incus.config_get.return_value = None
     destroyed = mocker.patch("jailbee.lifecycle.destroy_container")
 
@@ -76,7 +78,7 @@ def test_destroy_in_a_scratch_directory_destroys_the_container(tmp_path, monkeyp
     assert result.exit_code == 0, result.output
     assert "Traceback" not in result.output
     assert destroyed.call_count == 1
-    assert destroyed.call_args.args[2] == "tutkimus-feat-a"
+    assert destroyed.call_args.args[2] == f"{prefix}-feat-a"
 
 
 def test_destroy_background_in_a_scratch_directory_omits_the_config_flag(
@@ -86,8 +88,9 @@ def test_destroy_background_in_a_scratch_directory_omits_the_config_flag(
     re-synthesizes the same config from the cwd it inherits, which is why the
     spawn also has to run in `cfg.repo_root`."""
     repo = _scratch_cwd(tmp_path, monkeypatch, mocker)
+    prefix = _scratch_prefix(repo)
     incus = mocker.patch("jailbee.incus.Incus").return_value
-    incus.list_containers.return_value = [_payload("tutkimus-feat-a")]
+    incus.list_containers.return_value = [_payload(f"{prefix}-feat-a", prefix=prefix)]
     incus.config_get.return_value = None
     popen = mocker.patch("jailbee.cli.subprocess.Popen")
     popen.return_value = mocker.MagicMock(pid=4242)
@@ -259,11 +262,18 @@ def test_new_background_in_a_scratch_directory_omits_the_config_flag(tmp_path, m
 def test_new_in_a_scratch_dir_colliding_with_a_configured_repo_refuses(
     tmp_path, monkeypatch, mocker, make_cfg
 ):
-    """`~/Downloads/myapp` derives the same `container_prefix` as a
-    configured `~/src/myapp`, and registering it would repoint that repo's
-    row at the scratch directory. `new_cmd` refuses up front — before the
-    (multi-minute) scratch base-image build, which is why the check is a
-    pre-flight and not only `register_repo`'s own guard."""
+    """A scratch directory carrying a configured repo's `container_prefix`
+    would repoint that repo's registry row at itself. `new_cmd` refuses up
+    front — before the (multi-minute) scratch base-image build, which is why
+    the check is a pre-flight and not only `register_repo`'s own guard.
+
+    The collision is set up through `scratch.config.container_prefix` rather
+    than through two same-named directories, because the *derived* prefix
+    carries a digest of the path and so can no longer collide with anything
+    (`test_a_scratch_directory_no_longer_collides_with_a_same_named_repo`).
+    Pinning the key host-wide is the one way left to reach this state, and it
+    is exactly the case `docs/config.md` says is "here for when you do want
+    it" — one prefix shared by every scratch directory on the host."""
     from sqlmodel import Session
 
     from jailbee.db import get_engine
@@ -271,7 +281,9 @@ def test_new_in_a_scratch_dir_colliding_with_a_configured_repo_refuses(
 
     xdg = tmp_path / ".config"
     (xdg / "jailbee").mkdir(parents=True)
-    (xdg / "jailbee" / "global.yaml").write_text("{}\n")
+    (xdg / "jailbee" / "global.yaml").write_text(
+        "scratch:\n  config:\n    container_prefix: myapp\n"
+    )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
