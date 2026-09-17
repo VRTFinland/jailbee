@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import errno
+import functools
+import itertools
 import os
 import shlex
 import subprocess
+import weakref
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
 # unless the environment already chose one. Harmless for non-Qt tests.
@@ -132,6 +135,53 @@ def claude_overview_of(*rows, unreachable: tuple[str, ...] = (), containers_know
     return claude_overview.Overview(
         rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
     )
+
+
+def _cache_typer_command_tree() -> None:
+    """Build each Typer app's Click command tree once per session.
+
+    ``CliRunner.invoke(app, ...)`` calls ``typer.main.get_command(app)``,
+    which walks every command and sub-app and reflects over each callback's
+    signature — ``get_type_hints``, ``inspect.signature`` and a Click
+    ``Parameter`` per argument, for the *whole* CLI, on every invocation. The
+    suite invokes `jailbee.cli.app` ~1100 times, so it rebuilt ~100k commands
+    and spent roughly two thirds of `tests/test_cli.py` doing it.
+
+    The tree is a pure function of the app, and nothing here mutates an app
+    after import: the only Typer instances in the suite are jailbee's own,
+    registered at import time. Caching is therefore invisible to the tests —
+    except in speed (full suite: 201s -> 150s).
+
+    Patching ``typer.main.get_command`` covers the tests that call it directly
+    (`test_cli_branch.py`, `test_completion_wiring.py`, ...) as well as
+    ``Typer.__call__``; ``typer.testing`` needs its own assignment because it
+    binds the function at import.
+
+    Keyed weakly, so an app that goes away takes its entry with it and a
+    later object cannot inherit a dead app's tree by reusing its ``id()``.
+    """
+    import typer.main
+    import typer.testing
+
+    real = typer.main.get_command
+    cache: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+
+    @functools.wraps(real)
+    def cached(typer_instance: Any) -> Any:
+        try:
+            tree = cache.get(typer_instance)
+        except TypeError:  # unhashable / not weak-referenceable
+            return real(typer_instance)
+        if tree is None:
+            tree = real(typer_instance)
+            cache[typer_instance] = tree
+        return tree
+
+    typer.main.get_command = cached
+    typer.testing._get_command = cached
+
+
+_cache_typer_command_tree()
 
 
 # Module-level alias for tests that prefer `from tests.conftest import make_cfg`
@@ -317,8 +367,38 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         )
 
 
+# Names the per-test isolation dirs. A counter rather than pytest's own
+# numbering, which costs a directory listing per call — see `_isolation_root`.
+_ISOLATION_COUNTER = itertools.count()
+
+
+@pytest.fixture(scope="session")
+def _isolation_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One session-wide parent for the per-test XDG isolation dirs.
+
+    Not a convenience: ``tmp_path_factory.mktemp(..., numbered=True)``
+    picks its suffix by listing the *whole* base temp dir and taking the
+    highest number it finds, so every call is O(entries) and the two
+    autouse isolation fixtures below made the suite quadratic in its own
+    test count — at 6475 tests that was ~42M directory-entry comparisons,
+    over half the run. Numbering here is a counter instead (see
+    ``_test_isolation_dir``), and moving the dirs one level down keeps
+    the base temp dir small enough that pytest's own ``tmp_path``
+    numbering stays cheap too.
+    """
+    return tmp_path_factory.mktemp("isolation", numbered=False)
+
+
+@pytest.fixture
+def _test_isolation_dir(_isolation_root: Path) -> Path:
+    """This test's private corner of ``_isolation_root``, named by counter."""
+    iso = _isolation_root / f"t{next(_ISOLATION_COUNTER)}"
+    iso.mkdir()
+    return iso
+
+
 @pytest.fixture(autouse=True)
-def _isolate_global_config(tmp_path_factory, monkeypatch):
+def _isolate_global_config(_test_isolation_dir, monkeypatch):
     """Redirect ``default_global_config_path`` to an empty tmp dir.
 
     Without this, every ``load_config()`` call layers the developer's
@@ -329,7 +409,8 @@ def _isolate_global_config(tmp_path_factory, monkeypatch):
     supersedes this fixture (monkeypatch.setenv keeps the most recent
     value).
     """
-    iso = tmp_path_factory.mktemp("xdg-isolation", numbered=True)
+    iso = _test_isolation_dir / "xdg-config"
+    iso.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(iso))
 
 
@@ -366,7 +447,7 @@ def _reset_deprecation_notices():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_state_dir(tmp_path_factory, monkeypatch):
+def _isolate_state_dir(_test_isolation_dir, monkeypatch):
     """Redirect XDG_STATE_HOME to a tmp dir so tests never touch ~/.local/state/jailbee/.
 
     _resolve_attachable always calls get_engine() (via
@@ -390,7 +471,8 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     to point at. Dispose per test and the cache never grows. See the
     `pytest-fd-cliff-oom` memory note for the full chain.
     """
-    iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
+    iso = _test_isolation_dir / "xdg-state"
+    iso.mkdir()
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
     yield
     for engine in _ENGINES.values():
@@ -439,6 +521,12 @@ def _mock_runtime_mounts(request, mocker):
     integration don't care about the polling mechanics; tests that *do*
     live in tests/test_runtime_mounts.py and skip this autouse via the
     `unmock_runtime_mounts` marker on the file.
+
+    Plain callables rather than mocks: nothing asserts on the replacements
+    this fixture installs (the tests that want a handle patch the same two
+    names again themselves), and a `MagicMock` per patch per test is
+    measurable at this suite's size — the two here cost ~0.6 ms of every
+    test's setup.
     """
     if request.node.get_closest_marker("unmock_runtime_mounts"):
         return
@@ -446,10 +534,11 @@ def _mock_runtime_mounts(request, mocker):
         return
     mocker.patch(
         "jailbee.runtime_mounts.attach_runtime_devices",
-        return_value=True,
+        new=lambda *a, **k: True,
     )
     mocker.patch(
         "jailbee.runtime_mounts.detach_runtime_devices",
+        new=lambda *a, **k: None,
     )
 
 
@@ -463,6 +552,9 @@ def _neutralize_kitty_autodetect(request, mocker):
     without it. Tests that exercise kitty autodetect explicitly re-patch
     `_kitty_terminfo_candidates` to inject their own paths and override
     this default.
+
+    A plain callable rather than a mock, for the reason given in
+    `_mock_runtime_mounts`.
     """
     # Exempt the one test whose subject IS this function (it asserts on
     # the real candidate list). Tests that exercise kitty autodetect
@@ -472,7 +564,7 @@ def _neutralize_kitty_autodetect(request, mocker):
         return
     mocker.patch(
         "jailbee.config.models_tools._kitty_terminfo_candidates",
-        return_value=[Path("/nonexistent/kitty-terminfo-sentinel")],
+        new=lambda: [Path("/nonexistent/kitty-terminfo-sentinel")],
     )
 
 

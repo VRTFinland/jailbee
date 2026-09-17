@@ -29,6 +29,21 @@ def incus(mocker):
     return m
 
 
+@pytest.fixture(autouse=True)
+def _no_poll_delay(monkeypatch):
+    """Take the half-second between poll rounds out of the parallel driver.
+
+    `_run_chains_in_parallel` sleeps `_POLL_INTERVAL_SEC` whenever a step is
+    still in flight — a real wait, and the only thing these tests were
+    waiting for: every handle here carries an explicit `deadline` (0.0 for
+    "already expired", 1e9 for "never"), so nothing in the driver's timeout
+    branch depends on wall-clock time passing, and the poll results are
+    scripted rather than observed. Six tests in this file were spending
+    half a second each doing nothing.
+    """
+    monkeypatch.setattr(autostart, "_POLL_INTERVAL_SEC", 0)
+
+
 # --- helpers -------------------------------------------------------------
 
 

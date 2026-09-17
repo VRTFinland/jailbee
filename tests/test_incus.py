@@ -1069,10 +1069,14 @@ def test_exec_lines_kills_the_command_when_the_reader_stops(tmp_path):
         os.kill(pid, 0)
 
 
-def test_exec_lines_kills_a_command_that_ignores_sigterm(tmp_path):
+def test_exec_lines_kills_a_command_that_ignores_sigterm(tmp_path, monkeypatch):
     """terminate() comes first so incus can pass it on; a command that ignores
     it must still not outlive the reader."""
     incus = _fake_incus(tmp_path)
+    # The wait between SIGTERM and SIGKILL is the whole cost of this test, and
+    # its length is not what is under test: the escalation is. Three seconds
+    # of real waiting made this the slowest test in the suite.
+    monkeypatch.setattr(Incus, "_EXEC_LINES_TERM_GRACE", 0.2)
     gen = incus.exec_lines("c", ["sh", "-c", "trap '' TERM; echo $$; sleep 30 & wait"])
     pid = int(next(gen))
 

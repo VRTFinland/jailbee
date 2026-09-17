@@ -57,6 +57,7 @@ All commands run from the repo root.
 ### Testing
 ```bash
 uv run pytest                # run all tests (fast, all mocked)
+uv run pytest -n auto        # same, across every core (~2x, messier output)
 uv run pytest -xvs           # stop on first failure, verbose
 uv run pytest tests/test_X.py # single file
 ```
