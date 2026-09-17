@@ -3,6 +3,13 @@ import pytest
 from jailbee.agents import enabled_agent_specs
 from tests.conftest import make_cfg, with_agent
 
+# The codex preset's install line, and its update line — the vendor's
+# installer decides which of the two it is doing, so `agent_presets` gives
+# both fields the same command.
+CODEX_INSTALL = "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+# ...as `_ensure_one` wraps it for the step: a child `bash -c` of its own.
+CODEX_INSTALL_RUN = f"bash -c '{CODEX_INSTALL}'"
+
 
 def test_disabled_agents_are_excluded(tmp_path):
     cfg = make_cfg(tmp_path, agents={"codex": {"enabled": False}})
@@ -16,9 +23,9 @@ def test_spec_carries_mounts_egress_and_install(tmp_path):
     assert [c.name for c in spec.shared] == ["codex"]
     assert [c.container_path for c in spec.shared] == ["~/.codex"]
     assert spec.egress == ("api.openai.com:443",)
-    assert spec.install == "npm i -g @openai/codex"
+    assert spec.install == CODEX_INSTALL
     assert spec.install_check == "command -v codex"
-    assert spec.install_network == "strict"
+    assert spec.install_network == "loose"
 
 
 def test_file_mount_becomes_a_seed_file_not_a_dir(tmp_path):
@@ -132,8 +139,8 @@ def test_install_runs_when_check_fails(tmp_path, mocker):
     (step,) = [c.args[3] for c in apply_step.call_args_list]
     # Wrapped in a child `bash -c` so the command gets its own shell — see
     # `_ensure_one` and `test_install_step_is_safe_to_concatenate`.
-    assert step.run == "bash -c 'npm i -g @openai/codex'"
-    assert step.network is None  # codex installs under strict
+    assert step.run == CODEX_INSTALL_RUN
+    assert step.network == "loose"  # codex's installer is a curl | sh
 
 
 def test_update_runs_when_check_succeeds_and_auto_update(tmp_path, mocker):
@@ -146,7 +153,7 @@ def test_update_runs_when_check_succeeds_and_auto_update(tmp_path, mocker):
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert step.run == "bash -c 'npm i -g @openai/codex@latest'"
+    assert step.run == CODEX_INSTALL_RUN  # install and update are the same line
 
 
 def test_no_update_when_auto_update_off(tmp_path, mocker):
@@ -177,6 +184,27 @@ def test_grok_install_step_swaps_to_loose(tmp_path, mocker):
     assert step.network == "loose"
 
 
+def test_strict_install_step_leaves_network_unset(tmp_path, mocker):
+    """The default `install_network: strict` must emit `network=None`, i.e.
+    leave the container in whatever mode it is already in.
+
+    Covered here on `aider` rather than `codex`: codex's preset moved to the
+    vendor's `curl | sh` installer and now asks for `loose` like `grok`, so
+    the strict default would otherwise have no preset exercising it.
+    """
+    from jailbee.agents import ensure_agents
+
+    cfg = make_cfg(tmp_path, agents={"aider": {"enabled": True}}, shared_dir=tmp_path / "shared")
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.network is None
+
+
 def test_install_runs_even_when_auto_update_off(tmp_path, mocker):
     """`auto_update=False` only gates the update path — a fresh install must
     still happen. Otherwise disabling auto-update would silently disable
@@ -196,7 +224,7 @@ def test_install_runs_even_when_auto_update_off(tmp_path, mocker):
     ensure_agents(cfg, incus, "c1", "/home/dev/repo")
 
     (step,) = [c.args[3] for c in apply_step.call_args_list]
-    assert step.run == "bash -c 'npm i -g @openai/codex'"
+    assert step.run == CODEX_INSTALL_RUN
 
 
 def test_install_step_is_safe_to_concatenate(tmp_path, mocker):

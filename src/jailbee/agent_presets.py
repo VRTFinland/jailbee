@@ -15,8 +15,36 @@ from jailbee.constants import CLAUDE_API_HOSTS
 AGENT_PRESETS: dict[str, dict[str, object]] = {
     "codex": {
         "command": "codex",
-        "install": "npm i -g @openai/codex",
-        "update": "npm i -g @openai/codex@latest",
+        # The vendor's own installer, not `npm i -g @openai/codex`. npm exists
+        # in the golden image only when `golden.stacks.node` is on, so the npm
+        # line made enabling this preset a silent no-op on every image without
+        # the node stack: the install step died with `npm: command not found`
+        # (a warning `_ensure_one` swallows) and the autostart window then died
+        # with `codex: not found`. The installer is a static binary drop and
+        # needs no toolchain at all.
+        #
+        # Install and update are the same command line — the script decides
+        # which it is from what's already on disk.
+        #
+        # `CODEX_NON_INTERACTIVE=1` is load-bearing, not tidiness: the script
+        # ends every run (install *and* update) with a `Start Codex now? [y/N]`
+        # prompt read from /dev/tty, and the install step runs in a tmux window
+        # that has one. Without it every `jailbee new` blocks on that prompt
+        # until `autostart.step_timeout`.
+        "install": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+        "update": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+        # The installer fetches itself from chatgpt.com, then the release from
+        # releases.openai.com, falling back to api.github.com + the
+        # github.com release redirect. All four are CDN-fronted and
+        # round-robin their IPs, which is exactly the case the ACL's
+        # resolve-at-apply-time pooling handles worst on a first run — so the
+        # install step gets `loose` rather than a hostname list that fails
+        # intermittently. Same reasoning as `grok` below. docs/agents.md
+        # carries the recipe for pinning this back to strict.
+        "install_network": "loose",
+        # Also where the installer puts the binary: ~/.local/bin/codex is a
+        # per-container symlink into ~/.codex/packages/standalone/current,
+        # so the ~300MB payload is downloaded once per repo, not per branch.
         "shared": [{"subpath": "codex", "path": "~/.codex"}],
         "egress_allow": ["api.openai.com:443"],
     },

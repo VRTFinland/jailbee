@@ -110,7 +110,7 @@ agents:
     autostart: true
 ```
 
-Everything else — the npm install command, the `~/.codex` shared mount, the
+Everything else — the install command, the `~/.codex` shared mount, the
 `api.openai.com:443` egress entry — comes from the preset. `claude` ships
 enabled with `autostart: false` by default in the `jailbee config init --global`
 template; see [Claude](#9-claude) below for its own switches.
@@ -147,15 +147,15 @@ This resolution happens at the raw-dict level, before Pydantic validation, so
 a partial override (just one field) validates against the preset's completed
 shape rather than failing on missing required fields.
 
-**Worked override — fixing a renamed package.** Say the `codex` npm package
+**Worked override — fixing a renamed package.** Say the `gemini` npm package
 were renamed upstream. Nothing about the mount, the egress host, or the
 command name needs to change — override just the two scalar fields:
 
 ```yaml
 agents:
-  codex:
-    install: "npm i -g @openai/codex-cli"
-    update: "npm i -g @openai/codex-cli@latest"
+  gemini:
+    install: "npm i -g @google/gemini-cli-next"
+    update: "npm i -g @google/gemini-cli-next@latest"
 ```
 
 `command`, `shared`, and `egress_allow` still come from the preset unchanged.
@@ -325,13 +325,72 @@ path in sections 2–4 above is what makes shipping them acceptable.
 
 | Preset | Install | Config paths | Egress | Verification status |
 | --- | --- | --- | --- | --- |
-| `codex` | `npm i -g @openai/codex` (Node ≥ 22) | `~/.codex` (dir — config, auth, sessions, logs) | `api.openai.com:443` | Install + config dir verified against vendor docs; the ChatGPT-login sign-in hosts are **undocumented** upstream, so the API-key path is the documented one. |
+| `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**) | `api.openai.com:443`; `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. The ChatGPT-login sign-in hosts remain **undocumented** upstream, so the API-key path is the documented one. |
 | `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443` | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
 | `opencode` | `npm i -g opencode-ai@latest` | `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | provider-dependent | Verified. |
 | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` — **not npm** | `~/.grok` (dir — `config.toml`, `auth.json`) | `api.x.ai:443` (API-key path); `x.ai:443` (installer); `auth.x.ai:443` (OIDC device-code + refresh); `cli-chat-proxy.grok.com:443` (SuperGrok inference and hosted web_search). `install_network: loose` because the installer's redirect target is undocumented. This list is runtime hosts only — it does not open arbitrary HTTPS for `web_fetch`. | Install + config dir verified against vendor docs. SuperGrok hosts checked against a live device-auth session in a strict-mode container: without the chat proxy, inference retries `https://cli-chat-proxy.grok.com/v1/responses` until it fails. API key env var is `XAI_API_KEY` per vendor docs; a third-party guide claims `GROK_CODE_XAI_API_KEY` — the vendor spelling wins, and that discrepancy is exactly why presets are templates. |
 
 Source of truth for the exact values: `src/jailbee/agent_presets.py`.
+
+### A preset's install command needs a toolchain the image may not have
+
+An `install:` line is just a shell command run inside the container. Nothing
+checks that what it invokes exists, and a failed install step is only a
+warning `jailbee new` prints once and walks past — so enabling a preset whose
+installer is missing its toolchain is a **silent** no-op. The install step
+dies with `<tool>: command not found`, and the agent's autostart window then
+dies with `<agent>: not found`. The evidence lives in the container, not on
+the host:
+
+```bash
+jailbee exec <container> -- tmux capture-pane -p -t autostart:install-gemini
+```
+
+| Preset | Needs | Which is present when |
+| --- | --- | --- |
+| `gemini`, `opencode` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
+| `aider` | `uv` | your own `install.d/` snippet installs it — jailbee's golden image does not ship `uv` |
+| `claude`, `codex`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
+
+For the npm pair, add the stack and rebuild the base image:
+
+```yaml
+golden:
+  stacks:
+    node: true      # or a major version, e.g. 22
+```
+
+```bash
+jailbee base build
+```
+
+`codex` used to be in the npm row and no longer is. If you added the node
+stack solely to get `codex` working, you can drop it again; and if a
+container already has an `npm i -g @openai/codex` install, remove it
+(`npm uninstall -g @openai/codex`), because `/etc/profile.d` puts
+`~/.npm-global/bin` ahead of `~/.local/bin` and the old copy would shadow the
+new one.
+
+### Pinning codex's install back to strict
+
+The codex install step asks for `install_network: loose` because all four of
+the installer's hosts are CDN-fronted and rotate their IPs, which is the case
+the strict ACL's resolve-at-apply-time pooling handles worst on a first run.
+To keep the step strict instead, name the hosts yourself and accept that the
+first attempt may need a retry while the pool fills:
+
+```yaml
+agents:
+  codex:
+    install_network: strict
+    egress_allow:
+      - chatgpt.com:443
+      - releases.openai.com:443
+```
+
+Those entries join the container's runtime allowlist too — `egress_allow`
+appends, it has no install-only scope.
 
 ## 9. Claude
 

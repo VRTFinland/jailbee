@@ -255,6 +255,25 @@ against the vendor's own docs before relying on them (package name,
 config paths, host list). Enabling one they don't already use, without
 double-checking those details, is worse than not enabling it.
 
+**Check that the preset's installer has a toolchain to run in.** Nothing
+verifies this, and a failed install step is only a warning `jailbee new`
+walks past — so the agent silently never appears, and its autostart
+window dies with `<agent>: not found`.
+
+- `gemini`, `opencode` need `npm`, which the golden image has only when
+  `golden.stacks.node` is on. Add the stack in the same edit and tell the
+  user to run `jailbee base build`.
+- `aider` needs `uv`, which jailbee's golden image does not ship at all —
+  it takes an `.jailbee/install.d/` snippet of the repo's own.
+- `claude`, `codex`, `grok` need nothing: each installs a static binary
+  through the vendor's own installer.
+
+```yaml
+golden:
+  stacks:
+    node: true      # only for gemini / opencode
+```
+
 The **master switch and egress hosts usually belong in
 `~/.config/jailbee/global.yaml`**, not the per-repo file — an agent's
 login state is personal, same reasoning as the `gpg`/`ssh`/`jetbrains`

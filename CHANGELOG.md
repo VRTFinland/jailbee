@@ -112,6 +112,25 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **The `codex` agent preset could not install itself.** It ran `npm i -g
+  @openai/codex`, but npm is in the golden image only when
+  `golden.stacks.node` is on — so on any image without the node stack
+  enabling `codex` did nothing at all: the install step died with `npm:
+  command not found`, which `jailbee new` reports as a warning and walks
+  past, and the agent's autostart window then died with `codex: not found`.
+  The preset now runs the vendor's own installer
+  (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`, the same line for
+  install and update), which drops a static binary into `~/.local/bin` and
+  needs no toolchain. The install step asks for `loose` while it runs,
+  because all four of the installer's hosts are CDN-fronted and rotate their
+  IPs; `docs/agents.md` has the recipe for pinning it back to strict. The
+  ~300MB payload lands inside the preset's existing `~/.codex` shared mount,
+  so it is fetched once per repo rather than per branch. If you added the
+  node stack solely to get `codex` working you can drop it again, and an
+  existing `npm i -g @openai/codex` install should be removed — `/etc/profile.d`
+  puts `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would
+  shadow the new one. `gemini` and `opencode` still install through npm and
+  still need `golden.stacks.node`; that requirement is now documented.
 - **Both dashboards opened on an empty table.** `jailbee dashboard` and the
   Qt window drew their frontend first and only then asked Incus what was
   there, so the first thing on screen was a blank view — and the snapshot
