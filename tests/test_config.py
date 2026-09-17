@@ -4224,7 +4224,8 @@ def test_load_repo_config_synthesizes_when_there_is_no_file(tmp_path, monkeypatc
     cfg = load_repo_config(repo)
 
     assert cfg.is_synthetic() is True
-    assert cfg.container_prefix == "tutkimus"
+    # Slug plus a path digest; the digest itself is pinned further down.
+    assert cfg.container_prefix.startswith("tutkimus-")
     assert cfg.golden.alias == SCRATCH_BASE_ALIAS
     assert cfg.repo_root == repo
     # No stacks by default: the scratch image is the core install plus Claude.
@@ -4245,6 +4246,20 @@ def test_load_repo_config_prefers_a_real_file(tmp_path, monkeypatch, mocker):
     assert cfg.golden.alias == "myrepo-base"  # derived, not pinned
 
 
+_PATH_DIGEST_RE = re.compile(r"^[0-9a-f]{6}$")
+
+
+def _prefix_parts(prefix: str) -> tuple[str, str]:
+    """Split a synthesized `container_prefix` into its slug and path digest.
+
+    The tests below assert *properties* of the digest rather than recomputing
+    it: a test that hashed the path itself would pass no matter what the
+    loader hashed, including nothing at all.
+    """
+    slug, _, digest = prefix.rpartition("-")
+    return slug, digest
+
+
 def test_synthesized_prefix_is_slugified(tmp_path, monkeypatch, mocker):
     """`_build_config_from_dict` would reject `Tutkimus_A` and tell the user to
     set `container_prefix:` in a file that does not exist."""
@@ -4253,7 +4268,95 @@ def test_synthesized_prefix_is_slugified(tmp_path, monkeypatch, mocker):
     repo = _write_bare_repo(tmp_path, name="Tutkimus_A")
     from jailbee.config import load_repo_config
 
-    assert load_repo_config(repo).container_prefix == "tutkimus-a"
+    slug, digest = _prefix_parts(load_repo_config(repo).container_prefix)
+    assert slug == "tutkimus-a"
+    assert _PATH_DIGEST_RE.match(digest)
+
+
+def test_synthesized_prefix_carries_a_path_digest(tmp_path, monkeypatch, mocker):
+    """The directory name alone is not an identity — see the test below."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="tutkimus")
+    from jailbee.config import load_repo_config
+
+    slug, digest = _prefix_parts(load_repo_config(repo).container_prefix)
+    assert slug == "tutkimus"
+    assert _PATH_DIGEST_RE.match(digest)
+
+
+def test_same_named_scratch_directories_get_different_prefixes(tmp_path, monkeypatch, mocker):
+    """The defect this rule exists for: `~/a/test-repo` and `~/b/test-repo`
+    derived one prefix from the name alone, so they shared profiles, container
+    names and one `RegisteredRepo` row, and silently overwrote each other."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    first = _write_bare_repo(tmp_path / "a", name="test-repo")
+    second = _write_bare_repo(tmp_path / "b", name="test-repo")
+    from jailbee.config import load_repo_config
+
+    one = load_repo_config(first).container_prefix
+    two = load_repo_config(second).container_prefix
+
+    assert one != two
+    assert _prefix_parts(one)[0] == _prefix_parts(two)[0] == "test-repo"
+
+
+def test_a_scratch_directory_no_longer_collides_with_a_same_named_repo(
+    tmp_path, monkeypatch, mocker
+):
+    """`~/Downloads/myapp` used to derive a configured `~/src/myapp`'s exact
+    prefix, which `egress_pool.check_prefix_collision` had to refuse. The
+    digest removes the collision at the source; the guard stays for the one
+    way left to reach it, an explicit `scratch.config.container_prefix`."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
+    _write_global(tmp_path, monkeypatch)
+    configured = _write_repo(tmp_path / "src", name="myapp", config_yaml="{}\n")
+    scratch = _write_bare_repo(tmp_path / "Downloads", name="myapp")
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(configured).container_prefix == "myapp"
+    assert load_repo_config(scratch).container_prefix != "myapp"
+
+
+def test_synthesized_prefix_is_stable_across_loads(tmp_path, monkeypatch, mocker):
+    """The prefix names profiles, containers and a registry row, so it must be
+    a pure function of the path — never of load order or database state."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="tutkimus")
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(repo).container_prefix == load_repo_config(repo).container_prefix
+
+
+def test_synthesized_prefix_follows_the_resolved_path(tmp_path, monkeypatch, mocker):
+    """A symlink into the directory is the same directory, and must not get a
+    second identity — hence the digest is taken of the *resolved* path."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="tutkimus")
+    # Same basename as the real directory, so only the path digest can differ.
+    link = tmp_path / "link" / "tutkimus"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(repo, target_is_directory=True)
+    from jailbee.config import load_repo_config
+
+    assert load_repo_config(link).container_prefix == load_repo_config(repo).container_prefix
+
+
+def test_synthesized_prefix_matches_prefix_re(tmp_path, monkeypatch, mocker):
+    """Appending the digest must not break the grammar `_build_config_from_dict`
+    validates against — hex digits are inside `[a-z0-9]`, but assert it."""
+    from jailbee.config.models_host import _PREFIX_RE
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_bare_repo(tmp_path, name="Tutkimus_A")
+    from jailbee.config import load_repo_config
+
+    assert _PREFIX_RE.match(load_repo_config(repo).container_prefix)
 
 
 def test_synthesized_layer_is_beaten_by_scratch_config(tmp_path, monkeypatch, mocker):
@@ -4373,7 +4476,7 @@ def test_a_sibling_of_home_is_still_allowed(tmp_path, monkeypatch, mocker, priva
     (sibling / ".git").mkdir(parents=True)
     from jailbee.config import load_repo_config
 
-    assert load_repo_config(sibling).container_prefix == "projects"
+    assert load_repo_config(sibling).container_prefix.startswith("projects-")
 
 
 def test_a_directory_inside_home_is_still_allowed(tmp_path, monkeypatch, mocker, private_home):
@@ -4385,7 +4488,7 @@ def test_a_directory_inside_home_is_still_allowed(tmp_path, monkeypatch, mocker,
     (inside / ".git").mkdir(parents=True)
     from jailbee.config import load_repo_config
 
-    assert load_repo_config(inside).container_prefix == "app"
+    assert load_repo_config(inside).container_prefix.startswith("app-")
 
 
 def test_unusable_directory_name_is_reported(tmp_path, monkeypatch, mocker):

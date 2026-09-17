@@ -12,6 +12,7 @@ import pytest
 from rich.console import Console, RenderableType
 
 from jailbee import dashboard
+from jailbee.config.loader import _scratch_prefix
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
@@ -214,18 +215,19 @@ def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, 
     mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
     repo = tmp_path / "tutkimus"
     (repo / ".git").mkdir(parents=True)
+    prefix = _scratch_prefix(repo)  # slug plus a digest of the path
 
     mocker.patch.object(
         dashboard,
         "list_containers",
         side_effect=lambda cfg, incus, **kw: (
-            [] if kw.get("all_repos") else [_ci("tutkimus-x", "tutkimus")]
+            [] if kw.get("all_repos") else [_ci(f"{prefix}-x", prefix)]
         ),
     )
 
     groups = dashboard.gather_rows(mocker.MagicMock(), [repo], cwd_root=repo, with_git=False)
 
-    assert [g.prefix for g in groups] == ["tutkimus"]
+    assert [g.prefix for g in groups] == [prefix]
     assert groups[0].repo_root == str(repo)
     # No file on disk -> no config path. Task 10b is what re-enables its menu.
     assert groups[0].config_path is None
