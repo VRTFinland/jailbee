@@ -48,6 +48,7 @@ class RefreshWorker(QObject):
         self._force = False
         self._paused = False
         self._prev_groups: list[RepoGroup] = []
+        self._seeded_at: float | None = None
 
     def gather_once(self, do_git: bool) -> list[RepoGroup]:
         """Gather one snapshot (blocking). Wraps ``gather_live``, so each
@@ -76,6 +77,17 @@ class RefreshWorker(QObject):
         self._interval = max(0.5, value)
         self._paused = False
 
+    def seed(self, groups: list[RepoGroup], *, at: float) -> None:
+        """Adopt a snapshot gathered before the window was shown.
+
+        ``app.run`` surveys the cheap tier synchronously so the window is
+        never seen blank; this hands the result over so the loop *continues*
+        that schedule instead of restarting it. ``at`` is the monotonic
+        timestamp of that gather. Must be called before the thread starts.
+        """
+        self._prev_groups = groups
+        self._seeded_at = at
+
     def set_paused(self, paused: bool) -> None:
         """Pause/resume periodic gathers. A paused worker still honors
         :meth:`force` and the initial gather."""
@@ -84,9 +96,13 @@ class RefreshWorker(QObject):
     @Slot()
     def run_loop(self) -> None:
         """The gather loop. Runs until :meth:`request_stop` is observed."""
-        last_base = 0.0
+        # A seeded worker continues the pre-gather's schedule: `first` forces
+        # an immediate git-inclusive gather, which is exactly what the cheap
+        # seed is still missing — but with git disabled there is nothing left
+        # to fetch, and a `first` there would just repeat the seed.
+        last_base = 0.0 if self._seeded_at is None else self._seeded_at
         last_full = 0.0
-        first = True
+        first = True if self._seeded_at is None else self._git_enabled
         while not self._stop:
             forced = self._force
             do_base, do_git = _refresh_due(

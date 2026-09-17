@@ -268,3 +268,98 @@ def test_gather_once_delegates_to_gather_live(mocker):
     assert worker.gather_once(do_git=True) == groups
     # git disabled at the worker level wins over a git-tier tick
     gl.assert_called_once_with(incus, cwd, with_git=False)
+
+
+def test_seeded_worker_skips_the_redundant_base_gather_when_git_is_disabled(qtbot, mocker):
+    """`app.run` gathers a base snapshot synchronously before showing the
+    window. With git disabled that is the only tier there is, so the worker
+    must continue that schedule rather than restart it — otherwise launching
+    the dashboard runs two identical gathers back to back.
+    """
+    import time
+
+    gather = mocker.patch("jailbee.qtui.refresh.gather_live", return_value=[])
+    worker = RefreshWorker(
+        incus=mocker.Mock(),
+        cwd_root=Path("/repo"),
+        interval=5.0,
+        git_interval=10.0,
+        git_enabled=False,
+    )
+    worker.seed([], at=time.monotonic())
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run_loop)
+
+    with qtbot.waitSignal(worker.groupsReady, timeout=400, raising=False) as blocker:
+        thread.start()
+    assert not blocker.signal_triggered
+    assert gather.call_count == 0
+
+    worker.request_stop()
+    thread.quit()
+    assert thread.wait(3000)
+
+
+def test_seeded_worker_still_gathers_the_git_tier_immediately(qtbot, mocker):
+    """The seeded snapshot is the cheap tier only, so the git columns are
+    still missing — the worker's first tick must fetch them at once rather
+    than wait out `git_interval`.
+    """
+    import time
+
+    groups = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
+    gather = mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
+    worker = RefreshWorker(
+        incus=mocker.Mock(),
+        cwd_root=Path("/repo"),
+        interval=5.0,
+        git_interval=600.0,
+        git_enabled=True,
+    )
+    worker.seed([], at=time.monotonic())
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run_loop)
+
+    with qtbot.waitSignal(worker.groupsReady, timeout=3000):
+        thread.start()
+    assert gather.call_args.kwargs["with_git"] is True
+
+    worker.request_stop()
+    thread.quit()
+    assert thread.wait(3000)
+
+
+def test_seeded_groups_carry_forward_into_the_next_base_refresh(qtbot, mocker):
+    """The pre-gather is the worker's `prev_groups` too: without it the first
+    base refresh after launch has no earlier snapshot to copy git status from
+    and the git columns blink blank.
+    """
+    import time
+
+    status = GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="1", conflict="ok")
+    seeded = [
+        RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [_ci("p-x", git_status=status)])
+    ]
+    fresh = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [_ci("p-x", git_status=None)])]
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=fresh)
+    worker = RefreshWorker(
+        incus=mocker.Mock(),
+        cwd_root=Path("/repo"),
+        interval=0.5,
+        git_interval=600.0,
+        git_enabled=False,
+    )
+    worker.seed(seeded, at=time.monotonic())
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run_loop)
+
+    with qtbot.waitSignal(worker.groupsReady, timeout=3000) as blocker:
+        thread.start()
+    assert blocker.args[0][0].containers[0].git_status == status
+
+    worker.request_stop()
+    thread.quit()
+    assert thread.wait(3000)

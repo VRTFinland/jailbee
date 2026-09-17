@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -622,6 +623,23 @@ def run(
     _wire(window, worker, controller)
     if paused:
         worker.set_paused(True)
+
+    # Surveyed before the window is shown, so it never appears blank and
+    # fills in a gather later. Only the cheap tier is waited for — the git
+    # probes are what make a full gather slow, and the worker's first tick
+    # fetches them at once (see `RefreshWorker.seed`).
+    #
+    # A failure here still shows the window, unlike the TUI's own pre-gather:
+    # a GUI launched detached has nowhere to print, so an error in the status
+    # bar beats a window that never appears.
+    try:
+        seeded = worker.gather_once(False)
+    except Exception as exc:  # the worker keeps retrying; report and carry on
+        controller.on_failed(str(exc))
+    else:
+        # Stamped on completion, the way the loop stamps its own gathers.
+        worker.seed(seeded, at=time.monotonic())
+        controller.on_groups(seeded)
 
     thread.start()
     window.show()
