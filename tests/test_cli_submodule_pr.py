@@ -103,6 +103,7 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None, mock_state_r
     # offers any remaining comments after the PR lands. Keep the default happy
     # path empty; focused outbox tests replace either boundary explicitly.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/lib-a")
     from jailbee.pr_outbox import Outbox
 
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={}))

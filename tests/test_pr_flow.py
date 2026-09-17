@@ -1051,6 +1051,80 @@ def test_create_or_view_records_authorship_on_create(tmp_path, mocker):
     state.record.assert_called_once_with(head="feat/foo", author=True, adopted=False, number=123)
 
 
+@pytest.mark.parametrize(("is_update", "already_exists"), [(False, False), (False, True), (True, True)])
+def test_outbox_create_and_existing_lookup_pin_scope_repo(
+    tmp_path, mocker, is_update, already_exists
+):
+    from subprocess import CompletedProcess
+
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/library")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    commands = []
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "git":
+            return CompletedProcess(cmd, 0, "https://github.com/acme/library", "")
+        commands.append(cmd)
+        assert kwargs["cwd"] == tmp_path / "libs/foo"
+        if cmd[:3] == ["gh", "pr", "create"]:
+            return CompletedProcess(
+                cmd, 1 if already_exists else 0,
+                "https://github.com/acme/library/pull/42", "already exists" if already_exists else ""
+            )
+        return CompletedProcess(
+            cmd, 0, '{"number": 42, "url": "https://github.com/acme/library/pull/42"}', ""
+        )
+
+    mocker.patch("subprocess.run", side_effect=run)
+    created = pr_flow.create_or_view_pr(
+        _sub_scope(tmp_path), mocker.MagicMock(), is_update=is_update,
+        head="library-head", base="main", title="Library title", body="Library body",
+        draft=True, label="jailbee submodule pr", use_outbox=True,
+    )
+
+    assert created.number == 42
+    assert len(commands) == (2 if already_exists and not is_update else 1)
+    assert all("--repo" in cmd for cmd in commands)
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/library" for cmd in commands)
+
+
+@pytest.mark.parametrize("hinted", [False, True])
+def test_outbox_description_edit_pins_scope_repo(tmp_path, mocker, hinted):
+    from subprocess import CompletedProcess
+
+    source = _outbox_source()
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    run = mocker.patch("subprocess.run", return_value=CompletedProcess([], 0, "", ""))
+
+    updated = _apply_updates(
+        tmp_path, mocker, use_outbox=True, outbox_hint=source if hinted else None
+    )
+
+    assert updated.description_source == "002-d.json"
+    run.assert_called_once()
+    cmd = run.call_args.args[0]
+    assert cmd[:4] == ["gh", "pr", "edit", "1234"]
+    assert "--repo" in cmd
+    assert cmd[cmd.index("--repo") + 1] == "acme/widgets"
+
+
+def test_outbox_create_refuses_an_unresolvable_scope(tmp_path, mocker):
+    from jailbee.pr import PrError
+
+    mocker.patch("jailbee.git.get_remote_url", return_value=None)
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    with pytest.raises(PrError, match="GitHub repository"):
+        pr_flow.create_or_view_pr(
+            _sub_scope(tmp_path), mocker.MagicMock(), is_update=False,
+            head="library-head", base="main", title="t", body="b", draft=True,
+            label="jailbee submodule pr", use_outbox=True,
+        )
+    create.assert_not_called()
+
+
 def test_create_or_view_does_not_record_on_update(tmp_path, mocker):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
     create = mocker.patch("jailbee.pr.create_pr")
@@ -1100,6 +1174,7 @@ def test_create_or_view_forwards_record_context_with_the_pr_number(tmp_path, moc
 
 def _apply_updates(tmp_path, mocker, **kwargs):
     """`apply_pr_updates` with the superproject update path's usual arguments."""
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
     call = {
         "number": 1234,
         "branch": "feat/foo",

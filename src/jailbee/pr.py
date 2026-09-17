@@ -333,6 +333,7 @@ def create_pr(
     remote: str,
     draft: bool = True,
     label: str = "jailbee pr",
+    repo: str | None = None,
 ) -> PrCreated:
     """Create a GitHub PR for `head` via `gh pr create` (non-interactive).
 
@@ -363,6 +364,8 @@ def create_pr(
     ]
     if draft:
         cmd.append("--draft")
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
     except FileNotFoundError as e:
@@ -372,7 +375,7 @@ def create_pr(
     if proc.returncode != 0:
         stderr = proc.stderr
         if "already exists" in stderr.lower():
-            return view_existing_pr(repo_root, head)
+            return view_existing_pr(repo_root, head, **({"repo": repo} if repo is not None else {}))
         if (
             "not logged" in stderr.lower()
             or "authentication" in stderr.lower()
@@ -612,11 +615,14 @@ def _raise_from_gh_failure(number: int, stderr: str) -> Never:
     raise PrResolveError(f"'gh pr view' failed: {stderr.strip()}")
 
 
-def view_existing_pr(repo_root: Path, head: str) -> PrCreated:
+def view_existing_pr(repo_root: Path, head: str, *, repo: str | None = None) -> PrCreated:
     """Resolve the PR that already exists for `head` (already-exists / update path)."""
+    cmd = ["gh", "pr", "view", head, "--json", "number,url"]
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(
-            ["gh", "pr", "view", head, "--json", "number,url"],
+            cmd,
             cwd=repo_root,
             capture_output=True,
             text=True,

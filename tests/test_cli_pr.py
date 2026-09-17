@@ -69,6 +69,7 @@ def _setup(mocker, tmp_path, labels=None):
     # below re-patch it. Without this the real `read_outbox` would run against
     # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
     # And an empty outbox for the offer `jailbee pr` makes once the PR is up,
     # for the same reason: every test that does not opt in below takes the
     # "nothing to offer" path instead of reading a MagicMock.
@@ -882,7 +883,9 @@ def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tm
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body."}
+    assert edit.call_args.kwargs == {
+        "title": "feat: x", "body": "Body.", "repo": "acme/widgets"
+    }
     gen.assert_not_called()
     confirm.assert_not_called()
     record.assert_called_once()

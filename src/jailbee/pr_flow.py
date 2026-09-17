@@ -1208,6 +1208,17 @@ def resolve_create_text(
     return resolved_title, resolved_body
 
 
+def _outbox_repo(scope: PrScope) -> str:
+    """Resolve the active scope's GitHub slug before publishing outbox text."""
+    from jailbee.pr import PrError
+    from jailbee.pr_outbox import scope_slug
+
+    repo = scope_slug(scope)
+    if repo is None:
+        raise PrError(f"{scope.prefix}Cannot resolve the GitHub repository for the outbox.")
+    return repo
+
+
 def create_or_view_pr(
     scope: PrScope,
     state: PrState,
@@ -1220,6 +1231,7 @@ def create_or_view_pr(
     draft: bool,
     label: str,
     record_context: str | None = None,
+    use_outbox: bool = False,
 ) -> PrCreated:
     """Return the container's PR: an existing one on update, else a new one.
 
@@ -1227,6 +1239,10 @@ def create_or_view_pr(
     `base`/`title`/`body`/`draft`/`label` are unused on that path. On create,
     `pr.create_pr` opens the PR and the authorship is recorded via
     `state.record`. Raises `pr.PrError` for the caller to map to a CLI exit.
+
+    `use_outbox` pins both creation and lookup to the active scope's GitHub
+    slug. An update must resolve its PR in that repository before selecting
+    a pending description for the resulting number.
 
     `record_context` is a description of what a label-write failure would mean
     (e.g. ``"failed to record the PR label on 'feat-foo'"``); when given, the
@@ -1237,8 +1253,9 @@ def create_or_view_pr(
     """
     from jailbee import pr as pr_module
 
+    repo_args = {"repo": _outbox_repo(scope)} if use_outbox else {}
     if is_update:
-        return pr_module.view_existing_pr(scope.repo_root, head)
+        return pr_module.view_existing_pr(scope.repo_root, head, **repo_args)
 
     created = pr_module.create_pr(
         scope.repo_root,
@@ -1249,6 +1266,7 @@ def create_or_view_pr(
         remote=scope.remote,
         draft=draft,
         label=label,
+        **repo_args,
     )
     if record_context is not None:
         state.record(
@@ -1344,7 +1362,8 @@ def apply_pr_updates(
     )
     if edit is not None:
         try:
-            pr_module.edit_pr(scope.repo_root, number, title=edit.title, body=edit.body)
+            repo_args = {"repo": _outbox_repo(scope)} if edit.source is not None else {}
+            pr_module.edit_pr(scope.repo_root, number, title=edit.title, body=edit.body, **repo_args)
             title_changed = edit.title is not None
             body_changed = edit.body is not None
         except pr_module.PrError as exc:
