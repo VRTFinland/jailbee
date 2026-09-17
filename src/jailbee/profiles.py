@@ -108,11 +108,16 @@ def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
     the pooled-adapter loop below, and `init_command`'s one-key `jailbee new`
     repair reads it through this function, so the two cannot drift.
     """
-    env = CLAUDE.wiring(cfg, CLAUDE.holder_override(cfg)).env
-    if not env:
+    # Keyed, not unpacked: `((key, value),) = env.items()` raised `ValueError`
+    # the moment `wiring` returned anything but exactly one variable, and that
+    # is the adapter's business to change, not an invariant this caller can
+    # enforce. This function is about one key, so it asks for that key.
+    value = CLAUDE.wiring(cfg, CLAUDE.holder_override(cfg)).env.get(
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+    )
+    if not value:
         return None
-    ((key, value),) = env.items()
-    return (f"environment.{key}", value)
+    return ("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", value)
 
 
 DEFAULT_CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
