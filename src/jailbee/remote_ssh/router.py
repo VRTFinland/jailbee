@@ -106,7 +106,7 @@ def route(
     engine: Engine | None = None,
 ) -> Route:
     """Route one remote SSH command according to the restricted grammar."""
-    if raw is None or not raw.strip():
+    if raw is None:
         return Route("help", (), None, None, False)
 
     argv = _parse(raw)

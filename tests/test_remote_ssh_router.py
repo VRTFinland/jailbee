@@ -61,6 +61,12 @@ def test_whitespace_command_routes_to_help() -> None:
     assert route("  ", RemoteSSHConfig()).kind == "help"
 
 
+@pytest.mark.parametrize("raw", ["\n", "\t", " \r "])
+def test_control_whitespace_is_rejected_before_empty_routing(raw: str) -> None:
+    with pytest.raises(RouteError, match="control character"):
+        route(raw, RemoteSSHConfig())
+
+
 def test_dashboard_is_registered_only_and_requires_pty() -> None:
     result = route("dashboard", RemoteSSHConfig())
     assert result.argv == ("dashboard", "--registered-only")
