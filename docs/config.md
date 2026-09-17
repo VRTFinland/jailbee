@@ -2406,6 +2406,12 @@ incus network acl delete "$OLD" "$OLD-container-extras"
 rm -rf ~/.local/share/jailbee/shared/"$OLD"
 ```
 
+Delete the containers *before* the profiles, and not only because Incus
+refuses to remove a profile still in use: jailbee recognises a container by
+the `<prefix>-base` profile it carries, so a container whose profiles are gone
+disappears from `jailbee ls` and `jailbee dashboard` entirely and has to be
+found with `incus list`.
+
 The golden image is *not* among them: every scratch directory shares the one
 `jailbee-scratch-base` alias, so it survives any prefix change and must not be
 deleted alongside.
