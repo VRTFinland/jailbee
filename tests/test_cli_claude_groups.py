@@ -19,9 +19,10 @@ def group_env(mocker, tmp_path, monkeypatch):
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
-    cfg = cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
+    cfg = cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "work")})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
@@ -30,7 +31,7 @@ def group_env(mocker, tmp_path, monkeypatch):
             "name": "myrepo-b",
             "status": "Running",
             "profiles": [],
-            "config": {claude_groups.GROUP_LABEL: "personal"},
+            "config": {groups.GROUP_LABEL: "personal"},
             "state": None,
         },
     ]
@@ -58,16 +59,16 @@ def test_bare_group_is_a_command_group_not_a_status_command(group_env):
 
 def test_use_applies_the_override(group_env, mocker):
     _, _incus = group_env
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code == 0
     assert setter.call_args.args[3] == "personal"
 
 
 def test_use_refuses_while_claude_runs(group_env, mocker):
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code != 0
     assert "--force" in result.output
@@ -75,8 +76,8 @@ def test_use_refuses_while_claude_runs(group_env, mocker):
 
 
 def test_use_force_overrides_the_refusal(group_env, mocker):
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a", "--force"])
     assert result.exit_code == 0
     setter.assert_called_once()
@@ -84,22 +85,22 @@ def test_use_force_overrides_the_refusal(group_env, mocker):
 
 def test_use_proceeds_when_the_probe_cannot_tell(group_env, mocker):
     """`None` is "cannot tell" — it must not read as a refusal."""
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=None)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=None)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code == 0
     setter.assert_called_once()
 
 
 def test_use_none_sets_no_group(group_env, mocker):
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     runner.invoke(app, ["claude", "group", "use", "none", "myrepo-a"])
     assert setter.call_args.args[3] is None
 
 
 def test_use_rejects_a_bad_group_name(group_env, mocker):
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     result = runner.invoke(app, ["claude", "group", "use", "Work", "myrepo-a"])
     assert result.exit_code != 0
     setter.assert_not_called()
@@ -114,8 +115,8 @@ def test_use_without_a_container_errors_without_a_tty(group_env, mocker):
 
 
 def test_reset_clears_the_override(group_env, mocker):
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
     result = runner.invoke(app, ["claude", "group", "reset", "myrepo-b"])
     assert result.exit_code == 0
     clearer.assert_called_once()
@@ -123,9 +124,11 @@ def test_reset_clears_the_override(group_env, mocker):
 
 def test_use_invalidates_the_repos_recorded_account(group_env, mocker):
     """§7.2: a stale `oauthAccount` would make the repo authoritative for the wrong account."""
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    mocker.patch("jailbee.claude_groups.set_container_group")
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.set_container_group")
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
     runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     invalidate.assert_called_once()
 
@@ -136,8 +139,10 @@ def test_set_invalidates_the_repos_recorded_account(group_env, mocker, tmp_path)
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
 
@@ -151,8 +156,10 @@ def test_unset_invalidates_the_repos_recorded_account(group_env, mocker, tmp_pat
     global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
 
     result = runner.invoke(app, ["claude", "group", "unset"])
 
@@ -165,7 +172,7 @@ def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
     assert result.exit_code == 0
@@ -183,7 +190,7 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
     runner.invoke(app, ["claude", "group", "set", "none"])
 
@@ -198,7 +205,7 @@ def test_unset_removes_the_entry(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
     runner.invoke(app, ["claude", "group", "unset"])
 
@@ -234,8 +241,8 @@ def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, t
     writer = mocker.patch("jailbee.cli._write_repo_group")
     # myrepo-b, not myrepo-a, is the one Claude is running in.
     mocker.patch(
-        "jailbee.claude_groups.claude_running",
-        side_effect=lambda cfg, incus, container: container == "myrepo-b",
+        "jailbee.accounts.groups.agent_running",
+        side_effect=lambda cfg, incus, container, command: container == "myrepo-b",
     )
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
@@ -252,7 +259,7 @@ def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
 
     result = runner.invoke(app, ["claude", "group", "set", "personal", "--force"])
 
@@ -270,8 +277,8 @@ def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker,
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     writer = mocker.patch("jailbee.cli._write_repo_group")
     mocker.patch(
-        "jailbee.claude_groups.claude_running",
-        side_effect=lambda cfg, incus, container: container == "myrepo-a",
+        "jailbee.accounts.groups.agent_running",
+        side_effect=lambda cfg, incus, container, command: container == "myrepo-a",
     )
 
     result = runner.invoke(app, ["claude", "group", "unset"])
@@ -288,7 +295,7 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
 
     result = runner.invoke(app, ["claude", "group", "unset", "--force"])
 
@@ -302,20 +309,22 @@ def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
     """`-g` narrows the host-wide table; it must not point the *config* at
     another group. A holder view keeps the calling repo's config home while
     naming another group's directory (see `cli._holder_view`), and
-    `claude_overview.build` reads both."""
-    from jailbee import claude_groups, claude_overview
+    `accounts.overview.build` reads both."""
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.overview import Overview
 
     captured = {}
 
-    def fake_build(cfg, gcfg, incus):
+    def fake_build(adapter, cfg, gcfg, incus):
         captured["holder"] = cfg.claude_credentials_dir
-        return claude_overview.Overview(rows=(), unreachable=(), containers_known=True)
+        return Overview(rows=(), unreachable=(), containers_known=True)
 
-    mocker.patch("jailbee.claude_overview.build", side_effect=fake_build)
+    mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
 
     runner.invoke(app, ["claude", "ls", "-g", "personal"])
 
-    assert captured["holder"] == claude_groups.group_dir("work")
+    assert captured["holder"] == groups.group_dir(CLAUDE.name, "work")
 
 
 @pytest.fixture
@@ -327,12 +336,13 @@ def holder_view_env(mocker, tmp_path, monkeypatch):
     `oauthAccount` turns into a wrongly named park.
     """
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.global_config import GlobalConfig
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
-    cfg = cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir("work")})
+    cfg = cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "work")})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch(
         "jailbee.cli._load_global",
@@ -362,13 +372,15 @@ def test_park_on_another_group_leaves_this_repos_recorded_account_alone(holder_v
     Clearing it there is how a later `jailbee claude park` loses its name."""
     import json
 
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     cfg = holder_view_env
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_json(home / ".claude.json", {"oauthAccount": {"emailAddress": "work@example.com"}})
     _write_json(
-        claude_groups.group_dir("personal") / ".credentials.json",
+        groups.group_dir(CLAUDE.name, "personal") / ".credentials.json",
         {"claudeAiOauth": {"refreshToken": "rt-personal"}},
     )
 
@@ -389,23 +401,25 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
     prevent."""
     import json
 
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     cfg = holder_view_env
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_json(home / ".claude.json", {"oauthAccount": {"emailAddress": "work@example.com"}})
     _write_json(
-        claude_pool.store_dir() / "personal@example.com.json",
+        engine.store_dir(CLAUDE) / "personal@example.com.json",
         {
             "claudeAiOauth": {"refreshToken": "rt-personal"},
-            claude_pool.ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
+            ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
         },
     )
     _write_json(
-        claude_groups.group_dir("work") / ".credentials.json",
+        groups.group_dir(CLAUDE.name, "work") / ".credentials.json",
         {"claudeAiOauth": {"refreshToken": "rt-work"}},
     )
-    claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
+    groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True, exist_ok=True)
 
     assert (
         runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
@@ -415,7 +429,7 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
 
     stored = {
         p.name: json.loads(p.read_text())["claudeAiOauth"]["refreshToken"]
-        for p in claude_pool.store_dir().glob("*.json")
+        for p in engine.store_dir(CLAUDE).glob("*.json")
     }
     assert stored.get("personal@example.com.json") != "rt-work"
     assert "rt-work" in stored.values()
@@ -427,16 +441,18 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     activated there could only be named `unknown-<timestamp>`."""
     import json
 
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     _write_json(
-        claude_pool.store_dir() / "personal@example.com.json",
+        engine.store_dir(CLAUDE) / "personal@example.com.json",
         {
             "claudeAiOauth": {"refreshToken": "rt-personal"},
-            claude_pool.ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
+            ACCOUNT_RECORD_KEY: {"emailAddress": "personal@example.com"},
         },
     )
-    claude_groups.group_dir("personal").mkdir(parents=True, exist_ok=True)
+    groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True, exist_ok=True)
 
     assert (
         runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
@@ -447,7 +463,7 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     assert result.exit_code == 0
     assert "unknown-" not in result.output
     assert "personal@example.com" in result.output
-    stored = claude_pool.store_dir() / "personal@example.com.json"
+    stored = engine.store_dir(CLAUDE) / "personal@example.com.json"
     assert json.loads(stored.read_text())["claudeAiOauth"]["refreshToken"] == "rt-personal"
 
 
@@ -456,10 +472,11 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
 
 def _labels(mocker, **labels: str):
     """Point `container_override`'s `config_get` at a per-container label."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     def fake(container: str, key: str) -> str | None:
-        assert key == claude_groups.GROUP_LABEL
+        assert key == groups.GROUP_LABEL
         return labels.get(container)
 
     return fake
@@ -471,9 +488,9 @@ def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker
     stay on `work` the next time the repo's group changed."""
     _, incus = group_env
     incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    setter = mocker.patch("jailbee.claude_groups.set_container_group")
-    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
     result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
 
@@ -485,8 +502,8 @@ def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker
 def test_use_of_the_repos_own_group_says_no_override_was_written(group_env, mocker):
     _, incus = group_env
     incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.clear_container_group")
 
     result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
 
@@ -501,9 +518,11 @@ def test_use_of_the_repos_own_group_keeps_the_account_when_nothing_changes(group
     Claude again."""
     _, incus = group_env
     incus.config_get.side_effect = _labels(mocker)  # no labels: everything inherits
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    mocker.patch("jailbee.claude_groups.clear_container_group")
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.clear_container_group")
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
 
     result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-a"])
 
@@ -516,9 +535,11 @@ def test_use_of_the_repos_own_group_invalidates_when_the_holder_changes(group_en
     the recorded account does go stale."""
     _, incus = group_env
     incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    mocker.patch("jailbee.claude_groups.clear_container_group")
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.clear_container_group")
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
 
     runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
 
@@ -528,9 +549,11 @@ def test_use_of_the_repos_own_group_invalidates_when_the_holder_changes(group_en
 def test_reset_keeps_the_account_when_the_override_was_redundant(group_env, mocker):
     _, incus = group_env
     incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "work"})
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    mocker.patch("jailbee.claude_groups.clear_container_group")
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity", return_value=True)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.clear_container_group")
+    invalidate = mocker.patch(
+        "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
+    )
 
     result = runner.invoke(app, ["claude", "group", "reset", "myrepo-b"])
 
@@ -546,8 +569,8 @@ def test_set_drops_an_override_the_change_made_redundant(group_env, mocker, tmp_
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
 
@@ -562,8 +585,8 @@ def test_set_keeps_an_override_that_still_deviates(group_env, mocker, tmp_path):
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
     result = runner.invoke(app, ["claude", "group", "set", "third"])
 
@@ -578,13 +601,13 @@ def test_set_re_renders_the_profile_before_dropping_an_override(group_env, mocke
     global_yaml = tmp_path / "global.yaml"
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     order: list[str] = []
     mocker.patch(
         "jailbee.cli._reapply_binds_profile", side_effect=lambda *a, **k: order.append("profile")
     )
     mocker.patch(
-        "jailbee.claude_groups.clear_container_group",
+        "jailbee.accounts.groups.clear_container_group",
         side_effect=lambda *a, **k: order.append("clear"),
     )
 
@@ -600,8 +623,8 @@ def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mock
     global_yaml.write_text("claude_credentials:\n  group: personal\n  repos:\n    myrepo: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
-    mocker.patch("jailbee.claude_groups.claude_running", return_value=False)
-    clearer = mocker.patch("jailbee.claude_groups.clear_container_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
     result = runner.invoke(app, ["claude", "group", "unset"])
 
@@ -616,12 +639,13 @@ def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mock
 def test_create_makes_the_directory_0700(group_env):
     import stat
 
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     result = runner.invoke(app, ["claude", "group", "create", "fresh"])
 
     assert result.exit_code == 0, result.output
-    created = claude_groups.group_dir("fresh")
+    created = groups.group_dir(CLAUDE.name, "fresh")
     assert created.is_dir()
     assert stat.S_IMODE(created.stat().st_mode) == 0o700
 
@@ -636,9 +660,10 @@ def test_create_names_what_to_do_with_the_new_group(group_env):
 
 
 def test_create_is_idempotent(group_env):
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
-    claude_groups.group_dir("fresh").mkdir(parents=True)
+    groups.group_dir(CLAUDE.name, "fresh").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "create", "fresh"])
 
@@ -660,14 +685,15 @@ def test_create_refuses_a_name_it_could_not_address(group_env, bad):
 
 
 def test_rm_removes_an_unused_empty_group(group_env):
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
-    claude_groups.group_dir("demo").mkdir(parents=True)
+    groups.group_dir(CLAUDE.name, "demo").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "rm", "demo"])
 
     assert result.exit_code == 0, result.output
-    assert not claude_groups.group_dir("demo").exists()
+    assert not groups.group_dir(CLAUDE.name, "demo").exists()
 
 
 def test_rm_of_a_group_that_does_not_exist_is_not_an_error(group_env):
@@ -685,7 +711,8 @@ def test_rm_refuses_while_a_repo_resolves_to_the_group(holder_view_env, mocker):
     default, so it is the *member* refusal being tested and not the
     host-default one, which fires first and says something else.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.global_config import GlobalConfig
 
     mocker.patch(
@@ -694,19 +721,20 @@ def test_rm_refuses_while_a_repo_resolves_to_the_group(holder_view_env, mocker):
             {"claude_credentials": {"repos": {"myrepo": "work"}}}
         ),
     )
-    claude_groups.group_dir("work").mkdir(parents=True)
+    groups.group_dir(CLAUDE.name, "work").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "rm", "work"])
 
     assert result.exit_code == 2
     assert "myrepo" in result.output
-    assert claude_groups.group_dir("work").exists()
+    assert groups.group_dir(CLAUDE.name, "work").exists()
 
 
 def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
     """The repo check reads the registry; an empty one must not make the host's
     own default look unused."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.global_config import GlobalConfig
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
@@ -714,40 +742,43 @@ def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
         "jailbee.cli._load_global",
         return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "demo"}}),
     )
-    claude_groups.group_dir("demo").mkdir(parents=True)
+    groups.group_dir(CLAUDE.name, "demo").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "rm", "demo"])
 
     assert result.exit_code == 2
     assert "global.yaml" in result.output
-    assert claude_groups.group_dir("demo").exists()
+    assert groups.group_dir(CLAUDE.name, "demo").exists()
 
 
 def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mocker):
     """`myrepo-b` reads `personal` through its own label, and removing the
     directory under it would leave it mounting nothing."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    claude_groups.group_dir("personal").mkdir(parents=True)
+    groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "rm", "personal"])
 
     assert result.exit_code == 2
     assert "myrepo-b" in result.output
     assert "group reset" in result.output
-    assert claude_groups.group_dir("personal").exists()
+    assert groups.group_dir(CLAUDE.name, "personal").exists()
 
 
 def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    holder = claude_groups.group_dir("demo")
+    holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
-    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
-    parked = claude_pool.PoolChange(
+    (holder / CREDENTIAL_FILE).write_text("{}")
+    parked = PoolChange(
         parked_as="demo@corp.com",
         activated=None,
         updated=[],
@@ -758,9 +789,9 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     # below succeed — a mock that only returned would leave the credential
     # in place and hide a broken order of operations.
     park = mocker.patch(
-        "jailbee.claude_pool.park",
+        "jailbee.accounts.engine.park",
         side_effect=lambda *a, **k: (
-            (holder / claude_pool.CREDENTIAL_FILE).unlink(),
+            (holder / CREDENTIAL_FILE).unlink(),
             parked,
         )[1],
     )
@@ -771,41 +802,45 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     park.assert_called_once()
     # The holder view, not this repo's own config: parking through the caller's
     # holder would store the wrong group's login.
-    assert park.call_args.args[0].claude_credentials_dir == holder
+    assert park.call_args.args[1].claude_credentials_dir == holder
     assert "demo@corp.com" in result.output
     assert not holder.exists()
 
 
 def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, mocker):
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     # Without this the command refuses for want of a TTY, and the test would
     # pass without ever reaching the prompt it is about.
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    holder = claude_groups.group_dir("demo")
+    holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
-    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
-    park = mocker.patch("jailbee.claude_pool.park")
+    (holder / CREDENTIAL_FILE).write_text("{}")
+    park = mocker.patch("jailbee.accounts.engine.park")
 
     result = runner.invoke(app, ["claude", "group", "rm", "demo"], input="n\n")
 
     assert result.exit_code != 0
     park.assert_not_called()
-    assert (holder / claude_pool.CREDENTIAL_FILE).exists()
+    assert (holder / CREDENTIAL_FILE).exists()
 
 
 def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
     """Parking is not destructive, but it does move a login out of a holder a
     script may still be pointing at — so it stays an explicit request."""
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch("jailbee.cli._is_tty", return_value=False)
-    holder = claude_groups.group_dir("demo")
+    holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
-    (holder / claude_pool.CREDENTIAL_FILE).write_text("{}")
-    park = mocker.patch("jailbee.claude_pool.park")
+    (holder / CREDENTIAL_FILE).write_text("{}")
+    park = mocker.patch("jailbee.accounts.engine.park")
 
     result = runner.invoke(app, ["claude", "group", "rm", "demo"])
 
@@ -817,10 +852,11 @@ def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
 def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
     """`rmdir`, never `rm -rf`: whatever else is in there is someone's, and the
     command says what stopped it instead of removing it."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    holder = claude_groups.group_dir("demo")
+    holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
     (holder / "notes.txt").write_text("mine")
 
@@ -836,7 +872,9 @@ def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
 
 def _built(mocker, *rows, **kwargs) -> None:
     """Point `claude group ls` at a fabricated host-wide overview."""
-    mocker.patch("jailbee.claude_overview.build", return_value=claude_overview_of(*rows, **kwargs))
+    mocker.patch(
+        "jailbee.accounts.overview.build", return_value=claude_overview_of(*rows, **kwargs)
+    )
 
 
 def test_group_ls_lists_every_group_and_what_it_holds(group_env, mocker):
@@ -936,7 +974,7 @@ def test_group_ls_warns_when_the_containers_could_not_be_listed(group_env, mocke
 
 
 def test_group_ls_exits_2_when_the_store_cannot_be_read(group_env, mocker):
-    mocker.patch("jailbee.claude_overview.build", side_effect=OSError("permission denied"))
+    mocker.patch("jailbee.accounts.overview.build", side_effect=OSError("permission denied"))
 
     result = runner.invoke(app, ["claude", "group", "ls"])
 

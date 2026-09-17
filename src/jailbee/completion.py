@@ -279,17 +279,19 @@ def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
     Full slot names rather than bare emails: a name is always an exact match,
     while an email is ambiguous once one account has two stored logins.
     """
-    from jailbee.claude_pool import parked_slots
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.engine import parked_slots
 
-    return [s.name for s in parked_slots() if s.name.startswith(incomplete)]
+    return [s.name for s in parked_slots(CLAUDE) if s.name.startswith(incomplete)]
 
 
 @_completion_guard
 def complete_claude_group(ctx: typer.Context, incomplete: str) -> list[str]:
     """Complete a credential group name from the ones present on this host."""
-    from jailbee.claude_groups import group_dir
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.groups import group_dir
 
-    root = group_dir("x").parent
+    root = group_dir(CLAUDE.name, "x").parent
     try:
         names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
     except OSError:

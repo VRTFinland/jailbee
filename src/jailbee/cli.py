@@ -1829,15 +1829,15 @@ def new_cmd(
 
     resolved_claude_group: str | None = None
     if claude_group is not None:
-        from jailbee import claude_groups
+        from jailbee.accounts import groups
 
         try:
             resolved_claude_group = (
-                claude_groups.NO_GROUP
+                groups.NO_GROUP
                 if claude_group == "none"
-                else claude_groups.validate_group_name(claude_group)
+                else groups.validate_group_name(claude_group)
             )
-        except claude_groups.GroupError as e:
+        except groups.GroupError as e:
             error(str(e))
             raise typer.Exit(2) from e
 
@@ -3072,7 +3072,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlmodel import Session
 
-    from jailbee import claude_overview, claude_pool
+    from jailbee.accounts import overview as accounts_overview
+    from jailbee.accounts.models import PoolChange
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
@@ -11304,14 +11305,15 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
     """
     if group is None:
         return cfg
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     try:
-        name = claude_groups.validate_group_name(group)
-    except claude_groups.GroupError as e:
+        name = groups.validate_group_name(group)
+    except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    return cfg.model_copy(update={"claude_credentials_dir": claude_groups.group_dir(name)})
+    return cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, name)})
 
 
 def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
@@ -11322,26 +11324,25 @@ def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
     member and is trivially authoritative for itself — there is no group
     to be ambiguous about, and no `incus list` is worth paying for it.
     """
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.incus import Incus
 
-    group = claude_pool.group_name(cfg)
+    group = engine.repo_group(cfg)
     if group is None:
         return {cfg.container_prefix}
-    found, _ = claude_pool.members(cfg, gcfg)
-    return claude_groups.authoritative_prefixes(
-        gcfg, Incus(), group, [m.container_prefix for m in found]
-    )
+    found, _ = engine.members(CLAUDE, cfg, gcfg)
+    return groups.authoritative_prefixes(gcfg, Incus(), group, [m.container_prefix for m in found])
 
 
-def _claude_group_cell(row: "claude_overview.Row") -> str:
+def _claude_group_cell(row: "accounts_overview.Row") -> str:
     """The GROUP cell: the group, `(no group)` for a repo's own holder, or `-`."""
     if row.state == "parked":
         return "-"
     return row.group if row.group is not None else "(no group)"
 
 
-def _claude_used_by_cell(row: "claude_overview.Row", containers_known: bool) -> str:
+def _claude_used_by_cell(row: "accounts_overview.Row", containers_known: bool) -> str:
     """Who reads this holder: the repos resolving to it, and its containers.
 
     Container *names* appear only when no repo resolves to the holder. That is
@@ -11364,7 +11365,7 @@ def _claude_used_by_cell(row: "claude_overview.Row", containers_known: bool) -> 
     return f"{repos} · {count} container{plural}: {', '.join(row.containers)}"
 
 
-def _claude_account_cell(row: "claude_overview.Row") -> str:
+def _claude_account_cell(row: "accounts_overview.Row") -> str:
     """The ACCOUNT cell, bold on the holder this repo reads.
 
     The text comes first and the markup second: an empty group has no account
@@ -11374,7 +11375,7 @@ def _claude_account_cell(row: "claude_overview.Row") -> str:
     return f"[bold]{text}[/bold]" if row.mine else text
 
 
-def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[claude_overview.Row]]":
+def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[accounts_overview.Row]]":
     from jailbee import table_format
 
     return [
@@ -11446,18 +11447,19 @@ def _claude_holder_line(cfg: "Config") -> None:
     Shared by `claude ls` and `claude group ls`: the row is bold in both, and
     the fact behind the bold has to be spelled out somewhere.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.paths import display_path
 
-    group = claude_pool.group_name(cfg)
+    group = engine.repo_group(cfg)
     where = "no credential group" if group is None else f"group `{group}`"
     info(
         f"This repo ({cfg.container_prefix}) → {where} "
-        f"· {display_path(claude_pool.holder_dir(cfg))}"
+        f"· {display_path(engine.holder_dir(CLAUDE, cfg))}"
     )
 
 
-def _claude_overview_warnings(overview: "claude_overview.Overview") -> None:
+def _claude_listing_warnings(overview: "accounts_overview.Overview") -> None:
     """What could not be read while building the table, for either listing."""
     if not overview.containers_known:
         warn(
@@ -11488,14 +11490,16 @@ def _claude_ref_or_pick(
 
     `None` means cancelled — callers abort without an error line.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.tui import pick_claude_account
 
     if ref is not None:
         return ref
     authoritative = _claude_authoritative(cfg, gcfg)
-    return claude_pool.resolve_interactively(
-        claude_pool.list_slots(cfg, gcfg, authoritative=authoritative),
+    return engine.resolve_interactively(
+        CLAUDE,
+        engine.list_slots(CLAUDE, cfg, gcfg, authoritative=authoritative),
         None,
         purpose=purpose,
         picker=lambda slots: pick_claude_account(slots, message=message),
@@ -11503,7 +11507,7 @@ def _claude_ref_or_pick(
     )
 
 
-def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str) -> None:
+def _report_side_effects(change: "PoolChange", *, session_note: str) -> None:
     """The parts of a pool change that are the same for `use` and `park`.
 
     `session_note` is the caller's, because the two commands leave a running
@@ -11511,9 +11515,9 @@ def _report_side_effects(change: "claude_pool.PoolChange", *, session_note: str)
     `park` leaves the holder empty and that session unauthenticated. One shared
     sentence would be a false reassurance in the command that removes auth.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts.models import is_unidentified
 
-    if change.parked_as is not None and claude_pool.is_unidentified(change.parked_as):
+    if change.parked_as is not None and is_unidentified(change.parked_as):
         # The design requires this warning, and its absence is why an
         # unidentified park was only ever discovered later, from `claude ls`.
         # The file is a working login; only the record of *which* account it
@@ -11584,7 +11588,10 @@ def claude_ls_cmd(
     lives in the help rather than under every table: one more line on every
     run is a line that stops being read.
     """
-    from jailbee import claude_groups, claude_overview, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
+    from jailbee.accounts.overview import build as build_overview
     from jailbee.incus import Incus
     from jailbee.paths import display_path
     from jailbee.tui import console
@@ -11601,23 +11608,23 @@ def claude_ls_cmd(
         # commands, and a rule that held only in the writing path would teach
         # the wrong grammar in the one command users reach for first.
         try:
-            group = claude_groups.validate_group_name(group)
-        except claude_groups.GroupError as e:
+            group = groups.validate_group_name(group)
+        except groups.GroupError as e:
             error(str(e))
             raise typer.Exit(2) from e
     try:
         # The repo's own config, never a `-g` holder view: `build` reads both
         # the holder and the calling repo's config home, and a view conflates
         # them (see `_holder_view`). Filtering is this command's job.
-        overview = claude_overview.build(cfg, gcfg, Incus())
-    except (claude_pool.PoolError, OSError) as e:
+        overview = build_overview(CLAUDE, cfg, gcfg, Incus())
+    except (PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
     # A parked login can be activated into any group, so it belongs in a
     # filtered view too — the row it would become is exactly what `-g` is
     # about to be used for.
-    def _kept(row: "claude_overview.Row") -> bool:
+    def _kept(row: "accounts_overview.Row") -> bool:
         if group is None:
             return True
         return (row.group is None if ungrouped_only else row.group == group) or (
@@ -11643,11 +11650,11 @@ def claude_ls_cmd(
         # would make the payload unparseable for the caller that asked for it.
         return
 
-    holder_group = claude_pool.group_name(cfg)
+    holder_group = engine.repo_group(cfg)
     where = "no credential group" if holder_group is None else f"group `{holder_group}`"
     info(
         f"This repo ({cfg.container_prefix}) → {where} "
-        f"· {display_path(claude_pool.holder_dir(cfg))}"
+        f"· {display_path(engine.holder_dir(CLAUDE, cfg))}"
     )
     if (
         group is not None
@@ -11668,7 +11675,7 @@ def claude_ls_cmd(
             "Parked logins are host-wide — any of them can be activated into "
             "any group, which is why they are listed here too."
         )
-    _claude_overview_warnings(overview)
+    _claude_listing_warnings(overview)
     if not any(r.state in ("live", "parked") for r in overview.rows):
         info(
             "No login on this host yet: run `claude` in a container and /login, "
@@ -11704,7 +11711,9 @@ def claude_use_cmd(
     running Claude session picks the new credential up on its next turn — no
     restart.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
@@ -11715,10 +11724,10 @@ def claude_use_cmd(
         )
         if target is None:
             raise typer.Abort()
-        change = claude_pool.switch(
-            cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
+        change = engine.switch(
+            CLAUDE, cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
         )
-    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+    except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -11753,14 +11762,16 @@ def claude_park_cmd(
     next `claude` in a container of this holder prompts `/login`, and that
     login lands straight in the holder.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _claude_ctx(config)
     cfg = _holder_view(cfg, group)
     try:
-        change = claude_pool.park(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
-    except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+        change = engine.park(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
+    except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -11797,7 +11808,9 @@ def claude_rm_cmd(
     contacts Anthropic, so a deleted login can only come back through a
     browser `/login`.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
 
     cfg, gcfg = _claude_ctx(config)
     try:
@@ -11809,15 +11822,15 @@ def claude_rm_cmd(
         # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
         # and a parked file is ambiguous for a switch but not for a deletion,
         # and `rm` is the command that clears that state.
-        slot = claude_pool.resolve_removable(
+        slot = engine.resolve_removable(
             target,
-            claude_pool.list_slots(cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
+            engine.list_slots(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
         )
         if slot.live:
             # Pre-checked so the confirmation prompt is never shown for a
             # deletion that `remove_slot` would refuse anyway.
-            raise claude_pool.PoolError(claude_pool.live_account_refusal(slot.name))
-    except (claude_pool.PoolError, OSError) as e:
+            raise PoolError(engine.live_account_refusal(CLAUDE, slot.name))
+    except (PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -11827,8 +11840,8 @@ def claude_rm_cmd(
     ):
         raise typer.Exit(1)
     try:
-        claude_pool.remove_slot(slot)
-    except (claude_pool.PoolError, OSError) as e:
+        engine.remove_slot(CLAUDE, slot)
+    except (PoolError, OSError) as e:
         error(f"could not delete `{slot.name}`: {e}")
         raise typer.Exit(2) from e
     success(f"Deleted `{slot.name}` — a browser /login is the only way back")
@@ -11857,7 +11870,7 @@ def _resolve_group_container(
     One container in the repo → that one, named out loud. Several → a
     picker. No TTY → an error listing the candidates, so a script author
     learns the invocation from the failure. The same three-way shape
-    `claude_pool.resolve_interactively` uses for slots.
+    `accounts.engine.resolve_interactively` uses for slots.
     """
     from jailbee.lifecycle import resolve_container_for_interactive
     from jailbee.tui import pick_container_for_group
@@ -11906,11 +11919,11 @@ def _refuse_if_claude_running(
     behaviour. `None` from the probe means "cannot tell" and must not
     read as a refusal.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     if force:
         return
-    if claude_groups.claude_running(cfg, incus, container) is not True:
+    if groups.agent_running(cfg, incus, container, command=cfg.claude.command) is not True:
         return
     error(
         f"Claude is running in {container}. Swapping the credential group under a "
@@ -11931,7 +11944,7 @@ def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: 
     guards applies here too, but to every container at once — see the
     design's §6.1/§8.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     if force:
         return
@@ -11939,7 +11952,7 @@ def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: 
         str(row["name"])
         for row in incus.list_containers()
         if str(row.get("name", "")).startswith(f"{cfg.container_prefix}-")
-        and claude_groups.claude_running(cfg, incus, str(row["name"])) is True
+        and groups.agent_running(cfg, incus, str(row["name"]), command=cfg.claude.command) is True
     )
     if not running:
         return
@@ -11978,16 +11991,16 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
 
     Left in place, such an override is not merely untidy — it outranks the
     profile, so the *next* change to the repo's group would silently leave
-    that one container behind (`claude_groups.override_is_redundant`).
+    that one container behind (`accounts.groups.override_is_redundant`).
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
-    view = cfg.model_copy(
-        update={"claude_credentials_dir": None if group is None else claude_groups.group_dir(group)}
-    )
-    names = claude_groups.redundant_overrides(view, incus)
+    holder = None if group is None else groups.group_dir(CLAUDE.name, group)
+    view = cfg.model_copy(update={"claude_credentials_dir": holder})
+    names = groups.redundant_overrides(view, incus)
     for name in names:
-        claude_groups.clear_container_group(incus, name)
+        groups.clear_container_group(incus, name)
     if names:
         info(
             f"Dropped the now-redundant override on: {', '.join(names)} — "
@@ -12061,14 +12074,16 @@ def claude_group_ls_cmd(
     and repos keeping their own included. This is the same rows narrowed to
     the groups themselves, which is what `create`, `rm` and `set` act on.
     """
-    from jailbee import claude_overview, claude_pool
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
+    from jailbee.accounts.overview import build as build_overview
     from jailbee.incus import Incus
     from jailbee.tui import console
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        overview = claude_overview.build(cfg, gcfg, Incus())
-    except (claude_pool.PoolError, OSError) as e:
+        overview = build_overview(CLAUDE, cfg, gcfg, Incus())
+    except (PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -12090,7 +12105,7 @@ def claude_group_ls_cmd(
     if fmt != "table":
         return
     _claude_holder_line(cfg)
-    _claude_overview_warnings(overview)
+    _claude_listing_warnings(overview)
     info("Every login on this host, parked ones included: `jailbee claude ls`.")
 
 
@@ -12104,18 +12119,19 @@ def claude_group_create_cmd(
     create the directory on demand. This is for the case where the group
     wants to exist before any of them runs.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.paths import display_path
 
     try:
-        group = claude_groups.validate_group_name(group)
-    except claude_groups.GroupError as e:
+        group = groups.validate_group_name(group)
+    except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
 
-    existed = claude_groups.group_dir(group).is_dir()
+    existed = groups.group_dir(CLAUDE.name, group).is_dir()
     try:
-        created = claude_groups.ensure_group_dir(group)
+        created = groups.ensure_group_dir(CLAUDE.name, group)
     except OSError as e:
         error(f"could not create the group directory: {e}")
         raise typer.Exit(2) from e
@@ -12158,15 +12174,17 @@ def claude_group_rm_cmd(
     the host-wide store and can be activated into any other group.
     `jailbee claude rm` remains the only command that destroys a credential.
     """
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import engine, groups
+    from jailbee.accounts.adapters.claude import CLAUDE, note_account_at
+    from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
     from jailbee.incus import Incus, IncusError
     from jailbee.paths import display_path
 
     cfg, gcfg = _claude_ctx(config)
     try:
-        group = claude_groups.validate_group_name(group)
-    except claude_groups.GroupError as e:
+        group = groups.validate_group_name(group)
+    except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -12181,7 +12199,7 @@ def claude_group_rm_cmd(
         )
         raise typer.Exit(2)
 
-    members = claude_pool.group_member_prefixes(gcfg, group)
+    members = engine.group_member_prefixes(gcfg, group)
     if members:
         error(
             f"`{group}` is the credential group of: {', '.join(members)}. "
@@ -12210,7 +12228,7 @@ def claude_group_rm_cmd(
     labelled = sorted(
         str(row.get("name", ""))
         for row in rows
-        if (row.get("config") or {}).get(claude_groups.GROUP_LABEL) == group
+        if (row.get("config") or {}).get(groups.GROUP_LABEL) == group
     )
     if labelled:
         error(
@@ -12220,13 +12238,13 @@ def claude_group_rm_cmd(
         )
         raise typer.Exit(2)
 
-    holder = claude_groups.group_dir(group)
+    holder = groups.group_dir(CLAUDE.name, group)
     if not holder.exists():
         info(f"No group `{group}` on this host — nothing to remove.")
         return
 
-    if claude_pool.credential_in(holder).exists():
-        account = claude_pool.note_account_at(holder)
+    if engine.credential_in(CLAUDE, holder).exists():
+        account = note_account_at(holder)
         named = "an unidentified login" if account is None else f"`{account.identity.email}`"
         if not yes:
             if not _is_tty():
@@ -12243,8 +12261,10 @@ def claude_group_rm_cmd(
         # home describes a different login.
         view = _holder_view(cfg, group)
         try:
-            change = claude_pool.park(view, gcfg, authoritative=_claude_authoritative(view, gcfg))
-        except (claude_pool.PoolError, ClaudeLockTimeoutError, OSError) as e:
+            change = engine.park(
+                CLAUDE, view, gcfg, authoritative=_claude_authoritative(view, gcfg)
+            )
+        except (PoolError, ClaudeLockTimeoutError, OSError) as e:
             error(str(e))
             raise typer.Exit(2) from e
         if change.parked_as is not None:
@@ -12299,7 +12319,8 @@ def claude_group_set_cmd(
     override from `jailbee claude group use`. Use `jailbee claude group
     unset` to fall back to the host-wide default instead.
     """
-    from jailbee import claude_groups, claude_pool
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -12311,11 +12332,11 @@ def claude_group_set_cmd(
         value = None
     else:
         try:
-            value = claude_groups.validate_group_name(group)
-        except claude_groups.GroupError as e:
+            value = groups.validate_group_name(group)
+        except groups.GroupError as e:
             error(str(e))
             raise typer.Exit(2) from e
-        claude_groups.ensure_group_dir(str(value))
+        groups.ensure_group_dir(CLAUDE.name, str(value))
 
     try:
         _write_repo_group(config, value)
@@ -12326,7 +12347,7 @@ def claude_group_set_cmd(
     # The repo's `oauthAccount` now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+    invalidate_identity(CLAUDE.config_home(cfg))
 
     where = "no credential group" if value is None else f"group `{value}`"
     success(f"This repo now uses {where}.")
@@ -12346,7 +12367,8 @@ def claude_group_unset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
-    from jailbee import claude_pool, config_writer
+    from jailbee import config_writer
+    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -12364,7 +12386,7 @@ def claude_group_unset_cmd(
     # The repo's `oauthAccount` now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+    invalidate_identity(CLAUDE.config_home(cfg))
 
     repo = _group_after_write(cfg)
     where = "no credential group" if repo is None else f"group `{repo}`"
@@ -12406,13 +12428,13 @@ def claude_group_use_cmd(
     Claude must be restarted in that container afterwards to pick up the
     new login — this command never kills a session.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     cfg = _load_or_exit(config)
     target: str | None
     try:
-        target = None if group == "none" else claude_groups.validate_group_name(group)
-    except claude_groups.GroupError as e:
+        target = None if group == "none" else groups.validate_group_name(group)
+    except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -12422,14 +12444,14 @@ def claude_group_use_cmd(
     name = _resolve_group_container(cfg, incus, container)
     _refuse_if_claude_running(cfg, incus, name, force)
 
-    before = claude_groups.effective_group(cfg, incus, name)
-    redundant = claude_groups.override_is_redundant(cfg, target)
+    before = groups.effective_group(cfg, incus, name)
+    redundant = groups.override_is_redundant(cfg, target)
     try:
         if redundant:
-            claude_groups.clear_container_group(incus, name)
+            groups.clear_container_group(incus, name)
         else:
-            claude_groups.set_container_group(cfg, incus, name, target)
-    except (claude_groups.GroupError, OSError) as e:
+            groups.set_container_group(cfg, incus, name, target)
+    except (groups.GroupError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
@@ -12446,7 +12468,7 @@ def _report_group_change(
 ) -> None:
     """Report one container's group change, and invalidate only if it moved.
 
-    `claude_pool.invalidate_identity` exists because the repo's
+    `adapters.claude.invalidate_identity` exists because the repo's
     `oauthAccount` would otherwise name an account this container no longer
     reads (§7.2). When the container's *effective* group did not change —
     dropping an override that only repeated the repo, or naming the group it
@@ -12454,7 +12476,7 @@ def _report_group_change(
     would throw away a name nothing else can supply until a container runs
     Claude again.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
 
     where = "no credential group" if after is None else f"group `{after}`"
     if redundant:
@@ -12464,7 +12486,7 @@ def _report_group_change(
     if before == after:
         info("Nothing else changed: that is the group it was already reading.")
         return
-    claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+    invalidate_identity(CLAUDE.config_home(cfg))
     info("Restart Claude in that container to pick up the new login.")
 
 
@@ -12483,7 +12505,7 @@ def claude_group_reset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Drop a container's override so it inherits the repo's group again."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -12491,9 +12513,9 @@ def claude_group_reset_cmd(
     name = _resolve_group_container(cfg, incus, container)
     _refuse_if_claude_running(cfg, incus, name, force)
 
-    before = claude_groups.effective_group(cfg, incus, name)
-    claude_groups.clear_container_group(incus, name)
-    repo = claude_groups.repo_group(cfg)
+    before = groups.effective_group(cfg, incus, name)
+    groups.clear_container_group(incus, name)
+    repo = groups.repo_group(cfg)
     _report_group_change(cfg, name, before=before, after=repo, redundant=True)
 
 

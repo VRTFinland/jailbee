@@ -269,10 +269,10 @@ def test_complete_claude_account_offers_the_parked_slots_by_prefix(mocker):
     stored logins."""
     from pathlib import Path
 
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts.models import Slot
 
     mocker.patch(
-        "jailbee.claude_pool.parked_slots",
+        "jailbee.accounts.engine.parked_slots",
         return_value=[
             Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False),
             Slot("other@x.com", Path("/s/b.json"), live=False),
@@ -290,7 +290,7 @@ def test_complete_claude_account_needs_no_repo_config(mocker):
     a TAB press outside a repo still has accounts to offer, and `list_slots`
     would load every registered repo's config to resolve holder members."""
     load = mocker.patch("jailbee.completion._load")
-    mocker.patch("jailbee.claude_pool.parked_slots", return_value=[])
+    mocker.patch("jailbee.accounts.engine.parked_slots", return_value=[])
     assert completion.complete_claude_account(_ctx(), "") == []
     load.assert_not_called()
 
@@ -298,7 +298,7 @@ def test_complete_claude_account_needs_no_repo_config(mocker):
 def test_complete_claude_account_survives_an_unreadable_store(mocker):
     """`_completion_guard` is the contract for every completer: a TAB press must
     never traceback."""
-    mocker.patch("jailbee.claude_pool.parked_slots", side_effect=OSError("boom"))
+    mocker.patch("jailbee.accounts.engine.parked_slots", side_effect=OSError("boom"))
     assert completion.complete_claude_account(_ctx(), "") == []
 
 
