@@ -205,7 +205,9 @@ def test_base_profile_prepends_repo_relative_container_path(make_cfg, tmp_path):
     `environment.PATH` is that the profile *replaces* the value Incus would
     supply, so the exact string is the contract.
     """
-    cfg = make_cfg(tmp_path, container_prefix="myrepo", container={"path": ["scripts", "tools/bin"]})
+    cfg = make_cfg(
+        tmp_path, container_prefix="myrepo", container={"path": ["scripts", "tools/bin"]}
+    )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
     assert parsed["config"]["environment.PATH"] == (
         "/home/dev/myrepo/scripts:/home/dev/myrepo/tools/bin:"

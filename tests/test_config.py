@@ -806,7 +806,7 @@ def test_container_path_loaded_from_yaml(tmp_path, mocker):
     ],
 )
 def test_container_path_rejects_an_unusable_entry(entry):
-    with pytest.raises(ValidationError, match="invalid container.path entry"):
+    with pytest.raises(ValidationError, match=r"invalid container\.path entry"):
         Config.model_validate({"container": {"path": [entry]}})
 
 
