@@ -170,7 +170,7 @@ def test_shared_fields_is_none_for_a_non_object(raw: str | None) -> None:
 
 
 def test_shared_fields_logs_an_unrecognized_sibling(caplog) -> None:
-    with caplog.at_level("DEBUG", logger="jailbee.claude_pool"):
+    with caplog.at_level("DEBUG", logger="jailbee.accounts.adapters.claude"):
         claude_pool.shared_fields(_cred(brandNewKey={"a": 1}))
     assert "brandNewKey" in caplog.text
 
