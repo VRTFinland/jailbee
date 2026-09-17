@@ -227,10 +227,17 @@ async def serve_async(config: RemoteSSHConfig) -> None:
 
 def serve(config: RemoteSSHConfig) -> None:
     """Synchronous entry point for the CLI and user service."""
-    logging.basicConfig(level=logging.INFO)
+    audit_handler = logging.StreamHandler()
+    audit_handler.setLevel(logging.INFO)
     previous_level = log.level
+    previous_propagate = log.propagate
+    log.addHandler(audit_handler)
     log.setLevel(logging.INFO)
+    log.propagate = False
     try:
         asyncio.run(serve_async(config))
     finally:
+        log.removeHandler(audit_handler)
+        audit_handler.close()
         log.setLevel(previous_level)
+        log.propagate = previous_propagate

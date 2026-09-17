@@ -705,15 +705,17 @@ def test_listener_suppresses_library_command_logs_and_restores_level(
     assert "transport error" in caplog.text
 
 
-@pytest.mark.parametrize("existing_handler", [False, True])
+@pytest.mark.parametrize("handler_level", [None, logging.NOTSET, logging.WARNING])
 def test_sync_serve_establishes_audit_visibility_without_library_command_logs(
-    listener, caplog, capsys, monkeypatch, existing_handler
+    listener, caplog, capsys, monkeypatch, handler_level
 ):
     value, listen = listener
     root = logging.getLogger()
     captured = io.StringIO()
     handler = logging.StreamHandler(captured)
-    initial_handlers = [handler] if existing_handler else []
+    if handler_level is not None:
+        handler.setLevel(handler_level)
+    initial_handlers = [handler] if handler_level is not None else []
 
     async def start(*args, **kwargs):
         process, _ = actual_process()
@@ -726,14 +728,71 @@ def test_sync_serve_establishes_audit_visibility_without_library_command_logs(
         monkeypatch.setattr(root, "handlers", initial_handlers.copy())
         try:
             server.serve(RemoteSSHConfig())
-            text = captured.getvalue() if existing_handler else capsys.readouterr().err
-            assert "SSH session" in text
+            text = capsys.readouterr().err
+            assert text.count("SSH session") == 1
             assert FINGERPRINT in text
             assert "status=0" in text
             assert "full-secret-argv" not in text
-            if existing_handler:
-                assert root.handlers == [handler]
-                assert root.level == logging.WARNING
+            assert captured.getvalue() == ""
+            assert root.handlers == initial_handlers
+            assert root.level == logging.WARNING
+            if handler_level is not None:
+                assert handler.level == handler_level
         finally:
             for installed in root.handlers:
                 installed.close()
+
+
+@pytest.mark.parametrize("outcome", ["closed", "startup_error", "wait_error", "cancelled"])
+@pytest.mark.parametrize("prior_level,propagate", [(logging.NOTSET, True), (logging.ERROR, False)])
+def test_sync_serve_removes_only_its_audit_handler_and_restores_logger(
+    listener, caplog, capsys, monkeypatch, mocker, outcome, prior_level, propagate
+):
+    value, listen = listener
+    existing = logging.StreamHandler(io.StringIO())
+    existing.setLevel(logging.WARNING)
+    existing_close = mocker.spy(existing, "close")
+    installed = []
+
+    async def start(*args, **kwargs):
+        added = [handler for handler in server.log.handlers if handler is not existing]
+        assert len(added) == 1
+        audit_handler = added[0]
+        installed.append((audit_handler, mocker.spy(audit_handler, "close")))
+        assert audit_handler.level == logging.INFO
+        assert server.log.level == logging.INFO
+        assert server.log.propagate is False
+        process, _ = actual_process()
+        await server.handle_process(process)
+        if outcome == "startup_error":
+            raise OSError("bind failed")
+        return value
+
+    async def wait_closed():
+        if outcome == "wait_error":
+            raise OSError("wait failed")
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+
+    listen.side_effect = start
+    value.wait_closed.side_effect = wait_closed
+    with caplog.at_level(prior_level, logger=server.__name__):
+        monkeypatch.setattr(server.log, "handlers", [existing])
+        monkeypatch.setattr(server.log, "propagate", propagate)
+        try:
+            if outcome == "closed":
+                server.serve(RemoteSSHConfig())
+            else:
+                error = asyncio.CancelledError if outcome == "cancelled" else OSError
+                with pytest.raises(error):
+                    server.serve(RemoteSSHConfig())
+            assert capsys.readouterr().err.count("SSH session") == 1
+            assert server.log.handlers == [existing]
+            assert server.log.level == prior_level
+            assert server.log.propagate is propagate
+            assert len(installed) == 1
+            installed[0][1].assert_called_once_with()
+            existing_close.assert_not_called()
+            assert existing.level == logging.WARNING
+        finally:
+            existing.close()
