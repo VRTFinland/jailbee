@@ -8128,7 +8128,7 @@ def test_doing_cell_lists_the_busiest_names_with_counts():
         )
     )
 
-    assert cell == "claude, pytest×8"
+    assert cell == "claude, pytest x8"
 
 
 def test_doing_cell_folds_the_tail_into_a_count():

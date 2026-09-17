@@ -33,12 +33,12 @@ from jailbee.git import (
 # the container-side probe — duplicating the parser is how the two would drift.
 from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
 from jailbee.incus import Incus, IncusError
+from jailbee.procstat import ActivitySampler, SampleInput
 from jailbee.profiles import (
     _device_name_from_path,
     is_under_repo,
     profile_names,
 )
-from jailbee.procstat import ActivitySampler, SampleInput
 from jailbee.retry import with_remote_retry
 from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
@@ -2330,8 +2330,7 @@ def ls_field_specs(
         if not c.activity:
             return "[dim]—[/dim]"
         names = [
-            p.comm if p.count == 1 else f"{p.comm}×{p.count}"
-            for p in c.activity[:DOING_MAX_NAMES]
+            p.comm if p.count == 1 else f"{p.comm} x{p.count}" for p in c.activity[:DOING_MAX_NAMES]
         ]
         hidden = len(c.activity) - len(names)
         if hidden > 0:

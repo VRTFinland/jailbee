@@ -1430,3 +1430,55 @@ def test_run_still_shows_the_window_when_the_first_gather_fails(mocker):
     window.show.assert_called_once()
     window.set_refresh_failed.assert_called_once()
     assert "daemon unreachable" in window.set_refresh_failed.call_args.args[0]
+
+
+def test_run_primes_the_sampler_before_showing_the_window(mocker):
+    """Two readings before `show()`, so the first window carries CPU numbers
+    instead of dashes."""
+    mocker.patch("jailbee.qtui.app.QApplication")
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
+    mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
+    window = mock_window_cls.return_value
+    mocker.patch("jailbee.qtui.app.QThread")
+    mocker.patch("jailbee.qtui.app.PRIME_INTERVAL_SECONDS", 0)
+    mock_worker_cls = mocker.patch("jailbee.qtui.app.RefreshWorker")
+    worker = mock_worker_cls.return_value
+    worker.gather_once.return_value = [RepoGroup("p", "/repo", Path("/repo/.gie/config.yaml"), [])]
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
+    from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
+
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
+    mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
+    mocker.patch("jailbee.db.gui_state.save_gui_state")
+
+    qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
+
+    assert worker.sample_activity.call_count == 2
+    names = [c[0] for c in window.method_calls]
+    assert names.index("set_groups") < names.index("show")
+
+
+def test_run_shows_the_window_when_priming_fails(mocker):
+    """A /proc that cannot be read must not cost the user their window."""
+    mocker.patch("jailbee.qtui.app.QApplication")
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
+    mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
+    window = mock_window_cls.return_value
+    mocker.patch("jailbee.qtui.app.QThread")
+    mocker.patch("jailbee.qtui.app.PRIME_INTERVAL_SECONDS", 0)
+    mock_worker_cls = mocker.patch("jailbee.qtui.app.RefreshWorker")
+    worker = mock_worker_cls.return_value
+    worker.gather_once.return_value = []
+    worker.sample_activity.side_effect = OSError("/proc unreadable")
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
+    from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
+
+    mocker.patch("jailbee.qtui.app.seed_view_state", return_value=ViewState())
+    mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
+    mocker.patch("jailbee.db.gui_state.save_gui_state")
+
+    qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
+
+    window.show.assert_called_once()
