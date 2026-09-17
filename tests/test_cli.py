@@ -9485,23 +9485,27 @@ def test_new_records_the_watermark_for_the_apply_it_runs(tmp_path, monkeypatch, 
     directory is told to run an `apply` that `jb new` has already run for
     it, on every `jb ls` / `jb new` / `jb shell` from then on.
     """
+    from pathlib import Path
+
     from sqlmodel import Session
     from typer.testing import CliRunner
 
     from jailbee import __version__
     from jailbee.cli import app
+    from jailbee.config.loader import _scratch_prefix
     from jailbee.db import get_engine
     from jailbee.db.models import RepoUpgradeState
 
     _new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
     incus.profile_exists.return_value = False
     mocker.patch("jailbee.apply.run_apply")
+    prefix = _scratch_prefix(Path.cwd())  # slug plus a digest of the path
 
     result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
 
     assert result.exit_code == 0, result.output
     with Session(get_engine()) as session:
-        row = session.get(RepoUpgradeState, "tutkimus")
+        row = session.get(RepoUpgradeState, prefix)
     assert row is not None
     assert (row.apply_version, row.apply_observed) == (__version__, True)
 
