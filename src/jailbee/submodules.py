@@ -16,6 +16,7 @@ chooses loud failure over silent drift.
 
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,14 @@ if TYPE_CHECKING:
 # routine run identically against the host (subprocess) and a container
 # (incus.exec).
 GitRun = Callable[[str, list[str]], tuple[bool, str]]
+
+
+@dataclass(frozen=True)
+class DeclaredSubmodule:
+    """One normalized host-declared submodule path and its configured URL."""
+
+    path: str
+    url: str
 
 
 def _container_runner(
@@ -906,6 +915,112 @@ def host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
     created yet.
     """
     return (repo_root / subpath / ".git").exists()
+
+
+def _declared_submodules_at(repo_dir: Path) -> tuple[tuple[str, str], ...]:
+    ok, output = git.run_capture(
+        str(repo_dir),
+        [
+            "config",
+            "-f",
+            f"{repo_dir}/.gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.(path|url)$",
+        ],
+    )
+    if not ok:
+        return ()
+
+    values: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+    for line in output.splitlines():
+        key, separator, value = line.strip().partition(" ")
+        if not separator or not key.startswith("submodule."):
+            raise SubmoduleError(f"malformed submodule declaration in {repo_dir / '.gitmodules'}")
+        field = "path" if key.endswith(".path") else "url" if key.endswith(".url") else None
+        if field is None:
+            continue
+        name = key[len("submodule.") : -len(field) - 1]
+        if not name or not value:
+            raise SubmoduleError(f"malformed submodule declaration in {repo_dir / '.gitmodules'}")
+        if name not in values:
+            values[name] = {}
+            order.append(name)
+        if field in values[name]:
+            raise SubmoduleError(
+                f"duplicate submodule {field} for '{name}' in {repo_dir / '.gitmodules'}"
+            )
+        values[name][field] = value
+
+    result: list[tuple[str, str]] = []
+    for name in order:
+        path = values[name].get("path")
+        url = values[name].get("url")
+        if path is None:
+            raise SubmoduleError(
+                f"submodule '{name}' is missing path in {repo_dir / '.gitmodules'}"
+            )
+        if url is None:
+            raise SubmoduleError(f"submodule '{name}' is missing URL in {repo_dir / '.gitmodules'}")
+        result.append((path, url))
+    return tuple(result)
+
+
+def _normalize_declared_path(path: str) -> str:
+    parts = path.split("/")
+    normalized = posixpath.normpath(path)
+    if (
+        not path
+        or path.startswith("/")
+        or ".." in parts
+        or normalized in {"", ".", ".."}
+        or normalized.startswith("../")
+    ):
+        raise SubmoduleError(f"unsafe submodule path '{path}'")
+    return normalized
+
+
+def declared_submodule_remotes(repo_root: Path) -> tuple[DeclaredSubmodule, ...]:
+    """Return the safe repository tree declared by host ``.gitmodules`` files.
+
+    Uninitialized children remain allowed leaves. Recursion reads only working
+    trees that are initialized host repositories, and canonical-directory
+    tracking rejects symlink aliases or cycles before another file is read.
+    """
+    root = Path(repo_root)
+    canonical_root = root.resolve()
+    visited = {canonical_root}
+    seen_paths: set[str] = set()
+    result: list[DeclaredSubmodule] = []
+
+    def walk(repo_dir: Path, prefix: str) -> None:
+        for raw_path, url in _declared_submodules_at(repo_dir):
+            relative = _normalize_declared_path(raw_path)
+            path = posixpath.join(prefix, relative) if prefix else relative
+            if path in seen_paths:
+                raise SubmoduleError(f"duplicate submodule path '{path}'")
+            seen_paths.add(path)
+            result.append(DeclaredSubmodule(path, url))
+
+            if not host_subrepo_exists(root, path):
+                continue
+            child = root / path
+            canonical_child = child.resolve()
+            try:
+                canonical_child.relative_to(canonical_root)
+            except ValueError as exc:
+                raise SubmoduleError(
+                    f"submodule path '{path}' resolves outside the host repository"
+                ) from exc
+            if canonical_child in visited:
+                raise SubmoduleError(
+                    f"submodule path '{path}' revisits host directory '{canonical_child}'"
+                )
+            visited.add(canonical_child)
+            walk(child, path)
+
+    walk(root, "")
+    return tuple(result)
 
 
 def host_submodule_paths(repo_root: Path) -> list[str]:

@@ -28,8 +28,10 @@ from rich.markup import escape
 
 from jailbee import git, pr
 from jailbee.config import CONTAINER_USERNAME
+from jailbee.github_repo import github_slug
 from jailbee.incus import Incus, IncusError
-from jailbee.outbox_io import OutboxReadError, read_text_outbox
+from jailbee.outbox_io import OutboxReadError as OutboxReadError
+from jailbee.outbox_io import read_text_outbox
 from jailbee.pr_ai import PrText
 from jailbee.tui import console, error_plain, info, warn, warn_plain
 
@@ -413,24 +415,6 @@ def read_outbox(incus: Incus, container: str, *, uid: int | None) -> Outbox:
 # mistake), then PR ownership, then staleness — see the design's §C for why
 # each gate exists.
 # --------------------------------------------------------------------------
-
-_GITHUB_SLUG_RE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
-
-
-def github_slug(url: str) -> str | None:
-    """Extract an ``owner/name`` slug from a GitHub remote URL, or None.
-
-    Matches the ssh form (``git@github.com:owner/name.git``), the https form
-    (``https://github.com/owner/name[.git]``) and an explicit ``ssh://``
-    form. Any non-GitHub host, or an empty/unparseable URL, returns None.
-    Pure — no subprocess, no network.
-    """
-    if not url:
-        return None
-    match = _GITHUB_SLUG_RE.search(url)
-    if match is None:
-        return None
-    return f"{match.group(1)}/{match.group(2)}"
 
 
 def scope_slug(scope: PrScope) -> str | None:

@@ -6,6 +6,135 @@ from jailbee import submodules
 from jailbee.incus import IncusError
 
 
+def _write_gitdir(path):
+    (path / ".git").mkdir(parents=True)
+
+
+def test_declared_submodule_remotes_walks_initialized_host_repos_only(tmp_path, mocker):
+    repo_root = tmp_path / "repo"
+    _write_gitdir(repo_root / "libs/parser")
+    _write_gitdir(repo_root / "libs/parser/vendor/lexer")
+
+    entries = {
+        str(repo_root): (
+            "submodule.parser.path libs/./parser\n"
+            "submodule.parser.url ../parser.git\n"
+            "submodule.docs.path docs\n"
+            "submodule.docs.url https://github.com/acme/docs.git\n"
+        ),
+        str(repo_root / "libs/parser"): (
+            "submodule.lexer.url git@github.com:acme/lexer.git\nsubmodule.lexer.path vendor/lexer\n"
+        ),
+        str(repo_root / "libs/parser/vendor/lexer"): "",
+    }
+    mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        side_effect=lambda cwd, _args: (bool(entries[str(cwd)]), entries[str(cwd)]),
+    )
+
+    assert submodules.declared_submodule_remotes(repo_root) == (
+        submodules.DeclaredSubmodule("libs/parser", "../parser.git"),
+        submodules.DeclaredSubmodule("libs/parser/vendor/lexer", "git@github.com:acme/lexer.git"),
+        submodules.DeclaredSubmodule("docs", "https://github.com/acme/docs.git"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        (
+            "submodule.a.path /absolute\nsubmodule.a.url https://github.com/acme/a.git\n",
+            "unsafe submodule path",
+        ),
+        (
+            "submodule.a.path libs/../secrets\nsubmodule.a.url https://github.com/acme/a.git\n",
+            "unsafe submodule path",
+        ),
+        ("submodule.a.path libs/a\n", "missing URL"),
+        (
+            "submodule.a.path libs/a\n"
+            "submodule.a.url https://github.com/acme/a.git\n"
+            "submodule.b.path libs/./a\n"
+            "submodule.b.url https://github.com/acme/b.git\n",
+            "duplicate submodule path",
+        ),
+    ],
+)
+def test_declared_submodule_remotes_rejects_unsafe_or_incomplete_entries(
+    tmp_path, mocker, output, message
+):
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(True, output))
+
+    with pytest.raises(submodules.SubmoduleError, match=message):
+        submodules.declared_submodule_remotes(tmp_path)
+
+
+def test_declared_submodule_remotes_rejects_canonical_directory_cycle(tmp_path, mocker):
+    repo_root = tmp_path / "repo"
+    (repo_root / ".git").mkdir(parents=True)
+    repo_root.mkdir(exist_ok=True)
+    (repo_root / "loop").symlink_to(repo_root, target_is_directory=True)
+    mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        return_value=(
+            True,
+            "submodule.loop.path loop\nsubmodule.loop.url https://github.com/acme/loop.git\n",
+        ),
+    )
+
+    with pytest.raises(submodules.SubmoduleError, match="revisits host directory"):
+        submodules.declared_submodule_remotes(repo_root)
+
+
+@pytest.mark.parametrize(
+    ("url", "slug"),
+    [
+        ("https://github.com/acme/widgets.git", "acme/widgets"),
+        ("git@github.com:acme/widgets.git", "acme/widgets"),
+        ("ssh://git@github.com/acme/widgets.git", "acme/widgets"),
+        ("https://github.com/acme/widgets", "acme/widgets"),
+        ("https://gitlab.com/acme/widgets.git", None),
+        ("https://notgithub.com/acme/widgets.git", None),
+    ],
+)
+def test_github_slug_accepts_only_canonical_github_remotes(url, slug):
+    from jailbee.github_repo import github_slug
+
+    assert github_slug(url) == slug
+
+
+@pytest.mark.parametrize(
+    ("parent", "declared", "resolved"),
+    [
+        (
+            "https://github.com/acme/app.git",
+            "../parser.git",
+            "https://github.com/acme/parser.git",
+        ),
+        (
+            "git@github.com:acme/app.git",
+            "../parser.git",
+            "git@github.com:acme/parser.git",
+        ),
+        (
+            "ssh://git@github.com/acme/app.git",
+            "../parser.git",
+            "ssh://git@github.com/acme/parser.git",
+        ),
+        (
+            "https://github.com/acme/app.git",
+            "git@github.com:other/parser.git",
+            "git@github.com:other/parser.git",
+        ),
+        ("local-path", "../parser.git", None),
+    ],
+)
+def test_resolve_submodule_url_uses_the_parent_repository_location(parent, declared, resolved):
+    from jailbee.github_repo import resolve_submodule_url
+
+    assert resolve_submodule_url(parent, declared) == resolved
+
+
 def test_host_submodule_paths_returns_top_relative_paths_recursively(tmp_path, mocker):
     repo_root = tmp_path / "repo"
 
