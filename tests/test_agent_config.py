@@ -230,7 +230,6 @@ def test_private_rejects_paths_that_escape_the_mount(bad):
         AgentSharedMount.model_validate({"subpath": "codex", "path": "~/.codex", "private": [bad]})
 
 
-
 def test_codex_preset_keeps_the_app_server_dirs_per_container():
     """The socket in app-server-control lets one container's Codex frontend
     drive another container's daemon, which then resolves the working
