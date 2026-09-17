@@ -2337,13 +2337,17 @@ directory with an empty `.jailbee/config.yaml`. Layer 3 merges with the same
 Two fields are set by the synthesized layer itself, before `scratch.config`
 merges on top:
 
-- **`container_prefix`** — slugified from the directory name (lowercase,
-  runs of non-`[a-z0-9]` characters collapsed to one `-`, leading/trailing
-  `-` trimmed), since a directory name routinely breaks the
-  `[a-z0-9][a-z0-9-]*` regex (`Tutkimus_A`, `my project`) and there is no
-  file to tell the user to edit. If the slug comes out empty (nothing but
-  punctuation survives), synthesis fails naming the directory and pointing
-  at `jailbee config init`, where `container_prefix:` can be set explicitly.
+- **`container_prefix`** — `<slug>-<digest>`. The slug is the directory name
+  lowercased, with runs of non-`[a-z0-9]` characters collapsed to one `-` and
+  leading/trailing `-` trimmed, since a directory name routinely breaks the
+  `[a-z0-9][a-z0-9-]*` regex (`Tutkimus_A`, `my project`) and there is no file
+  to tell the user to edit. The digest is the first six hex characters of
+  `sha256` over the directory's **resolved** path, so `~/a/test-repo` and
+  `~/b/test-repo` get distinct identities instead of sharing one, and reaching
+  a directory through a symlink does not mint a second one. If the slug comes
+  out empty (nothing but punctuation survives), synthesis fails naming the
+  directory and pointing at `jailbee config init`, where `container_prefix:`
+  can be set explicitly.
 - **`golden.alias`** — pinned to `jailbee-scratch-base`, so every scratch
   directory on the host shares one golden image instead of building its own.
   Because the alias is shared, the image's *content* comes only from
@@ -2361,23 +2365,50 @@ and **any ancestor of `$HOME`** — `/home`, `/Users`, and so on. All are always
 a mistaken `cd`, never a research directory, and the cost of being wrong is a
 container bind-mounting the user's whole home (or, one level up, everyone's).
 
-**A limitation this shares with configured repos.** Two same-named *scratch*
-directories under different parents (`~/a/tutkimus`, `~/b/tutkimus`) slugify
-to the same `container_prefix`, and so share profiles, container names, and
-one `RegisteredRepo` row — the second one registered is read as the first
-having moved. This is exactly today's behaviour for two clones of one repo
-sharing a `container_prefix`; scratch directories don't get a different
-identity rule to solve a problem configured repos already live with.
+**Moving a scratch directory changes its identity.** The same mechanism seen
+from the other side: the digest is taken of the path, so `mv ~/a/tutkimus
+~/b/` derives a new `container_prefix`, and the containers and profiles created
+under the old path are left behind. The registry row cleans itself up — the
+next `jailbee apply` or `jailbee new` drops the stale one, and until then the
+refresh timer logs `prefix changed to <new>; run jailbee apply to migrate` and
+skips the repo rather than refreshing it under the wrong name. Everything else
+has to be removed by hand; see [Removing a scratch directory's
+containers](#removing-a-scratch-directorys-containers). A repo with a
+`.jailbee/config.yaml` is unaffected — its prefix comes from the file (or, left
+unset, from the directory name), never from the path.
 
-**But a scratch directory never displaces a configured repo.** If the derived
-prefix already belongs to a directory that *has* a `.jailbee/config.yaml`
-(`~/Downloads/myapp` against a configured `~/src/myapp`), `jailbee new` and
-`jailbee apply` refuse in the scratch directory, naming both paths. Taking the
-registration over would repoint the refresh timer at the scratch directory and
-silently re-render the configured repo's egress allowlist from scratch
-defaults — and unlike the scratch-vs-scratch case, that repo's owner made no
-choice at all. Run `jailbee config init` in the scratch directory and set an
-explicit `container_prefix:`, or rename the directory.
+**A scratch directory never displaces a configured repo.** The derived prefix
+cannot collide with anything, but `scratch.config.container_prefix` set
+host-wide can: if that prefix already belongs to a directory that *has* a
+`.jailbee/config.yaml`, `jailbee new` and `jailbee apply` refuse in the scratch
+directory, naming both paths. Taking the registration over would repoint the
+refresh timer at the scratch directory and silently re-render the configured
+repo's egress allowlist from scratch defaults. Run `jailbee config init` in the
+scratch directory and set an explicit `container_prefix:`, or drop the
+host-wide one.
+
+#### Removing a scratch directory's containers
+
+A scratch directory owns no config file to delete, and nothing prunes its
+Incus objects when its `container_prefix` changes — after a `mv`, or on the
+upgrade to 1.5.0, which added the path digest to every synthesized prefix.
+`jailbee dashboard` shows the leftovers as their own group, labelled by the
+old prefix and with no repo behind it; removing them is manual:
+
+```bash
+OLD=tutkimus                        # the old prefix, as the dashboard shows it
+
+incus list -f csv -c n | grep "^$OLD-"          # what is still there
+incus delete -f "$OLD-<branch>"                 # once per container listed
+incus profile delete "$OLD-base" "$OLD-binds" \
+                     "$OLD-net-strict" "$OLD-net-loose"
+incus network acl delete "$OLD" "$OLD-container-extras"
+rm -rf ~/.local/share/jailbee/shared/"$OLD"
+```
+
+The golden image is *not* among them: every scratch directory shares the one
+`jailbee-scratch-base` alias, so it survives any prefix change and must not be
+deleted alongside.
 
 **One command genuinely needs a file.** `jailbee net egress export` prints a
 replacement for the repo config's `egress_allow:` key, and there is no such
