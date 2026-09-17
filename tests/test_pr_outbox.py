@@ -2098,12 +2098,15 @@ def test_pending_pr_text_skips_a_manifest_for_another_repo(mocker, make_cfg, tmp
     hand `jailbee pr` a description written for an unrelated repository."""
     from jailbee.pr_outbox import Outbox
 
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.run_capture", side_effect=AssertionError("unexpected real git call"))
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[PrScope.for_repo(cfg)])
     _host_repo(mocker, "https://github.com/acme/widgets.git")
     text = _description_manifest(repo="evil/other")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
+    assert _pending_pr_text(cfg, mocker.MagicMock()) is None
     assert "evil/other" in warn.call_args.args[0]
 
 
