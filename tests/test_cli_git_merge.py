@@ -860,9 +860,7 @@ def test_git_merge_target_prompt_hides_the_chosen_sources(merge_pickers, mocker)
     assert p.offered["targets"] == ["sampleapp-c4"]
 
 
-def test_git_merge_source_prompt_hides_the_targets_given_on_the_command_line(
-    merge_pickers, mocker
-):
+def test_git_merge_source_prompt_hides_the_targets_given_on_the_command_line(merge_pickers, mocker):
     """The same rule from the other side: a named target cannot also be a source."""
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))

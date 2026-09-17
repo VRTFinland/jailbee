@@ -6282,8 +6282,7 @@ def _print_multi_target_summary(outcomes: list[_TargetOutcome], *, plain: bool) 
         else:
             status = "stopped"
             detail = (
-                f"{verb} {landed} — stopped at {outcome.failure.source}: "
-                f"{outcome.failure.reason}"
+                f"{verb} {landed} — stopped at {outcome.failure.source}: {outcome.failure.reason}"
             )
             if outcome.remaining:
                 detail += f" ({', '.join(outcome.remaining)} not attempted)"
@@ -6333,9 +6332,7 @@ def _merge_sources_into_target(
             break
         except (sync.SyncError, git_helpers.GitError) as exc:
             error_plain(str(exc))
-            extra = _ff_only_divergence_hint(
-                str(exc), source=source, target=target, branch=branch
-            )
+            extra = _ff_only_divergence_hint(str(exc), source=source, target=target, branch=branch)
             if extra is not None:
                 warn_plain(extra)
             # First non-blank line only: git's output can run to many lines and
