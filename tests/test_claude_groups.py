@@ -98,6 +98,20 @@ def test_group_dir_is_a_sibling_of_the_parked_store(monkeypatch, tmp_path: Path)
     assert claude_groups.group_dir("work").parent == claude_pool.store_dir().parent
 
 
+def test_group_dir_is_keyed_by_agent(monkeypatch, tmp_path) -> None:
+    """Claude's path is unchanged; a second agent gets a root of its own."""
+    from jailbee.accounts import groups
+
+    monkeypatch.setattr("jailbee.paths.xdg_data_home", lambda: tmp_path)
+
+    assert groups.group_dir("claude", "work") == (
+        tmp_path / "jailbee" / "claude-credentials" / "work"
+    )
+    assert groups.group_dir("codex", "work") == (
+        tmp_path / "jailbee" / "codex-credentials" / "work"
+    )
+
+
 _ENV_KEY = "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"
 
 
@@ -116,7 +130,7 @@ def test_set_container_group_overrides_the_profile_device(monkeypatch, mocker, t
     incus.list_containers.return_value = []  # no local device yet -> override path
     # The repo has a group, so the binds profile carries the device.
     cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
-    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
+    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -135,7 +149,7 @@ def test_set_container_group_adds_the_device_when_the_profile_has_none(
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> add path
     cfg = _cfg(tmp_path)  # repo shares no group -> profiles.py renders no device
-    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=False)
+    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=False)
 
     claude_groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -153,7 +167,7 @@ def test_set_container_group_always_sets_the_env_key(monkeypatch, mocker, tmp_pa
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> override path
-    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
+    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(
         _cfg(tmp_path, claude_groups.group_dir("work")), incus, "myrepo-x", "personal"
@@ -168,7 +182,7 @@ def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Pat
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> override path
-    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
+    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(
         _cfg(tmp_path, claude_groups.group_dir("work")), incus, "myrepo-x", "personal"
@@ -196,7 +210,7 @@ def test_set_container_group_updates_an_already_local_device(monkeypatch, mocker
         }
     ]
     cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
-    mocker.patch("jailbee.claude_groups._profile_has_creds_device", return_value=True)
+    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
     claude_groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -310,6 +324,17 @@ def test_groups_by_prefix_from_reuses_prefetched_rows(monkeypatch, tmp_path):
     rows = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
     assert claude_groups.groups_by_prefix_from(_gcfg(group="work"), rows, ["myrepo"]) == {
         "myrepo": {"work", "personal"}
+    }
+
+
+def test_groups_by_prefix_from_falls_back_to_the_repos_group_with_no_containers(
+    monkeypatch, tmp_path
+):
+    """With nothing writing the shared config home, the repo's own resolved
+    group is the best evidence there is."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert claude_groups.groups_by_prefix_from(_gcfg(group="work"), [], ["myrepo"]) == {
+        "myrepo": {"work"}
     }
 
 
