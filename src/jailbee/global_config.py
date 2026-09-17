@@ -26,6 +26,7 @@ from jailbee.config import (
     _columns_already_sanitized,
     _split_host_keys,
 )
+from jailbee.config.models_remote import RemoteConfig
 from jailbee.paths import expand_path, xdg_data_home
 
 
@@ -220,6 +221,13 @@ class GlobalConfig(BaseModel):
             "Settings for `jailbee config edit` itself. Host-level only "
             "(`common.py`'s `_HOST_LEVEL_KEYS`): how your own files get written is a "
             "personal editing habit, so a repo's `.jailbee/config.yaml` cannot set it."
+        ),
+    )
+    remote: RemoteConfig = Field(
+        default_factory=RemoteConfig,
+        description=(
+            "Remote access settings shared by every repo on this host. Host-level only: "
+            "a repo's `.jailbee/config.yaml` cannot enable or broaden remote access."
         ),
     )
 

@@ -47,6 +47,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.7"]
+ssh = ["asyncssh>=2.24"]
 
 [project.scripts]
 jailbee = "jailbee.entry:main"
@@ -70,6 +71,7 @@ dev = [
     "PySide6>=6.7",
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.6",
+    "asyncssh>=2.24",
 ]
 # The documentation site generator. Pinned exactly rather than floored: it is
 # 0.0.x, so any release may break the build, and an upgrade should be a commit

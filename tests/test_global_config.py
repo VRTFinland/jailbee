@@ -347,6 +347,28 @@ def test_config_edit_is_host_level_and_defaults_to_auto(tmp_path):
     assert GlobalConfig().config_edit.write_policy == "auto"
 
 
+def test_remote_block_reaches_global_config_without_entering_repo_overlay(tmp_path):
+    """Remote access is a host policy, never a repository-controlled setting."""
+    from jailbee.config import _split_host_keys
+
+    path = tmp_path / "global.yaml"
+    raw = {
+        "remote": {"ssh": {"listen": "::1", "port": 2222}},
+        "gpg": {"enabled": True},
+    }
+    path.write_text(yaml.safe_dump(raw))
+
+    host, overlay = _split_host_keys(raw)
+    gcfg, warnings = load_global_config(path)
+
+    assert host["remote"] == raw["remote"]
+    assert "remote" not in overlay
+    assert overlay == {"gpg": {"enabled": True}}
+    assert gcfg.remote.ssh.listen == "::1"
+    assert gcfg.remote.ssh.port == 2222
+    assert warnings == []
+
+
 def test_config_edit_rejects_an_unknown_policy(tmp_path):
     from jailbee.config import ConfigError
     from jailbee.global_config import validate_global_raw
