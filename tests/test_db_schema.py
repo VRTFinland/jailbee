@@ -899,3 +899,114 @@ def test_migrate_to_v10_is_idempotent() -> None:
         _migrate_to_v10(conn)  # must not raise on an already-migrated table
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(registered_repo)")}
     assert "synthetic_config" in cols
+
+
+def test_dismissed_notice_composite_primary_key() -> None:
+    """One key may be dismissed in several scopes: `legacy-chrome-block` can
+    apply to the global config and to a repo's own file at the same time, and
+    they are two separate decisions."""
+    from jailbee.db.models import DismissedNotice
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(
+            DismissedNotice(
+                scope="/home/u/.config/jailbee/global.yaml",
+                key="legacy-chrome-block",
+                fingerprint="",
+                version="1.3.2",
+                dismissed_at=now,
+            )
+        )
+        s.add(
+            DismissedNotice(
+                scope="/home/u/proj/.jailbee/config.yaml",
+                key="legacy-chrome-block",
+                fingerprint="",
+                version="1.3.2",
+                dismissed_at=now,
+            )
+        )
+        s.commit()
+        rows = s.exec(select(DismissedNotice)).all()
+    assert len(rows) == 2
+
+
+def test_dismissed_notice_round_trips_utc() -> None:
+    """`dismissed_at` is what doctor reports; SQLite drops tzinfo without the
+    TypeDecorator, and a naive datetime would break any later comparison."""
+    from jailbee.db.models import DismissedNotice
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(
+            DismissedNotice(
+                scope="myrepo",
+                key="apply",
+                fingerprint="1.3.2",
+                version="1.3.2",
+                dismissed_at=now,
+            )
+        )
+        s.commit()
+    with Session(engine) as s:
+        row = s.get(DismissedNotice, ("myrepo", "apply"))
+    assert row is not None
+    assert row.dismissed_at == now
+    assert row.dismissed_at.tzinfo is not None
+
+
+def test_v10_db_migrates_to_v11_adding_dismissed_notice() -> None:
+    """An existing v10 DB (no `dismissed_notice` table) is migrated in place.
+    The table is new, so `create_all` makes it and `_migrate_to_v11` only lets
+    the version advance; unrelated data survives."""
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import RegisteredRepo, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    with Session(engine) as s:
+        s.add(SchemaMeta(id=1, version=10))
+        s.add(
+            RegisteredRepo(
+                container_prefix="myrepo",
+                repo_root="/tmp/myrepo",
+                registered_at=now,
+                last_refresh_at=None,
+            )
+        )
+        s.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE dismissed_notice")
+
+    _ensure_schema(engine)
+
+    with engine.connect() as conn:
+        tables = {
+            row[0]
+            for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    with Session(engine) as s:
+        meta = s.get(SchemaMeta, 1)
+        repo = s.get(RegisteredRepo, "myrepo")
+    assert "dismissed_notice" in tables
+    assert repo is not None  # unrelated data survived
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+
+def test_migrate_to_v11_is_idempotent() -> None:
+    """A no-op version guard must stay a no-op when the chain is replayed."""
+    from jailbee.db import _migrate_to_v11
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _migrate_to_v11(conn)
+        _migrate_to_v11(conn)

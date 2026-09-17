@@ -259,3 +259,41 @@ class HostSetupState(SQLModel, table=True):
         default=None,
         sa_column=Column(_UTCDateTime, nullable=True),
     )
+
+
+class DismissedNotice(SQLModel, table=True):
+    """One advisory the user has marked read, and the state it was read at.
+
+    Two families share this table, told apart by `key`:
+
+    - **Upgrade advice.** `scope` is the repo's `container_prefix`, `key` is
+      an `upgrade.Action` in its CLI spelling (`base-build`, `apply`), and
+      `fingerprint` is the highest ``UPGRADE_NOTES`` version the dismissal
+      acknowledged. A later release that adds a reason *above* that version
+      re-arms the advice — which is the whole re-arm rule, and why the
+      fingerprint is the highest firing note's version rather than the version
+      of jailbee that happened to be running.
+    - **Deprecation notices.** `scope` is the config file the notice names,
+      `key` is the notice id (`legacy-config-dir`, `legacy-chrome-block`), and
+      `fingerprint` is ``""``. Such a notice never grows a new reason on its
+      own, so its identity *is* ``(scope, key)`` and the dismissal holds until
+      the config changes.
+
+    `version` is the jailbee version at the moment of dismissal. It is
+    **display only** — what `jailbee doctor` reports as "dismissed at 1.3.2" —
+    and is never compared, so that the re-arm rule stays "a new reason
+    appeared" and not "the tool was upgraded".
+
+    Deliberately *not* folded into `RepoUpgradeState`: that row records when an
+    action actually ran and is written once, never rewritten. A dismissal is a
+    different claim, and conflating the two is what would make doctor's
+    "dismissed at 1.3.2 — still owed" a lie.
+    """
+
+    __tablename__ = "dismissed_notice"
+
+    scope: str = Field(primary_key=True)
+    key: str = Field(primary_key=True)
+    fingerprint: str
+    version: str
+    dismissed_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))

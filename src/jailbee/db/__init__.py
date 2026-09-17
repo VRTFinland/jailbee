@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 def state_dir() -> Path:
@@ -193,6 +193,20 @@ def _migrate_to_v10(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v11(conn: Connection) -> None:
+    """v10 -> v11: added the `dismissed_notice` table.
+
+    A no-op version guard, like `_migrate_to_v7`-`v9` and unlike
+    `_migrate_to_v10`: `_ensure_schema` runs `SQLModel.metadata.create_all`
+    *before* the migration chain, so a table that is entirely new needs no DDL
+    here. The entry exists only so the stored version can reach 11 through the
+    chain — a gap no registered step can cross is what triggers the
+    drop-and-recreate fallback, and that would cost the user their pool,
+    registry and background-job state.
+    """
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -204,6 +218,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     8: _migrate_to_v8,
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
 
 
