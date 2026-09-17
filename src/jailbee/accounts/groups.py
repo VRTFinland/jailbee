@@ -336,7 +336,7 @@ def groups_by_prefix_from(
     """For each prefix, the set of groups its containers use.
 
     Takes the `incus list` payload rather than fetching it, so a caller
-    answering the same question for many groups — `claude_overview` — pays
+    answering the same question for many groups — `accounts.overview` — pays
     for one `incus list` instead of one per group.
 
     A container with no override counts as its repo's resolved group; a
@@ -402,7 +402,7 @@ def authoritative_in(
     a group can no longer name the login it keeps for itself.
 
     Takes the mapping rather than building one, so a caller resolving many
-    holders — `claude_overview` — computes it once for the whole host.
+    holders — `accounts.overview` — computes it once for the whole host.
     """
     return {prefix for prefix, groups in by_prefix.items() if groups == {group}}
 

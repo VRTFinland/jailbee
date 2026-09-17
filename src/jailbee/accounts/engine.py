@@ -118,7 +118,7 @@ def credential_in(adapter: AccountAdapter, holder: Path) -> Path:
     """The live credential file inside `holder`.
 
     The path-shaped half of `live_credential_path`, for callers holding a
-    holder directory rather than a `Config` that names it: `claude_overview`
+    holder directory rather than a `Config` that names it: `accounts.overview`
     walks the credential store and reads groups no repo resolves to.
     """
     return holder / adapter.credential_file

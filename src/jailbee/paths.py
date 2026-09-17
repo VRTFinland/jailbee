@@ -54,7 +54,7 @@ def _warn_legacy_config_dir(path: Path) -> None:
 
     The message names the repo the file is in, because the warning is not
     necessarily about the repo the user is standing in: `jailbee claude ls`
-    (`claude_overview._config_homes`) and the dashboards
+    (`accounts.overview._config_homes`) and the dashboards
     (`dashboard.gather_rows`) load *every* registered repo's config, so one
     unmigrated checkout elsewhere on the host made a migrated repo print
     "run `git mv .gie .jailbee` in this repo" — advice with no matching

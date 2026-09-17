@@ -115,6 +115,7 @@ def claude_row(
         )
     )
     return claude_overview.Row(
+        agent="claude",
         slot=slot,
         group=group,
         prefix=prefix,
