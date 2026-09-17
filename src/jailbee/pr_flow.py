@@ -1208,7 +1208,7 @@ def resolve_create_text(
 
 
 def _outbox_repo(scope: PrScope) -> str:
-    """Resolve the active scope's GitHub slug before publishing outbox text."""
+    """Resolve the active scope's GitHub slug for an outbox-enabled PR flow."""
     from jailbee.pr import PrError
     from jailbee.pr_outbox import scope_slug
 
@@ -1327,7 +1327,9 @@ def apply_pr_updates(
 
     `url` is the PR's own URL, recorded as the receipt for a consumed outbox
     description. `use_outbox` lets that description replace the Claude
-    regeneration. Both PR commands enable it unless `--no-outbox` is given.
+    regeneration and pins every mutation to the scope used for PR lookup,
+    regardless of the text's source. Both PR commands enable it unless
+    `--no-outbox` is given.
     `foreign_head` rides along with it: on a
     PR jailbee did not open, an outbox description must name that PR and is
     confirmed once before it replaces the body (see
@@ -1359,9 +1361,17 @@ def apply_pr_updates(
         for_pr=number,
         outbox_hint=outbox_hint,
     )
+    repo_args: dict[str, str] = {}
+    if (edit is not None or ready is not None) and (
+        use_outbox or (edit is not None and edit.source is not None)
+    ):
+        try:
+            repo_args["repo"] = _outbox_repo(scope)
+        except pr_module.PrError as exc:
+            warn(f"{scope.prefix}Updating the PR failed: {exc}")
+            return PrUpdate(title_changed=False, body_changed=False, state_note="")
     if edit is not None:
         try:
-            repo_args = {"repo": _outbox_repo(scope)} if edit.source is not None else {}
             pr_module.edit_pr(
                 scope.repo_root, number, title=edit.title, body=edit.body, **repo_args
             )
@@ -1380,7 +1390,7 @@ def apply_pr_updates(
     state_note = ""
     if ready is not None:
         try:
-            pr_module.set_ready(scope.repo_root, number, ready)
+            pr_module.set_ready(scope.repo_root, number, ready, **repo_args)
             state_note = " (marked ready)" if ready else " (marked draft)"
         except pr_module.PrError as exc:
             warn(f"{scope.prefix}Toggling PR draft state failed: {exc}")

@@ -1228,6 +1228,28 @@ def test_apply_updates_edits_and_toggles(tmp_path, mocker):
     )
 
 
+@pytest.mark.parametrize("title", [None, "Typed title"])
+def test_outbox_updates_refuse_mutations_without_a_repository(tmp_path, mocker, title):
+    from subprocess import CompletedProcess
+
+    mocker.patch("jailbee.git.get_remote_url", return_value=None)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    run = mocker.patch("subprocess.run", return_value=CompletedProcess([], 0, "", ""))
+    warn = mocker.patch("jailbee.pr_flow.warn")
+
+    updated = pr_flow.apply_pr_updates(
+        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path),
+        number=42, branch="feat/foo", base="main", title=title, body=None,
+        description=False, ready=True, ai_on=False, foreign_head=False,
+        url="https://github.com/acme/widgets/pull/42", use_outbox=True,
+    )
+
+    run.assert_not_called()
+    assert updated == pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
+    assert "Cannot resolve the GitHub repository" in warn.call_args.args[0]
+
+
 def test_apply_updates_warns_but_survives_an_edit_failure(tmp_path, mocker):
     from jailbee.pr import PrEditError
 

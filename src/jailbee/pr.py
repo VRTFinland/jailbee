@@ -421,9 +421,11 @@ def edit_pr(
     _run_gh_mutation(repo_root, cmd, "gh pr edit")
 
 
-def set_ready(repo_root: Path, number: int, ready: bool) -> None:
+def set_ready(repo_root: Path, number: int, ready: bool, *, repo: str | None = None) -> None:
     """Mark PR #`number` ready (`gh pr ready`) or back to draft (`--undo`)."""
     cmd = ["gh", "pr", "ready", str(number)]
+    if repo is not None:
+        cmd += ["--repo", repo]
     if not ready:
         cmd.append("--undo")
     _run_gh_mutation(repo_root, cmd, "gh pr ready")

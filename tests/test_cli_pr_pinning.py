@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from jailbee import pr_flow, pr_outbox
 from jailbee.cli import app
+from jailbee.pr_ai import PrText
 from jailbee.submodule_pr import SubCandidate, SubPublishResult
 from jailbee.sync import FetchResult, PublishResult
 
@@ -136,3 +137,64 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(mocker, tmp_path,
         f"https://github.com/{slug}/pull/42", uid=cfg.container_user.uid,
     )
     assert "#42" in result.output and "#99" not in result.output
+
+
+@pytest.mark.parametrize("submodule", [False, True], ids=["pr", "submodule-pr"])
+@pytest.mark.parametrize("no_outbox", [False, True], ids=["outbox", "no-outbox"])
+@pytest.mark.parametrize(
+    ("flags", "edit_fields", "ready"),
+    [
+        (["--title", "Typed title"], {"--title": "Typed title"}, None),
+        (["--body", "Typed body"], {"--body": "Typed body"}, None),
+        (["--description"], {"--title": "Generated title", "--body": "Generated body"}, None),
+        (["--ready"], {}, True),
+        (["--draft"], {}, False),
+        (["--title", "Typed title", "--ready"], {"--title": "Typed title"}, True),
+    ],
+    ids=["title", "body", "generated", "ready", "draft", "title-and-ready"],
+)
+def test_update_mutations_keep_lookup_repository(
+    mocker, tmp_path, submodule, no_outbox, flags, edit_fields, ready
+):
+    cfg, _incus, args, root, slug = _setup_command(
+        mocker, tmp_path, submodule=submodule, authored=True
+    )
+    cfg.claude.enabled = True
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=pr_outbox.Outbox(files={}))
+    mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="Generated title", body="Generated body", branch="feat/foo"),
+    )
+    consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
+    lookups, mutations = [], []
+
+    def run(cmd, **kwargs):
+        assert kwargs["cwd"] == root
+        repo = cmd[cmd.index("--repo") + 1] if "--repo" in cmd else os.environ["GH_REPO"]
+        if cmd[:3] == ["gh", "pr", "view"]:
+            number = 42 if repo == slug else 99
+            lookups.append((repo, str(number)))
+            return CompletedProcess(cmd, 0, json.dumps(
+                {"number": number, "url": f"https://github.com/{repo}/pull/{number}"}
+            ), "")
+        assert cmd[:3] in (["gh", "pr", "edit"], ["gh", "pr", "ready"])
+        mutations.append((repo, cmd[3], cmd))
+        return CompletedProcess(cmd, 0, "", "")
+
+    mocker.patch("subprocess.run", side_effect=run)
+    result = CliRunner().invoke(app, args + flags + (["--no-outbox"] if no_outbox else []))
+
+    assert result.exit_code == 0, result.output
+    target = ("unrelated/default", "99") if no_outbox else (slug, "42")
+    assert lookups == [target]
+    assert [(repo, number) for repo, number, _cmd in mutations] == [target] * (
+        bool(edit_fields) + (ready is not None)
+    )
+    if edit_fields:
+        edit = next(cmd for _repo, _number, cmd in mutations if cmd[2] == "edit")
+        for flag in ("--title", "--body"):
+            assert (edit[edit.index(flag) + 1] if flag in edit else None) == edit_fields.get(flag)
+    if ready is not None:
+        state = next(cmd for _repo, _number, cmd in mutations if cmd[2] == "ready")
+        assert ("--undo" in state) is (not ready)
+    consumed.assert_not_called()

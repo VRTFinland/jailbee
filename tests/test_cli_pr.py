@@ -978,7 +978,7 @@ def test_pr_update_description_regenerates(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
-    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B")
+    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B", repo="acme/widgets")
     assert "refreshed" in result.output.lower()
 
 
@@ -1050,7 +1050,7 @@ def test_pr_update_ready_toggles_state(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--ready"])
 
     assert result.exit_code == 0, result.output
-    ready.assert_called_once_with(tmp_path, 123, True)
+    ready.assert_called_once_with(tmp_path, 123, True, repo="acme/widgets")
     assert "marked ready" in result.output.lower()
 
 
@@ -1061,7 +1061,7 @@ def test_pr_update_draft_toggles_state(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--draft"])
 
     assert result.exit_code == 0, result.output
-    ready.assert_called_once_with(tmp_path, 123, False)
+    ready.assert_called_once_with(tmp_path, 123, False, repo="acme/widgets")
 
 
 def test_pr_update_via_already_exists_fallback(mocker, tmp_path):
@@ -1890,7 +1890,7 @@ def test_pr_foreign_head_explicit_description_still_applies(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--description"])
 
     assert result.exit_code == 0, result.output
-    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B")
+    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B", repo="acme/widgets")
 
 
 def test_pr_foreign_head_explicit_title_still_applies(mocker, tmp_path):
