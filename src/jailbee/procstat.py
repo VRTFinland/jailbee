@@ -137,6 +137,14 @@ def read_container_pids(
 
     Returns an empty list for anything unreadable: the caller renders a
     dash, and a gather must never fail over this.
+
+    One assumption the caller must keep: ``/proc/<pid>/cgroup`` reports a
+    path *relative to the reader's own cgroup namespace*. From the host
+    (the root namespace) a container's init reads
+    ``0::/lxc.payload.<name>/init.scope``; read from inside that container
+    the very same process reads ``0::/init.scope``, and the cut below would
+    land on nothing. jailbee only ever runs this on the host, which is why
+    that is a note rather than a guard.
     """
     try:
         raw = (proc_root / str(init_pid) / "cgroup").read_text()
