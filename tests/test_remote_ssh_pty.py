@@ -15,7 +15,13 @@ import pytest
 from asyncssh import SignalReceived, TerminalSizeChanged
 
 from jailbee.remote_ssh import pty as runner
-from jailbee.remote_ssh.pty import ChildSpec, PTYError, decode_wait_status, run_child, validated_term
+from jailbee.remote_ssh.pty import (
+    ChildSpec,
+    PTYError,
+    decode_wait_status,
+    run_child,
+    validated_term,
+)
 
 
 class Reader:
@@ -156,8 +162,17 @@ def test_invalid_requested_terminal_never_spawns(term, spec, boundary):
 
 
 @pytest.mark.parametrize(
-    "size", [(0, 24, 0, 0), (80, -1, 0, 0), (65536, 24, 0, 0), (80, 24, -1, 0),
-             (80, 24, 0, 65536), (True, 24, 0, 0), (80.5, 24, 0, 0), (80, 24)]
+    "size",
+    [
+        (0, 24, 0, 0),
+        (80, -1, 0, 0),
+        (65536, 24, 0, 0),
+        (80, 24, -1, 0),
+        (80, 24, 0, 65536),
+        (True, 24, 0, 0),
+        (80.5, 24, 0, 0),
+        (80, 24),
+    ],
 )
 def test_invalid_dimensions_never_spawn(size, spec, boundary):
     process = SSHProcess("xterm")
@@ -278,7 +293,10 @@ def test_pty_cancellation_or_disconnect_hangs_up_and_reaps(spec, boundary, monke
 
 def pipe_child(*, status=0, pending=False):
     child = SimpleNamespace(
-        pid=4321, stdin=Writer(), stdout=Reader(b"output"), stderr=Reader(b"error"),
+        pid=4321,
+        stdin=Writer(),
+        stdout=Reader(b"output"),
+        stderr=Reader(b"error"),
         returncode=None,
     )
     child.finished = asyncio.Event()
@@ -301,9 +319,13 @@ def test_pipe_argv_env_and_separate_bounded_streams(spec, boundary, monkeypatch)
     boundary.create.return_value = child
     asyncio.run(run_child(process, spec))
     boundary.create.assert_awaited_once_with(
-        *spec.argv, cwd=spec.cwd, stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={"PATH": "/bin"}, start_new_session=True,
+        *spec.argv,
+        cwd=spec.cwd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={"PATH": "/bin"},
+        start_new_session=True,
     )
     assert process.stdout.data == b"output"
     assert process.stderr.data == b"error"
@@ -392,9 +414,7 @@ def test_cleanup_timeout_kills_group_then_reaps(spec, boundary, monkeypatch, pty
         assert reaped.is_set()
 
     asyncio.run(scenario())
-    assert boundary.killpg.call_args_list == [
-        call(4321, signal.SIGHUP), call(4321, signal.SIGKILL)
-    ]
+    assert boundary.killpg.call_args_list == [call(4321, signal.SIGHUP), call(4321, signal.SIGKILL)]
 
 
 class EventReader(Reader):

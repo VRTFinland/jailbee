@@ -207,9 +207,9 @@ async def _write_pty(fd: int, data: bytes) -> None:
         except InterruptedError:
             continue
         except BlockingIOError:
-            ready = loop.create_future()
+            ready: asyncio.Future[None] = loop.create_future()
 
-            def writable() -> None:
+            def writable(ready: asyncio.Future[None] = ready) -> None:
                 if not ready.done():
                     ready.set_result(None)
 
@@ -305,6 +305,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             raise
         finally:
             if redirect_started:
+
                 async def detach() -> None:
                     with suppress(Exception):
                         await process.redirect(stdout=asyncio.subprocess.PIPE)
@@ -327,6 +328,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     try:
         child = await asyncio.shield(spawn)
     except asyncio.CancelledError:
+
         async def abandon_spawn() -> None:
             child = await spawn
             await _cleanup_pipes(child, asyncio.create_task(child.wait()))
