@@ -467,7 +467,13 @@ def live_account(
     prefer: str,
     authoritative: Collection[str],
 ) -> LiveAccount | None:
-    """The account this repo's holder holds, with its record."""
+    """The account this repo's holder holds, with its record.
+
+    `account_of` for a caller holding a `Config` rather than a holder — the
+    shape `doctor` and `live_identity` want. Not the protocol's entry point:
+    that is `ClaudeAdapter.account_at`, which takes the holder directly, so a
+    generic caller never has to synthesise a `Config` pointed at one.
+    """
     return account_of(
         engine.holder_dir(CLAUDE, cfg), found, prefer=prefer, authoritative=authoritative
     )
@@ -690,15 +696,15 @@ class ClaudeAdapter:
 
         return credential_locks(holder)
 
-    def live_account(
+    def account_at(
         self,
-        cfg: Config,
+        holder: Path,
         found: Sequence[Member],
         *,
         prefer: str,
         authoritative: Collection[str],
     ) -> LiveAccount | None:
-        return live_account(cfg, found, prefer=prefer, authoritative=authoritative)
+        return account_of(holder, found, prefer=prefer, authoritative=authoritative)
 
     def record_for(self, slot: Slot, raw: str) -> dict[str, Any] | None:
         return trusted_record_in(slot, raw)

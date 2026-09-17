@@ -94,9 +94,9 @@ class AccountAdapter(Protocol):
 
     def locks(self, holder: Path) -> AbstractContextManager[None]: ...
 
-    def live_account(
+    def account_at(
         self,
-        cfg: Config,
+        holder: Path,
         found: Sequence[Member],
         *,
         prefer: str,

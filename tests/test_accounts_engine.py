@@ -52,10 +52,10 @@ class FakeAdapter:
     def locks(self, holder: Path) -> Any:
         return nullcontext()
 
-    def live_account(
-        self, cfg: Any, found: Any, *, prefer: str, authoritative: Any
+    def account_at(
+        self, holder: Path, found: Any, *, prefer: str, authoritative: Any
     ) -> models.LiveAccount | None:
-        raw = (self._holder or self._home) / self.credential_file
+        raw = holder / self.credential_file
         if not raw.exists():
             return None
         block = self.grant_block(raw.read_text(encoding="utf-8"))

@@ -602,8 +602,8 @@ def _slots_for(
     because there is only ever one of them, and it reads as what it is in
     `jailbee claude ls`.
     """
-    account = adapter.live_account(
-        cfg, found, prefer=cfg.container_prefix, authoritative=authoritative
+    account = adapter.account_at(
+        holder_dir(adapter, cfg), found, prefer=cfg.container_prefix, authoritative=authoritative
     )
     slots = parked_slots(adapter)
     live = live_slot(adapter, cfg, None if account is None else account.identity)
@@ -691,8 +691,8 @@ def park(
     as swapping it. Phase 3 wires them from the CLI.
     """
     found, unreachable = members(adapter, cfg, gcfg)
-    account = adapter.live_account(
-        cfg, found, prefer=cfg.container_prefix, authoritative=authoritative
+    account = adapter.account_at(
+        holder_dir(adapter, cfg), found, prefer=cfg.container_prefix, authoritative=authoritative
     )
     parked: Path | None = None
     if live_credential_path(adapter, cfg).exists():

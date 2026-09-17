@@ -135,24 +135,8 @@ def _existing_group_dirs(adapter: AccountAdapter) -> list[str]:
         return []
 
 
-def _holder_view(cfg: Config, holder: Path) -> Config:
-    """`cfg`, pointed at `holder` for `adapter.live_account`'s own lookup.
-
-    A derived copy, never a mutation — `Config` is read-only after load, the
-    same rule `cli._holder_view` follows for the same reason: this module
-    walks holders `cfg`'s own repo does not resolve to — another group's
-    directory, or another registered repo's config home — and
-    `AccountAdapter.live_account` always reads the holder its `Config`
-    argument resolves to, never one passed in directly. Pointing a throwaway
-    copy at each holder in turn is how one `cfg` answers the question for
-    every holder on the host, not just its own.
-    """
-    return cfg.model_copy(update={"claude_credentials_dir": holder})
-
-
-def _account_at(
+def _identity_at(
     adapter: AccountAdapter,
-    cfg: Config,
     holder: Path,
     homes: dict[str, Path],
     by_prefix: dict[str, set[str | None]],
@@ -163,19 +147,25 @@ def _account_at(
 ) -> Identity | None:
     """Which account `holder`'s login belongs to, or None when nothing says.
 
+    `holder` is passed to the adapter directly, which is the whole reason this
+    module can walk holders the calling repo does not resolve to — another
+    group's directory, or another registered repo's config home — without
+    holding a `Config` for each. An earlier shape asked the adapter through a
+    `Config` copy pointed at the holder, which put a Claude-specific key in
+    this generic module and re-created the "config in hand ≠ holder in hand"
+    confusion that once misattributed one group's account to another.
+
     Authoritativeness is `groups.authoritative_in`'s rule and only its
     rule, asked of the one `groups_by_prefix_from` mapping `build` computes
     for the whole host — including for an ungrouped holder, where the answer
     being sought is "no group".
     """
     members = [Member(p, homes[p]) for p in member_prefixes]
-    # Not intersected with `member_prefixes`: `_member_account` already keeps
-    # only the members it was handed, and a second filter here would look like
-    # it guarded a case that one does not.
+    # Not intersected with `member_prefixes`: the adapter already keeps only
+    # the members it was handed, and a second filter here would look like it
+    # guarded a case that one does not.
     authoritative = groups.authoritative_in(by_prefix, group)
-    account = adapter.live_account(
-        _holder_view(cfg, holder), members, prefer=prefer, authoritative=authoritative
-    )
+    account = adapter.account_at(holder, members, prefer=prefer, authoritative=authoritative)
     return None if account is None else account.identity
 
 
@@ -213,9 +203,8 @@ def build(adapter: AccountAdapter, cfg: Config, gcfg: GlobalConfig, incus: Incus
     for group in group_names:
         holder = engine.group_dir(adapter.name, group)
         member_prefixes = [p for p in prefixes if _resolved_group(gcfg, p) == group]
-        identity = _account_at(
+        identity = _identity_at(
             adapter,
-            cfg,
             holder,
             homes,
             by_prefix,
@@ -244,9 +233,8 @@ def build(adapter: AccountAdapter, cfg: Config, gcfg: GlobalConfig, incus: Incus
             engine.live_slot_at(
                 adapter,
                 holder,
-                _account_at(
+                _identity_at(
                     adapter,
-                    cfg,
                     holder,
                     homes,
                     by_prefix,
