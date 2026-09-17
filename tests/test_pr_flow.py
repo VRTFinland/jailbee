@@ -60,6 +60,21 @@ def test_candidate_scopes_returns_repo_then_sorted_submodules(tmp_path, mocker):
     assert [scope.remote for scope in scopes] == [cfg.upstream_remote, "a-upstream", "z-origin"]
 
 
+def test_candidate_scopes_merges_only_initialized_recorded_paths_once(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a", "z"])
+    mocker.patch(
+        "jailbee.submodules.host_subrepo_exists",
+        side_effect=lambda root, path: root == tmp_path and path in {"a", "b", "z"},
+    )
+    remote = mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+
+    scopes = pr_flow.candidate_scopes(cfg, extra_paths=["z", "b", "missing", "b"])
+
+    assert [scope.subpath for scope in scopes] == [None, "a", "b", "z"]
+    assert [call.args[1] for call in remote.call_args_list] == ["a", "b", "z"]
+
+
 def test_noun_names_the_pr_number(tmp_path):
     assert _super_scope(tmp_path).noun("12") == "PR #12"
 

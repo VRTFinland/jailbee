@@ -594,6 +594,88 @@ def _submodule_gate_setup(mocker, make_cfg, tmp_path, *, records=None, labels=No
     return cfg, incus, PrScope.for_submodule(cfg, "deps/one"), urls
 
 
+@pytest.mark.parametrize("check_other_scope", [False, True])
+def test_recorded_transported_submodule_description_then_comments_are_publishable(
+    mocker, make_cfg, tmp_path, check_other_scope
+):
+    from jailbee.pr_outbox import (
+        Outbox,
+        Progress,
+        apply_manifest,
+        parse_manifest,
+        pending_pr_text,
+        resolve_target,
+    )
+
+    mocker.patch("subprocess.run", side_effect=AssertionError("unexpected real subprocess"))
+    cfg = make_cfg(tmp_path)
+    # Transport initialized this host checkout; host .gitmodules has no entry.
+    mocker.patch("jailbee.git.run_capture", return_value=(False, ""))
+    mocker.patch(
+        "jailbee.submodules.host_subrepo_exists",
+        side_effect=lambda root, path: root == tmp_path and path == "new/library",
+    )
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch(
+        "jailbee.git.get_remote_url",
+        side_effect=lambda root, remote: (
+            "https://github.com/acme/library"
+            if root == tmp_path / "new/library"
+            else "https://github.com/acme/widgets"
+        ),
+    )
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda container, key: (
+        json.dumps({"new/library": {"pr": 42, "branch": "library-head"}})
+        if key == "user.jailbee.sub_pr"
+        else None
+    )
+    text = _manifest_text(
+        repo="acme/library",
+        pr=42,
+        actions=[
+            {"type": "description", "title": "Library title", "body": "Library body"},
+            {"type": "comment", "body": "Library comment"},
+        ],
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"new.json": text}))
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(42))
+    comment = mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/comment")
+
+    if check_other_scope:
+        assert pending_pr_text(
+            cfg, incus, "c", scope=PrScope.for_repo(cfg), source_branch="super-head", uid=1000
+        ) is None
+        warn.assert_not_called()
+    selected = pending_pr_text(
+        cfg,
+        incus,
+        "c",
+        scope=PrScope.for_submodule(cfg, "new/library"),
+        source_branch="library-head",
+        for_pr=42,
+        uid=1000,
+    )
+    assert selected is not None
+    assert (selected.text.title, selected.text.body) == ("Library title", "Library body")
+
+    target = resolve_target(cfg, incus, "c", parse_manifest("new.json", text, {}), force=False)
+    assert target.scope.subpath == "new/library"
+    resolve.assert_called_once_with(
+        tmp_path / "new/library", 42, remote="origin", repo="acme/library"
+    )
+    outcome = apply_manifest(
+        cfg, incus, "c", target, Progress(applied=frozenset({0}), urls={}), uid=1000
+    )
+    assert outcome.applied == (1,)
+    assert outcome.urls == ("https://x/comment",)
+    assert outcome.failure is None
+    comment.assert_called_once_with(
+        tmp_path / "new/library", 42, "Library comment", repo="acme/library"
+    )
+
+
 @pytest.mark.parametrize("recorded_path", ["deps/one", "deps/two"])
 def test_submodule_scope_accepts_owned_number_from_either_duplicate_path(
     mocker, make_cfg, tmp_path, recorded_path
@@ -642,7 +724,7 @@ def test_scope_mismatch_names_requested_and_all_known_github_repos(mocker, make_
 
     assert all(slug in str(exc.value) for slug in ("unknown/repo", "acme/widgets", "acme/library"))
     assert "acme/private" not in str(exc.value)
-    incus.config_get.assert_not_called()
+    incus.config_get.assert_called_once_with("c", "user.jailbee.sub_pr")
 
 
 def test_submodule_scope_cannot_borrow_superproject_ownership(mocker, make_cfg, tmp_path):
@@ -2063,7 +2145,9 @@ def test_pending_pr_text_silently_skips_a_superproject_manifest_in_submodule_sco
     )
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=sub_scope) is None
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    assert _pending_pr_text(cfg, incus, scope=sub_scope) is None
     warn.assert_not_called()
 
 
@@ -2090,7 +2174,9 @@ def test_pending_pr_text_silently_skips_a_submodule_manifest_in_superproject_sco
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-sub.json": text}))
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=super_scope) is None
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    assert _pending_pr_text(cfg, incus, scope=super_scope) is None
     warn.assert_not_called()
 
 
@@ -2109,8 +2195,10 @@ def test_pending_pr_text_warns_for_a_manifest_outside_every_candidate_scope(
     )
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=scope) is None
-    candidates.assert_called_once_with(cfg)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    assert _pending_pr_text(cfg, incus, scope=scope) is None
+    candidates.assert_called_once_with(cfg, extra_paths=[])
     assert "001-foreign.json" in warn.call_args.args[0]
     assert "evil/other" in warn.call_args.args[0]
 
@@ -2134,8 +2222,11 @@ def test_pending_pr_text_discovers_candidate_scopes_only_once_after_mismatches(
         ),
     )
 
-    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=scope) is None
-    candidates.assert_called_once_with(cfg)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    assert _pending_pr_text(cfg, incus, scope=scope) is None
+    candidates.assert_called_once_with(cfg, extra_paths=[])
+    incus.config_get.assert_called_once_with("c", "user.jailbee.sub_pr")
 
 
 def test_pending_pr_text_matching_active_scope_does_not_discover_candidates(
@@ -2148,6 +2239,7 @@ def test_pending_pr_text_matching_active_scope_does_not_discover_candidates(
     _host_repo(mocker)
     candidates = mocker.patch("jailbee.pr_flow.candidate_scopes")
     gitmodules_walk = mocker.patch("jailbee.submodules.host_submodule_paths")
+    recorded = mocker.patch("jailbee.submodule_pr.recorded_paths")
     mocker.patch(
         "jailbee.pr_outbox.read_outbox",
         return_value=Outbox(files={"001-super.json": _description_manifest()}),
@@ -2158,6 +2250,7 @@ def test_pending_pr_text_matching_active_scope_does_not_discover_candidates(
     assert found is not None and found.manifest == "001-super.json"
     candidates.assert_not_called()
     gitmodules_walk.assert_not_called()
+    recorded.assert_not_called()
 
 
 def test_pending_pr_text_falls_back_to_source_branch_without_reading_container_config(
@@ -2218,7 +2311,9 @@ def test_pending_pr_text_skips_a_manifest_for_another_repo(mocker, make_cfg, tmp
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert _pending_pr_text(cfg, mocker.MagicMock()) is None
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    assert _pending_pr_text(cfg, incus) is None
     assert "evil/other" in warn.call_args.args[0]
 
 

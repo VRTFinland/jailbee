@@ -18,6 +18,7 @@ PR and a submodule PR:
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Never, Protocol
@@ -83,16 +84,21 @@ class PrScope:
         return "jailbee submodule pr" if self.subpath else "jailbee pr"
 
 
-def candidate_scopes(cfg: Config) -> list[PrScope]:
-    """The superproject and initialized host submodules eligible for PR work."""
+def candidate_scopes(cfg: Config, *, extra_paths: Iterable[str] = ()) -> list[PrScope]:
+    """The superproject, then unique initialized submodules in path order.
+
+    `extra_paths` can include container-recorded submodules transported to the
+    host before their declarations appear in the host's `.gitmodules`.
+    """
     from jailbee import submodules
 
+    paths = set(submodules.host_submodule_paths(cfg.repo_root))
+    paths.update(
+        path for path in extra_paths if submodules.host_subrepo_exists(cfg.repo_root, path)
+    )
     return [
         PrScope.for_repo(cfg),
-        *(
-            PrScope.for_submodule(cfg, path)
-            for path in sorted(submodules.host_submodule_paths(cfg.repo_root))
-        ),
+        *(PrScope.for_submodule(cfg, path) for path in sorted(paths)),
     ]
 
 

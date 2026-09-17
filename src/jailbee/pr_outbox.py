@@ -554,9 +554,12 @@ def resolve_target(
     """
     # Imported lazily because pr_flow also consumes this module.
     from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX, candidate_scopes
-    from jailbee.submodule_pr import SubmodulePrState
+    from jailbee.submodule_pr import SubmodulePrState, recorded_paths
 
-    scopes = [(scope, scope_slug(scope)) for scope in candidate_scopes(cfg)]
+    scopes = [
+        (scope, scope_slug(scope))
+        for scope in candidate_scopes(cfg, extra_paths=recorded_paths(incus, container))
+    ]
     matches = [scope for scope, slug in scopes if slug == manifest.repo]
     if not matches:
         known = ", ".join(sorted({slug for _, slug in scopes if slug is not None})) or "none"
@@ -1565,10 +1568,13 @@ def pending_pr_text(
                 # Candidate discovery walks .gitmodules, so the common path —
                 # a manifest for the active repository — must never pay for it.
                 from jailbee.pr_flow import candidate_scopes
+                from jailbee.submodule_pr import recorded_paths
 
                 known_slugs = {
                     candidate_slug
-                    for candidate_scope in candidate_scopes(cfg)
+                    for candidate_scope in candidate_scopes(
+                        cfg, extra_paths=recorded_paths(incus, container)
+                    )
                     if (candidate_slug := scope_slug(candidate_scope)) is not None
                 }
             if manifest.repo not in known_slugs:
