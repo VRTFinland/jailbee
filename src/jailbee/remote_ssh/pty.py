@@ -1,0 +1,379 @@
+"""Bounded SSH byte relays and ownership of local child process groups."""
+
+from __future__ import annotations
+
+import asyncio
+import errno
+import fcntl
+import io
+import os
+import pty
+import re
+import signal
+import struct
+import termios
+from contextlib import ExitStack, suppress
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from pathlib import Path
+
+    from asyncssh import SSHServerProcess
+
+_TERM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+._-]{0,63}$")
+_BUFFER_SIZE = 65536
+
+
+class PTYError(ValueError):
+    """The requested terminal cannot be safely provided."""
+
+
+@dataclass(frozen=True)
+class ChildSpec:
+    argv: tuple[str, ...]
+    cwd: Path
+    requires_pty: bool
+
+
+class _Reader(Protocol):
+    async def read(self, n: int) -> bytes: ...
+
+
+class _Writer(Protocol):
+    def write(self, data: bytes) -> None: ...
+
+    async def drain(self) -> None: ...
+
+
+def validated_term(value: str | None) -> str:
+    if value is None or not _TERM_RE.fullmatch(value):
+        raise PTYError("invalid or missing terminal type")
+    return value
+
+
+def decode_wait_status(status: int) -> tuple[int | None, signal.Signals | None]:
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status), None
+    if os.WIFSIGNALED(status):
+        return None, signal.Signals(os.WTERMSIG(status))
+    raise PTYError(f"unexpected child wait status: {status}")
+
+
+def _window_size(size: tuple[int, int, int, int]) -> bytes:
+    if len(size) != 4 or any(type(value) is not int or not 0 <= value <= 65535 for value in size):
+        raise PTYError("invalid terminal dimensions")
+    columns, rows, x_pixels, y_pixels = size
+    if not columns or not rows:
+        raise PTYError("terminal rows and columns must be positive")
+    return struct.pack("HHHH", rows, columns, x_pixels, y_pixels)
+
+
+def _signal_group(pid: int, sig: signal.Signals) -> None:
+    with suppress(ProcessLookupError):
+        os.killpg(pid, sig)
+
+
+async def _finish[T](task: asyncio.Task[T]) -> T:
+    """Keep resource cleanup alive even if the caller is cancelled again."""
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+
+
+async def _terminate(pid: int, waiter: asyncio.Task[int]) -> None:
+    _signal_group(pid, signal.SIGHUP)
+    try:
+        await asyncio.wait_for(asyncio.shield(waiter), 2)
+    except TimeoutError:
+        _signal_group(pid, signal.SIGKILL)
+        await waiter
+
+
+async def _cleanup_pipes(child: asyncio.subprocess.Process, waiter: asyncio.Task[int]) -> None:
+    async def discard(reader: asyncio.StreamReader) -> None:
+        with suppress(OSError):
+            while await reader.read(_BUFFER_SIZE):
+                pass
+
+    # Process.wait() can wait for pipe closure. Continue draining after the SSH
+    # relays stop, otherwise a full StreamReader buffer can prevent reaping.
+    drains = [
+        asyncio.create_task(discard(reader))
+        for reader in (child.stdout, child.stderr)
+        if reader is not None
+    ]
+    if child.stdin is not None:
+        child.stdin.close()
+    try:
+        await _terminate(child.pid, waiter)
+    finally:
+        for task in drains:
+            task.cancel()
+        await asyncio.gather(*drains, return_exceptions=True)
+        if child.stdin is not None:
+            with suppress(BrokenPipeError, ConnectionResetError):
+                await child.stdin.wait_closed()
+
+
+async def _copy(reader: _Reader, writer: _Writer) -> None:
+    while data := await reader.read(_BUFFER_SIZE):
+        writer.write(data)
+        await writer.drain()
+
+
+async def _connected[T](process: SSHServerProcess[bytes], work: Awaitable[T]) -> T:
+    task = asyncio.ensure_future(work)
+    disconnected = asyncio.create_task(process.wait_closed())
+    try:
+        done, _ = await asyncio.wait({task, disconnected}, return_when=asyncio.FIRST_COMPLETED)
+        if disconnected in done:
+            raise ConnectionError("SSH channel disconnected")
+        return task.result()
+    finally:
+        task.cancel()
+        disconnected.cancel()
+        await asyncio.gather(task, disconnected, return_exceptions=True)
+
+
+async def _input(
+    process: SSHServerProcess[bytes],
+    pid: int,
+    send: Callable[[bytes], Awaitable[None]],
+    master: int | None = None,
+) -> None:
+    # Import only when an SSH session runs, keeping the SSH extra optional.
+    from asyncssh import SignalReceived, TerminalSizeChanged
+
+    while True:
+        try:
+            data = await process.stdin.read(_BUFFER_SIZE)
+        except SignalReceived as exc:
+            sig = signal.Signals.__members__.get("SIG" + exc.signal)
+            if sig is not None:
+                _signal_group(pid, sig)
+            continue
+        except TerminalSizeChanged as exc:
+            if master is not None:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, _window_size(exc.term_size))
+            continue
+        if not data:
+            if master is not None:
+                attrs = termios.tcgetattr(master)
+                if attrs[3] & termios.ICANON:
+                    # Flush a partial canonical line, then signal EOF on an empty line.
+                    await send(attrs[6][termios.VEOF] * 2)
+            return
+        try:
+            await send(data)
+        except (BrokenPipeError, ConnectionResetError):
+            # A child may stop reading while it still has output to deliver.
+            return
+
+
+async def _supervise(
+    process: SSHServerProcess[bytes],
+    waiter: asyncio.Task[int],
+    stdin: asyncio.Task[None],
+    outputs: list[asyncio.Task[None]],
+) -> int:
+    disconnected = asyncio.create_task(process.wait_closed())
+    relays = [stdin, *outputs, disconnected]
+    pending = {waiter, *relays}
+    try:
+        while True:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if disconnected in done:
+                raise ConnectionError("SSH channel disconnected")
+            for task in done:
+                task.result()
+            if waiter.done() and all(task.done() for task in outputs):
+                return waiter.result()
+    finally:
+        for task in relays:
+            task.cancel()
+        await asyncio.gather(*relays, return_exceptions=True)
+
+
+async def _write_pty(fd: int, data: bytes) -> None:
+    loop = asyncio.get_running_loop()
+    while data:
+        try:
+            count = os.write(fd, data)
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            ready = loop.create_future()
+
+            def writable() -> None:
+                if not ready.done():
+                    ready.set_result(None)
+
+            loop.add_writer(fd, writable)
+            try:
+                await ready
+            finally:
+                loop.remove_writer(fd)
+        else:
+            data = data[count:]
+
+
+class _PTYOutput(io.BufferedReader):
+    """Observe AsyncSSH closing its read transport after all PTY output drains."""
+
+    def __init__(self, file: io.FileIO):
+        self.finished = asyncio.Event()
+        super().__init__(file)
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self.finished.set()
+
+    async def wait_closed(self) -> None:
+        await self.finished.wait()
+
+
+def _duplicate(master: int, mode: str) -> io.FileIO:
+    fd = os.dup(master)
+    try:
+        # Binary, unbuffered fdopen returns a FileIO in both modes used here.
+        return cast(io.FileIO, os.fdopen(fd, mode, buffering=0))
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _waitpid(pid: int) -> int:
+    while True:
+        try:
+            return os.waitpid(pid, 0)[1]
+        except InterruptedError:
+            continue
+
+
+async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
+    term = validated_term(process.term_type)
+    size = _window_size(process.term_size)
+    pid, master = pty.fork()
+    if pid == 0:
+        try:
+            os.chdir(spec.cwd)
+            env = os.environ.copy()
+            env["TERM"] = term
+            os.execvpe(spec.argv[0], spec.argv, env)
+        finally:
+            # Never unwind into the inherited server loop in a forked child.
+            os._exit(127)
+
+    waiter = asyncio.create_task(asyncio.to_thread(_waitpid, pid))
+    with ExitStack() as resources:
+        resources.callback(os.close, master)
+        redirect_started = False
+        try:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, size)
+            os.set_blocking(master, False)
+            writer = resources.enter_context(_duplicate(master, "wb"))
+            raw_reader = resources.enter_context(_duplicate(master, "rb"))
+            reader = resources.enter_context(_PTYOutput(raw_reader))
+            redirect_started = True
+            await _connected(
+                process, process.redirect(stdout=reader, bufsize=_BUFFER_SIZE, send_eof=False)
+            )
+
+            async def send(data: bytes) -> None:
+                await _write_pty(writer.fileno(), data)
+
+            async def input_pty() -> None:
+                try:
+                    await _input(process, pid, send, master)
+                except OSError as exc:
+                    # Linux reports EIO once the slave side has closed.
+                    if exc.errno != errno.EIO:
+                        raise
+
+            stdin = asyncio.create_task(input_pty())
+            output = asyncio.create_task(reader.wait_closed())
+            return await _supervise(process, waiter, stdin, [output])
+        except BaseException:
+            await _finish(asyncio.create_task(_terminate(pid, waiter)))
+            raise
+        finally:
+            if redirect_started:
+                async def detach() -> None:
+                    with suppress(Exception):
+                        await process.redirect(stdout=asyncio.subprocess.PIPE)
+
+                await _finish(asyncio.create_task(detach()))
+
+
+async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *spec.argv,
+            cwd=spec.cwd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ.copy(),
+            start_new_session=True,
+        )
+    )
+    try:
+        child = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        async def abandon_spawn() -> None:
+            child = await spawn
+            await _cleanup_pipes(child, asyncio.create_task(child.wait()))
+
+        await _finish(asyncio.create_task(abandon_spawn()))
+        raise
+    waiter = asyncio.create_task(child.wait())
+    assert child.stdin is not None and child.stdout is not None and child.stderr is not None
+    child_stdin = child.stdin
+
+    async def send(data: bytes) -> None:
+        child_stdin.write(data)
+        await child_stdin.drain()
+
+    async def input_pipe() -> None:
+        try:
+            await _input(process, child.pid, send)
+        finally:
+            child_stdin.close()
+
+    try:
+        stdin = asyncio.create_task(input_pipe())
+        outputs = [
+            asyncio.create_task(_copy(child.stdout, process.stdout)),
+            asyncio.create_task(_copy(child.stderr, process.stderr)),
+        ]
+        return await _supervise(process, waiter, stdin, outputs)
+    except BaseException:
+        await _finish(asyncio.create_task(_cleanup_pipes(child, waiter)))
+        raise
+    finally:
+        child_stdin.close()
+        with suppress(BrokenPipeError, ConnectionResetError):
+            await child_stdin.wait_closed()
+
+
+async def run_child(process: SSHServerProcess[bytes], spec: ChildSpec) -> None:
+    """Run an argv directly, owning all child resources until exit or disconnect."""
+    if process.term_type is not None:
+        status, sig = decode_wait_status(await _run_pty(process, spec))
+    else:
+        if spec.requires_pty:
+            raise PTYError("This entry point requires a PTY; retry with ssh -t.")
+        result = await _run_pipes(process, spec)
+        status, sig = (result, None) if result >= 0 else (None, signal.Signals(-result))
+    if sig is not None:
+        process.exit_with_signal(sig.name.removeprefix("SIG"))
+    else:
+        assert status is not None
+        process.exit(status)
