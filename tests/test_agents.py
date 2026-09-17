@@ -22,7 +22,11 @@ def test_spec_carries_mounts_egress_and_install(tmp_path):
     assert spec.name == "codex"
     assert [c.name for c in spec.shared] == ["codex"]
     assert [c.container_path for c in spec.shared] == ["~/.codex"]
-    assert spec.egress == ("api.openai.com:443",)
+    assert spec.egress == (
+        "api.openai.com:443",
+        "auth.openai.com:443",
+        "chatgpt.com:443",
+    )
     assert spec.install == CODEX_INSTALL
     assert spec.install_check == "command -v codex"
     assert spec.install_network == "loose"

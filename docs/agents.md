@@ -111,7 +111,7 @@ agents:
 ```
 
 Everything else — the install command, the `~/.codex` shared mount, the
-`api.openai.com:443` egress entry — comes from the preset. `claude` ships
+OpenAI egress entries — comes from the preset. `claude` ships
 enabled with `autostart: false` by default in the `jailbee config init --global`
 template; see [Claude](#9-claude) below for its own switches.
 
@@ -292,7 +292,7 @@ has been running for weeks.
 | Preset | Env var | Notes |
 |---|---|---|
 | `claude` | — | Browser/device flow; solved via the shared `~/.claude` directory, not an API key. |
-| `codex` | `OPENAI_API_KEY` | The ChatGPT-login sign-in hosts are undocumented upstream; the API-key path is the one with a documented host list. |
+| `codex` | `OPENAI_API_KEY` | The ChatGPT login (`codex login`, a device-code flow) works too: the preset allows the hosts it needs — `auth.openai.com` for the code and the token refreshes, `chatgpt.com` for the backend it then talks to. The credentials land in the shared `~/.codex`, so one login covers every container of the repo. |
 | `gemini` | `GEMINI_API_KEY` | API-key path only — the OAuth/Code Assist path uses a different set of hosts (see the table below) and has no key. |
 | `aider` | provider-dependent (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | Aider proxies whichever model backend you configure; the key follows that backend, not aider itself. |
 | `opencode` | provider-dependent, via `opencode auth login` → `~/.local/share/opencode/auth.json` | |
@@ -325,7 +325,7 @@ path in sections 2–4 above is what makes shipping them acceptable.
 
 | Preset | Install | Config paths | Egress | Verification status |
 | --- | --- | --- | --- | --- |
-| `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**) | `api.openai.com:443`; `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. The ChatGPT-login sign-in hosts remain **undocumented** upstream, so the API-key path is the documented one. |
+| `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**) | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
 | `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443` | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
 | `opencode` | `npm i -g opencode-ai@latest` | `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | provider-dependent | Verified. |

@@ -2656,6 +2656,20 @@ def test_agent_mounts_and_egress_reach_effective_lists(tmp_path):
     assert "api.openai.com:443" in cfg.effective_egress_allow()
 
 
+def test_codex_sign_in_hosts_reach_the_allowlist(tmp_path):
+    """The device-code login and the ChatGPT-plan backend, not just the API.
+
+    With only `api.openai.com` allowed, `codex` installs and starts in a
+    strict container and then fails at `codex login` with `failed to request
+    device code` — the POST to `auth.openai.com/api/accounts/deviceauth/usercode`
+    times out against the ACL.
+    """
+    cfg = make_cfg(tmp_path, agents={"codex": {"enabled": True}})
+    allowed = cfg.effective_egress_allow()
+    assert "auth.openai.com:443" in allowed
+    assert "chatgpt.com:443" in allowed
+
+
 def test_validate_agents_revalidates_a_plain_agentconfig_under_claude_key():
     """A caller building `Config` in Python (not from YAML) can pass an
     already-constructed base `AgentConfig` under the `claude` key.
@@ -3554,7 +3568,12 @@ def test_load_path_agents_layer_merges_per_agent_instead_of_replacing(
     assert cfg.agents["codex"].enabled is True
     # The preset's own host is still there (preset merges under both layers),
     # and the repo's addition appended rather than replacing.
-    assert cfg.agents["codex"].egress_allow == ["api.openai.com:443", "extra.host:443"]
+    assert cfg.agents["codex"].egress_allow == [
+        "api.openai.com:443",
+        "auth.openai.com:443",
+        "chatgpt.com:443",
+        "extra.host:443",
+    ]
     # The preset's other fields survived too — the repo entry was a fragment.
     assert cfg.agents["codex"].command == "codex"
     assert "extra.host:443" in cfg.effective_egress_allow()

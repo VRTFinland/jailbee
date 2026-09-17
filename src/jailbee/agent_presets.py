@@ -46,7 +46,21 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # per-container symlink into ~/.codex/packages/standalone/current,
         # so the ~300MB payload is downloaded once per repo, not per branch.
         "shared": [{"subpath": "codex", "path": "~/.codex"}],
-        "egress_allow": ["api.openai.com:443"],
+        # Runtime hosts, all three needed by an ordinary signed-in session:
+        # `api.openai.com` is the API-key path (`/v1/responses`, `/auth`),
+        # `auth.openai.com` is the sign-in itself — the device-code flow posts
+        # to `/api/accounts/deviceauth/usercode` and every later token refresh
+        # goes to `/oauth/token` — and `chatgpt.com` is the backend a
+        # ChatGPT-plan login actually talks to (`/backend-api/codex/...`).
+        # Only the first was here originally, which made `codex` install and
+        # start fine in a strict container and then fail at login with
+        # `failed to request device code`, the request timing out against the
+        # ACL. Telemetry (`ab.chatgpt.com`) is deliberately left out.
+        "egress_allow": [
+            "api.openai.com:443",
+            "auth.openai.com:443",
+            "chatgpt.com:443",
+        ],
     },
     "gemini": {
         "command": "gemini",

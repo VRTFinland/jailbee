@@ -190,6 +190,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "`environment.PATH` — nothing to re-apply unless you set that key"
         ),
     ),
+    UpgradeNote(
+        version=(1, 5, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the `codex` agent preset allows `auth.openai.com` and `chatgpt.com` "
+            "too, without which `codex login` fails in a strict container — "
+            "nothing to re-apply unless you enable that agent"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
