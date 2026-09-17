@@ -8013,3 +8013,67 @@ def test_parse_cpu_limit_counts_every_incus_spelling(raw, expected):
     from jailbee.lifecycle import _parse_cpu_limit
 
     assert _parse_cpu_limit(raw) == expected
+
+
+def test_annotate_activity_writes_the_sampler_result_back(mocker):
+    """The adapter's whole job: build one SampleInput per container, then
+    write what comes back onto the matching rows."""
+    from jailbee.lifecycle import ContainerInfo, annotate_activity
+    from jailbee.procstat import ContainerActivity, ProcessActivity
+
+    a = ContainerInfo(
+        name="myrepo-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        init_pid=500,
+        cpu_usage_ns=1_000,
+    )
+    b = ContainerInfo(
+        name="myrepo-b",
+        state="Stopped",
+        network=None,
+        ip=None,
+        memory_limit=None,
+    )
+    busy = ProcessActivity(comm="claude", percent=98.0, count=1)
+    sampler = mocker.Mock()
+    sampler.sample.return_value = {
+        "myrepo-a": ContainerActivity(cpu_percent=182.0, processes=(busy,)),
+        "myrepo-b": ContainerActivity(cpu_percent=None, processes=()),
+    }
+
+    annotate_activity([a, b], sampler)
+
+    sent = sampler.sample.call_args.args[0]
+    assert [(s.name, s.init_pid, s.cpu_usage_ns) for s in sent] == [
+        ("myrepo-a", 500, 1_000),
+        ("myrepo-b", None, None),
+    ]
+    assert (a.cpu_percent, a.activity) == (182.0, (busy,))
+    assert (b.cpu_percent, b.activity) == (None, ())
+
+
+def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
+    """A container that vanished between the gather and the sample must not
+    keep rendering the previous tick's percentage."""
+    from jailbee.lifecycle import ContainerInfo, annotate_activity
+    from jailbee.procstat import ProcessActivity
+
+    c = ContainerInfo(
+        name="myrepo-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        cpu_percent=99.0,
+        activity=(ProcessActivity("claude", 99.0, 1),),
+    )
+    sampler = mocker.Mock()
+    sampler.sample.return_value = {}
+
+    annotate_activity([c], sampler)
+
+    assert c.cpu_percent is None
+    assert c.activity == ()

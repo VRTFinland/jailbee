@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,6 +38,7 @@ from jailbee.profiles import (
     is_under_repo,
     profile_names,
 )
+from jailbee.procstat import ActivitySampler, SampleInput
 from jailbee.retry import with_remote_retry
 from jailbee.stopping import stop_container
 from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
@@ -391,6 +392,25 @@ def list_containers(
     # background rows, legacy containers) sort ahead of dated ones.
     out.sort(key=lambda c: c.created_at or _NEWEST_FIRST, reverse=True)
     return out
+
+
+def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySampler) -> None:
+    """Fill ``cpu_percent`` and ``activity`` from one sampler reading.
+
+    The counterpart to ``dashboard.carry_forward_git_status``: a derived
+    value the gather cannot produce on its own, written in place after it.
+    Rows the sampler did not answer for are cleared rather than left holding
+    the previous tick's numbers.
+
+    The first call on a fresh sampler leaves everything None — it primes it —
+    so a caller that renders immediately calls this twice,
+    ``procstat.PRIME_INTERVAL_SECONDS`` apart.
+    """
+    results = sampler.sample([SampleInput(c.name, c.init_pid, c.cpu_usage_ns) for c in containers])
+    for c in containers:
+        result = results.get(c.name)
+        c.cpu_percent = result.cpu_percent if result else None
+        c.activity = result.processes if result else ()
 
 
 def container_repo_dir(cfg: Config, incus: Incus, name: str) -> str:
