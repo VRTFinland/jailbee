@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import builtins
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,7 @@ from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from jailbee.config import ConfigError
 from jailbee.remote_ssh.keys import (
     AuthorizedKey,
     SSHDependencyError,
@@ -200,6 +204,53 @@ def test_remote_ssh_serve_loads_config_verifies_keys_and_starts_server(
     serve.assert_called_once_with(global_config.remote.ssh)
 
 
+def test_remote_ssh_serve_reports_global_config_error_concisely(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "jailbee.cli.load_global_config",
+        side_effect=ConfigError("global config is malformed"),
+    )
+    ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve"])
+
+    assert result.exit_code == 1
+    assert "global config is malformed" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not ensure.called
+
+
+def test_remote_ssh_serve_translates_missing_asyncssh_dependency(
+    mocker: MockerFixture,
+) -> None:
+    global_config = mocker.Mock()
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    real_import = builtins.__import__
+
+    def import_without_asyncssh(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ):
+        if name == "jailbee.remote_ssh" and "server" in fromlist:
+            raise ModuleNotFoundError("No module named 'asyncssh'", name="asyncssh")
+        return real_import(name, globals, locals, fromlist, level)
+
+    mocker.patch("builtins.__import__", side_effect=import_without_asyncssh)
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve"])
+
+    assert result.exit_code == 1
+    error_output = flat_output(result.stderr)
+    assert "requires the optional 'ssh' extra" in error_output
+    assert "uv tool install 'jailbee[ssh]'" in error_output
+    assert "Traceback" not in error_output
+
+
 def test_remote_console_is_hidden_but_delegates(mocker: MockerFixture) -> None:
     run = mocker.patch("jailbee.remote_ssh.console.run", return_value=7)
 
@@ -218,3 +269,38 @@ def test_setup_help_still_names_only_the_original_steps() -> None:
     assert all(step in output for step in ("completions", "timer", "skills"))
     assert "remote" not in output
     assert "ssh" not in output
+
+
+def test_ordinary_help_imports_work_without_asyncssh() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class BlockAsyncSSH(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "asyncssh" or fullname.startswith("asyncssh."):
+            raise ModuleNotFoundError("No module named 'asyncssh'", name="asyncssh")
+        return None
+
+sys.meta_path.insert(0, BlockAsyncSSH())
+
+from typer.testing import CliRunner
+from jailbee.cli import app
+
+runner = CliRunner()
+for argv in (["--help"], ["setup", "--help"], ["remote", "ssh", "--help"]):
+    result = runner.invoke(app, argv)
+    if result.exit_code != 0:
+        raise SystemExit(f"{argv!r}: {result.exit_code}: {result.output}")
+print("ordinary help works without asyncssh")
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "ordinary help works without asyncssh\n"
