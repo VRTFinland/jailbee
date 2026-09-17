@@ -125,8 +125,8 @@ def test_a_group_row_falls_back_to_an_authoritative_member(tmp_path: Path, mocke
     _login_in(groups.group_dir("claude", "work"), "rt-work")
     _identity_in(CLAUDE.config_home(cfg), ACCOUNT_BLOCK)
 
-    overview = accounts_overview.build(CLAUDE,
-        cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, [_raw("myrepo-a")])
+    overview = accounts_overview.build(
+        CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, [_raw("myrepo-a")])
     )
 
     row = _row(overview, "work")
@@ -167,7 +167,9 @@ def test_a_group_only_a_container_uses_lists_that_container(tmp_path: Path, mock
     _login_in(groups.group_dir("claude", "personal"), "rt-personal", account=ACCOUNT_BLOCK)
     rows = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
 
-    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, rows))
+    overview = accounts_overview.build(
+        CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, rows)
+    )
 
     row = _row(overview, "personal")
     assert row is not None
@@ -181,7 +183,9 @@ def test_a_group_named_only_by_a_container_label_is_a_row(tmp_path: Path, mocker
     showing, not one to hide."""
     cfg = _cfg(tmp_path)
 
-    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")]))
+    overview = accounts_overview.build(
+        CLAUDE, cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")])
+    )
 
     row = _row(overview, "vanished")
     assert row is not None
@@ -208,8 +212,8 @@ def test_a_group_row_lists_every_repo_resolving_to_it(tmp_path: Path, mocker) ->
     _register("other", other)
     _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
 
-    overview = accounts_overview.build(CLAUDE,
-        cfg, _gcfg(group="work"), _incus(mocker, [_raw("myrepo-a"), _raw("other-a")])
+    overview = accounts_overview.build(
+        CLAUDE, cfg, _gcfg(group="work"), _incus(mocker, [_raw("myrepo-a"), _raw("other-a")])
     )
 
     row = _row(overview, "work")

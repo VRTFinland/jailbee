@@ -55,9 +55,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jailbee.accounts.models import (
+    _SLOT_SUFFIX,
     DISAMBIGUATOR,
     LIVE_UNIDENTIFIED,
-    _SLOT_SUFFIX,
     Identity,
     LiveAccount,
     Member,
@@ -498,11 +498,7 @@ def _same_grant(adapter: AccountAdapter, left: dict[str, Any], right: dict[str, 
     if left == right:
         return True
     token = left.get(adapter.refresh_token_key)
-    return (
-        isinstance(token, str)
-        and bool(token)
-        and token == right.get(adapter.refresh_token_key)
-    )
+    return isinstance(token, str) and bool(token) and token == right.get(adapter.refresh_token_key)
 
 
 def holds_same_login(adapter: AccountAdapter, left: Path, right: Path) -> bool:

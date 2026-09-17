@@ -687,9 +687,7 @@ class ClaudeAdapter:
     def record_for(self, slot: Slot, raw: str) -> dict[str, Any] | None:
         return trusted_record_in(slot, raw)
 
-    def on_park(
-        self, cfg: Config, holder: Path, parked: Path, account: LiveAccount | None
-    ) -> None:
+    def on_park(self, cfg: Config, holder: Path, parked: Path, account: LiveAccount | None) -> None:
         """Stamp the account into the parked file and retire the holder's note.
 
         Both belong to the grant that just left: `_stamp_account_record` keeps
@@ -701,9 +699,7 @@ class ClaudeAdapter:
         with suppress(OSError):
             account_note_path(holder).unlink(missing_ok=True)
 
-    def on_activate(
-        self, holder: Path, record: dict[str, Any] | None, credential_raw: str
-    ) -> None:
+    def on_activate(self, holder: Path, record: dict[str, Any] | None, credential_raw: str) -> None:
         write_account_note(holder, record, credential_raw)
 
     def on_switch(

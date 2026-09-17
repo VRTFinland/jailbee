@@ -187,9 +187,7 @@ def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Pat
         _cfg(tmp_path, groups.group_dir("claude", "work")), incus, "myrepo-x", "personal"
     )
 
-    label_calls = [
-        c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL
-    ]
+    label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
     assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, "personal")]
 
 
@@ -236,9 +234,7 @@ def test_set_container_group_to_no_group_removes_the_device(monkeypatch, mocker,
     # The env key points at the repo's own config home, not at the creds mount.
     env_calls = [c for c in incus.config_set.call_args_list if c.args[1] == _ENV_KEY]
     assert env_calls[0].args[2].endswith("/.claude")
-    label_calls = [
-        c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL
-    ]
+    label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
     assert label_calls[0].args[2] == groups.NO_GROUP
 
 
@@ -277,9 +273,7 @@ def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, 
         _raw("clean-a"),
     ]
     gcfg = _gcfg(group="work")
-    assert groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {
-        "clean"
-    }
+    assert groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {"clean"}
 
 
 def test_claude_running_true(mocker, tmp_path):
@@ -336,9 +330,7 @@ def test_groups_by_prefix_from_falls_back_to_the_repos_group_with_no_containers(
     """With nothing writing the shared config home, the repo's own resolved
     group is the best evidence there is."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    assert groups.groups_by_prefix_from(_gcfg(group="work"), [], ["myrepo"]) == {
-        "myrepo": {"work"}
-    }
+    assert groups.groups_by_prefix_from(_gcfg(group="work"), [], ["myrepo"]) == {"myrepo": {"work"}}
 
 
 def test_authoritative_prefixes_from_reuses_prefetched_rows(monkeypatch, tmp_path):

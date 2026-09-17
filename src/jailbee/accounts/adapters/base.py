@@ -87,9 +87,7 @@ class AccountAdapter(Protocol):
         self, cfg: Config, holder: Path, parked: Path, account: LiveAccount | None
     ) -> None: ...
 
-    def on_activate(
-        self, holder: Path, record: dict[str, Any] | None, credential_raw: str
-    ) -> None:
+    def on_activate(self, holder: Path, record: dict[str, Any] | None, credential_raw: str) -> None:
         """Record, beside the credential just written, which account it holds.
 
         The counterpart of `on_park`, called under the credential locks once

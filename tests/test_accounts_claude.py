@@ -563,7 +563,8 @@ def test_park_falls_back_to_a_timestamped_name(tmp_path: Path, monkeypatch) -> N
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
 
-    change = engine.park(CLAUDE,
+    change = engine.park(
+        CLAUDE,
         cfg,
         GlobalConfig(),
         authoritative={cfg.container_prefix},
@@ -626,8 +627,8 @@ def test_switch_parks_the_live_login_and_activates_the_target(tmp_path: Path, mo
     _holder_with(cfg, _cred(mcpOAuth={"live": True}))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.activated == "new@corp.com"
@@ -698,14 +699,18 @@ def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, mo
     )
     _login_as(cfg, ACCOUNT_BLOCK, "first")
 
-    first = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "second@corp.com#aaaabbbb", authoritative={cfg.container_prefix}
+    first = engine.switch(
+        CLAUDE,
+        cfg,
+        GlobalConfig(),
+        "second@corp.com#aaaabbbb",
+        authoritative={cfg.container_prefix},
     )
     assert first.parked_as == "first@corp.com#ccccdddd"
 
     # Nothing ran Claude in between, so nothing repopulated `oauthAccount`.
-    back = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    back = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
     assert back.parked_as == "second@corp.com#aaaabbbb"
@@ -714,7 +719,9 @@ def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, mo
     # rendered as `(unknown)` for every switch until a container ran Claude.
     live = [
         s
-        for s in engine.list_slots(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+        for s in engine.list_slots(
+            CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}
+        )
         if s.live
     ]
     assert [s.name for s in live] == ["first@corp.com#ccccdddd"]
@@ -750,8 +757,8 @@ def test_switch_restores_the_activated_accounts_record(tmp_path: Path, monkeypat
     home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
     assert change.updated == [cfg.container_prefix]
@@ -770,8 +777,8 @@ def test_the_activated_credential_never_carries_jailbees_record(
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other", mcpOAuth={"srv": 1}))
 
-    engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
     live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
@@ -789,8 +796,8 @@ def test_the_activated_credential_drops_the_record_into_an_empty_holder(
     cfg = _cfg(tmp_path)
     engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
+    engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
     live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
@@ -820,8 +827,8 @@ def test_switch_ignores_a_record_that_contradicts_the_slot_name(
     home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "renamed@corp.com", authoritative={cfg.container_prefix}
+    engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "renamed@corp.com", authoritative={cfg.container_prefix}
     )
 
     # Invalidated, not repointed at the record's account: the pre-record
@@ -840,7 +847,8 @@ def test_a_disambiguator_is_not_a_contradiction(tmp_path: Path, monkeypatch) -> 
     home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    engine.switch(CLAUDE,
+    engine.switch(
+        CLAUDE,
         cfg,
         GlobalConfig(),
         f"first@corp.com#ccccdddd~{PARK_STAMP}",
@@ -861,7 +869,9 @@ def test_switch_still_clears_when_the_target_carries_no_record(tmp_path: Path, m
     home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    engine.switch(CLAUDE, cfg, GlobalConfig(), "first@corp.com", authoritative={cfg.container_prefix})
+    engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "first@corp.com", authoritative={cfg.container_prefix}
+    )
 
     assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
 
@@ -871,8 +881,8 @@ def test_switch_into_an_empty_holder_parks_nothing(tmp_path: Path, monkeypatch) 
     cfg = _cfg(tmp_path)
     engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.parked_as is None
@@ -887,7 +897,9 @@ def test_switch_refuses_the_account_already_live(tmp_path: Path, monkeypatch) ->
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
     with pytest.raises(models.PoolError) as excinfo:
-        engine.switch(CLAUDE, cfg, GlobalConfig(), "me@corp.com", authoritative={cfg.container_prefix})
+        engine.switch(
+            CLAUDE, cfg, GlobalConfig(), "me@corp.com", authoritative={cfg.container_prefix}
+        )
 
     assert "already" in str(excinfo.value).lower()
 
@@ -915,8 +927,8 @@ def test_switch_restores_both_files_when_activation_fails(
     mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        engine.switch(CLAUDE,
-            cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+        engine.switch(
+            CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
         )
 
     assert live.read_text() == _cred()
@@ -939,8 +951,8 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
     _write_identity(tmp_path / "other-shared" / "claude", {"emailAddress": "old@corp.com"})
 
-    change = engine.switch(CLAUDE,
-        cfg, gcfg, "new@corp.com", authoritative={cfg.container_prefix, "other"}
+    change = engine.switch(
+        CLAUDE, cfg, gcfg, "new@corp.com", authoritative={cfg.container_prefix, "other"}
     )
 
     assert change.updated == sorted([cfg.container_prefix, "other"])
@@ -959,8 +971,8 @@ def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeyp
     home.mkdir(parents=True, exist_ok=True)
     (home / ".claude.json").write_text('{"oauthAccount": {"emai', encoding="utf-8")
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.not_updated == [cfg.container_prefix]
@@ -976,8 +988,8 @@ def test_switch_reports_a_member_that_looks_busy(tmp_path: Path, monkeypatch) ->
     sessions.mkdir(parents=True)
     (sessions / "77.json").write_text("{}", encoding="utf-8")
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.live_sessions == [cfg.container_prefix]
@@ -1159,7 +1171,9 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
     mocker.patch("pathlib.Path.unlink", _flaky_unlink)
 
     with pytest.raises(OSError):
-        engine.switch(CLAUDE, cfg, GlobalConfig(), "new@x.com", authoritative={cfg.container_prefix})
+        engine.switch(
+            CLAUDE, cfg, GlobalConfig(), "new@x.com", authoritative={cfg.container_prefix}
+        )
 
     # The target is back in the store and the holder is empty again — not
     # holding a second copy of the grant `_atomic_write` already wrote.
@@ -1186,8 +1200,8 @@ def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
     cfg = _cfg(tmp_path)
     engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "other@x.com", authoritative={cfg.container_prefix}
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "other@x.com", authoritative={cfg.container_prefix}
     )
 
     # The switch itself completes normally...
@@ -1301,7 +1315,8 @@ def test_resolve_interactively_passes_a_typed_ref_straight_through() -> None:
         calls.append(slots)
         return "picked"
 
-    result = engine.resolve_interactively(CLAUDE,
+    result = engine.resolve_interactively(
+        CLAUDE,
         _slots(),
         "typed@corp.com",
         purpose="switch to",
@@ -1321,8 +1336,8 @@ def test_resolve_interactively_never_offers_the_live_slot() -> None:
         seen.append([s.name for s in slots])
         return slots[0].name
 
-    result = engine.resolve_interactively(CLAUDE,
-        _slots(), None, purpose="switch to", picker=picker, is_interactive=lambda: True
+    result = engine.resolve_interactively(
+        CLAUDE, _slots(), None, purpose="switch to", picker=picker, is_interactive=lambda: True
     )
     assert seen == [["parked@corp.com", "other@x.com"]]
     assert result == "parked@corp.com"
@@ -1331,8 +1346,13 @@ def test_resolve_interactively_never_offers_the_live_slot() -> None:
 def test_resolve_interactively_returns_none_when_the_picker_is_cancelled() -> None:
     """ESC is not an error: the caller aborts without printing a failure."""
     assert (
-        engine.resolve_interactively(CLAUDE,
-            _slots(), None, purpose="switch to", picker=lambda _: None, is_interactive=lambda: True
+        engine.resolve_interactively(
+            CLAUDE,
+            _slots(),
+            None,
+            purpose="switch to",
+            picker=lambda _: None,
+            is_interactive=lambda: True,
         )
         is None
     )
@@ -1343,7 +1363,8 @@ def test_resolve_interactively_rejects_a_holder_with_nothing_parked() -> None:
     still nothing to switch *to*, and the message must say how to get one."""
     only_live = [Slot(name="live@corp.com", path=Path("/h/c.json"), live=True)]
     with pytest.raises(models.PoolError) as e:
-        engine.resolve_interactively(CLAUDE,
+        engine.resolve_interactively(
+            CLAUDE,
             only_live,
             None,
             purpose="switch to",
@@ -1358,7 +1379,8 @@ def test_resolve_interactively_names_the_candidates_without_a_tty() -> None:
     """A script cannot answer a picker, so the failure has to teach it the
     references it should have passed."""
     with pytest.raises(models.PoolError) as e:
-        engine.resolve_interactively(CLAUDE,
+        engine.resolve_interactively(
+            CLAUDE,
             _slots(),
             None,
             purpose="delete",
@@ -1387,8 +1409,8 @@ def test_park_stores_a_second_independent_grant_for_one_account(
     _holder_with(cfg, _grant("lineage-2"))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = engine.park(CLAUDE,
-        cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+    change = engine.park(
+        CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}"
@@ -1409,7 +1431,9 @@ def test_park_refuses_a_rotated_copy_of_a_stored_login(tmp_path: Path, monkeypat
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
     with pytest.raises(models.PoolError) as excinfo:
-        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+        engine.park(
+            CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+        )
 
     assert "already stored as `me@corp.com`" in str(excinfo.value)
     assert engine.live_credential_path(CLAUDE, cfg).exists()
@@ -1429,7 +1453,9 @@ def test_park_fails_closed_when_the_two_grants_cannot_be_compared(
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
     with pytest.raises(models.PoolError) as excinfo:
-        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+        engine.park(
+            CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+        )
 
     message = str(excinfo.value)
     assert "could not read both files" in message
@@ -1450,8 +1476,8 @@ def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, mo
     _holder_with(cfg, _grant("lineage-3"))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = engine.park(CLAUDE,
-        cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+    change = engine.park(
+        CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}-2"
@@ -1475,7 +1501,9 @@ def test_park_refuses_a_lineage_already_stored_under_a_disambiguated_name(
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
     with pytest.raises(models.PoolError) as excinfo:
-        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+        engine.park(
+            CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
+        )
 
     assert f"already stored as `me@corp.com~{PARK_STAMP}`" in str(excinfo.value)
 
@@ -1492,8 +1520,13 @@ def test_a_switch_for_another_account_survives_a_collided_one(tmp_path: Path, mo
     _holder_with(cfg, _grant("mine-live"))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "colleague@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
+    change = engine.switch(
+        CLAUDE,
+        cfg,
+        GlobalConfig(),
+        "colleague@x.com",
+        authoritative={cfg.container_prefix},
+        now=PARK_TIME,
     )
 
     assert change.activated == "colleague@x.com"
@@ -1544,8 +1577,8 @@ def test_switch_to_a_parked_slot_whose_name_the_live_one_shares(
     _holder_with(cfg, _grant("live"))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = engine.switch(CLAUDE,
-        cfg, GlobalConfig(), "me@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
+    change = engine.switch(
+        CLAUDE, cfg, GlobalConfig(), "me@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.activated == "me@x.com"
@@ -1640,7 +1673,8 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
     mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        engine.switch(CLAUDE,
+        engine.switch(
+            CLAUDE,
             cfg,
             GlobalConfig(),
             "colleague@x.com",
@@ -1664,7 +1698,8 @@ def test_live_account_ignores_a_non_authoritative_member(tmp_path):
     found = [models.Member("mixed", home)]
 
     assert (
-        claude_adapter.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
+        claude_adapter.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set())
+        is None
     )
     assert (
         claude_adapter.live_account(
@@ -1689,8 +1724,8 @@ def test_park_names_the_file_unknown_when_nothing_is_authoritative(tmp_path, moc
     live.write_text(json.dumps({"claudeAiOauth": {"refreshToken": "rt-1"}}))
     mocker.patch("jailbee.accounts.engine.store_dir", return_value=tmp_path / "store")
 
-    change = engine.park(CLAUDE,
-        cfg, GlobalConfig(), authoritative=set(), now=datetime(2026, 9, 2, 10, 0, 0)
+    change = engine.park(
+        CLAUDE, cfg, GlobalConfig(), authoritative=set(), now=datetime(2026, 9, 2, 10, 0, 0)
     )
 
     assert change.parked_as is not None
@@ -1788,7 +1823,9 @@ def test_a_holder_note_is_ignored_once_the_grant_it_names_is_gone(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("rt-old"))
-    claude_adapter.write_account_note(engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-old"))
+    claude_adapter.write_account_note(
+        engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-old")
+    )
     _holder_with(cfg, _grant("rt-after-a-fresh-login"))
 
     change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
@@ -1829,7 +1866,9 @@ def test_switch_drops_a_stale_note_when_the_slot_carries_no_record(
     _park(tmp_path, "plain@corp.com", monkeypatch)
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("outgoing"))
-    claude_adapter.write_account_note(engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("outgoing"))
+    claude_adapter.write_account_note(
+        engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("outgoing")
+    )
 
     engine.switch(CLAUDE, cfg, GlobalConfig(), "plain@corp.com", authoritative=set())
 

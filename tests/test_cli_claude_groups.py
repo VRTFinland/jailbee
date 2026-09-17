@@ -372,9 +372,8 @@ def test_park_on_another_group_leaves_this_repos_recorded_account_alone(holder_v
     Clearing it there is how a later `jailbee claude park` loses its name."""
     import json
 
-    from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     cfg = holder_view_env
     home = CLAUDE.config_home(cfg)
@@ -402,8 +401,7 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
     import json
 
     from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE
 
     cfg = holder_view_env
     home = CLAUDE.config_home(cfg)
@@ -442,8 +440,7 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     import json
 
     from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE
 
     _write_json(
         engine.store_dir(CLAUDE) / "personal@example.com.json",
@@ -473,7 +470,6 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
 def _labels(mocker, **labels: str):
     """Point `container_override`'s `config_get` at a per-container label."""
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
     def fake(container: str, key: str) -> str | None:
         assert key == groups.GROUP_LABEL
@@ -769,8 +765,8 @@ def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mock
 
 
 def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
-    from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
     from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
@@ -808,9 +804,8 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
 
 
 def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, mocker):
-    from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     # Without this the command refuses for want of a TTY, and the test would
@@ -831,9 +826,8 @@ def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, 
 def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
     """Parking is not destructive, but it does move a login out of a holder a
     script may still be pointing at — so it stays an explicit request."""
-    from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import ACCOUNT_RECORD_KEY, CLAUDE, CREDENTIAL_FILE
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch("jailbee.cli._is_tty", return_value=False)

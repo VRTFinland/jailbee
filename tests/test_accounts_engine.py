@@ -62,9 +62,7 @@ class FakeAdapter:
         if block is None or not isinstance(block.get("email"), str):
             return None
         record = {"emailAddress": block["email"]}
-        return models.LiveAccount(
-            identity=models.Identity(email=block["email"]), record=record
-        )
+        return models.LiveAccount(identity=models.Identity(email=block["email"]), record=record)
 
     def record_for(self, slot: models.Slot, raw: str) -> dict[str, Any] | None:
         return None
@@ -115,9 +113,7 @@ def test_registry_raises_for_an_unknown_agent() -> None:
 
 def _write(path: Path, email: str, refresh: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"login": {"email": email, "refresh": refresh}}), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"login": {"email": email, "refresh": refresh}}), encoding="utf-8")
 
 
 @pytest.fixture
@@ -127,9 +123,7 @@ def fake_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_park_moves_the_live_credential_into_the_store(
-    fake_env: Path, mocker
-) -> None:
+def test_park_moves_the_live_credential_into_the_store(fake_env: Path, mocker) -> None:
     from jailbee.accounts import engine
 
     home = fake_env / "home"
@@ -143,9 +137,9 @@ def test_park_moves_the_live_credential_into_the_store(
 
     assert change.parked_as == "me@example.com"
     assert not (home / adapter.credential_file).exists()
-    assert (
-        engine.store_dir(adapter) / "me@example.com.json"
-    ).exists(), "the login must be in the store, not deleted"
+    assert (engine.store_dir(adapter) / "me@example.com.json").exists(), (
+        "the login must be in the store, not deleted"
+    )
 
 
 def test_switch_never_leaves_one_grant_in_two_files(fake_env: Path, mocker) -> None:
