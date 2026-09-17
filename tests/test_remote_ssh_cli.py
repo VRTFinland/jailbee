@@ -27,7 +27,9 @@ def test_remote_ssh_help_exposes_the_management_surface() -> None:
 
     assert remote.exit_code == ssh.exit_code == keys.exit_code == 0
     assert "ssh" in remote.stdout
-    assert all(command in ssh.stdout for command in ("enable", "disable", "restart", "status", "serve"))
+    assert all(
+        command in ssh.stdout for command in ("enable", "disable", "restart", "status", "serve")
+    )
     assert all(command in keys.stdout for command in ("add", "ls", "rm"))
 
 
@@ -143,10 +145,7 @@ def test_remote_ssh_key_list_emits_one_stable_line_per_key(mocker: MockerFixture
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "ls"])
 
     assert result.exit_code == 0, result.stdout
-    assert result.stdout == (
-        "SHA256:first  ssh-ed25519  laptop\n"
-        "SHA256:second  ssh-rsa  \n"
-    )
+    assert result.stdout == ("SHA256:first  ssh-ed25519  laptop\nSHA256:second  ssh-rsa  \n")
     read.assert_called_once_with()
 
 
