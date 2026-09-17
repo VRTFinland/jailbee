@@ -45,7 +45,30 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # Also where the installer puts the binary: ~/.local/bin/codex is a
         # per-container symlink into ~/.codex/packages/standalone/current,
         # so the ~300MB payload is downloaded once per repo, not per branch.
-        "shared": [{"subpath": "codex", "path": "~/.codex"}],
+        # Sharing the whole home is deliberate beyond the binary: one login,
+        # one config.toml and one session history (`/resume`, memories) serve
+        # every container of the repo. The sqlite files carrying that state
+        # have rotating numeric suffixes (`state_5.sqlite`,
+        # `thread_history_1.sqlite`, ...), so they cannot be named as mounts
+        # of their own — the directory mount is what keeps them shared.
+        #
+        # Two subdirectories are carved back out. Codex keeps its app-server
+        # control socket and daemon pid files under $CODEX_HOME and offers no
+        # way to relocate them (checked against 0.154.0: the paths are
+        # assembled from CODEX_HOME in the binary, and the only related env
+        # var is an internal remote-control kill switch). A *pathname* AF_UNIX
+        # socket is not confined by a network namespace, so sharing that
+        # directory let one container's Codex frontend connect to another
+        # container's daemon; the protocol passes the working directory as a
+        # string, every container clones the repo to the same path, and the
+        # daemon therefore edited and committed to the wrong clone.
+        "shared": [
+            {
+                "subpath": "codex",
+                "path": "~/.codex",
+                "private": ["app-server-control", "app-server-daemon"],
+            }
+        ],
         # Runtime hosts, all three needed by an ordinary signed-in session:
         # `api.openai.com` is the API-key path (`/v1/responses`, `/auth`),
         # `auth.openai.com` is the sign-in itself — the device-code flow posts

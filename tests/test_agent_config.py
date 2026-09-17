@@ -229,3 +229,14 @@ def test_private_rejects_paths_that_escape_the_mount(bad):
     with pytest.raises(ValidationError, match="private subpath"):
         AgentSharedMount.model_validate({"subpath": "codex", "path": "~/.codex", "private": [bad]})
 
+
+
+def test_codex_preset_keeps_the_app_server_dirs_per_container():
+    """The socket in app-server-control lets one container's Codex frontend
+    drive another container's daemon, which then resolves the working
+    directory against its own rootfs and edits the wrong clone."""
+    from jailbee.agent_presets import AGENT_PRESETS
+
+    shared = AGENT_PRESETS["codex"]["shared"]
+    assert isinstance(shared, list)
+    assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
