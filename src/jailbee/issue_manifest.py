@@ -134,6 +134,18 @@ def _string_or_null(value: object, field: str, context: str) -> str | None:
     return value
 
 
+def _utf8_size(value: str, field: str, context: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise IssueManifestError(f"{context}: {field} is not valid UTF-8") from exc
+
+
+def _validate_body_size(body: str, field: str, context: str) -> None:
+    if _utf8_size(body, field, context) > MAX_BODY_BYTES:
+        raise IssueManifestError(f"{context}: {field} exceeds the 64 KiB limit")
+
+
 def _labels(value: object, field: str, context: str) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise IssueManifestError(f"{context}: {field} must be a list of non-empty strings")
@@ -191,8 +203,7 @@ def _resolve_body(
         body = files[filename]
         body_files.add(filename)
 
-    if len(body.encode("utf-8")) > MAX_BODY_BYTES:
-        raise IssueManifestError(f"{context}: body exceeds the 64 KiB limit")
+    _validate_body_size(body, "body", context)
     return body
 
 
@@ -318,6 +329,8 @@ def _parse_edit(
     expected_body = (
         _string_or_null(expected["body"], "expected.body", context) if has_expected_body else None
     )
+    if expected_body is not None:
+        _validate_body_size(expected_body, "expected.body", context)
     fields = ({"title"} if has_title else set()) | ({"body"} if has_body else set())
     _record_mutations(changed, repo, target, fields, context)
     return EditAction(
@@ -427,7 +440,7 @@ def _parse_state_action(
 
 def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManifest:
     """Parse one issue manifest using only its text and outbox file snapshot."""
-    if len(text.encode("utf-8")) > MAX_MANIFEST_BYTES:
+    if _utf8_size(text, "manifest", name) > MAX_MANIFEST_BYTES:
         raise IssueManifestError(f"{name}: manifest exceeds the 256 KiB limit")
     try:
         decoded: object = json.loads(text)

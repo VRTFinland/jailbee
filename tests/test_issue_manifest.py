@@ -197,6 +197,56 @@ def test_edit_allows_an_empty_body_to_clear_it() -> None:
 
 
 @pytest.mark.parametrize(
+    ("expected_body", "accepted"),
+    [
+        ("x" * (64 * 1024), True),
+        ("x" * (64 * 1024 + 1), False),
+        ("é" * (32 * 1024), True),
+        ("é" * (32 * 1024) + "x", False),
+    ],
+    ids=["ascii-boundary", "ascii-overflow", "utf8-boundary", "utf8-overflow"],
+)
+def test_expected_edit_body_uses_the_utf8_body_size_limit(
+    expected_body: str, accepted: bool
+) -> None:
+    action = {
+        "type": "edit",
+        "repo": ".",
+        "issue": 8,
+        "body": "Replacement",
+        "expected": {"body": expected_body},
+    }
+
+    if accepted:
+        manifest = _parse_action(action)
+        assert manifest.actions[0] == EditAction(
+            repo=".",
+            target=ExistingIssue(number=8),
+            title=None,
+            body="Replacement",
+            expected_title=None,
+            expected_body=expected_body,
+            has_expected_title=False,
+            has_expected_body=True,
+        )
+    else:
+        with pytest.raises(IssueManifestError, match=r"action 0.*expected\.body.*64 KiB"):
+            _parse_action(action)
+
+
+def test_rejects_a_malformed_unicode_escape_with_action_context() -> None:
+    with pytest.raises(IssueManifestError, match=r"action 0.*body.*valid UTF-8"):
+        _parse_action(_comment(body="\ud800"))
+
+
+def test_rejects_raw_malformed_unicode_with_manifest_context() -> None:
+    text = json.dumps({"version": 1, "actions": [_comment(body="\ud800")]}, ensure_ascii=False)
+
+    with pytest.raises(IssueManifestError, match=r"001-work\.json.*manifest.*valid UTF-8"):
+        parse_manifest("001-work.json", text, {})
+
+
+@pytest.mark.parametrize(
     ("payload", "match"),
     [
         ({"actions": [_create()]}, "version"),
