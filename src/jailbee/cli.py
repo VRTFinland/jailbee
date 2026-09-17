@@ -1517,7 +1517,10 @@ def new_cmd(
             error_plain(str(e))
             raise typer.Exit(1) from e
 
-    _advise_upgrade(cfg)
+    # Only the post-install hint here. The upgrade advice waits until after
+    # the implicit-apply pre-flight below: in a scratch directory the profile
+    # set does not exist yet, so advice printed at this point would tell the
+    # user to run the very `apply` the next lines of output perform.
     _advise_setup()
 
     # --tmux/--shell are shorthands for `--attach <mode>` that additionally
@@ -1891,6 +1894,16 @@ def new_cmd(
             # regardless — both are idempotent, and skipping it here would
             # change behaviour for configured repos, which this block must not.
             run_apply(cfg, incus, gcfg, assume_yes=True, no_restart=True)
+            # Same reasoning as `init`'s call: this writes what `apply`
+            # writes, so it satisfies an `apply` upgrade note just as `apply`
+            # does. Without it the directory is told, for the rest of its
+            # life, to run the `apply` that just ran.
+            _record_upgrade_action(cfg, "apply")
+
+    # Deferred to here (see `_advise_setup` above): everything the advice can
+    # ask for — a rebuilt base image, an applied profile set — has now had its
+    # chance to happen, and it is still ahead of the container itself.
+    _advise_upgrade(cfg)
 
     # Register this repo with the refresh timer and resolve the pool
     # *before* creating the container so that the new container's
