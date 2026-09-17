@@ -131,9 +131,7 @@ def test_read_paths_reject_unreadable_or_wrongly_shaped_responses(tmp_path, mock
 
 def test_read_path_reports_a_missing_gh_binary_without_leaking_os_details(tmp_path, mocker):
     token = "github_pat_environment_secret"
-    mocker.patch(
-        "jailbee.issue_github.subprocess.run", side_effect=FileNotFoundError(token)
-    )
+    mocker.patch("jailbee.issue_github.subprocess.run", side_effect=FileNotFoundError(token))
 
     with pytest.raises(IssueGithubReadError) as caught:
         get_issue(tmp_path, "acme/widgets", 42)
@@ -157,9 +155,7 @@ def test_read_path_normalizes_nonzero_gh_results_without_echoing_stderr(tmp_path
 
 
 def test_create_issue_posts_one_json_request_and_returns_the_issue_receipt(tmp_path, mocker):
-    response = json.dumps(
-        {"number": 73, "html_url": "https://github.com/acme/widgets/issues/73"}
-    )
+    response = json.dumps({"number": 73, "html_url": "https://github.com/acme/widgets/issues/73"})
     run = mocker.patch(
         "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=response)
     )
@@ -172,9 +168,7 @@ def test_create_issue_posts_one_json_request_and_returns_the_issue_receipt(tmp_p
         labels=("bug", "needs-triage"),
     )
 
-    assert receipt == MutationReceipt(
-        issue=73, url="https://github.com/acme/widgets/issues/73"
-    )
+    assert receipt == MutationReceipt(issue=73, url="https://github.com/acme/widgets/issues/73")
     _assert_api_call(
         run,
         tmp_path,
@@ -184,18 +178,14 @@ def test_create_issue_posts_one_json_request_and_returns_the_issue_receipt(tmp_p
 
 
 def test_edit_issue_patches_only_the_requested_fields(tmp_path, mocker):
-    response = json.dumps(
-        {"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"}
-    )
+    response = json.dumps({"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"})
     run = mocker.patch(
         "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=response)
     )
 
     receipt = edit_issue(tmp_path, "acme/widgets", 42, title=None, body="New steps")
 
-    assert receipt == MutationReceipt(
-        issue=42, url="https://github.com/acme/widgets/issues/42"
-    )
+    assert receipt == MutationReceipt(issue=42, url="https://github.com/acme/widgets/issues/42")
     _assert_api_call(
         run,
         tmp_path,
@@ -213,16 +203,12 @@ def test_edit_issue_patches_only_the_requested_fields(tmp_path, mocker):
 
 
 def test_replace_labels_sends_the_complete_post_delta_set_in_one_patch(tmp_path, mocker):
-    response = json.dumps(
-        {"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"}
-    )
+    response = json.dumps({"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"})
     run = mocker.patch(
         "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=response)
     )
 
-    receipt = replace_labels(
-        tmp_path, "acme/widgets", 42, labels=("Bug", "Needs-Triage")
-    )
+    receipt = replace_labels(tmp_path, "acme/widgets", 42, labels=("Bug", "Needs-Triage"))
 
     assert receipt.issue == 42
     _assert_api_call(
@@ -286,9 +272,7 @@ def test_add_comment_posts_body_and_uses_the_target_issue_in_the_receipt(tmp_pat
 def test_set_state_maps_manifest_reasons_to_github_payloads(
     tmp_path, mocker, state, reason, expected_payload
 ):
-    response = json.dumps(
-        {"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"}
-    )
+    response = json.dumps({"number": 42, "html_url": "https://github.com/acme/widgets/issues/42"})
     run = mocker.patch(
         "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=response)
     )
@@ -351,9 +335,7 @@ def test_mutation_missing_gh_is_a_definite_pre_dispatch_failure(tmp_path, mocker
         KeyboardInterrupt(),
     ],
 )
-def test_mutation_transport_or_interruption_exceptions_are_uncertain(
-    tmp_path, mocker, failure
-):
+def test_mutation_transport_or_interruption_exceptions_are_uncertain(tmp_path, mocker, failure):
     mocker.patch("jailbee.issue_github.subprocess.run", side_effect=failure)
 
     with pytest.raises(IssueGithubMutationError) as caught:
@@ -378,9 +360,7 @@ def test_mutation_signal_exit_is_uncertain(tmp_path, mocker):
 
 
 def test_mutation_success_with_unreadable_response_is_uncertain(tmp_path, mocker):
-    mocker.patch(
-        "jailbee.issue_github.subprocess.run", return_value=_completed(stdout="not-json")
-    )
+    mocker.patch("jailbee.issue_github.subprocess.run", return_value=_completed(stdout="not-json"))
 
     with pytest.raises(IssueGithubMutationError) as caught:
         set_state(tmp_path, "acme/widgets", 42, state="open", reason=None)
@@ -388,9 +368,7 @@ def test_mutation_success_with_unreadable_response_is_uncertain(tmp_path, mocker
     assert caught.value.uncertain is True
 
 
-def test_mutation_errors_never_expose_environment_tokens_or_payloads(
-    tmp_path, mocker, monkeypatch
-):
+def test_mutation_errors_never_expose_environment_tokens_or_payloads(tmp_path, mocker, monkeypatch):
     token = "github_pat_environment_secret"
     body = "private manifest payload"
     monkeypatch.setenv("GH_TOKEN", token)

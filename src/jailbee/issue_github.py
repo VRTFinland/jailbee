@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeGuard
 
-
 _HTTP_STATUS_RE = re.compile(r"\bHTTP\s+([45]\d{2})\b", re.IGNORECASE)
 _TIMEOUT_SECONDS = 60
 
