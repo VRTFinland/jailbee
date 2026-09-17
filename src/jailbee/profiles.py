@@ -8,6 +8,10 @@ from pathlib import Path
 
 import yaml
 
+from jailbee.accounts.adapters import base
+from jailbee.accounts.adapters.claude import CLAUDE
+from jailbee.accounts.adapters.claude import CLAUDE_CREDS_DEVICE as CLAUDE_CREDS_DEVICE
+from jailbee.accounts.adapters.claude import CLAUDE_CREDS_DIRNAME as CLAUDE_CREDS_DIRNAME
 from jailbee.config import CONTAINER_USERNAME, NET_DESCRIPTIONS, Config
 from jailbee.gui import host_wayland_socket
 from jailbee.network import acl_name
@@ -84,22 +88,10 @@ def claude_config_dir_env(cfg: Config) -> tuple[str, str]:
     )
 
 
-CLAUDE_CREDS_DIRNAME = ".claude-creds"
-"""Container-side directory name for a shared Claude credential.
-
-Deliberately not `.claude`: only the credential is shared, and the config home
-stays per-repo. Claude Code resolves `.credentials.json` *and*
-`.oauth_refresh.lock` from `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so the rotation
-lock travels with the credential into this directory — which is what keeps
-containers of different repos mutually excluded.
-"""
-
-CLAUDE_CREDS_DEVICE = "claude-creds"
-"""Name of the `<prefix>-binds` disk device that mounts the shared credential
-directory. Its presence on that profile is what `init_command`'s `jailbee
-new` repair checks before writing the env key — see
-`ensure_claude_credentials_env`.
-"""
+# CLAUDE_CREDS_DIRNAME and CLAUDE_CREDS_DEVICE now live on the adapter
+# (`jailbee.accounts.adapters.claude`), which is the single source of truth
+# for the shared-credential device and env key; re-imported above so every
+# existing caller of `jailbee.profiles.CLAUDE_CREDS_*` keeps working.
 
 
 def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
@@ -111,17 +103,16 @@ def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
     Claude Code falls back to `~/.claude` for it, silently sending credential
     lookup back into the per-repo config home.
 
-    Single source of truth for the two writers of the key, mirroring
-    `claude_config_dir_env`: this module's full render (`jailbee apply`) and
-    `init_command`'s one-key repair on the `jailbee new` path.
+    A thin wrapper around `ClaudeAdapter.wiring`, which is the actual single
+    source of truth for this value now: `base_profile_yaml` reads it through
+    the pooled-adapter loop below, and `init_command`'s one-key `jailbee new`
+    repair reads it through this function, so the two cannot drift.
     """
-    if not cfg.claude.enabled or cfg.claude_credentials_dir is None:
+    env = CLAUDE.wiring(cfg, CLAUDE.holder_override(cfg)).env
+    if not env:
         return None
-    default = f"/home/{CONTAINER_USERNAME}/{CLAUDE_CREDS_DIRNAME}"
-    value = cfg.container.env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", default)
-    if not value:
-        return None
-    return ("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", value)
+    ((key, value),) = env.items()
+    return (f"environment.{key}", value)
 
 
 DEFAULT_CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -262,12 +253,17 @@ def base_profile_yaml(cfg: Config) -> str:
         # containers via `jailbee apply` with no image rebuild required.
         key, value = claude_config_dir_env(cfg)
         profile_config[key] = value
-        # The credential directory has no `profile.d` half at all: its value is
-        # per-repo, so the golden image cannot carry it. The profile route
-        # covers every way into the container that jailbee itself opens.
-        creds_env = claude_securestorage_dir_env(cfg)
-        if creds_env is not None:
-            profile_config[creds_env[0]] = creds_env[1]
+
+    # A shared credential has no `profile.d` half at all: its value is
+    # per-repo, so the golden image cannot carry it. The profile route covers
+    # every way into the container that jailbee itself opens. Each pooled
+    # agent's adapter answers what its container needs to read this holder's
+    # credential — Claude is the only one wired today, but the loop is what
+    # lets a future agent join without a new branch here.
+    for adapter in base.pooled_adapters(cfg):
+        wiring = adapter.wiring(cfg, adapter.holder_override(cfg))
+        for key, value in wiring.env.items():
+            profile_config[f"environment.{key}"] = value
 
     path_env = container_path_env(cfg)
     if path_env is not None:
@@ -282,10 +278,10 @@ def base_profile_yaml(cfg: Config) -> str:
     # CLAUDE_SECURESTORAGE_CONFIG_DIR is special-cased: unlike DISPLAY or
     # SSH_AUTH_SOCK, an empty value here is NOT equivalent to unset — Claude
     # Code falls back to `~/.claude` for it, silently sending credential
-    # lookup back into the per-repo config home. The loop above can (re-)set
-    # it to "" via a `container.env` override even when
-    # `claude_securestorage_dir_env` already decided to omit the key, so drop
-    # it here if it ended up empty. Scoped to this one key on purpose: other
+    # lookup back into the per-repo config home. The repo-defined loop above
+    # can (re-)set it to "" via a `container.env` override even when the
+    # pooled-adapter loop already decided to omit the key, so drop it here if
+    # it ended up empty. Scoped to this one key on purpose: other
     # env vars keep their existing "repo override always wins, even empty"
     # behaviour.
     if not profile_config.get("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"):
@@ -438,17 +434,16 @@ def binds_profile_yaml(cfg: Config) -> str:
             "path": container_path,
         }
 
-    # Shared Claude credential — one directory, several repos. Rendered by its
-    # own branch rather than through `effective_shared_caches()` because its
+    # Shared credential devices — one directory, several repos. Rendered by
+    # this loop rather than through `effective_shared_caches()` because each
     # source is outside `shared_dir`; named without the `shared-` prefix for
     # the same reason, since that prefix means "derived from a SharedCache"
-    # everywhere else in this profile.
-    if cfg.claude.enabled and cfg.claude_credentials_dir is not None:
-        devices[CLAUDE_CREDS_DEVICE] = {
-            "type": "disk",
-            "source": str(cfg.claude_credentials_dir),
-            "path": f"{home}/{CLAUDE_CREDS_DIRNAME}",
-        }
+    # everywhere else in this profile. Claude is the only pooled agent wired
+    # today (`claude-creds`, see `ClaudeAdapter.wiring`), but the loop is what
+    # lets a future agent join without a new branch here.
+    for adapter in base.pooled_adapters(cfg):
+        wiring = adapter.wiring(cfg, adapter.holder_override(cfg))
+        devices.update(wiring.devices)
 
     # Auto-detect tmux config/plugins on host and RO-bind into the dev
     # user's home. Only paths that exist on the host are

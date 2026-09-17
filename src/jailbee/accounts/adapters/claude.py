@@ -19,6 +19,7 @@ from jailbee.accounts import engine
 from jailbee.accounts.adapters import base
 from jailbee.accounts.models import Identity, LiveAccount, slug_for
 from jailbee.claude_locks import ClaudeLockTimeoutError, config_lock
+from jailbee.config import CONTAINER_USERNAME
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -98,6 +99,23 @@ activation the live copy is authoritative. The list is cswap's
 ACCOUNT_CREDENTIAL_KEYS = frozenset({"claudeAiOauth", "trustedDeviceToken"})
 """Account-scoped siblings we know about, named so the probe below does not
 flag them. `trustedDeviceToken` is enrolled per (device, account) at login."""
+
+CLAUDE_CREDS_DIRNAME = ".claude-creds"
+"""Container-side directory name for a shared Claude credential.
+
+Deliberately not `.claude`: only the credential is shared, and the config home
+stays per-repo. Claude Code resolves `.credentials.json` *and*
+`.oauth_refresh.lock` from `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so the rotation
+lock travels with the credential into this directory — which is what keeps
+containers of different repos mutually excluded.
+"""
+
+CLAUDE_CREDS_DEVICE = "claude-creds"
+"""Name of the `<prefix>-binds` disk device that mounts the shared credential
+directory. Its presence on that profile is what `init_command`'s `jailbee
+new` repair checks before writing the env key — see
+`ensure_claude_credentials_env`.
+"""
 
 ACCOUNT_RECORD_KEY = "jailbeeAccount"
 """Where a parked file keeps the `oauthAccount` block of the login it holds.
@@ -705,8 +723,30 @@ class ClaudeAdapter:
         return []
 
     def wiring(self, cfg: Config, group_dir: Path | None) -> base.Wiring:
-        """Empty until Task 6 moves the profile wiring in."""
-        return base.Wiring()
+        """The device and env a container needs to read a shared credential.
+
+        An *empty* `CLAUDE_SECURESTORAGE_CONFIG_DIR` is not the same as an
+        unset one — Claude Code falls back to `~/.claude` for it, silently
+        sending credential writes into the config home mount — so an empty
+        value is omitted entirely rather than written.
+        """
+        if not cfg.claude.enabled or group_dir is None:
+            return base.Wiring()
+        home = f"/home/{CONTAINER_USERNAME}"
+        value = cfg.container.env.get(
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR", f"{home}/{CLAUDE_CREDS_DIRNAME}"
+        )
+        env = {"CLAUDE_SECURESTORAGE_CONFIG_DIR": value} if value else {}
+        return base.Wiring(
+            devices={
+                CLAUDE_CREDS_DEVICE: {
+                    "type": "disk",
+                    "source": str(group_dir),
+                    "path": f"{home}/{CLAUDE_CREDS_DIRNAME}",
+                }
+            },
+            env=env,
+        )
 
     def prepare_config_home(self, cfg: Config, home: Path) -> None:
         """No-op here; `init_command` still owns the onboarding seed."""

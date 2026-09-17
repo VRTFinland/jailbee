@@ -319,7 +319,7 @@ def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
     back to `~/.claude` for it, silently pointing credential lookup back at the
     config home. A `container.env` entry set to "" must therefore drop the key
     rather than write it."""
-    from jailbee.profiles import claude_securestorage_dir_env
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     cfg = make_cfg(
         tmp_path,
@@ -327,7 +327,7 @@ def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
         claude_credentials_dir=tmp_path / "creds" / "work",
         container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
     )
-    assert claude_securestorage_dir_env(cfg) is None
+    assert CLAUDE.wiring(cfg, tmp_path / "creds" / "work").env == {}
     # The helper returning None is not enough on its own: base_profile_yaml
     # also runs an unconditional `container.env` passthrough loop that could
     # re-write the same key to "". Assert on the actual rendered profile.
