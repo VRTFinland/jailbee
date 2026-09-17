@@ -579,7 +579,11 @@ def test_up_raises_if_service_does_not_become_active(tmp_path, mocker):
     gcfg = GlobalConfig.model_validate(
         {"docker_registry_mirror": {"data_dir": str(tmp_path / "registry")}}
     )
-    mocker.patch("jailbee.registry._SERVICE_WAIT_SECONDS", 1)
+    # 0, like every other wait test in this file: `time.sleep` is mocked, so a
+    # one-second budget is a one-second *busy* loop re-polling a MagicMock
+    # thousands of times. The first poll already loses — the deadline check
+    # runs after it — so the timeout branch is reached either way.
+    mocker.patch("jailbee.registry._SERVICE_WAIT_SECONDS", 0)
     mocker.patch("jailbee.registry.time.sleep")  # don't actually sleep
 
     with pytest.raises(RuntimeError, match=r"service did not become active"):
