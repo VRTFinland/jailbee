@@ -92,7 +92,7 @@ class PrEditError(PrError):
     """`gh pr edit` / `gh pr ready` failed: gh missing, not authed, etc."""
 
 
-def resolve_pr(repo_root: Path, number: int, *, remote: str) -> PrInfo:
+def resolve_pr(repo_root: Path, number: int, *, remote: str, repo: str | None = None) -> PrInfo:
     """Resolve PR metadata via `gh pr view`.
 
     Pre-flights `git remote get-url <remote>` to fail fast with a clear
@@ -100,15 +100,19 @@ def resolve_pr(repo_root: Path, number: int, *, remote: str) -> PrInfo:
     `gh pr view <number> --json ...` with cwd=repo_root so gh's own
     auto-detection picks up the right repo.
 
-    Note that `gh` resolves the repo by its own rules (it prefers a remote
+    Pass `repo` to pin GitHub operations to an explicit owner/name slug.
+    Otherwise `gh` resolves the repo by its own rules (it prefers a remote
     named `upstream`, and honours `gh repo set-default`), so in a multi-remote
     repo it may not land on `remote`. This pre-flight only guarantees that the
     remote jailbee itself fetches from is a GitHub one.
     """
     _validate_github_origin(repo_root, remote)
+    cmd = ["gh", "pr", "view", str(number), "--json", GH_PR_VIEW_JSON_FIELDS]
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(
-            ["gh", "pr", "view", str(number), "--json", GH_PR_VIEW_JSON_FIELDS],
+            cmd,
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -136,7 +140,7 @@ def _pr_info_from_json(stdout: str) -> PrInfo:
     )
 
 
-def find_pr_for_branch(repo_root: Path, branch: str) -> PrInfo | None:
+def find_pr_for_branch(repo_root: Path, branch: str, *, repo: str | None = None) -> PrInfo | None:
     """Return the PR whose head is `branch`, or None when there is none.
 
     `jailbee pr` uses this on the create path: a container made from an existing
@@ -148,9 +152,12 @@ def find_pr_for_branch(repo_root: Path, branch: str) -> PrInfo | None:
     GitHub, or output gh changes the shape of all yield None, which falls back
     to the ordinary create path. Never raises.
     """
+    cmd = ["gh", "pr", "view", branch, "--json", GH_PR_VIEW_JSON_FIELDS]
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(
-            ["gh", "pr", "view", branch, "--json", GH_PR_VIEW_JSON_FIELDS],
+            cmd,
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -326,6 +333,7 @@ def create_pr(
     remote: str,
     draft: bool = True,
     label: str = "jailbee pr",
+    repo: str | None = None,
 ) -> PrCreated:
     """Create a GitHub PR for `head` via `gh pr create` (non-interactive).
 
@@ -356,6 +364,8 @@ def create_pr(
     ]
     if draft:
         cmd.append("--draft")
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=False)
     except FileNotFoundError as e:
@@ -365,7 +375,7 @@ def create_pr(
     if proc.returncode != 0:
         stderr = proc.stderr
         if "already exists" in stderr.lower():
-            return view_existing_pr(repo_root, head)
+            return view_existing_pr(repo_root, head, **({"repo": repo} if repo is not None else {}))
         if (
             "not logged" in stderr.lower()
             or "authentication" in stderr.lower()
@@ -392,6 +402,7 @@ def edit_pr(
     *,
     title: str | None = None,
     body: str | None = None,
+    repo: str | None = None,
 ) -> None:
     """Update PR #`number`'s title/body via `gh pr edit`.
 
@@ -401,6 +412,8 @@ def edit_pr(
     if title is None and body is None:
         return
     cmd = ["gh", "pr", "edit", str(number)]
+    if repo is not None:
+        cmd += ["--repo", repo]
     if title is not None:
         cmd += ["--title", title]
     if body is not None:
@@ -408,9 +421,11 @@ def edit_pr(
     _run_gh_mutation(repo_root, cmd, "gh pr edit")
 
 
-def set_ready(repo_root: Path, number: int, ready: bool) -> None:
+def set_ready(repo_root: Path, number: int, ready: bool, *, repo: str | None = None) -> None:
     """Mark PR #`number` ready (`gh pr ready`) or back to draft (`--undo`)."""
     cmd = ["gh", "pr", "ready", str(number)]
+    if repo is not None:
+        cmd += ["--repo", repo]
     if not ready:
         cmd.append("--undo")
     _run_gh_mutation(repo_root, cmd, "gh pr ready")
@@ -459,6 +474,7 @@ def submit_review(
     commit_id: str,
     body: str,
     comments: list[dict[str, Any]],
+    repo: str | None = None,
 ) -> str:
     """Post one review (event COMMENT) carrying every line comment at once.
 
@@ -473,14 +489,16 @@ def submit_review(
         "api",
         "--method",
         "POST",
-        f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/reviews",
         "--input",
         "-",
     ]
     return str(_run_gh_api(repo_root, cmd, payload, "gh api pulls/reviews").get("html_url", ""))
 
 
-def reply_to_review_comment(repo_root: Path, number: int, comment_id: int, body: str) -> str:
+def reply_to_review_comment(
+    repo_root: Path, number: int, comment_id: int, body: str, *, repo: str | None = None
+) -> str:
     """Reply to review comment `comment_id` on PR #`number` (threaded reply)."""
     payload = json.dumps({"body": body})
     cmd = [
@@ -488,7 +506,7 @@ def reply_to_review_comment(repo_root: Path, number: int, comment_id: int, body:
         "api",
         "--method",
         "POST",
-        f"repos/{{owner}}/{{repo}}/pulls/{number}/comments/{comment_id}/replies",
+        f"repos/{repo or '{owner}/{repo}'}/pulls/{number}/comments/{comment_id}/replies",
         "--input",
         "-",
     ]
@@ -497,7 +515,7 @@ def reply_to_review_comment(repo_root: Path, number: int, comment_id: int, body:
     )
 
 
-def add_issue_comment(repo_root: Path, number: int, body: str) -> str:
+def add_issue_comment(repo_root: Path, number: int, body: str, *, repo: str | None = None) -> str:
     """Post a top-level (issue-style) comment on PR #`number`."""
     payload = json.dumps({"body": body})
     cmd = [
@@ -505,16 +523,18 @@ def add_issue_comment(repo_root: Path, number: int, body: str) -> str:
         "api",
         "--method",
         "POST",
-        f"repos/{{owner}}/{{repo}}/issues/{number}/comments",
+        f"repos/{repo or '{owner}/{repo}'}/issues/{number}/comments",
         "--input",
         "-",
     ]
     return str(_run_gh_api(repo_root, cmd, payload, "gh api issues/comments").get("html_url", ""))
 
 
-def pr_body(repo_root: Path, number: int) -> str:
+def pr_body(repo_root: Path, number: int, *, repo: str | None = None) -> str:
     """Return PR #`number`'s current description (`gh pr view --json body`)."""
     cmd = ["gh", "pr", "view", str(number), "--json", "body"]
+    if repo is not None:
+        cmd += ["--repo", repo]
     data = _run_gh_api(repo_root, cmd, None, "gh pr view")
     return str(data.get("body") or "")
 
@@ -597,11 +617,14 @@ def _raise_from_gh_failure(number: int, stderr: str) -> Never:
     raise PrResolveError(f"'gh pr view' failed: {stderr.strip()}")
 
 
-def view_existing_pr(repo_root: Path, head: str) -> PrCreated:
+def view_existing_pr(repo_root: Path, head: str, *, repo: str | None = None) -> PrCreated:
     """Resolve the PR that already exists for `head` (already-exists / update path)."""
+    cmd = ["gh", "pr", "view", head, "--json", "number,url"]
+    if repo is not None:
+        cmd += ["--repo", repo]
     try:
         proc = subprocess.run(
-            ["gh", "pr", "view", head, "--json", "number,url"],
+            cmd,
             cwd=repo_root,
             capture_output=True,
             text=True,

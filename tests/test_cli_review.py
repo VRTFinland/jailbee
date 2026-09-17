@@ -14,10 +14,13 @@ that loop into `pr_outbox` leaves them passing unchanged.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from jailbee.pr_flow import PrScope
 
 runner = CliRunner()
 
@@ -48,7 +51,12 @@ def _a_target(name: str = "001-x.json", *, text: str | None = None, stale: bool 
         state="OPEN",
         base_ref="main",
     )
-    return Target(manifest=manifest, pr=info, stale=stale)
+    return Target(
+        manifest=manifest,
+        pr=info,
+        stale=stale,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
 
 
 def _null_pr_target(name: str = "001-x.json"):
@@ -56,7 +64,12 @@ def _null_pr_target(name: str = "001-x.json"):
     from jailbee.pr_outbox import Target, parse_manifest
 
     text = _manifest_text(pr=None, actions=[{"type": "description", "body": "new body"}])
-    return Target(manifest=parse_manifest(name, text, {}), pr=None, stale=False)
+    return Target(
+        manifest=parse_manifest(name, text, {}),
+        pr=None,
+        stale=False,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
 
 
 def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = 1, state: str = "Running"):
@@ -102,6 +115,47 @@ def _setup(mocker, tmp_path, *, files=None):
 
 
 # ---- apply ----------------------------------------------------------------
+
+
+def test_apply_submodule_repo_manifest_without_an_extra_option(mocker, tmp_path):
+    from jailbee.pr import PrInfo
+
+    text = _manifest_text(repo="acme/library", pr=42)
+    cfg, incus = _setup(mocker, tmp_path, files={"sub.json": text})
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["deps/library"])
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+    mocker.patch(
+        "jailbee.git.get_remote_url",
+        side_effect=lambda root, remote: {
+            (tmp_path, "origin"): "https://github.com/acme/widgets.git",
+            (tmp_path / "deps/library", "upstream"): "https://github.com/acme/library.git",
+        }[root, remote],
+    )
+    incus.config_get.side_effect = lambda container, key: {
+        "user.jailbee.sub_pr": json.dumps({"deps/library": {"pr": 42}}),
+    }.get(key)
+    resolve = mocker.patch(
+        "jailbee.pr.resolve_pr",
+        return_value=PrInfo(
+            number=42,
+            head_ref="library-head",
+            head_sha="abc1234",
+            state="OPEN",
+            base_ref="main",
+        ),
+    )
+    comment = mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/sub-comment")
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 0, result.output
+    assert "https://x/sub-comment" in result.output
+    resolve.assert_called_once_with(
+        cfg.repo_root / "deps/library", 42, remote="upstream", repo="acme/library"
+    )
+    comment.assert_called_once_with(
+        cfg.repo_root / "deps/library", 42, "looks good", repo="acme/library"
+    )
 
 
 def test_apply_reports_nothing_pending(mocker, tmp_path):
@@ -245,16 +299,26 @@ def test_apply_publishes_without_a_prompt_off_a_tty_with_yes(mocker, tmp_path):
     apply_mock.assert_called_once()
 
 
-def test_apply_routes_a_pr_null_manifest_to_jb_pr(mocker, tmp_path):
+@pytest.mark.parametrize(
+    ("subpath", "command"), [(None, "jailbee pr"), ("libs/foo", "jailbee submodule pr")]
+)
+def test_apply_routes_a_pr_null_manifest_to_its_publishing_command(
+    mocker, tmp_path, subpath, command
+):
+    from dataclasses import replace
+
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_null_pr_target())
+    target = _null_pr_target()
+    if subpath:
+        target = replace(target, scope=PrScope(tmp_path / subpath, "origin", "", subpath))
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
     result = runner.invoke(app, ["review", "apply", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     assert "does not exist yet" in result.output
-    assert "jailbee pr feat-foo" in result.output
+    assert f"{command} feat-foo" in result.output
     apply_mock.assert_not_called()
 
 
@@ -358,7 +422,12 @@ def test_apply_deletes_a_body_file_shared_by_two_completed_manifests(mocker, tmp
     )
 
     def _target(name):
-        return Target(manifest=parse_manifest(name, text, bodies), pr=_a_target().pr, stale=False)
+        return Target(
+            manifest=parse_manifest(name, text, bodies),
+            pr=_a_target().pr,
+            stale=False,
+            scope=PrScope(tmp_path, "origin", "", None),
+        )
 
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",

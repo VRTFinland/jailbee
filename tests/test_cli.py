@@ -3151,7 +3151,7 @@ def test_cli_config_show_includes_resolved_agents(tmp_path, monkeypatch, mocker)
     result = runner.invoke(app, ["config", "show"])
 
     assert result.exit_code == 0, result.stdout + (result.stderr or "")
-    assert "npm i -g @openai/codex" in result.stdout
+    assert "https://chatgpt.com/codex/install.sh" in result.stdout
     assert "api.openai.com:443" in result.stdout
 
 

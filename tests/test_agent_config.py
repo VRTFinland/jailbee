@@ -20,7 +20,9 @@ def test_preset_supplies_command_and_install():
     out = resolve_agents_raw({"agents": {"codex": {"enabled": True}}})
     codex = out["agents"]["codex"]
     assert codex["command"] == "codex"
-    assert codex["install"] == "npm i -g @openai/codex"
+    assert codex["install"] == (
+        "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+    )
 
 
 def test_user_scalar_overrides_preset():

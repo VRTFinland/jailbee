@@ -18,6 +18,7 @@ PR and a submodule PR:
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Never, Protocol
@@ -52,6 +53,26 @@ class PrScope:
     prefix: str
     subpath: str | None
 
+    @classmethod
+    def for_repo(cls, cfg: Config) -> PrScope:
+        return cls(
+            repo_root=cfg.repo_root,
+            remote=cfg.upstream_remote,
+            prefix="",
+            subpath=None,
+        )
+
+    @classmethod
+    def for_submodule(cls, cfg: Config, subpath: str) -> PrScope:
+        from jailbee import submodule_pr
+
+        return cls(
+            repo_root=cfg.repo_root / subpath,
+            remote=submodule_pr.resolve_remote(cfg.repo_root, subpath),
+            prefix=f"submodule '{subpath}': ",
+            subpath=subpath,
+        )
+
     def noun(self, pr_label: str | None) -> str:
         """How to name the PR under discussion in a message."""
         base = f"PR #{pr_label}" if pr_label else "the container's PR"
@@ -61,6 +82,24 @@ class PrScope:
     def command(self) -> str:
         """The CLI invocation to point users at for follow-up commands."""
         return "jailbee submodule pr" if self.subpath else "jailbee pr"
+
+
+def candidate_scopes(cfg: Config, *, extra_paths: Iterable[str] = ()) -> list[PrScope]:
+    """The superproject, then unique initialized submodules in path order.
+
+    `extra_paths` can include container-recorded submodules transported to the
+    host before their declarations appear in the host's `.gitmodules`.
+    """
+    from jailbee import submodules
+
+    paths = set(submodules.host_submodule_paths(cfg.repo_root))
+    paths.update(
+        path for path in extra_paths if submodules.host_subrepo_exists(cfg.repo_root, path)
+    )
+    return [
+        PrScope.for_repo(cfg),
+        *(PrScope.for_submodule(cfg, path) for path in sorted(paths)),
+    ]
 
 
 def reject_as_on_pr_update(
@@ -180,6 +219,35 @@ def _pick_outbox_manifest(names: list[str]) -> str | None:
     return str(result)
 
 
+def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: int | None) -> bool:
+    """Ask before an outbox description replaces the body of a foreign PR.
+
+    "Foreign" is `is_foreign_pr_head`: a PR jailbee did not open, which is as
+    true of the user's own PR adopted with `jailbee pr --pr N` as it is of a
+    stranger's. The manifest has already been narrowed to one that names this
+    PR (`pending_pr_text(numbered_only=True)`), so the question is not "is this
+    text about this PR" — it is "may a body the container's agent wrote replace
+    one a human may have typed on GitHub".
+
+    Off a TTY the answer is no, with the reason: `jailbee pr` runs unattended,
+    and an unattended run may not decide this on the user's behalf. Neither
+    outcome says what to do with the manifest instead — the offer `jailbee pr`
+    makes once the PR is up names every description this run left pending, and
+    the command that publishes them, in one place.
+    """
+    label = scope.noun(str(for_pr) if for_pr is not None else None)
+    if not _can_prompt():
+        warn(
+            f"{source.manifest} proposes a new description for {label}, which jailbee "
+            f"did not open; not replacing it unattended."
+        )
+        return False
+    return typer.confirm(
+        f"Replace {label}'s description with the one {source.manifest} proposes?",
+        default=False,
+    )
+
+
 @dataclass(frozen=True)
 class HeadPlan:
     """The publish name and the AI text a create/update run decided on.
@@ -228,8 +296,8 @@ def resolve_pr_text_and_head(
     description the container already wrote (`pr_outbox.pending_pr_text`) is
     used as `ai_text`, `generate_pr_text` is then never called, and the
     manifest's proposed branch feeds the same `confirm_pr_branch_name` decision
-    a Claude-proposed one feeds. It defaults to False so `jailbee submodule pr`
-    — the other caller — never looks at an outbox keyed to *this* repo's origin.
+    a Claude-proposed one feeds. Both PR commands enable it by default and
+    select descriptions for the active repository scope; `--no-outbox` opts out.
     Neither `--no-ai` nor the `claude.*` toggles gate it: a manifest is not an
     AI run, it is text that already exists.
     """
@@ -267,6 +335,8 @@ def resolve_pr_text_and_head(
             cfg,
             incus,
             full,
+            scope=scope,
+            source_branch=source_branch,
             uid=cfg.container_user.uid,
             pick=_pick_outbox_manifest if _can_prompt() else None,
         )
@@ -379,7 +449,7 @@ def resolve_pr_description_update(
     body: str | None,
     description: bool,
     ai_on: bool,
-    offer_regen: bool = True,
+    foreign_head: bool = False,
     use_outbox: bool = False,
     for_pr: int | None = None,
     outbox_hint: OutboxPrText | None = None,
@@ -392,21 +462,31 @@ def resolve_pr_description_update(
     --description, or an interactive TTY confirmation, trigger a Claude
     regeneration of both fields. Returns None when nothing should change.
 
-    `offer_regen=False` suppresses the interactive offer *and* the outbox —
-    used on a PR jailbee did not create, where silently rewriting the author's
-    description is never what the user asked for. The outbox does not weaken
-    that reason, it strengthens it: the replacement text was written by an
-    agent, not typed by the user, and `_eligible_for` lets a `pr: null`
-    manifest apply to a stranger's PR number. Explicit
-    --description/--title/--body still apply — those the user typed.
+    `foreign_head` is "this is a PR jailbee did not open" — as true of the
+    user's own PR adopted with `jailbee pr --pr N` as of a stranger's. It
+    governs both text sources, and it says something different to each:
+
+      - The interactive "regenerate with Claude?" offer is suppressed outright.
+        A run that was asked for nothing of the sort must not propose rewriting
+        the author's description.
+      - The outbox is *narrowed*, not switched off: only a description that
+        names this PR is considered (`numbered_only`), and applying one asks
+        once. The two once shared a single flag, and that is precisely what
+        made a container that had adopted its own PR drop the description its
+        agent had written, in silence. What the guard is actually for is text
+        that was never about this PR — `_eligible_for` lets a `pr: null`
+        manifest, "the PR this container would open", reach a number jailbee
+        did not open — and a manifest naming the number is not that.
+
+    Explicit --description/--title/--body still apply either way: those the
+    user typed.
 
     `use_outbox` swaps the *source* of the text rather than adding a path, and
     an outbox hit returns before the regeneration offer is reached: the answer
     already exists, so asking "update the description with Claude?" would be
     asking for something already in hand. Neither `--no-ai` nor the `claude.*`
-    toggles gate it — a manifest is not an AI run. It defaults to False so
-    `jailbee submodule pr`, the other caller, never looks at an outbox keyed to
-    *this* repo's origin.
+    toggles gate it — a manifest is not an AI run. Both PR commands enable it
+    by default and select descriptions for the active repository scope.
 
     `for_pr` is the number of the PR being updated, and it must be passed
     whenever `use_outbox` is: the lookup accepts `pr: null` manifests and ones
@@ -429,7 +509,7 @@ def resolve_pr_description_update(
     # Looked up only past the explicit-flag check above: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    if use_outbox and offer_regen:
+    if use_outbox:
         from jailbee import pr_outbox
 
         outbox_source = outbox_hint
@@ -438,11 +518,20 @@ def resolve_pr_description_update(
                 cfg,
                 incus,
                 full,
+                scope=scope,
+                source_branch=branch,
                 uid=cfg.container_user.uid,
                 for_pr=for_pr,
+                numbered_only=foreign_head,
                 pick=_pick_outbox_manifest if _can_prompt() else None,
             )
-        if outbox_source is not None:
+        # A declined confirmation falls *through* rather than returning None:
+        # it refuses this text, not the --description the user may also have
+        # typed. Nothing is consumed on that path, so the manifest stays
+        # pending for `jailbee review apply`.
+        if outbox_source is not None and (
+            not foreign_head or _confirm_foreign_description(scope, outbox_source, for_pr)
+        ):
             return DescriptionUpdate(
                 title=outbox_source.text.title,
                 body=outbox_source.text.body,
@@ -450,7 +539,7 @@ def resolve_pr_description_update(
             )
 
     want_regen = description
-    if not want_regen and offer_regen and _can_prompt() and ai_on:
+    if not want_regen and not foreign_head and _can_prompt() and ai_on:
         want_regen = typer.confirm(
             f"Update {scope.prefix}the PR description with Claude?",
             default=False,
@@ -559,7 +648,7 @@ class ContainerLabelState:
         Raises `MalformedPrLabelError` when `user.jailbee.pr` is set but does
         not parse as an integer, rather than silently treating it as "no
         PR": every guard keyed on `pr_label`'s truthiness (`--as` rejection,
-        the foreign-force confirmation, `offer_regen`) would otherwise turn
+        the foreign-force confirmation, `foreign_head`) would otherwise turn
         OFF for a container that plainly has a PR, just with corrupted
         state — a fail-open reading of a fail-closed guard. A label jailbee
         wrote itself always parses; anything else needs a human, not a
@@ -1118,6 +1207,17 @@ def resolve_create_text(
     return resolved_title, resolved_body
 
 
+def _outbox_repo(scope: PrScope) -> str:
+    """Resolve the active scope's GitHub slug for an outbox-enabled PR flow."""
+    from jailbee.pr import PrError
+    from jailbee.pr_outbox import scope_slug
+
+    repo = scope_slug(scope)
+    if repo is None:
+        raise PrError(f"{scope.prefix}Cannot resolve the GitHub repository for the outbox.")
+    return repo
+
+
 def create_or_view_pr(
     scope: PrScope,
     state: PrState,
@@ -1130,6 +1230,7 @@ def create_or_view_pr(
     draft: bool,
     label: str,
     record_context: str | None = None,
+    use_outbox: bool = False,
 ) -> PrCreated:
     """Return the container's PR: an existing one on update, else a new one.
 
@@ -1137,6 +1238,10 @@ def create_or_view_pr(
     `base`/`title`/`body`/`draft`/`label` are unused on that path. On create,
     `pr.create_pr` opens the PR and the authorship is recorded via
     `state.record`. Raises `pr.PrError` for the caller to map to a CLI exit.
+
+    `use_outbox` pins both creation and lookup to the active scope's GitHub
+    slug. An update must resolve its PR in that repository before selecting
+    a pending description for the resulting number.
 
     `record_context` is a description of what a label-write failure would mean
     (e.g. ``"failed to record the PR label on 'feat-foo'"``); when given, the
@@ -1147,8 +1252,9 @@ def create_or_view_pr(
     """
     from jailbee import pr as pr_module
 
+    repo_args = {"repo": _outbox_repo(scope)} if use_outbox else {}
     if is_update:
-        return pr_module.view_existing_pr(scope.repo_root, head)
+        return pr_module.view_existing_pr(scope.repo_root, head, **repo_args)
 
     created = pr_module.create_pr(
         scope.repo_root,
@@ -1159,6 +1265,7 @@ def create_or_view_pr(
         remote=scope.remote,
         draft=draft,
         label=label,
+        **repo_args,
     )
     if record_context is not None:
         state.record(
@@ -1203,7 +1310,10 @@ def apply_pr_updates(
     description: bool,
     ready: bool | None,
     ai_on: bool,
-    offer_regen: bool,
+    # Required, unlike `resolve_pr_description_update`'s own default: this is
+    # the entry point a caller could forget it at, and forgetting it fails
+    # *open* — a foreign PR would be treated as one jailbee opened.
+    foreign_head: bool,
     url: str,
     use_outbox: bool = False,
     outbox_hint: OutboxPrText | None = None,
@@ -1217,8 +1327,13 @@ def apply_pr_updates(
 
     `url` is the PR's own URL, recorded as the receipt for a consumed outbox
     description. `use_outbox` lets that description replace the Claude
-    regeneration; it defaults to False, so `jailbee submodule pr` — which never
-    passes it — reaches none of that. `outbox_hint` carries a description the
+    regeneration and pins every mutation to the scope used for PR lookup,
+    regardless of the text's source. Both PR commands enable it unless
+    `--no-outbox` is given.
+    `foreign_head` rides along with it: on a
+    PR jailbee did not open, an outbox description must name that PR and is
+    confirmed once before it replaces the body (see
+    `resolve_pr_description_update`). `outbox_hint` carries a description the
     create path already resolved in this same run, so the choice between
     several pending ones is not put to the user twice; see
     `resolve_pr_description_update`. The consumption is recorded only after
@@ -1241,14 +1356,25 @@ def apply_pr_updates(
         body=body,
         description=description,
         ai_on=ai_on,
-        offer_regen=offer_regen,
+        foreign_head=foreign_head,
         use_outbox=use_outbox,
         for_pr=number,
         outbox_hint=outbox_hint,
     )
+    repo_args: dict[str, str] = {}
+    if (edit is not None or ready is not None) and (
+        use_outbox or (edit is not None and edit.source is not None)
+    ):
+        try:
+            repo_args["repo"] = _outbox_repo(scope)
+        except pr_module.PrError as exc:
+            warn(f"{scope.prefix}Updating the PR failed: {exc}")
+            return PrUpdate(title_changed=False, body_changed=False, state_note="")
     if edit is not None:
         try:
-            pr_module.edit_pr(scope.repo_root, number, title=edit.title, body=edit.body)
+            pr_module.edit_pr(
+                scope.repo_root, number, title=edit.title, body=edit.body, **repo_args
+            )
             title_changed = edit.title is not None
             body_changed = edit.body is not None
         except pr_module.PrError as exc:
@@ -1264,7 +1390,7 @@ def apply_pr_updates(
     state_note = ""
     if ready is not None:
         try:
-            pr_module.set_ready(scope.repo_root, number, ready)
+            pr_module.set_ready(scope.repo_root, number, ready, **repo_args)
             state_note = " (marked ready)" if ready else " (marked draft)"
         except pr_module.PrError as exc:
             warn(f"{scope.prefix}Toggling PR draft state failed: {exc}")

@@ -908,6 +908,19 @@ def host_subrepo_exists(repo_root: Path, subpath: str) -> bool:
     return (repo_root / subpath / ".git").exists()
 
 
+def host_submodule_paths(repo_root: Path) -> list[str]:
+    """Top-relative initialized host submodule paths, recursively."""
+
+    def run(directory: str, args: list[str]) -> tuple[bool, str]:
+        return git.run_capture(directory, args)
+
+    paths = (
+        Path(directory).relative_to(repo_root).as_posix()
+        for directory in _walk_submodule_dirs(run, str(repo_root))
+    )
+    return [path for path in paths if host_subrepo_exists(repo_root, path)]
+
+
 def _container_submodule_url(
     incus: Incus, container: str, repo_dir: str, subpath: str, *, uid: int
 ) -> str | None:

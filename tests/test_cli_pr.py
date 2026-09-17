@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -69,6 +70,7 @@ def _setup(mocker, tmp_path, labels=None):
     # below re-patch it. Without this the real `read_outbox` would run against
     # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
     # And an empty outbox for the offer `jailbee pr` makes once the PR is up,
     # for the same reason: every test that does not opt in below takes the
     # "nothing to offer" path instead of reading a MagicMock.
@@ -97,6 +99,49 @@ def _publish_via_hook(mocker, published):
         return published
 
     return mocker.patch("jailbee.sync.publish_branch_from_container", side_effect=fake_publish)
+
+
+@pytest.mark.parametrize("is_update", [False, True])
+def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
+    from subprocess import CompletedProcess
+
+    labels = {"user.jailbee.base_branch": "main", "user.jailbee.branch": "feat/foo"}
+    if is_update:
+        labels.update(
+            {
+                "user.jailbee.pr": "123",
+                "user.jailbee.pr_branch": "feat/foo",
+                "user.jailbee.pr_author": "true",
+            }
+        )
+    _setup(mocker, tmp_path, labels=labels)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch(
+        "jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo")
+    )
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    commands = []
+
+    def run(cmd, **kwargs):
+        assert kwargs["cwd"] == tmp_path
+        if cmd[0] == "git":
+            assert cmd == ["git", "remote", "get-url", "origin"]
+            return CompletedProcess(cmd, 0, "https://github.com/acme/widgets", "")
+        commands.append(cmd)
+        if cmd[:3] == ["gh", "pr", "create"]:
+            return CompletedProcess(cmd, 0, "https://github.com/acme/widgets/pull/123", "")
+        return CompletedProcess(
+            cmd, 0, '{"number":123,"url":"https://github.com/acme/widgets/pull/123"}', ""
+        )
+
+    mocker.patch("subprocess.run", side_effect=run)
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert commands[0][:3] == ["gh", "pr", "view" if is_update else "create"]
+    assert all("--repo" in cmd for cmd in commands)
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/widgets" for cmd in commands)
 
 
 def test_create_pr_happy_path(mocker, tmp_path):
@@ -482,6 +527,28 @@ def _outbox_source(manifest="002-description.json", branch="feat/x"):
     )
 
 
+def _description_only_outbox(mocker, name="002-description.json"):
+    """An outbox holding one manifest whose only action is a description.
+
+    The offer narrows itself to comments, so this manifest contributes nothing
+    to publish — it exists to be *mentioned*.
+    """
+    import json
+
+    from jailbee.pr_outbox import Outbox
+
+    text = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "actions": [{"type": "description", "body": "Body."}],
+        }
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={name: text}))
+
+
 def test_no_outbox_restores_the_claude_run(mocker, tmp_path):
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
@@ -797,6 +864,53 @@ def test_pr_update_explicit_title_edits(mocker, tmp_path):
     assert "description refreshed" not in result.output.lower()
 
 
+def test_pr_names_the_description_an_explicit_title_outranked(mocker, tmp_path):
+    """`--title`/`--body` win outright, and the manifest is deliberately never
+    looked up — so the offer is the only place left that can say a staged
+    description went unused."""
+    _update_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.edit_pr")
+    _description_only_outbox(mocker, name="003-desc.json")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo", "--title", "New title"])
+
+    assert result.exit_code == 0, result.output
+    assert "003-desc.json still holds a description" in result.output
+
+
+def test_pr_says_nothing_about_a_description_it_consumed(mocker, tmp_path):
+    """The note must not fire for the ordinary path: the description landed, the
+    sidecar records it, and the offer re-reads the outbox after that record."""
+    import json
+
+    from jailbee.pr_outbox import Outbox
+
+    _update_setup(mocker, tmp_path)
+    mocker.patch("jailbee.pr.edit_pr")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source("004-d.json"))
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    text = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "actions": [{"type": "description", "body": "Body."}],
+        }
+    )
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={"004-d.json": text, "004-d.json.progress.json": '{"applied": [0], "urls": {}}'}
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "still holds a description" not in result.output
+
+
 def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tmp_path):
     """The answer already exists, so the "with Claude?" prompt is never shown."""
     from tests.conftest import flat_output
@@ -813,7 +927,7 @@ def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tm
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body."}
+    assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body.", "repo": "acme/widgets"}
     gen.assert_not_called()
     confirm.assert_not_called()
     record.assert_called_once()
@@ -864,7 +978,7 @@ def test_pr_update_description_regenerates(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     gen.assert_called_once()
-    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B")
+    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B", repo="acme/widgets")
     assert "refreshed" in result.output.lower()
 
 
@@ -936,7 +1050,7 @@ def test_pr_update_ready_toggles_state(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--ready"])
 
     assert result.exit_code == 0, result.output
-    ready.assert_called_once_with(tmp_path, 123, True)
+    ready.assert_called_once_with(tmp_path, 123, True, repo="acme/widgets")
     assert "marked ready" in result.output.lower()
 
 
@@ -947,7 +1061,7 @@ def test_pr_update_draft_toggles_state(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--draft"])
 
     assert result.exit_code == 0, result.output
-    ready.assert_called_once_with(tmp_path, 123, False)
+    ready.assert_called_once_with(tmp_path, 123, False, repo="acme/widgets")
 
 
 def test_pr_update_via_already_exists_fallback(mocker, tmp_path):
@@ -1540,11 +1654,11 @@ def test_pr_already_adopted_container_skips_gh_and_prompt(mocker, tmp_path):
     assert publish.call_args.kwargs["publish_name"] == "alice/worktime-stomp"
 
 
-def test_pr_leaves_an_adopted_foreign_prs_description_alone(mocker, tmp_path):
-    """A `jailbee new --pr 456` container publishes to someone else's PR head,
-    so `offer_regen` is False. Its own agent's manifest must not rewrite that
-    author's title and body with no confirmation and no undo — the outbox is a
-    stronger reason to honour that guard, not a reason to bypass it."""
+def test_pr_applies_an_adopted_prs_description_after_one_confirmation(mocker, tmp_path):
+    """An adopted PR is as often the user's own — opened from another container
+    and bound with `jailbee pr --pr N` — as it is a stranger's, and the
+    container's agent wrote this description for that very number. It is
+    applied, once the one question about it is answered."""
     _review_setup(
         mocker,
         tmp_path,
@@ -1554,15 +1668,51 @@ def test_pr_leaves_an_adopted_foreign_prs_description_alone(mocker, tmp_path):
         },
     )
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=True)
     edit = mocker.patch("jailbee.pr.edit_pr")
     record = mocker.patch("jailbee.pr_outbox.record_consumed")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    pending.assert_not_called()
+    # Narrowed to manifests that name this PR: a `pr: null` one is about the PR
+    # this container would open, which is not this one.
+    assert pending.call_args.kwargs["numbered_only"] is True
+    assert edit.call_args.kwargs["body"] == "Body."
+    record.assert_called_once()
+    # Rich wraps the success line, so match on the receipt's manifest name.
+    assert "002-description.json" in result.output
+
+
+def test_pr_leaves_an_adopted_foreign_prs_description_alone_when_declined(mocker, tmp_path):
+    """The question is the guard. Answering no leaves the author's title and
+    body as they were, and consumes nothing — the manifest is still there for
+    `jailbee review apply`."""
+    _review_setup(
+        mocker,
+        tmp_path,
+        extra_labels={
+            "user.jailbee.pr_adopted": "1",
+            "user.jailbee.pr_branch": "alice/worktime-stomp",
+        },
+    )
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    record = mocker.patch("jailbee.pr_outbox.record_consumed")
+    _description_only_outbox(mocker)
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
     edit.assert_not_called()
     record.assert_not_called()
+    # The run's one word about the description it did not use. Without it the
+    # manifest passes through the whole command unmentioned.
+    assert "002-description.json still holds a description" in result.output
+    assert "review apply" in result.output
 
 
 def test_pr_adopted_push_failure_points_at_pr_refresh(mocker, tmp_path):
@@ -1740,7 +1890,7 @@ def test_pr_foreign_head_explicit_description_still_applies(mocker, tmp_path):
     result = CliRunner().invoke(app, ["pr", "feat-foo", "--description"])
 
     assert result.exit_code == 0, result.output
-    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B")
+    edit.assert_called_once_with(tmp_path, 123, title="AI T", body="AI B", repo="acme/widgets")
 
 
 def test_pr_foreign_head_explicit_title_still_applies(mocker, tmp_path):
@@ -2556,7 +2706,7 @@ def _tty(mocker):
     )
 
 
-def _pending_comment_manifest(mocker, actions=None):
+def _pending_comment_manifest(mocker, tmp_path, actions=None):
     """One pending manifest in the container's outbox, already gated.
 
     Patches the three reads the offer makes — `read_outbox`, `resolve_target`
@@ -2566,6 +2716,7 @@ def _pending_comment_manifest(mocker, actions=None):
     import json
 
     from jailbee.pr import PrInfo
+    from jailbee.pr_flow import PrScope
     from jailbee.pr_outbox import Outbox, Progress, Target, parse_manifest
 
     text = json.dumps(
@@ -2588,6 +2739,7 @@ def _pending_comment_manifest(mocker, actions=None):
             base_ref="main",
         ),
         stale=False,
+        scope=PrScope(tmp_path, "origin", "", None),
     )
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
     mocker.patch(
@@ -2611,7 +2763,7 @@ def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
         return_value=ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
     )
     mocker.patch("jailbee.pr_outbox.finalize")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
 
@@ -2628,7 +2780,7 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="n\n")
 
@@ -2653,7 +2805,7 @@ def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
     # construction — the asymmetry §F.2 describes, and the only gate `--force`
     # relaxes.
     _pending_comment_manifest(
-        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+        mocker, tmp_path, actions=[{"type": "review", "body": "looks good", "comments": []}]
     )
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
@@ -2680,7 +2832,7 @@ def test_a_non_stale_refusal_is_not_told_to_retry_with_force(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     _pending_comment_manifest(
-        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+        mocker, tmp_path, actions=[{"type": "review", "body": "looks good", "comments": []}]
     )
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
@@ -2706,6 +2858,7 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
     # offer would publish, and must not call a body rewrite a "comment".
     _pending_comment_manifest(
         mocker,
+        tmp_path,
         actions=[
             {"type": "comment", "body": "ok"},
             {"type": "description", "body": "a new body"},
@@ -2740,7 +2893,7 @@ def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
     mocker.patch(
         "jailbee.pr_outbox.apply_manifest",
         return_value=ApplyOutcome(applied=(), urls=(), failure="HTTP 500"),
@@ -2763,7 +2916,7 @@ def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    _pending_comment_manifest(mocker, actions=[{"type": "description", "body": "a body"}])
+    _pending_comment_manifest(mocker, tmp_path, actions=[{"type": "description", "body": "a body"}])
     resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
@@ -2794,6 +2947,7 @@ def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.finalize")
     _pending_comment_manifest(
         mocker,
+        tmp_path,
         actions=[
             {"type": "comment", "body": "ok"},
             {"type": "description", "body": "the agent's body"},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -30,6 +31,17 @@ def _created(number=123, already=False):
         number=number,
         url=f"https://github.com/acme/lib-a/pull/{number}",
         already_existed=already,
+    )
+
+
+def _outbox_source(manifest="002-description.json", branch="feat/foo"):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import OutboxPrText
+
+    return OutboxPrText(
+        text=PrText(title="feat: from container", body="Container body.", branch=branch),
+        manifest=manifest,
+        index=0,
     )
 
 
@@ -88,6 +100,14 @@ def _setup(mocker, tmp_path, *, candidates=None, state_record=None, mock_state_r
     # real, not just in tests, and reported it as "git is not installed".
     # The test that cares re-patches it with a side_effect.
     mocker.patch("jailbee.pr.assert_github_remote")
+    # The shared PR flow checks the container outbox for a description and
+    # offers any remaining comments after the PR lands. Keep the default happy
+    # path empty; focused outbox tests replace either boundary explicitly.
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/lib-a")
+    from jailbee.pr_outbox import Outbox
+
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={}))
     return cfg_mock, incus_mock, record
 
 
@@ -105,7 +125,7 @@ def _happy(mocker):
         return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
     )
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
-    mocker.patch("jailbee.pr.create_pr", return_value=_created())
+    return mocker.patch("jailbee.pr.create_pr", return_value=_created())
 
 
 def test_create_submodule_pr_happy_path(mocker, tmp_path):
@@ -319,7 +339,7 @@ def test_adopted_pr_publishes_to_the_adopted_head_even_when_recording_it_fails(m
 
     assert result.exit_code == 0, result.output
     create.assert_not_called()
-    view.assert_called_once_with(tmp_path / "lib/a", "user/existing")
+    view.assert_called_once_with(tmp_path / "lib/a", "user/existing", repo="acme/lib-a")
     assert publish.call_args.kwargs["publish_name"] == "user/existing"
 
 
@@ -507,6 +527,237 @@ def test_update_on_detached_submodule_without_branch_and_no_flags_does_not_crash
     apply_updates.assert_not_called()
     assert "--ready" not in result.output
     assert "--description" not in result.output
+
+
+# --- Container PR outbox ---------------------------------------------------
+
+
+@pytest.mark.parametrize("outcome", ["create", "existing", "failed_edit", "update"])
+def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
+    mocker, tmp_path, outcome
+):
+    from subprocess import CompletedProcess
+
+    from jailbee import pr_flow
+    from jailbee.submodule_pr import SubPublishResult
+
+    cfg, incus, _record = _setup(
+        mocker,
+        tmp_path,
+        state_record=pr_flow.PrRecord(123, "feat/foo", True, False)
+        if outcome == "update"
+        else None,
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
+    )
+    source = _outbox_source()
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
+    updates = mocker.spy(pr_flow, "apply_pr_updates")
+    consumption = mocker.spy(pr_flow, "record_outbox_consumption")
+    consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    commands = []
+
+    def run(cmd, **kwargs):
+        assert kwargs["cwd"] == tmp_path / "lib/a"
+        if cmd[0] == "git":
+            assert cmd == ["git", "remote", "get-url", "origin"]
+            return CompletedProcess(cmd, 0, "https://github.com/acme/lib-a", "")
+        commands.append(cmd)
+        if cmd[:3] == ["gh", "pr", "create"]:
+            existing = outcome in {"existing", "failed_edit"}
+            return CompletedProcess(
+                cmd,
+                1 if existing else 0,
+                "https://github.com/acme/lib-a/pull/123",
+                "already exists" if existing else "",
+            )
+        if cmd[:3] == ["gh", "pr", "view"]:
+            return CompletedProcess(
+                cmd, 0, '{"number":123,"url":"https://github.com/acme/lib-a/pull/123"}', ""
+            )
+        assert cmd[:4] == ["gh", "pr", "edit", "123"]
+        return CompletedProcess(cmd, 1 if outcome == "failed_edit" else 0, "", "edit denied")
+
+    mocker.patch("subprocess.run", side_effect=run)
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    pending.assert_called_once()
+    assert pending.call_args.kwargs["scope"].repo_root == tmp_path / "lib/a"
+    assert all("--repo" in cmd for cmd in commands)
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/lib-a" for cmd in commands)
+    if outcome != "create":
+        updates.assert_called_once()
+        assert updates.call_args.kwargs["outbox_hint"] == (None if outcome == "update" else source)
+        edit = next(cmd for cmd in commands if cmd[:3] == ["gh", "pr", "edit"])
+        assert edit[edit.index("--title") + 1] == "feat: from container"
+        assert edit[edit.index("--body") + 1] == "Container body."
+    if outcome == "failed_edit":
+        consumption.assert_not_called()
+        consumed.assert_not_called()
+        assert "edit denied" in result.output
+    else:
+        consumption.assert_called_once()
+        consumed.assert_called_once_with(
+            incus,
+            "sampleapp-feat-foo",
+            source.manifest,
+            0,
+            "https://github.com/acme/lib-a/pull/123",
+            uid=cfg.container_user.uid,
+        )
+
+
+def test_submodule_pr_no_outbox_forwards_false_and_preserves_the_ai_path(mocker, tmp_path):
+    from jailbee import pr_flow
+    from jailbee.pr_ai import PrText
+    from jailbee.submodule_pr import SubPublishResult
+
+    cfg, _incus, _record = _setup(mocker, tmp_path)
+    cfg.claude.enabled = True
+    cfg.claude.ai_pr_description = True
+    cfg.claude.ai_pr_branch = True
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
+    )
+    generated = mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="feat: generated", body="Generated body.", branch="feat/foo"),
+    )
+    mocker.patch("jailbee.pr.create_pr", return_value=_created(already=True))
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    resolve = mocker.spy(pr_flow, "resolve_pr_text_and_head")
+    apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
+    offer = mocker.patch("jailbee.cli._offer_outbox_comments")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--no-outbox"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["use_outbox"] is False
+    assert apply_updates.call_args.kwargs["use_outbox"] is False
+    generated.assert_called_once()
+    pending.assert_not_called()
+    offer.assert_not_called()
+
+
+def test_submodule_pr_uses_outbox_by_default_in_both_flow_calls(mocker, tmp_path):
+    from jailbee import pr_flow
+    from jailbee.submodule_pr import SubPublishResult
+
+    _setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=SubPublishResult(src_ref="r", publish_name="feat/foo", forced=False),
+    )
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
+    mocker.patch("jailbee.pr.create_pr", return_value=_created(already=True))
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    resolve = mocker.spy(pr_flow, "resolve_pr_text_and_head")
+    apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
+    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert resolve.call_args.kwargs["use_outbox"] is True
+    assert apply_updates.call_args.kwargs["use_outbox"] is True
+
+
+def test_submodule_pr_outbox_description_is_used_recorded_once_and_named(mocker, tmp_path):
+    from jailbee import pr_flow
+    from tests.conftest import flat_output
+
+    cfg, incus, _record = _setup(mocker, tmp_path)
+    create = _happy(mocker)
+    source = _outbox_source()
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
+    record_consumption = mocker.spy(pr_flow, "record_outbox_consumption")
+    record_consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["title"] == "feat: from container"
+    assert create.call_args.kwargs["body"] == "Container body."
+    record_consumption.assert_called_once_with(
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        source,
+        "https://github.com/acme/lib-a/pull/123",
+    )
+    record_consumed.assert_called_once()
+    assert result.output.index("#123") < result.output.index("description from")
+    assert "description from 002-description.json (written in the container)" in flat_output(
+        result.output
+    )
+
+
+def test_submodule_pr_outbox_offer_runs_after_outcome_and_consumption(mocker, tmp_path):
+    cfg, incus, _record = _setup(mocker, tmp_path)
+    _happy(mocker)
+    events: list[tuple[str, object]] = []
+    mocker.patch(
+        "jailbee.pr_flow.render_pr_outcome",
+        side_effect=lambda *args, **kwargs: events.append(("render", kwargs["number"])),
+    )
+    mocker.patch(
+        "jailbee.pr_flow.record_outbox_consumption",
+        side_effect=lambda *args, **kwargs: events.append(("record", args[3])),
+    )
+    offer = mocker.patch(
+        "jailbee.cli._offer_outbox_comments",
+        side_effect=lambda *args, **kwargs: events.append(("offer", kwargs["number"])) or 0,
+    )
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert events == [("render", 123), ("record", None), ("offer", 123)]
+    offer.assert_called_once_with(cfg, incus, "sampleapp-feat-foo", "feat-foo", number=123)
+
+
+def test_submodule_pr_outbox_offer_failure_exits_after_the_successful_outcome(mocker, tmp_path):
+    from jailbee import pr_flow
+
+    _setup(mocker, tmp_path)
+    _happy(mocker)
+    events: list[str] = []
+    render_outcome = pr_flow.render_pr_outcome
+
+    def render(*args, **kwargs):
+        events.append("render")
+        return render_outcome(*args, **kwargs)
+
+    mocker.patch("jailbee.pr_flow.render_pr_outcome", side_effect=render)
+    mocker.patch("jailbee.pr_flow.record_outbox_consumption")
+    mocker.patch(
+        "jailbee.cli._offer_outbox_comments",
+        side_effect=lambda *args, **kwargs: events.append("offer") or 1,
+    )
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo"])
+
+    assert result.exit_code == 1
+    assert events == ["render", "offer"]
+    assert "#123" in result.output
+
+
+def test_submodule_pr_no_outbox_skips_the_comment_offer(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    _happy(mocker)
+    offer = mocker.patch("jailbee.cli._offer_outbox_comments")
+
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "--no-outbox"])
+
+    assert result.exit_code == 0, result.output
+    offer.assert_not_called()
 
 
 # --- Binding a submodule to an existing PR by number (`--pr N`) -------------

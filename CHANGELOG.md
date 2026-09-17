@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jb submodule pr` now consumes matching PR descriptions from the container's
+  review outbox, and `jb review apply` can publish comments staged for a
+  submodule repository.
+
 - **Autostart runs in stages, and can hand the rest to the background.** An
   `on_create` / `on_start` trigger may now be a list of **stages** instead of
   a flat list of steps. A stage holds **chains** that run in parallel, each
@@ -112,6 +116,42 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **A PR adopted by number ignored the description its own agent wrote.**
+  `jailbee pr` suppresses the "regenerate the description with Claude?" offer
+  on a PR it did not open, and the outbox lookup shared that one flag — so a
+  container whose PR was bound with `jailbee pr --pr N` (your own PR, opened
+  from another container) silently dropped a staged description and reported
+  `description unchanged`, with nothing on screen to say a manifest existed.
+  The two are now separate decisions. On such a PR the lookup is *narrowed*
+  to a description that names that PR number, and applying it asks once
+  (`Replace PR #N's description with the one <manifest> proposes?`; off a TTY
+  the answer is no, and declining consumes nothing). A `pr: null`
+  description — "the PR this container would open", which that PR is not —
+  stays withheld, and is now named rather than passed over in silence.
+  `jailbee review apply` no longer refuses it either: a `pr: null` manifest
+  resolves to the container's own PR when exactly one is bound to it, which
+  previously left such a description publishable by neither command. Every
+  description `jailbee pr` leaves pending, for any reason, is now named in
+  the offer it makes once the PR is up.
+- **The `codex` agent preset could not install itself.** It ran `npm i -g
+  @openai/codex`, but npm is in the golden image only when
+  `golden.stacks.node` is on — so on any image without the node stack
+  enabling `codex` did nothing at all: the install step died with `npm:
+  command not found`, which `jailbee new` reports as a warning and walks
+  past, and the agent's autostart window then died with `codex: not found`.
+  The preset now runs the vendor's own installer
+  (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`, the same line for
+  install and update), which drops a static binary into `~/.local/bin` and
+  needs no toolchain. The install step asks for `loose` while it runs,
+  because all four of the installer's hosts are CDN-fronted and rotate their
+  IPs; `docs/agents.md` has the recipe for pinning it back to strict. The
+  ~300MB payload lands inside the preset's existing `~/.codex` shared mount,
+  so it is fetched once per repo rather than per branch. If you added the
+  node stack solely to get `codex` working you can drop it again, and an
+  existing `npm i -g @openai/codex` install should be removed — `/etc/profile.d`
+  puts `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would
+  shadow the new one. `gemini` and `opencode` still install through npm and
+  still need `golden.stacks.node`; that requirement is now documented.
 - **Both dashboards opened on an empty table.** `jailbee dashboard` and the
   Qt window drew their frontend first and only then asked Incus what was
   there, so the first thing on screen was a blank view — and the snapshot

@@ -23,6 +23,58 @@ def _sub_scope(tmp_path: Path) -> pr_flow.PrScope:
     )
 
 
+def test_scope_for_repo_uses_superproject_settings(tmp_path):
+    cfg = _cfg(tmp_path)
+
+    assert pr_flow.PrScope.for_repo(cfg) == pr_flow.PrScope(
+        repo_root=cfg.repo_root,
+        remote=cfg.upstream_remote,
+        prefix="",
+        subpath=None,
+    )
+
+
+def test_scope_for_submodule_resolves_its_remote(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+
+    assert pr_flow.PrScope.for_submodule(cfg, "libs/foo") == pr_flow.PrScope(
+        repo_root=cfg.repo_root / "libs/foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+
+
+def test_candidate_scopes_returns_repo_then_sorted_submodules(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a"])
+    mocker.patch(
+        "jailbee.submodule_pr.resolve_remote",
+        side_effect=lambda _repo_root, subpath: {"a": "a-upstream", "z": "z-origin"}[subpath],
+    )
+
+    scopes = pr_flow.candidate_scopes(cfg)
+
+    assert [scope.subpath for scope in scopes] == [None, "a", "z"]
+    assert [scope.remote for scope in scopes] == [cfg.upstream_remote, "a-upstream", "z-origin"]
+
+
+def test_candidate_scopes_merges_only_initialized_recorded_paths_once(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a", "z"])
+    mocker.patch(
+        "jailbee.submodules.host_subrepo_exists",
+        side_effect=lambda root, path: root == tmp_path and path in {"a", "b", "z"},
+    )
+    remote = mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+
+    scopes = pr_flow.candidate_scopes(cfg, extra_paths=["z", "b", "missing", "b"])
+
+    assert [scope.subpath for scope in scopes] == [None, "a", "b", "z"]
+    assert [call.args[1] for call in remote.call_args_list] == ["a", "b", "z"]
+
+
 def test_noun_names_the_pr_number(tmp_path):
     assert _super_scope(tmp_path).noun("12") == "PR #12"
 
@@ -171,7 +223,7 @@ def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker
         body=None,
         description=False,
         ai_on=True,
-        offer_regen=False,
+        foreign_head=True,
     )
     assert result is None
     confirm.assert_not_called()
@@ -209,7 +261,7 @@ def test_container_label_state_raises_on_a_malformed_pr_label(mocker):
     """FIX 5 regression: a non-numeric `user.jailbee.pr` must fail closed, not
     silently read as `number=None` (== "no PR"), which would turn OFF every
     guard keyed on `pr_label` (--as rejection, the foreign-force
-    confirmation, offer_regen) for a container that plainly has a PR."""
+    confirmation, foreign_head) for a container that plainly has a PR."""
     incus = mocker.MagicMock()
     incus.config_get.side_effect = lambda name, key: {"user.jailbee.pr": "not-a-number"}.get(key)
 
@@ -545,6 +597,22 @@ def test_create_path_uses_the_outbox_and_never_runs_claude(tmp_path, mocker):
     assert plan.outbox_source is not None and plan.outbox_source.manifest == "002-d.json"
 
 
+def test_create_outbox_lookup_forwards_the_scope_and_source_branch(tmp_path, mocker):
+    scope = _sub_scope(tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    _plan(
+        tmp_path,
+        mocker,
+        scope=scope,
+        source_branch="sub-head",
+        use_outbox=True,
+    )
+
+    assert pending.call_args.kwargs["scope"] == scope
+    assert pending.call_args.kwargs["source_branch"] == "sub-head"
+
+
 def test_create_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     """`jailbee submodule pr` shares this function and must be unaffected."""
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
@@ -675,7 +743,7 @@ def test_record_outbox_consumption_warns_but_does_not_raise(tmp_path, mocker):
 # ---- the update path's outbox description ---------------------------------
 
 
-def _update_edit(tmp_path, mocker, **kwargs):
+def _update_edit(tmp_path, mocker, *, scope=None, **kwargs):
     """`resolve_pr_description_update` with the update path's usual arguments."""
     call = {
         "branch": "feat/foo",
@@ -687,7 +755,11 @@ def _update_edit(tmp_path, mocker, **kwargs):
     }
     call.update(kwargs)
     return pr_flow.resolve_pr_description_update(
-        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path), **call
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        scope if scope is not None else _super_scope(tmp_path),
+        **call,
     )
 
 
@@ -704,6 +776,23 @@ def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
     assert edit.source is not None and edit.source.manifest == "002-d.json"
     generate.assert_not_called()
     confirm.assert_not_called()  # the answer already exists; do not ask
+
+
+def test_update_outbox_lookup_forwards_the_scope_and_source_branch(tmp_path, mocker):
+    scope = _sub_scope(tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    _update_edit(
+        tmp_path,
+        mocker,
+        scope=scope,
+        branch="sub-head",
+        use_outbox=True,
+    )
+
+    assert pending.call_args.kwargs["scope"] == scope
+    assert pending.call_args.kwargs["source_branch"] == "sub-head"
 
 
 def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):
@@ -726,27 +815,95 @@ def test_the_update_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     pending.assert_not_called()
 
 
-def test_a_foreign_pr_is_not_rewritten_from_the_outbox(tmp_path, mocker):
-    """`offer_regen=False` means "do not silently rewrite this author's
-    description", and a manifest is a *stronger* reason to honour that: the
-    text was written by an agent, and a `pr: null` manifest is eligible for a
-    stranger's PR number under `_eligible_for`."""
+def test_a_foreign_pr_takes_a_description_that_names_it_after_confirming(tmp_path, mocker):
+    """A PR jailbee did not open is still often the user's own, adopted with
+    `jailbee pr --pr N`. Dropping the description its agent wrote for that very
+    number was the bug; the guard is a narrowed lookup plus one question."""
     mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=True)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
-    edit = _update_edit(tmp_path, mocker, use_outbox=True, offer_regen=False)
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
+
+    assert edit is not None and (edit.title, edit.body) == ("feat: x", "Body.")
+    assert edit.source is not None and edit.source.manifest == "002-d.json"
+    assert pending.call_args.kwargs["numbered_only"] is True
+    assert confirm.call_count == 1
+
+
+def test_a_declined_foreign_description_consumes_nothing(tmp_path, mocker):
+    """Declining refuses *this text*, not the run: nothing is returned to
+    `edit_pr`, so `record_outbox_consumption` is never reached and the manifest
+    stays pending for `jailbee review apply`."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
 
     assert edit is None
-    pending.assert_not_called()
+
+
+def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_path, mocker):
+    """`--description` is what the user typed; refusing the manifest's text must
+    not refuse that too."""
+    from jailbee.pr_ai import PrText
+
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    mocker.patch(
+        "jailbee.pr_ai.generate_pr_text",
+        return_value=PrText(title="regen", body="Fresh.", branch="b"),
+    )
+
+    edit = _update_edit(
+        tmp_path,
+        mocker,
+        use_outbox=True,
+        foreign_head=True,
+        description=True,
+    )
+
+    assert edit is not None and (edit.title, edit.body) == ("regen", "Fresh.")
+    assert edit.source is None  # nothing from the outbox was consumed
+
+
+def test_a_foreign_description_is_never_applied_off_a_tty(tmp_path, mocker):
+    """The question has no answer when there is nobody to ask, and an
+    unattended run may not decide it on the user's behalf."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    confirm = mocker.patch("typer.confirm")
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
+
+    assert edit is None
+    confirm.assert_not_called()
+
+
+def test_an_authored_pr_asks_nothing_before_using_the_outbox(tmp_path, mocker):
+    """The confirmation belongs to the foreign head alone: jailbee's own PR
+    carries the description its own container wrote, as it always did."""
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm")
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+
+    edit = _update_edit(tmp_path, mocker, use_outbox=True, for_pr=77)
+
+    assert edit is not None and edit.source is not None
+    assert pending.call_args.kwargs["numbered_only"] is False
+    confirm.assert_not_called()
 
 
 def test_an_explicit_title_still_applies_to_a_foreign_pr(tmp_path, mocker):
     """The outbox gate above must not swallow what the user typed themselves."""
-    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True, offer_regen=False)
+    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True, foreign_head=True)
 
     assert edit is not None and (edit.title, edit.body) == ("typed", None)
+    pending.assert_not_called()
 
 
 def test_a_pre_resolved_outbox_hint_is_not_looked_up_again(tmp_path, mocker):
@@ -894,6 +1051,98 @@ def test_create_or_view_records_authorship_on_create(tmp_path, mocker):
     state.record.assert_called_once_with(head="feat/foo", author=True, adopted=False, number=123)
 
 
+@pytest.mark.parametrize(
+    ("is_update", "already_exists"), [(False, False), (False, True), (True, True)]
+)
+def test_outbox_create_and_existing_lookup_pin_scope_repo(
+    tmp_path, mocker, is_update, already_exists
+):
+    from subprocess import CompletedProcess
+
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/library")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    commands = []
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "git":
+            return CompletedProcess(cmd, 0, "https://github.com/acme/library", "")
+        commands.append(cmd)
+        assert kwargs["cwd"] == tmp_path / "libs/foo"
+        if cmd[:3] == ["gh", "pr", "create"]:
+            return CompletedProcess(
+                cmd,
+                1 if already_exists else 0,
+                "https://github.com/acme/library/pull/42",
+                "already exists" if already_exists else "",
+            )
+        return CompletedProcess(
+            cmd, 0, '{"number": 42, "url": "https://github.com/acme/library/pull/42"}', ""
+        )
+
+    mocker.patch("subprocess.run", side_effect=run)
+    created = pr_flow.create_or_view_pr(
+        _sub_scope(tmp_path),
+        mocker.MagicMock(),
+        is_update=is_update,
+        head="library-head",
+        base="main",
+        title="Library title",
+        body="Library body",
+        draft=True,
+        label="jailbee submodule pr",
+        use_outbox=True,
+    )
+
+    assert created.number == 42
+    assert len(commands) == (2 if already_exists and not is_update else 1)
+    assert all("--repo" in cmd for cmd in commands)
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/library" for cmd in commands)
+
+
+@pytest.mark.parametrize("hinted", [False, True])
+def test_outbox_description_edit_pins_scope_repo(tmp_path, mocker, hinted):
+    from subprocess import CompletedProcess
+
+    source = _outbox_source()
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
+    mocker.patch("jailbee.pr_outbox.record_consumed")
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+    run = mocker.patch("subprocess.run", return_value=CompletedProcess([], 0, "", ""))
+
+    updated = _apply_updates(
+        tmp_path, mocker, use_outbox=True, outbox_hint=source if hinted else None
+    )
+
+    assert updated.description_source == "002-d.json"
+    run.assert_called_once()
+    cmd = run.call_args.args[0]
+    assert cmd[:4] == ["gh", "pr", "edit", "1234"]
+    assert "--repo" in cmd
+    assert cmd[cmd.index("--repo") + 1] == "acme/widgets"
+
+
+def test_outbox_create_refuses_an_unresolvable_scope(tmp_path, mocker):
+    from jailbee.pr import PrError
+
+    mocker.patch("jailbee.git.get_remote_url", return_value=None)
+    create = mocker.patch("jailbee.pr.create_pr")
+
+    with pytest.raises(PrError, match="GitHub repository"):
+        pr_flow.create_or_view_pr(
+            _sub_scope(tmp_path),
+            mocker.MagicMock(),
+            is_update=False,
+            head="library-head",
+            base="main",
+            title="t",
+            body="b",
+            draft=True,
+            label="jailbee submodule pr",
+            use_outbox=True,
+        )
+    create.assert_not_called()
+
+
 def test_create_or_view_does_not_record_on_update(tmp_path, mocker):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
     create = mocker.patch("jailbee.pr.create_pr")
@@ -943,6 +1192,7 @@ def test_create_or_view_forwards_record_context_with_the_pr_number(tmp_path, moc
 
 def _apply_updates(tmp_path, mocker, **kwargs):
     """`apply_pr_updates` with the superproject update path's usual arguments."""
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
     call = {
         "number": 1234,
         "branch": "feat/foo",
@@ -952,7 +1202,7 @@ def _apply_updates(tmp_path, mocker, **kwargs):
         "description": False,
         "ready": None,
         "ai_on": True,
-        "offer_regen": True,
+        "foreign_head": False,
         "url": "https://x/pull/1234",
     }
     call.update(kwargs)
@@ -976,6 +1226,39 @@ def test_apply_updates_edits_and_toggles(tmp_path, mocker):
     assert result == pr_flow.PrUpdate(
         title_changed=True, body_changed=True, state_note=" (marked ready)"
     )
+
+
+@pytest.mark.parametrize("title", [None, "Typed title"])
+def test_outbox_updates_refuse_mutations_without_a_repository(tmp_path, mocker, title):
+    from subprocess import CompletedProcess
+
+    mocker.patch("jailbee.git.get_remote_url", return_value=None)
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    run = mocker.patch("subprocess.run", return_value=CompletedProcess([], 0, "", ""))
+    warn = mocker.patch("jailbee.pr_flow.warn")
+
+    updated = pr_flow.apply_pr_updates(
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        number=42,
+        branch="feat/foo",
+        base="main",
+        title=title,
+        body=None,
+        description=False,
+        ready=True,
+        ai_on=False,
+        foreign_head=False,
+        url="https://github.com/acme/widgets/pull/42",
+        use_outbox=True,
+    )
+
+    run.assert_not_called()
+    assert updated == pr_flow.PrUpdate(title_changed=False, body_changed=False, state_note="")
+    assert "Cannot resolve the GitHub repository" in warn.call_args.args[0]
 
 
 def test_apply_updates_warns_but_survives_an_edit_failure(tmp_path, mocker):

@@ -7028,9 +7028,7 @@ def pr_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
-    scope = pr_flow.PrScope(
-        repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
-    )
+    scope = pr_flow.PrScope.for_repo(cfg)
     state = pr_flow.ContainerLabelState(incus, full, short=short)
     stacked_state = pr_flow.ContainerLabelState(
         incus, full, short=short, prefix=pr_flow.STACKED_LABEL_PREFIX
@@ -7150,10 +7148,12 @@ def pr_cmd(
             pr_label = str(found_number)
             stored_pr_branch = found_head
 
-    # A container whose PR jailbee did not create (`jailbee new --pr`, adopted or not).
-    # Two things follow: --force needs its own confirmation (it rewrites a
-    # branch the PR author may own), and the interactive "regenerate the
-    # description?" offer is suppressed — adoption only ever promised commits.
+    # A container whose PR jailbee did not create (`jailbee new --pr`, or a PR
+    # adopted by number or by branch name). Three things follow: --force needs
+    # its own confirmation (it rewrites a branch the PR author may own), the
+    # interactive "regenerate the description?" offer is suppressed — adoption
+    # only ever promised commits — and an outbox description is narrowed to one
+    # that names this PR, then confirmed once before it replaces the body.
     is_foreign_pr_head = bool(pr_label) and not is_author
     if force and pr_label and not is_author:
         pr_flow.confirm_foreign_force_push(scope, short, pr_label, stored_pr_branch, yes=yes)
@@ -7286,6 +7286,7 @@ def pr_cmd(
         created = pr_flow.create_or_view_pr(
             scope,
             active_state,
+            use_outbox=not no_outbox,
             is_update=is_update_path,
             head=publish.publish_name,
             base=resolved_base,
@@ -7315,7 +7316,7 @@ def pr_cmd(
             description=description,
             ready=ready,
             ai_on=ai_on,
-            offer_regen=not is_foreign_pr_head,
+            foreign_head=is_foreign_pr_head,
             url=created.url,
             use_outbox=not no_outbox,
             # What the create path already resolved this run, when `gh pr
@@ -7600,6 +7601,13 @@ def submodule_pr_cmd(
     ] = False,
     web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
     no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
+    no_outbox: Annotated[
+        bool,
+        typer.Option(
+            "--no-outbox",
+            help="Ignore a PR description written in the container's outbox.",
+        ),
+    ] = False,
     branch: Annotated[
         str | None,
         typer.Option("--branch", "-b", help="Branch to publish FROM the submodule"),
@@ -7820,14 +7828,9 @@ def submodule_pr_cmd(
         cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
     )
 
-    remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
+    scope = pr_flow.PrScope.for_submodule(cfg, subpath)
+    remote = scope.remote
     resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
-    scope = pr_flow.PrScope(
-        repo_root=cfg.repo_root / subpath,
-        remote=remote,
-        prefix=f"submodule '{subpath}': ",
-        subpath=subpath,
-    )
     if pr_number is not None:
         # After the transport, not before: for a submodule the host has never
         # seen, `scope.repo_root` does not exist as a git repo until the
@@ -7900,6 +7903,7 @@ def submodule_pr_cmd(
         as_name=as_name,
         no_ai=no_ai,
         status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
+        use_outbox=not no_outbox,
     )
     publish_name = plan.publish_name
     if publish_name is None:
@@ -7934,11 +7938,12 @@ def submodule_pr_cmd(
         raise typer.Exit(1) from exc
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    text_on = ai_on or plan.outbox_source is not None
     resolved_title, resolved_body = ("", "")
     if not is_update:
         resolved_title, resolved_body = pr_flow.resolve_create_text(
             scope,
-            ai_on=ai_on,
+            ai_on=text_on,
             ai_text=plan.ai_text,
             title=title,
             body=body,
@@ -7950,6 +7955,7 @@ def submodule_pr_cmd(
         created = pr_flow.create_or_view_pr(
             scope,
             state,
+            use_outbox=not no_outbox,
             is_update=is_update,
             head=published.publish_name,
             base=resolved_base,
@@ -7979,10 +7985,10 @@ def submodule_pr_cmd(
             description=description,
             ready=ready,
             ai_on=ai_on,
-            offer_regen=not is_foreign,
-            # No `use_outbox`: a submodule PR is a different repository from
-            # the one the container's outbox manifests name.
+            foreign_head=is_foreign,
             url=created.url,
+            use_outbox=not no_outbox,
+            outbox_hint=plan.outbox_source,
         )
     elif did_update:
         # The submodule is detached and no --branch resolved a source: there
@@ -8009,13 +8015,20 @@ def submodule_pr_cmd(
         ready=ready,
         update=update,
     )
+    if not did_update:
+        pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
     if incus.config_get(full, "user.jailbee.pr"):
         info(
             "Merge this submodule PR first; the superproject PR's gitlink bump "
             "then points at a merged commit."
         )
+    outbox_failures = (
+        0 if no_outbox else _offer_outbox_comments(cfg, incus, full, short, number=created.number)
+    )
     if web:
         pr_mod.open_pr_in_browser(scope.repo_root, created.number)
+    if outbox_failures:
+        raise typer.Exit(1)
 
 
 net_app = typer.Typer(
