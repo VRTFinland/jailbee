@@ -14,6 +14,7 @@ that loop into `pr_outbox` leaves them passing unchanged.
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -298,16 +299,24 @@ def test_apply_publishes_without_a_prompt_off_a_tty_with_yes(mocker, tmp_path):
     apply_mock.assert_called_once()
 
 
-def test_apply_routes_a_pr_null_manifest_to_jb_pr(mocker, tmp_path):
+@pytest.mark.parametrize(
+    ("subpath", "command"), [(None, "jailbee pr"), ("libs/foo", "jailbee submodule pr")]
+)
+def test_apply_routes_a_pr_null_manifest_to_its_publishing_command(mocker, tmp_path, subpath, command):
+    from dataclasses import replace
+
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_null_pr_target())
+    target = _null_pr_target()
+    if subpath:
+        target = replace(target, scope=PrScope(tmp_path / subpath, "origin", "", subpath))
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
     result = runner.invoke(app, ["review", "apply", "feat-foo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     assert "does not exist yet" in result.output
-    assert "jailbee pr feat-foo" in result.output
+    assert f"{command} feat-foo" in result.output
     apply_mock.assert_not_called()
 
 

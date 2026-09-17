@@ -1903,7 +1903,7 @@ def _gate_manifests(
                 # columns.
                 notes.append(
                     f"manifest {name} describes a PR that does not exist yet.\n"
-                    f"  Run `jailbee pr {short}` to create it."
+                    f"  Run `{target.scope.command} {short}` to create it."
                 )
             continue
         targets.append(target)

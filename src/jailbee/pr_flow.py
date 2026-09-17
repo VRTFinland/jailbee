@@ -296,8 +296,8 @@ def resolve_pr_text_and_head(
     description the container already wrote (`pr_outbox.pending_pr_text`) is
     used as `ai_text`, `generate_pr_text` is then never called, and the
     manifest's proposed branch feeds the same `confirm_pr_branch_name` decision
-    a Claude-proposed one feeds. It defaults to False so `jailbee submodule pr`
-    — the other caller — never looks at an outbox keyed to *this* repo's origin.
+    a Claude-proposed one feeds. Both PR commands enable it by default and
+    select descriptions for the active repository scope; `--no-outbox` opts out.
     Neither `--no-ai` nor the `claude.*` toggles gate it: a manifest is not an
     AI run, it is text that already exists.
     """
@@ -485,9 +485,8 @@ def resolve_pr_description_update(
     an outbox hit returns before the regeneration offer is reached: the answer
     already exists, so asking "update the description with Claude?" would be
     asking for something already in hand. Neither `--no-ai` nor the `claude.*`
-    toggles gate it — a manifest is not an AI run. It defaults to False so
-    `jailbee submodule pr`, the other caller, never looks at an outbox keyed to
-    *this* repo's origin.
+    toggles gate it — a manifest is not an AI run. Both PR commands enable it
+    by default and select descriptions for the active repository scope.
 
     `for_pr` is the number of the PR being updated, and it must be passed
     whenever `use_outbox` is: the lookup accepts `pr: null` manifests and ones
@@ -1328,8 +1327,8 @@ def apply_pr_updates(
 
     `url` is the PR's own URL, recorded as the receipt for a consumed outbox
     description. `use_outbox` lets that description replace the Claude
-    regeneration; it defaults to False, so `jailbee submodule pr` — which never
-    passes it — reaches none of that. `foreign_head` rides along with it: on a
+    regeneration. Both PR commands enable it unless `--no-outbox` is given.
+    `foreign_head` rides along with it: on a
     PR jailbee did not open, an outbox description must name that PR and is
     confirmed once before it replaces the body (see
     `resolve_pr_description_update`). `outbox_hint` carries a description the
