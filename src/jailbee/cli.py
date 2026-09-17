@@ -449,6 +449,78 @@ def version() -> None:
     typer.echo(__version__)
 
 
+@app.command()
+def dismiss(
+    keys: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Warning keys to mark read (run `jailbee dismiss` with no arguments to list them)"
+        ),
+    ] = None,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Every warning that applies right now"),
+    ] = False,
+    clear: Annotated[
+        bool,
+        typer.Option("--clear", help="Undo a dismissal instead of recording one"),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Mark repeating advisory warnings read, so they stop appearing.
+
+    With no arguments, lists what applies here and what has already been
+    dismissed. An owed `jailbee base build` / `jailbee apply` comes back when a
+    later release adds a new reason for it; a deprecated config spelling stays
+    dismissed until the config changes. `jailbee doctor` reports them either
+    way — it never respects a dismissal.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import dismiss_command, notices
+    from jailbee.db import get_engine
+
+    # Loading the config is also what fills `notices.active()`: the deprecation
+    # notices register themselves as the layers are read.
+    cfg = _load_or_exit(config)
+    now = datetime.now(UTC)
+    targets = list(keys or [])
+    if targets and all_:
+        error("Pass keys or --all, not both.")
+        raise typer.Exit(2)
+
+    with Session(get_engine()) as session:
+        rows = dismiss_command.survey(cfg, session, __version__, now=now)
+        if not targets and not all_:
+            for line in dismiss_command.render(rows):
+                info_plain(line)
+            return
+        if all_:
+            selected = [r for r in rows if (r.dismissal is not None if clear else r.applies)]
+        else:
+            selected, unknown = dismiss_command.resolve(rows, targets, include_stale=clear)
+            if unknown:
+                # `error_plain` / `info_plain`: a key can carry a scope, and a
+                # config path may hold square brackets that Rich would read as
+                # a style tag and silently delete.
+                error_plain(f"Not showing here: {', '.join(unknown)}")
+                for line in dismiss_command.render(rows):
+                    info_plain(line)
+                raise typer.Exit(2)
+        if clear:
+            removed = dismiss_command.clear(session, selected)
+            notices.reset_caches()
+            success(f"Cleared {removed} dismissal(s) — the warnings return on the next command.")
+            return
+        dismiss_command.apply_dismissals(session, selected, __version__, now=now)
+    notices.reset_caches()
+    for row in selected:
+        success_plain(f"Dismissed `{row.key}` ({row.scope})")
+    info_plain("They return when a new reason appears. `jailbee doctor` still reports them.")
+
+
 @config_app.command("show")
 def config_show(
     config: ConfigOption = None,
