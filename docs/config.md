@@ -1250,7 +1250,7 @@ out.
 |---|---|---|---|
 | `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` adopts a login the repo's credential group already holds), and subsequent containers in the same repo inherit that state via the shared cache. |
 | `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
-| `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; `jailbee tmux <c>` lands in that window. `validate_runtime` rejects `autostart: true` with `enabled: false`. |
+| `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; the first `jailbee tmux <c>` lands in that window (later attaches keep the window you detached from). `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
@@ -1495,9 +1495,11 @@ moves to whichever stage takes its place, so the split point you drew
 doesn't silently vanish.
 
 Which window `jailbee tmux` (or `--attach tmux`) lands on is chosen **by
-name**, not by tmux's own "most recently created" default — so the agent
-stage's position only decides *when* its window is created relative to the
-hand-off, not which window ends up focused.
+name** on the first attach, not by tmux's own "most recently created"
+default — so the agent stage's position only decides *when* its window is
+created relative to the hand-off, not which window ends up focused. Later
+attaches keep the window you detached from; see
+[Where the generated launch steps go](agents.md#where-the-generated-launch-steps-go).
 
 #### Deprecated: step-level `network`/`mounts`
 
