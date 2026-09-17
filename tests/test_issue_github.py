@@ -344,6 +344,33 @@ def test_mutation_transport_or_interruption_exceptions_are_uncertain(tmp_path, m
     assert caught.value.uncertain is True
 
 
+def test_mutation_decode_failure_is_uncertain_and_redacted(tmp_path, mocker):
+    secret = "github_pat_sensitive_bytes"
+    raw = secret.encode() + b"\xff"
+    failure = UnicodeDecodeError("utf-8", raw, len(raw) - 1, len(raw), "invalid byte")
+    mocker.patch("jailbee.issue_github.subprocess.run", side_effect=failure)
+
+    with pytest.raises(IssueGithubMutationError) as caught:
+        add_comment(tmp_path, "acme/widgets", 42, body="Hello")
+
+    assert caught.value.uncertain is True
+    assert secret not in repr(caught.value)
+    assert secret not in "".join(traceback.format_exception(caught.value))
+
+
+def test_read_decode_failure_is_normalized_and_redacted(tmp_path, mocker):
+    secret = "github_pat_sensitive_bytes"
+    raw = secret.encode() + b"\xff"
+    failure = UnicodeDecodeError("utf-8", raw, len(raw) - 1, len(raw), "invalid byte")
+    mocker.patch("jailbee.issue_github.subprocess.run", side_effect=failure)
+
+    with pytest.raises(IssueGithubReadError) as caught:
+        get_issue(tmp_path, "acme/widgets", 42)
+
+    assert secret not in repr(caught.value)
+    assert secret not in "".join(traceback.format_exception(caught.value))
+
+
 def test_mutation_signal_exit_is_uncertain(tmp_path, mocker):
     mocker.patch(
         "jailbee.issue_github.subprocess.run",

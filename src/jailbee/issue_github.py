@@ -87,7 +87,7 @@ def _run_api(
                 uncertain=True,
             ) from None
         raise IssueGithubReadError("GitHub read failed") from None
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, UnicodeError, subprocess.SubprocessError):
         if mutation:
             raise IssueGithubMutationError(
                 "GitHub mutation transport failed after dispatch",
