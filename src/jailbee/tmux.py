@@ -145,6 +145,35 @@ def select_window(incus: Incus, container: str, window: str) -> bool:
     return True
 
 
+def ever_attached(incus: Incus, container: str) -> bool:
+    """True once any client has attached to the autostart session.
+
+    tmux itself remembers which window a session was on when the last
+    client detached, and restores it on the next attach. `_attach_tmux`
+    overrides that with :func:`select_window` only while this returns
+    False, so the agent window wins on the first attach — where the
+    current window is still the empty window 0, every step window having
+    been created with `-d` (see :func:`_new_window`) — and the window the
+    user actually left wins on every attach after that.
+
+    `#{session_last_attached}` is empty on a session nobody has attached
+    to yet; `"0"` is accepted as the same answer because not every tmux
+    build leaves the format empty. Best-effort like
+    :func:`select_window`: a missing session or a tmux that does not know
+    the format reads as "never attached", which only restores the old
+    unconditional focus.
+    """
+    try:
+        out = incus.exec(
+            container,
+            _runuser(f"tmux display-message -p -t {SESSION_NAME} '#{{session_last_attached}}'"),
+        )
+    except IncusError:
+        return False
+    stamp = out.strip()
+    return bool(stamp) and stamp != "0"
+
+
 def _sanitize_window_name(name: str) -> str:
     """Replace tmux-unsafe characters in a window name with underscores."""
     return _WINDOW_NAME_SAFE.sub("_", name)

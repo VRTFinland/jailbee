@@ -136,6 +136,43 @@ def test_select_window_returns_false_on_missing():
     assert select_window(incus, "c1", "claude") is False
 
 
+def test_ever_attached_false_when_never_attached():
+    from jailbee.tmux import ever_attached
+
+    incus = MagicMock()
+    incus.exec.return_value = "\n"
+    assert ever_attached(incus, "c1") is False
+    args = " ".join(incus.exec.call_args.args[1])
+    assert "display-message" in args
+    assert "session_last_attached" in args
+    assert "autostart" in args
+
+
+def test_ever_attached_true_when_a_client_has_attached():
+    from jailbee.tmux import ever_attached
+
+    incus = MagicMock()
+    incus.exec.return_value = "1789666104\n"
+    assert ever_attached(incus, "c1") is True
+
+
+def test_ever_attached_false_on_zero_timestamp():
+    """Some tmux builds report `0` rather than an empty string."""
+    from jailbee.tmux import ever_attached
+
+    incus = MagicMock()
+    incus.exec.return_value = "0\n"
+    assert ever_attached(incus, "c1") is False
+
+
+def test_ever_attached_false_when_session_missing():
+    from jailbee.tmux import ever_attached
+
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("can't find session: autostart")
+    assert ever_attached(incus, "c1") is False
+
+
 def test_sanitize_window_name():
     from jailbee.tmux import _sanitize_window_name
 

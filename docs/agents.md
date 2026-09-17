@@ -92,11 +92,20 @@ is just an ordinary step, and the generated steps are appended after all of
 your own `on_start` steps regardless.
 
 Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
-on is chosen **by name** — the last *autostarting* agent (one with
-`autostart: true`), `claude` sorted last among them — not by tmux's own
-"most recently created" default. So the `agents` stage's position only
-controls *when* the agent's window comes up relative to the hand-off, not
-which window ends up focused once you're in.
+on depends on whether you have been in the session before:
+
+- **The first attach** picks a window **by name** — the last *autostarting*
+  agent (one with `autostart: true`), `claude` sorted last among them — not
+  by tmux's own "most recently created" default. So the `agents` stage's
+  position only controls *when* the agent's window comes up relative to the
+  hand-off, not which window ends up focused once you're in.
+- **Every attach after that** lands on the window you detached from. tmux
+  tracks that itself; jailbee simply stops overriding it once
+  `#{session_last_attached}` says a client has been there. Switch to `codex`,
+  detach, and the next `jailbee tmux` puts you back in `codex`.
+
+Restarting the container resets this — the tmux server dies with it, so the
+next attach is a first attach again and lands on the agent window.
 
 ## 2. Enabling a preset
 
