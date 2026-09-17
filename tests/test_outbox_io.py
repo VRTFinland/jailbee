@@ -1,12 +1,15 @@
 """Tests for the bounded, text-only container outbox reader."""
 
 import base64
+import fcntl
 import hashlib
 import io
 import json
+import multiprocessing
 import os
 import stat
 import tarfile
+from multiprocessing.connection import Connection
 from pathlib import Path
 
 import pytest
@@ -155,6 +158,35 @@ def _journal_path(root: Path) -> Path:
     paths = [path for path in root.rglob("*.json") if "archive" not in path.parts]
     assert len(paths) == 1
     return paths[0]
+
+
+def _probe_exclusive_lock(path: str, connection: Connection) -> None:
+    descriptor = os.open(path, os.O_RDWR)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            connection.send(False)
+        else:
+            connection.send(True)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+        connection.close()
+
+
+def _other_process_can_lock(path: Path) -> bool:
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(target=_probe_exclusive_lock, args=(str(path), send))
+    process.start()
+    send.close()
+    assert receive.poll(5), "lock probe process did not report"
+    result = receive.recv()
+    process.join(5)
+    assert process.exitcode == 0
+    receive.close()
+    return result
 
 
 def test_proposal_digest_length_prefixes_exact_manifest_and_referenced_bodies():
@@ -347,6 +379,40 @@ def test_journal_rejects_indices_and_illegal_transitions(tmp_path):
     assert store.load(key) == applied
 
 
+def test_journal_lock_serializes_other_process_and_is_reentrant(tmp_path):
+    key = journal_key(_identity(), "001.json")
+    store = JournalStore(tmp_path)
+    store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
+
+    with store.lock(key):
+        (lock_path,) = tmp_path.rglob("*.lock")
+        assert not _other_process_can_lock(lock_path)
+        store.mark_prepared(key, 0, repo="acme/app")
+        store.mark_applied(
+            key,
+            0,
+            repo="acme/app",
+            url="https://github.com/acme/app/issues/9",
+            issue=9,
+        )
+
+    assert _other_process_can_lock(lock_path)
+    loaded = store.load(key)
+    assert loaded is not None
+    assert loaded.actions[0].state == "applied"
+
+
+def test_transition_uses_the_public_journal_lock(tmp_path, mocker):
+    key = journal_key(_identity(), "001.json")
+    store = JournalStore(tmp_path)
+    store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
+    lock = mocker.spy(store, "lock")
+
+    store.mark_prepared(key, 0, repo="acme/app")
+
+    lock.assert_called_once_with(key)
+
+
 def test_leftover_prepared_loads_as_uncertain_without_rewriting(tmp_path, mocker):
     key = journal_key(_identity(), "001.json")
     store = JournalStore(tmp_path)
@@ -383,24 +449,67 @@ def test_uncertain_actions_can_be_resolved_as_applied_or_retried(tmp_path):
     assert [action.index for action in retried.actions] == [0]
 
 
-def test_mark_uncertain_bounds_persisted_diagnostics(tmp_path):
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Authorization: Bearer bearer-super-secret",
+        "failed at https://user:url-secret@github.com/acme/app",
+        "gh: arbitrary sensitive stderr with request={private payload}",
+        "token=github_pat_super_secret\nfull stderr and payload follow",
+    ],
+)
+def test_mark_uncertain_persists_only_whitelisted_diagnostics(tmp_path, detail):
     key = journal_key(_identity(), "001.json")
     store = JournalStore(tmp_path)
     store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
     store.mark_prepared(key, 0, repo="acme/app")
-    token = "github_pat_super_secret"
 
     journal = store.mark_uncertain(
         key,
         0,
         repo="acme/app",
-        detail=f"transport failed token={token}\nfull stderr and payload follow",
+        detail=detail,
     )
 
     persisted = _journal_path(tmp_path).read_text()
-    assert token not in persisted
-    assert "full stderr" not in persisted
-    assert journal.actions[0].detail is not None
+    assert detail not in persisted
+    assert "super-secret" not in persisted
+    assert "url-secret" not in persisted
+    assert "private payload" not in persisted
+    assert journal.actions[0].detail == "GitHub mutation outcome is uncertain"
+
+
+def test_mark_uncertain_preserves_a_whitelisted_safe_summary(tmp_path):
+    key = journal_key(_identity(), "001.json")
+    store = JournalStore(tmp_path)
+    store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
+    store.mark_prepared(key, 0, repo="acme/app")
+
+    journal = store.mark_uncertain(
+        key,
+        0,
+        repo="acme/app",
+        detail="GitHub mutation transport failed after dispatch",
+    )
+
+    assert journal.actions[0].detail == "GitHub mutation transport failed after dispatch"
+
+
+def test_journal_load_rejects_an_untrusted_uncertain_detail(tmp_path):
+    key = journal_key(_identity(), "001.json")
+    store = JournalStore(tmp_path)
+    store.create(key, proposal_digest("001.json", "{}", {}), action_count=1)
+    store.mark_prepared(key, 0, repo="acme/app")
+    path = _journal_path(tmp_path)
+    data = json.loads(path.read_text())
+    data["actions"][0].update(
+        state="uncertain",
+        detail="Authorization: Bearer journal-secret",
+    )
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(JournalError, match="detail"):
+        store.load(key)
 
 
 def test_archive_moves_settled_journal_without_overwriting_history(tmp_path, mocker):

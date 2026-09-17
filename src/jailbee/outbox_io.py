@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import io
 import json
@@ -11,10 +12,12 @@ import re
 import tarfile
 import tempfile
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TypeGuard
+from threading import local
+from typing import Iterator, Literal, TypeGuard
 
 from jailbee.db import state_dir
 from jailbee.incus import Incus, IncusError
@@ -76,11 +79,17 @@ _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _ZERO_CREATED_AT_PREFIX = "0001-01-01T00:00:00"
 _RECOVERED_DETAIL = "a previous run prepared this action; its outcome is uncertain"
 _MAX_DETAIL_LENGTH = 240
-_SECRET_RE = re.compile(
-    r"(?i)(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+|"
-    r"\b(?:token|authorization|password|secret)\s*(?:=|:)\s*\S+"
+_DEFAULT_UNCERTAIN_DETAIL = "GitHub mutation outcome is uncertain"
+_SAFE_UNCERTAIN_DETAILS = frozenset(
+    {
+        _DEFAULT_UNCERTAIN_DETAIL,
+        "GitHub mutation was interrupted after dispatch",
+        "GitHub mutation transport failed after dispatch",
+        "GitHub mutation succeeded but returned an unreadable response",
+        "GitHub mutation returned an unusable response",
+    }
 )
-_DIAGNOSTIC_TAIL_RE = re.compile(r"(?i)\b(?:request\s+body|payload|stderr)\b")
+_SAFE_STORED_DETAILS = _SAFE_UNCERTAIN_DETAILS | {_RECOVERED_DETAIL}
 
 
 def _hash_parts(parts: tuple[str, ...]) -> str:
@@ -136,12 +145,7 @@ def _exact_fields(value: dict[str, object], expected: set[str], context: str) ->
 
 
 def _safe_detail(detail: str) -> str:
-    first_line = detail.splitlines()[0].strip() if detail.splitlines() else ""
-    first_line = _DIAGNOSTIC_TAIL_RE.split(first_line, maxsplit=1)[0].rstrip(" :-")
-    first_line = _SECRET_RE.sub("[redacted]", first_line)
-    if not first_line:
-        return "GitHub mutation outcome is uncertain"
-    return first_line[:_MAX_DETAIL_LENGTH]
+    return detail if detail in _SAFE_UNCERTAIN_DETAILS else _DEFAULT_UNCERTAIN_DETAIL
 
 
 class JournalStore:
@@ -149,6 +153,7 @@ class JournalStore:
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root if root is not None else state_dir() / "issue-outbox"
+        self._lock_state = local()
 
     @staticmethod
     def _container_directory(identity: ContainerIdentity) -> str:
@@ -166,6 +171,46 @@ class JournalStore:
             / self._container_directory(key.identity)
             / self._manifest_filename(key.manifest_name)
         )
+
+    def _lock_path(self, key: JournalKey) -> Path:
+        journal_path = self._path(key)
+        return journal_path.with_name(f"{journal_path.name}.lock")
+
+    def _held_lock_paths(self) -> set[Path]:
+        held = getattr(self._lock_state, "paths", None)
+        if held is None:
+            held = set()
+            self._lock_state.paths = held
+        return held
+
+    @contextmanager
+    def lock(self, key: JournalKey) -> Iterator[None]:
+        """Serialize one journal, including an optional remote mutation window."""
+        path = self._lock_path(key)
+        held = self._held_lock_paths()
+        if path in held:
+            yield
+            return
+        descriptor: int | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+            os.chmod(path, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError as exc:
+            if descriptor is not None:
+                os.close(descriptor)
+            raise JournalError(f"could not lock journal for {key.manifest_name}") from exc
+        assert descriptor is not None
+        held.add(path)
+        try:
+            yield
+        finally:
+            held.remove(path)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     @staticmethod
     def _fsync_directory(directory: Path) -> None:
@@ -264,8 +309,10 @@ class JournalStore:
             raise JournalError("invalid prepared journal action")
         if state == "applied" and (url is None or detail is not None):
             raise JournalError("invalid applied journal action")
-        if state == "uncertain" and (url is not None or issue is not None or detail is None):
-            raise JournalError("invalid uncertain journal action")
+        if state == "uncertain" and (
+            url is not None or issue is not None or detail not in _SAFE_STORED_DETAILS
+        ):
+            raise JournalError("invalid uncertain journal action detail")
         return JournalAction(
             index=index,
             state=state,
@@ -348,25 +395,26 @@ class JournalStore:
 
     def create(self, key: JournalKey, digest: str, action_count: int) -> IssueJournal:
         """Create an empty journal or return the identical existing one."""
-        digest = self._validate_digest(digest)
-        if type(action_count) is not int or action_count < 0:
-            raise JournalError("invalid journal action_count")
-        existing = self._load_raw(key)
-        if existing is not None:
-            if existing.digest != digest:
-                raise JournalError("existing journal digest does not match this proposal")
-            if existing.action_count != action_count:
-                raise JournalError("existing journal action_count does not match this proposal")
-            return self._recover_prepared(existing)
-        journal = IssueJournal(
-            identity=key.identity,
-            manifest_name=key.manifest_name,
-            digest=digest,
-            action_count=action_count,
-            actions=(),
-        )
-        self._write(key, journal)
-        return journal
+        with self.lock(key):
+            digest = self._validate_digest(digest)
+            if type(action_count) is not int or action_count < 0:
+                raise JournalError("invalid journal action_count")
+            existing = self._load_raw(key)
+            if existing is not None:
+                if existing.digest != digest:
+                    raise JournalError("existing journal digest does not match this proposal")
+                if existing.action_count != action_count:
+                    raise JournalError("existing journal action_count does not match this proposal")
+                return self._recover_prepared(existing)
+            journal = IssueJournal(
+                identity=key.identity,
+                manifest_name=key.manifest_name,
+                digest=digest,
+                action_count=action_count,
+                actions=(),
+            )
+            self._write(key, journal)
+            return journal
 
     def _required_raw(self, key: JournalKey) -> IssueJournal:
         journal = self._load_raw(key)
@@ -393,19 +441,20 @@ class JournalStore:
         return replace(journal, actions=tuple(sorted(actions, key=lambda item: item.index)))
 
     def mark_prepared(self, key: JournalKey, index: int, *, repo: str) -> IssueJournal:
-        journal = self._required_raw(key)
-        self._checked_index(journal, index)
-        if not repo:
-            raise JournalError("journal action repo must be non-empty")
-        if self._action_at(journal, index) is not None:
-            raise JournalError("illegal journal transition to prepared")
-        updated = self._with_action(
-            journal,
-            JournalAction(index=index, state="prepared", repo=repo),
-            index,
-        )
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_raw(key)
+            self._checked_index(journal, index)
+            if not repo:
+                raise JournalError("journal action repo must be non-empty")
+            if self._action_at(journal, index) is not None:
+                raise JournalError("illegal journal transition to prepared")
+            updated = self._with_action(
+                journal,
+                JournalAction(index=index, state="prepared", repo=repo),
+                index,
+            )
+            self._write(key, updated)
+            return updated
 
     def mark_applied(
         self,
@@ -416,28 +465,29 @@ class JournalStore:
         url: str,
         issue: int | None,
     ) -> IssueJournal:
-        journal = self._required_raw(key)
-        self._checked_index(journal, index)
-        current = self._action_at(journal, index)
-        if current is None or current.state != "prepared":
-            raise JournalError("illegal journal transition to applied")
-        if current.repo != repo:
-            raise JournalError("journal action repo does not match prepared state")
-        action = JournalAction(index=index, state="applied", repo=repo, url=url, issue=issue)
-        self._parse_action(
-            {
-                "index": action.index,
-                "state": action.state,
-                "repo": action.repo,
-                "url": action.url,
-                "issue": action.issue,
-                "detail": action.detail,
-            },
-            action_count=journal.action_count,
-        )
-        updated = self._with_action(journal, action, index)
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_raw(key)
+            self._checked_index(journal, index)
+            current = self._action_at(journal, index)
+            if current is None or current.state != "prepared":
+                raise JournalError("illegal journal transition to applied")
+            if current.repo != repo:
+                raise JournalError("journal action repo does not match prepared state")
+            action = JournalAction(index=index, state="applied", repo=repo, url=url, issue=issue)
+            self._parse_action(
+                {
+                    "index": action.index,
+                    "state": action.state,
+                    "repo": action.repo,
+                    "url": action.url,
+                    "issue": action.issue,
+                    "detail": action.detail,
+                },
+                action_count=journal.action_count,
+            )
+            updated = self._with_action(journal, action, index)
+            self._write(key, updated)
+            return updated
 
     def mark_uncertain(
         self,
@@ -447,35 +497,37 @@ class JournalStore:
         repo: str,
         detail: str,
     ) -> IssueJournal:
-        journal = self._required_raw(key)
-        self._checked_index(journal, index)
-        current = self._action_at(journal, index)
-        if current is None or current.state != "prepared":
-            raise JournalError("illegal journal transition to uncertain")
-        if current.repo != repo:
-            raise JournalError("journal action repo does not match prepared state")
-        updated = self._with_action(
-            journal,
-            JournalAction(
-                index=index,
-                state="uncertain",
-                repo=repo,
-                detail=_safe_detail(detail),
-            ),
-            index,
-        )
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_raw(key)
+            self._checked_index(journal, index)
+            current = self._action_at(journal, index)
+            if current is None or current.state != "prepared":
+                raise JournalError("illegal journal transition to uncertain")
+            if current.repo != repo:
+                raise JournalError("journal action repo does not match prepared state")
+            updated = self._with_action(
+                journal,
+                JournalAction(
+                    index=index,
+                    state="uncertain",
+                    repo=repo,
+                    detail=_safe_detail(detail),
+                ),
+                index,
+            )
+            self._write(key, updated)
+            return updated
 
     def clear_prepared(self, key: JournalKey, index: int) -> IssueJournal:
-        journal = self._required_raw(key)
-        self._checked_index(journal, index)
-        current = self._action_at(journal, index)
-        if current is None or current.state != "prepared":
-            raise JournalError("illegal journal transition while clearing prepared action")
-        updated = self._with_action(journal, None, index)
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_raw(key)
+            self._checked_index(journal, index)
+            current = self._action_at(journal, index)
+            if current is None or current.state != "prepared":
+                raise JournalError("illegal journal transition while clearing prepared action")
+            updated = self._with_action(journal, None, index)
+            self._write(key, updated)
+            return updated
 
     def _required_uncertain(self, key: JournalKey, index: int) -> IssueJournal:
         raw = self._required_raw(key)
@@ -494,71 +546,74 @@ class JournalStore:
         url: str,
         issue: int | None,
     ) -> IssueJournal:
-        journal = self._required_uncertain(key, index)
-        current = self._action_at(journal, index)
-        assert current is not None
-        action = JournalAction(
-            index=index,
-            state="applied",
-            repo=current.repo,
-            url=url,
-            issue=issue,
-        )
-        self._parse_action(
-            {
-                "index": action.index,
-                "state": action.state,
-                "repo": action.repo,
-                "url": action.url,
-                "issue": action.issue,
-                "detail": action.detail,
-            },
-            action_count=journal.action_count,
-        )
-        updated = self._with_action(journal, action, index)
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_uncertain(key, index)
+            current = self._action_at(journal, index)
+            assert current is not None
+            action = JournalAction(
+                index=index,
+                state="applied",
+                repo=current.repo,
+                url=url,
+                issue=issue,
+            )
+            self._parse_action(
+                {
+                    "index": action.index,
+                    "state": action.state,
+                    "repo": action.repo,
+                    "url": action.url,
+                    "issue": action.issue,
+                    "detail": action.detail,
+                },
+                action_count=journal.action_count,
+            )
+            updated = self._with_action(journal, action, index)
+            self._write(key, updated)
+            return updated
 
     def resolve_retry(self, key: JournalKey, index: int) -> IssueJournal:
-        journal = self._required_uncertain(key, index)
-        updated = self._with_action(journal, None, index)
-        self._write(key, updated)
-        return updated
+        with self.lock(key):
+            journal = self._required_uncertain(key, index)
+            updated = self._with_action(journal, None, index)
+            self._write(key, updated)
+            return updated
 
     def archive(self, key: JournalKey) -> Path:
         """Move a journal with no unknown outcomes into immutable history."""
-        journal = self._required_raw(key)
-        if any(action.state in ("prepared", "uncertain") for action in journal.actions):
-            raise JournalError("cannot archive a journal containing uncertain progress")
-        source = self._path(key)
-        archive_dir = source.parent / "archive"
-        encoded_name = self._manifest_filename(key.manifest_name).removesuffix(".json")
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-        stem = f"{encoded_name}.{journal.digest}.{timestamp}"
-        destination: Path | None = None
-        moved = False
-        try:
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            descriptor, reserved = tempfile.mkstemp(
-                dir=archive_dir,
-                prefix=f"{stem}.",
-                suffix=".json",
-            )
-            os.close(descriptor)
-            destination = Path(reserved)
-            os.replace(source, destination)
-            moved = True
-            self._fsync_directory(archive_dir)
-            self._fsync_directory(source.parent)
-        except OSError as exc:
-            if destination is not None and not moved:
-                try:
-                    destination.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            raise JournalError(f"could not archive journal for {key.manifest_name}") from exc
-        assert destination is not None
-        return destination
+        with self.lock(key):
+            journal = self._required_raw(key)
+            if any(action.state in ("prepared", "uncertain") for action in journal.actions):
+                raise JournalError("cannot archive a journal containing uncertain progress")
+            source = self._path(key)
+            archive_dir = source.parent / "archive"
+            encoded_name = self._manifest_filename(key.manifest_name).removesuffix(".json")
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+            stem = f"{encoded_name}.{journal.digest}.{timestamp}"
+            destination: Path | None = None
+            moved = False
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                descriptor, reserved = tempfile.mkstemp(
+                    dir=archive_dir,
+                    prefix=f"{stem}.",
+                    suffix=".json",
+                )
+                os.close(descriptor)
+                destination = Path(reserved)
+                os.replace(source, destination)
+                moved = True
+                self._fsync_directory(archive_dir)
+                self._fsync_directory(source.parent)
+            except OSError as exc:
+                if destination is not None and not moved:
+                    try:
+                        destination.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise JournalError(f"could not archive journal for {key.manifest_name}") from exc
+            assert destination is not None
+            return destination
 
 
 def read_text_outbox(
