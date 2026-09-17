@@ -180,9 +180,7 @@ def _pick_outbox_manifest(names: list[str]) -> str | None:
     return str(result)
 
 
-def _confirm_foreign_description(
-    scope: PrScope, source: OutboxPrText, for_pr: int | None
-) -> bool:
+def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: int | None) -> bool:
     """Ask before an outbox description replaces the body of a foreign PR.
 
     "Foreign" is `is_foreign_pr_head`: a PR jailbee did not open, which is as

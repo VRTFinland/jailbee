@@ -529,7 +529,9 @@ def test_null_pr_manifest_resolves_without_a_pr_when_none_is_bound(mocker, make_
     incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.branch": "feat/foo"})
     find = mocker.patch("jailbee.pr.find_pr_for_branch")
 
-    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
+    assert (
+        resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
+    )
     # The branch lookup is not a binding: adopting a PR is the user's decision.
     find.assert_not_called()
 
@@ -560,7 +562,9 @@ def test_null_pr_manifest_stays_unresolved_when_two_prs_are_bound(mocker, make_c
         labels={"user.jailbee.pr": "1234", "user.jailbee.stacked_pr": "1300"},
     )
 
-    assert resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
+    assert (
+        resolve_target(make_cfg(tmp_path), incus, "c", _null_pr_manifest(), force=False).pr is None
+    )
 
 
 def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():

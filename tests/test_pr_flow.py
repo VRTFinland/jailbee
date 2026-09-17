@@ -811,9 +811,7 @@ def test_an_explicit_title_still_applies_to_a_foreign_pr(tmp_path, mocker):
     """The outbox gate above must not swallow what the user typed themselves."""
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
-    edit = _update_edit(
-        tmp_path, mocker, title="typed", use_outbox=True, foreign_head=True
-    )
+    edit = _update_edit(tmp_path, mocker, title="typed", use_outbox=True, foreign_head=True)
 
     assert edit is not None and (edit.title, edit.body) == ("typed", None)
     pending.assert_not_called()
