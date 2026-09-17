@@ -8,6 +8,7 @@ with the names changed.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -91,10 +92,39 @@ class FakeAdapter:
         return None
 
 
+class NoLiveSwitchAdapter(FakeAdapter):
+    """An agent whose running session cannot survive a switch.
+
+    Phase 3's Codex adapter is the real one: its credential is a symlinked
+    `auth.json` a running process holds open. Nothing in the tree sets
+    `live_switch = False` yet, so without this fake the engine's only new
+    logic — the `blockers` refusal in `park` and `switch` — never executes.
+    """
+
+    live_switch = False
+
+    def __init__(
+        self, home: Path, holder: Path | None = None, *, blocking: Sequence[str] = ("repo-x",)
+    ) -> None:
+        super().__init__(home, holder)
+        self._blocking = list(blocking)
+        self.asked: list[tuple[Any, tuple[str, ...]]] = []
+
+    def blockers(self, cfg: Any, incus: Any, containers: Any) -> list[str]:
+        self.asked.append((incus, tuple(containers)))
+        return list(self._blocking)
+
+
 def test_the_fake_adapter_satisfies_the_protocol(tmp_path: Path) -> None:
     adapter: base.AccountAdapter = FakeAdapter(tmp_path)
     assert isinstance(adapter, base.AccountAdapter)
     assert adapter.name == "fake"
+
+
+def test_the_no_live_switch_adapter_satisfies_the_protocol(tmp_path: Path) -> None:
+    adapter: base.AccountAdapter = NoLiveSwitchAdapter(tmp_path)
+    assert isinstance(adapter, base.AccountAdapter)
+    assert adapter.live_switch is False
 
 
 def test_registry_returns_a_registered_adapter(tmp_path: Path) -> None:
@@ -177,6 +207,139 @@ def test_switch_refuses_to_activate_the_live_slot(fake_env: Path, mocker) -> Non
 
     with pytest.raises(models.PoolError, match="already the live account"):
         engine.switch(adapter, cfg, gcfg, "me@example.com", authoritative={"repo"})
+
+
+def test_park_refuses_before_writing_when_the_agent_is_running(fake_env: Path, mocker) -> None:
+    """The refusal's contract is *before any write*, not merely "raises".
+
+    Reordering the guard below `_park_locked` would still raise, and the
+    login would already be in the store with the holder emptied — the exact
+    state the refusal exists to prevent. So the assertions that matter are
+    the ones about the filesystem.
+    """
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = NoLiveSwitchAdapter(home)
+    live = home / adapter.credential_file
+    _write(live, "me@example.com", "r1")
+    before = live.read_text(encoding="utf-8")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    incus = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    with pytest.raises(models.PoolError, match="fake is running in: repo-x"):
+        engine.park(
+            adapter,
+            cfg,
+            gcfg,
+            authoritative={"repo"},
+            incus=incus,
+            holder_users=["repo-x", "repo-y"],
+        )
+
+    assert live.read_text(encoding="utf-8") == before, "the live credential must not move"
+    assert not engine.store_dir(adapter).exists(), "nothing may reach the store"
+    assert adapter.asked == [(incus, ("repo-x", "repo-y"))], (
+        "the adapter is asked once, about the holder's containers"
+    )
+
+
+def test_switch_refuses_before_writing_when_the_agent_is_running(fake_env: Path, mocker) -> None:
+    """As in `park`: the store and the live credential must be untouched."""
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = NoLiveSwitchAdapter(home)
+    live = home / adapter.credential_file
+    _write(live, "live@example.com", "r-live")
+    store = engine.store_dir(adapter)
+    parked = store / "parked@example.com.json"
+    _write(parked, "parked@example.com", "r-parked")
+    live_before = live.read_text(encoding="utf-8")
+    parked_before = parked.read_text(encoding="utf-8")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    incus = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    with pytest.raises(models.PoolError, match="fake is running in: repo-x"):
+        engine.switch(
+            adapter,
+            cfg,
+            gcfg,
+            "parked@example.com",
+            authoritative={"repo"},
+            incus=incus,
+            holder_users=["repo-x"],
+        )
+
+    assert live.read_text(encoding="utf-8") == live_before, "the live credential must not move"
+    assert parked.read_text(encoding="utf-8") == parked_before, "the target must not move"
+    assert [p.name for p in store.iterdir()] == ["parked@example.com.json"], (
+        "nothing staged, nothing parked"
+    )
+
+
+def test_switch_proceeds_when_nothing_is_running(fake_env: Path, mocker) -> None:
+    """`live_switch = False` refuses only while `blockers` names something.
+
+    Without this the refusal could be an unconditional one and both tests
+    above would still pass.
+    """
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = NoLiveSwitchAdapter(home, blocking=())
+    _write(home / adapter.credential_file, "live@example.com", "r-live")
+    store = engine.store_dir(adapter)
+    _write(store / "parked@example.com.json", "parked@example.com", "r-parked")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    change = engine.switch(
+        adapter,
+        cfg,
+        gcfg,
+        "parked@example.com",
+        authoritative={"repo"},
+        incus=mocker.MagicMock(),
+    )
+
+    assert change.activated == "parked@example.com"
+    assert change.parked_as == "live@example.com"
+
+
+@pytest.mark.parametrize("command", ["park", "switch"])
+def test_the_running_agent_check_cannot_be_skipped_without_an_incus(
+    fake_env: Path, mocker, command: str
+) -> None:
+    """A missing `incus` raises, and keeps raising under `python -O`.
+
+    The guard used to be a bare `assert`, which `-O` strips — leaving
+    `adapter.blockers(cfg, None, ...)` called on the one adapter kind the
+    guard exists for. `TypeError` is a real exception and cannot be
+    optimised away; it is not `PoolError` because no user action causes it.
+    """
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = NoLiveSwitchAdapter(home)
+    _write(home / adapter.credential_file, "live@example.com", "r-live")
+    _write(engine.store_dir(adapter) / "parked@example.com.json", "parked@example.com", "r-parked")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    with pytest.raises(TypeError, match="live_switch=False"):
+        if command == "park":
+            engine.park(adapter, cfg, gcfg, authoritative={"repo"})
+        else:
+            engine.switch(adapter, cfg, gcfg, "parked@example.com", authoritative={"repo"})
+
+    assert adapter.asked == [], "the adapter must not be asked with a None incus"
 
 
 def test_the_store_is_named_after_the_agent(fake_env: Path) -> None:

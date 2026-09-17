@@ -664,6 +664,30 @@ def _park_locked(
     return dest
 
 
+def _required_incus(adapter: AccountAdapter, incus: Incus | None) -> Incus:
+    """`incus`, for the one code path that cannot do without it.
+
+    `park` and `switch` take `incus` optionally because an adapter with
+    `live_switch = True` — every adapter today — never consults it. An adapter
+    that *cannot* survive a live switch does, and a caller reaching that branch
+    without one is a jailbee bug, not a user error.
+
+    Not an `assert`: `python -O` strips those, and the stripped version would
+    call `adapter.blockers(cfg, None, ...)` — handing the one adapter kind this
+    guard exists for a `None` where it expects a daemon connection. A refusal
+    that silently stops refusing is worse than no refusal at all, so this
+    raises unconditionally. `TypeError` rather than `PoolError` on purpose:
+    `PoolError` is rendered to the user as something they can act on, and
+    nothing a user does can cause this.
+    """
+    if incus is None:
+        raise TypeError(
+            f"the `{adapter.name}` adapter has live_switch=False, so park/switch must be "
+            "given an `incus` to check its holder's containers with."
+        )
+    return incus
+
+
 def park(
     adapter: AccountAdapter,
     cfg: Config,
@@ -700,8 +724,7 @@ def park(
         # does nothing, and refusing a no-op would be noise. Everything below
         # this line writes.
         if not adapter.live_switch:
-            assert incus is not None  # see `switch`
-            blocking = adapter.blockers(cfg, incus, holder_users)
+            blocking = adapter.blockers(cfg, _required_incus(adapter, incus), holder_users)
             if blocking:
                 raise PoolError(
                     f"{adapter.name} is running in: {', '.join(blocking)}. "
@@ -771,8 +794,7 @@ def switch(
         # switch, and such a caller has an `Incus` already — it is what named
         # the holder's containers. An adapter with `live_switch = True` never
         # gets here, which is why the parameter can default to None at all.
-        assert incus is not None
-        blocking = adapter.blockers(cfg, incus, holder_users)
+        blocking = adapter.blockers(cfg, _required_incus(adapter, incus), holder_users)
         if blocking:
             raise PoolError(
                 f"{adapter.name} is running in: {', '.join(blocking)}. "
