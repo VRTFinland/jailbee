@@ -582,6 +582,22 @@ def test_create_path_uses_the_outbox_and_never_runs_claude(tmp_path, mocker):
     assert plan.outbox_source is not None and plan.outbox_source.manifest == "002-d.json"
 
 
+def test_create_outbox_lookup_forwards_the_scope_and_source_branch(tmp_path, mocker):
+    scope = _sub_scope(tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+
+    _plan(
+        tmp_path,
+        mocker,
+        scope=scope,
+        source_branch="sub-head",
+        use_outbox=True,
+    )
+
+    assert pending.call_args.kwargs["scope"] == scope
+    assert pending.call_args.kwargs["source_branch"] == "sub-head"
+
+
 def test_create_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     """`jailbee submodule pr` shares this function and must be unaffected."""
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text")
@@ -712,7 +728,7 @@ def test_record_outbox_consumption_warns_but_does_not_raise(tmp_path, mocker):
 # ---- the update path's outbox description ---------------------------------
 
 
-def _update_edit(tmp_path, mocker, **kwargs):
+def _update_edit(tmp_path, mocker, *, scope=None, **kwargs):
     """`resolve_pr_description_update` with the update path's usual arguments."""
     call = {
         "branch": "feat/foo",
@@ -724,7 +740,11 @@ def _update_edit(tmp_path, mocker, **kwargs):
     }
     call.update(kwargs)
     return pr_flow.resolve_pr_description_update(
-        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path), **call
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        scope if scope is not None else _super_scope(tmp_path),
+        **call,
     )
 
 
@@ -741,6 +761,23 @@ def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
     assert edit.source is not None and edit.source.manifest == "002-d.json"
     generate.assert_not_called()
     confirm.assert_not_called()  # the answer already exists; do not ask
+
+
+def test_update_outbox_lookup_forwards_the_scope_and_source_branch(tmp_path, mocker):
+    scope = _sub_scope(tmp_path)
+    pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
+    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+
+    _update_edit(
+        tmp_path,
+        mocker,
+        scope=scope,
+        branch="sub-head",
+        use_outbox=True,
+    )
+
+    assert pending.call_args.kwargs["scope"] == scope
+    assert pending.call_args.kwargs["source_branch"] == "sub-head"
 
 
 def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):

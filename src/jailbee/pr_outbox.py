@@ -1461,27 +1461,25 @@ def _eligible_for(manifest: Manifest, for_pr: int | None, *, numbered_only: bool
     return manifest.pr in (None, for_pr)
 
 
-def _outbox_branch(action: DescriptionAction, container_branch: str, name: str) -> str:
+def _outbox_branch(action: DescriptionAction, source_branch: str, name: str) -> str:
     """The head branch name to propose: `action.branch` if it is a valid ref.
 
     The container is untrusted input and this value reaches `git push`, the
     local-branch rename and `gh pr create --head`. The other two sources of a
     head name are already checked (`--as` exits 2, `pr_ai` falls back), so this
-    one is too — a rejected name falls back to the container's own branch
+    one is too — a rejected name falls back to the source branch
     rather than failing the run after the push, which the design forbids.
     """
     if not action.branch:
-        return container_branch
+        return source_branch
     if git.check_ref_format(action.branch):
         return action.branch
-    instead = (
-        f"publishing under {container_branch!r} instead" if container_branch else "ignoring it"
-    )
+    instead = f"publishing under {source_branch!r} instead" if source_branch else "ignoring it"
     warn(
         f"{name}: the proposed branch name {action.branch!r} is not a valid git "
         f"branch name; {instead}."
     )
-    return container_branch
+    return source_branch
 
 
 def pending_pr_text(
@@ -1489,6 +1487,8 @@ def pending_pr_text(
     incus: Incus,
     container: str,
     *,
+    scope: PrScope,
+    source_branch: str | None,
     uid: int | None,
     for_pr: int | None = None,
     numbered_only: bool = False,
@@ -1497,32 +1497,32 @@ def pending_pr_text(
     """The pending `description` action, as a `PrText`, or None.
 
     Best-effort: an unreadable outbox, a malformed manifest, or an ambiguity
-    with no `pick` never fails `jailbee pr` — it warns and returns None, and the
-    caller falls back to its normal path. `pick` is supplied only on a TTY; it
-    is handed every candidate manifest name and returns the one to use, or None
-    to use none of them. Off a TTY an ambiguity is refused with a warning
-    naming each candidate: `jailbee pr` must neither guess between two
-    descriptions nor die mid-flow after it has already pushed.
+    with no `pick` never fails the scoped PR command — it warns and returns
+    None, and the caller falls back to its normal path. `pick` is supplied only
+    on a TTY; it is handed every candidate manifest name and returns the one to
+    use, or None to use none of them. Off a TTY an ambiguity is refused with a
+    warning naming each candidate: the publishing command must neither guess
+    between two descriptions nor die mid-flow after it has already pushed.
 
     Two gates decide which manifests may contribute, and they are the two
     `resolve_target` runs first, in the same order:
 
     1. Repo lock — `manifest.repo` must be the GitHub slug of the host's own
-       upstream remote. This is the gate the design calls the costliest to
-       skip: without it a container could hand `jailbee pr` text written for
-       an unrelated repository. Failing it warns and skips.
+       configured remote. This is the gate the design calls the costliest to
+       skip: without it a container could hand the publishing command text
+       written for an unrelated repository. Failing it warns and skips.
     2. PR ownership — `for_pr` and `numbered_only`; see `_eligible_for`. A
        manifest for some other PR is skipped *silently*: a review container
        legitimately carries such manifests for `jailbee review apply`, and
-       warning about them on every `jailbee pr` run would be noise, not news.
+       warning about them on every scoped PR run would be noise, not news.
 
     `numbered_only` is the exception to that silence. It is set on a PR jailbee
     did not open, where it withholds a `pr: null` description the caller would
     otherwise have used — so the run *would* differ had the manifest named its
-    PR, and saying nothing would leave the user watching `jailbee pr` ignore a
-    description with no way to tell why. Each withheld manifest is named, with
-    the reason and nothing else: what to do about it is the offer's line, once
-    the PR is up.
+    PR, and saying nothing would leave the user watching the publishing command
+    ignore a description with no way to tell why. Each withheld manifest is
+    named, with the reason and nothing else: what to do about it is the offer's
+    line, once the PR is up.
     """
     try:
         outbox = read_outbox(incus, container, uid=uid)
@@ -1533,17 +1533,18 @@ def pending_pr_text(
         # Before the git round-trip below: the empty outbox is the common case.
         return None
 
-    slug = github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
+    slug = scope_slug(scope)
     if slug is None:
         warn(
             f"{container} has outbox manifests, but this repo has no GitHub remote "
-            f"(remote {cfg.upstream_remote!r} is not a GitHub URL) to check them "
+            f"(remote {scope.remote!r} is not a GitHub URL) to check them "
             "against; falling back to the usual PR text."
         )
         return None
 
     candidates: list[tuple[str, int, DescriptionAction]] = []
     withheld: list[str] = []
+    known_slugs: set[str] | None = None
     for name in outbox.manifest_names:
         try:
             manifest = parse_manifest(name, outbox.files[name], outbox.files)
@@ -1551,7 +1552,18 @@ def pending_pr_text(
             warn(f"Ignoring outbox manifest {name}: {e}")
             continue
         if manifest.repo != slug:
-            warn(f"Ignoring outbox manifest {name}: it targets {manifest.repo}, not {slug}.")
+            if known_slugs is None:
+                # Candidate discovery walks .gitmodules, so the common path —
+                # a manifest for the active repository — must never pay for it.
+                from jailbee.pr_flow import candidate_scopes
+
+                known_slugs = {
+                    candidate_slug
+                    for candidate_scope in candidate_scopes(cfg)
+                    if (candidate_slug := scope_slug(candidate_scope)) is not None
+                }
+            if manifest.repo not in known_slugs:
+                warn(f"Ignoring outbox manifest {name}: it targets {manifest.repo}, not {slug}.")
             continue
         described = [
             (name, index, action)
@@ -1586,7 +1598,7 @@ def pending_pr_text(
                 f"{container} has more than one pending PR description "
                 f"({', '.join(names)}); using none of them. Read them with "
                 f"`jailbee review show`, drop the stale one with `jailbee review "
-                f"drop`, or re-run on a terminal to choose."
+                f"drop`, or re-run `{scope.command}` on a terminal to choose."
             )
             return None
         chosen = pick(names)
@@ -1598,16 +1610,16 @@ def pending_pr_text(
             return None
 
     name, index, action = candidates[0]
-    # A description need not propose a branch name. The container's own branch
-    # is then the honest answer — it is what `jailbee pr` would publish under
+    # A description need not propose a branch name. The source branch is then
+    # the honest answer — it is what the scoped PR command would publish under
     # anyway, and `confirm_pr_branch_name` skips its prompt when the proposal
     # and the source branch agree.
-    container_branch = incus.config_get(container, "user.jailbee.branch") or ""
+    fallback_branch = source_branch or ""
     return OutboxPrText(
         text=PrText(
-            title=_description_title(action, container_branch or container),
+            title=_description_title(action, fallback_branch or container),
             body=action.body,
-            branch=_outbox_branch(action, container_branch, name),
+            branch=_outbox_branch(action, fallback_branch, name),
         ),
         manifest=name,
         index=index,

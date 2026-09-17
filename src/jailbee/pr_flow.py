@@ -329,6 +329,8 @@ def resolve_pr_text_and_head(
             cfg,
             incus,
             full,
+            scope=scope,
+            source_branch=source_branch,
             uid=cfg.container_user.uid,
             pick=_pick_outbox_manifest if _can_prompt() else None,
         )
@@ -511,6 +513,8 @@ def resolve_pr_description_update(
                 cfg,
                 incus,
                 full,
+                scope=scope,
+                source_branch=branch,
                 uid=cfg.container_user.uid,
                 for_pr=for_pr,
                 numbered_only=foreign_head,

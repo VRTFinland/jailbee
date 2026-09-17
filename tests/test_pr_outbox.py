@@ -1724,9 +1724,24 @@ def _host_repo(mocker, url="git@github.com:acme/widgets.git"):
     return mocker.patch("jailbee.git.get_remote_url", return_value=url)
 
 
+def _pending_pr_text(cfg, incus, *, scope=None, source_branch="feat/foo", **kwargs):
+    """Call the pending-description lookup with the publishing scope inputs."""
+    from jailbee.pr_outbox import pending_pr_text
+
+    return pending_pr_text(
+        cfg,
+        incus,
+        "c",
+        scope=scope if scope is not None else PrScope.for_repo(cfg),
+        source_branch=source_branch,
+        uid=1000,
+        **kwargs,
+    )
+
+
 def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, tmp_path):
     from jailbee.pr_ai import PrText
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch("jailbee.git.check_ref_format", return_value=True)
@@ -1735,7 +1750,7 @@ def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, t
     )
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"002-d.json": text}))
 
-    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000)
+    found = _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock())
 
     assert found is not None
     assert found.text == PrText(title="feat: x", body="Body.", branch="feat/x")
@@ -1744,7 +1759,7 @@ def test_pending_pr_text_returns_the_description_as_a_prtext(mocker, make_cfg, t
 
 
 def test_pending_pr_text_is_none_without_a_description(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch(
@@ -1752,11 +1767,11 @@ def test_pending_pr_text_is_none_without_a_description(mocker, make_cfg, tmp_pat
         return_value=Outbox(files={"001-x.json": _manifest_text()}),
     )
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
 
 
 def test_pending_pr_text_skips_an_already_consumed_description(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch(
@@ -1769,11 +1784,11 @@ def test_pending_pr_text_skips_an_already_consumed_description(mocker, make_cfg,
         ),
     )
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
 
 
 def test_pending_pr_text_asks_which_manifest_when_two_compete(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     a = _description_manifest(actions=[{"type": "description", "body": "A"}])
@@ -1783,8 +1798,8 @@ def test_pending_pr_text_asks_which_manifest_when_two_compete(mocker, make_cfg, 
         return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
     )
 
-    found = pending_pr_text(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, pick=lambda names: "002-b.json"
+    found = _pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), pick=lambda names: "002-b.json"
     )
 
     assert found is not None and found.manifest == "002-b.json"
@@ -1792,7 +1807,7 @@ def test_pending_pr_text_asks_which_manifest_when_two_compete(mocker, make_cfg, 
 
 
 def test_pending_pr_text_declines_to_guess_without_a_picker(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     a = _description_manifest(actions=[{"type": "description", "body": "A"}])
@@ -1804,14 +1819,14 @@ def test_pending_pr_text_declines_to_guess_without_a_picker(mocker, make_cfg, tm
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
     # `pick=None` is the off-TTY case: warn, name both, and fall back.
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
     assert "001-a.json" in warn.call_args.args[0]
     assert "002-b.json" in warn.call_args.args[0]
 
 
 def test_pending_pr_text_returns_none_when_the_picker_cancels(mocker, make_cfg, tmp_path):
     """A cancelled picker means "run Claude after all", not "guess"."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     a = _description_manifest(actions=[{"type": "description", "body": "A"}])
@@ -1821,30 +1836,28 @@ def test_pending_pr_text_returns_none_when_the_picker_cancels(mocker, make_cfg, 
         return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
     )
 
-    found = pending_pr_text(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, pick=lambda names: None
-    )
+    found = _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), pick=lambda names: None)
 
     assert found is None
 
 
 def test_pending_pr_text_survives_an_unreadable_outbox(mocker, make_cfg, tmp_path):
     """`jailbee pr` must never die because the outbox could not be read."""
-    from jailbee.pr_outbox import OutboxReadError, pending_pr_text
+    from jailbee.pr_outbox import OutboxReadError
 
     mocker.patch(
         "jailbee.pr_outbox.read_outbox", side_effect=OutboxReadError("instance is not running")
     )
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
     assert "not running" in warn.call_args.args[0]
 
 
 def test_pending_pr_text_skips_a_malformed_manifest_and_uses_the_good_one(
     mocker, make_cfg, tmp_path
 ):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     good = _description_manifest(actions=[{"type": "description", "body": "Good."}])
@@ -1854,17 +1867,17 @@ def test_pending_pr_text_skips_a_malformed_manifest_and_uses_the_good_one(
     )
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000)
+    found = _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock())
 
     assert found is not None and found.manifest == "002-good.json"
     assert "001-bad.json" in warn.call_args.args[0]
 
 
-def test_pending_pr_text_falls_back_to_the_container_branch_and_first_body_line(
+def test_pending_pr_text_falls_back_to_the_source_branch_and_first_body_line(
     mocker, make_cfg, tmp_path
 ):
     """`title: null` / `branch: null` are filled in; `PrText` needs all three."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(
@@ -1872,14 +1885,209 @@ def test_pending_pr_text_falls_back_to_the_container_branch_and_first_body_line(
     )
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
     incus = mocker.MagicMock()
-    incus.config_get.return_value = "feat/foo"
 
-    found = pending_pr_text(make_cfg(tmp_path), incus, "c", uid=1000)
+    found = _pending_pr_text(make_cfg(tmp_path), incus)
 
     assert found is not None
     assert found.text.title == "Add a thing"
     assert found.text.branch == "feat/foo"
     assert found.text.body == "# Add a thing\n\nMore."
+
+
+def test_pending_pr_text_returns_a_matching_submodule_description(mocker, make_cfg, tmp_path):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    sub_scope = PrScope(
+        repo_root=tmp_path / "libs" / "foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+    mocker.patch(
+        "jailbee.git.get_remote_url",
+        side_effect=lambda root, remote: (
+            "git@github.com:acme/foo.git"
+            if (root, remote) == (sub_scope.repo_root, "upstream")
+            else "git@github.com:acme/widgets.git"
+        ),
+    )
+    text = _description_manifest(
+        repo="acme/foo",
+        actions=[{"type": "description", "title": "Sub title", "body": "Sub body"}],
+    )
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-sub.json": text}))
+
+    found = _pending_pr_text(cfg, mocker.MagicMock(), scope=sub_scope, source_branch="sub-head")
+
+    assert found is not None
+    assert found.text == PrText(title="Sub title", body="Sub body", branch="sub-head")
+    assert found.manifest == "001-sub.json"
+
+
+def test_pending_pr_text_silently_skips_a_superproject_manifest_in_submodule_scope(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    super_scope = PrScope.for_repo(cfg)
+    sub_scope = PrScope(
+        repo_root=tmp_path / "libs" / "foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+    urls = {
+        (super_scope.repo_root, super_scope.remote): "git@github.com:acme/widgets.git",
+        (sub_scope.repo_root, sub_scope.remote): "git@github.com:acme/foo.git",
+    }
+    mocker.patch("jailbee.git.get_remote_url", side_effect=lambda root, remote: urls[root, remote])
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[super_scope, sub_scope])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-super.json": _description_manifest()}),
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=sub_scope) is None
+    warn.assert_not_called()
+
+
+def test_pending_pr_text_silently_skips_a_submodule_manifest_in_superproject_scope(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    super_scope = PrScope.for_repo(cfg)
+    sub_scope = PrScope(
+        repo_root=tmp_path / "libs" / "foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+    urls = {
+        (super_scope.repo_root, super_scope.remote): "git@github.com:acme/widgets.git",
+        (sub_scope.repo_root, sub_scope.remote): "git@github.com:acme/foo.git",
+    }
+    mocker.patch("jailbee.git.get_remote_url", side_effect=lambda root, remote: urls[root, remote])
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[super_scope, sub_scope])
+    text = _description_manifest(repo="acme/foo")
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-sub.json": text}))
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=super_scope) is None
+    warn.assert_not_called()
+
+
+def test_pending_pr_text_warns_for_a_manifest_outside_every_candidate_scope(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    scope = PrScope.for_repo(cfg)
+    _host_repo(mocker)
+    candidates = mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[scope])
+    text = _description_manifest(repo="evil/other")
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-foreign.json": text})
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=scope) is None
+    candidates.assert_called_once_with(cfg)
+    assert "001-foreign.json" in warn.call_args.args[0]
+    assert "evil/other" in warn.call_args.args[0]
+
+
+def test_pending_pr_text_discovers_candidate_scopes_only_once_after_mismatches(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    scope = PrScope.for_repo(cfg)
+    _host_repo(mocker)
+    candidates = mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[scope])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(
+            files={
+                "001-foreign.json": _description_manifest(repo="evil/one"),
+                "002-foreign.json": _description_manifest(repo="evil/two"),
+            }
+        ),
+    )
+
+    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=scope) is None
+    candidates.assert_called_once_with(cfg)
+
+
+def test_pending_pr_text_matching_active_scope_does_not_discover_candidates(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    scope = PrScope.for_repo(cfg)
+    _host_repo(mocker)
+    candidates = mocker.patch("jailbee.pr_flow.candidate_scopes")
+    gitmodules_walk = mocker.patch("jailbee.submodules.host_submodule_paths")
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-super.json": _description_manifest()}),
+    )
+
+    found = _pending_pr_text(cfg, mocker.MagicMock(), scope=scope)
+
+    assert found is not None and found.manifest == "001-super.json"
+    candidates.assert_not_called()
+    gitmodules_walk.assert_not_called()
+
+
+def test_pending_pr_text_falls_back_to_source_branch_without_reading_container_config(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_ai import PrText
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    _host_repo(mocker)
+    text = _description_manifest(actions=[{"type": "description", "body": ""}])
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
+    incus = mocker.MagicMock()
+
+    found = _pending_pr_text(cfg, incus, source_branch="sub-head")
+
+    assert found is not None
+    assert found.text == PrText(title="sub-head", body="", branch="sub-head")
+    incus.config_get.assert_not_called()
+
+
+def test_pending_pr_text_ambiguity_names_the_scoped_publishing_command(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Outbox
+
+    cfg = make_cfg(tmp_path)
+    sub_scope = PrScope(
+        repo_root=tmp_path / "libs" / "foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+    mocker.patch("jailbee.git.get_remote_url", return_value="git@github.com:acme/foo.git")
+    a = _description_manifest(repo="acme/foo", actions=[{"type": "description", "body": "A"}])
+    b = _description_manifest(repo="acme/foo", actions=[{"type": "description", "body": "B"}])
+    mocker.patch(
+        "jailbee.pr_outbox.read_outbox",
+        return_value=Outbox(files={"001-a.json": a, "002-b.json": b}),
+    )
+    warn = mocker.patch("jailbee.pr_outbox.warn")
+
+    assert _pending_pr_text(cfg, mocker.MagicMock(), scope=sub_scope) is None
+    assert "jailbee submodule pr" in warn.call_args.args[0]
 
 
 # --- Gate 1: the repo lock ------------------------------------------------
@@ -1888,19 +2096,19 @@ def test_pending_pr_text_falls_back_to_the_container_branch_and_first_body_line(
 def test_pending_pr_text_skips_a_manifest_for_another_repo(mocker, make_cfg, tmp_path):
     """The gate the design calls the costliest to skip: a container must not
     hand `jailbee pr` a description written for an unrelated repository."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker, "https://github.com/acme/widgets.git")
     text = _description_manifest(repo="evil/other")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
     assert "evil/other" in warn.call_args.args[0]
 
 
 def test_pending_pr_text_refuses_when_the_host_has_no_github_remote(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker, "/srv/mirrors/widgets.git")
     mocker.patch(
@@ -1909,18 +2117,18 @@ def test_pending_pr_text_refuses_when_the_host_has_no_github_remote(mocker, make
     )
     warn = mocker.patch("jailbee.pr_outbox.warn")
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
     assert "GitHub remote" in warn.call_args.args[0]
 
 
 def test_pending_pr_text_does_not_ask_git_for_an_empty_outbox(mocker, make_cfg, tmp_path):
     """The empty outbox is the common case; it must not cost a git round-trip."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     remote = _host_repo(mocker)
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={}))
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
     remote.assert_not_called()
 
 
@@ -1935,43 +2143,41 @@ def test_pending_pr_text_skips_a_numbered_manifest_on_the_create_path(mocker, ma
     it was never meant to go and burn the action index, so `jailbee review
     apply` could never post it where it belongs.
     """
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(pr=1234, head_sha="abc1234")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
 
-    assert pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000) is None
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock()) is None
 
 
 def test_pending_pr_text_accepts_a_numbered_manifest_for_the_named_pr(mocker, make_cfg, tmp_path):
     """`for_pr` is the update path's gate: that PR's own description is fair game."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(pr=1234, head_sha="abc1234")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
 
-    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234)
+    found = _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234)
 
     assert found is not None and found.manifest == "001-d.json"
 
 
 def test_pending_pr_text_skips_a_manifest_for_a_different_pr(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(pr=999, head_sha="abc1234")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
 
-    assert (
-        pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234) is None
-    )
+    assert _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234) is None
 
 
 def test_pending_pr_text_accepts_a_null_pr_manifest_on_the_update_path(mocker, make_cfg, tmp_path):
     """The container may have written the description before the PR existed."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch(
@@ -1979,7 +2185,7 @@ def test_pending_pr_text_accepts_a_null_pr_manifest_on_the_update_path(mocker, m
         return_value=Outbox(files={"001-d.json": _description_manifest()}),
     )
 
-    found = pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234)
+    found = _pending_pr_text(make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234)
 
     assert found is not None
 
@@ -1987,14 +2193,14 @@ def test_pending_pr_text_accepts_a_null_pr_manifest_on_the_update_path(mocker, m
 def test_numbered_only_still_accepts_a_manifest_naming_the_pr(mocker, make_cfg, tmp_path):
     """A container that names the number has said which PR it meant; that the
     PR was adopted rather than opened by jailbee does not unsay it."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(pr=1234, head_sha="abc1234")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
 
-    found = pending_pr_text(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    found = _pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234, numbered_only=True
     )
 
     assert found is not None and found.manifest == "001-d.json"
@@ -2004,7 +2210,7 @@ def test_numbered_only_withholds_a_null_pr_manifest_and_says_so(mocker, make_cfg
     """`pr: null` means "the PR this container would open", which on a foreign
     head is not this PR. It is withheld — and named, because the run would have
     used it had the manifest carried the number."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch(
@@ -2012,8 +2218,8 @@ def test_numbered_only_withholds_a_null_pr_manifest_and_says_so(mocker, make_cfg
         return_value=Outbox(files={"001-d.json": _description_manifest()}),
     )
 
-    found = pending_pr_text(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    found = _pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234, numbered_only=True
     )
 
     assert found is None
@@ -2024,14 +2230,14 @@ def test_numbered_only_withholds_a_null_pr_manifest_and_says_so(mocker, make_cfg
 def test_numbered_only_says_nothing_about_another_prs_manifest(mocker, make_cfg, tmp_path, capsys):
     """A review container legitimately carries manifests for other PRs; those
     were never this run's to use, so naming them would be noise, not news."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     text = _description_manifest(pr=999, head_sha="abc1234")
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files={"001-d.json": text}))
 
-    found = pending_pr_text(
-        make_cfg(tmp_path), mocker.MagicMock(), "c", uid=1000, for_pr=1234, numbered_only=True
+    found = _pending_pr_text(
+        make_cfg(tmp_path), mocker.MagicMock(), for_pr=1234, numbered_only=True
     )
 
     assert found is None
@@ -2043,7 +2249,7 @@ def test_numbered_only_says_nothing_about_another_prs_manifest(mocker, make_cfg,
 
 
 def test_pending_pr_text_keeps_a_valid_proposed_branch(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     check = mocker.patch("jailbee.git.check_ref_format", return_value=True)
@@ -2052,7 +2258,7 @@ def test_pending_pr_text_keeps_a_valid_proposed_branch(mocker, make_cfg, tmp_pat
     incus = mocker.MagicMock()
     incus.config_get.return_value = "feat/foo"
 
-    found = pending_pr_text(make_cfg(tmp_path), incus, "c", uid=1000)
+    found = _pending_pr_text(make_cfg(tmp_path), incus)
 
     assert found is not None and found.text.branch == "feat/x"
     check.assert_called_once_with("feat/x")
@@ -2062,7 +2268,7 @@ def test_pending_pr_text_rejects_an_invalid_proposed_branch(mocker, make_cfg, tm
     """`--as` exits 2 and the AI proposal falls back; the untrusted source is
     checked too, or `-x` / `a b` reaches `git push` and `gh pr create --head`
     and fails *after* this run has already pushed."""
-    from jailbee.pr_outbox import Outbox, pending_pr_text
+    from jailbee.pr_outbox import Outbox
 
     _host_repo(mocker)
     mocker.patch("jailbee.git.check_ref_format", return_value=False)
@@ -2072,9 +2278,9 @@ def test_pending_pr_text_rejects_an_invalid_proposed_branch(mocker, make_cfg, tm
     incus = mocker.MagicMock()
     incus.config_get.return_value = "feat/foo"
 
-    found = pending_pr_text(make_cfg(tmp_path), incus, "c", uid=1000)
+    found = _pending_pr_text(make_cfg(tmp_path), incus)
 
     assert found is not None
-    assert found.text.branch == "feat/foo"  # the container's own branch, not '-x'
+    assert found.text.branch == "feat/foo"  # the source branch, not '-x'
     assert found.text.body == "B"  # the description itself is still used
     assert "-x" in warn.call_args.args[0]
