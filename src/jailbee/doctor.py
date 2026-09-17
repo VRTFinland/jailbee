@@ -188,9 +188,7 @@ def _check_update_available() -> CheckResult:
         with Session(get_engine()) as session:
             latest = update_check.available(session, __version__)
             dismissal = (
-                notices.load_all(session).get(
-                    (update_check.NOTICE_KEY, update_check.NOTICE_SCOPE)
-                )
+                notices.load_all(session).get((update_check.NOTICE_KEY, update_check.NOTICE_SCOPE))
                 if latest is not None
                 else None
             )

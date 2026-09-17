@@ -21,7 +21,6 @@ def _allow_update_check(monkeypatch) -> None:
     monkeypatch.delenv("JAILBEE_NO_UPDATE_CHECK", raising=False)
 
 
-
 def _stub_hint(mocker, lines=None):
     """Patch the read path, not the DB: these tests are about plumbing —
     is it called, where does it print, what silences it."""

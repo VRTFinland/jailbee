@@ -276,7 +276,7 @@ def test_survey_offers_the_pypi_update_advisory(db_engine, tmp_path, mocker) -> 
     """The update hint repeats like the others, so `jailbee dismiss` has to be
     able to name it — under one host-wide scope, since which jailbee is
     installed is not a property of any repo."""
-    from jailbee.update_check import Install, NOTICE_SCOPE, record_check
+    from jailbee.update_check import NOTICE_SCOPE, Install, record_check
     from tests.conftest import make_cfg
 
     mocker.patch("jailbee.update_check.detect_install", return_value=Install("uv", "cmd"))

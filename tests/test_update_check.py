@@ -22,7 +22,6 @@ def _allow_update_check(monkeypatch) -> None:
     monkeypatch.delenv("JAILBEE_NO_UPDATE_CHECK", raising=False)
 
 
-
 # --- version comparison ----------------------------------------------------
 
 
