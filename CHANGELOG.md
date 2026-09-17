@@ -10,6 +10,17 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **The dashboards show what a container is actually doing.** Two new
+  columns: `CPU`, the share of a core the container is burning right now
+  (`182%·4` — 1.8 cores of the 4 it is allowed), and `DOING`, the programs
+  burning it (`claude, pytest x8`). Only programs above 5% of a core are
+  listed, so an idle container reads `—` rather than a list of daemons.
+  Both are read from the host's own `/proc`, so they cost no command inside
+  the container and nothing at all for a container that is idle. They are
+  live rates rather than readings, so they appear in `jailbee dashboard`
+  and the Qt window by default and in `jailbee ls` only on request
+  (`--fields cpu,doing`, which costs one extra 0.2 s reading).
+
 - `jb submodule pr` now consumes matching PR descriptions from the container's
   review outbox, and `jb review apply` can publish comments staged for a
   submodule repository.

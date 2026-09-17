@@ -361,13 +361,22 @@ autostart status|cancel` below to inspect or clear one. **TTL** appears
 only while a container is in loose mode. Stopped/mount-mode containers show
 `—` in the four git columns.
 
+**CPU** and **DOING** say what a container is working on right now. CPU is
+the share of a core it is burning, `top`-style — `182%·4` is 1.8 cores of
+the 4 it is allowed — and DOING names the programs burning it
+(`claude, pytest x8`, where `x8` counts processes of that name). Only
+programs above 5% of a core are listed, so an idle container reads `—`
+rather than a list of daemons. Both are read from the host's own `/proc`,
+so they cost no command inside the container.
+
 The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
-columns. **IP** and **MEM** are *not* in it — reach either from `ls` with
-`--fields ip,mem`. The dashboards' own default column set differs in
-exactly one of those two: they add **MEM**, since the view refreshes and a
-live number earns its width there; **IP** is off by default in both —
+columns. **IP**, **MEM**, **CPU** and **DOING** are *not* in it — reach any
+of them from `ls` with `--fields ip,mem,cpu,doing`. The dashboards' own
+default set adds **MEM**, **CPU** and **DOING**, since the view refreshes
+and a live number earns its width there; **IP** is off by default in both —
 enable it in the dashboard settings (see below) if you want it there
-instead. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
+instead. CPU and DOING are *rates*, measured between two readings, so `ls`
+takes a second reading (about 0.2 s) when you ask for either by name. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
 mount-mode container exists, since on a clone-only host every row would
 read `clone`.
 
