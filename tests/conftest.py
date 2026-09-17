@@ -521,6 +521,12 @@ def _mock_runtime_mounts(request, mocker):
     integration don't care about the polling mechanics; tests that *do*
     live in tests/test_runtime_mounts.py and skip this autouse via the
     `unmock_runtime_mounts` marker on the file.
+
+    Plain callables rather than mocks: nothing asserts on the replacements
+    this fixture installs (the tests that want a handle patch the same two
+    names again themselves), and a `MagicMock` per patch per test is
+    measurable at this suite's size — the two here cost ~0.6 ms of every
+    test's setup.
     """
     if request.node.get_closest_marker("unmock_runtime_mounts"):
         return
@@ -528,10 +534,11 @@ def _mock_runtime_mounts(request, mocker):
         return
     mocker.patch(
         "jailbee.runtime_mounts.attach_runtime_devices",
-        return_value=True,
+        new=lambda *a, **k: True,
     )
     mocker.patch(
         "jailbee.runtime_mounts.detach_runtime_devices",
+        new=lambda *a, **k: None,
     )
 
 
@@ -545,6 +552,9 @@ def _neutralize_kitty_autodetect(request, mocker):
     without it. Tests that exercise kitty autodetect explicitly re-patch
     `_kitty_terminfo_candidates` to inject their own paths and override
     this default.
+
+    A plain callable rather than a mock, for the reason given in
+    `_mock_runtime_mounts`.
     """
     # Exempt the one test whose subject IS this function (it asserts on
     # the real candidate list). Tests that exercise kitty autodetect
@@ -554,7 +564,7 @@ def _neutralize_kitty_autodetect(request, mocker):
         return
     mocker.patch(
         "jailbee.config.models_tools._kitty_terminfo_candidates",
-        return_value=[Path("/nonexistent/kitty-terminfo-sentinel")],
+        new=lambda: [Path("/nonexistent/kitty-terminfo-sentinel")],
     )
 
 
