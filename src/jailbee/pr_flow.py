@@ -180,6 +180,35 @@ def _pick_outbox_manifest(names: list[str]) -> str | None:
     return str(result)
 
 
+def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: int | None) -> bool:
+    """Ask before an outbox description replaces the body of a foreign PR.
+
+    "Foreign" is `is_foreign_pr_head`: a PR jailbee did not open, which is as
+    true of the user's own PR adopted with `jailbee pr --pr N` as it is of a
+    stranger's. The manifest has already been narrowed to one that names this
+    PR (`pending_pr_text(numbered_only=True)`), so the question is not "is this
+    text about this PR" — it is "may a body the container's agent wrote replace
+    one a human may have typed on GitHub".
+
+    Off a TTY the answer is no, with the reason: `jailbee pr` runs unattended,
+    and an unattended run may not decide this on the user's behalf. Neither
+    outcome says what to do with the manifest instead — the offer `jailbee pr`
+    makes once the PR is up names every description this run left pending, and
+    the command that publishes them, in one place.
+    """
+    label = scope.noun(str(for_pr) if for_pr is not None else None)
+    if not _can_prompt():
+        warn(
+            f"{source.manifest} proposes a new description for {label}, which jailbee "
+            f"did not open; not replacing it unattended."
+        )
+        return False
+    return typer.confirm(
+        f"Replace {label}'s description with the one {source.manifest} proposes?",
+        default=False,
+    )
+
+
 @dataclass(frozen=True)
 class HeadPlan:
     """The publish name and the AI text a create/update run decided on.
@@ -379,7 +408,7 @@ def resolve_pr_description_update(
     body: str | None,
     description: bool,
     ai_on: bool,
-    offer_regen: bool = True,
+    foreign_head: bool = False,
     use_outbox: bool = False,
     for_pr: int | None = None,
     outbox_hint: OutboxPrText | None = None,
@@ -392,13 +421,24 @@ def resolve_pr_description_update(
     --description, or an interactive TTY confirmation, trigger a Claude
     regeneration of both fields. Returns None when nothing should change.
 
-    `offer_regen=False` suppresses the interactive offer *and* the outbox —
-    used on a PR jailbee did not create, where silently rewriting the author's
-    description is never what the user asked for. The outbox does not weaken
-    that reason, it strengthens it: the replacement text was written by an
-    agent, not typed by the user, and `_eligible_for` lets a `pr: null`
-    manifest apply to a stranger's PR number. Explicit
-    --description/--title/--body still apply — those the user typed.
+    `foreign_head` is "this is a PR jailbee did not open" — as true of the
+    user's own PR adopted with `jailbee pr --pr N` as of a stranger's. It
+    governs both text sources, and it says something different to each:
+
+      - The interactive "regenerate with Claude?" offer is suppressed outright.
+        A run that was asked for nothing of the sort must not propose rewriting
+        the author's description.
+      - The outbox is *narrowed*, not switched off: only a description that
+        names this PR is considered (`numbered_only`), and applying one asks
+        once. The two once shared a single flag, and that is precisely what
+        made a container that had adopted its own PR drop the description its
+        agent had written, in silence. What the guard is actually for is text
+        that was never about this PR — `_eligible_for` lets a `pr: null`
+        manifest, "the PR this container would open", reach a number jailbee
+        did not open — and a manifest naming the number is not that.
+
+    Explicit --description/--title/--body still apply either way: those the
+    user typed.
 
     `use_outbox` swaps the *source* of the text rather than adding a path, and
     an outbox hit returns before the regeneration offer is reached: the answer
@@ -429,7 +469,7 @@ def resolve_pr_description_update(
     # Looked up only past the explicit-flag check above: consuming a manifest
     # whose body then loses to an explicit --title/--body would delete a
     # description that was never published.
-    if use_outbox and offer_regen:
+    if use_outbox:
         from jailbee import pr_outbox
 
         outbox_source = outbox_hint
@@ -440,9 +480,16 @@ def resolve_pr_description_update(
                 full,
                 uid=cfg.container_user.uid,
                 for_pr=for_pr,
+                numbered_only=foreign_head,
                 pick=_pick_outbox_manifest if _can_prompt() else None,
             )
-        if outbox_source is not None:
+        # A declined confirmation falls *through* rather than returning None:
+        # it refuses this text, not the --description the user may also have
+        # typed. Nothing is consumed on that path, so the manifest stays
+        # pending for `jailbee review apply`.
+        if outbox_source is not None and (
+            not foreign_head or _confirm_foreign_description(scope, outbox_source, for_pr)
+        ):
             return DescriptionUpdate(
                 title=outbox_source.text.title,
                 body=outbox_source.text.body,
@@ -450,7 +497,7 @@ def resolve_pr_description_update(
             )
 
     want_regen = description
-    if not want_regen and offer_regen and _can_prompt() and ai_on:
+    if not want_regen and not foreign_head and _can_prompt() and ai_on:
         want_regen = typer.confirm(
             f"Update {scope.prefix}the PR description with Claude?",
             default=False,
@@ -559,7 +606,7 @@ class ContainerLabelState:
         Raises `MalformedPrLabelError` when `user.jailbee.pr` is set but does
         not parse as an integer, rather than silently treating it as "no
         PR": every guard keyed on `pr_label`'s truthiness (`--as` rejection,
-        the foreign-force confirmation, `offer_regen`) would otherwise turn
+        the foreign-force confirmation, `foreign_head`) would otherwise turn
         OFF for a container that plainly has a PR, just with corrupted
         state — a fail-open reading of a fail-closed guard. A label jailbee
         wrote itself always parses; anything else needs a human, not a
@@ -1203,7 +1250,10 @@ def apply_pr_updates(
     description: bool,
     ready: bool | None,
     ai_on: bool,
-    offer_regen: bool,
+    # Required, unlike `resolve_pr_description_update`'s own default: this is
+    # the entry point a caller could forget it at, and forgetting it fails
+    # *open* — a foreign PR would be treated as one jailbee opened.
+    foreign_head: bool,
     url: str,
     use_outbox: bool = False,
     outbox_hint: OutboxPrText | None = None,
@@ -1218,7 +1268,10 @@ def apply_pr_updates(
     `url` is the PR's own URL, recorded as the receipt for a consumed outbox
     description. `use_outbox` lets that description replace the Claude
     regeneration; it defaults to False, so `jailbee submodule pr` — which never
-    passes it — reaches none of that. `outbox_hint` carries a description the
+    passes it — reaches none of that. `foreign_head` rides along with it: on a
+    PR jailbee did not open, an outbox description must name that PR and is
+    confirmed once before it replaces the body (see
+    `resolve_pr_description_update`). `outbox_hint` carries a description the
     create path already resolved in this same run, so the choice between
     several pending ones is not put to the user twice; see
     `resolve_pr_description_update`. The consumption is recorded only after
@@ -1241,7 +1294,7 @@ def apply_pr_updates(
         body=body,
         description=description,
         ai_on=ai_on,
-        offer_regen=offer_regen,
+        foreign_head=foreign_head,
         use_outbox=use_outbox,
         for_pr=number,
         outbox_hint=outbox_hint,
