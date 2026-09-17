@@ -712,3 +712,102 @@ def test_uninitialized_submodule_uses_existing_host_root_for_all_github_reads(pr
     preflight["labels"].assert_called_once_with(root, "acme/lib")
     preflight["login"].assert_called_once_with(root)
     assert batch.host_repo_root == root
+
+
+def _alias_repositories(preflight):
+    targets = preflight["targets"]
+    targets["."] = replace(targets["."], slug="Acme/App")
+    targets["lib"] = replace(targets["lib"], slug="acme/app")
+
+
+def test_case_variant_repo_aliases_conflict_on_the_same_issue_field(preflight):
+    from jailbee.issue_outbox import IssueGateError
+
+    _alias_repositories(preflight)
+    edit = _edit(title="Next", expected={"title": "Old title"})
+    with pytest.raises(IssueGateError, match="conflict on title") as caught:
+        preflight["prepare"]({"a.json": [edit], "b.json": [{**edit, "repo": "lib"}]})
+    assert "a.json" in str(caught.value) and "b.json" in str(caught.value)
+
+
+def test_case_variant_aliases_share_issue_and_label_caches_preserving_display(preflight):
+    from jailbee.issue_outbox import plan_lines
+
+    _alias_repositories(preflight)
+    batch = preflight["prepare"](
+        {
+            "a.json": [_comment(), _create(labels=["bug"])],
+            "b.json": [_comment("lib"), _create("lib", labels=["BUG"])],
+        }
+    )
+    root = preflight["targets"]["."].repo_root
+    preflight["fetch"].assert_called_once_with(root, "Acme/App", 7)
+    preflight["labels"].assert_called_once_with(root, "Acme/App")
+    assert tuple(batch.initial_issues) == (("acme/app", 7),)
+    assert batch.manifests[1].actions[1].labels == ("Bug",)
+    assert "Repository: . (Acme/App)" in plan_lines(batch)
+    assert "Repository: lib (acme/app)" in plan_lines(batch)
+
+
+@pytest.mark.parametrize("boundary", ["fetch", "labels"])
+def test_case_variant_aliases_share_failed_read_caches(preflight, boundary):
+    from jailbee.issue_github import IssueGithubReadError
+    from jailbee.issue_outbox import IssueGateError
+
+    _alias_repositories(preflight)
+    preflight[boundary].side_effect = IssueGithubReadError("unavailable")
+    with pytest.raises(IssueGateError, match="unavailable"):
+        preflight["prepare"](
+            {
+                "a.json": [_comment(), _create()],
+                "b.json": [_comment("lib"), _create("lib")],
+            }
+        )
+    assert preflight[boundary].call_count == 1
+
+
+def test_case_variant_aliases_share_second_stale_pass_snapshot(preflight):
+    from jailbee.issue_outbox import IssueStaleError, revalidate_batch
+
+    _alias_repositories(preflight)
+    batch = preflight["prepare"](
+        {
+            "a.json": [_edit(title="Next", expected={"title": "Old title"})],
+            "b.json": [_edit(repo="lib", body="Next", expected={"body": "Old body"})],
+        }
+    )
+    preflight["fetch"].reset_mock()
+    preflight["fetch"].return_value = replace(preflight["snapshot"], title="Changed", body="Changed")
+    with pytest.raises(IssueStaleError) as caught:
+        revalidate_batch(batch)
+    assert "expected.title" in str(caught.value) and "expected.body" in str(caught.value)
+    preflight["fetch"].assert_called_once_with(batch.host_repo_root, "Acme/App", 7)
+
+
+def test_case_variant_journal_repo_restores_created_ref(preflight):
+    _alias_repositories(preflight)
+    actions = [_create(), {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"}]
+    _record(preflight, actions, repo="aCME/aPP")
+    batch = preflight["prepare"]({"a.json": actions})
+    first, second = batch.manifests[0].actions
+    assert first.status == "applied"
+    assert second.issue.number == 42
+    assert second.issue.ref == "new"
+    preflight["fetch"].assert_called_once_with(batch.host_repo_root, "Acme/App", 42)
+
+
+def test_restored_ref_conflicts_with_numbered_case_variant_alias(preflight):
+    from jailbee.issue_outbox import IssueGateError
+
+    _alias_repositories(preflight)
+    actions = [
+        _create(),
+        {"type": "edit", "repo": ".", "issue_ref": "new", "title": "Next",
+         "expected": {"title": "Old title"}},
+    ]
+    _record(preflight, actions, issue=7, repo="ACME/APP")
+    with pytest.raises(IssueGateError, match="conflict on title"):
+        preflight["prepare"](
+            {"a.json": actions,
+             "b.json": [_edit(repo="lib", title="Next", expected={"title": "Old title"})]}
+        )

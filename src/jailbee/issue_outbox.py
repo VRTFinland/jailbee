@@ -52,6 +52,11 @@ class RepoTarget:
     repo_root: Path
     slug: str
 
+    @property
+    def identity(self) -> str:
+        """Case-insensitive GitHub identity, separate from display spelling."""
+        return self.slug.casefold()
+
 
 def resolve_repo_targets(cfg: Config) -> Mapping[str, RepoTarget]:
     """Return ``.`` plus safe host-declared submodule targets keyed by path."""
@@ -247,7 +252,7 @@ def _load_proposals(
                     for receipt in journal.actions:
                         action = manifest.actions[receipt.index]
                         target = targets.get(action.repo)
-                        if target is not None and target.slug != receipt.repo:
+                        if target is not None and target.identity != receipt.repo.casefold():
                             raise JournalError("journal repo differs from the host-resolved repo")
                         if (
                             isinstance(action, CreateAction)
@@ -358,10 +363,12 @@ def prepare_batch(
             snapshot = None
             if not isinstance(action, CreateAction) and status == "pending":
                 if issue.number is not None:
-                    key = (repo.slug, issue.number)
+                    key = (repo.identity, issue.number)
                     if key not in issues and key not in issue_errors:
                         try:
-                            issues[key] = issue_github.get_issue(cfg.repo_root, *key)
+                            issues[key] = issue_github.get_issue(
+                                cfg.repo_root, repo.slug, issue.number
+                            )
                         except IssueGithubReadError as exc:
                             issue_errors[key] = str(exc)
                     if key in issue_errors:
@@ -376,19 +383,21 @@ def prepare_batch(
 
             labels = None
             if isinstance(action, (CreateAction, LabelsAction)) and status == "pending":
-                if repo.slug not in label_maps and repo.slug not in label_errors:
+                if repo.identity not in label_maps and repo.identity not in label_errors:
                     try:
-                        label_maps[repo.slug] = issue_github.list_labels(cfg.repo_root, repo.slug)
+                        label_maps[repo.identity] = issue_github.list_labels(
+                            cfg.repo_root, repo.slug
+                        )
                     except IssueGithubReadError as exc:
-                        label_errors[repo.slug] = str(exc)
-                if repo.slug in label_errors:
-                    refusals.append(f"{context}: {label_errors[repo.slug]}")
-                labels = _resolve_labels(action, label_maps.get(repo.slug), context, refusals)
+                        label_errors[repo.identity] = str(exc)
+                if repo.identity in label_errors:
+                    refusals.append(f"{context}: {label_errors[repo.identity]}")
+                labels = _resolve_labels(action, label_maps.get(repo.identity), context, refusals)
 
             if status == "pending":
                 for field in _expected_fields(action):
                     mutation_key = (
-                        (repo.slug, issue.number, field)
+                        (repo.identity, issue.number, field)
                         if issue.number is not None
                         else (manifest.name, issue.ref or "", field)
                     )
@@ -419,11 +428,13 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                 or not _expected_fields(resolved.action)
             ):
                 continue
-            key = (resolved.repo.slug, resolved.issue.number)
+            key = (resolved.repo.identity, resolved.issue.number)
             context = f"{manifest.manifest.name} action {resolved.index}"
             if key not in fresh and key not in errors:
                 try:
-                    fresh[key] = issue_github.get_issue(batch.host_repo_root, *key)
+                    fresh[key] = issue_github.get_issue(
+                        batch.host_repo_root, resolved.repo.slug, resolved.issue.number
+                    )
                 except IssueGithubReadError as exc:
                     errors[key] = str(exc)
             if key in errors:
