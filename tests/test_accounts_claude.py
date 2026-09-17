@@ -8,8 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from jailbee import claude_pool
-from jailbee.claude_pool import Identity, Slot
+from jailbee.accounts import engine, models
+from jailbee.accounts.adapters import claude as claude_adapter
+from jailbee.accounts.adapters.claude import CLAUDE
+from jailbee.accounts.models import Identity, Slot
 from jailbee.config.loader import _scratch_prefix
 from jailbee.global_config import GlobalConfig
 from tests.conftest import make_cfg
@@ -27,17 +29,17 @@ def _cfg(tmp_path: Path, *, group: str | None = None):
 
 def test_store_dir_follows_xdg_data_home(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    assert claude_pool.store_dir() == (
+    assert engine.store_dir(CLAUDE) == (
         tmp_path / "data" / "jailbee" / "claude-credentials" / "_parked"
     )
 
 
 def test_holder_is_the_config_home_without_a_group(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    assert claude_pool.config_home(cfg) == tmp_path / "shared" / "claude"
-    assert claude_pool.holder_dir(cfg) == tmp_path / "shared" / "claude"
+    assert CLAUDE.config_home(cfg) == tmp_path / "shared" / "claude"
+    assert engine.holder_dir(CLAUDE, cfg) == tmp_path / "shared" / "claude"
     assert (
-        claude_pool.live_credential_path(cfg)
+        engine.live_credential_path(CLAUDE, cfg)
         == tmp_path / "shared" / "claude" / ".credentials.json"
     )
 
@@ -45,16 +47,16 @@ def test_holder_is_the_config_home_without_a_group(tmp_path: Path) -> None:
 def test_holder_is_the_group_directory_with_a_group(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path, group="work")
     # The config home does NOT move: only the credential is shared.
-    assert claude_pool.config_home(cfg) == tmp_path / "shared" / "claude"
-    assert claude_pool.holder_dir(cfg) == tmp_path / "creds" / "work"
+    assert CLAUDE.config_home(cfg) == tmp_path / "shared" / "claude"
+    assert engine.holder_dir(CLAUDE, cfg) == tmp_path / "creds" / "work"
 
 
 def test_identity_file_prefers_the_legacy_config_json(tmp_path: Path) -> None:
     home = tmp_path / "claude"
     home.mkdir()
-    assert claude_pool.identity_file(home) == home / ".claude.json"
+    assert claude_adapter.identity_file(home) == home / ".claude.json"
     (home / ".config.json").write_text("{}", encoding="utf-8")
-    assert claude_pool.identity_file(home) == home / ".config.json"
+    assert claude_adapter.identity_file(home) == home / ".config.json"
 
 
 def _write_identity(home: Path, block: object) -> None:
@@ -74,7 +76,7 @@ def test_read_identity_returns_email_and_org(tmp_path: Path) -> None:
             "organizationUuid": "A1B2C3D4-5678",
         },
     )
-    assert claude_pool.read_identity(home) == Identity(
+    assert claude_adapter.read_identity(home) == Identity(
         email="Me@Corp.COM", org_uuid="A1B2C3D4-5678"
     )
 
@@ -82,22 +84,22 @@ def test_read_identity_returns_email_and_org(tmp_path: Path) -> None:
 def test_read_identity_tolerates_a_missing_organization(tmp_path: Path) -> None:
     home = tmp_path / "claude"
     _write_identity(home, {"emailAddress": "me@example.com"})
-    assert claude_pool.read_identity(home) == Identity(email="me@example.com")
+    assert claude_adapter.read_identity(home) == Identity(email="me@example.com")
 
 
 @pytest.mark.parametrize("block", [None, {}, {"emailAddress": ""}, {"emailAddress": 7}, "nonsense"])
 def test_read_identity_is_none_when_unusable(tmp_path: Path, block: object) -> None:
     home = tmp_path / "claude"
     _write_identity(home, block)
-    assert claude_pool.read_identity(home) is None
+    assert claude_adapter.read_identity(home) is None
 
 
 def test_read_identity_is_none_on_a_missing_or_torn_file(tmp_path: Path) -> None:
     home = tmp_path / "claude"
-    assert claude_pool.read_identity(home) is None
+    assert claude_adapter.read_identity(home) is None
     home.mkdir()
     (home / ".claude.json").write_text('{"oauthAccount": {"emai', encoding="utf-8")
-    assert claude_pool.read_identity(home) is None
+    assert claude_adapter.read_identity(home) is None
 
 
 def test_read_identity_is_none_on_a_torn_multibyte_sequence(tmp_path: Path) -> None:
@@ -108,24 +110,24 @@ def test_read_identity_is_none_on_a_torn_multibyte_sequence(tmp_path: Path) -> N
     home.mkdir()
     (home / ".claude.json").write_bytes(b'{"oauthAccount": {"emailAddress": "caf\xc3')
 
-    assert claude_pool.read_identity(home) is None
+    assert claude_adapter.read_identity(home) is None
 
 
 def test_slug_lowercases_and_truncates_the_org() -> None:
-    slug = claude_pool.slug_for(Identity("Me@Corp.COM", "A1B2C3D4-5678-90ab"))
+    slug = models.slug_for(Identity("Me@Corp.COM", "A1B2C3D4-5678-90ab"))
     assert slug == "me@corp.com#a1b2c3d4"
 
 
 def test_slug_omits_the_org_when_absent() -> None:
-    assert claude_pool.slug_for(Identity("me@example.com")) == "me@example.com"
+    assert models.slug_for(Identity("me@example.com")) == "me@example.com"
 
 
 def test_slug_replaces_characters_a_filename_should_not_carry() -> None:
-    assert claude_pool.slug_for(Identity("a b/c@x.com")) == "a-b-c@x.com"
+    assert models.slug_for(Identity("a b/c@x.com")) == "a-b-c@x.com"
 
 
 def test_unknown_slot_name_is_sortable() -> None:
-    name = claude_pool.unknown_slot_name(datetime(2026, 8, 28, 10, 42, 33))
+    name = models.unknown_slot_name(datetime(2026, 8, 28, 10, 42, 33))
     assert name == "unknown-20260828-104233"
 
 
@@ -142,7 +144,7 @@ def test_slot_email_and_org_hint() -> None:
     assert unknown.email is None
     assert unknown.org_hint is None
 
-    live = Slot(name=claude_pool.LIVE_UNIDENTIFIED, path=Path("/x"), live=True)
+    live = Slot(name=models.LIVE_UNIDENTIFIED, path=Path("/x"), live=True)
     assert live.email is None
 
 
@@ -151,7 +153,7 @@ def _cred(**extra: object) -> str:
 
 
 def test_shared_fields_of_a_bare_login_is_empty() -> None:
-    assert claude_pool.shared_fields(_cred()) == {}
+    assert claude_adapter.shared_fields(_cred()) == {}
 
 
 def test_shared_fields_picks_only_the_allowlist() -> None:
@@ -161,42 +163,42 @@ def test_shared_fields_picks_only_the_allowlist() -> None:
         trustedDeviceToken="device",
         somethingNew="x",
     )
-    assert claude_pool.shared_fields(raw) == {"mcpOAuth": {"srv": 1}, "pluginSecrets": {"p": 2}}
+    assert claude_adapter.shared_fields(raw) == {"mcpOAuth": {"srv": 1}, "pluginSecrets": {"p": 2}}
 
 
 @pytest.mark.parametrize("raw", [None, "", "not json", "[1, 2]", '"a string"'])
 def test_shared_fields_is_none_for_a_non_object(raw: str | None) -> None:
-    assert claude_pool.shared_fields(raw) is None
+    assert claude_adapter.shared_fields(raw) is None
 
 
 def test_shared_fields_logs_an_unrecognized_sibling(caplog) -> None:
     with caplog.at_level("DEBUG", logger="jailbee.accounts.adapters.claude"):
-        claude_pool.shared_fields(_cred(brandNewKey={"a": 1}))
+        claude_adapter.shared_fields(_cred(brandNewKey={"a": 1}))
     assert "brandNewKey" in caplog.text
 
 
 def test_compose_takes_shared_keys_from_the_live_credential() -> None:
     target = _cred(mcpOAuth={"stale": True})
-    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"fresh": True}}))
+    out = json.loads(claude_adapter.compose_credential(target, {"mcpOAuth": {"fresh": True}}))
     assert out["mcpOAuth"] == {"fresh": True}
 
 
 def test_compose_drops_a_shared_key_the_machine_no_longer_holds() -> None:
     target = _cred(mcpOAuth={"stale": True})
-    out = json.loads(claude_pool.compose_credential(target, {}))
+    out = json.loads(claude_adapter.compose_credential(target, {}))
     assert "mcpOAuth" not in out
 
 
 def test_compose_keeps_account_bound_and_unknown_keys_from_the_slot() -> None:
     target = _cred(trustedDeviceToken="slot-device", somethingNew="slot-value")
-    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"a": 1}}))
+    out = json.loads(claude_adapter.compose_credential(target, {"mcpOAuth": {"a": 1}}))
     assert out["trustedDeviceToken"] == "slot-device"
     assert out["somethingNew"] == "slot-value"
 
 
 def test_compose_preserves_the_login_exactly() -> None:
     target = _cred()
-    out = json.loads(claude_pool.compose_credential(target, {"mcpOAuth": {"a": 1}}))
+    out = json.loads(claude_adapter.compose_credential(target, {"mcpOAuth": {"a": 1}}))
     assert out["claudeAiOauth"] == {"accessToken": "t", "refreshToken": "r"}
 
 
@@ -211,12 +213,12 @@ def test_compose_preserves_the_login_exactly() -> None:
 def test_compose_returns_the_target_verbatim_when_it_cannot_merge(
     target: str, live: dict[str, object] | None
 ) -> None:
-    assert claude_pool.compose_credential(target, live) == target
+    assert claude_adapter.compose_credential(target, live) == target
 
 
 def _park(tmp_path: Path, name: str, monkeypatch) -> Path:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True, exist_ok=True)
     path = store / f"{name}.json"
     path.write_text(_cred(), encoding="utf-8")
@@ -226,9 +228,9 @@ def _park(tmp_path: Path, name: str, monkeypatch) -> Path:
 def test_parked_slots_reads_the_store(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "b@x.com", monkeypatch)
     _park(tmp_path, "a@x.com#a1b2c3d4", monkeypatch)
-    (claude_pool.store_dir() / "notes.txt").write_text("ignored", encoding="utf-8")
+    (engine.store_dir(CLAUDE) / "notes.txt").write_text("ignored", encoding="utf-8")
 
-    slots = claude_pool.parked_slots()
+    slots = engine.parked_slots(CLAUDE)
 
     assert [s.name for s in slots] == ["a@x.com#a1b2c3d4", "b@x.com"]
     assert all(not s.live for s in slots)
@@ -236,16 +238,16 @@ def test_parked_slots_reads_the_store(tmp_path: Path, monkeypatch) -> None:
 
 def test_parked_slots_is_empty_when_the_store_does_not_exist(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    assert claude_pool.parked_slots() == []
+    assert engine.parked_slots(CLAUDE) == []
 
 
 def test_live_slot_is_named_after_the_identity(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    live = claude_pool.live_credential_path(cfg)
+    live = engine.live_credential_path(CLAUDE, cfg)
     live.parent.mkdir(parents=True)
     live.write_text(_cred(), encoding="utf-8")
 
-    slot = claude_pool.live_slot(cfg, Identity("me@corp.com", "a1b2c3d4-99"))
+    slot = engine.live_slot(CLAUDE, cfg, Identity("me@corp.com", "a1b2c3d4-99"))
 
     assert slot is not None
     assert slot.name == "me@corp.com#a1b2c3d4"
@@ -255,19 +257,19 @@ def test_live_slot_is_named_after_the_identity(tmp_path: Path) -> None:
 
 def test_live_slot_falls_back_to_a_display_name(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    live = claude_pool.live_credential_path(cfg)
+    live = engine.live_credential_path(CLAUDE, cfg)
     live.parent.mkdir(parents=True)
     live.write_text(_cred(), encoding="utf-8")
 
-    slot = claude_pool.live_slot(cfg, None)
+    slot = engine.live_slot(CLAUDE, cfg, None)
 
     assert slot is not None
-    assert slot.name == claude_pool.LIVE_UNIDENTIFIED
+    assert slot.name == models.LIVE_UNIDENTIFIED
 
 
 def test_live_slot_is_none_when_nothing_is_logged_in(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    assert claude_pool.live_slot(cfg, None) is None
+    assert engine.live_slot(CLAUDE, cfg, None) is None
 
 
 def _slot(name: str) -> Slot:
@@ -276,25 +278,25 @@ def _slot(name: str) -> Slot:
 
 def test_resolve_ref_matches_a_full_slot_name() -> None:
     slots = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
-    assert claude_pool.resolve_ref("me@x.com#bbbb2222", slots).name == "me@x.com#bbbb2222"
+    assert engine.resolve_ref("me@x.com#bbbb2222", slots).name == "me@x.com#bbbb2222"
 
 
 def test_resolve_ref_matches_a_bare_email() -> None:
     slots = [_slot("me@x.com#aaaa1111"), _slot("other@x.com")]
-    assert claude_pool.resolve_ref("Me@X.com", slots).name == "me@x.com#aaaa1111"
+    assert engine.resolve_ref("Me@X.com", slots).name == "me@x.com#aaaa1111"
 
 
 def test_resolve_ref_reports_an_ambiguous_email() -> None:
     slots = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.resolve_ref("me@x.com", slots)
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.resolve_ref("me@x.com", slots)
     assert "aaaa1111" in str(excinfo.value)
     assert "bbbb2222" in str(excinfo.value)
 
 
 def test_resolve_ref_lists_what_it_knows_when_nothing_matches() -> None:
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.resolve_ref("nobody@x.com", [_slot("me@x.com")])
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.resolve_ref("nobody@x.com", [_slot("me@x.com")])
     assert "me@x.com" in str(excinfo.value)
 
 
@@ -307,8 +309,8 @@ def test_resolve_ref_reports_a_duplicated_name_as_corruption() -> None:
         Slot(name="me@x.com", path=Path("/store/me@x.com.json"), live=False),
         Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True),
     ]
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.resolve_ref("me@x.com", dupes)
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.resolve_ref("me@x.com", dupes)
     message = str(excinfo.value)
     assert "/store/me@x.com.json" in message
     assert "/holder/.credentials.json" in message
@@ -322,27 +324,27 @@ def test_resolve_ref_quotes_the_stripped_reference_in_every_message() -> None:
     argument, so the same typo was echoed two different ways."""
     padded = "  Me@X.com  "
 
-    with pytest.raises(claude_pool.PoolError) as unknown:
-        claude_pool.resolve_ref(padded, [_slot("other@x.com")])
+    with pytest.raises(models.PoolError) as unknown:
+        engine.resolve_ref(padded, [_slot("other@x.com")])
     assert "`Me@X.com`" in str(unknown.value)
 
     ambiguous = [_slot("me@x.com#aaaa1111"), _slot("me@x.com#bbbb2222")]
-    with pytest.raises(claude_pool.PoolError) as several:
-        claude_pool.resolve_ref(padded, ambiguous)
+    with pytest.raises(models.PoolError) as several:
+        engine.resolve_ref(padded, ambiguous)
     assert "`Me@X.com`" in str(several.value)
 
 
 def test_slug_sanitizes_the_organization_half_too() -> None:
     """The organization comes from a file containers write, so a separator in
     it must not survive into a slot name that later becomes a path."""
-    slug = claude_pool.slug_for(Identity("me@x.com", "../../.."))
+    slug = models.slug_for(Identity("me@x.com", "../../.."))
     assert "/" not in slug
     assert slug == "me@x.com#..-..-.."
 
 
 def test_slug_never_starts_with_a_dot() -> None:
-    assert claude_pool.slug_for(Identity(".hidden@x.com")) == "hidden@x.com"
-    assert claude_pool.slug_for(Identity("..")) == "unnamed"
+    assert models.slug_for(Identity(".hidden@x.com")) == "hidden@x.com"
+    assert models.slug_for(Identity("..")) == "unnamed"
 
 
 def test_read_identity_is_none_when_the_document_root_is_not_an_object(
@@ -351,7 +353,7 @@ def test_read_identity_is_none_when_the_document_root_is_not_an_object(
     home = tmp_path / "claude"
     home.mkdir()
     (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
-    assert claude_pool.read_identity(home) is None
+    assert claude_adapter.read_identity(home) is None
 
 
 def _register(prefix: str, repo_root: Path) -> None:
@@ -400,7 +402,7 @@ def _write_repo(root: Path, *, shared: Path) -> None:
 
 def test_members_of_an_ungrouped_repo_is_the_repo_itself(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    found, unreachable = claude_pool.members(cfg, GlobalConfig())
+    found, unreachable = engine.members(CLAUDE, cfg, GlobalConfig())
     assert [m.container_prefix for m in found] == [cfg.container_prefix]
     assert found[0].config_home == tmp_path / "shared" / "claude"
     assert unreachable == []
@@ -417,7 +419,7 @@ def test_members_of_a_group_include_other_registered_repos(tmp_path: Path, mocke
         {"claude_credentials": {"group": "work", "repos": {"outsider": None}}}
     )
 
-    found, unreachable = claude_pool.members(cfg, gcfg)
+    found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
     assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, "other"])
     assert any(m.config_home == tmp_path / "other-shared" / "claude" for m in found)
@@ -434,7 +436,7 @@ def test_members_names_a_repo_whose_config_will_not_load(tmp_path: Path, mocker)
     _register("gone", tmp_path / "gone")  # no config file at all
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
-    found, unreachable = claude_pool.members(cfg, gcfg)
+    found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
     assert [m.container_prefix for m in found] == [cfg.container_prefix]
     assert unreachable == ["broken", "gone"]
@@ -455,7 +457,7 @@ def test_members_include_a_registered_scratch_repo(tmp_path: Path, mocker) -> No
     _register(scratch_prefix, scratch)
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
-    found, unreachable = claude_pool.members(cfg, gcfg)
+    found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
     assert unreachable == []
     assert [m.container_prefix for m in found] == sorted([cfg.container_prefix, scratch_prefix])
@@ -475,7 +477,7 @@ def test_members_still_names_a_registered_directory_that_is_gone(tmp_path: Path,
     _register("vanished", tmp_path / "vanished")  # never created
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
-    found, unreachable = claude_pool.members(cfg, gcfg)
+    found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
     assert unreachable == ["vanished"]
     assert [m.container_prefix for m in found] == [cfg.container_prefix]
@@ -487,11 +489,11 @@ def test_live_identity_prefers_the_calling_repo(tmp_path: Path) -> None:
     _write_identity(mine, {"emailAddress": "mine@x.com"})
     _write_identity(theirs, {"emailAddress": "theirs@x.com"})
     found = [
-        claude_pool.Member("theirs", theirs),
-        claude_pool.Member("mine", mine),
+        models.Member("theirs", theirs),
+        models.Member("mine", mine),
     ]
 
-    assert claude_pool.live_identity(
+    assert claude_adapter.live_identity(
         _cfg(tmp_path), found, prefer="mine", authoritative={"mine", "theirs"}
     ) == Identity("mine@x.com")
 
@@ -500,19 +502,19 @@ def test_live_identity_falls_back_to_another_member(tmp_path: Path) -> None:
     theirs = tmp_path / "theirs" / "claude"
     _write_identity(theirs, {"emailAddress": "theirs@x.com"})
     found = [
-        claude_pool.Member("mine", tmp_path / "mine" / "claude"),
-        claude_pool.Member("theirs", theirs),
+        models.Member("mine", tmp_path / "mine" / "claude"),
+        models.Member("theirs", theirs),
     ]
 
-    assert claude_pool.live_identity(
+    assert claude_adapter.live_identity(
         _cfg(tmp_path), found, prefer="mine", authoritative={"mine", "theirs"}
     ) == Identity("theirs@x.com")
 
 
 def test_live_identity_is_none_when_no_member_names_an_account(tmp_path: Path) -> None:
-    found = [claude_pool.Member("mine", tmp_path / "mine" / "claude")]
+    found = [models.Member("mine", tmp_path / "mine" / "claude")]
     assert (
-        claude_pool.live_identity(_cfg(tmp_path), found, prefer="mine", authoritative={"mine"})
+        claude_adapter.live_identity(_cfg(tmp_path), found, prefer="mine", authoritative={"mine"})
         is None
     )
 
@@ -526,13 +528,13 @@ def test_live_session_prefixes_reports_members_with_session_files(
     idle = tmp_path / "idle" / "claude"
     (idle / "sessions").mkdir(parents=True)
 
-    found = [claude_pool.Member("busy", busy), claude_pool.Member("idle", idle)]
+    found = [models.Member("busy", busy), models.Member("idle", idle)]
 
-    assert claude_pool.live_session_prefixes(found) == ["busy"]
+    assert claude_adapter.live_session_prefixes(found) == ["busy"]
 
 
 def _holder_with(cfg, raw: str) -> Path:
-    path = claude_pool.live_credential_path(cfg)
+    path = engine.live_credential_path(CLAUDE, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(raw, encoding="utf-8")
     return path
@@ -542,18 +544,18 @@ def test_park_names_the_slot_after_the_live_identity(tmp_path: Path, monkeypatch
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert change.parked_as == "me@corp.com"
-    stored = claude_pool.store_dir() / "me@corp.com.json"
+    stored = engine.store_dir(CLAUDE) / "me@corp.com.json"
     assert _login_in(stored) == json.loads(_cred())["claudeAiOauth"]
     # The account record travels with the grant, so a later switch can restore it.
-    assert json.loads(stored.read_text())[claude_pool.ACCOUNT_RECORD_KEY] == {
+    assert json.loads(stored.read_text())[claude_adapter.ACCOUNT_RECORD_KEY] == {
         "emailAddress": "me@corp.com"
     }
-    assert not claude_pool.live_credential_path(cfg).exists()
+    assert not engine.live_credential_path(CLAUDE, cfg).exists()
 
 
 def test_park_falls_back_to_a_timestamped_name(tmp_path: Path, monkeypatch) -> None:
@@ -561,7 +563,7 @@ def test_park_falls_back_to_a_timestamped_name(tmp_path: Path, monkeypatch) -> N
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
 
-    change = claude_pool.park(
+    change = engine.park(CLAUDE,
         cfg,
         GlobalConfig(),
         authoritative={cfg.container_prefix},
@@ -575,10 +577,10 @@ def test_park_of_an_empty_holder_changes_nothing(tmp_path: Path, monkeypatch) ->
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path)
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert change.parked_as is None
-    assert claude_pool.parked_slots() == []
+    assert engine.parked_slots(CLAUDE) == []
 
 
 def test_park_refuses_to_store_the_same_login_twice(tmp_path: Path, monkeypatch) -> None:
@@ -587,10 +589,10 @@ def test_park_refuses_to_store_the_same_login_twice(tmp_path: Path, monkeypatch)
     _park(tmp_path, "me@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     message = str(excinfo.value)
     # The message says what is true — this login is already stored — and names
@@ -598,17 +600,17 @@ def test_park_refuses_to_store_the_same_login_twice(tmp_path: Path, monkeypatch)
     assert "already stored as `me@corp.com`" in message
     assert "jailbee claude rm me@corp.com" in message
     # The live credential is untouched: a refused park must not lose a login.
-    assert claude_pool.live_credential_path(cfg).exists()
+    assert engine.live_credential_path(CLAUDE, cfg).exists()
 
 
 def test_park_clears_the_recorded_account(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert change.updated == [cfg.container_prefix]
     data = json.loads((home / ".claude.json").read_text())
@@ -622,21 +624,21 @@ def test_switch_parks_the_live_login_and_activates_the_target(tmp_path: Path, mo
     target.write_text(json.dumps({"claudeAiOauth": {"accessToken": "new"}}), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred(mcpOAuth={"live": True}))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.activated == "new@corp.com"
     assert change.parked_as == "old@corp.com"
-    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
     assert live["claudeAiOauth"] == {"accessToken": "new"}
     # The machine's live MCP tokens came across; the target's stale ones did not.
     assert live["mcpOAuth"] == {"live": True}
     # Exactly one file per login: the target is gone from the store.
     assert not target.exists()
-    assert [s.name for s in claude_pool.parked_slots()] == ["old@corp.com"]
+    assert [s.name for s in engine.parked_slots(CLAUDE)] == ["old@corp.com"]
 
 
 ACCOUNT_BLOCK = {
@@ -660,7 +662,7 @@ def _park_carrying(tmp_path: Path, name: str, token: str, monkeypatch) -> Path:
         json.dumps(
             {
                 "claudeAiOauth": {"refreshToken": token},
-                claude_pool.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
+                claude_adapter.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
             }
         ),
         encoding="utf-8",
@@ -672,7 +674,7 @@ def _login_as(cfg, block: dict, token: str) -> None:
     """What a `/login` in a container leaves behind: a credential in the holder
     and an `oauthAccount` in the config home."""
     _holder_with(cfg, _grant(token))
-    _write_identity(claude_pool.config_home(cfg), block)
+    _write_identity(CLAUDE.config_home(cfg), block)
 
 
 def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, monkeypatch) -> None:
@@ -691,28 +693,28 @@ def test_two_switches_in_a_row_keep_the_outgoing_account_name(tmp_path: Path, mo
 
     _login_as(cfg, SECOND_ACCOUNT_BLOCK, "second")
     assert (
-        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}).parked_as
+        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}).parked_as
         == "second@corp.com#aaaabbbb"
     )
     _login_as(cfg, ACCOUNT_BLOCK, "first")
 
-    first = claude_pool.switch(
+    first = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "second@corp.com#aaaabbbb", authoritative={cfg.container_prefix}
     )
     assert first.parked_as == "first@corp.com#ccccdddd"
 
     # Nothing ran Claude in between, so nothing repopulated `oauthAccount`.
-    back = claude_pool.switch(
+    back = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
     assert back.parked_as == "second@corp.com#aaaabbbb"
-    assert [s.name for s in claude_pool.parked_slots()] == ["second@corp.com#aaaabbbb"]
+    assert [s.name for s in engine.parked_slots(CLAUDE)] == ["second@corp.com#aaaabbbb"]
     # And the holder can still say which account is live, which is what `ls`
     # rendered as `(unknown)` for every switch until a container ran Claude.
     live = [
         s
-        for s in claude_pool.list_slots(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+        for s in engine.list_slots(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
         if s.live
     ]
     assert [s.name for s in live] == ["first@corp.com#ccccdddd"]
@@ -730,13 +732,13 @@ def test_park_keeps_claude_codes_own_account_record_with_the_grant(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("first"))
-    _write_identity(claude_pool.config_home(cfg), ACCOUNT_BLOCK)
+    _write_identity(CLAUDE.config_home(cfg), ACCOUNT_BLOCK)
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert change.parked_as == "first@corp.com#ccccdddd"
-    stored = json.loads((claude_pool.store_dir() / f"{change.parked_as}.json").read_text())
-    assert stored[claude_pool.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
+    stored = json.loads((engine.store_dir(CLAUDE) / f"{change.parked_as}.json").read_text())
+    assert stored[claude_adapter.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
 
 
 def test_switch_restores_the_activated_accounts_record(tmp_path: Path, monkeypatch) -> None:
@@ -745,10 +747,10 @@ def test_switch_restores_the_activated_accounts_record(tmp_path: Path, monkeypat
     _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other"))
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
@@ -768,12 +770,12 @@ def test_the_activated_credential_never_carries_jailbees_record(
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other", mcpOAuth={"srv": 1}))
 
-    claude_pool.switch(
+    engine.switch(CLAUDE,
         cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
-    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
-    assert claude_pool.ACCOUNT_RECORD_KEY not in live
+    live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
+    assert claude_adapter.ACCOUNT_RECORD_KEY not in live
     assert live["claudeAiOauth"] == {"refreshToken": "first"}
     assert live["mcpOAuth"] == {"srv": 1}
 
@@ -785,14 +787,14 @@ def test_the_activated_credential_drops_the_record_into_an_empty_holder(
     shared fields to compose, and must still strip jailbee's key."""
     _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    claude_pool.switch(
+    engine.switch(CLAUDE,
         cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative={cfg.container_prefix}
     )
 
-    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
-    assert claude_pool.ACCOUNT_RECORD_KEY not in live
+    live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
+    assert claude_adapter.ACCOUNT_RECORD_KEY not in live
 
 
 def test_switch_ignores_a_record_that_contradicts_the_slot_name(
@@ -808,17 +810,17 @@ def test_switch_ignores_a_record_that_contradicts_the_slot_name(
             {
                 "claudeAiOauth": {"refreshToken": "first"},
                 # The record still names the account the file was parked under.
-                claude_pool.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
+                claude_adapter.ACCOUNT_RECORD_KEY: ACCOUNT_BLOCK,
             }
         ),
         encoding="utf-8",
     )
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other"))
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    claude_pool.switch(
+    engine.switch(CLAUDE,
         cfg, GlobalConfig(), "renamed@corp.com", authoritative={cfg.container_prefix}
     )
 
@@ -835,10 +837,10 @@ def test_a_disambiguator_is_not_a_contradiction(tmp_path: Path, monkeypatch) -> 
     assert slot.exists()
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other"))
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    claude_pool.switch(
+    engine.switch(CLAUDE,
         cfg,
         GlobalConfig(),
         f"first@corp.com#ccccdddd~{PARK_STAMP}",
@@ -856,10 +858,10 @@ def test_switch_still_clears_when_the_target_carries_no_record(tmp_path: Path, m
     target.write_text(_grant("first"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("other"))
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com", authoritative={cfg.container_prefix})
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "first@corp.com", authoritative={cfg.container_prefix})
 
     assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
 
@@ -867,25 +869,25 @@ def test_switch_still_clears_when_the_target_carries_no_record(tmp_path: Path, m
 def test_switch_into_an_empty_holder_parks_nothing(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
     assert change.parked_as is None
     assert change.activated == "new@corp.com"
-    assert claude_pool.live_credential_path(cfg).exists()
+    assert engine.live_credential_path(CLAUDE, cfg).exists()
 
 
 def test_switch_refuses_the_account_already_live(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.switch(cfg, GlobalConfig(), "me@corp.com", authoritative={cfg.container_prefix})
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.switch(CLAUDE, cfg, GlobalConfig(), "me@corp.com", authoritative={cfg.container_prefix})
 
     assert "already" in str(excinfo.value).lower()
 
@@ -895,11 +897,11 @@ def test_switch_writes_the_credential_readable_only_by_its_owner(
 ) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
 
-    mode = claude_pool.live_credential_path(cfg).stat().st_mode & 0o777
+    mode = engine.live_credential_path(CLAUDE, cfg).stat().st_mode & 0o777
     assert mode == 0o600
 
 
@@ -909,17 +911,17 @@ def test_switch_restores_both_files_when_activation_fails(
     target = _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _cred())
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
     mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        claude_pool.switch(
+        engine.switch(CLAUDE,
             cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
         )
 
     assert live.read_text() == _cred()
     assert target.exists()
-    assert not (claude_pool.store_dir() / "old@corp.com.json").exists()
+    assert not (engine.store_dir(CLAUDE) / "old@corp.com.json").exists()
 
 
 def test_switch_clears_the_account_in_every_member_including_this_repo(
@@ -933,17 +935,17 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
     _register("other", other)
     _register(cfg.container_prefix, tmp_path / "repo")
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
     _write_identity(tmp_path / "other-shared" / "claude", {"emailAddress": "old@corp.com"})
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, gcfg, "new@corp.com", authoritative={cfg.container_prefix, "other"}
     )
 
     assert change.updated == sorted([cfg.container_prefix, "other"])
     for home in (
-        claude_pool.config_home(cfg),
+        CLAUDE.config_home(cfg),
         tmp_path / "other-shared" / "claude",
     ):
         assert "oauthAccount" not in json.loads((home / ".claude.json").read_text())
@@ -952,12 +954,12 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
 def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-    home = claude_pool.config_home(cfg)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True, exist_ok=True)
     (home / ".claude.json").write_text('{"oauthAccount": {"emai', encoding="utf-8")
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
@@ -969,12 +971,12 @@ def test_switch_names_a_member_whose_config_file_is_torn(tmp_path: Path, monkeyp
 def test_switch_reports_a_member_that_looks_busy(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-    sessions = claude_pool.config_home(cfg) / "sessions"
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
+    sessions = CLAUDE.config_home(cfg) / "sessions"
     sessions.mkdir(parents=True)
     (sessions / "77.json").write_text("{}", encoding="utf-8")
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix}
     )
 
@@ -990,27 +992,27 @@ def test_park_use_park_round_trip_preserves_the_login(tmp_path: Path, monkeypatc
         {"claudeAiOauth": {"accessToken": "a", "refreshToken": "b", "expiresAt": 123}}
     )
     _holder_with(cfg, original)
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "first@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "first@x.com"})
 
-    claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
     _holder_with(cfg, json.dumps({"claudeAiOauth": {"accessToken": "second"}}))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "second@x.com"})
-    claude_pool.switch(cfg, GlobalConfig(), "first@x.com", authoritative={cfg.container_prefix})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "second@x.com"})
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "first@x.com", authoritative={cfg.container_prefix})
 
-    live = json.loads(claude_pool.live_credential_path(cfg).read_text())
+    live = json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())
     assert live["claudeAiOauth"] == json.loads(original)["claudeAiOauth"]
-    assert [s.name for s in claude_pool.parked_slots()] == ["second@x.com"]
+    assert [s.name for s in engine.parked_slots(CLAUDE)] == ["second@x.com"]
 
 
 def test_remove_slot_refuses_the_live_account(tmp_path: Path) -> None:
     live = Slot(name="me@corp.com", path=tmp_path / "c.json", live=True)
-    with pytest.raises(claude_pool.PoolError):
-        claude_pool.remove_slot(live)
+    with pytest.raises(models.PoolError):
+        engine.remove_slot(CLAUDE, live)
 
 
 def test_remove_slot_deletes_a_parked_file(tmp_path: Path, monkeypatch) -> None:
     path = _park(tmp_path, "old@corp.com", monkeypatch)
-    claude_pool.remove_slot(Slot(name="old@corp.com", path=path, live=False))
+    engine.remove_slot(CLAUDE, Slot(name="old@corp.com", path=path, live=False))
     assert not path.exists()
 
 
@@ -1019,9 +1021,9 @@ def test_list_slots_puts_the_live_account_first(tmp_path: Path, monkeypatch) -> 
     _park(tmp_path, "aaa@x.com", monkeypatch)
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _cred())
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "live@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "live@x.com"})
 
-    slots = claude_pool.list_slots(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    slots = engine.list_slots(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert [s.name for s in slots] == ["live@x.com", "aaa@x.com", "zzz@x.com"]
     assert slots[0].live is True
@@ -1032,7 +1034,7 @@ def test_invalidate_identity_reports_a_config_it_cannot_read(tmp_path: Path) -> 
     home.mkdir()
     (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
 
-    assert claude_pool.invalidate_identity(home) is False
+    assert claude_adapter.invalidate_identity(home) is False
     assert (home / ".claude.json").read_text() == '["not", "an", "object"]'
 
 
@@ -1045,23 +1047,23 @@ def test_invalidate_identity_reports_a_torn_multibyte_config(tmp_path: Path) -> 
     torn = b'{"oauthAccount": {"emailAddress": "caf\xc3'
     (home / ".claude.json").write_bytes(torn)
 
-    assert claude_pool.invalidate_identity(home) is False
+    assert claude_adapter.invalidate_identity(home) is False
     assert (home / ".claude.json").read_bytes() == torn
 
 
 def test_invalidate_identity_is_true_when_there_is_nothing_to_clear(tmp_path: Path) -> None:
     home = tmp_path / "claude"
     home.mkdir()
-    assert claude_pool.invalidate_identity(home) is True
+    assert claude_adapter.invalidate_identity(home) is True
     (home / ".claude.json").write_text('{"projects": {}}', encoding="utf-8")
-    assert claude_pool.invalidate_identity(home) is True
+    assert claude_adapter.invalidate_identity(home) is True
 
 
 def test_mark_onboarded_creates_the_config_it_writes(tmp_path: Path) -> None:
     home = tmp_path / "claude"
     home.mkdir()
 
-    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+    assert claude_adapter.mark_onboarded(home, repo_dir="/home/dev/pds") is True
 
     data = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
     assert data["hasCompletedOnboarding"] is True
@@ -1079,7 +1081,7 @@ def test_mark_onboarded_keeps_other_projects(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+    assert claude_adapter.mark_onboarded(home, repo_dir="/home/dev/pds") is True
 
     projects = json.loads((home / ".claude.json").read_text(encoding="utf-8"))["projects"]
     assert projects["/home/dev/other"] == {"allowedTools": ["Read"]}
@@ -1094,7 +1096,7 @@ def test_mark_onboarded_refuses_a_config_claude_code_has_written(tmp_path: Path)
     for written in ('{"hasCompletedOnboarding": false}', '{"oauthAccount": {}}'):
         (home / ".claude.json").write_text(written, encoding="utf-8")
 
-        assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is False
+        assert claude_adapter.mark_onboarded(home, repo_dir="/home/dev/pds") is False
         assert (home / ".claude.json").read_text() == written
 
 
@@ -1105,7 +1107,7 @@ def test_mark_onboarded_reports_a_config_it_cannot_read(tmp_path: Path) -> None:
     home.mkdir()
     (home / ".claude.json").write_text('["not", "an", "object"]', encoding="utf-8")
 
-    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is False
+    assert claude_adapter.mark_onboarded(home, repo_dir="/home/dev/pds") is False
     assert (home / ".claude.json").read_text() == '["not", "an", "object"]'
 
 
@@ -1116,7 +1118,7 @@ def test_mark_onboarded_writes_the_legacy_config_when_it_is_the_live_one(tmp_pat
     home.mkdir()
     (home / ".config.json").write_text("{}", encoding="utf-8")
 
-    assert claude_pool.mark_onboarded(home, repo_dir="/home/dev/pds") is True
+    assert claude_adapter.mark_onboarded(home, repo_dir="/home/dev/pds") is True
 
     assert json.loads((home / ".config.json").read_text())["hasCompletedOnboarding"] is True
     assert not (home / ".claude.json").exists()
@@ -1125,11 +1127,11 @@ def test_mark_onboarded_writes_the_legacy_config_when_it_is_the_live_one(tmp_pat
 def test_switch_leaves_no_staging_file_behind(tmp_path: Path, monkeypatch) -> None:
     _park(tmp_path, "new@corp.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    claude_pool.switch(cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "new@corp.com", authoritative={cfg.container_prefix})
 
-    assert list(claude_pool.store_dir().glob("*.activating")) == []
+    assert list(engine.store_dir(CLAUDE).glob("*.activating")) == []
 
 
 def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
@@ -1145,8 +1147,8 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
     """
     target = _park(tmp_path, "new@x.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-    live_path = claude_pool.live_credential_path(cfg)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
+    live_path = engine.live_credential_path(CLAUDE, cfg)
     real_unlink = Path.unlink
 
     def _flaky_unlink(self: Path, *args: object, **kwargs: object) -> None:
@@ -1157,7 +1159,7 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
     mocker.patch("pathlib.Path.unlink", _flaky_unlink)
 
     with pytest.raises(OSError):
-        claude_pool.switch(cfg, GlobalConfig(), "new@x.com", authoritative={cfg.container_prefix})
+        engine.switch(CLAUDE, cfg, GlobalConfig(), "new@x.com", authoritative={cfg.container_prefix})
 
     # The target is back in the store and the holder is empty again — not
     # holding a second copy of the grant `_atomic_write` already wrote.
@@ -1173,7 +1175,7 @@ def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
     files: the store is host-wide, so the grant may be live in another holder
     this call cannot see. Leaving it costs a file on disk and nothing else."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     stage = store / "orphan@x.com.json.activating"
     stage.write_text(
@@ -1182,9 +1184,9 @@ def test_switch_leaves_an_orphaned_staging_file_exactly_where_it_is(
     )
     _park(tmp_path, "other@x.com", monkeypatch)
     cfg = _cfg(tmp_path)
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "other@x.com", authoritative={cfg.container_prefix}
     )
 
@@ -1231,8 +1233,8 @@ def test_the_disambiguator_cannot_appear_in_a_derived_name() -> None:
     """The whole grammar rests on this: `~` separates a derived name from what
     makes it unique, which only works because `_SLUG_UNSAFE` strips `~` out of
     both halves. Widen that allowed set and slot names stop parsing."""
-    slug = claude_pool.slug_for(Identity("a~b@x.com", "c~d~e"))
-    assert claude_pool.DISAMBIGUATOR not in slug
+    slug = models.slug_for(Identity("a~b@x.com", "c~d~e"))
+    assert models.DISAMBIGUATOR not in slug
     assert slug == "a-b@x.com#c-d-e"
 
 
@@ -1249,7 +1251,7 @@ def test_slot_email_and_org_hint_look_past_a_disambiguator() -> None:
     assert unknown.email is None
     assert unknown.org_hint is None
 
-    unidentified = Slot(name=f"{claude_pool.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
+    unidentified = Slot(name=f"{models.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
     assert unidentified.email is None
     assert unidentified.org_hint is None
 
@@ -1275,8 +1277,8 @@ def test_display_name_keeps_an_emailless_name_whole() -> None:
     """The two emailless shapes have no `#<org8>` to drop, and their
     disambiguator is the only thing telling two of them apart — so the name
     passes through untouched rather than being rebuilt from `email`."""
-    unidentified = Slot(name=f"{claude_pool.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
-    assert unidentified.display_name == f"{claude_pool.LIVE_UNIDENTIFIED}~live"
+    unidentified = Slot(name=f"{models.LIVE_UNIDENTIFIED}~live", path=Path("/x"), live=True)
+    assert unidentified.display_name == f"{models.LIVE_UNIDENTIFIED}~live"
     assert unidentified.disambiguator == "live"
 
     unknown = Slot(name=f"unknown-{PARK_STAMP}", path=Path("/x"), live=False)
@@ -1299,7 +1301,7 @@ def test_resolve_interactively_passes_a_typed_ref_straight_through() -> None:
         calls.append(slots)
         return "picked"
 
-    result = claude_pool.resolve_interactively(
+    result = engine.resolve_interactively(CLAUDE,
         _slots(),
         "typed@corp.com",
         purpose="switch to",
@@ -1319,7 +1321,7 @@ def test_resolve_interactively_never_offers_the_live_slot() -> None:
         seen.append([s.name for s in slots])
         return slots[0].name
 
-    result = claude_pool.resolve_interactively(
+    result = engine.resolve_interactively(CLAUDE,
         _slots(), None, purpose="switch to", picker=picker, is_interactive=lambda: True
     )
     assert seen == [["parked@corp.com", "other@x.com"]]
@@ -1329,7 +1331,7 @@ def test_resolve_interactively_never_offers_the_live_slot() -> None:
 def test_resolve_interactively_returns_none_when_the_picker_is_cancelled() -> None:
     """ESC is not an error: the caller aborts without printing a failure."""
     assert (
-        claude_pool.resolve_interactively(
+        engine.resolve_interactively(CLAUDE,
             _slots(), None, purpose="switch to", picker=lambda _: None, is_interactive=lambda: True
         )
         is None
@@ -1340,8 +1342,8 @@ def test_resolve_interactively_rejects_a_holder_with_nothing_parked() -> None:
     """One live login and nothing parked is not an empty pool — but there is
     still nothing to switch *to*, and the message must say how to get one."""
     only_live = [Slot(name="live@corp.com", path=Path("/h/c.json"), live=True)]
-    with pytest.raises(claude_pool.PoolError) as e:
-        claude_pool.resolve_interactively(
+    with pytest.raises(models.PoolError) as e:
+        engine.resolve_interactively(CLAUDE,
             only_live,
             None,
             purpose="switch to",
@@ -1355,8 +1357,8 @@ def test_resolve_interactively_rejects_a_holder_with_nothing_parked() -> None:
 def test_resolve_interactively_names_the_candidates_without_a_tty() -> None:
     """A script cannot answer a picker, so the failure has to teach it the
     references it should have passed."""
-    with pytest.raises(claude_pool.PoolError) as e:
-        claude_pool.resolve_interactively(
+    with pytest.raises(models.PoolError) as e:
+        engine.resolve_interactively(CLAUDE,
             _slots(),
             None,
             purpose="delete",
@@ -1370,8 +1372,8 @@ def test_resolve_interactively_names_the_candidates_without_a_tty() -> None:
 
 
 def test_group_name_is_the_directory_name_or_none(tmp_path: Path) -> None:
-    assert claude_pool.group_name(_cfg(tmp_path, group="gisgro")) == "gisgro"
-    assert claude_pool.group_name(_cfg(tmp_path)) is None
+    assert engine.repo_group(_cfg(tmp_path, group="gisgro")) == "gisgro"
+    assert engine.repo_group(_cfg(tmp_path)) is None
 
 
 def test_park_stores_a_second_independent_grant_for_one_account(
@@ -1383,17 +1385,17 @@ def test_park_stores_a_second_independent_grant_for_one_account(
     first.write_text(_grant("lineage-1"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("lineage-2"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(
+    change = engine.park(CLAUDE,
         cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}"
     assert first.read_text() == _grant("lineage-1")
-    second = claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json"
+    second = engine.store_dir(CLAUDE) / f"me@corp.com~{PARK_STAMP}.json"
     assert _login_in(second) == json.loads(_grant("lineage-2"))["claudeAiOauth"]
-    assert not claude_pool.live_credential_path(cfg).exists()
+    assert not engine.live_credential_path(CLAUDE, cfg).exists()
 
 
 def test_park_refuses_a_rotated_copy_of_a_stored_login(tmp_path: Path, monkeypatch) -> None:
@@ -1404,14 +1406,14 @@ def test_park_refuses_a_rotated_copy_of_a_stored_login(tmp_path: Path, monkeypat
     cfg = _cfg(tmp_path)
     rotated = {"claudeAiOauth": {"accessToken": "rotated", "refreshToken": "same-lineage"}}
     _holder_with(cfg, json.dumps(rotated))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
 
     assert "already stored as `me@corp.com`" in str(excinfo.value)
-    assert claude_pool.live_credential_path(cfg).exists()
-    assert not (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json").exists()
+    assert engine.live_credential_path(CLAUDE, cfg).exists()
+    assert not (engine.store_dir(CLAUDE) / f"me@corp.com~{PARK_STAMP}.json").exists()
 
 
 def test_park_fails_closed_when_the_two_grants_cannot_be_compared(
@@ -1424,16 +1426,16 @@ def test_park_fails_closed_when_the_two_grants_cannot_be_compared(
     stored.write_text("not json at all", encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("lineage-2"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
 
     message = str(excinfo.value)
     assert "could not read both files" in message
     assert "copies" not in message
-    assert claude_pool.live_credential_path(cfg).exists()
-    assert not (claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}.json").exists()
+    assert engine.live_credential_path(CLAUDE, cfg).exists()
+    assert not (engine.store_dir(CLAUDE) / f"me@corp.com~{PARK_STAMP}.json").exists()
 
 
 def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, monkeypatch) -> None:
@@ -1446,16 +1448,16 @@ def test_park_never_overwrites_an_existing_disambiguated_slot(tmp_path: Path, mo
     already.write_text(_grant("lineage-2"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("lineage-3"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    change = claude_pool.park(
+    change = engine.park(CLAUDE,
         cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.parked_as == f"me@corp.com~{PARK_STAMP}-2"
     assert plain.read_text() == _grant("lineage-1")
     assert already.read_text() == _grant("lineage-2")
-    third = claude_pool.store_dir() / f"me@corp.com~{PARK_STAMP}-2.json"
+    third = engine.store_dir(CLAUDE) / f"me@corp.com~{PARK_STAMP}-2.json"
     assert _login_in(third) == json.loads(_grant("lineage-3"))["claudeAiOauth"]
 
 
@@ -1470,10 +1472,10 @@ def test_park_refuses_a_lineage_already_stored_under_a_disambiguated_name(
     already.write_text(_grant("lineage-2"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("lineage-2"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@corp.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@corp.com"})
 
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix}, now=PARK_TIME)
 
     assert f"already stored as `me@corp.com~{PARK_STAMP}`" in str(excinfo.value)
 
@@ -1488,19 +1490,19 @@ def test_a_switch_for_another_account_survives_a_collided_one(tmp_path: Path, mo
     colleague.write_text(_grant("colleague"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("mine-live"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "colleague@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.activated == "colleague@x.com"
     assert change.parked_as == f"me@x.com~{PARK_STAMP}"
-    assert json.loads(claude_pool.live_credential_path(cfg).read_text())["claudeAiOauth"] == {
+    assert json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())["claudeAiOauth"] == {
         "accessToken": "a",
         "refreshToken": "colleague",
     }
-    assert [s.name for s in claude_pool.parked_slots()] == [
+    assert [s.name for s in engine.parked_slots(CLAUDE)] == [
         "me@x.com",
         f"me@x.com~{PARK_STAMP}",
     ]
@@ -1515,9 +1517,9 @@ def test_list_slots_disambiguates_a_live_name_a_parked_slot_holds(
     _park(tmp_path, "me@x.com", monkeypatch)
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("live"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    slots = claude_pool.list_slots(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    slots = engine.list_slots(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert [(s.name, s.live) for s in slots] == [("me@x.com~live", True), ("me@x.com", False)]
     # Still one account as far as the columns are concerned.
@@ -1540,19 +1542,19 @@ def test_switch_to_a_parked_slot_whose_name_the_live_one_shares(
     parked.write_text(_grant("parked"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     _holder_with(cfg, _grant("live"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
 
-    change = claude_pool.switch(
+    change = engine.switch(CLAUDE,
         cfg, GlobalConfig(), "me@x.com", authoritative={cfg.container_prefix}, now=PARK_TIME
     )
 
     assert change.activated == "me@x.com"
     assert change.parked_as == "me@x.com"
-    assert json.loads(claude_pool.live_credential_path(cfg).read_text())["claudeAiOauth"] == {
+    assert json.loads(engine.live_credential_path(CLAUDE, cfg).read_text())["claudeAiOauth"] == {
         "accessToken": "a",
         "refreshToken": "parked",
     }
-    stored = claude_pool.parked_slots()
+    stored = engine.parked_slots(CLAUDE)
     assert [s.name for s in stored] == ["me@x.com"]
     assert json.loads(stored[0].path.read_text())["claudeAiOauth"]["refreshToken"] == "live"
 
@@ -1565,14 +1567,14 @@ def test_resolve_removable_picks_the_parked_file_of_a_duplicated_name() -> None:
         Slot(name="me@x.com", path=Path("/store/me@x.com.json"), live=False),
         Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True),
     ]
-    assert claude_pool.resolve_removable("me@x.com", dupes).path == Path("/store/me@x.com.json")
+    assert engine.resolve_removable("me@x.com", dupes).path == Path("/store/me@x.com.json")
 
 
 def test_resolve_removable_still_reports_the_live_account() -> None:
     """The escape must not swallow the ordinary refusal: with no duplicate,
     `rm <live>` still resolves to the live slot so the caller can refuse it."""
     live = Slot(name="me@x.com", path=Path("/holder/.credentials.json"), live=True)
-    assert claude_pool.resolve_removable("me@x.com", [live]).live is True
+    assert engine.resolve_removable("me@x.com", [live]).live is True
 
 
 def test_resolve_removable_defers_to_resolve_ref_for_two_parked_files() -> None:
@@ -1582,8 +1584,8 @@ def test_resolve_removable_defers_to_resolve_ref_for_two_parked_files() -> None:
         Slot(name="me@x.com", path=Path("/store/a.json"), live=False),
         Slot(name="me@x.com", path=Path("/store/b.json"), live=False),
     ]
-    with pytest.raises(claude_pool.PoolError):
-        claude_pool.resolve_removable("me@x.com", dupes)
+    with pytest.raises(models.PoolError):
+        engine.resolve_removable("me@x.com", dupes)
 
 
 def test_compose_ignores_a_non_shared_key_offered_as_live(tmp_path: Path) -> None:
@@ -1592,7 +1594,7 @@ def test_compose_ignores_a_non_shared_key_offered_as_live(tmp_path: Path) -> Non
     account's grant under another's identity, and two files for one lineage."""
     target = _grant("target-lineage")
     out = json.loads(
-        claude_pool.compose_credential(
+        claude_adapter.compose_credential(
             target,
             {"claudeAiOauth": {"accessToken": "x", "refreshToken": "live-lineage"}, "mcpOAuth": {}},
         )
@@ -1606,19 +1608,19 @@ def test_park_of_an_empty_holder_creates_nothing(tmp_path: Path, monkeypatch) ->
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path, group="work")
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative={cfg.container_prefix})
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative={cfg.container_prefix})
 
     assert change.parked_as is None
-    assert not claude_pool.holder_dir(cfg).exists()
+    assert not engine.holder_dir(CLAUDE, cfg).exists()
 
 
 def test_the_live_account_refusal_has_one_source(tmp_path: Path) -> None:
     """`cli.claude_rm_cmd` pre-checks so the prompt is skipped, and
     `remove_slot` refuses again for non-CLI callers. One sentence, two sites."""
     live = Slot(name="me@corp.com", path=tmp_path / "c.json", live=True)
-    with pytest.raises(claude_pool.PoolError) as excinfo:
-        claude_pool.remove_slot(live)
-    assert str(excinfo.value) == claude_pool.live_account_refusal("me@corp.com")
+    with pytest.raises(models.PoolError) as excinfo:
+        engine.remove_slot(CLAUDE, live)
+    assert str(excinfo.value) == engine.live_account_refusal(CLAUDE, "me@corp.com")
 
 
 def test_switch_rolls_back_a_park_that_had_to_disambiguate(
@@ -1634,11 +1636,11 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
     colleague.write_text(_grant("colleague"), encoding="utf-8")
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _grant("mine-live"))
-    _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
+    _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
     mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
-        claude_pool.switch(
+        engine.switch(CLAUDE,
             cfg,
             GlobalConfig(),
             "colleague@x.com",
@@ -1647,26 +1649,25 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
         )
 
     assert live.read_text() == _grant("mine-live")
-    assert not (claude_pool.store_dir() / f"me@x.com~{PARK_STAMP}.json").exists()
-    assert [s.name for s in claude_pool.parked_slots()] == ["colleague@x.com", "me@x.com"]
+    assert not (engine.store_dir(CLAUDE) / f"me@x.com~{PARK_STAMP}.json").exists()
+    assert [s.name for s in engine.parked_slots(CLAUDE)] == ["colleague@x.com", "me@x.com"]
 
 
 def test_live_account_ignores_a_non_authoritative_member(tmp_path):
     """A repo spanning two groups must not name the holder's login."""
-    from jailbee import claude_pool
 
     home = tmp_path / "mixed-home"
     home.mkdir()
     (home / ".claude.json").write_text(
         json.dumps({"oauthAccount": {"emailAddress": "wrong@example.com"}})
     )
-    found = [claude_pool.Member("mixed", home)]
+    found = [models.Member("mixed", home)]
 
     assert (
-        claude_pool.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
+        claude_adapter.live_account(_cfg(tmp_path), found, prefer="mixed", authoritative=set()) is None
     )
     assert (
-        claude_pool.live_account(
+        claude_adapter.live_account(
             _cfg(tmp_path), found, prefer="mixed", authoritative={"mixed"}
         ).identity.email
         == "wrong@example.com"
@@ -1677,25 +1678,23 @@ def test_park_names_the_file_unknown_when_nothing_is_authoritative(tmp_path, moc
     """Never wrong, sometimes nameless."""
     from datetime import datetime
 
-    from jailbee import claude_pool
-
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".claude.json").write_text(
         json.dumps({"oauthAccount": {"emailAddress": "wrong@example.com"}})
     )
-    live = claude_pool.live_credential_path(cfg)
+    live = engine.live_credential_path(CLAUDE, cfg)
     live.parent.mkdir(parents=True, exist_ok=True)
     live.write_text(json.dumps({"claudeAiOauth": {"refreshToken": "rt-1"}}))
-    mocker.patch("jailbee.claude_pool.store_dir", return_value=tmp_path / "store")
+    mocker.patch("jailbee.accounts.engine.store_dir", return_value=tmp_path / "store")
 
-    change = claude_pool.park(
+    change = engine.park(CLAUDE,
         cfg, GlobalConfig(), authoritative=set(), now=datetime(2026, 9, 2, 10, 0, 0)
     )
 
     assert change.parked_as is not None
-    assert claude_pool.is_unidentified(change.parked_as)
+    assert models.is_unidentified(change.parked_as)
     assert "wrong@example.com" not in change.parked_as
 
 
@@ -1712,7 +1711,7 @@ def test_members_excludes_a_caller_that_does_not_resolve_to_the_holder(
     cfg = _cfg(tmp_path, group="personal")
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
-    found, unreachable = claude_pool.members(cfg, gcfg)
+    found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
     assert found == []
     assert unreachable == []
@@ -1730,7 +1729,7 @@ def test_members_include_an_unregistered_caller_that_resolves_to_the_holder(
     cfg = _cfg(tmp_path, group="work")
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
 
-    found, _ = claude_pool.members(cfg, gcfg)
+    found, _ = engine.members(CLAUDE, cfg, gcfg)
 
     assert [m.container_prefix for m in found] == [cfg.container_prefix]
 
@@ -1745,11 +1744,11 @@ def test_switch_clears_rather_than_restores_a_non_authoritative_member(
     _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
     cfg = _cfg(tmp_path, group="work")
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
-    claude_pool.holder_dir(cfg).mkdir(parents=True)
-    home = claude_pool.config_home(cfg)
+    engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
+    home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
 
-    change = claude_pool.switch(cfg, gcfg, "first@corp.com#ccccdddd", authoritative=set())
+    change = engine.switch(CLAUDE, cfg, gcfg, "first@corp.com#ccccdddd", authoritative=set())
 
     assert change.updated == [cfg.container_prefix]
     data = json.loads((home / ".claude.json").read_text())
@@ -1769,15 +1768,15 @@ def test_park_names_the_slot_from_the_holder_note(tmp_path: Path, monkeypatch, m
     cfg = _cfg(tmp_path, group="personal")
     gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
     _holder_with(cfg, _grant("rt-personal"))
-    claude_pool.write_account_note(
-        claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-personal")
+    claude_adapter.write_account_note(
+        engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-personal")
     )
 
-    change = claude_pool.park(cfg, gcfg, authoritative=set(), now=PARK_TIME)
+    change = engine.park(CLAUDE, cfg, gcfg, authoritative=set(), now=PARK_TIME)
 
     assert change.parked_as == "first@corp.com#ccccdddd"
-    stored = claude_pool.store_dir() / "first@corp.com#ccccdddd.json"
-    assert json.loads(stored.read_text())[claude_pool.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
+    stored = engine.store_dir(CLAUDE) / "first@corp.com#ccccdddd.json"
+    assert json.loads(stored.read_text())[claude_adapter.ACCOUNT_RECORD_KEY] == ACCOUNT_BLOCK
 
 
 def test_a_holder_note_is_ignored_once_the_grant_it_names_is_gone(
@@ -1789,10 +1788,10 @@ def test_a_holder_note_is_ignored_once_the_grant_it_names_is_gone(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("rt-old"))
-    claude_pool.write_account_note(claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-old"))
+    claude_adapter.write_account_note(engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-old"))
     _holder_with(cfg, _grant("rt-after-a-fresh-login"))
 
-    change = claude_pool.park(cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
+    change = engine.park(CLAUDE, cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
 
     assert change.parked_as == f"unknown-{PARK_STAMP}"
 
@@ -1801,9 +1800,9 @@ def test_the_holder_note_never_holds_the_refresh_token(tmp_path: Path) -> None:
     """It names an account; the grant is identified by a digest, never copied."""
     holder = tmp_path / "holder"
     holder.mkdir()
-    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("s3cr3t-lineage"))
+    claude_adapter.write_account_note(holder, ACCOUNT_BLOCK, _grant("s3cr3t-lineage"))
 
-    raw = (holder / claude_pool.ACCOUNT_NOTE_FILE).read_text(encoding="utf-8")
+    raw = (holder / claude_adapter.ACCOUNT_NOTE_FILE).read_text(encoding="utf-8")
 
     assert "s3cr3t-lineage" not in raw
     assert "first@corp.com" in raw
@@ -1814,9 +1813,9 @@ def test_switch_notes_the_activated_account_in_the_holder(tmp_path: Path, monkey
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("outgoing"))
 
-    claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
 
-    account = claude_pool.note_account(cfg)
+    account = claude_adapter.note_account(cfg)
     assert account is not None
     assert account.identity == Identity("first@corp.com", "ccccdddd-1111")
     assert account.record == ACCOUNT_BLOCK
@@ -1830,25 +1829,25 @@ def test_switch_drops_a_stale_note_when_the_slot_carries_no_record(
     _park(tmp_path, "plain@corp.com", monkeypatch)
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("outgoing"))
-    claude_pool.write_account_note(claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("outgoing"))
+    claude_adapter.write_account_note(engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("outgoing"))
 
-    claude_pool.switch(cfg, GlobalConfig(), "plain@corp.com", authoritative=set())
+    engine.switch(CLAUDE, cfg, GlobalConfig(), "plain@corp.com", authoritative=set())
 
-    assert not (claude_pool.holder_dir(cfg) / claude_pool.ACCOUNT_NOTE_FILE).exists()
-    assert claude_pool.note_account(cfg) is None
+    assert not (engine.holder_dir(CLAUDE, cfg) / claude_adapter.ACCOUNT_NOTE_FILE).exists()
+    assert claude_adapter.note_account(cfg) is None
 
 
 def test_park_removes_the_note_with_the_login(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("rt-personal"))
-    claude_pool.write_account_note(
-        claude_pool.holder_dir(cfg), ACCOUNT_BLOCK, _grant("rt-personal")
+    claude_adapter.write_account_note(
+        engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-personal")
     )
 
-    claude_pool.park(cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
+    engine.park(CLAUDE, cfg, GlobalConfig(), authoritative=set(), now=PARK_TIME)
 
-    assert not (claude_pool.holder_dir(cfg) / claude_pool.ACCOUNT_NOTE_FILE).exists()
+    assert not (engine.holder_dir(CLAUDE, cfg) / claude_adapter.ACCOUNT_NOTE_FILE).exists()
 
 
 def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
@@ -1859,22 +1858,22 @@ def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
     _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
     cfg = _cfg(tmp_path, group="personal")
     _holder_with(cfg, _grant("outgoing"))
-    claude_pool.write_account_note(
-        claude_pool.holder_dir(cfg), SECOND_ACCOUNT_BLOCK, _grant("outgoing")
+    claude_adapter.write_account_note(
+        engine.holder_dir(CLAUDE, cfg), SECOND_ACCOUNT_BLOCK, _grant("outgoing")
     )
-    real_write = claude_pool._atomic_write
+    real_write = engine._atomic_write
 
     def fail_the_credential(path, text):
-        if path == claude_pool.live_credential_path(cfg):
+        if path == engine.live_credential_path(CLAUDE, cfg):
             raise OSError("disk full")
         real_write(path, text)
 
     mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=fail_the_credential)
 
     with pytest.raises(OSError):
-        claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
+        engine.switch(CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
 
-    account = claude_pool.note_account(cfg)
+    account = claude_adapter.note_account(cfg)
     assert account is not None
     assert account.record == SECOND_ACCOUNT_BLOCK
 
@@ -1889,9 +1888,9 @@ def test_note_account_at_names_the_login_in_a_bare_directory(tmp_path: Path) -> 
     holder = tmp_path / "creds" / "personal"
     holder.mkdir(parents=True)
     (holder / ".credentials.json").write_text(_grant("rt-personal"), encoding="utf-8")
-    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-personal"))
+    claude_adapter.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-personal"))
 
-    account = claude_pool.note_account_at(holder)
+    account = claude_adapter.note_account_at(holder)
 
     assert account is not None
     assert account.identity == Identity("first@corp.com", "ccccdddd-1111")
@@ -1900,10 +1899,10 @@ def test_note_account_at_names_the_login_in_a_bare_directory(tmp_path: Path) -> 
 def test_note_account_at_ignores_a_note_whose_grant_has_moved_on(tmp_path: Path) -> None:
     holder = tmp_path / "creds" / "personal"
     holder.mkdir(parents=True)
-    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-old"))
+    claude_adapter.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-old"))
     (holder / ".credentials.json").write_text(_grant("rt-fresh-login"), encoding="utf-8")
 
-    assert claude_pool.note_account_at(holder) is None
+    assert claude_adapter.note_account_at(holder) is None
 
 
 def test_live_slot_at_reads_a_holder_by_path(tmp_path: Path) -> None:
@@ -1911,7 +1910,7 @@ def test_live_slot_at_reads_a_holder_by_path(tmp_path: Path) -> None:
     holder.mkdir(parents=True)
     (holder / ".credentials.json").write_text(_grant("rt-work"), encoding="utf-8")
 
-    slot = claude_pool.live_slot_at(holder, Identity("first@corp.com", "ccccdddd-1111"))
+    slot = engine.live_slot_at(CLAUDE, holder, Identity("first@corp.com", "ccccdddd-1111"))
 
     assert slot == Slot(
         name="first@corp.com#ccccdddd", path=holder / ".credentials.json", live=True
@@ -1924,20 +1923,20 @@ def test_live_slot_at_is_none_for_a_group_directory_with_no_login(tmp_path: Path
     holder = tmp_path / "creds" / "empty"
     holder.mkdir(parents=True)
 
-    assert claude_pool.live_slot_at(holder, None) is None
+    assert engine.live_slot_at(CLAUDE, holder, None) is None
 
 
 def test_account_of_prefers_the_holder_note_over_a_member_config_home(tmp_path: Path) -> None:
     holder = tmp_path / "creds" / "work"
     holder.mkdir(parents=True)
     (holder / ".credentials.json").write_text(_grant("rt-work"), encoding="utf-8")
-    claude_pool.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-work"))
+    claude_adapter.write_account_note(holder, ACCOUNT_BLOCK, _grant("rt-work"))
     member_home = tmp_path / "member" / "claude"
     _write_identity(member_home, SECOND_ACCOUNT_BLOCK)
 
-    account = claude_pool.account_of(
+    account = claude_adapter.account_of(
         holder,
-        [claude_pool.Member("member", member_home)],
+        [models.Member("member", member_home)],
         prefer="member",
         authoritative={"member"},
     )
@@ -1955,9 +1954,9 @@ def test_account_of_falls_back_to_an_authoritative_member(tmp_path: Path) -> Non
     member_home = tmp_path / "member" / "claude"
     _write_identity(member_home, SECOND_ACCOUNT_BLOCK)
 
-    account = claude_pool.account_of(
+    account = claude_adapter.account_of(
         holder,
-        [claude_pool.Member("member", member_home)],
+        [models.Member("member", member_home)],
         prefer="member",
         authoritative={"member"},
     )
@@ -1967,8 +1966,8 @@ def test_account_of_falls_back_to_an_authoritative_member(tmp_path: Path) -> Non
 
 
 def test_registered_repos_is_public(tmp_path: Path) -> None:
-    """`claude_overview` walks every registered repo, not just one holder's
+    """`accounts.overview` walks every registered repo, not just one holder's
     members, so the registry read is part of the module's surface."""
     _register("other", tmp_path / "other")
 
-    assert ("other", tmp_path / "other") in claude_pool.registered_repos()
+    assert ("other", tmp_path / "other") in engine.registered_repos()

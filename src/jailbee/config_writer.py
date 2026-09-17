@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Final
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from jailbee.claude_pool import _fsync_dir
+from jailbee.accounts.engine import _fsync_dir
 
 if TYPE_CHECKING:
     from pydantic import BaseModel

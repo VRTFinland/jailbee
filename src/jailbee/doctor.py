@@ -254,14 +254,14 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
     Member repos come from the registry: the mapping is one host-local object,
     so no other repo's config needs loading to resolve it.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
 
     group_dir = cfg.claude_credentials_dir
     if group_dir is None:
         return []
 
     assert cfg.shared_dir is not None  # set by load_config
-    group = claude_pool.group_name(cfg)
+    group = engine.repo_group(cfg)
     assert group is not None  # group_dir is not None, so neither is this
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
     if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
@@ -292,7 +292,7 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
     loading — turning a working config into a hard load failure on upgrade
     would be worse than the ambiguity.
     """
-    from jailbee.claude_groups import RESERVED_GROUP_NAMES
+    from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 
     configured = {gcfg.claude_credentials.group, *gcfg.claude_credentials.repos.values()}
     offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
@@ -322,10 +322,10 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
     unreadable registry says nothing about whether the credential join
     itself is healthy, so it degrades this check's "shared with" listing
     to empty rather than failing the check. The matching rule itself lives
-    in `claude_pool.group_member_prefixes`, which raises — the degradation
+    in `accounts.engine.group_member_prefixes`, which raises — the degradation
     is this caller's policy, not the rule's.
     """
-    from jailbee.claude_pool import group_member_prefixes
+    from jailbee.accounts.engine import group_member_prefixes
 
     try:
         prefixes = group_member_prefixes(gcfg, group)
@@ -338,7 +338,7 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
     """One failed check per staging file an interrupted `jailbee claude use`
     left in the store.
 
-    `claude_pool.switch` renames its target to `<name>.json.activating` before
+    `accounts.engine.switch` renames its target to `<name>.json.activating` before
     anything else moves, so a hard kill in that window leaves a login in a file
     `parked_slots()` does not list — invisible to `jailbee claude ls`, and
     invisible here too unless something goes looking for it.
@@ -367,22 +367,23 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
     refresh-token lineage in two files. The remaining caveat covers what is
     genuinely unknowable from here — another holder, or another name.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     suffix = ".activating"
     try:
-        stages = sorted(claude_pool.store_dir().glob(f"*.json{suffix}"))
+        stages = sorted(engine.store_dir(CLAUDE).glob(f"*.json{suffix}"))
     except OSError:  # an unreadable store is _check_claude_credentials' business
         return []
 
-    live = claude_pool.live_credential_path(cfg)
+    live = engine.live_credential_path(CLAUDE, cfg)
     results: list[CheckResult] = []
     for stage in stages:
         home = stage.with_name(stage.name[: -len(suffix)])
-        if claude_pool.holds_same_login(stage, live):
+        if engine.holds_same_login(CLAUDE, stage, live):
             detail = (
                 f"an interrupted switch left {stage}, and that login is the one "
-                f"live in {claude_pool.holder_dir(cfg)} right now — the switch had "
+                f"live in {engine.holder_dir(CLAUDE, cfg)} right now — the switch had "
                 "already written it before it was killed. The staging file is a "
                 "leftover second copy of a live grant, so delete it; renaming it "
                 "into the store is the one move that would put that login in two "
@@ -423,33 +424,36 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     in or switches. Not a broken state, but one worth naming, because the
     symptom inside a container is "Not logged in" with no explanation.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import slug_for
 
     orphans = _orphaned_stage_checks(cfg)
 
-    parked = claude_pool.parked_slots()
+    parked = engine.parked_slots(CLAUDE)
     if not parked:
         return orphans
 
     try:
-        from jailbee import claude_groups
+        from jailbee.accounts import groups
+        from jailbee.accounts.adapters.claude import live_identity
 
-        found, _ = claude_pool.members(cfg, gcfg)
-        group = claude_pool.group_name(cfg)
+        found, _ = engine.members(CLAUDE, cfg, gcfg)
+        group = engine.repo_group(cfg)
         authoritative = (
             {cfg.container_prefix}
             if group is None
-            else claude_groups.authoritative_prefixes(
+            else groups.authoritative_prefixes(
                 gcfg, incus, group, [m.container_prefix for m in found]
             )
         )
-        identity = claude_pool.live_identity(
+        identity = live_identity(
             cfg, found, prefer=cfg.container_prefix, authoritative=authoritative
         )
     except Exception:  # a bookkeeping read is not a diagnosis; see _check_upgrade_advice
         identity = None
 
-    holder = claude_pool.holder_dir(cfg)
+    holder = engine.holder_dir(CLAUDE, cfg)
     count = f"{len(parked)} parked"
     if not (holder / ".credentials.json").exists():
         return [
@@ -461,7 +465,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
             ),
             *orphans,
         ]
-    live = claude_pool.slug_for(identity) if identity is not None else "an unidentified account"
+    live = slug_for(identity) if identity is not None else "an unidentified account"
     return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
@@ -480,10 +484,10 @@ def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckRe
     reached, as `_check_claude_pool` does: a discoverability nicety must not
     turn an unreachable Incus into a failed check.
     """
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     try:
-        names = claude_groups.redundant_overrides(cfg, incus)
+        names = groups.redundant_overrides(cfg, incus)
     except Exception:  # not a diagnosis; see _check_claude_pool
         return []
     if not names:

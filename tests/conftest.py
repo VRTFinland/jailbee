@@ -95,15 +95,15 @@ def claude_row(
     mine: bool = False,
     live: bool = True,
 ):
-    """One `claude_overview.Row`, built the way `build` builds them.
+    """One `accounts.overview.Row`, built the way `build` builds them.
 
     Real `Row`s rather than mocks: the display properties (`state`, `account`,
     `org_hint`) are the module's own, and a stub of them would test nothing.
     Shared by the `claude ls` and `claude group ls` tests, which render the
     same rows through the same field specs and must not drift apart.
     """
-    from jailbee import claude_overview
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts import overview
+    from jailbee.accounts.models import Slot
 
     slot = (
         None
@@ -114,7 +114,7 @@ def claude_row(
             live=live,
         )
     )
-    return claude_overview.Row(
+    return overview.Row(
         agent="claude",
         slot=slot,
         group=group,
@@ -128,9 +128,9 @@ def claude_row(
 
 def claude_overview_of(*rows, unreachable: tuple[str, ...] = (), containers_known: bool = True):
     """An `Overview` around `rows`, with nothing unreadable by default."""
-    from jailbee import claude_overview
+    from jailbee.accounts import overview
 
-    return claude_overview.Overview(
+    return overview.Overview(
         rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
     )
 

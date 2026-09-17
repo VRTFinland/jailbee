@@ -18,7 +18,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from rich.status import Status
 
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts.models import Slot
     from jailbee.config import Config
     from jailbee.destroy_guard import RiskSummary
     from jailbee.incus import Incus
@@ -791,12 +791,12 @@ def pick_container_for_group(cfg: Config, incus: Incus, names: Sequence[str]) ->
     """
     import questionary
 
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     width = max(len(n) for n in names)
     choices = []
     for name in names:
-        group = claude_groups.effective_group(cfg, incus, name)
+        group = groups.effective_group(cfg, incus, name)
         label = "no group" if group is None else group
         choices.append(questionary.Choice(title=f"{name:<{width}}  {label}", value=name))
     result = questionary.select("Change the group of:", choices=choices).ask()

@@ -236,7 +236,7 @@ def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
     org column lines up across rows of differing email length."""
     from pathlib import Path
 
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts.models import Slot
     from jailbee.tui import _claude_choice_title
 
     long = Slot("a.long.address@example.com#c0ffee12", Path("/s/a.json"), live=False)
@@ -254,7 +254,7 @@ def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
 def test_claude_picker_omits_the_org_for_an_account_without_one() -> None:
     from pathlib import Path
 
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts.models import Slot
     from jailbee.tui import _claude_choice_title
 
     plain = Slot("me@personal.com", Path("/s/b.json"), live=False)
@@ -268,7 +268,7 @@ def test_claude_picker_offers_the_slot_name_as_the_value(mocker) -> None:
     display text — the name is what `claude use`/`rm` resolve."""
     from pathlib import Path
 
-    from jailbee.claude_pool import Slot
+    from jailbee.accounts.models import Slot
     from jailbee.tui import pick_claude_account
 
     select = mocker.patch("questionary.select")

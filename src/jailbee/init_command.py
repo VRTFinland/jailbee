@@ -337,7 +337,7 @@ def _seed_claude_json(cfg: Config) -> None:
     through `/login` for the account the mounted credential already carries —
     the friction every new container in a shared group used to pay, and every
     scratch directory pays twice over because it has no repo config to
-    inherit. `claude_pool.mark_onboarded` writes that state; the decision to
+    inherit. `accounts.adapters.claude.mark_onboarded` writes that state; the decision to
     write it lives here, where both halves are known.
 
     The credential check is the gate, not a detail: with nothing to adopt, the
@@ -347,10 +347,11 @@ def _seed_claude_json(cfg: Config) -> None:
     its holder being its own config home.
 
     Never an overwrite: `mark_onboarded` refuses a config home Claude Code has
-    already written (`claude_pool.ONBOARDING_KEYS`), and this falls back to the
+    already written (`accounts.adapters.claude.ONBOARDING_KEYS`), and this falls back to the
     `{}` seed — which in turn only ever writes an absent file.
     """
-    from jailbee.claude_pool import live_credential_path, mark_onboarded
+    from jailbee.accounts.adapters.claude import CLAUDE, mark_onboarded
+    from jailbee.accounts.engine import live_credential_path
     from jailbee.profiles import container_repo_dir_for
 
     assert cfg.shared_dir is not None  # set by load_config
@@ -358,7 +359,7 @@ def _seed_claude_json(cfg: Config) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     if (
         cfg.claude.seed_onboarding
-        and live_credential_path(cfg).exists()
+        and live_credential_path(CLAUDE, cfg).exists()
         and mark_onboarded(target.parent, repo_dir=container_repo_dir_for(cfg))
     ):
         return

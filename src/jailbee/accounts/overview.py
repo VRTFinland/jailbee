@@ -3,7 +3,7 @@
 `jailbee claude ls` used to be a *holder* view: one live row — the calling
 repo's — plus the host-wide parked store. Which account a credential group
 held was answerable only by naming that group with ``-g``, and a group
-reachable only as one container's temporary override (`claude_groups`) was
+reachable only as one container's temporary override (`accounts.groups`) was
 not discoverable at all. This module answers the whole question at once.
 
 **A row is a login file, not a group.** Three shapes, told apart by

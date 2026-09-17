@@ -40,7 +40,7 @@ NO_GROUP = "_none"
 
 Not ``none``: ``_CREDENTIAL_GROUP_RE`` accepts ``none`` as a group name,
 so it would collide. A leading underscore never can — the same property
-``claude_pool.store_dir`` relies on for ``_parked``. The empty string is
+``accounts.engine.store_dir`` relies on for ``_parked``. The empty string is
 unusable too, because ``Incus.config_get`` returns ``None`` for it and
 that is indistinguishable from an absent label.
 """
@@ -395,7 +395,7 @@ def authoritative_in(
     A repo is authoritative for a group only when *every* group its
     containers use is that one. A repo spanning two groups shares one
     `~/.claude` between them, so its `oauthAccount` names whichever
-    account ran most recently — see `claude_pool.account_of`.
+    account ran most recently — see `accounts.adapters.claude.account_of`.
 
     `group=None` asks the same question of a repo's *own* config home,
     which is a holder like any other: a repo with one container moved into

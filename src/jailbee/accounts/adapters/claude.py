@@ -4,8 +4,8 @@
 answers with lives here: where a login is recorded, how an account is named,
 which siblings of a credential belong to the machine rather than to the
 account, and what has to be written beside a credential the engine just moved.
-`claude_pool.py` re-exports every module-level name below, so the module
-callers and tests have always used keeps its surface.
+This is the only home of those names: `cli.py`, `doctor.py` and the tests
+import them from here directly.
 """
 
 from __future__ import annotations
@@ -285,7 +285,7 @@ def _member_account(
     shares one `~/.claude` between them, so its `oauthAccount` names
     whichever account ran most recently, and naming a parked file from it
     would store one account's grant under another's name. See
-    `claude_groups.authoritative_prefixes`, which is its only producer.
+    `accounts.groups.authoritative_prefixes`, which is its only producer.
 
     The calling repo is consulted first among the authoritative ones; any
     of them will do, since they share one login. None means no

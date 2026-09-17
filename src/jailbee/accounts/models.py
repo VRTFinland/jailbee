@@ -1,7 +1,7 @@
 """Shared data model for an agent's account pool.
 
-Moved here, verbatim, from `claude_pool.py` — jailbee's original, Claude-only
-pool — as the generic engine takes shape behind `adapters.base.AccountAdapter`.
+Moved here, verbatim, from jailbee's original, Claude-only pool, as the
+generic engine took shape behind `adapters.base.AccountAdapter`.
 Nothing here is Claude-specific: `Identity` and `Slot` describe any agent's
 stored login, `Member` any repo sharing a holder, `LiveAccount` any holder's
 live credential, and `PoolChange` what one pool operation did, for the CLI to

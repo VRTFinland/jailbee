@@ -7698,7 +7698,7 @@ def test_destroy_container_invalidates_the_recorded_account_for_an_override(
     have been using an account the repo's shared config home does not
     record; destroying it must invalidate that stale `oauthAccount`.
     """
-    from jailbee import claude_pool
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.lifecycle import destroy_container
 
     cfg = make_cfg(tmp_path / "myrepo")
@@ -7713,11 +7713,11 @@ def test_destroy_container_invalidates_the_recorded_account_for_an_override(
             "devices": {},
         }
     ]
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+    invalidate = mocker.patch("jailbee.accounts.adapters.claude.invalidate_identity")
 
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
-    invalidate.assert_called_once_with(claude_pool.config_home(cfg))
+    invalidate.assert_called_once_with(CLAUDE.config_home(cfg))
 
 
 def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_path, mocker):
@@ -7737,7 +7737,7 @@ def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_
             "devices": {},
         }
     ]
-    invalidate = mocker.patch("jailbee.claude_pool.invalidate_identity")
+    invalidate = mocker.patch("jailbee.accounts.adapters.claude.invalidate_identity")
 
     destroy_container(cfg, incus, "myrepo-feat", force=True)
 
@@ -7812,7 +7812,7 @@ def test_new_container_applies_the_group_before_start(tmp_path, mocker):
     calls: list[str] = []
     incus.start.side_effect = lambda *a, **k: calls.append("start")
     set_group = mocker.patch(
-        "jailbee.claude_groups.set_container_group",
+        "jailbee.accounts.groups.set_container_group",
         side_effect=lambda *a, **k: calls.append("set_group"),
     )
 
@@ -7841,10 +7841,11 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
     """`--claude-group X` on a repo already in X must not create an override:
     it outranks the profile, so the next `jailbee claude group set` would
     leave this one container behind on X."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
 
     cfg = _cfg_for_new(tmp_path).model_copy(
-        update={"claude_credentials_dir": claude_groups.group_dir("personal")}
+        update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "personal")}
     )
     incus = MagicMock()
     incus.exists.return_value = False
@@ -7855,7 +7856,7 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
     # like a pytest tmpdir OOM, nowhere near the cause.
     incus.profile_show.return_value = "devices:\n  claude-creds:\n    source: /x\n"
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+    set_group = mocker.patch("jailbee.accounts.groups.set_container_group")
 
     new_container(
         cfg,
@@ -7879,13 +7880,13 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
 def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker):
     """`--claude-group none` where the repo already shares nothing: same rule,
     and the label would otherwise survive the repo joining a group later."""
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     cfg = _cfg_for_new(tmp_path)  # no `claude_credentials_dir`
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+    set_group = mocker.patch("jailbee.accounts.groups.set_container_group")
 
     new_container(
         cfg,
@@ -7899,7 +7900,7 @@ def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group=claude_groups.NO_GROUP,
+            claude_group=groups.NO_GROUP,
         ),
     )
 
@@ -7911,7 +7912,7 @@ def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
-    set_group = mocker.patch("jailbee.claude_groups.set_container_group")
+    set_group = mocker.patch("jailbee.accounts.groups.set_container_group")
 
     new_container(
         cfg,

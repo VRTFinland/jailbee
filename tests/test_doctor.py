@@ -1859,15 +1859,16 @@ def test_doctor_is_silent_when_the_pool_is_empty(tmp_path, make_cfg, monkeypatch
 def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkeypatch):
     import json
 
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".claude.json").write_text(
         json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
@@ -1883,12 +1884,13 @@ def test_doctor_reports_the_pool_and_the_live_account(tmp_path, make_cfg, monkey
 
 
 def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatch):
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
 
@@ -1902,12 +1904,13 @@ def test_doctor_flags_a_holder_with_no_live_login(tmp_path, make_cfg, monkeypatc
 def test_doctor_reports_an_orphaned_staging_file_in_an_empty_store(tmp_path, make_cfg, monkeypatch):
     """A store holding nothing but a staging file is the one case where an
     "empty" pool is not silent: that file is a login nothing else names."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     stage = store / "orphan@x.com.json.activating"
     stage.write_text("{}", encoding="utf-8")
@@ -1926,17 +1929,18 @@ def test_doctor_reports_an_orphaned_staging_file_alongside_the_pool(
     instead of it."""
     import json
 
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
     stage = store / "orphan@x.com.json.activating"
     stage.write_text("{}", encoding="utf-8")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".claude.json").write_text(
         json.dumps({"oauthAccount": {"emailAddress": "live@x.com"}}), encoding="utf-8"
@@ -1961,12 +1965,13 @@ def test_doctor_reports_an_orphan_when_the_holder_has_no_live_login(
     """A kill between the park and the write leaves exactly this state: the
     login parked, the holder empty, and a staging file nothing else lists.
     Both facts must be reported — the orphan is not swallowed by the failure."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@x.com.json").write_text("{}", encoding="utf-8")
     (store / "orphan@x.com.json.activating").write_text("{}", encoding="utf-8")
@@ -1981,12 +1986,13 @@ def test_doctor_does_not_tell_you_to_rename_over_a_stored_login(tmp_path, make_c
     """The staging file's own name can be taken by the time anyone reads this:
     park a fresh login of the same account and it lands on exactly that name.
     `mv` would overwrite it silently, so the advice must not be given."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "dup@x.com.json").write_text("{}", encoding="utf-8")
     (store / "dup@x.com.json.activating").write_text("{}", encoding="utf-8")
@@ -2013,16 +2019,17 @@ def test_doctor_says_a_staged_login_is_already_live_in_this_holder(tmp_path, mak
     that it "may be live in another repo's holder", a careful reader checks the
     others, finds nothing, renames, and ends up with one refresh-token lineage
     in two files. Doctor has `cfg`, so it can settle this case for free."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     stage = store / "orphan@x.com.json.activating"
     stage.write_text(_staged_grant("one-lineage"), encoding="utf-8")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("one-lineage"), encoding="utf-8")
 
@@ -2041,17 +2048,18 @@ def test_doctor_keeps_the_caveat_when_the_stage_is_not_the_live_login(
 ):
     """A different grant is still unknowable from here — but the caveat now
     names both ways it can already exist, not just the other-holder one."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "orphan@x.com.json.activating").write_text(
         _staged_grant("staged-lineage"), encoding="utf-8"
     )
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("other-lineage"), encoding="utf-8")
 
@@ -2069,15 +2077,16 @@ def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
 ):
     """Unreadable is not the same as "yes". An unreadable file falls back to the caveat
     rather than telling the reader to delete a login."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "orphan@x.com.json.activating").write_text("not json", encoding="utf-8")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text("not json", encoding="utf-8")
 
@@ -2092,12 +2101,13 @@ def test_doctor_will_not_claim_an_unreadable_stage_is_the_live_login(
 def test_doctor_offers_a_free_name_when_the_stage_name_is_taken(tmp_path, make_cfg, monkeypatch):
     """Deleting one of two logins is a destructive answer to "which do you
     want?". Keeping both is the option that was missing."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "dup@x.com.json").write_text(_staged_grant("stored"), encoding="utf-8")
     (store / "dup@x.com.json.activating").write_text(_staged_grant("staged"), encoding="utf-8")
@@ -2117,17 +2127,18 @@ def test_doctor_never_offers_to_keep_a_staged_login_already_live_here(
     telling a reader to park a live grant under a free name would give one
     refresh-token lineage two files, which is exactly the harm the
     same-holder check exists to prevent."""
-    from jailbee import claude_pool
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.doctor import _check_claude_pool
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "dup@x.com.json").write_text(_staged_grant("other-stored"), encoding="utf-8")
     stage = store / "dup@x.com.json.activating"
     stage.write_text(_staged_grant("live-lineage"), encoding="utf-8")
-    home = claude_pool.config_home(cfg)
+    home = CLAUDE.config_home(cfg)
     home.mkdir(parents=True)
     (home / ".credentials.json").write_text(_staged_grant("live-lineage"), encoding="utf-8")
 

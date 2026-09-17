@@ -26,8 +26,8 @@ disagree with the directory about what the directory contains.
 **Nothing here knows which agent it is serving.** The store root, the
 credential filename, how a login is recognized inside a credential file and
 what has to be recorded beside it all come from the `AccountAdapter` passed in
-as the first argument. Moved out of `claude_pool.py`, which is now the Claude
-binding of this engine.
+as the first argument. Moved out of jailbee's original, Claude-only account
+pool, whose Claude half now lives in `adapters/claude.py`.
 
 **An interrupted switch is reported, not healed.** A hard kill inside
 `switch`'s staging window leaves `<name>.json.activating` in the store, a file

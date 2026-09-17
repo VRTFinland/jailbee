@@ -64,7 +64,7 @@ class ContainerInfo:
     pr_author: bool = False
     # The container's Claude credential group, from
     # `user.jailbee.claude_group`. None means it inherits the repo's group;
-    # `claude_groups.NO_GROUP` means it deliberately shares none.
+    # `accounts.groups.NO_GROUP` means it deliberately shares none.
     claude_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
@@ -1154,15 +1154,15 @@ def new_container(
     # authenticates against the repo's group and only picks up the override
     # after a restart.
     if opts.claude_group is not None:
-        from jailbee import claude_groups
+        from jailbee.accounts import groups
 
-        wanted = None if opts.claude_group == claude_groups.NO_GROUP else opts.claude_group
+        wanted = None if opts.claude_group == groups.NO_GROUP else opts.claude_group
         # An override naming the group this repo already resolves to is not a
         # preference but leftover state: it outranks the profile, so the next
         # `jailbee claude group set` would leave this one container behind on
-        # the old group. See `claude_groups.override_is_redundant`.
-        if not claude_groups.override_is_redundant(cfg, wanted):
-            claude_groups.set_container_group(cfg, incus, name, wanted)
+        # the old group. See `accounts.groups.override_is_redundant`.
+        if not groups.override_is_redundant(cfg, wanted):
+            groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
 
@@ -1729,7 +1729,7 @@ def destroy_container(
     if not incus.exists(name):
         raise ValueError(f"Container '{name}' does not exist")
 
-    from jailbee import claude_groups
+    from jailbee.accounts import groups
 
     state = "Stopped"
     had_claude_override = False
@@ -1741,10 +1741,10 @@ def destroy_container(
             # label at all — a named group or the explicit "no group"
             # marker — counts; only its presence matters here, not its
             # validity (spec §7.2), so this reads the raw config directly
-            # rather than through `claude_groups.container_override` (which
+            # rather than through `accounts.groups.container_override` (which
             # also validates and would need a second `incus.config_get`
             # round trip for data already in hand).
-            had_claude_override = bool((raw.get("config") or {}).get(claude_groups.GROUP_LABEL))
+            had_claude_override = bool((raw.get("config") or {}).get(groups.GROUP_LABEL))
             break
 
     if state == "Running":
@@ -1808,9 +1808,9 @@ def destroy_container(
     # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
     # and the destroy path."
     if had_claude_override:
-        from jailbee import claude_pool
+        from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
 
-        claude_pool.invalidate_identity(claude_pool.config_home(cfg))
+        invalidate_identity(CLAUDE.config_home(cfg))
 
     # After the instance is gone, never before: Incus refuses to delete an
     # ACL still referenced by an instance NIC. The label died with the

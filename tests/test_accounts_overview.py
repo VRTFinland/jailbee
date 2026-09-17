@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from jailbee import claude_groups, claude_overview, claude_pool
+from jailbee.accounts import engine, groups
+from jailbee.accounts import overview as accounts_overview
+from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE, write_account_note
+from jailbee.accounts.models import LIVE_UNIDENTIFIED
 from jailbee.global_config import GlobalConfig
 from tests.conftest import make_cfg
 
@@ -25,7 +28,7 @@ def _grant(token: str) -> str:
 
 
 def _no_git(mocker) -> None:
-    """Keep `load_config` off the `git` binary, as tests/test_claude_pool.py does."""
+    """Keep `load_config` off the `git` binary, as tests/test_accounts_claude.py does."""
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
 
@@ -55,7 +58,7 @@ def _write_repo(root: Path, *, shared: Path) -> None:
 
 
 def _cfg(tmp_path: Path, *, group: str | None = None):
-    extra = {"claude_credentials_dir": claude_groups.group_dir(group)} if group else {}
+    extra = {"claude_credentials_dir": groups.group_dir("claude", group)} if group else {}
     return make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", **extra)
 
 
@@ -66,9 +69,9 @@ def _gcfg(**creds) -> GlobalConfig:
 def _login_in(holder: Path, token: str, *, account: dict | None = None) -> None:
     """A holder directory with a live credential, optionally named by its note."""
     holder.mkdir(parents=True, exist_ok=True)
-    (holder / claude_pool.CREDENTIAL_FILE).write_text(_grant(token), encoding="utf-8")
+    (holder / CREDENTIAL_FILE).write_text(_grant(token), encoding="utf-8")
     if account is not None:
-        claude_pool.write_account_note(holder, account, _grant(token))
+        write_account_note(holder, account, _grant(token))
 
 
 def _identity_in(home: Path, block: dict) -> None:
@@ -78,7 +81,7 @@ def _identity_in(home: Path, block: dict) -> None:
 
 
 def _raw(name: str, group: str | None = None) -> dict:
-    config = {} if group is None else {claude_groups.GROUP_LABEL: group}
+    config = {} if group is None else {groups.GROUP_LABEL: group}
     return {"name": name, "status": "Running", "profiles": [], "config": config, "state": None}
 
 
@@ -88,7 +91,7 @@ def _incus(mocker, rows: list[dict] | None = None):
     return incus
 
 
-def _row(overview: claude_overview.Overview, group: str | None, prefix: str | None = None):
+def _row(overview: accounts_overview.Overview, group: str | None, prefix: str | None = None):
     """The one row for a holder, or None. Parked rows are addressed by name."""
     found = [r for r in overview.rows if r.group == group and r.prefix == prefix]
     assert len(found) <= 1, f"more than one row for {group!r}/{prefix!r}"
@@ -102,9 +105,9 @@ def _xdg(monkeypatch, tmp_path: Path):
 
 def test_a_group_row_names_the_login_from_the_holder_note(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work", account=ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     row = _row(overview, "work")
     assert row is not None
@@ -119,10 +122,10 @@ def test_a_group_row_falls_back_to_an_authoritative_member(tmp_path: Path, mocke
     """Holders predating the account note are named by a member repo's
     `oauthAccount` — the same rule `park` uses."""
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work")
-    _identity_in(claude_pool.config_home(cfg), ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "work"), "rt-work")
+    _identity_in(CLAUDE.config_home(cfg), ACCOUNT_BLOCK)
 
-    overview = claude_overview.build(
+    overview = accounts_overview.build(CLAUDE,
         cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, [_raw("myrepo-a")])
     )
 
@@ -133,23 +136,23 @@ def test_a_group_row_falls_back_to_an_authoritative_member(tmp_path: Path, mocke
 
 def test_a_group_row_is_unidentified_when_nothing_names_the_login(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work")
+    _login_in(groups.group_dir("claude", "work"), "rt-work")
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     row = _row(overview, "work")
     assert row is not None
     assert row.state == "live"
-    assert row.account == claude_pool.LIVE_UNIDENTIFIED
+    assert row.account == LIVE_UNIDENTIFIED
 
 
 def test_a_group_with_no_login_is_still_a_row(tmp_path: Path, mocker) -> None:
     """A group created but never filled was invisible before: `claude group`
     printed its name and nothing said it held no login."""
     cfg = _cfg(tmp_path)
-    claude_groups.group_dir("fresh").mkdir(parents=True)
+    groups.group_dir("claude", "fresh").mkdir(parents=True)
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker))
 
     row = _row(overview, "fresh")
     assert row is not None
@@ -161,10 +164,10 @@ def test_a_group_only_a_container_uses_lists_that_container(tmp_path: Path, mock
     """The temporary-override case: no repo resolves to `personal`, so nothing
     but the container label says the group is in use at all."""
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("personal"), "rt-personal", account=ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "personal"), "rt-personal", account=ACCOUNT_BLOCK)
     rows = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, rows))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker, rows))
 
     row = _row(overview, "personal")
     assert row is not None
@@ -178,7 +181,7 @@ def test_a_group_named_only_by_a_container_label_is_a_row(tmp_path: Path, mocker
     showing, not one to hide."""
     cfg = _cfg(tmp_path)
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")]))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker, [_raw("myrepo-a", "vanished")]))
 
     row = _row(overview, "vanished")
     assert row is not None
@@ -188,10 +191,10 @@ def test_a_group_named_only_by_a_container_label_is_a_row(tmp_path: Path, mocker
 
 def test_the_repos_own_holder_is_marked_mine(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work", account=ACCOUNT_BLOCK)
-    _login_in(claude_groups.group_dir("other"), "rt-other")
+    _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "other"), "rt-other")
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     assert _row(overview, "work").mine is True
     assert _row(overview, "other").mine is False
@@ -203,9 +206,9 @@ def test_a_group_row_lists_every_repo_resolving_to_it(tmp_path: Path, mocker) ->
     other = tmp_path / "other"
     _write_repo(other, shared=tmp_path / "other-shared")
     _register("other", other)
-    _login_in(claude_groups.group_dir("work"), "rt-work", account=ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
 
-    overview = claude_overview.build(
+    overview = accounts_overview.build(CLAUDE,
         cfg, _gcfg(group="work"), _incus(mocker, [_raw("myrepo-a"), _raw("other-a")])
     )
 
@@ -224,7 +227,7 @@ def test_an_ungrouped_repo_holder_is_its_own_row(tmp_path: Path, mocker) -> None
     _register("other", other)
     _login_in(tmp_path / "other-shared" / "claude", "rt-other", account=ACCOUNT_BLOCK)
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker, [_raw("other-a")]))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker, [_raw("other-a")]))
 
     row = _row(overview, None, "other")
     assert row is not None
@@ -242,7 +245,7 @@ def test_an_ungrouped_repo_with_no_login_is_not_a_row(tmp_path: Path, mocker) ->
     _write_repo(other, shared=tmp_path / "other-shared")
     _register("other", other)
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     assert _row(overview, None, "other") is None
 
@@ -251,7 +254,7 @@ def test_the_calling_repos_empty_holder_is_always_a_row(tmp_path: Path, mocker) 
     """The table has to say what *this* repo uses, even when nothing is logged in."""
     cfg = _cfg(tmp_path)
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker))
 
     row = _row(overview, None, "myrepo")
     assert row is not None
@@ -265,23 +268,23 @@ def test_an_ungrouped_repo_spanning_a_group_does_not_name_its_own_holder(
     """One container moved into a group makes the repo's `~/.claude` describe
     whichever account ran last — so it can no longer name its own login."""
     cfg = _cfg(tmp_path)
-    _login_in(claude_pool.config_home(cfg), "rt-mine")
-    _identity_in(claude_pool.config_home(cfg), ACCOUNT_BLOCK)
+    _login_in(CLAUDE.config_home(cfg), "rt-mine")
+    _identity_in(CLAUDE.config_home(cfg), ACCOUNT_BLOCK)
     rows = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker, rows))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker, rows))
 
     row = _row(overview, None, "myrepo")
-    assert row.account == claude_pool.LIVE_UNIDENTIFIED
+    assert row.account == LIVE_UNIDENTIFIED
 
 
 def test_parked_logins_are_rows_of_their_own(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path)
-    store = claude_pool.store_dir()
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@corp.com.json").write_text(_grant("rt-parked"), encoding="utf-8")
 
-    overview = claude_overview.build(cfg, _gcfg(), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(), _incus(mocker))
 
     parked = [r for r in overview.rows if r.state == "parked"]
     assert [r.account for r in parked] == ["parked@corp.com"]
@@ -295,12 +298,12 @@ def test_a_live_row_colliding_with_a_parked_name_takes_the_live_suffix(
     """`park` then `/login` as the same account is the documented way to hold two
     grants; the ref a script reads back has to stay the one `claude use` knows."""
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-live", account=ACCOUNT_BLOCK)
-    store = claude_pool.store_dir()
+    _login_in(groups.group_dir("claude", "work"), "rt-live", account=ACCOUNT_BLOCK)
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "work@corp.com#ccccdddd.json").write_text(_grant("rt-parked"), encoding="utf-8")
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     assert _row(overview, "work").name == "work@corp.com#ccccdddd~live"
 
@@ -311,11 +314,11 @@ def test_containers_are_unknown_when_incus_cannot_be_listed(tmp_path: Path, mock
     from jailbee.incus import IncusError
 
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work", account=ACCOUNT_BLOCK)
+    _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
     incus = mocker.MagicMock()
     incus.list_containers.side_effect = IncusError("connection refused")
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), incus)
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), incus)
 
     assert overview.containers_known is False
     assert _row(overview, "work").account == "work@corp.com"
@@ -328,21 +331,21 @@ def test_a_member_repo_whose_config_will_not_load_is_reported(tmp_path: Path, mo
     (broken / ".jailbee" / "config.yaml").write_text(": not yaml :", encoding="utf-8")
     _register("broken", broken)
 
-    overview = claude_overview.build(cfg, _gcfg(group="work"), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(group="work"), _incus(mocker))
 
     assert overview.unreachable == ("broken",)
 
 
 def test_rows_are_ordered_live_then_empty_then_parked(tmp_path: Path, mocker) -> None:
     cfg = _cfg(tmp_path, group="work")
-    _login_in(claude_groups.group_dir("work"), "rt-work", account=ACCOUNT_BLOCK)
-    claude_groups.group_dir("zzz-empty").mkdir(parents=True)
-    _login_in(claude_groups.group_dir("alpha"), "rt-alpha")
-    store = claude_pool.store_dir()
+    _login_in(groups.group_dir("claude", "work"), "rt-work", account=ACCOUNT_BLOCK)
+    groups.group_dir("claude", "zzz-empty").mkdir(parents=True)
+    _login_in(groups.group_dir("claude", "alpha"), "rt-alpha")
+    store = engine.store_dir(CLAUDE)
     store.mkdir(parents=True)
     (store / "parked@corp.com.json").write_text(_grant("rt-parked"), encoding="utf-8")
 
-    overview = claude_overview.build(cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
+    overview = accounts_overview.build(CLAUDE, cfg, _gcfg(repos={"myrepo": "work"}), _incus(mocker))
 
     assert [(r.state, r.group) for r in overview.rows] == [
         ("live", "alpha"),
