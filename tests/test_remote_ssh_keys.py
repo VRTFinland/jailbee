@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import base64
 import builtins
+import importlib.util
 import os
 import stat
-import subprocess
 import sys
 
 import asyncssh
@@ -198,17 +198,14 @@ def test_remove_rejects_ambiguous_duplicate_entries(populated_paths):
     assert populated_paths.authorized_keys.read_bytes() == before
 
 
-def test_module_import_works_without_extra():
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; sys.modules['asyncssh'] = None; import jailbee.remote_ssh.keys",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
+def test_module_import_works_without_extra(without_asyncssh, monkeypatch):
+    spec = importlib.util.spec_from_file_location("_isolated_ssh_keys", keys.__file__)
+    assert spec is not None and spec.loader is not None
+    isolated = importlib.util.module_from_spec(spec)
+    # Dataclass annotation resolution needs the temporary module registered.
+    monkeypatch.setitem(sys.modules, spec.name, isolated)
+    spec.loader.exec_module(isolated)
+    assert isolated.authorized_fingerprint(PUBLIC_KEY) == FINGERPRINT
 
 
 def test_list_and_remove_work_without_extra(populated_paths, without_asyncssh):
