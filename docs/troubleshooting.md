@@ -23,6 +23,28 @@ old image or profiles meanwhile. But it repeats on every one of those commands
 until the action has actually run to completion — a `jailbee apply` that
 reported a failed restart or port forward has not, and will not clear it.
 
+If you have read it and are not going to run the action yet, mark it read:
+
+```bash
+jailbee dismiss apply        # or: jailbee dismiss base-build
+jailbee dismiss              # what applies here, and what you have dismissed
+jailbee dismiss --clear apply
+```
+
+The hint then stops appearing on `jailbee ls` / `new` / `shell` until a later
+release adds a **new** reason for that action — upgrading alone does not bring
+it back. `jailbee doctor` is unaffected: it keeps reporting the action as a
+failed `upgrade actions` check and adds the version you dismissed it at, so
+nothing is hidden from the one place you would go looking.
+
+The same command covers the deprecation notices about `.gie/config.yaml`
+(`legacy-config-dir`) and a legacy `chrome:` block (`legacy-chrome-block`).
+Those cannot grow a new reason on their own, so they stay dismissed until you
+change the config; `jailbee doctor` lists them under its `dismissed notices`
+check. Warnings that answer the command you just typed — what `jailbee config
+validate` reports, `jailbee base build`'s `golden.python` line, a deprecated
+command alias — are deliberately not dismissible.
+
 ### Containers get no IPv4 address
 
 A new container's `IPV4` column in `jailbee ls` / `incus list` stays empty, or

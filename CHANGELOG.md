@@ -8,6 +8,19 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **`jailbee dismiss`** — mark a repeating advisory read so it stops
+  appearing on `jailbee ls` / `new` / `shell`: an owed `jailbee base build` /
+  `jailbee apply` (`base-build`, `apply`), or a deprecated config spelling
+  (`legacy-config-dir`, `legacy-chrome-block`). With no arguments it lists
+  what applies and what has been dismissed. An owed action returns when a
+  later release adds a new reason for it; a deprecation stays dismissed
+  until the config changes. `jailbee doctor` reports them either way —
+  marked with the version they were dismissed at, under `upgrade actions`
+  and the new `dismissed notices` check — so a dismissal never hides
+  anything from it.
+
 ## 1.4.0 - 2026-09-15
 
 ### Added
