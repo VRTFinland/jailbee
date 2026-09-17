@@ -3632,3 +3632,63 @@ def test_config_edit_reject_note_refuses_the_repo_layer_of_a_synthesized_config(
     assert "scratch.config" in note
     assert "config init" in note
     assert config_edit_reject_note_for_prefix([group], "demo", global_layer=True) is None
+
+
+def test_run_samples_activity_twice_before_taking_the_screen(mocker):
+    """A rate needs two readings. One sample here would dash the CPU column
+    on the first frame and fill it a tick later — the very symptom the
+    pre-gather exists to prevent."""
+    setcbreak = _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+    # Patch the module's own constant rather than `time.sleep`: patching
+    # `dashboard.time.sleep` reaches the real `time` module and slows every
+    # other test in the process.
+    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
+    calls: list[int] = []
+    mocker.patch.object(
+        dashboard, "sample_activity", side_effect=lambda g, s: calls.append(setcbreak.call_count)
+    )
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert calls[:2] == [0, 0]  # both before the screen was taken
+
+
+def test_worker_samples_activity_on_every_gather(mocker):
+    """The columns are live: each refresh re-reads /proc, or the numbers
+    freeze at whatever the pre-gather saw."""
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
+    sampled = mocker.patch.object(dashboard, "sample_activity")
+
+    def _blocking_select(*args, **kwargs):
+        # `run()` floors `interval` at 0.5s, so a shorter wait here would
+        # end the session before the worker's first tick was even due.
+        time.sleep(0.7)
+        return ([True], [], [])
+
+    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=0.5, no_git=True) == 0
+    assert sampled.call_count > 2  # two priming samples, plus the worker's
+
+
+def test_sample_activity_flattens_every_group(mocker):
+    """One reading covers the whole screen — not one per repo group."""
+    annotate = mocker.patch.object(dashboard, "annotate_activity")
+    # `_ci(name, repo, ...)` — two positional arguments, see its definition
+    # near the top of this test module.
+    a = _ci("p-a", "p")
+    b = _ci("q-b", "q")
+    groups = [
+        dashboard.RepoGroup("p", "/p", Path("/p/.jailbee/config.yaml"), [a]),
+        dashboard.RepoGroup("q", "/q", Path("/q/.jailbee/config.yaml"), [b]),
+    ]
+    sampler = mocker.Mock()
+
+    dashboard.sample_activity(groups, sampler)
+
+    annotate.assert_called_once_with([a, b], sampler)
