@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.db.models import RepoUpgradeState
+    from jailbee.notices import Dismissal
 
 Action = Literal["base_build", "apply"]
 
@@ -39,6 +40,21 @@ ACTION_COMMANDS: dict[Action, str] = {
     "base_build": "jb base build",
     "apply": "jb apply",
 }
+
+ACTION_KEYS: dict[Action, str] = {
+    "base_build": "base-build",
+    "apply": "apply",
+}
+"""The CLI spelling of each action, as `jailbee dismiss` takes and stores it.
+
+Kebab-case because the `dismissed_notice` key column is shared with the
+deprecation notice ids (`legacy-config-dir`), and one column holding both
+`base_build` and `legacy-config-dir` would be two conventions in one place.
+The mapping lives here, beside `ACTION_COMMANDS`, so the two spellings of an
+action cannot drift apart.
+"""
+
+KEY_ACTIONS: dict[str, Action] = {key: action for action, key in ACTION_KEYS.items()}
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -240,15 +256,25 @@ def pending(
     watermarks: dict[Action, Watermark],
     *,
     notes: tuple[UpgradeNote, ...] | None = None,
+    dismissals: dict[Action, tuple[int, int, int]] | None = None,
 ) -> Pending:
     """Return the actions owed in a repo with these watermarks.
 
     `notes` defaults to `UPGRADE_NOTES` and is resolved here rather than in
     the signature, so a test can pass its own manifest without the real one's
     contents — which change every release — leaking into the assertions.
+
+    `dismissals` maps an action to the highest note version the user has
+    marked read, and drops every note at or below it. A new reason always
+    arrives carrying a new release number, so that single version is a
+    complete record of which reasons were read — which is why `UpgradeNote`
+    needs no identifier of its own. Omit it for the unfiltered view: the hint
+    path passes it, `jailbee doctor` deliberately does not.
     """
     if notes is None:
         notes = UPGRADE_NOTES
+    if dismissals is None:
+        dismissals = {}
     now = parse_version(current)
     if now is None:
         return Pending()
@@ -258,12 +284,14 @@ def pending(
         mark = watermarks.get(action)
         if mark is None:
             continue
+        floor = dismissals.get(action)
         firing = tuple(
             note
             for note in notes
             if action in note.actions
             and note.version <= now
             and (note.version > mark.version if mark.observed else note.version >= mark.version)
+            and (floor is None or note.version > floor)
         )
         if firing:
             owed.append(
@@ -288,11 +316,22 @@ def _dotted(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
 
-def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]:
+def format_advice(
+    owed: Pending,
+    *,
+    max_reasons: int = MAX_REASONS,
+    dismissed: dict[Action, str] | None = None,
+) -> list[str]:
     """Render `owed` as plain lines for `tui.hint`.
 
     Returns lines rather than printing, so the wording is testable without
     capturing output and the caller owns the output stream.
+
+    `dismissed` maps an action to the jailbee version it was marked read at.
+    Only `jailbee doctor` passes it, and passing it changes the footer rather
+    than hiding anything: doctor reports a dismissed action exactly as loudly
+    as an undismissed one, which is what makes a dismissal that lasts until a
+    new reason appears safe to offer at all.
     """
     lines: list[str] = []
     for item in owed.actions:
@@ -316,6 +355,10 @@ def format_advice(owed: Pending, *, max_reasons: int = MAX_REASONS) -> list[str]
         if hidden:
             lines.append(f"    - ... and {hidden} more (see the CHANGELOG)")
         lines.append(f"    Run `{command}` in this repo to pick these up.")
+        if dismissed is not None and item.action in dismissed:
+            lines.append(f"    Dismissed at {dismissed[item.action]} — still owed.")
+        else:
+            lines.append(f"    Or `jb dismiss {ACTION_KEYS[item.action]}` to stop repeating this.")
     return lines
 
 
@@ -445,6 +488,39 @@ def record(
     session.commit()
 
 
+def load_dismissals(session: Session, prefix: str) -> dict[Action, Dismissal]:
+    """This repo's upgrade dismissals, by action.
+
+    The `dismissed_notice` table is host-wide and shared with the deprecation
+    family, so both filters are load-bearing: another repo's `apply` must not
+    silence this one, and a `legacy-chrome-block` row is not an action at all.
+    """
+    from jailbee import notices
+
+    rows: dict[Action, Dismissal] = {}
+    for (key, scope), entry in notices.load_all(session).items():
+        action = KEY_ACTIONS.get(key)
+        if action is None or scope != prefix:
+            continue
+        rows[action] = entry
+    return rows
+
+
+def dismissal_bounds(rows: dict[Action, Dismissal]) -> dict[Action, tuple[int, int, int]]:
+    """The comparison bound each dismissal sets, skipping any that cannot parse.
+
+    An unparseable fingerprint is dropped rather than read as "dismiss
+    everything": the failure mode of a bad row must be one advisory too many,
+    never an action silenced for the life of the repo.
+    """
+    bounds: dict[Action, tuple[int, int, int]] = {}
+    for action, entry in rows.items():
+        version = parse_version(entry.fingerprint)
+        if version is not None:
+            bounds[action] = version
+    return bounds
+
+
 def advice_lines(
     session: Session,
     prefix: str,
@@ -453,6 +529,30 @@ def advice_lines(
     now: datetime,
     notes: tuple[UpgradeNote, ...] | None = None,
 ) -> list[str]:
-    """The whole read path: backfill if needed, compare, format."""
+    """The hint path: backfill if needed, compare, drop what was marked read."""
     marks = load_or_backfill(session, prefix, current, now=now)
-    return format_advice(pending(current, marks, notes=notes))
+    bounds = dismissal_bounds(load_dismissals(session, prefix))
+    return format_advice(pending(current, marks, notes=notes, dismissals=bounds))
+
+
+def doctor_lines(
+    session: Session,
+    prefix: str,
+    current: str,
+    *,
+    now: datetime,
+    notes: tuple[UpgradeNote, ...] | None = None,
+) -> list[str]:
+    """`jailbee doctor`'s read path: the same advice with nothing dropped.
+
+    A dismissal silences the hint that decorates `jailbee ls` / `new` /
+    `shell`; it never silences doctor. doctor is the place a user can always
+    come back to, and that promise is the reason a dismissal is allowed to
+    last until a new reason appears rather than expiring on the next upgrade.
+    """
+    marks = load_or_backfill(session, prefix, current, now=now)
+    rows = load_dismissals(session, prefix)
+    return format_advice(
+        pending(current, marks, notes=notes),
+        dismissed={action: entry.version for action, entry in rows.items()},
+    )

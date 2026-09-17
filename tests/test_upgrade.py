@@ -650,3 +650,131 @@ def test_the_apparmor_note_advises_base_build_only() -> None:
     note = matches[0]
     assert note.version == (1, 3, 2)
     assert note.actions == frozenset({"base_build"})
+
+
+def _dismiss_notes():
+    """A two-release manifest for the dismissal tests: one reason the user can
+    mark read, one that a later release adds above it."""
+    from jailbee.upgrade import UpgradeNote
+
+    return (
+        UpgradeNote(version=(1, 2, 0), actions=frozenset({"apply"}), reason="older reason"),
+        UpgradeNote(version=(1, 3, 2), actions=frozenset({"apply"}), reason="newer reason"),
+    )
+
+
+def test_pending_drops_reasons_at_or_below_the_dismissed_version() -> None:
+    from jailbee.upgrade import Watermark, pending
+
+    marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
+    owed = pending("1.3.2", marks, notes=_dismiss_notes(), dismissals={"apply": (1, 3, 2)})
+    assert not owed
+
+
+def test_pending_re_arms_when_a_release_adds_a_reason_above_the_dismissal() -> None:
+    """The whole re-arm rule: a dismissal acknowledges reasons up to a version,
+    and a later release that adds one above it brings the advice back — with
+    only the new reason, not the ones already read."""
+    from jailbee.upgrade import Watermark, pending
+
+    marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
+    owed = pending("1.3.2", marks, notes=_dismiss_notes(), dismissals={"apply": (1, 2, 0)})
+    assert [item.reasons for item in owed.actions] == [("newer reason",)]
+
+
+def test_pending_without_dismissals_is_unchanged() -> None:
+    from jailbee.upgrade import Watermark, pending
+
+    marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
+    owed = pending("1.3.2", marks, notes=_dismiss_notes())
+    assert [item.reasons for item in owed.actions] == [("older reason", "newer reason")]
+
+
+def test_format_advice_offers_the_dismiss_key() -> None:
+    """Without this line the feature is undiscoverable. The key is the CLI
+    spelling (`base-build`), not the `Action` (`base_build`)."""
+    from jailbee.upgrade import UpgradeNote, Watermark, format_advice, pending
+
+    marks = {"base_build": Watermark(version=(1, 1, 0), observed=True)}
+    notes = (UpgradeNote(version=(1, 2, 0), actions=frozenset({"base_build"}), reason="a reason"),)
+    lines = format_advice(pending("1.2.0", marks, notes=notes))
+    assert any("jb dismiss base-build" in line for line in lines)
+
+
+def test_format_advice_names_a_dismissal_instead_of_offering_one() -> None:
+    from jailbee.upgrade import Watermark, format_advice, pending
+
+    marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
+    lines = format_advice(pending("1.3.2", marks, notes=_dismiss_notes()), dismissed={"apply": "1.3.2"})
+    assert any("Dismissed at 1.3.2 — still owed." in line for line in lines)
+    assert not any("jb dismiss" in line for line in lines)
+
+
+def test_advice_lines_is_silent_for_a_dismissed_action(db_engine) -> None:
+    from jailbee import notices
+    from jailbee.upgrade import advice_lines
+
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    with Session(db_engine) as session:
+        advice_lines(session, "myrepo", "1.1.0", now=now)
+        notices.save(session, "apply", "myrepo", fingerprint="1.3.2", version="1.3.2", now=now)
+    with Session(db_engine) as session:
+        lines = advice_lines(session, "myrepo", "1.3.2", now=now, notes=_dismiss_notes())
+    assert lines == []
+
+
+def test_doctor_lines_reports_a_dismissed_action_anyway(db_engine) -> None:
+    """`jailbee doctor` is what makes a dismissal that never expires safe: it is
+    the place a user can always come back to."""
+    from jailbee import notices
+    from jailbee.upgrade import doctor_lines
+
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    with Session(db_engine) as session:
+        doctor_lines(session, "myrepo", "1.1.0", now=now)
+        notices.save(session, "apply", "myrepo", fingerprint="1.3.2", version="1.3.2", now=now)
+    with Session(db_engine) as session:
+        lines = doctor_lines(session, "myrepo", "1.3.2", now=now, notes=_dismiss_notes())
+    assert any("newer reason" in line for line in lines)
+    assert any("Dismissed at 1.3.2 — still owed." in line for line in lines)
+
+
+def test_load_dismissals_ignores_other_repos_and_other_keys(db_engine) -> None:
+    """The table is shared with the deprecation family and with every other repo
+    on the host; `apply` in another repo must not silence this one."""
+    from jailbee import notices
+    from jailbee.upgrade import load_dismissals
+
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    with Session(db_engine) as session:
+        notices.save(session, "apply", "otherrepo", fingerprint="1.3.2", version="1.3.2", now=now)
+        notices.save(
+            session, "legacy-chrome-block", "myrepo", fingerprint="", version="1.3.2", now=now
+        )
+        notices.save(session, "apply", "myrepo", fingerprint="1.2.0", version="1.3.2", now=now)
+    with Session(db_engine) as session:
+        rows = load_dismissals(session, "myrepo")
+    assert set(rows) == {"apply"}
+    assert rows["apply"].fingerprint == "1.2.0"
+
+
+def test_dismissal_bounds_skips_an_unparseable_fingerprint() -> None:
+    """A deprecation fingerprint is `""`, and a hand-edited row could hold
+    anything. An unparseable bound is dropped rather than treated as "dismiss
+    everything": the failure mode of a bad row must be one advisory too many,
+    never an action silenced for the life of the repo."""
+    from jailbee.notices import Dismissal
+    from jailbee.upgrade import Watermark, dismissal_bounds, pending
+
+    rows = {
+        "apply": Dismissal(
+            key="apply",
+            scope="myrepo",
+            fingerprint="",
+            version="1.3.2",
+            dismissed_at=datetime(2026, 9, 17, tzinfo=UTC),
+        )
+    }
+    assert dismissal_bounds(rows) == {}
+    marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
+    assert pending("1.3.2", marks, notes=_dismiss_notes(), dismissals=dismissal_bounds(rows))
