@@ -1284,6 +1284,15 @@ def new_container(
 
     allocate_startup(cfg, incus, name)
 
+    # Carve the per-container subpaths out of each shared agent mount. The
+    # container is already running (`incus.start` above), which is the point:
+    # the device is hot-plugged into an already-mounted parent so the nested
+    # mount lands on top of the shared one. Must precede `ensure_agents`,
+    # which installs and may launch the agents that write there.
+    from jailbee import agent_private
+
+    agent_private.attach(cfg, incus, name)
+
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
     # claude-install, provides its persistent store) and after the network
@@ -1706,6 +1715,13 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
         incus.start(name)
     attach_runtime_devices(cfg, incus, name)
 
+    # After the start, not before: see `agent_private.attach`. Re-adding the
+    # device against the running container is what fixes the mount order of
+    # a carve-out nested inside a shared agent mount.
+    from jailbee import agent_private
+
+    agent_private.attach(cfg, incus, name)
+
 
 def destroy_container(
     cfg: Config,
@@ -1782,6 +1798,15 @@ def destroy_container(
         release_all(cfg, incus, name)
     except Exception as e:
         warn(f"Could not release pooled cache slots for '{name}' (continuing): {e}")
+
+    # Same posture for the per-container agent carve-outs: warn, never block
+    # a destroy the user asked for.
+    try:
+        from jailbee import agent_private
+
+        agent_private.release(cfg, incus, name)
+    except Exception as e:
+        warn(f"Could not release private agent subpaths for '{name}' (continuing): {e}")
 
     # Clean refs/jailbee/<short>/* on the host. Best-effort: a failure here
     # (git missing, repo broken) must not block destroy — leftover refs
