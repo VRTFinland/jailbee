@@ -72,6 +72,9 @@ class FakeAdapter:
     def on_park(self, cfg: Any, holder: Path, parked: Path, account: Any) -> None:
         return None
 
+    def on_activate(self, holder: Path, record: Any, credential_raw: str) -> None:
+        return None
+
     def on_switch(
         self, found: Any, unreachable: Any, record: Any, authoritative: Any
     ) -> tuple[list[str], list[str]]:
@@ -108,3 +111,83 @@ def test_registry_returns_a_registered_adapter(tmp_path: Path) -> None:
 def test_registry_raises_for_an_unknown_agent() -> None:
     with pytest.raises(KeyError):
         base.get_adapter("nosuchagent")
+
+
+def _write(path: Path, email: str, refresh: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"login": {"email": email, "refresh": refresh}}), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def fake_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An XDG data home the engine's store lands in."""
+    monkeypatch.setattr("jailbee.paths.xdg_data_home", lambda: tmp_path / "xdg")
+    return tmp_path
+
+
+def test_park_moves_the_live_credential_into_the_store(
+    fake_env: Path, mocker
+) -> None:
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = FakeAdapter(home)
+    _write(home / adapter.credential_file, "me@example.com", "r1")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    change = engine.park(adapter, cfg, gcfg, authoritative={"repo"})
+
+    assert change.parked_as == "me@example.com"
+    assert not (home / adapter.credential_file).exists()
+    assert (
+        engine.store_dir(adapter) / "me@example.com.json"
+    ).exists(), "the login must be in the store, not deleted"
+
+
+def test_switch_never_leaves_one_grant_in_two_files(fake_env: Path, mocker) -> None:
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = FakeAdapter(home)
+    _write(home / adapter.credential_file, "live@example.com", "r-live")
+    store = engine.store_dir(adapter)
+    _write(store / "parked@example.com.json", "parked@example.com", "r-parked")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    change = engine.switch(adapter, cfg, gcfg, "parked@example.com", authoritative={"repo"})
+
+    assert change.activated == "parked@example.com"
+    assert change.parked_as == "live@example.com"
+    live = json.loads((home / adapter.credential_file).read_text(encoding="utf-8"))
+    assert live["login"]["email"] == "parked@example.com"
+    assert not (store / "parked@example.com.json").exists()
+    assert (store / "live@example.com.json").exists()
+    assert not list(store.glob("*.activating")), "no staging file may survive"
+
+
+def test_switch_refuses_to_activate_the_live_slot(fake_env: Path, mocker) -> None:
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = FakeAdapter(home)
+    _write(home / adapter.credential_file, "me@example.com", "r1")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    with pytest.raises(models.PoolError):
+        engine.switch(adapter, cfg, gcfg, "me@example.com", authoritative={"repo"})
+
+
+def test_the_store_is_named_after_the_agent(fake_env: Path) -> None:
+    from jailbee.accounts import engine
+
+    adapter = FakeAdapter(fake_env / "home")
+    assert engine.store_dir(adapter).parent.name == "fake-credentials"
+    assert engine.store_dir(adapter).name == "_parked"

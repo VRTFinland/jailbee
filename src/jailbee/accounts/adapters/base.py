@@ -87,6 +87,22 @@ class AccountAdapter(Protocol):
         self, cfg: Config, holder: Path, parked: Path, account: LiveAccount | None
     ) -> None: ...
 
+    def on_activate(
+        self, holder: Path, record: dict[str, Any] | None, credential_raw: str
+    ) -> None:
+        """Record, beside the credential just written, which account it holds.
+
+        The counterpart of `on_park`, called under the credential locks once
+        the new login is in place — and again on a rollback, with the login
+        being restored. Claude writes its account note here; an agent that
+        keeps nothing beside the credential does nothing.
+
+        Separate from `on_switch`, which runs outside the locks and rewrites
+        *members*: this one describes the holder itself, and must not exist
+        before the credential it names does.
+        """
+        ...
+
     def on_switch(
         self,
         found: Sequence[Member],

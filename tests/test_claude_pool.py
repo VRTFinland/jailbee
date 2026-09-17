@@ -910,7 +910,7 @@ def test_switch_restores_both_files_when_activation_fails(
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _cred())
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "old@corp.com"})
-    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
+    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
         claude_pool.switch(
@@ -1635,7 +1635,7 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _grant("mine-live"))
     _write_identity(claude_pool.config_home(cfg), {"emailAddress": "me@x.com"})
-    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=OSError("disk full"))
+    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
         claude_pool.switch(
@@ -1869,7 +1869,7 @@ def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
             raise OSError("disk full")
         real_write(path, text)
 
-    mocker.patch("jailbee.claude_pool._atomic_write", side_effect=fail_the_credential)
+    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=fail_the_credential)
 
     with pytest.raises(OSError):
         claude_pool.switch(cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())
