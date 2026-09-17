@@ -298,8 +298,13 @@ ssh -vv -A -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
 ssh -vv -X -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
 ```
 
-The dashboard may still run, but the forwarding request must report failure;
-the remote process must receive neither `SSH_AUTH_SOCK` nor an X11 display.
+The dashboard may still run, but the SSH client's debug output must report the
+forwarding request as rejected. Do not infer that `SSH_AUTH_SOCK` or `DISPLAY`
+must be absent from the child: it inherits the systemd user service's existing
+environment. If either value was already present there, it is inherited service
+environment, not an SSH-forwarded environment created by `-A` or `-X`; the
+observable contract is that the client request establishes no forwarded agent
+socket or X11 display.
 
 Remote forwarding is refused at setup. Local forwarding can bind locally, so
 open it in one terminal and trigger a channel from another:

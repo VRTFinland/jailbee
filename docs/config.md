@@ -81,10 +81,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Six top-level keys are read from `~/.config/jailbee/global.yaml` into
+Eight top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
-`claude_credentials`, `scratch` and `config_edit`. `ls`'s column block is
+`claude_credentials`, `scratch`, `config_edit`, `update_check`, and `remote`.
+`ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -97,7 +98,12 @@ merged this way — see
 `config_edit` describe this host rather than any one repo — what a directory
 with no config file gets, and how jailbee writes your files — so there is no
 repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
-[`config_edit`](#config_edit).
+[`config_edit`](#config_edit). `update_check` and `remote` are likewise
+properties of this host, not a repo: they are validated directly against
+`GlobalConfig`; explicitly configured values override their schema defaults,
+omitted fields retain their defaults, and no repo layer can augment or
+override them. See [`update_check`](#update_check) and
+[`remote.ssh`](#remotessh).
 
 One consequence: `jailbee config show` prints the *Config* layer, so the `ls:` /
 `dashboard:` values it shows come from the repo file only. Use `jailbee config
