@@ -2871,6 +2871,27 @@ def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
     assert run.call_args.kwargs["cwd_root"] is None
 
 
+def test_registered_only_dashboard_never_loads_the_cwd(mocker) -> None:
+    load = mocker.patch("jailbee.config.load_repo_config")
+    advise = mocker.patch("jailbee.cli._advise_setup")
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+
+    result = CliRunner().invoke(app, ["dashboard", "--registered-only"])
+
+    assert result.exit_code == 0
+    load.assert_not_called()
+    advise.assert_not_called()
+    assert run.call_args.kwargs["cwd_root"] is None
+
+
+def test_registered_only_dashboard_flag_is_hidden_from_help() -> None:
+    result = CliRunner().invoke(app, ["dashboard", "--help"])
+
+    assert result.exit_code == 0
+    assert "--registered-only" not in result.output
+
+
 def test_dashboard_command_lets_a_programming_error_out_of_the_probe(mocker):
     """The widened `except` is `(ConfigError, OSError)`, not `Exception`.
 

@@ -2909,6 +2909,14 @@ def dashboard_cmd(
             help="Run the GUI attached to this terminal instead of detaching to the background.",
         ),
     ] = False,
+    registered_only: Annotated[
+        bool,
+        typer.Option(
+            "--registered-only",
+            hidden=True,
+            help="Use registered repositories only (internal remote launch option).",
+        ),
+    ] = False,
 ) -> None:
     """Live, auto-refreshing view of jailbee containers across all repos.
 
@@ -2923,6 +2931,7 @@ def dashboard_cmd(
             no_git=no_git,
             gui=gui,
             foreground=foreground,
+            registered_only=registered_only,
         )
     )
 
@@ -2945,6 +2954,7 @@ def tui_cmd(
             no_git=no_git,
             gui=False,
             foreground=False,
+            registered_only=False,
         )
     )
 
@@ -2974,38 +2984,49 @@ def gui_cmd(
             no_git=no_git,
             gui=True,
             foreground=foreground,
+            registered_only=False,
         )
     )
 
 
 def _run_dashboard(
-    *, interval: float | None, git_interval: float, no_git: bool, gui: bool, foreground: bool
+    *,
+    interval: float | None,
+    git_interval: float,
+    no_git: bool,
+    gui: bool,
+    foreground: bool,
+    registered_only: bool,
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend."""
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
 
-    # Before either frontend takes the screen: this is the other command that
-    # surveys the whole fleet, and the other one that can afford to stop.
-    _advise_setup(offer=True)
-
-    # A launch-time probe, not a load: the dashboards re-resolve per gather.
-    # `Path.cwd()` only counts as a repo if its config actually loads — with
-    # `scratch.enabled: false` a config-less directory is still nothing to show,
-    # and neither is a directory whose config file exists but does not parse.
-    #
-    # `OSError` as well as `ConfigError`, and not one without the other: the
-    # loader wraps YAML and Pydantic failures as `ConfigError` but lets
-    # `read_text()`'s own errors through raw, so an unreadable config file (bad
-    # permissions, a dangling symlink, an I/O error) arrives here as a bare
-    # `OSError`. The stat this replaced degraded gracefully; a traceback at
-    # `jb dashboard` launch is the one failure a user cannot work around. Kept
-    # to these two on purpose — a programming error must still surface.
-    try:
-        load_repo_config(Path.cwd())
-        cwd_root: Path | None = Path.cwd()
-    except (ConfigError, OSError):
+    if registered_only:
         cwd_root = None
+    else:
+        # Before either frontend takes the screen: this is the other command
+        # that surveys the whole fleet, and the other one that can afford to
+        # stop.
+        _advise_setup(offer=True)
+
+        # A launch-time probe, not a load: the dashboards re-resolve per gather.
+        # `Path.cwd()` only counts as a repo if its config actually loads — with
+        # `scratch.enabled: false` a config-less directory is still nothing to show,
+        # and neither is a directory whose config file exists but does not parse.
+        #
+        # `OSError` as well as `ConfigError`, and not one without the other: the
+        # loader wraps YAML and Pydantic failures as `ConfigError` but lets
+        # `read_text()`'s own errors through raw, so an unreadable config file (bad
+        # permissions, a dangling symlink, an I/O error) arrives here as a bare
+        # `OSError`. The stat this replaced degraded gracefully; a traceback at
+        # `jb dashboard` launch is the one failure a user cannot work around. Kept
+        # to these two on purpose — a programming error must still surface.
+        try:
+            load_repo_config(Path.cwd())
+            cwd_root = Path.cwd()
+        except (ConfigError, OSError):
+            cwd_root = None
 
     if gui:
         try:
