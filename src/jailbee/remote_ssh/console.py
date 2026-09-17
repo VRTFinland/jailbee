@@ -85,9 +85,7 @@ def _history() -> FileHistory:
 
 
 def _session(repos: Sequence[RepoChoice]) -> PromptSession[str]:
-    words = sorted(
-        {*_LOCAL_COMMANDS, *(repo.prefix for repo in repos), *known_command_paths()}
-    )
+    words = sorted({*_LOCAL_COMMANDS, *(repo.prefix for repo in repos), *known_command_paths()})
     return PromptSession(
         history=_history(),
         completer=WordCompleter(words, ignore_case=True),
