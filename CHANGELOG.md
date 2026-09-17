@@ -152,6 +152,23 @@ before editing `## Unreleased`.
   puts `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would
   shadow the new one. `gemini` and `opencode` still install through npm and
   still need `golden.stacks.node`; that requirement is now documented.
+
+  The same preset shared one more thing than it should have. Codex keeps its
+  app-server control socket and daemon pid files under `$CODEX_HOME`, which
+  the preset mounts into every container of the repo — and a *pathname*
+  AF_UNIX socket is not confined by a network namespace, so one container's
+  Codex frontend could connect to another container's daemon. The protocol
+  passes the working directory as a string and every container clones the
+  repo to the same path, so the daemon then edited files and committed in the
+  wrong clone. `agents.<name>.shared[]` gains a `private` list naming
+  subpaths that stay per container, and the `codex` preset ships with
+  `private: [app-server-control, app-server-daemon]`. Everything else in
+  `~/.codex` stays shared, so one login, one `config.toml` and one session
+  history still serve every container. Existing containers pick the carve-out
+  up on their next `jailbee start`; no `jailbee apply` is needed.
+  `jailbee doctor` now reports any socket it finds in a shared agent mount
+  that is not carved out — `gemini`, `opencode` and `grok` share a whole home
+  directory too and ship unverified.
 - **Both dashboards opened on an empty table.** `jailbee dashboard` and the
   Qt window drew their frontend first and only then asked Incus what was
   there, so the first thing on screen was a blank view — and the snapshot
