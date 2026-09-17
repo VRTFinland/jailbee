@@ -1443,6 +1443,94 @@ jailbee destroy feat-descoutbox --force
 git push origin --delete feat/outbox-desc-smoke   # requires explicit user approval
 ```
 
+## Adopted-PR description smoke test
+
+> Host-only, and the one path unit tests cannot reach: a PR jailbee did not
+> open. Requires `gh auth login` on the host and push access to origin.
+> Replace `<owner>/<repo>` and `<N>` throughout.
+
+```bash
+# 1. A PR jailbee knows nothing about, opened from the HOST.
+git checkout main
+git checkout -b feat/adoptdesc
+echo "adopted desc" > adopted.txt && git add . && git commit -m "feat: adopted desc"
+git push -u origin feat/adoptdesc          # requires explicit user approval
+gh pr create --fill --draft                # note the number → <N>
+git checkout main
+
+# 2. A container on that branch, with a description naming that PR.
+jailbee new feat/adoptdesc
+jailbee shell feat-adoptdesc
+mkdir -p ~/.jailbee/pr-outbox
+cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": <N>,
+  "head_sha": null,
+  "actions": [
+    {
+      "type": "description",
+      "title": "feat: adopted description smoke",
+      "body": "## Summary\n\nWritten in a container for a PR jailbee did not open."
+    }
+  ]
+}
+JSON
+cd ~/SampleApp && echo more >> adopted.txt && git add . && git commit -m "more"
+exit
+
+# 3. Bind the PR by number. The description is NOT applied silently.
+jailbee pr feat-adoptdesc --pr <N>
+# expect: "PR #<N> by @<you> (OPEN); head 'feat/adoptdesc' → base 'main'.",
+#         the bind confirmation, the push, then — because jailbee did not open
+#         this PR —
+#           "Replace PR #<N>'s description with the one 001-description.json
+#            proposes? [y/N]"
+# Answer n:
+# expect: "…description unchanged." and, after it,
+#           "001-description.json still holds a description this run did not use.
+#             `jailbee review apply feat-adoptdesc` publishes it."
+gh pr view <N> --json title      # expect: unchanged — declining consumed nothing
+
+jailbee pr feat-adoptdesc        # nothing new to push; answer y this time
+gh pr view <N> --json title,body
+# expect: "feat: adopted description smoke" and the manifest's body, and the
+#         success line ends "(description from 001-description.json)"
+
+# 4. A `pr: null` description on the same container is withheld by `jailbee
+#    pr` — and `jailbee review apply` publishes it anyway.
+jailbee shell feat-adoptdesc
+cat > ~/.jailbee/pr-outbox/002-description.json <<'JSON'
+{
+  "version": 1,
+  "repo": "<owner>/<repo>",
+  "pr": null,
+  "head_sha": null,
+  "actions": [
+    {"type": "description", "title": "feat: second description", "body": "Second body."}
+  ]
+}
+JSON
+exit
+jailbee pr feat-adoptdesc
+# expect: "002-description.json proposes a description for the PR this container
+#          would open (`pr: null`), and PR #<N> was not opened by jailbee; not
+#          putting an agent's text on a PR it was not written for."
+#         then "…description unchanged." and the "still holds a description"
+#         note. No prompt about the description at all.
+jailbee review ls
+# expect: one row, PR #<N> — a `pr: null` manifest resolves to the container's
+#         own bound PR rather than being deferred to `jailbee pr` for ever
+jailbee review apply feat-adoptdesc -y
+gh pr view <N> --json title,body   # expect: "feat: second description"
+
+jailbee destroy feat-adoptdesc --force
+
+# Cleanup (closes nothing on GitHub — close/delete the smoke PR manually).
+git push origin --delete feat/adoptdesc    # requires explicit user approval
+```
+
 ## Remote-git retry smoke test
 
 Covers `retry.with_remote_retry` at all three call sites. Each needs a
