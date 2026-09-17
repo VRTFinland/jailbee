@@ -750,17 +750,26 @@ otherwise fight over.
   ACL, /etc/hosts, dockerd proxy — after editing `.jailbee/config.yaml`; idempotent).
 - **Advisory warnings:** `jailbee dismiss [KEYS…] [--all] [--clear]` marks a
   repeating advisory read so it stops appearing on `jailbee ls`/`new`/`shell`.
-  Keys: `base-build` / `apply` (an owed action after an upgrade) and
+  Keys: `base-build` / `apply` (an owed action after an upgrade), `update`
+  (a newer JailBee release is on PyPI) and
   `legacy-config-dir` / `legacy-chrome-block` (a deprecated config spelling);
   `KEY@scope` picks one of several files raising the same notice. With no
   arguments it lists what applies and what has been dismissed. An owed action
   returns when a later release adds a **new** reason for it — upgrading alone
-  does not; a deprecation stays dismissed until the config changes.
+  does not; a dismissed `update` returns when a release newer than the
+  dismissed one appears; a deprecation stays dismissed until the config
+  changes.
   `jailbee doctor` never respects a dismissal: it still reports both, marked
   with the version they were dismissed at, so nothing is hidden from it.
   Warnings that answer the command you just typed (what `jailbee config
   validate` reports, `jailbee base build`'s `golden.python` line, a deprecated
   alias) are deliberately not dismissible.
+- **Update notice:** `jailbee ls`/`new`/`shell` print one stderr line when a
+  newer JailBee is on PyPI, naming the upgrade command for the install at
+  hand. The version is fetched by a detached background process at most once
+  a day, never on the command's own path, and `update_check: false` in
+  `~/.config/jailbee/global.yaml` (or `JAILBEE_NO_UPDATE_CHECK=1` for one
+  command) turns it off. An editable install is never advised.
 - **Background jobs:** `jailbee job ls [--all-repos]` (in-flight/failed jobs with
   phase, pid, age, error, log path), `jailbee job log <name> [--follow]` (print or
   follow the worker log), `jailbee job clear [<name>] [--all]` (acknowledge a dead

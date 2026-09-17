@@ -16,6 +16,13 @@ if TYPE_CHECKING:
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _allow_update_check(monkeypatch) -> None:
+    """Undo `conftest._block_update_check` — this file is about the check."""
+    monkeypatch.delenv("JAILBEE_NO_UPDATE_CHECK", raising=False)
+
+
+
 # --- version comparison ----------------------------------------------------
 
 
@@ -358,7 +365,7 @@ def test_run_probe_records_what_it_fetched(db_engine: Engine, mocker) -> None:
 
     mocker.patch.object(update_check, "get_engine", return_value=db_engine)
     mocker.patch.object(update_check, "fetch_latest", return_value="1.5.0")
-    mocker.patch.object(update_check, "_configured_enabled", return_value=True)
+    mocker.patch.object(update_check, "configured_enabled", return_value=True)
 
     update_check.run_probe(now=NOW)
 
@@ -377,8 +384,94 @@ def test_run_probe_fetches_nothing_when_the_check_is_disabled(db_engine: Engine,
 
     mocker.patch.object(update_check, "get_engine", return_value=db_engine)
     fetch = mocker.patch.object(update_check, "fetch_latest", return_value="1.5.0")
-    mocker.patch.object(update_check, "_configured_enabled", return_value=False)
+    mocker.patch.object(update_check, "configured_enabled", return_value=False)
 
     update_check.run_probe(now=NOW)
 
     fetch.assert_not_called()
+
+
+# --- dismissal -------------------------------------------------------------
+
+
+def _dismiss(session: Session, fingerprint: str, *, at: datetime = NOW) -> None:
+    from jailbee import notices
+    from jailbee.update_check import NOTICE_KEY, NOTICE_SCOPE
+
+    notices.save(
+        session,
+        NOTICE_KEY,
+        NOTICE_SCOPE,
+        fingerprint=fingerprint,
+        version="1.4.0",
+        now=at,
+    )
+
+
+def test_the_hint_invites_the_user_to_dismiss_it(db_session: Session) -> None:
+    from jailbee.update_check import Install, consume_hint, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+
+    lines = consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    assert lines[-1].strip() == "Or `jb dismiss update` to stop repeating this."
+
+
+def test_a_dismissed_release_is_not_advertised_again(db_session: Session) -> None:
+    from jailbee.update_check import Install, consume_hint, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+    _dismiss(db_session, "1.5.0")
+
+    assert (
+        consume_hint(
+            db_session, "1.4.0", now=NOW + timedelta(days=30), install=Install("uv", "cmd")
+        )
+        == []
+    )
+
+
+def test_a_release_newer_than_the_dismissed_one_speaks_again(db_session: Session) -> None:
+    """A dismissal acknowledges the release it was shown for, not every
+    release after it — the same rule the upgrade advice follows."""
+    from jailbee.update_check import Install, consume_hint, record_check
+
+    _dismiss(db_session, "1.5.0")
+    record_check(db_session, "1.6.0", now=NOW)
+
+    lines = consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd"))
+    assert any("1.6.0" in line for line in lines)
+
+
+def test_an_unparseable_dismissal_fingerprint_does_not_silence_anything(
+    db_session: Session,
+) -> None:
+    """A row that cannot be compared must fail towards speaking: a dismissal
+    nobody can evaluate is not consent to hide the advice forever."""
+    from jailbee.update_check import Install, consume_hint, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+    _dismiss(db_session, "not-a-version")
+
+    assert consume_hint(db_session, "1.4.0", now=NOW, install=Install("uv", "cmd")) != []
+
+
+# --- what the other surfaces read -----------------------------------------
+
+
+def test_available_reports_the_cached_release_ignoring_dismissals(db_session: Session) -> None:
+    """`jailbee doctor` and `jailbee dismiss` both need the unfiltered answer."""
+    from jailbee.update_check import available, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+    _dismiss(db_session, "1.5.0")
+
+    assert available(db_session, "1.4.0") == "1.5.0"
+
+
+def test_available_is_none_when_the_running_version_is_current(db_session: Session) -> None:
+    from jailbee.update_check import available, record_check
+
+    record_check(db_session, "1.5.0", now=NOW)
+
+    assert available(db_session, "1.5.0") is None

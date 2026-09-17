@@ -2981,3 +2981,78 @@ def test_dismissed_notices_check_reports_a_suppressed_notice(monkeypatch) -> Non
     assert [r.ok for r in results] == [False]
     assert "dismissed 1.3.2" in results[0].detail
     assert "`chrome:` is deprecated." in results[0].detail
+
+
+def test_doctor_reports_an_available_release(mocker) -> None:
+    """`jailbee doctor` is where a user comes back to after scrolling past the
+    hint — and where a dismissed advisory must still be visible."""
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.doctor import _check_update_available
+    from jailbee.update_check import Install, record_check
+
+    mocker.patch("jailbee.update_check.detect_install", return_value=Install("uv", "uv tool x"))
+    mocker.patch("jailbee.update_check.configured_enabled", return_value=True)
+    with Session(get_engine()) as session:
+        record_check(session, "9.9.9", now=datetime(2026, 9, 17, tzinfo=UTC))
+
+    got = _check_update_available()
+
+    assert "9.9.9" in got.detail
+    assert "uv tool x" in got.detail
+
+
+def test_doctor_names_the_dismissal_that_hides_the_update_hint(mocker) -> None:
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import notices
+    from jailbee.db import get_engine
+    from jailbee.doctor import _check_update_available
+    from jailbee.update_check import NOTICE_KEY, NOTICE_SCOPE, Install, record_check
+
+    mocker.patch("jailbee.update_check.detect_install", return_value=Install("uv", "uv tool x"))
+    mocker.patch("jailbee.update_check.configured_enabled", return_value=True)
+    with Session(get_engine()) as session:
+        record_check(session, "9.9.9", now=datetime(2026, 9, 17, tzinfo=UTC))
+        notices.save(
+            session,
+            NOTICE_KEY,
+            NOTICE_SCOPE,
+            fingerprint="9.9.9",
+            version="1.4.0",
+            now=datetime(2026, 9, 17, tzinfo=UTC),
+        )
+
+    got = _check_update_available()
+
+    assert "9.9.9" in got.detail
+    assert "dismissed" in got.detail
+
+
+def test_doctor_says_when_the_update_check_is_switched_off(mocker) -> None:
+    from jailbee.doctor import _check_update_available
+
+    mocker.patch("jailbee.update_check.configured_enabled", return_value=False)
+
+    got = _check_update_available()
+
+    assert got.ok is True
+    assert "disabled" in got.detail
+
+
+def test_doctor_update_check_survives_a_broken_state_db(mocker) -> None:
+    """Same rule as every other bookkeeping read here."""
+    from jailbee.doctor import _check_update_available
+
+    mocker.patch("jailbee.update_check.configured_enabled", return_value=True)
+    mocker.patch("jailbee.update_check.available", side_effect=RuntimeError("db is locked"))
+
+    got = _check_update_available()
+
+    assert got.ok is True
+    assert "could not be read" in got.detail

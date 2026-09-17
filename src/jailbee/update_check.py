@@ -40,6 +40,7 @@ from urllib.request import Request, urlopen
 
 from jailbee import __version__
 from jailbee.db import get_engine
+from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.upgrade import parse_version
 
 if TYPE_CHECKING:
@@ -64,6 +65,17 @@ HINT_INTERVAL = timedelta(hours=24)
 
 ENV_DISABLE = "JAILBEE_NO_UPDATE_CHECK"
 """Off switch for scripts and CI, which cannot edit the user's config file."""
+
+NOTICE_KEY = "update"
+"""How `jailbee dismiss` names this advisory. Kebab-case, like the rest."""
+
+NOTICE_SCOPE = "host"
+"""One scope, because the fact is about the machine, not about any repo.
+
+The upgrade advice is per repo (`container_prefix`) and a deprecation notice
+per config file; which jailbee is installed is neither, so dismissing the
+update once covers every repo on the host.
+"""
 
 Manager = Literal["uv", "pipx", "pip", "editable", "unknown"]
 
@@ -210,15 +222,33 @@ def consume_hint(
     """The read path: the lines to print, and the record that they were.
 
     Returns `[]` unless a strictly newer release is cached, this install can
-    be advised at all, and the same release was not already advertised within
-    `interval`. A *different* release ignores the interval — the point of the
-    rate limit is to stop `jailbee ls` repeating itself, not to sit on news.
+    be advised at all, the release has not been dismissed, and the same
+    release was not already advertised within `interval`. A *different*
+    release ignores the interval — the point of the rate limit is to stop
+    `jailbee ls` repeating itself, not to sit on news.
+
+    Two limits rather than one because they answer different things: the
+    interval is how often an undismissed release may be mentioned, the
+    dismissal is the user saying they have heard it. Either alone leaves a
+    gap — without the interval a user who has not met `jailbee dismiss` gets
+    the line on every command, and without the dismissal one who has still
+    gets it daily until they upgrade.
+
+    The dismissal is read from the store directly rather than through
+    `notices.dismissals()`: that cache is populated during config loading and
+    kept for the life of the process, which is the wrong lifetime for a row
+    `jailbee dismiss` may have written seconds ago.
     """
+    from jailbee import notices
+
     row = _row(session)
     if row is None:
         return []
     latest = newer_version(current, row.latest_version)
     if latest is None:
+        return []
+    dismissal = notices.load_all(session).get((NOTICE_KEY, NOTICE_SCOPE))
+    if dismissal is not None and dismissal_silences(dismissal.fingerprint, latest):
         return []
     if (
         row.hint_shown_version == latest
@@ -233,7 +263,35 @@ def consume_hint(
     row.hint_shown_version = latest
     session.add(row)
     session.commit()
-    return lines
+    # The footer is added here, not in `hint_lines`: `jailbee dismiss` and
+    # `jailbee doctor` render the same advice and must not invite a dismissal
+    # — one is the dismissal, the other is where a dismissal stays visible.
+    return [*lines, f"    Or `jb dismiss {NOTICE_KEY}` to stop repeating this."]
+
+
+def available(session: Session, current: str) -> str | None:
+    """The cached newer release, or `None`. Dismissals and the interval are
+    deliberately ignored: this is what `jailbee doctor` and `jailbee dismiss`
+    read, and both exist to show what the hint would hide."""
+    row = _row(session)
+    return None if row is None else newer_version(current, row.latest_version)
+
+
+def dismissal_silences(fingerprint: str | None, latest: str) -> bool:
+    """Whether a dismissal recorded at `fingerprint` covers `latest`.
+
+    A dismissal acknowledges the release it was shown for, so anything newer
+    speaks again — the rule `upgrade.pending` follows for its own notes. A
+    fingerprint that cannot be parsed silences nothing: an unreadable record
+    of consent is not consent.
+    """
+    if fingerprint is None:
+        return False
+    stored = parse_version(fingerprint)
+    here = parse_version(latest)
+    if stored is None or here is None:
+        return False
+    return stored >= here
 
 
 def probe_argv() -> list[str]:
@@ -292,16 +350,18 @@ def fetch_latest(url: str = PYPI_JSON_URL, *, timeout: float = FETCH_TIMEOUT) ->
     return version if isinstance(version, str) else None
 
 
-def _configured_enabled() -> bool:
+def configured_enabled() -> bool:
     """Read `update_check` from `global.yaml`, defaulting to off on trouble.
 
-    Only the probe calls this — a foreground command already holds a loaded
-    `GlobalConfig`. An unreadable or invalid file yields `False`: the file is
-    where the user says no, and a parse error must not be the one path that
-    reaches the network anyway.
-    """
-    from jailbee.global_config import default_global_config_path, load_global_config
+    Read here rather than taken from the caller's loaded `GlobalConfig`
+    because the two callers cannot share one: the probe is a separate process,
+    and the hint decorates commands that have only the repo config in hand.
 
+    An unreadable or invalid file yields `False`: the file is where the user
+    says no, and a parse error must not be the one path that still reaches the
+    network. Its own errors stay silent — the command this decorates reports
+    a broken global config on its own, and twice is once too many.
+    """
     try:
         gcfg, _ = load_global_config(default_global_config_path())
     except Exception:
@@ -322,7 +382,7 @@ def run_probe(*, now: datetime | None = None, url: str = PYPI_JSON_URL) -> None:
 
     from sqlmodel import Session
 
-    if not check_enabled(configured=_configured_enabled(), env=os.environ):
+    if not check_enabled(configured=configured_enabled(), env=os.environ):
         return
     latest = fetch_latest(url)
     with Session(get_engine()) as session:

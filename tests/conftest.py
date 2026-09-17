@@ -252,6 +252,24 @@ def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _block_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the PyPI update check out of every test that is not about it.
+
+    `cli._advise_update` decorates `ls` / `new` / `shell`, and the probe it
+    can start is a real `subprocess.Popen` of a process that would really talk
+    to PyPI — neither belongs in a suite that is otherwise fully mocked and
+    offline. It also kept turning up as a second `Popen` call in tests that
+    assert on the *worker* jailbee spawns.
+
+    The env var rather than a patch, because it is the one switch both halves
+    honour: the foreground path and the probe, which re-reads it in its own
+    process. `tests/test_update_check.py` and `tests/test_cli_update_hint.py`
+    delete it again for the tests that are about this feature.
+    """
+    monkeypatch.setenv("JAILBEE_NO_UPDATE_CHECK", "1")
+
+
+@pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 

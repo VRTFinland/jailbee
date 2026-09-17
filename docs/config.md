@@ -2504,6 +2504,43 @@ config_edit:
 A `regenerate` that would drop hand-written comment lines always shows the
 diff and asks first — that confirmation cannot be turned off.
 
+### `update_check`
+
+Whether JailBee tells you when a newer release is on PyPI. Host-level only,
+like `claude_credentials`, `scratch` and `config_edit`: whether your machine
+talks to PyPI is not a repo's decision.
+
+```yaml
+update_check: true      # true (default) | false
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `update_check` | `true` | `false` stops both the hint and the fetch behind it. `JAILBEE_NO_UPDATE_CHECK=1` does the same for a single command, for scripts and CI that cannot edit this file. |
+
+The check never runs on a command's path. `jailbee ls` / `new` / `shell` read
+the last answer out of the state database and, when it is over a day old,
+start a detached background process that fetches
+`https://pypi.org/pypi/jailbee/json` for the *next* run to read. Nothing
+identifying you, your host or your repos is sent — the request carries a
+`jailbee/<version>` user agent and nothing else — and an offline host simply
+keeps showing the last answer it had.
+
+When a newer release is known, one line appears on stderr:
+
+```
+⚠ jailbee 1.5.0 is available (you are running 1.4.0).
+    Upgrade with: uv tool upgrade jailbee
+    Or `jb dismiss update` to stop repeating this.
+```
+
+The upgrade command is derived from how JailBee was installed (`uv tool`,
+`pipx`, or plain `pip`). An **editable install** is never advised: it runs
+from a checkout, so no upgrade command would give you what you want. The
+same release is mentioned at most once a day, and `jailbee dismiss update`
+silences it until a release newer still appears. `jailbee doctor` reports it
+either way — including the dismissal — under `update check`.
+
 ## `--config / -c` override
 
 `jailbee -c /path/to/config.yaml <subcommand>` bypasses discovery and uses

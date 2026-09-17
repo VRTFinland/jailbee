@@ -270,3 +270,50 @@ def test_cli_rejects_keys_and_all_together(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(app, ["dismiss", "apply", "--all"])
     assert result.exit_code == 2
+
+
+def test_survey_offers_the_pypi_update_advisory(db_engine, tmp_path, mocker) -> None:
+    """The update hint repeats like the others, so `jailbee dismiss` has to be
+    able to name it — under one host-wide scope, since which jailbee is
+    installed is not a property of any repo."""
+    from jailbee.update_check import Install, NOTICE_SCOPE, record_check
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.update_check.detect_install", return_value=Install("uv", "cmd"))
+    cfg = make_cfg(tmp_path)
+    with Session(db_engine) as session:
+        record_check(session, "1.5.0", now=NOW)
+        rows = _rows(cfg, session, version="1.4.0")
+
+    update = [r for r in rows if r.key == "update"]
+    assert len(update) == 1
+    assert (update[0].scope, update[0].fingerprint, update[0].applies) == (
+        NOTICE_SCOPE,
+        "1.5.0",
+        True,
+    )
+    assert not any("dismiss" in line for line in update[0].lines)
+
+
+def test_survey_says_nothing_about_updates_when_none_is_cached(db_engine, tmp_path) -> None:
+    from tests.conftest import make_cfg
+
+    with Session(db_engine) as session:
+        rows = _rows(make_cfg(tmp_path), session, version="1.4.0")
+
+    assert [r for r in rows if r.key == "update"] == []
+
+
+def test_survey_omits_the_update_for_an_install_it_cannot_advise(
+    db_engine, tmp_path, mocker
+) -> None:
+    """An editable checkout is never advised, so there is nothing to dismiss."""
+    from jailbee.update_check import Install, record_check
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.update_check.detect_install", return_value=Install("editable", None))
+    with Session(db_engine) as session:
+        record_check(session, "1.5.0", now=NOW)
+        rows = _rows(make_cfg(tmp_path), session, version="1.4.0")
+
+    assert [r for r in rows if r.key == "update"] == []

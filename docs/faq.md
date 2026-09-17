@@ -67,6 +67,23 @@ package — a virtualenv you manage yourself works too; only a bare
 
 → [Install JailBee](installation.md#3-install-jailbee)
 
+### How do I know when a new release is out?
+
+JailBee tells you. When it has seen a newer release on PyPI, `jailbee ls` /
+`new` / `shell` print one line on stderr naming the version and the upgrade
+command for your install (`uv tool upgrade jailbee`, `pipx upgrade jailbee`,
+…). `jailbee dismiss update` silences one release; `update_check: false` in
+`~/.config/jailbee/global.yaml` — or `JAILBEE_NO_UPDATE_CHECK=1` for one
+command — turns the whole thing off.
+
+The check costs your commands nothing and reports nothing about you: the
+version is fetched by a detached background process at most once a day, in
+one anonymous GET of `https://pypi.org/pypi/jailbee/json`, and the commands
+themselves only read the answer it left behind. An install running from a
+checkout is never advised to upgrade.
+
+→ [`update_check`](config.md#update_check)
+
 ### What is the minimum host setup?
 
 Four one-time steps: install and initialise Incus, add the two

@@ -161,6 +161,56 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
     return CheckResult("upgrade actions", False, "\n".join(lines))
 
 
+def _check_update_available() -> CheckResult:
+    """Report whether a newer jailbee has been seen on PyPI.
+
+    Reads the cache the hint reads; it never fetches, so `jailbee doctor` is
+    as offline as the rest of the command. A dismissal does not hide it, and
+    is named instead — `_check_upgrade_advice` explains why that is the
+    promise dismissals rest on.
+
+    Unlike that check this one passes even with an update pending, which is a
+    deliberate departure: an owed `base build` means this host's own image no
+    longer matches the tool driving it, while a release published an hour ago
+    means nothing here is wrong yet. Failing for it would turn every release
+    into a red `doctor` (and a non-zero exit in CI) for every user who has not
+    upgraded that day.
+    """
+    from sqlmodel import Session
+
+    from jailbee import __version__, notices, update_check
+    from jailbee.db import get_engine
+
+    if not update_check.configured_enabled():
+        return CheckResult("update check", True, "disabled (`update_check: false`)")
+
+    try:
+        with Session(get_engine()) as session:
+            latest = update_check.available(session, __version__)
+            dismissal = (
+                notices.load_all(session).get(
+                    (update_check.NOTICE_KEY, update_check.NOTICE_SCOPE)
+                )
+                if latest is not None
+                else None
+            )
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        return CheckResult("update check", True, f"state could not be read ({e})")
+
+    if latest is None:
+        return CheckResult("update check", True, f"running {__version__}, nothing newer known")
+
+    install = update_check.detect_install()
+    lines = update_check.hint_lines(__version__, latest, install)
+    if not lines:
+        # No command jailbee is willing to advise (an editable checkout, or an
+        # install with no metadata) — the release is still worth naming.
+        lines = [f"jailbee {latest} is available ({install.manager} install, not upgraded here)."]
+    if dismissal is not None and update_check.dismissal_silences(dismissal.fingerprint, latest):
+        lines.append(f"    [dismissed {dismissal.version}]")
+    return CheckResult("update check", True, "\n".join(lines))
+
+
 def _check_dismissed_notices() -> list[CheckResult]:
     """Report deprecation notices this process suppressed because of a dismissal.
 
@@ -537,6 +587,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
+    results.append(_check_update_available())
     # Same reasoning as the check above: a dismissal hides the hint on the
     # commands the user actually runs, never the diagnosis here.
     results.extend(_check_dismissed_notices())

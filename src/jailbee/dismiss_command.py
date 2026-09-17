@@ -56,10 +56,14 @@ def survey(cfg: Config, session: Session, version: str, *, now: datetime) -> lis
     The deprecation half comes from `notices.active()`, which the caller's own
     config load populated — so `jailbee dismiss` must load the config before
     calling this (the CLI does anyway, for `container_prefix`). Upgrade advice
-    is computed *unfiltered*: the status view's job is to show what would be
-    hidden as much as what is.
+    and the PyPI update are computed *unfiltered*: the status view's job is to
+    show what would be hidden as much as what is.
+
+    Three families, and the update is the only host-wide one: its scope is
+    `update_check.NOTICE_SCOPE` rather than a repo or a config file, because
+    which jailbee is installed is a property of the machine.
     """
-    from jailbee import notices, upgrade
+    from jailbee import notices, update_check, upgrade
 
     stored = notices.load_all(session)
     rows: list[Row] = []
@@ -85,6 +89,29 @@ def survey(cfg: Config, session: Session, version: str, *, now: datetime) -> lis
                 applies=True,
             )
         )
+
+    latest = update_check.available(session, version)
+    if latest is not None:
+        # `hint_lines` is empty for an install jailbee will not advise (an
+        # editable checkout): there is no advice, so there is nothing to mark
+        # read, and offering the key would be offering a no-op.
+        lines = update_check.hint_lines(version, latest, update_check.detect_install())
+        if lines:
+            ident = (update_check.NOTICE_KEY, update_check.NOTICE_SCOPE)
+            seen.add(ident)
+            rows.append(
+                Row(
+                    key=update_check.NOTICE_KEY,
+                    scope=update_check.NOTICE_SCOPE,
+                    lines=tuple(lines),
+                    # The release being advertised, so a dismissal expires as
+                    # soon as a newer one appears — `upgrade`'s rule, keyed on
+                    # the version shown rather than the version running.
+                    fingerprint=latest,
+                    dismissal=stored.get(ident),
+                    applies=True,
+                )
+            )
 
     for notice in notices.active():
         seen.add(notice.ident)

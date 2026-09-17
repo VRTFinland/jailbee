@@ -270,6 +270,41 @@ def _advise_upgrade(cfg: "Config") -> None:
         return
 
 
+def _advise_update() -> None:
+    """Print the PyPI update hint, and start the probe that keeps it fresh.
+
+    Same contract as `_advise_upgrade`: stderr, never interactive, and wrapped
+    broadly because a courtesy must never take down the command the user
+    actually ran. Nothing here talks to the network — `maybe_probe` starts a
+    detached process at most once a day and returns immediately, so the cost
+    on this path is one small read of the state DB.
+
+    Reads the global config itself rather than taking the caller's: two of the
+    three commands that call this have only the repo config loaded, and a
+    second read of a small YAML file is cheaper than threading a parameter
+    through them for it.
+    """
+    import os
+
+    from sqlmodel import Session
+
+    from jailbee import update_check
+    from jailbee.db import get_engine
+    from jailbee.tui import hint
+
+    try:
+        enabled = update_check.check_enabled(
+            configured=update_check.configured_enabled(), env=os.environ
+        )
+        now = _now()
+        with Session(get_engine()) as session:
+            lines = update_check.consume_hint(session, __version__, now=now) if enabled else []
+            update_check.maybe_probe(session, now=now, enabled=enabled)
+        hint(lines)
+    except Exception:  # advice is a courtesy; must never fail the command
+        return
+
+
 def _setup_offer_allowed() -> bool:
     """True when jailbee may stop and *ask* about the missing setup steps.
 
@@ -1144,6 +1179,7 @@ def list_cmd(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_update()
     # `--format json` is for a parser, terminal or not: never stop to ask there.
     _advise_setup(offer=fmt == "table")
     show_submodules = submodules and repo_has_submodules(cfg)
@@ -1904,6 +1940,7 @@ def new_cmd(
     # ask for — a rebuilt base image, an applied profile set — has now had its
     # chance to happen, and it is still ahead of the container itself.
     _advise_upgrade(cfg)
+    _advise_update()
 
     # Register this repo with the refresh timer and resolve the pool
     # *before* creating the container so that the new container's
@@ -2820,6 +2857,7 @@ def shell(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_update()
     _advise_setup()
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")
     raise typer.Exit(_attach_shell(cfg, incus, name, user))

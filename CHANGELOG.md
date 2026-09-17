@@ -10,13 +10,25 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **JailBee tells you when a newer release is out.** `jailbee ls` / `new` /
+  `shell` print one stderr line naming the version and the upgrade command
+  for the install at hand (`uv tool upgrade jailbee`, `pipx upgrade
+  jailbee`, …), and `jailbee doctor` reports the same under `update check`.
+  The version comes from PyPI, fetched by a detached background process at
+  most once a day — never on a command's own path, and carrying nothing that
+  identifies you or your repos. An install running from a checkout is never
+  advised. `update_check: false` in `~/.config/jailbee/global.yaml` (or
+  `JAILBEE_NO_UPDATE_CHECK=1` for one command) turns it off; `jailbee
+  dismiss update` silences one release. See
+  [docs/config.md](https://jailbee.gisgro.io/docs/config/#update_check).
 - **`jailbee dismiss`** — mark a repeating advisory read so it stops
   appearing on `jailbee ls` / `new` / `shell`: an owed `jailbee base build` /
-  `jailbee apply` (`base-build`, `apply`), or a deprecated config spelling
-  (`legacy-config-dir`, `legacy-chrome-block`). With no arguments it lists
+  `jailbee apply` (`base-build`, `apply`), a newer release on PyPI (`update`), or a
+  deprecated config spelling (`legacy-config-dir`, `legacy-chrome-block`). With no arguments it lists
   what applies and what has been dismissed. An owed action returns when a
-  later release adds a new reason for it; a deprecation stays dismissed
-  until the config changes. `jailbee doctor` reports them either way —
+  later release adds a new reason for it; a dismissed `update` returns when
+  a release newer than the dismissed one appears; a deprecation stays
+  dismissed until the config changes. `jailbee doctor` reports them either way —
   marked with the version they were dismissed at, under `upgrade actions`
   and the new `dismissed notices` check — so a dismissal never hides
   anything from it.
