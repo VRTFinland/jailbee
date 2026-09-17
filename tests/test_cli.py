@@ -9747,3 +9747,71 @@ def test_cli_push_rejects_ff_flags_alongside_force_and_plain(mocker):
         result = CliRunner().invoke(app, ["git", "push", "feat-x", other, "--no-ff"])
         assert result.exit_code == 2, f"{other}: {result.output}"
         assert "only applies to --merge" in result.output
+
+
+def test_ls_samples_activity_when_the_cpu_column_is_requested(mocker, tmp_path):
+    """`--fields cpu` must print a number. A rate needs two readings, so
+    `ls` takes the second itself rather than rendering the dash a single
+    reading leaves behind."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    # Patched at the definition site, which is what `cli.py`'s lazy import
+    # resolves to at call time.
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+    mocker.patch("jailbee.procstat.PRIME_INTERVAL_SECONDS", 0)
+
+    result = CliRunner().invoke(app, ["ls", "--fields", "name,cpu"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert annotate.call_count == 2  # prime, then rate
+    assert annotate.call_args_list[0].args[1] is annotate.call_args_list[1].args[1]
+
+
+def test_ls_does_not_sample_activity_by_default(mocker, tmp_path):
+    """Nobody who did not ask for the column pays the 0.2 s."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    annotate.assert_not_called()
+
+
+def test_ls_does_not_sample_for_a_configured_field_list_in_json_mode(mocker, tmp_path):
+    """`ls: {fields: ...}` is a table preference and `emit` ignores it for
+    `--format json`. Sampling there would pay for a column that is never
+    printed."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "ls:\n  fields: [name, cpu]\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+
+    result = CliRunner().invoke(app, ["ls", "--format", "json"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    annotate.assert_not_called()

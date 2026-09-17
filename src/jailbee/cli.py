@@ -1223,6 +1223,28 @@ def list_cmd(
         hide=columns.hide,
     )
 
+    # `cpu` and `doing` are rates: they exist only where two readings do.
+    # Rather than print a column that could never hold a value, `ls` takes
+    # the second reading itself — but only for someone who asked for the
+    # column by name. The rule for what counts as asking is copied from
+    # `emit`'s own precedence above, not restated: an explicit --fields
+    # wins, and a configured `ls: {fields: ...}` applies to the table only.
+    requested = (
+        fields.split(",")
+        if fields is not None
+        else (columns.fields or () if fmt == "table" else ())
+    )
+    if any(name.strip() in ("cpu", "doing") for name in requested):
+        import time
+
+        from jailbee.lifecycle import annotate_activity
+        from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
+
+        sampler = ActivitySampler()
+        annotate_activity(containers, sampler)
+        time.sleep(PRIME_INTERVAL_SECONDS)
+        annotate_activity(containers, sampler)
+
     table_format.emit(
         containers,
         all_fields,
