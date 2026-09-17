@@ -297,3 +297,34 @@ class DismissedNotice(SQLModel, table=True):
     fingerprint: str
     version: str
     dismissed_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class UpdateCheckState(SQLModel, table=True):
+    """Host-level cache of the PyPI update check — one row, `id=1`.
+
+    Not per repo: which jailbee is installed is a property of the machine,
+    like `HostSetupState`. Two pairs of columns, written by two different
+    processes: `checked_at` / `latest_version` by the detached probe
+    (`update_check.run_probe`), `hint_shown_at` / `hint_shown_version` by the
+    foreground command that printed the advice. Keeping them apart is what
+    lets the hint be rate-limited per release without re-fetching, and lets a
+    failed fetch stamp `checked_at` while leaving the last known version in
+    place — see `update_check.record_check`.
+
+    Every column is nullable: a row exists as soon as either half has
+    something to say, and the other half stays empty until it does.
+    """
+
+    __tablename__ = "update_check_state"
+
+    id: int = Field(default=1, primary_key=True)
+    checked_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(_UTCDateTime, nullable=True),
+    )
+    latest_version: str | None = None
+    hint_shown_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(_UTCDateTime, nullable=True),
+    )
+    hint_shown_version: str | None = None

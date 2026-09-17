@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 
 def state_dir() -> Path:
@@ -207,6 +207,18 @@ def _migrate_to_v11(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v12(conn: Connection) -> None:
+    """v11 -> v12: added the `update_check_state` table.
+
+    Another no-op version guard, for the same reason as `_migrate_to_v11`:
+    `create_all` has already made the table by the time the chain runs. Both
+    branches that introduced these two tables numbered their step v11; the
+    merge kept `dismissed_notice` at 11 and moved the update check to 12, so
+    a database stamped at either version still walks an unbroken chain.
+    """
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -219,6 +231,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     9: _migrate_to_v9,
     10: _migrate_to_v10,
     11: _migrate_to_v11,
+    12: _migrate_to_v12,
 }
 
 
