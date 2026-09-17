@@ -123,6 +123,14 @@ def test_declared_submodule_remotes_accepts_an_absent_file(tmp_path, mocker):
     assert submodules.declared_submodule_remotes(tmp_path) == ()
 
 
+def test_declared_submodule_remotes_rejects_a_broken_gitmodules_symlink(tmp_path, mocker):
+    (tmp_path / ".gitmodules").symlink_to(tmp_path / "missing-gitmodules")
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
+
+    with pytest.raises(submodules.SubmoduleError, match="could not read"):
+        submodules.declared_submodule_remotes(tmp_path)
+
+
 @pytest.mark.parametrize(
     ("url", "slug"),
     [

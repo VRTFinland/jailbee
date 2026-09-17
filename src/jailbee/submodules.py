@@ -934,7 +934,17 @@ def _declared_submodules_at(repo_dir: Path) -> tuple[tuple[str, str], ...]:
         try:
             config_path.stat()
         except FileNotFoundError:
-            return ()
+            try:
+                config_path.lstat()
+            except FileNotFoundError:
+                return ()
+            except OSError as exc:
+                raise SubmoduleError(
+                    f"could not inspect submodule declarations at {config_path}"
+                ) from exc
+            raise SubmoduleError(
+                f"could not read submodule declarations from {config_path}"
+            ) from None
         except OSError as exc:
             raise SubmoduleError(
                 f"could not inspect submodule declarations at {config_path}"
