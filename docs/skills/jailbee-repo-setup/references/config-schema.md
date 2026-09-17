@@ -525,7 +525,7 @@ stage form instead. An existing flat config keeps running unchanged
 one implicit stage, switching the profile once instead of once per step —
 the only behavioural difference from before).
 
-Steps run inside a container-local tmux session named `autostart`. Attach with `jailbee tmux <container>`. Step windows are created detached, so a run in flight never steals focus from an attached user. Sync steps' output stays visible after completion (`remain-on-exit on`). Background steps keep running until the container stops.
+Steps run inside a container-local tmux session named `autostart`. Attach with `jailbee tmux <container>`. Step windows are created detached, so a run in flight never steals focus from an attached user; a failed step keeps its window (and its output) open, a successful one closes it. Background steps keep running until the container stops.
 
 **Detaching a run.** A stage marked `detach: true` — and everything after
 it — moves to a background supervisor once the CLI would otherwise wait

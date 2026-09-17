@@ -1544,9 +1544,10 @@ jailbee tmux <container>
 ```
 
 Every step window is created in the background, so attaching while a run is
-still going does not drag your view from step to step. Sync steps' output
-stays visible in their window after they finish (the session has
-`remain-on-exit on`). Background steps (e.g. `pnpm dev`) keep
+still going does not drag your view from step to step. A step that **fails**
+keeps its window open with the output still on screen (`remain-on-exit
+failed`, set on that window alone); a step that succeeds closes its window,
+as do the windows you open yourself. Background steps (e.g. `pnpm dev`) keep
 running in their own window until the container stops.
 
 #### Where does the autostart config come from?

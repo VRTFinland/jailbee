@@ -15,10 +15,9 @@ def test_ensure_session_creates_when_missing():
         IncusError("no session"),  # has-session check fails
         "",  # mkdir succeeds
         "",  # new-session succeeds
-        "",  # set-option remain-on-exit
     ]
     ensure_session(incus, "c1")
-    assert incus.exec.call_count == 4
+    assert incus.exec.call_count == 3
     # 2nd call: mkdir
     mkdir_args = incus.exec.call_args_list[1].args[1]
     assert "mkdir" in " ".join(mkdir_args)
@@ -29,10 +28,6 @@ def test_ensure_session_creates_when_missing():
     assert "new-session" in new_cmd
     assert SESSION_NAME in new_cmd
     assert " -c " not in new_cmd  # no start_dir given
-    # 4th call: set-option remain-on-exit
-    opt_args = incus.exec.call_args_list[3].args[1]
-    assert "set-option" in " ".join(opt_args)
-    assert "remain-on-exit" in " ".join(opt_args)
 
 
 def test_ensure_session_passes_start_dir():
@@ -601,3 +596,91 @@ def test_launch_step_new_window_is_detached(mocker):
         timeout=60,
     )
     assert "new-window -d " in " ".join(incus.exec.call_args_list[1].args[1])
+
+
+def test_step_window_keeps_only_a_failed_exit_on_screen(mocker):
+    """remain-on-exit is scoped to the step's own window and set to
+    `failed`, so a step that succeeds closes its window instead of
+    littering the window list with dead entries."""
+    incus = mocker.Mock()
+    incus.exec.side_effect = ["", "", "", "0\n", ""]
+    tmux.run_step(
+        incus,
+        "c1",
+        name="build",
+        command="make",
+        env={},
+        cwd="/r",
+        background=False,
+        timeout=60,
+    )
+    joined = " ".join(incus.exec.call_args_list[1].args[1])
+    assert f"set-option -w -t {SESSION_NAME}:build remain-on-exit failed" in joined
+    # Creating the window and scoping the option is one exec, not two.
+    assert incus.exec.call_count == 5
+
+
+def test_step_window_option_failure_does_not_fail_the_step(mocker):
+    """A tmux too old for `remain-on-exit failed` must still get its
+    window: the option is set in a subshell whose failure is swallowed,
+    while the new-window failure itself still propagates."""
+    incus = mocker.Mock()
+    incus.exec.side_effect = ["", "", IncusError("exit 124: still alive")]
+    tmux.run_step(
+        incus,
+        "c1",
+        name="srv",
+        command="sleep 9",
+        env={},
+        cwd="/r",
+        background=True,
+        timeout=60,
+    )
+    joined = " ".join(incus.exec.call_args_list[1].args[1])
+    assert "|| true" in joined
+    assert "new-window -d " in joined.split("&&")[0]
+
+
+def test_launch_step_scopes_remain_on_exit_to_its_window(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    tmux.launch_step(
+        incus,
+        "c1",
+        name="uv-sync",
+        command="uv sync",
+        env={},
+        cwd="/r",
+        background=False,
+        timeout=60,
+    )
+    joined = " ".join(incus.exec.call_args_list[1].args[1])
+    assert f"set-option -w -t {SESSION_NAME}:uv-sync remain-on-exit failed" in joined
+
+
+def test_ensure_session_leaves_remain_on_exit_at_its_default(mocker):
+    """A newly created session no longer sets a *global* remain-on-exit: a
+    window the user opens themselves must close when its shell exits,
+    however it exited. Step windows opt in per window (`_new_window`)."""
+    incus = mocker.Mock()
+    incus.exec.side_effect = [IncusError("no session"), "", ""]
+    ensure_session(incus, "c1")
+    assert incus.exec.call_count == 3
+    created = " ".join(" ".join(c.args[1]) for c in incus.exec.call_args_list[1:])
+    assert "remain-on-exit" not in created
+
+
+def test_ensure_session_resets_a_stale_global_remain_on_exit(mocker):
+    """An older jailbee set `remain-on-exit on` server-wide, and that global
+    outlives the upgrade for as long as the container keeps running — so an
+    existing session has it reset to tmux's default. It rides along with the
+    probe, so the common path is still a single `incus exec`, and its own
+    failure must not make a live session look missing."""
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    ensure_session(incus, "c1")
+    assert incus.exec.call_count == 1
+    joined = " ".join(incus.exec.call_args.args[1])
+    assert "has-session" in joined
+    assert "set-option -gu remain-on-exit" in joined
+    assert joined.rstrip("'").endswith("|| true)")

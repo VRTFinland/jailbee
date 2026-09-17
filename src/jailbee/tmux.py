@@ -21,6 +21,8 @@ from jailbee.incus import Incus, IncusError
 SESSION_NAME = "autostart"
 SENTINEL_DIR = "/tmp/.jailbee"
 BACKGROUND_PROBE_SEC = 2
+STEP_REMAIN_ON_EXIT = "failed"
+"""Keep a step's window after it exits only when the step failed (tmux >= 3.2)."""
 
 _WINDOW_NAME_SAFE = re.compile(r"[^A-Za-z0-9_-]")
 _sig_counter = itertools.count()
@@ -64,15 +66,33 @@ def _runuser(tmux_cmd: str) -> list[str]:
 def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -> None:
     """Create the autostart tmux session if it doesn't exist.
 
-    Idempotent. Also ensures the sentinel directory exists and that the
-    session has ``remain-on-exit on`` so failed windows stay visible.
+    Idempotent. Also ensures the sentinel directory exists.
+
+    ``remain-on-exit`` is deliberately left at its default here, and reset to
+    it when the session already exists. It used to be set globally to ``on``,
+    which kept *every* exited window in the list as ``[dead]`` — including the
+    ones the user opens themselves, so quitting a shell or an agent left
+    litter nobody could clear except by hand. Step windows now opt in per
+    window instead (see :func:`_new_window`).
 
     ``start_dir``, if given, is passed via ``-c`` so window 0 (the empty
     shell users see when attaching) opens there. Autostart steps set
     their own ``cwd`` per window and are unaffected.
     """
     try:
-        incus.exec(container, _runuser(f"tmux has-session -t {SESSION_NAME}"))
+        # The trailing group heals a session an older jailbee created: the
+        # server-wide `remain-on-exit on` it set outlives every upgrade for as
+        # long as the container keeps running, so without this the dead
+        # windows stay until the next restart. Folded into the probe to keep
+        # this one `incus exec`, and its failure swallowed so a tmux that
+        # dislikes the reset cannot turn a live session into a missing one.
+        incus.exec(
+            container,
+            _runuser(
+                f"tmux has-session -t {SESSION_NAME} && "
+                f"(tmux set-option -gu remain-on-exit || true)"
+            ),
+        )
         return
     except IncusError:
         pass  # session missing — create it
@@ -87,17 +107,13 @@ def ensure_session(incus: Incus, container: str, start_dir: str | None = None) -
         # Concurrent-creation race: a background `jailbee new` autostart can create
         # the session between our has-session check above and this new-session
         # call, so tmux reports "duplicate session". Tolerate it iff the session
-        # now exists (the winning caller owns remain-on-exit); otherwise the
-        # creation genuinely failed and the original error must surface.
+        # now exists; otherwise the creation genuinely failed and the
+        # original error must surface.
         try:
             incus.exec(container, _runuser(f"tmux has-session -t {SESSION_NAME}"))
         except IncusError:
             raise new_err from None
         return
-    incus.exec(
-        container,
-        _runuser(f"tmux set-option -t {SESSION_NAME} -g remain-on-exit on"),
-    )
 
 
 def kill_window(incus: Incus, container: str, window: str) -> None:
@@ -151,14 +167,25 @@ def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_f
     step in turn. Focus is chosen explicitly instead — `_attach_tmux` calls
     :func:`select_window` on the agent window before it attaches.
 
+    ``remain-on-exit`` is then scoped to this window alone, and only to a
+    failing exit: a step that fails keeps its output on screen to be read,
+    while a step that succeeds closes and leaves the window list clean.
+    Setting it per window rather than globally is what keeps the user's own
+    windows out of it — theirs close whatever they exit with.
+
+    Both run in one ``incus exec``: the window creation still decides the
+    call's fate, while the option is set in a group whose failure is
+    swallowed, so a tmux older than 3.2 (which has no ``failed`` value)
+    gets a plain window instead of a failed step.
     """
     inner = f"bash -lc {shlex.quote(shell_cmd)}"
-    incus.exec(
-        container,
-        _runuser(
-            f"tmux new-window -d -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
-        ),
+    new_window = (
+        f"tmux new-window -d -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
     )
+    set_remain = (
+        f"tmux set-option -w -t {SESSION_NAME}:{window} remain-on-exit {STEP_REMAIN_ON_EXIT}"
+    )
+    incus.exec(container, _runuser(f"{new_window} && ({set_remain} || true)"))
 
 
 def run_step(

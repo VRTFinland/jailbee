@@ -141,6 +141,16 @@ before editing `## Unreleased`.
   of anyone sitting in `jailbee tmux` from one step to the next. Step windows
   are now created detached; `jailbee tmux` still lands you in the agent's
   window, because it selects that one explicitly.
+- **Dead windows piled up in the tmux window list.** The session set
+  `remain-on-exit on` globally so a failed step's output could be read, but
+  that kept *every* window that ever exited in the list as `[dead]` —
+  including the shells and agents you quit yourself, which nothing ever
+  cleared. The option is now set on each step's own window and only for a
+  failing exit: a step that fails still keeps its output on screen, while a
+  step that succeeds, and every window you open yourself, closes on exit. A
+  container that was already running when you upgraded is healed the next
+  time jailbee touches its session — the old setting was server-wide and
+  would otherwise have outlived the upgrade until the container restarted.
 - **A scratch directory was told to run the `apply` that `jailbee new` had
   just run for it.** The first container in a directory with no
   `.jailbee/config.yaml` creates that directory's profile set through an
