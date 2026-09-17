@@ -8077,3 +8077,99 @@ def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
 
     assert c.cpu_percent is None
     assert c.activity == ()
+
+
+# ---- CPU / DOING columns ----
+
+
+def _cpu_spec(name):
+    from jailbee.lifecycle import ls_field_specs
+
+    return next(f for f in ls_field_specs(now=datetime.now(UTC)) if f.name == name)
+
+
+def _running(**kw):
+    from jailbee.lifecycle import ContainerInfo
+
+    base = {
+        "name": "myrepo-a",
+        "state": "Running",
+        "network": None,
+        "ip": None,
+        "memory_limit": None,
+    }
+    return ContainerInfo(**{**base, **kw})
+
+
+def test_cpu_cell_is_top_style_with_the_cap_trailing():
+    cell = _cpu_spec("cpu").cell(_running(cpu_percent=182.4, cpu_limit="4"))
+
+    assert "182%" in cell
+    assert "·4" in cell  # the cap, so a container pinned at its ceiling is visible
+
+
+def test_cpu_cell_omits_the_cap_when_limits_cpu_says_nothing():
+    assert _cpu_spec("cpu").cell(_running(cpu_percent=7.0)) == "7%"
+
+
+def test_cpu_cell_is_a_dash_without_a_sample():
+    assert "—" in _cpu_spec("cpu").cell(_running(state="Stopped"))
+
+
+def test_doing_cell_lists_the_busiest_names_with_counts():
+    from jailbee.procstat import ProcessActivity
+
+    cell = _cpu_spec("doing").cell(
+        _running(
+            activity=(
+                ProcessActivity("claude", 98.0, 1),
+                ProcessActivity("pytest", 61.0, 8),
+            )
+        )
+    )
+
+    assert cell == "claude, pytest×8"
+
+
+def test_doing_cell_folds_the_tail_into_a_count():
+    """The column is a glance, not a process list: past DOING_MAX_NAMES
+    names it says how many more there are."""
+    from jailbee.procstat import ProcessActivity
+
+    cell = _cpu_spec("doing").cell(
+        _running(activity=tuple(ProcessActivity(n, 50.0, 1) for n in ("a", "b", "c", "d")))
+    )
+
+    assert cell.startswith("a, b")
+    assert "+2" in cell
+
+
+def test_doing_cell_is_a_dash_when_nothing_is_working():
+    assert "—" in _cpu_spec("doing").cell(_running())
+
+
+def test_cpu_and_doing_are_dashboard_only_columns():
+    """Like `mem`: a live rate is the reason to keep a view open, and
+    meaningless as a single sample in a one-shot listing."""
+    from jailbee.table_format import shows_by_default_in_dashboard
+
+    for name in ("cpu", "doing"):
+        spec = _cpu_spec(name)
+        assert spec.default_table is False
+        assert spec.default_json is False
+        assert shows_by_default_in_dashboard(spec) is True
+
+
+def test_cpu_json_carries_the_parsed_cap():
+    assert _cpu_spec("cpu").json(_running(cpu_percent=50.0, cpu_limit="0-3")) == {
+        "percent": 50.0,
+        "limit": 4,
+    }
+
+
+def test_doing_json_is_a_list_of_objects():
+    from jailbee.procstat import ProcessActivity
+
+    assert _cpu_spec("doing").json(_running(activity=(ProcessActivity("claude", 98.5, 2),))) == [
+        {"comm": "claude", "percent": 98.5, "count": 2}
+    ]

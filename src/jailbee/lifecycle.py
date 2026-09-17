@@ -100,6 +100,10 @@ class ContainerInfo:
 # datetime.fromisoformat can't parse: "...123456789Z" -> "...123456Z".
 _SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
 
+# How many program names the DOING column spells out before folding the
+# rest into "+N". A glance, not a process list.
+DOING_MAX_NAMES = 2
+
 # Sentinel used to sort containers with no known creation time first (they are
 # either mid-creation background rows or legacy containers) under "newest first".
 _NEWEST_FIRST = datetime.max.replace(tzinfo=UTC)
@@ -2315,6 +2319,25 @@ def ls_field_specs(
         used = _format_bytes(c.memory_usage)
         return f"{used} / {c.memory_limit}" if c.memory_limit else used
 
+    def _cpu_cell(c: ContainerInfo) -> str:
+        if c.cpu_percent is None:
+            return "[dim]—[/dim]"
+        cores = _parse_cpu_limit(c.cpu_limit)
+        shown = f"{c.cpu_percent:.0f}%"
+        return shown if cores is None else f"{shown}[dim]·{cores}[/dim]"
+
+    def _doing_cell(c: ContainerInfo) -> str:
+        if not c.activity:
+            return "[dim]—[/dim]"
+        names = [
+            p.comm if p.count == 1 else f"{p.comm}×{p.count}"
+            for p in c.activity[:DOING_MAX_NAMES]
+        ]
+        hidden = len(c.activity) - len(names)
+        if hidden > 0:
+            names.append(f"[dim]+{hidden}[/dim]")
+        return ", ".join(names)
+
     def _pending_pr_actions(c: ContainerInfo) -> int:
         return (c.git_status.pending_pr_actions or 0) if c.git_status else 0
 
@@ -2455,6 +2478,31 @@ def ls_field_specs(
             # `ls` one: in a one-shot listing it is a single stale sample,
             # while in a view that refreshes it is the reason to keep the
             # view open. `--fields mem` still reaches it from `ls`.
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="cpu",
+            header="CPU",
+            cell=_cpu_cell,
+            json=lambda c: {"percent": c.cpu_percent, "limit": _parse_cpu_limit(c.cpu_limit)},
+            justify="right",
+            # A rate, not a reading: it exists only where two samples exist,
+            # which is a live view. `--fields cpu` reaches it from `ls`, and
+            # `ls` then takes the second sample itself rather than printing a
+            # column that could never hold a value.
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="doing",
+            header="DOING",
+            cell=_doing_cell,
+            json=lambda c: [
+                {"comm": p.comm, "percent": p.percent, "count": p.count} for p in c.activity
+            ],
             default_table=False,
             default_dashboard=True,
             default_json=False,

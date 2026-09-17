@@ -1152,7 +1152,7 @@ def list_cmd(
             help=(
                 "Comma-separated list of fields to show. Allowed: name, "
                 "full_name, repo, mode, base, state, created, job, network, "
-                "ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, "
+                "ttl, loose_until, ip, memory_limit, mem, cpu, doing, wt, ahead_diff, "
                 "ahead_count, conflict, local_diff, local_count, git_status, "
                 "claude_group, pr."
             ),
