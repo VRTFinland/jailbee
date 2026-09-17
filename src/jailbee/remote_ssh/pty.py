@@ -12,12 +12,12 @@ import re
 import signal
 import struct
 import termios
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
 
     from asyncssh import SSHServerProcess
@@ -28,6 +28,10 @@ _BUFFER_SIZE = 65536
 
 class PTYError(ValueError):
     """The requested terminal cannot be safely provided."""
+
+
+class _RawEOF(Exception):
+    """Raw terminals cannot represent an input half-close."""
 
 
 @dataclass(frozen=True)
@@ -61,13 +65,64 @@ def decode_wait_status(status: int) -> tuple[int | None, signal.Signals | None]:
     raise PTYError(f"unexpected child wait status: {status}")
 
 
-def _window_size(size: tuple[int, int, int, int]) -> bytes:
+def _window_size(
+    size: tuple[int, int, int, int], previous: bytes = struct.pack("HHHH", 24, 80, 0, 0)
+) -> bytes:
     if len(size) != 4 or any(type(value) is not int or not 0 <= value <= 65535 for value in size):
         raise PTYError("invalid terminal dimensions")
     columns, rows, x_pixels, y_pixels = size
-    if not columns or not rows:
-        raise PTYError("terminal rows and columns must be positive")
-    return struct.pack("HHHH", rows, columns, x_pixels, y_pixels)
+    old_rows, old_columns, old_x, old_y = struct.unpack("HHHH", previous)
+    return struct.pack(
+        "HHHH", rows or old_rows, columns or old_columns, x_pixels or old_x, y_pixels or old_y
+    )
+
+
+@contextmanager
+def _controls(
+    process: SSHServerProcess[bytes], pid: int, master: int | None = None
+) -> Iterator[asyncio.Future[None]]:
+    """Keep channel control callbacks independent of stdin EOF and flow control."""
+    original_signal = process.signal_received
+    original_resize = process.terminal_size_changed
+    size = _window_size(process.term_size) if master is not None else b""
+    failed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    def receive_signal(name: str) -> None:
+        sig = signal.Signals.__members__.get("SIG" + name)
+        if sig is None:
+            original_signal(name)
+            return
+        try:
+            _signal_group(pid, sig)
+        except OSError as exc:
+            if not failed.done():
+                failed.set_exception(exc)
+
+    def resize(columns: int, rows: int, x_pixels: int, y_pixels: int) -> None:
+        nonlocal size
+        if master is None:
+            original_resize(columns, rows, x_pixels, y_pixels)
+            return
+        try:
+            size = _window_size((columns, rows, x_pixels, y_pixels), size)
+            fcntl.ioctl(master, termios.TIOCSWINSZ, size)
+        except (OSError, PTYError) as exc:
+            if not failed.done():
+                failed.set_exception(exc)
+
+    # AsyncSSH invokes these public session callbacks directly. Consuming valid
+    # controls here prevents them queuing behind blocked stdin bytes. Restore
+    # the original handlers only after child/group cleanup has completed.
+    setattr(process, "signal_received", receive_signal)
+    setattr(process, "terminal_size_changed", resize)
+    try:
+        yield failed
+    finally:
+        setattr(process, "signal_received", original_signal)
+        setattr(process, "terminal_size_changed", original_resize)
+        if failed.done() and not failed.cancelled():
+            failed.exception()
+        failed.cancel()
 
 
 def _signal_group(pid: int, sig: signal.Signals) -> None:
@@ -87,8 +142,20 @@ async def _finish[T](task: asyncio.Task[T]) -> T:
 
 async def _terminate(pid: int, waiter: asyncio.Task[int]) -> None:
     _signal_group(pid, signal.SIGHUP)
+
+    async def wait_for_group() -> None:
+        await asyncio.shield(waiter)
+        while True:
+            try:
+                os.killpg(pid, 0)
+            except ProcessLookupError:
+                return
+            # Probe failures other than ESRCH are not evidence of termination.
+            # Let them propagate to the caller instead of claiming cleanup.
+            await asyncio.sleep(0.05)
+
     try:
-        await asyncio.wait_for(asyncio.shield(waiter), 2)
+        await asyncio.wait_for(wait_for_group(), 2)
     except TimeoutError:
         _signal_group(pid, signal.SIGKILL)
         await waiter
@@ -126,13 +193,21 @@ async def _copy(reader: _Reader, writer: _Writer) -> None:
         await writer.drain()
 
 
-async def _connected[T](process: SSHServerProcess[bytes], work: Awaitable[T]) -> T:
+async def _connected[T](
+    process: SSHServerProcess[bytes], work: Awaitable[T], failed: asyncio.Future[None] | None = None
+) -> T:
     task = asyncio.ensure_future(work)
     disconnected = asyncio.create_task(process.wait_closed())
     try:
-        done, _ = await asyncio.wait({task, disconnected}, return_when=asyncio.FIRST_COMPLETED)
+        watches: set[asyncio.Future[T] | asyncio.Future[None]] = {task, disconnected}
+        if failed is not None:
+            watches.add(failed)
+        done, _ = await asyncio.wait(watches, return_when=asyncio.FIRST_COMPLETED)
         if disconnected in done:
             raise ConnectionError("SSH channel disconnected")
+        if failed in done:
+            assert failed is not None
+            failed.result()
         return task.result()
     finally:
         task.cancel()
@@ -142,7 +217,6 @@ async def _connected[T](process: SSHServerProcess[bytes], work: Awaitable[T]) ->
 
 async def _input(
     process: SSHServerProcess[bytes],
-    pid: int,
     send: Callable[[bytes], Awaitable[None]],
     master: int | None = None,
 ) -> None:
@@ -153,13 +227,13 @@ async def _input(
         try:
             data = await process.stdin.read(_BUFFER_SIZE)
         except SignalReceived as exc:
-            sig = signal.Signals.__members__.get("SIG" + exc.signal)
-            if sig is not None:
-                _signal_group(pid, sig)
+            # Events queued before callback installation still arrive here.
+            if "SIG" + exc.signal in signal.Signals.__members__:
+                process.signal_received(exc.signal)
             continue
         except TerminalSizeChanged as exc:
             if master is not None:
-                fcntl.ioctl(master, termios.TIOCSWINSZ, _window_size(exc.term_size))
+                process.terminal_size_changed(*exc.term_size)
             continue
         if not data:
             if master is not None:
@@ -167,6 +241,10 @@ async def _input(
                 if attrs[3] & termios.ICANON:
                     # Flush a partial canonical line, then signal EOF on an empty line.
                     await send(attrs[6][termios.VEOF] * 2)
+                else:
+                    # No EOF byte exists in raw mode. End this terminal session
+                    # with the same HUP/grace/KILL policy used on disconnect.
+                    raise _RawEOF
             return
         try:
             await send(data)
@@ -180,10 +258,11 @@ async def _supervise(
     waiter: asyncio.Task[int],
     stdin: asyncio.Task[None],
     outputs: list[asyncio.Task[None]],
+    failed: asyncio.Future[None],
 ) -> int:
     disconnected = asyncio.create_task(process.wait_closed())
     relays = [stdin, *outputs, disconnected]
-    pending = {waiter, *relays}
+    pending: set[asyncio.Future[int] | asyncio.Future[None]] = {waiter, *relays, failed}
     try:
         while True:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -274,6 +353,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     waiter = asyncio.create_task(asyncio.to_thread(_waitpid, pid))
     with ExitStack() as resources:
         resources.callback(os.close, master)
+        failed = resources.enter_context(_controls(process, pid, master))
         redirect_started = False
         try:
             fcntl.ioctl(master, termios.TIOCSWINSZ, size)
@@ -283,7 +363,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             reader = resources.enter_context(_PTYOutput(raw_reader))
             redirect_started = True
             await _connected(
-                process, process.redirect(stdout=reader, bufsize=_BUFFER_SIZE, send_eof=False)
+                process, process.redirect(stdout=reader, bufsize=_BUFFER_SIZE, send_eof=False), failed
             )
 
             async def send(data: bytes) -> None:
@@ -291,7 +371,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
 
             async def input_pty() -> None:
                 try:
-                    await _input(process, pid, send, master)
+                    await _input(process, send, master)
                 except OSError as exc:
                     # Linux reports EIO once the slave side has closed.
                     if exc.errno != errno.EIO:
@@ -299,7 +379,11 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
 
             stdin = asyncio.create_task(input_pty())
             output = asyncio.create_task(reader.wait_closed())
-            return await _supervise(process, waiter, stdin, [output])
+            return await _supervise(process, waiter, stdin, [output], failed)
+        except _RawEOF:
+            await _finish(asyncio.create_task(_terminate(pid, waiter)))
+            await _connected(process, reader.wait_closed(), failed)
+            return waiter.result()
         except BaseException:
             await _finish(asyncio.create_task(_terminate(pid, waiter)))
             raise
@@ -331,7 +415,8 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
 
         async def abandon_spawn() -> None:
             child = await spawn
-            await _cleanup_pipes(child, asyncio.create_task(child.wait()))
+            with _controls(process, child.pid):
+                await _cleanup_pipes(child, asyncio.create_task(child.wait()))
 
         await _finish(asyncio.create_task(abandon_spawn()))
         raise
@@ -345,24 +430,25 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
 
     async def input_pipe() -> None:
         try:
-            await _input(process, child.pid, send)
+            await _input(process, send)
         finally:
             child_stdin.close()
 
-    try:
-        stdin = asyncio.create_task(input_pipe())
-        outputs = [
-            asyncio.create_task(_copy(child.stdout, process.stdout)),
-            asyncio.create_task(_copy(child.stderr, process.stderr)),
-        ]
-        return await _supervise(process, waiter, stdin, outputs)
-    except BaseException:
-        await _finish(asyncio.create_task(_cleanup_pipes(child, waiter)))
-        raise
-    finally:
-        child_stdin.close()
-        with suppress(BrokenPipeError, ConnectionResetError):
-            await child_stdin.wait_closed()
+    with _controls(process, child.pid) as failed:
+        try:
+            stdin = asyncio.create_task(input_pipe())
+            outputs = [
+                asyncio.create_task(_copy(child.stdout, process.stdout)),
+                asyncio.create_task(_copy(child.stderr, process.stderr)),
+            ]
+            return await _supervise(process, waiter, stdin, outputs, failed)
+        except BaseException:
+            await _finish(asyncio.create_task(_cleanup_pipes(child, waiter)))
+            raise
+        finally:
+            child_stdin.close()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                await child_stdin.wait_closed()
 
 
 async def run_child(process: SSHServerProcess[bytes], spec: ChildSpec) -> None:

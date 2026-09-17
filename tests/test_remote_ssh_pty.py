@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-from asyncssh import SignalReceived, TerminalSizeChanged
+from asyncssh import SSHReader, SSHServerProcess, SSHWriter, SignalReceived, TerminalSizeChanged
 
 from jailbee.remote_ssh import pty as runner
 from jailbee.remote_ssh.pty import (
@@ -75,6 +75,8 @@ class SSHProcess:
         self.stderr = Writer()
         self.exit = Mock()
         self.exit_with_signal = Mock()
+        self.signal_received = Mock()
+        self.terminal_size_changed = Mock()
         self.disconnected = asyncio.Event()
         self.redirected = asyncio.Event()
 
@@ -104,12 +106,21 @@ def boundary(monkeypatch):
     monkeypatch.setattr(runner.pty, "fork", fork)
     monkeypatch.setattr(runner.os, "waitpid", Mock(return_value=(4321, 7 << 8)))
     killpg = Mock()
-    monkeypatch.setattr(runner.os, "killpg", killpg)
+    probe = Mock(side_effect=ProcessLookupError)
+
+    def signal_group(pid, sig):
+        if sig == 0:
+            return probe(pid)
+        return killpg(pid, sig)
+
+    monkeypatch.setattr(runner.os, "killpg", signal_group)
     monkeypatch.setattr(runner.os, "close", Mock())
     monkeypatch.setattr(runner.os, "dup", Mock(side_effect=[91, 92]))
     monkeypatch.setattr(runner.os, "set_blocking", Mock())
     monkeypatch.setattr(runner.os, "write", Mock(side_effect=lambda fd, data: len(data)))
-    monkeypatch.setattr(runner.termios, "tcgetattr", Mock(return_value=[0, 0, 0, 0, 0, 0, []]))
+    attrs = [0, 0, 0, termios.ICANON, 0, 0, [b"\0"] * termios.NCCS]
+    attrs[6][termios.VEOF] = b"\x04"
+    monkeypatch.setattr(runner.termios, "tcgetattr", Mock(return_value=attrs))
     files = []
 
     def fdopen(fd, mode, buffering=0):
@@ -123,7 +134,7 @@ def boundary(monkeypatch):
     monkeypatch.setattr(runner.fcntl, "ioctl", Mock())
     create = AsyncMock()
     monkeypatch.setattr(runner.asyncio, "create_subprocess_exec", create)
-    return SimpleNamespace(fork=fork, killpg=killpg, files=files, create=create)
+    return SimpleNamespace(fork=fork, killpg=killpg, probe=probe, files=files, create=create)
 
 
 def test_term_accepts_a_conservative_terminal_name():
@@ -164,7 +175,6 @@ def test_invalid_requested_terminal_never_spawns(term, spec, boundary):
 @pytest.mark.parametrize(
     "size",
     [
-        (0, 24, 0, 0),
         (80, -1, 0, 0),
         (65536, 24, 0, 0),
         (80, 24, -1, 0),
@@ -446,7 +456,7 @@ def test_real_resize_event_applies_rows_columns_pixels(spec, boundary):
     assert call(90, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 100, 900, 700)) in (
         runner.fcntl.ioctl.call_args_list
     )
-    runner.os.write.assert_called_once_with(91, b"typed")
+    assert runner.os.write.call_args_list == [call(91, b"typed"), call(91, b"\x04\x04")]
 
 
 def test_pty_eof_uses_configured_canonical_eof_character(spec, boundary):
@@ -601,3 +611,303 @@ def test_cleanup_detaches_pty_reader_before_closing_descriptors(spec, boundary):
     with pytest.raises(RuntimeError, match="attaching reader"):
         asyncio.run(run_child(process, spec))
     assert process.redirect.call_args == call(stdout=asyncio.subprocess.PIPE)
+
+
+def actual_process(term=None):
+    """Use real AsyncSSH callback-to-stream dispatch with only the channel mocked."""
+    channel = Mock()
+    channel.get_encoding.return_value = (None, "strict")
+    channel.get_loop.return_value = asyncio.get_running_loop()
+    channel.get_recv_window.return_value = 2097152
+    channel.get_read_datatypes.return_value = [None]
+    channel.get_write_datatypes.return_value = [None, 1]
+    channel.get_terminal_type.return_value = term
+    channel.get_terminal_size.return_value = (80, 24, 0, 0)
+    process = SSHServerProcess(lambda _: None, None, 3, False)
+    process.connection_made(channel)
+    process._start_process(
+        SSHReader(process, channel), SSHWriter(process, channel), SSHWriter(process, channel, 1)
+    )
+    closed = asyncio.Event()
+    channel.wait_closed = closed.wait
+    return process, channel
+
+
+@pytest.mark.parametrize("state", ["eof", "closed", "blocked"])
+@pytest.mark.parametrize("terminal", [None, "xterm"])
+def test_live_control_callbacks_outlast_stdin(spec, boundary, monkeypatch, state, terminal):
+    async def scenario():
+        process, channel = actual_process(terminal)
+        original_signal = process.signal_received
+        original_resize = process.terminal_size_changed
+        child = pipe_child(pending=True)
+        boundary.create.return_value = child
+        ready = asyncio.Event()
+        done = asyncio.Event()
+
+        async def wait_in_thread(function, *args):
+            await done.wait()
+            return function(*args)
+
+        monkeypatch.setattr(runner.asyncio, "to_thread", wait_in_thread)
+
+        async def redirect(**kwargs):
+            if kwargs["stdout"] != asyncio.subprocess.PIPE:
+                kwargs["stdout"].close()
+
+        process.redirect = AsyncMock(side_effect=redirect)
+
+        async def drain():
+            ready.set()
+            if state == "closed":
+                raise BrokenPipeError
+            await asyncio.Future()
+
+        child.stdin.drain = drain
+        if terminal:
+            def write(fd, data):
+                ready.set()
+                if state == "closed":
+                    raise BrokenPipeError
+                raise BlockingIOError
+
+            monkeypatch.setattr(runner.os, "write", write)
+            monkeypatch.setattr(asyncio.get_running_loop(), "add_writer", Mock())
+            monkeypatch.setattr(asyncio.get_running_loop(), "remove_writer", Mock())
+        if state == "eof":
+            process.eof_received()
+        else:
+            process.data_received(b"bytes", None)
+        task = asyncio.create_task(run_child(process, spec))
+        try:
+            if state != "eof":
+                await ready.wait()
+            else:
+                while not (child.wait.called if not terminal else process.redirect.called):
+                    await asyncio.sleep(0)
+            for _ in range(5):
+                await asyncio.sleep(0)
+            process.signal_received("INT")
+            process.terminal_size_changed(111, 41, 0, 0)
+            assert call(4321, signal.SIGINT) in boundary.killpg.call_args_list
+            if terminal:
+                assert call(90, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 111, 0, 0)) in (
+                    runner.fcntl.ioctl.call_args_list
+                )
+        finally:
+            child.finished.set()
+            done.set()
+            await task
+        assert process.signal_received == original_signal
+        assert process.terminal_size_changed == original_resize
+
+    asyncio.run(scenario())
+
+
+def test_raw_pty_eof_terminates_and_reaps(spec, boundary, monkeypatch):
+    async def scenario():
+        reaped = asyncio.Event()
+
+        async def wait_in_thread(function, *args):
+            await reaped.wait()
+            return function(*args)
+
+        monkeypatch.setattr(runner.asyncio, "to_thread", wait_in_thread)
+        boundary.killpg.side_effect = lambda *_: reaped.set()
+        process = SSHProcess("xterm")
+        runner.termios.tcgetattr.return_value[3] = 0
+        task = asyncio.create_task(run_child(process, spec))
+        await process.redirected.wait()
+        try:
+            await asyncio.wait_for(reaped.wait(), 0.1)
+            assert call(4321, signal.SIGHUP) in boundary.killpg.call_args_list
+        finally:
+            reaped.set()
+            await task
+        runner.os.waitpid.assert_called_once_with(4321, 0)
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_kills_descendants_after_leader_is_reaped(spec, boundary, monkeypatch):
+    process = SSHProcess("xterm")
+    process.redirect.side_effect = RuntimeError("setup failed")
+    alive = True
+
+    def kill(pid, sig):
+        nonlocal alive
+        if sig == signal.SIGKILL:
+            alive = False
+
+    boundary.killpg.side_effect = kill
+    boundary.probe.side_effect = None
+    real_wait_for = asyncio.wait_for
+
+    async def short_wait(awaitable, timeout):
+        assert timeout == 2
+        return await real_wait_for(awaitable, 0.01)
+
+    monkeypatch.setattr(runner.asyncio, "wait_for", short_wait)
+    with pytest.raises(RuntimeError, match="setup failed"):
+        asyncio.run(run_child(process, spec))
+    boundary.probe.assert_called_with(4321)
+    assert call(4321, signal.SIGKILL) in boundary.killpg.call_args_list
+    assert not alive
+    runner.os.waitpid.assert_called_once_with(4321, 0)
+
+
+@pytest.mark.parametrize("initial", [(0, 0, 0, 0), (0, 32, 0, 0)])
+def test_unspecified_initial_size_uses_terminal_defaults(spec, boundary, initial):
+    process = SSHProcess("xterm")
+    process.term_size = initial
+    asyncio.run(run_child(process, spec))
+    assert call(90, termios.TIOCSWINSZ, struct.pack("HHHH", initial[1] or 24, 80, 0, 0)) in (
+        runner.fcntl.ioctl.call_args_list
+    )
+
+
+def test_unspecified_resize_dimensions_preserve_current_size(spec, boundary):
+    process = SSHProcess("xterm")
+    process.stdin = EventReader([
+        TerminalSizeChanged(132, 43, 800, 600), TerminalSizeChanged(0, 0, 0, 0),
+        TerminalSizeChanged(0, 50, 0, 0),
+    ])
+    asyncio.run(run_child(process, spec))
+    assert runner.fcntl.ioctl.call_args_list[-1] == call(
+        90, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 132, 800, 600)
+    )
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "redirect_error", "invalid_resize"])
+def test_pty_callbacks_survive_cleanup_and_restore_after_failure(spec, boundary, monkeypatch, outcome):
+    async def scenario():
+        process, _ = actual_process("xterm")
+        original_signal = Mock(wraps=process.signal_received)
+        process.signal_received = original_signal
+        original_resize = process.terminal_size_changed
+        entered = asyncio.Event()
+        reaped = asyncio.Event()
+
+        async def wait_in_thread(function, *args):
+            await reaped.wait()
+            return function(*args)
+
+        monkeypatch.setattr(runner.asyncio, "to_thread", wait_in_thread)
+
+        def kill(pid, sig):
+            if sig == signal.SIGHUP:
+                assert process.signal_received != original_signal
+                assert process.terminal_size_changed != original_resize
+                process.signal_received("USR1")
+                reaped.set()
+
+        boundary.killpg.side_effect = kill
+
+        async def redirect(**kwargs):
+            if kwargs["stdout"] == asyncio.subprocess.PIPE:
+                return
+            assert process.signal_received != original_signal
+            assert process.terminal_size_changed != original_resize
+            process.signal_received("unknown")
+            if outcome == "redirect_error":
+                raise OSError("redirect failed")
+            if outcome == "invalid_resize":
+                process.terminal_size_changed(-1, 24, 0, 0)
+            entered.set()
+            kwargs["stdout"].close()
+
+        process.redirect = AsyncMock(side_effect=redirect)
+        task = asyncio.create_task(run_child(process, spec))
+        if outcome == "cancel":
+            await entered.wait()
+            task.cancel()
+        expected = {
+            "cancel": asyncio.CancelledError, "redirect_error": OSError, "invalid_resize": PTYError
+        }[outcome]
+        with pytest.raises(expected):
+            await task
+        original_signal.assert_called_once_with("unknown")
+        assert call(4321, signal.SIGUSR1) in boundary.killpg.call_args_list
+        assert process.signal_received == original_signal
+        assert process.terminal_size_changed == original_resize
+        assert all(file.closed for file in boundary.files)
+
+    asyncio.run(scenario())
+
+
+def test_pipe_callbacks_installed_before_write_and_restored_after_cancel(spec, boundary):
+    async def scenario():
+        process, _ = actual_process()
+        original_signal = process.signal_received
+        original_resize = process.terminal_size_changed
+        child = pipe_child(pending=True)
+        boundary.create.return_value = child
+        writing = asyncio.Event()
+
+        async def drain():
+            assert process.signal_received != original_signal
+            writing.set()
+            await asyncio.Future()
+
+        def kill(pid, sig):
+            if sig == signal.SIGHUP:
+                process.signal_received("USR1")
+                child.finished.set()
+
+        child.stdin.drain = drain
+        boundary.killpg.side_effect = kill
+        process.data_received(b"bytes", None)
+        task = asyncio.create_task(run_child(process, spec))
+        await writing.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert call(4321, signal.SIGUSR1) in boundary.killpg.call_args_list
+        assert process.signal_received == original_signal
+        assert process.terminal_size_changed == original_resize
+        assert child.stdin.closed
+
+    asyncio.run(scenario())
+
+
+def test_group_probe_errors_are_not_treated_as_successful_cleanup(spec, boundary):
+    process = SSHProcess("xterm")
+    process.redirect.side_effect = RuntimeError("redirect failed")
+    boundary.probe.side_effect = PermissionError("group probe denied")
+    with pytest.raises(PermissionError, match="group probe denied"):
+        asyncio.run(run_child(process, spec))
+    runner.os.waitpid.assert_called_once_with(4321, 0)
+    assert all(file.closed for file in boundary.files)
+
+
+def test_raw_pty_eof_escalates_when_child_ignores_hup(spec, boundary, monkeypatch):
+    async def scenario():
+        reaped = asyncio.Event()
+
+        async def wait_in_thread(function, *args):
+            await reaped.wait()
+            return function(*args)
+
+        monkeypatch.setattr(runner.asyncio, "to_thread", wait_in_thread)
+        real_wait_for = asyncio.wait_for
+
+        async def short_wait(awaitable, timeout):
+            assert timeout == 2
+            return await real_wait_for(awaitable, 0.01)
+
+        monkeypatch.setattr(runner.asyncio, "wait_for", short_wait)
+
+        def kill(pid, sig):
+            if sig == signal.SIGKILL:
+                reaped.set()
+
+        boundary.killpg.side_effect = kill
+        runner.termios.tcgetattr.return_value[3] = 0
+        runner.os.waitpid.return_value = (4321, signal.SIGKILL)
+        process = SSHProcess("xterm")
+        await run_child(process, spec)
+        process.exit_with_signal.assert_called_once_with("KILL")
+
+    asyncio.run(scenario())
+    assert boundary.killpg.call_args_list == [call(4321, signal.SIGHUP), call(4321, signal.SIGKILL)]
+    runner.os.waitpid.assert_called_once_with(4321, 0)
