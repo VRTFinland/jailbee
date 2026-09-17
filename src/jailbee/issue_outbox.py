@@ -23,15 +23,6 @@ class RepoTarget:
     slug: str
 
 
-def _parent_target_path(path: str, remote_urls: Mapping[str, str]) -> str:
-    parents = [
-        candidate
-        for candidate in remote_urls
-        if candidate != "." and path.startswith(f"{candidate}/")
-    ]
-    return max(parents, key=len, default=".")
-
-
 def resolve_repo_targets(cfg: Config) -> Mapping[str, RepoTarget]:
     """Return ``.`` plus safe host-declared submodule targets keyed by path."""
     root_url = git.get_remote_url(cfg.repo_root, cfg.upstream_remote)
@@ -55,8 +46,13 @@ def resolve_repo_targets(cfg: Config) -> Mapping[str, RepoTarget]:
                     f"submodule '{declared.path}' has no URL for upstream remote '{remote}'"
                 )
         else:
-            parent_path = _parent_target_path(declared.path, remote_urls)
-            remote_url = resolve_submodule_url(remote_urls[parent_path], declared.url)
+            parent_url = remote_urls.get(declared.parent_path)
+            if parent_url is None:
+                raise ValueError(
+                    f"submodule '{declared.path}' has unresolved declaring parent "
+                    f"'{declared.parent_path}'"
+                )
+            remote_url = resolve_submodule_url(parent_url, declared.url)
 
         slug = github_slug(remote_url or "")
         if remote_url is None or slug is None:

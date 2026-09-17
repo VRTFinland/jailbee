@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,7 +35,11 @@ def test_declared_submodule_remotes_walks_initialized_host_repos_only(tmp_path, 
 
     assert submodules.declared_submodule_remotes(repo_root) == (
         submodules.DeclaredSubmodule("libs/parser", "../parser.git"),
-        submodules.DeclaredSubmodule("libs/parser/vendor/lexer", "git@github.com:acme/lexer.git"),
+        submodules.DeclaredSubmodule(
+            "libs/parser/vendor/lexer",
+            "git@github.com:acme/lexer.git",
+            parent_path="libs/parser",
+        ),
         submodules.DeclaredSubmodule("docs", "https://github.com/acme/docs.git"),
     )
 
@@ -84,6 +89,38 @@ def test_declared_submodule_remotes_rejects_canonical_directory_cycle(tmp_path, 
 
     with pytest.raises(submodules.SubmoduleError, match="revisits host directory"):
         submodules.declared_submodule_remotes(repo_root)
+
+
+def test_declared_submodule_remotes_raises_when_existing_file_cannot_be_read(tmp_path, mocker):
+    (tmp_path / ".gitmodules").write_text("invalid config\n")
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
+
+    with pytest.raises(submodules.SubmoduleError, match="could not read"):
+        submodules.declared_submodule_remotes(tmp_path)
+
+
+def test_declared_submodule_remotes_accepts_valid_file_with_no_declarations(tmp_path, mocker):
+    (tmp_path / ".gitmodules").write_text("[core]\n\tbare = false\n")
+    mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        side_effect=[(False, ""), (True, "core.bare=false\n")],
+    )
+
+    assert submodules.declared_submodule_remotes(tmp_path) == ()
+
+
+def test_declared_submodule_remotes_raises_when_file_metadata_is_inaccessible(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
+    mocker.patch.object(Path, "stat", side_effect=PermissionError("denied"))
+
+    with pytest.raises(submodules.SubmoduleError, match="could not inspect"):
+        submodules.declared_submodule_remotes(tmp_path)
+
+
+def test_declared_submodule_remotes_accepts_an_absent_file(tmp_path, mocker):
+    mocker.patch("jailbee.submodules.git.run_capture", return_value=(False, ""))
+
+    assert submodules.declared_submodule_remotes(tmp_path) == ()
 
 
 @pytest.mark.parametrize(

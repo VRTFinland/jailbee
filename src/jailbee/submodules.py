@@ -37,10 +37,11 @@ GitRun = Callable[[str, list[str]], tuple[bool, str]]
 
 @dataclass(frozen=True)
 class DeclaredSubmodule:
-    """One normalized host-declared submodule path and its configured URL."""
+    """One normalized host declaration, including its exact declaring repo."""
 
     path: str
     url: str
+    parent_path: str = "."
 
 
 def _container_runner(
@@ -929,7 +930,19 @@ def _declared_submodules_at(repo_dir: Path) -> tuple[tuple[str, str], ...]:
         ],
     )
     if not ok:
-        return ()
+        config_path = repo_dir / ".gitmodules"
+        try:
+            config_path.stat()
+        except FileNotFoundError:
+            return ()
+        except OSError as exc:
+            raise SubmoduleError(
+                f"could not inspect submodule declarations at {config_path}"
+            ) from exc
+        valid, _ = git.run_capture(str(repo_dir), ["config", "-f", str(config_path), "--list"])
+        if valid:
+            return ()
+        raise SubmoduleError(f"could not read submodule declarations from {config_path}")
 
     values: dict[str, dict[str, str]] = {}
     order: list[str] = []
@@ -1000,7 +1013,7 @@ def declared_submodule_remotes(repo_root: Path) -> tuple[DeclaredSubmodule, ...]
             if path in seen_paths:
                 raise SubmoduleError(f"duplicate submodule path '{path}'")
             seen_paths.add(path)
-            result.append(DeclaredSubmodule(path, url))
+            result.append(DeclaredSubmodule(path, url, parent_path=prefix or "."))
 
             if not host_subrepo_exists(root, path):
                 continue

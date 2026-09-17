@@ -80,6 +80,41 @@ def test_resolve_repo_targets_uses_relative_declaration_for_uninitialized_leaf(
     detect.assert_not_called()
 
 
+def test_resolve_repo_targets_uses_the_exact_declaring_parent_for_overlapping_paths(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee.issue_outbox import resolve_repo_targets
+
+    cfg = make_cfg(tmp_path)
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "vendor"]\n'
+        "\tpath = vendor\n"
+        "\turl = git@github.com:other/vendor.git\n"
+        '[submodule "plugin"]\n'
+        "\tpath = vendor/plugin\n"
+        "\turl = ../plugin.git\n"
+    )
+    mocker.patch(
+        "jailbee.submodules.git.run_capture",
+        return_value=(
+            True,
+            "submodule.vendor.path vendor\n"
+            "submodule.vendor.url git@github.com:other/vendor.git\n"
+            "submodule.plugin.path vendor/plugin\n"
+            "submodule.plugin.url ../plugin.git\n",
+        ),
+    )
+    mocker.patch(
+        "jailbee.issue_outbox.git.get_remote_url",
+        return_value="https://github.com/acme/app.git",
+    )
+
+    targets = resolve_repo_targets(cfg)
+
+    assert targets["vendor"].slug == "other/vendor"
+    assert targets["vendor/plugin"].slug == "acme/plugin"
+
+
 @pytest.mark.parametrize(
     ("root_url", "declared", "message"),
     [
