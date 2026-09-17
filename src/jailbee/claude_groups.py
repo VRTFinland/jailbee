@@ -56,7 +56,7 @@ INHERIT: Final = _Inherit()
 Distinct from `None`, which is the *presence* of an override saying "no
 group". Collapsing the two would make an unlabelled container in a
 group-less repo indistinguishable from one deliberately opted out, and
-`deviating_containers` would then list every container of such a repo.
+`redundant_overrides` would then list every container of such a repo.
 """
 
 RESERVED_GROUP_NAMES = frozenset({"none"})
@@ -281,9 +281,9 @@ def override_is_redundant(cfg: Config, group: str | None) -> bool:
 def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
     """This repo's containers whose override only repeats the repo's group.
 
-    The counterpart of `deviating_containers`, read from the same payload: a
-    container is in exactly one of the two lists, or in neither because it
-    carries no usable label at all.
+    Read from `incus.list_containers()`: a container appears here only when
+    its override repeats the repo's group, and is left out when it deviates
+    or carries no usable label at all.
     """
     out: list[str] = []
     for row in incus.list_containers():
@@ -317,15 +317,6 @@ def _label_group(raw_config: dict[str, str]) -> str | _Inherit | None:
     if not _CREDENTIAL_GROUP_RE.match(raw):
         return INHERIT
     return raw
-
-
-def groups_by_prefix(
-    gcfg: GlobalConfig,
-    incus: Incus,
-    prefixes: Collection[str],
-) -> dict[str, set[str | None]]:
-    """`groups_by_prefix_from` for a caller holding an `Incus` and no rows."""
-    return groups_by_prefix_from(gcfg, incus.list_containers(), prefixes)
 
 
 def groups_by_prefix_from(
@@ -440,22 +431,6 @@ def container_groups(
     # By container name only: a `None` group would make a whole-tuple sort
     # raise as soon as two entries shared a name and a prefix.
     return sorted(out, key=lambda triple: triple[0])
-
-
-def deviating_containers(cfg: Config, incus: Incus) -> list[tuple[str, str | None]]:
-    """This repo's containers whose group differs from the repo's, sorted."""
-    repo = repo_group(cfg)
-    out: list[tuple[str, str | None]] = []
-    for row in incus.list_containers():
-        name = str(row.get("name", ""))
-        if not name.startswith(f"{cfg.container_prefix}-"):
-            continue
-        label = _label_group(row.get("config") or {})
-        if label is INHERIT:
-            continue
-        if label != repo:
-            out.append((name, label))  # type: ignore[arg-type] # label narrowed to str | None by if check
-    return sorted(out)
 
 
 def claude_running(cfg: Config, incus: Incus, container: str) -> bool | None:

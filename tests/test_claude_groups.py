@@ -255,49 +255,6 @@ def _raw(name: str, group: str | None = None) -> dict:
     return {"name": name, "status": "Running", "profiles": [], "config": config, "state": None}
 
 
-def test_groups_by_prefix_uses_the_repo_group_for_unlabelled_containers(
-    mocker, monkeypatch, tmp_path
-):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    incus = mocker.MagicMock()
-    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b")]
-    gcfg = _gcfg(group="work")
-    assert claude_groups.groups_by_prefix(gcfg, incus, ["myrepo"]) == {"myrepo": {"work"}}
-
-
-def test_groups_by_prefix_sees_a_deviating_container(mocker, monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    incus = mocker.MagicMock()
-    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
-    gcfg = _gcfg(group="work")
-    assert claude_groups.groups_by_prefix(gcfg, incus, ["myrepo"]) == {
-        "myrepo": {"work", "personal"}
-    }
-
-
-def test_groups_by_prefix_falls_back_to_the_repo_group_with_no_containers(
-    mocker, monkeypatch, tmp_path
-):
-    """A repo with no containers is still authoritative for its own group."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    incus = mocker.MagicMock()
-    incus.list_containers.return_value = []
-    assert claude_groups.groups_by_prefix(_gcfg(group="work"), incus, ["myrepo"]) == {
-        "myrepo": {"work"}
-    }
-
-
-def test_groups_by_prefix_counts_stopped_containers(mocker, monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    incus = mocker.MagicMock()
-    stopped = _raw("myrepo-b", "personal")
-    stopped["status"] = "Stopped"
-    incus.list_containers.return_value = [_raw("myrepo-a"), stopped]
-    assert claude_groups.groups_by_prefix(_gcfg(group="work"), incus, ["myrepo"]) == {
-        "myrepo": {"work", "personal"}
-    }
-
-
 def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
@@ -310,14 +267,6 @@ def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, 
     assert claude_groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {
         "clean"
     }
-
-
-def test_deviating_containers_lists_only_the_odd_ones_out(mocker, monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    incus = mocker.MagicMock()
-    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("myrepo-b", "personal")]
-    cfg = _cfg(tmp_path, claude_groups.group_dir("work"))
-    assert claude_groups.deviating_containers(cfg, incus) == [("myrepo-b", "personal")]
 
 
 def test_claude_running_true(mocker, tmp_path):
@@ -442,7 +391,7 @@ def test_authoritative_in_answers_the_no_group_question_too(monkeypatch, tmp_pat
 
 
 def test_authoritative_in_is_the_rule_authoritative_prefixes_applies(monkeypatch, tmp_path):
-    """One implementation, so a caller holding a prefetched `groups_by_prefix`
+    """One implementation, so a caller holding a prefetched `groups_by_prefix_from`
     cannot drift from the `Incus`-taking wrapper."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     rows = [_raw("mixed-a"), _raw("mixed-b", "personal"), _raw("clean-a")]
