@@ -328,7 +328,7 @@ def live_session_prefixes(found: Sequence[Member]) -> list[str]:
 
 
 def _login_block(raw: str | None) -> dict[str, Any] | None:
-    """The `claudeAiOauth` block of credential *text* — `_login_of` for a path.
+    """The `claudeAiOauth` block of credential *text* — `login_of` for a path.
 
     One definition of "the login inside a credential", so the fingerprint a
     note is written with and the one it is checked against cannot be read out
@@ -394,13 +394,13 @@ def write_account_note(holder: Path, record: dict[str, Any] | None, credential_r
     future `park` its account name, never the login.
     """
     path = account_note_path(holder)
-    fingerprint = engine._grant_fingerprint(CLAUDE, _login_block(credential_raw))
+    fingerprint = engine.grant_fingerprint(CLAUDE, _login_block(credential_raw))
     if record is None or fingerprint is None:
         with suppress(OSError):
             path.unlink(missing_ok=True)
         return
     try:
-        engine._atomic_write(path, json.dumps({"account": record, "grant": fingerprint}, indent=2))
+        engine.atomic_write(path, json.dumps({"account": record, "grant": fingerprint}, indent=2))
     except OSError:
         log.debug("could not note the account of the login in %s", holder, exc_info=True)
 
@@ -423,8 +423,8 @@ def note_account_at(holder: Path) -> LiveAccount | None:
     grant = data.get("grant")
     if not isinstance(record, dict) or not isinstance(grant, str):
         return None
-    live = engine._login_of(CLAUDE, engine.credential_in(CLAUDE, holder))
-    if grant != engine._grant_fingerprint(CLAUDE, live):
+    live = engine.login_of(CLAUDE, engine.credential_in(CLAUDE, holder))
+    if grant != engine.grant_fingerprint(CLAUDE, live):
         return None
     identity = identity_of(record)
     return None if identity is None else LiveAccount(identity=identity, record=record)
@@ -510,7 +510,7 @@ def invalidate_identity(home: Path) -> bool:
             if "oauthAccount" not in data:
                 return True
             del data["oauthAccount"]
-            engine._atomic_write(path, json.dumps(data, indent=2))
+            engine.atomic_write(path, json.dumps(data, indent=2))
     except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
@@ -568,7 +568,7 @@ def mark_onboarded(home: Path, *, repo_dir: str) -> bool:
             entry = entry if isinstance(entry, dict) else {}
             data["projects"] = {**projects, repo_dir: {**entry, "hasTrustDialogAccepted": True}}
             data["hasCompletedOnboarding"] = True
-            engine._atomic_write(path, json.dumps(data, indent=2))
+            engine.atomic_write(path, json.dumps(data, indent=2))
     except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
@@ -598,7 +598,7 @@ def restore_identity(home: Path, record: dict[str, Any]) -> bool:
             if data.get("oauthAccount") == record:
                 return True
             data["oauthAccount"] = record
-            engine._atomic_write(path, json.dumps(data, indent=2))
+            engine.atomic_write(path, json.dumps(data, indent=2))
     except (ClaudeLockTimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
@@ -660,7 +660,7 @@ def _stamp_account_record(path: Path, record: dict[str, Any] | None) -> None:
         if not isinstance(data, dict):
             return
         data[ACCOUNT_RECORD_KEY] = record
-        engine._atomic_write(path, json.dumps(data))
+        engine.atomic_write(path, json.dumps(data))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         log.debug("could not record the account of the login parked at %s", path, exc_info=True)
 

@@ -604,7 +604,7 @@ def test_rm_refuses_the_live_account(repo, mocker):
 
 
 def test_use_exits_2_on_an_os_error(repo, mocker):
-    """`_move_file` and `_atomic_write` raise `OSError` mid-move: the one
+    """`_move_file` and `atomic_write` raise `OSError` mid-move: the one
     moment the user most needs a message rather than a stack trace."""
     mocker.patch("jailbee.accounts.engine.switch", side_effect=OSError("no space left on device"))
     result = runner.invoke(app, ["claude", "use", "x@y.com"])

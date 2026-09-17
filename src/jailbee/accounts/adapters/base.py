@@ -5,6 +5,28 @@ slot names, and the rule that a switch moves files rather than copying them.
 An adapter owns what differs — where the credential lives, how an account is
 named, which parts of the file belong to the machine rather than the account,
 and whether a running session survives a switch.
+
+**What an adapter may borrow from the engine.** The dependency runs both ways:
+`engine.py` calls an adapter through the protocol below, and an adapter calls
+back into these engine helpers, which are public precisely so it can. They are
+the sanctioned set, and a new adapter should reach for them rather than
+reimplement them:
+
+- `engine.atomic_write(path, text)` — write a file beside a credential
+  atomically, durably and at mode 0600. Every such file holds or names a
+  secret; its docstring carries the fsync-and-rename reasoning that a
+  per-adapter reimplementation would quietly drop.
+- `engine.login_of(adapter, path)` — the login block of a credential file, as
+  this adapter's own `grant_block` defines it. None means "cannot tell", never
+  "different".
+- `engine.grant_fingerprint(adapter, login)` — a stable id for a login's
+  refresh-token lineage, for an adapter that keeps a note beside the credential
+  and needs it to stop being read once that grant is gone.
+- `engine.credential_in(adapter, holder)` and `engine.holder_dir(adapter, cfg)`
+  — where a holder's live credential is, and which holder a repo reads.
+
+Anything else in `engine.py` spelled with a leading underscore is the engine's
+own business and is not part of this contract.
 """
 
 from __future__ import annotations

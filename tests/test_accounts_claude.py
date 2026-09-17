@@ -924,7 +924,7 @@ def test_switch_restores_both_files_when_activation_fails(
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _cred())
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
-    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
+    mocker.patch("jailbee.accounts.engine.atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
         engine.switch(
@@ -1176,7 +1176,7 @@ def test_switch_removes_what_it_wrote_when_the_holder_started_empty(
         )
 
     # The target is back in the store and the holder is empty again — not
-    # holding a second copy of the grant `_atomic_write` already wrote.
+    # holding a second copy of the grant `atomic_write` already wrote.
     assert target.exists()
     assert not live_path.exists()
 
@@ -1670,7 +1670,7 @@ def test_switch_rolls_back_a_park_that_had_to_disambiguate(
     cfg = _cfg(tmp_path)
     live = _holder_with(cfg, _grant("mine-live"))
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "me@x.com"})
-    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=OSError("disk full"))
+    mocker.patch("jailbee.accounts.engine.atomic_write", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError):
         engine.switch(
@@ -1900,14 +1900,14 @@ def test_a_failed_switch_leaves_the_note_describing_the_login_it_restored(
     claude_adapter.write_account_note(
         engine.holder_dir(CLAUDE, cfg), SECOND_ACCOUNT_BLOCK, _grant("outgoing")
     )
-    real_write = engine._atomic_write
+    real_write = engine.atomic_write
 
     def fail_the_credential(path, text):
         if path == engine.live_credential_path(CLAUDE, cfg):
             raise OSError("disk full")
         real_write(path, text)
 
-    mocker.patch("jailbee.accounts.engine._atomic_write", side_effect=fail_the_credential)
+    mocker.patch("jailbee.accounts.engine.atomic_write", side_effect=fail_the_credential)
 
     with pytest.raises(OSError):
         engine.switch(CLAUDE, cfg, GlobalConfig(), "first@corp.com#ccccdddd", authoritative=set())

@@ -370,7 +370,7 @@ def _fsync_file(path: Path) -> None:
         os.close(fd)
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str) -> None:
     """Replace `path` atomically and durably, mode 0600.
 
     The temporary file is created in the destination directory so the replace
@@ -384,6 +384,11 @@ def _atomic_write(path: Path, text: str) -> None:
     name rather than wrapped with `os.fdopen`: if `fdopen` itself raised, that
     descriptor would leak. `mkstemp` already creates the file at 0600 with a
     name unique to us, so reopening it by name races nothing.
+
+    Public because an adapter needs it: every file an adapter writes beside a
+    credential holds or names a secret, and reimplementing this per agent would
+    lose the reasoning above one adapter at a time. See `adapters/base.py` for
+    the list of engine helpers an adapter may use.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
@@ -439,8 +444,13 @@ def _move_file(src: Path, dest: Path) -> None:
         raise
 
 
-def _login_of(adapter: AccountAdapter, path: Path) -> dict[str, Any] | None:
-    """The `claudeAiOauth` block of a credential file, for identity comparison.
+def login_of(adapter: AccountAdapter, path: Path) -> dict[str, Any] | None:
+    """The login block of a credential file, for identity comparison.
+
+    "Login block" is whatever `adapter.grant_block` says it is — Claude's
+    `claudeAiOauth`, another agent's something else. Public so an adapter can
+    ask the same question of a file it is about to describe; see
+    `adapters/base.py` for the engine helpers an adapter may use.
 
     Read only to answer "are these two files the same grant?" — a question the
     slot name cannot answer, because a config home's `oauthAccount` is allowed
@@ -460,7 +470,7 @@ def _login_of(adapter: AccountAdapter, path: Path) -> dict[str, Any] | None:
 
 
 def _login_block(adapter: AccountAdapter, raw: str | None) -> dict[str, Any] | None:
-    """The `claudeAiOauth` block of credential *text* — `_login_of` for a path.
+    """The login block of credential *text* — `login_of` for a path.
 
     One definition of "the login inside a credential", so the fingerprint a
     note is written with and the one it is checked against cannot be read out
@@ -493,12 +503,12 @@ def holds_same_login(adapter: AccountAdapter, left: Path, right: Path) -> bool:
     blocks are compared and discarded; nothing about them is logged or
     returned.
     """
-    a = _login_of(adapter, left)
-    b = _login_of(adapter, right)
+    a = login_of(adapter, left)
+    b = login_of(adapter, right)
     return a is not None and b is not None and _same_grant(adapter, a, b)
 
 
-def _grant_fingerprint(adapter: AccountAdapter, login: dict[str, Any] | None) -> str | None:
+def grant_fingerprint(adapter: AccountAdapter, login: dict[str, Any] | None) -> str | None:
     """A stable id for a login's refresh-token lineage, or None for no lineage.
 
     Access tokens rotate; the refresh token behind them does not (the property
@@ -509,6 +519,11 @@ def _grant_fingerprint(adapter: AccountAdapter, login: dict[str, Any] | None) ->
     None for a credential carrying no refresh token — a managed `sk-ant-…` key,
     or any opaque shape — which leaves such a holder with no note and the
     pre-note behaviour.
+
+    Public because only an adapter has a use for it: an agent that keeps a note
+    beside its credential needs the note to stop being read once the grant it
+    describes is gone, and this is how it says so without storing a secret. See
+    `adapters/base.py` for the engine helpers an adapter may use.
     """
     token = None if login is None else login.get(adapter.refresh_token_key)
     if not isinstance(token, str) or not token:
@@ -542,10 +557,10 @@ def _disambiguated_slot(
     disambiguation the lineage could otherwise be parked a second time under a
     third name.
     """
-    live_grant = _login_of(adapter, live)
+    live_grant = login_of(adapter, live)
     taken = sorted({dest, *store.glob(f"{name}{DISAMBIGUATOR}*{_SLOT_SUFFIX}")})
     for other in taken:
-        other_grant = _login_of(adapter, other)
+        other_grant = login_of(adapter, other)
         if live_grant is None or other_grant is None:
             raise PoolError(
                 f"the store already holds `{_slot_name(other)}` ({other}), and jailbee "
@@ -779,7 +794,7 @@ def switch(
         try:
             parked = _park_locked(adapter, cfg, account, now or datetime.now())
             activated = adapter.compose(target_raw, live_raw)
-            _atomic_write(live_path, activated)
+            atomic_write(live_path, activated)
             staged.unlink()
             # Under the lock, and last: what the adapter records here describes
             # what is now in the holder, so it must not exist before the
