@@ -339,10 +339,13 @@ stopping at the first conflict; resolve inside `jailbee shell feat-c`, then
 → target without a host checkout, and no host branch, index or superproject
 working tree is touched (a host sub-repo can still be created, for a
 submodule born in the source container). Run it bare (`jailbee git merge`)
-and it asks for the sources, then the target; several
-sources run one at a time in the order given, and the run stops at the
-first conflict with a summary naming what landed, what didn't, and the
-resume command. `--plain` transports the refs without merging. `jailbee merge` is a
+and it asks for the sources, then the targets, each prompt a checkbox
+hiding whatever the other end holds — a container cannot merge into itself.
+Repeat `--into` for several targets; each takes every source. Sources run one
+at a time in the order given and stop at the first conflict, but only for the
+target they were running into: every target prints what landed, what didn't
+and the resume command, and a multi-target run closes with a roll-up.
+`--plain` transports the refs without merging. `jailbee merge` is a
 top-level alias for it.
 
 → [Merging one container into another](git-bridge.md#merging-one-container-into-another--jailbee-git-merge)

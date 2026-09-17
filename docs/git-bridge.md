@@ -301,10 +301,11 @@ against the previous release.
 ## Merging one container into another — `jailbee git merge`
 
 ```bash
-jailbee git merge                        # pick the sources, then the target
+jailbee git merge                        # pick the sources, then the targets
 jailbee git merge c1 --into c4
 jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
-jailbee git merge c1                     # pick the target only
+jailbee git merge c1 --into c4 --into c5 # both targets take c1
+jailbee git merge c1                     # pick the targets only
 jailbee git merge c1 --into c4 --plain   # transport only
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```
@@ -316,20 +317,35 @@ never seen). The merge runs inside the target on whatever it has checked
 out, so conflicts are resolved there, in `jailbee shell <target>`.
 
 Neither end is ever inferred, but either may be left out on a TTY and is
-then asked for — the **sources first, the target second**. Only running,
+then asked for — the **sources first, the targets second**. Only running,
 clone-mode containers are offered: mount mode and a stopped container are
-refused at both ends anyway. The source prompt is a checkbox, and it merges
-in the order the rows were **listed**, not the order they were ticked (the
-prompt says so) — with `-b` it becomes single-select, because one branch
-cannot describe several sources. The target prompt still offers a container
-you picked as a source: merging a container into itself means merging branch
-X into its own checked-out branch Y, which is coherent. Off a TTY both ends
-must be given, and the error names the ones that are missing.
+refused at both ends anyway. Both prompts are checkboxes, and the sources are
+merged in the order the rows were **listed**, not the order they were ticked
+(the prompt says so) — with `-b` the source prompt becomes single-select,
+because one branch cannot describe several sources, while the target prompt
+stays a checkbox. Off a TTY both ends must be given, and the error names the
+ones that are missing.
 
-Several sources are merged **one at a time, in the order given**. The run
-stops at the first conflict or failure and always prints what landed, what
-stopped it, what was not attempted, and the command that resumes where it left
-off — that report is the reason multi-source is allowed at all.
+**A container cannot be named at both ends.** Merging a container into itself
+would merge a branch into that same container's checked-out branch, which says
+nothing the target's own `git merge` does not say better. Each prompt hides
+the rows the other end already holds, and a collision that was typed instead
+(`jailbee git merge c1 --into c1`) is refused before anything is merged.
+
+Several sources are merged into each target **one at a time, in the order
+given**, and stop there at the first conflict or failure: the next source
+would otherwise land on a tree left in merge state. Targets are separate
+containers and do not share that constraint, so **a target that stops does not
+stop the ones after it**. Every target prints what landed, what stopped it,
+what was not attempted, and the command that resumes where it left off — that
+report is the reason several sources are allowed at all. A run with several
+targets closes with a roll-up naming the state of each one:
+
+```
+Summary: 1 of 2 targets complete
+  c4  stopped  merged c1 — stopped at c2: merge conflicts (c3 not attempted)
+  c5  ok       merged c1, c2, c3
+```
 
 `--plain` transports the refs only and runs no merge; its report says
 "transported", not "merged" — do not read `--plain` as a kind of merge.
