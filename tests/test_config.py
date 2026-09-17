@@ -778,6 +778,54 @@ def test_container_env_rejects_invalid_name(tmp_path, mocker):
         load_config(repo / ".jailbee" / "config.yaml")
 
 
+def test_container_path_defaults_empty(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.container.path == []
+
+
+def test_container_path_loaded_from_yaml(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(
+        tmp_path,
+        name="myrepo",
+        config_yaml="container:\n  path:\n    - scripts\n    - /opt/vendor/bin\n",
+    )
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+    assert cfg.container.path == ["scripts", "/opt/vendor/bin"]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "/opt/a:/opt/b",  # a colon would split into two PATH entries
+        "",
+        "   ",
+        "scripts\nmore",
+    ],
+)
+def test_container_path_rejects_an_unusable_entry(entry):
+    with pytest.raises(ValidationError, match="invalid container.path entry"):
+        Config.model_validate({"container": {"path": [entry]}})
+
+
+def test_validate_runtime_flags_container_env_path_shadowing_container_path(tmp_path):
+    """Both set is not a breakage — `container.env` simply wins — but the
+    ignored key is invisible otherwise, so say so."""
+    cfg = make_cfg(
+        tmp_path,
+        container={"path": ["scripts"], "env": {"PATH": "/only/this"}},
+    )
+    issues = cfg.validate_runtime()
+    assert any("container.env.PATH" in i and "container.path" in i for i in issues)
+
+
+def test_validate_runtime_silent_when_only_container_path_is_set(tmp_path):
+    cfg = make_cfg(tmp_path, container={"path": ["scripts"]})
+    assert not [i for i in cfg.validate_runtime() if "container.path" in i]
+
+
 def test_retired_open_chrome_string_rejected_with_migration_message(tmp_path, mocker):
     """Retired `autostart.open_chrome: "<url>"` must fail with a clear
     migration pointer to the new `browsers.chrome.autostart` field."""

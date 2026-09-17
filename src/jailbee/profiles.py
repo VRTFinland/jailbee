@@ -124,6 +124,61 @@ def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
     return ("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", value)
 
 
+DEFAULT_CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+"""The system half of `environment.PATH` when `container.path` is set.
+
+Incus supplies a default `PATH` to every `incus exec`, and a profile
+`environment.PATH` does not extend it — it *replaces* it, with no way to
+reference the previous value. So the moment a repo asks for one added
+directory, jailbee has to spell out the rest, and this constant is that
+spelling: the standard FHS binary directories, matching what Incus itself
+supplies.
+
+Two consequences, both of which is why nothing is written unless the repo
+opts in (`container_path_env` returns `None` for an empty list):
+  - An image whose Incus default carries something extra (`/snap/bin` on a
+    snapd image) loses it in repos that set `container.path`.
+  - `$HOME/.local/bin` and `~/.npm-global/bin` are deliberately absent. They
+    reach PATH through `/etc/profile.d/local-bin.sh`, which every login shell
+    jailbee opens sources *on top of* this value — so adding them here would
+    only duplicate them for login shells while quietly changing what a
+    non-login `incus exec` resolves.
+"""
+
+
+def container_path_env(cfg: Config) -> tuple[str, str] | None:
+    """The `(key, value)` `<prefix>-base` carries for `container.path`.
+
+    `None` when the repo set no `container.path`, which is what keeps a repo
+    that has not opted in rendering exactly as before.
+
+    Entries are resolved container-side, never against the host: a leading
+    `~` is the container user's home and a relative entry is taken from the
+    container's repo checkout. That checkout is `container_repo_dir_for(cfg)`,
+    which is a per-repo answer — a container created before that path became
+    derivable keeps its own in the `user.jailbee.repo_dir` label, and this
+    profile cannot see it. Same limitation the profile's mount routing has.
+
+    `container.env` is not consulted here; the render loop in
+    `base_profile_yaml` applies it afterwards, so a `container.env.PATH`
+    overrides the value this returns.
+    """
+    if not cfg.container.path:
+        return None
+    home = f"/home/{CONTAINER_USERNAME}"
+    repo_dir = container_repo_dir_for(cfg)
+    resolved: list[str] = []
+    for entry in cfg.container.path:
+        if entry == "~" or entry.startswith("~/"):
+            candidate = posixpath.join(home, entry[2:])
+        elif posixpath.isabs(entry):
+            candidate = entry
+        else:
+            candidate = posixpath.join(repo_dir, entry)
+        resolved.append(posixpath.normpath(candidate))
+    return ("environment.PATH", ":".join([*resolved, DEFAULT_CONTAINER_PATH]))
+
+
 def base_profile_yaml(cfg: Config) -> str:
     """Generate <repo>-base profile YAML.
 
@@ -213,6 +268,10 @@ def base_profile_yaml(cfg: Config) -> str:
         creds_env = claude_securestorage_dir_env(cfg)
         if creds_env is not None:
             profile_config[creds_env[0]] = creds_env[1]
+
+    path_env = container_path_env(cfg)
+    if path_env is not None:
+        profile_config[path_env[0]] = path_env[1]
 
     # Repo-defined env vars, applied last so they can override the
     # GUI/SSH defaults above when the user really means to (e.g. point

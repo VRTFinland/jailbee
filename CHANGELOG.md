@@ -8,6 +8,18 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Per-repo `PATH` additions.** A repo can put its own script directories on
+  `PATH` inside the container with the new `container.path` key, so
+  `deploy-staging` works as a bare command instead of
+  `./scripts/deploy-staging`. Entries resolve container-side — a relative one
+  against the repo checkout, `~` against the container user's home, absolute
+  as given — and land in the Incus base profile, so they reach `jailbee
+  shell`, `jailbee exec`, tmux windows, autostart steps and GUI launches
+  alike. `jailbee apply` picks them up with no image rebuild. See
+  [docs/config.md](https://jailbee.gisgro.io/docs/config/#containerpath).
+
 ## 1.4.0 - 2026-09-15
 
 ### Added

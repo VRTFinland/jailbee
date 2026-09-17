@@ -65,6 +65,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `browsers.chrome.autostart` / `browsers.firefox.autostart` | repo | Repo's autostart workflow |
 | `autostart.on_create`, `autostart.on_start` | repo | Repo-specific runtime workflow |
 | `container.env` | repo | Repo-specific runtime env (`NODE_OPTIONS`, app feature flags, …) |
+| `container.path` | repo | The repo's own `scripts/`, `bin/`; global for a personal `~/bin`, repo appends |
 | `shared_dir` | repo only (auto-derived) | Setting globally forces all repos to share the same dir |
 
 All fields are technically legal at either layer. The table above is convention.
@@ -326,6 +327,7 @@ Container-wide settings applied via the Incus base profile.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `env` | map | `{}` | Env vars injected into every process Incus starts in the container — `jailbee shell`, `jailbee tmux`, autostart steps, and any nested tmux/shell. Values are passed through verbatim (no shell expansion). Keys must match `[A-Za-z_][A-Za-z0-9_]*`. |
+| `path` | list[string] | `[]` | Container-side directories prepended to `PATH` — repo-internal scripts, a vendored toolchain. See [`container.path`](#containerpath) below. |
 
 `container.env` is ambient: it applies to interactive shells (`jailbee shell`),
 the autostart tmux session (`jailbee tmux`), and every autostart step. Per-step
@@ -353,6 +355,62 @@ container:
     NODE_OPTIONS: "--max-old-space-size=4096"
     MYAPP_FEATURE_FLAG: "1"
 ```
+
+#### `container.path`
+
+Directories prepended to `PATH` inside the container. The common case is a
+repo's own `scripts/` or `bin/` directory: the checkout is already there, and
+this is what makes `deploy-staging` work as a bare command instead of
+`./scripts/deploy-staging`.
+
+```yaml
+container:
+  path:
+    - scripts           # -> /home/dev/<container_prefix>/scripts
+    - tools/bin
+    - ~/bin             # -> /home/dev/bin
+    - /opt/vendor/bin   # used as given
+```
+
+Resolution is **container-side** — the host never looks these paths up, so
+nothing here is checked for existence and a typo is silent:
+
+- a relative entry resolves against the container's repo checkout
+  (`/home/dev/<container_prefix>`),
+- a leading `~` against the container user's home (`/home/dev`),
+- an absolute entry is used as given.
+
+Entries are prepended in the order written, so the first one wins a name
+collision. An entry may not be blank or contain a `:` (the `PATH` separator
+itself) or a newline — those are rejected at load time.
+
+Because `container.path` lands in the Incus base profile, it reaches **every**
+way into the container: `jailbee shell`, `jailbee exec`, tmux windows,
+autostart steps, and GUI launches like `jailbee ide` / `jailbee apps run`
+(which do not go through a login shell). `jailbee apply` is enough to pick it
+up — no image rebuild, and no container restart.
+
+Two consequences of that mechanism, both deliberate:
+
+- **The profile replaces `PATH` rather than extending it.** Incus offers no
+  way to reference the previous value, so once a repo sets `container.path`,
+  JailBee spells out the system half itself:
+  `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`. A container
+  image whose own default carries something extra (`/snap/bin`) loses it. Leave
+  `container.path` empty and no `PATH` is written at all, which is why a repo
+  that has not opted in is unaffected.
+- **`~/.local/bin` is not in that system half.** It reaches `PATH` through
+  `/etc/profile.d/local-bin.sh`, which every login shell sources on top of this
+  value — so login shells keep it, and a non-login `incus exec` resolves
+  exactly what it resolved before.
+
+`container.env.PATH` overrides `container.path` outright. Setting both is not
+an error, but the `container.path` entries are then ignored and
+`jailbee config validate` says so.
+
+In the [layered config](#configuration-layers), `container.path` follows the
+list-append convention: `global.yaml`'s entries come first, the repo's are
+appended after them — so a global entry wins a collision against a repo one.
 
 ### `shared_dir`
 

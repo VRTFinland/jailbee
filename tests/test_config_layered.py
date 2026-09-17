@@ -78,6 +78,20 @@ def test_empty_repo_list_resets_global(repo_and_global):
     assert cfg.egress_allow == []
 
 
+def test_container_path_appended_from_global(repo_and_global):
+    """`container.path` follows the list-append convention, which has a
+    consequence worth pinning: the global layer's entries land *earlier* in
+    the rendered PATH, so they win a name collision against the repo's own.
+    """
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"container": {"path": ["~/bin"]}})
+    _write(repo_path, {"container": {"path": ["scripts"]}})
+
+    cfg = load_config(repo_path)
+
+    assert cfg.container.path == ["~/bin", "scripts"]
+
+
 def test_golden_enable_snippets_appended_from_global(repo_and_global):
     """`golden` is a plain nested dict, so it goes through the same
     generic deep_merge as every other block: global.yaml's
