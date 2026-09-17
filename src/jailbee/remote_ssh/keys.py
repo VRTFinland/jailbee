@@ -92,7 +92,9 @@ def _parse_public_key(text: str) -> AuthorizedKey:
         or blob[4 : 4 + size] != algorithm.encode("ascii")
     ):
         raise SSHKeyError("public key wire algorithm does not match its text algorithm")
-    fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+    fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode(
+        "ascii"
+    ).rstrip("=")
     public_text = f"{algorithm} {encoded}"
     if comment is not None:
         public_text += " " + comment
@@ -195,7 +197,9 @@ def remove_authorized_key(fingerprint: str, *, paths: SSHPaths | None = None) ->
     """Atomically remove exactly one key selected by its full fingerprint."""
     paths = paths or ssh_paths()
     entries = _read_entries(paths.authorized_keys)
-    matches = [index for index, (_, key) in enumerate(entries) if key and key.fingerprint == fingerprint]
+    matches = [
+        index for index, (_, key) in enumerate(entries) if key and key.fingerprint == fingerprint
+    ]
     if not matches:
         raise SSHKeyError(f"unknown full public key fingerprint: {fingerprint}")
     if len(matches) != 1:

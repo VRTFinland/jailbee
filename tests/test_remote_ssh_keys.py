@@ -38,7 +38,9 @@ def key_paths(tmp_path):
 @pytest.fixture
 def populated_paths(key_paths):
     key_paths.config_dir.mkdir(parents=True)
-    key_paths.authorized_keys.write_bytes(f"# dedicated clients\n\n{PUBLIC_KEY} workstation  \n".encode())
+    key_paths.authorized_keys.write_bytes(
+        f"# dedicated clients\n\n{PUBLIC_KEY} workstation  \n".encode()
+    )
     return key_paths
 
 
@@ -111,7 +113,7 @@ def test_add_preserves_existing_lines_and_supplies_missing_newline(populated_pat
 
 def test_duplicate_blob_with_different_comment_preserves_original_bytes(populated_paths):
     before = populated_paths.authorized_keys.read_bytes()
-    with pytest.raises(SSHKeyError, match="already|duplicate"):
+    with pytest.raises(SSHKeyError, match=r"already|duplicate"):
         add_authorized_key(PUBLIC_KEY + " renamed", paths=populated_paths)
     assert populated_paths.authorized_keys.read_bytes() == before
 
