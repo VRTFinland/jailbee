@@ -7285,7 +7285,7 @@ def pr_cmd(
         created = pr_flow.create_or_view_pr(
             scope,
             active_state,
-            use_outbox=plan.outbox_source is not None or (is_update_path and not no_outbox),
+            use_outbox=not no_outbox,
             is_update=is_update_path,
             head=publish.publish_name,
             base=resolved_base,
@@ -7954,7 +7954,7 @@ def submodule_pr_cmd(
         created = pr_flow.create_or_view_pr(
             scope,
             state,
-            use_outbox=plan.outbox_source is not None or (is_update and not no_outbox),
+            use_outbox=not no_outbox,
             is_update=is_update,
             head=published.publish_name,
             base=resolved_base,
