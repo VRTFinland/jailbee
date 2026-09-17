@@ -777,7 +777,9 @@ def test_case_variant_aliases_share_second_stale_pass_snapshot(preflight):
         }
     )
     preflight["fetch"].reset_mock()
-    preflight["fetch"].return_value = replace(preflight["snapshot"], title="Changed", body="Changed")
+    preflight["fetch"].return_value = replace(
+        preflight["snapshot"], title="Changed", body="Changed"
+    )
     with pytest.raises(IssueStaleError) as caught:
         revalidate_batch(batch)
     assert "expected.title" in str(caught.value) and "expected.body" in str(caught.value)
@@ -802,12 +804,19 @@ def test_restored_ref_conflicts_with_numbered_case_variant_alias(preflight):
     _alias_repositories(preflight)
     actions = [
         _create(),
-        {"type": "edit", "repo": ".", "issue_ref": "new", "title": "Next",
-         "expected": {"title": "Old title"}},
+        {
+            "type": "edit",
+            "repo": ".",
+            "issue_ref": "new",
+            "title": "Next",
+            "expected": {"title": "Old title"},
+        },
     ]
     _record(preflight, actions, issue=7, repo="ACME/APP")
     with pytest.raises(IssueGateError, match="conflict on title"):
         preflight["prepare"](
-            {"a.json": actions,
-             "b.json": [_edit(repo="lib", title="Next", expected={"title": "Old title"})]}
+            {
+                "a.json": actions,
+                "b.json": [_edit(repo="lib", title="Next", expected={"title": "Old title"})],
+            }
         )
