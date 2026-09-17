@@ -23,6 +23,20 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class PrivateSubpath:
+    """One subpath of a shared agent mount that stays per container.
+
+    `container_path` keeps its leading `~`: expansion is the attaching
+    module's job, exactly as it is for `SharedCache.container_path` in
+    `lifecycle._under_repo_shared_caches`.
+    """
+
+    name: str
+    host_subpath: str
+    container_path: str
+
+
+@dataclass(frozen=True)
 class AgentSpec:
     name: str
     command: str
@@ -36,6 +50,7 @@ class AgentSpec:
     update: str | None
     install_network: str
     env: tuple[tuple[str, str], ...] = ()
+    private: tuple[PrivateSubpath, ...] = ()
 
 
 def _spec(name: str, agent: AgentConfig) -> AgentSpec:
@@ -49,6 +64,15 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
     )
     dirs = tuple(m.subpath for m in agent.shared if m.type == "dir")
     seeds = tuple((m.subpath, m.seed or "") for m in agent.shared if m.type == "file")
+    private = tuple(
+        PrivateSubpath(
+            name=f"private-{device_name(m.subpath)}-{device_name(entry.replace('/', '-'))}",
+            host_subpath=f"{m.subpath}/{entry}",
+            container_path=f"{m.path.rstrip('/')}/{entry}",
+        )
+        for m in agent.shared
+        for entry in m.private
+    )
     egress = tuple(agent.egress_allow)
     env = dict(agent.env)
     if isinstance(agent, ClaudeAgentConfig) and agent.plugins_enabled:
@@ -75,6 +99,7 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
         update=agent.update,
         install_network=agent.install_network,
         env=tuple(env.items()),
+        private=private,
     )
 
 

@@ -436,3 +436,40 @@ def test_enabled_agent_specs_does_not_invent_claude_on_a_mock_config(mocker):
     cfg.agents = {}
 
     assert enabled_agent_specs(cfg) == []
+
+
+def _with_private_codex(tmp_path, private):
+    """A codex agent whose shared mount is spelled out rather than taken from
+    the preset, so these assertions don't move when the preset does."""
+    cfg = make_cfg(tmp_path)
+    return with_agent(
+        cfg,
+        "codex",
+        command="codex",
+        enabled=True,
+        shared=[{"subpath": "codex", "path": "~/.codex", "private": private}],
+    )
+
+
+def test_spec_expands_private_subpaths_into_devices(tmp_path):
+    cfg = _with_private_codex(tmp_path, ["app-server-control", "app-server-daemon"])
+    spec = next(s for s in enabled_agent_specs(cfg) if s.name == "codex")
+
+    assert [p.name for p in spec.private] == [
+        "private-codex-app-server-control",
+        "private-codex-app-server-daemon",
+    ]
+    assert [p.host_subpath for p in spec.private] == [
+        "codex/app-server-control",
+        "codex/app-server-daemon",
+    ]
+    assert [p.container_path for p in spec.private] == [
+        "~/.codex/app-server-control",
+        "~/.codex/app-server-daemon",
+    ]
+
+
+def test_spec_has_no_private_subpaths_by_default(tmp_path):
+    cfg = _with_private_codex(tmp_path, [])
+    spec = next(s for s in enabled_agent_specs(cfg) if s.name == "codex")
+    assert spec.private == ()
