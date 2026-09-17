@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import errno
+import functools
 import os
 import shlex
 import subprocess
+import weakref
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
 # unless the environment already chose one. Harmless for non-Qt tests.
@@ -132,6 +134,53 @@ def claude_overview_of(*rows, unreachable: tuple[str, ...] = (), containers_know
     return claude_overview.Overview(
         rows=tuple(rows), unreachable=unreachable, containers_known=containers_known
     )
+
+
+def _cache_typer_command_tree() -> None:
+    """Build each Typer app's Click command tree once per session.
+
+    ``CliRunner.invoke(app, ...)`` calls ``typer.main.get_command(app)``,
+    which walks every command and sub-app and reflects over each callback's
+    signature — ``get_type_hints``, ``inspect.signature`` and a Click
+    ``Parameter`` per argument, for the *whole* CLI, on every invocation. The
+    suite invokes `jailbee.cli.app` ~1100 times, so it rebuilt ~100k commands
+    and spent roughly two thirds of `tests/test_cli.py` doing it.
+
+    The tree is a pure function of the app, and nothing here mutates an app
+    after import: the only Typer instances in the suite are jailbee's own,
+    registered at import time. Caching is therefore invisible to the tests —
+    except in speed (full suite: 201s -> 150s).
+
+    Patching ``typer.main.get_command`` covers the tests that call it directly
+    (`test_cli_branch.py`, `test_completion_wiring.py`, ...) as well as
+    ``Typer.__call__``; ``typer.testing`` needs its own assignment because it
+    binds the function at import.
+
+    Keyed weakly, so an app that goes away takes its entry with it and a
+    later object cannot inherit a dead app's tree by reusing its ``id()``.
+    """
+    import typer.main
+    import typer.testing
+
+    real = typer.main.get_command
+    cache: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+
+    @functools.wraps(real)
+    def cached(typer_instance: Any) -> Any:
+        try:
+            tree = cache.get(typer_instance)
+        except TypeError:  # unhashable / not weak-referenceable
+            return real(typer_instance)
+        if tree is None:
+            tree = real(typer_instance)
+            cache[typer_instance] = tree
+        return tree
+
+    typer.main.get_command = cached
+    typer.testing._get_command = cached
+
+
+_cache_typer_command_tree()
 
 
 # Module-level alias for tests that prefer `from tests.conftest import make_cfg`
