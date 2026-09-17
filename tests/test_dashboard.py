@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import itertools
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -3254,6 +3255,31 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _mock_terminal(mocker):
+    """Patch everything ``run()`` touches on a real terminal and the state DB.
+
+    Returns the ``tty.setcbreak`` mock, which is this file's marker for "the
+    screen has been taken": it is the first thing `run()` does to the terminal
+    before `Live` starts, so anything recorded while its ``call_count`` is 0
+    happened while the user could still see their own shell.
+    """
+    mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
+    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+
+    mock_stdin = mocker.Mock()
+    mock_stdin.isatty.return_value = True
+    mock_stdin.fileno.return_value = 0
+    mocker.patch.object(dashboard.sys, "stdin", mock_stdin)
+    mock_stdout = mocker.Mock()
+    mock_stdout.isatty.return_value = True
+    mocker.patch.object(dashboard.sys, "stdout", mock_stdout)
+
+    mocker.patch.object(dashboard.termios, "tcgetattr", return_value=object())
+    mocker.patch.object(dashboard.termios, "tcsetattr")
+    return mocker.patch.object(dashboard.tty, "setcbreak")
+
+
 def _drive_run(
     mocker, key_sequence: list[bytes], groups: list[dashboard.RepoGroup] | None = None
 ) -> int:
@@ -3269,28 +3295,76 @@ def _drive_run(
     loop reads it (a real race the tests must not depend on winning). A test
     that needs a real, dispatchable container passes its own ``groups``.
     """
-    mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
-    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
-    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+    _mock_terminal(mocker)
     mocker.patch.object(dashboard, "gather_live", return_value=groups or [])
-
-    mock_stdin = mocker.Mock()
-    mock_stdin.isatty.return_value = True
-    mock_stdin.fileno.return_value = 0
-    mocker.patch.object(dashboard.sys, "stdin", mock_stdin)
-    mock_stdout = mocker.Mock()
-    mock_stdout.isatty.return_value = True
-    mocker.patch.object(dashboard.sys, "stdout", mock_stdout)
-
-    mocker.patch.object(dashboard.termios, "tcgetattr", return_value=object())
-    mocker.patch.object(dashboard.termios, "tcsetattr")
-    mocker.patch.object(dashboard.tty, "setcbreak")
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
 
     return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+
+
+def test_run_gathers_a_base_snapshot_before_taking_the_screen(mocker):
+    """The dashboard must not show an empty table while it works out what to
+    show: the first gather happens before `Live` takes the screen, so the
+    first frame is already populated.
+
+    It is the cheap tier — ``with_git=False`` — because the git probes are
+    what make a full gather slow, and their columns fill in on the next tick
+    exactly as they do after any base refresh. Waiting for them here would
+    just move the empty screen behind a spinner.
+    """
+    setcbreak = _mock_terminal(mocker)
+    gathers: list[tuple[bool, int]] = []
+
+    def _gather(incus, cwd_root, *, with_git):
+        gathers.append((with_git, setcbreak.call_count))
+        return []
+
+    mocker.patch.object(dashboard, "gather_live", side_effect=_gather)
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert gathers[0] == (False, 0)
+
+
+def test_run_reports_a_failed_first_gather_without_taking_the_screen(mocker):
+    """An unreachable incus daemon used to take the screen, render an empty
+    table, and only then hand it back when the worker thread's first gather
+    blew up. Now the gather happens first, so the failure is reported on the
+    user's own terminal and the alternate screen is never entered.
+    """
+    setcbreak = _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", side_effect=OSError("daemon unreachable"))
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 1
+    assert setcbreak.call_count == 0
+
+
+def test_run_does_not_repeat_the_seeded_gather_when_git_is_disabled(mocker):
+    """With ``--no-git`` the pre-gather already produced the only tier there
+    is, so the worker must start from that snapshot's timestamp rather than
+    from scratch — otherwise launching the dashboard runs two identical
+    gathers back to back.
+    """
+    _mock_terminal(mocker)
+    gather = mocker.patch.object(dashboard, "gather_live", return_value=[])
+
+    def _blocking_select(*args, **kwargs):
+        # Outlive a worker tick (0.1s) but stay well inside `interval` (0.5s),
+        # so a second gather in this window can only be the redundant one.
+        time.sleep(0.3)
+        return ([True], [], [])
+
+    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert gather.call_count == 1
 
 
 def test_run_degrades_when_save_view_state_fails(mocker):

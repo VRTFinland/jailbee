@@ -1733,19 +1733,42 @@ def run(
     def now() -> datetime:
         return datetime.now().astimezone()
 
+    # Surveyed before `Live` takes the screen, so the first frame is already
+    # populated: a dashboard that appears empty and fills in a second later is
+    # indistinguishable from a broken one. Only the cheap tier is waited for —
+    # the git probes are what make a full gather slow, and their columns land
+    # on the worker's first tick exactly as they do after any base refresh.
+    #
+    # A failure here is fatal rather than deferred to the worker: taking the
+    # alternate screen only to hand it straight back is a worse way to say
+    # "the incus daemon is unreachable" than saying so on the user's own
+    # terminal.
+    try:
+        with console.status("⏳ Surveying containers…"):
+            seeded = gather_live(incus, cwd_root, with_git=False)
+    except Exception as exc:
+        error(f"dashboard refresh failed: {exc}")
+        return 1
+    seeded_at = time.monotonic()
+
     lock = threading.Lock()
     stop = threading.Event()
     force = threading.Event()
-    shared_groups: list[RepoGroup] = []
-    shared_last_full = 0.0
+    shared_groups: list[RepoGroup] = seeded
+    shared_last_full = seeded_at
     worker_error: list[BaseException] = []
 
     def refresher() -> None:
         nonlocal shared_groups, shared_last_full
-        last_base = 0.0
+        # Continues the schedule from the pre-gather instead of restarting it.
+        # `first` forces an immediate git-inclusive gather, which is exactly
+        # what is still missing — but with `--no-git` there is nothing left to
+        # fetch, and a `first` there would just repeat the gather we already
+        # have.
+        last_base = seeded_at
         last_full = 0.0
-        first = True
-        prev_groups: list[RepoGroup] = []
+        first = git_enabled
+        prev_groups: list[RepoGroup] = seeded
         while not stop.is_set():
             forced = force.is_set()
             do_base, do_git = _refresh_due(
