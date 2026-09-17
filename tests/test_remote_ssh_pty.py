@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
-from asyncssh import SSHReader, SSHServerProcess, SSHWriter, SignalReceived, TerminalSizeChanged
+from asyncssh import SignalReceived, SSHReader, SSHServerProcess, SSHWriter, TerminalSizeChanged
 
 from jailbee.remote_ssh import pty as runner
 from jailbee.remote_ssh.pty import (
@@ -637,7 +637,7 @@ def actual_process(term=None):
 @pytest.mark.parametrize("terminal", [None, "xterm"])
 def test_live_control_callbacks_outlast_stdin(spec, boundary, monkeypatch, state, terminal):
     async def scenario():
-        process, channel = actual_process(terminal)
+        process, _ = actual_process(terminal)
         original_signal = process.signal_received
         original_resize = process.terminal_size_changed
         child = pipe_child(pending=True)
@@ -665,6 +665,7 @@ def test_live_control_callbacks_outlast_stdin(spec, boundary, monkeypatch, state
 
         child.stdin.drain = drain
         if terminal:
+
             def write(fd, data):
                 ready.set()
                 if state == "closed":
@@ -768,10 +769,13 @@ def test_unspecified_initial_size_uses_terminal_defaults(spec, boundary, initial
 
 def test_unspecified_resize_dimensions_preserve_current_size(spec, boundary):
     process = SSHProcess("xterm")
-    process.stdin = EventReader([
-        TerminalSizeChanged(132, 43, 800, 600), TerminalSizeChanged(0, 0, 0, 0),
-        TerminalSizeChanged(0, 50, 0, 0),
-    ])
+    process.stdin = EventReader(
+        [
+            TerminalSizeChanged(132, 43, 800, 600),
+            TerminalSizeChanged(0, 0, 0, 0),
+            TerminalSizeChanged(0, 50, 0, 0),
+        ]
+    )
     asyncio.run(run_child(process, spec))
     assert runner.fcntl.ioctl.call_args_list[-1] == call(
         90, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 132, 800, 600)
@@ -779,7 +783,9 @@ def test_unspecified_resize_dimensions_preserve_current_size(spec, boundary):
 
 
 @pytest.mark.parametrize("outcome", ["cancel", "redirect_error", "invalid_resize"])
-def test_pty_callbacks_survive_cleanup_and_restore_after_failure(spec, boundary, monkeypatch, outcome):
+def test_pty_callbacks_survive_cleanup_and_restore_after_failure(
+    spec, boundary, monkeypatch, outcome
+):
     async def scenario():
         process, _ = actual_process("xterm")
         original_signal = Mock(wraps=process.signal_received)
@@ -822,7 +828,9 @@ def test_pty_callbacks_survive_cleanup_and_restore_after_failure(spec, boundary,
             await entered.wait()
             task.cancel()
         expected = {
-            "cancel": asyncio.CancelledError, "redirect_error": OSError, "invalid_resize": PTYError
+            "cancel": asyncio.CancelledError,
+            "redirect_error": OSError,
+            "invalid_resize": PTYError,
         }[outcome]
         with pytest.raises(expected):
             await task

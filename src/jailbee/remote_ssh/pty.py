@@ -30,7 +30,7 @@ class PTYError(ValueError):
     """The requested terminal cannot be safely provided."""
 
 
-class _RawEOF(Exception):
+class _RawEOFError(Exception):
     """Raw terminals cannot represent an input half-close."""
 
 
@@ -84,13 +84,14 @@ def _controls(
     """Keep channel control callbacks independent of stdin EOF and flow control."""
     original_signal = process.signal_received
     original_resize = process.terminal_size_changed
+    signal_names = signal.Signals.__members__
     size = _window_size(process.term_size) if master is not None else b""
     failed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
-    def receive_signal(name: str) -> None:
-        sig = signal.Signals.__members__.get("SIG" + name)
+    def receive_signal(signal: str) -> None:
+        sig = signal_names.get("SIG" + signal)
         if sig is None:
-            original_signal(name)
+            original_signal(signal)
             return
         try:
             _signal_group(pid, sig)
@@ -98,13 +99,13 @@ def _controls(
             if not failed.done():
                 failed.set_exception(exc)
 
-    def resize(columns: int, rows: int, x_pixels: int, y_pixels: int) -> None:
+    def resize(width: int, height: int, pixwidth: int, pixheight: int) -> None:
         nonlocal size
         if master is None:
-            original_resize(columns, rows, x_pixels, y_pixels)
+            original_resize(width, height, pixwidth, pixheight)
             return
         try:
-            size = _window_size((columns, rows, x_pixels, y_pixels), size)
+            size = _window_size((width, height, pixwidth, pixheight), size)
             fcntl.ioctl(master, termios.TIOCSWINSZ, size)
         except (OSError, PTYError) as exc:
             if not failed.done():
@@ -113,13 +114,15 @@ def _controls(
     # AsyncSSH invokes these public session callbacks directly. Consuming valid
     # controls here prevents them queuing behind blocked stdin bytes. Restore
     # the original handlers only after child/group cleanup has completed.
-    setattr(process, "signal_received", receive_signal)
-    setattr(process, "terminal_size_changed", resize)
+    # These per-session overrides intentionally replace AsyncSSH callback methods.
+    process.signal_received = receive_signal  # type: ignore[method-assign]
+    process.terminal_size_changed = resize  # type: ignore[method-assign]
     try:
         yield failed
     finally:
-        setattr(process, "signal_received", original_signal)
-        setattr(process, "terminal_size_changed", original_resize)
+        # Restore the callback methods replaced above.
+        process.signal_received = original_signal  # type: ignore[method-assign]
+        process.terminal_size_changed = original_resize  # type: ignore[method-assign]
         if failed.done() and not failed.cancelled():
             failed.exception()
         failed.cancel()
@@ -244,7 +247,7 @@ async def _input(
                 else:
                     # No EOF byte exists in raw mode. End this terminal session
                     # with the same HUP/grace/KILL policy used on disconnect.
-                    raise _RawEOF
+                    raise _RawEOFError
             return
         try:
             await send(data)
@@ -363,7 +366,9 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             reader = resources.enter_context(_PTYOutput(raw_reader))
             redirect_started = True
             await _connected(
-                process, process.redirect(stdout=reader, bufsize=_BUFFER_SIZE, send_eof=False), failed
+                process,
+                process.redirect(stdout=reader, bufsize=_BUFFER_SIZE, send_eof=False),
+                failed,
             )
 
             async def send(data: bytes) -> None:
@@ -380,7 +385,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             stdin = asyncio.create_task(input_pty())
             output = asyncio.create_task(reader.wait_closed())
             return await _supervise(process, waiter, stdin, [output], failed)
-        except _RawEOF:
+        except _RawEOFError:
             await _finish(asyncio.create_task(_terminate(pid, waiter)))
             await _connected(process, reader.wait_closed(), failed)
             return waiter.result()
