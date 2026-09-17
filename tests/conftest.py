@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import functools
+import itertools
 import os
 import shlex
 import subprocess
@@ -366,8 +367,38 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         )
 
 
+# Names the per-test isolation dirs. A counter rather than pytest's own
+# numbering, which costs a directory listing per call — see `_isolation_root`.
+_ISOLATION_COUNTER = itertools.count()
+
+
+@pytest.fixture(scope="session")
+def _isolation_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One session-wide parent for the per-test XDG isolation dirs.
+
+    Not a convenience: ``tmp_path_factory.mktemp(..., numbered=True)``
+    picks its suffix by listing the *whole* base temp dir and taking the
+    highest number it finds, so every call is O(entries) and the two
+    autouse isolation fixtures below made the suite quadratic in its own
+    test count — at 6475 tests that was ~42M directory-entry comparisons,
+    over half the run. Numbering here is a counter instead (see
+    ``_test_isolation_dir``), and moving the dirs one level down keeps
+    the base temp dir small enough that pytest's own ``tmp_path``
+    numbering stays cheap too.
+    """
+    return tmp_path_factory.mktemp("isolation", numbered=False)
+
+
+@pytest.fixture
+def _test_isolation_dir(_isolation_root: Path) -> Path:
+    """This test's private corner of ``_isolation_root``, named by counter."""
+    iso = _isolation_root / f"t{next(_ISOLATION_COUNTER)}"
+    iso.mkdir()
+    return iso
+
+
 @pytest.fixture(autouse=True)
-def _isolate_global_config(tmp_path_factory, monkeypatch):
+def _isolate_global_config(_test_isolation_dir, monkeypatch):
     """Redirect ``default_global_config_path`` to an empty tmp dir.
 
     Without this, every ``load_config()`` call layers the developer's
@@ -378,7 +409,8 @@ def _isolate_global_config(tmp_path_factory, monkeypatch):
     supersedes this fixture (monkeypatch.setenv keeps the most recent
     value).
     """
-    iso = tmp_path_factory.mktemp("xdg-isolation", numbered=True)
+    iso = _test_isolation_dir / "xdg-config"
+    iso.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(iso))
 
 
@@ -415,7 +447,7 @@ def _reset_deprecation_notices():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_state_dir(tmp_path_factory, monkeypatch):
+def _isolate_state_dir(_test_isolation_dir, monkeypatch):
     """Redirect XDG_STATE_HOME to a tmp dir so tests never touch ~/.local/state/jailbee/.
 
     _resolve_attachable always calls get_engine() (via
@@ -439,7 +471,8 @@ def _isolate_state_dir(tmp_path_factory, monkeypatch):
     to point at. Dispose per test and the cache never grows. See the
     `pytest-fd-cliff-oom` memory note for the full chain.
     """
-    iso = tmp_path_factory.mktemp("xdg-state-isolation", numbered=True)
+    iso = _test_isolation_dir / "xdg-state"
+    iso.mkdir()
     monkeypatch.setenv("XDG_STATE_HOME", str(iso))
     yield
     for engine in _ENGINES.values():
