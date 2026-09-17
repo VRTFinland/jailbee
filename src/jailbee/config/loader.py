@@ -46,7 +46,6 @@ from jailbee.config.root import Config
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.git import DEFAULT_REMOTE, detect_default_branch, detect_upstream_remote
 from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_home
-from jailbee.tui import hint
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -705,7 +705,9 @@ def test_format_advice_names_a_dismissal_instead_of_offering_one() -> None:
     from jailbee.upgrade import Watermark, format_advice, pending
 
     marks = {"apply": Watermark(version=(1, 1, 0), observed=True)}
-    lines = format_advice(pending("1.3.2", marks, notes=_dismiss_notes()), dismissed={"apply": "1.3.2"})
+    lines = format_advice(
+        pending("1.3.2", marks, notes=_dismiss_notes()), dismissed={"apply": "1.3.2"}
+    )
     assert any("Dismissed at 1.3.2 — still owed." in line for line in lines)
     assert not any("jb dismiss" in line for line in lines)
 

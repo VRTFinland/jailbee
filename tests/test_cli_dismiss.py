@@ -88,7 +88,9 @@ def test_resolve_rejects_a_key_that_is_not_showing() -> None:
     from jailbee.dismiss_command import Row, resolve
 
     rows = [
-        Row(key="apply", scope="myrepo", lines=(), fingerprint="1.3.2", dismissal=None, applies=True)
+        Row(
+            key="apply", scope="myrepo", lines=(), fingerprint="1.3.2", dismissal=None, applies=True
+        )
     ]
     matched, unknown = resolve(rows, ["base-build"])
     assert matched == []
