@@ -7599,6 +7599,13 @@ def submodule_pr_cmd(
     ] = False,
     web: Annotated[bool, typer.Option("--web", help="Open the PR afterwards")] = False,
     no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI title/body/branch")] = False,
+    no_outbox: Annotated[
+        bool,
+        typer.Option(
+            "--no-outbox",
+            help="Ignore a PR description written in the container's outbox.",
+        ),
+    ] = False,
     branch: Annotated[
         str | None,
         typer.Option("--branch", "-b", help="Branch to publish FROM the submodule"),
@@ -7894,6 +7901,7 @@ def submodule_pr_cmd(
         as_name=as_name,
         no_ai=no_ai,
         status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
+        use_outbox=not no_outbox,
     )
     publish_name = plan.publish_name
     if publish_name is None:
@@ -7928,11 +7936,12 @@ def submodule_pr_cmd(
         raise typer.Exit(1) from exc
 
     ai_on = cfg.claude.enabled and cfg.claude.ai_pr_description and not no_ai
+    text_on = ai_on or plan.outbox_source is not None
     resolved_title, resolved_body = ("", "")
     if not is_update:
         resolved_title, resolved_body = pr_flow.resolve_create_text(
             scope,
-            ai_on=ai_on,
+            ai_on=text_on,
             ai_text=plan.ai_text,
             title=title,
             body=body,
@@ -7974,9 +7983,9 @@ def submodule_pr_cmd(
             ready=ready,
             ai_on=ai_on,
             foreign_head=is_foreign,
-            # No `use_outbox`: a submodule PR is a different repository from
-            # the one the container's outbox manifests name.
             url=created.url,
+            use_outbox=not no_outbox,
+            outbox_hint=plan.outbox_source,
         )
     elif did_update:
         # The submodule is detached and no --branch resolved a source: there
@@ -8003,13 +8012,20 @@ def submodule_pr_cmd(
         ready=ready,
         update=update,
     )
+    if not did_update:
+        pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
     if incus.config_get(full, "user.jailbee.pr"):
         info(
             "Merge this submodule PR first; the superproject PR's gitlink bump "
             "then points at a merged commit."
         )
+    outbox_failures = (
+        0 if no_outbox else _offer_outbox_comments(cfg, incus, full, short, number=created.number)
+    )
     if web:
         pr_mod.open_pr_in_browser(scope.repo_root, created.number)
+    if outbox_failures:
+        raise typer.Exit(1)
 
 
 net_app = typer.Typer(
