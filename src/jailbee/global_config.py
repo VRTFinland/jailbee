@@ -260,8 +260,17 @@ def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
     """
     host_raw, _ = _split_host_keys(raw)
     try:
-        return GlobalConfig.model_validate(host_raw)
-    except ValidationError as e:
+        config = GlobalConfig.model_validate(host_raw)
+        allow = config.remote.ssh.commands.allow
+        if allow:
+            from jailbee.remote_ssh.router import known_command_paths
+
+            unknown = sorted(set(allow) - known_command_paths())
+            if unknown:
+                joined = ", ".join(unknown)
+                raise ValueError(f"unknown remote Jailbee command path(s): {joined}")
+        return config
+    except (ValidationError, ValueError) as e:
         raise ConfigError(f"Global config validation failed in {path}:\n{e}") from e
 
 

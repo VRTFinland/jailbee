@@ -3,8 +3,9 @@
 import pytest
 from pydantic import ValidationError
 
+from jailbee.config import ConfigError
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
-from jailbee.global_config import GlobalConfig
+from jailbee.global_config import GlobalConfig, validate_global_raw
 
 
 def test_remote_ssh_defaults_are_dashboard_only() -> None:
@@ -82,3 +83,39 @@ def test_allowlist_rejects_duplicates() -> None:
 def test_remote_models_reject_unknown_keys(model, kwargs: dict[str, object]) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         model(**kwargs)
+
+
+@pytest.mark.parametrize("mode", ["allowlist", "full"])
+def test_global_validation_accepts_public_allowlist_leaves(tmp_path, mode: str) -> None:
+    cfg = validate_global_raw(
+        {
+            "remote": {
+                "ssh": {
+                    "exec": True,
+                    "commands": {"mode": mode, "allow": ["git pull"]},
+                }
+            }
+        },
+        tmp_path / "global.yaml",
+    )
+    assert cfg.remote.ssh.commands.allow == ["git pull"]
+
+
+@pytest.mark.parametrize("mode", ["allowlist", "full"])
+def test_global_validation_rejects_unknown_allowlist_leaves(tmp_path, mode: str) -> None:
+    path = tmp_path / "global.yaml"
+    with pytest.raises(
+        ConfigError,
+        match=rf"(?s)Global config validation failed in {path}:.*git explode",
+    ):
+        validate_global_raw(
+            {
+                "remote": {
+                    "ssh": {
+                        "exec": True,
+                        "commands": {"mode": mode, "allow": ["git explode"]},
+                    }
+                }
+            },
+            path,
+        )
