@@ -128,6 +128,14 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
     doctor` exits non-zero for every user of that release until they run the
     action, including in scripts and CI that treat the exit code as a
     host-health verdict.
+
+    A dismissal (`jailbee dismiss apply`) silences the hint that decorates
+    `ls` / `new` / `shell`. It deliberately does **not** silence this check:
+    `doctor_lines` returns the unfiltered advice with each dismissal named, so
+    a dismissed action still fails here and still says when it was marked read.
+    That is the promise the dismissal feature rests on — it is why a dismissal
+    may last until a new reason appears instead of expiring on the next
+    upgrade.
     """
     from datetime import UTC, datetime
 
@@ -135,11 +143,11 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
 
     from jailbee import __version__
     from jailbee.db import get_engine
-    from jailbee.upgrade import advice_lines
+    from jailbee.upgrade import doctor_lines
 
     try:
         with Session(get_engine()) as session:
-            lines = advice_lines(
+            lines = doctor_lines(
                 session,
                 cfg.container_prefix,
                 __version__,
@@ -151,6 +159,36 @@ def _check_upgrade_advice(cfg: Config) -> CheckResult:
     if not lines:
         return CheckResult("upgrade actions", True, "nothing pending")
     return CheckResult("upgrade actions", False, "\n".join(lines))
+
+
+def _check_dismissed_notices() -> list[CheckResult]:
+    """Report deprecation notices this process suppressed because of a dismissal.
+
+    Takes no `Config`: the notices registered themselves while the config
+    loaded (`notices.emit`), and each one's scope is the file it names, not the
+    repo the user happens to be standing in.
+
+    Not-ok, like `_check_upgrade_advice` and for the same reason: the notice
+    still applies, and doctor is where a dismissal must stay visible. A
+    deprecation dismissal never expires on its own — it holds until the config
+    changes — so without this check it would have nowhere left to surface.
+    Silent for a notice that was never dismissed: that one printed itself.
+    """
+    from jailbee import notices
+
+    try:
+        dismissed = notices.dismissals()
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        return [CheckResult("dismissed notices", True, f"state could not be read ({e})")]
+
+    hidden = [n for n in notices.active() if n.ident in dismissed]
+    if not hidden:
+        return [CheckResult("dismissed notices", True, "nothing dismissed")]
+    detail = "\n".join(
+        "\n".join([*notice.lines, f"    [dismissed {dismissed[notice.ident].version}]"])
+        for notice in hidden
+    )
+    return [CheckResult("dismissed notices", False, detail)]
 
 
 def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
@@ -499,6 +537,9 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
+    # Same reasoning as the check above: a dismissal hides the hint on the
+    # commands the user actually runs, never the diagnosis here.
+    results.extend(_check_dismissed_notices())
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
     results.extend(_check_claude_pool(cfg, incus, gcfg))

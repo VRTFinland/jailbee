@@ -1535,7 +1535,7 @@ def test_doctor_reports_pending_upgrade_actions(make_cfg, tmp_path, mocker) -> N
 
     cfg = make_cfg(tmp_path)
     mocker.patch(
-        "jailbee.upgrade.advice_lines",
+        "jailbee.upgrade.doctor_lines",
         return_value=[
             "jailbee 1.4.0 changed what `jb base build` produces:",
             "    - install.sh installs fd",
@@ -1551,7 +1551,7 @@ def test_doctor_is_happy_when_nothing_is_pending(make_cfg, tmp_path, mocker) -> 
     from jailbee.doctor import _check_upgrade_advice
 
     cfg = make_cfg(tmp_path)
-    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    mocker.patch("jailbee.upgrade.doctor_lines", return_value=[])
     got = _check_upgrade_advice(cfg)
 
     assert got.ok is True
@@ -1563,7 +1563,7 @@ def test_doctor_upgrade_check_survives_a_broken_state_db(make_cfg, tmp_path, moc
     from jailbee.doctor import _check_upgrade_advice
 
     cfg = make_cfg(tmp_path)
-    mocker.patch("jailbee.upgrade.advice_lines", side_effect=RuntimeError("db is locked"))
+    mocker.patch("jailbee.upgrade.doctor_lines", side_effect=RuntimeError("db is locked"))
     got = _check_upgrade_advice(cfg)
 
     assert got.ok is True
@@ -1586,7 +1586,7 @@ def test_doctor_upgrade_detail_preserves_the_structured_block(make_cfg, tmp_path
         "    - install.sh installs ripgrep",
         "    Run `jb base build` to pick this up.",
     ]
-    mocker.patch("jailbee.upgrade.advice_lines", return_value=lines)
+    mocker.patch("jailbee.upgrade.doctor_lines", return_value=lines)
 
     got = _check_upgrade_advice(cfg)
 
@@ -1602,13 +1602,16 @@ def test_run_checks_includes_the_upgrade_check(tmp_path, mocker) -> None:
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
     incus.network_exists.return_value = True
-    mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+    mocker.patch("jailbee.upgrade.doctor_lines", return_value=[])
 
     with patch("jailbee.doctor.registry_status", return_value=MirrorStatus.RUNNING):
         results = run_checks(cfg, incus)
 
     names = {r.name for r in results}
     assert "upgrade actions" in names
+    # The dismissal check rides alongside it, so a dismissed advisory always
+    # has somewhere to surface — see `_check_dismissed_notices`.
+    assert "dismissed notices" in names
 
 
 # ---- post-install user setup checks (`jailbee setup`) ----
@@ -2897,3 +2900,84 @@ def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mo
     check = next(r for r in results if r.name == "qt dashboard (optional)")
     assert check.ok is True, "an optional extra must not fail doctor"
     assert "not installed" in check.detail
+
+
+def test_upgrade_check_reports_a_dismissed_action(make_cfg, tmp_path, monkeypatch) -> None:
+    """doctor ignores a dismissal by design: it is the place a user can always
+    come back to, and that promise is what makes a dismissal that lasts until a
+    new reason appears safe to offer.
+
+    `_check_upgrade_advice` opens its own session through `get_engine`, so the
+    dismissal is written through the same engine rather than the `db_engine`
+    fixture.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import notices
+    from jailbee.db import get_engine
+    from jailbee.doctor import _check_upgrade_advice
+    from jailbee.upgrade import UpgradeNote, load_or_backfill
+
+    notes = (UpgradeNote(version=(1, 2, 0), actions=frozenset({"apply"}), reason="a reason"),)
+    monkeypatch.setattr("jailbee.upgrade.UPGRADE_NOTES", notes)
+    monkeypatch.setattr("jailbee.__version__", "1.2.0")
+
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    cfg = make_cfg(tmp_path)
+    with Session(get_engine()) as session:
+        load_or_backfill(session, cfg.container_prefix, "1.1.0", now=now)
+        notices.save(
+            session,
+            "apply",
+            cfg.container_prefix,
+            fingerprint="1.2.0",
+            version="1.2.0",
+            now=now,
+        )
+
+    result = _check_upgrade_advice(cfg)
+    assert result.ok is False
+    assert "a reason" in result.detail
+    assert "Dismissed at 1.2.0 — still owed." in result.detail
+
+
+def test_dismissed_notices_check_is_ok_when_nothing_is_dismissed() -> None:
+    from jailbee import notices
+    from jailbee.doctor import _check_dismissed_notices
+
+    notices.reset_caches()
+    results = _check_dismissed_notices()
+    assert [r.ok for r in results] == [True]
+
+
+def test_dismissed_notices_check_reports_a_suppressed_notice(monkeypatch) -> None:
+    """A deprecation dismissal never expires, so doctor is the only place it
+    stays visible."""
+    from datetime import UTC, datetime
+
+    from jailbee import notices
+    from jailbee.doctor import _check_dismissed_notices
+    from jailbee.notices import Dismissal, Notice
+
+    notices.reset_caches()
+    ident = ("legacy-chrome-block", "/g/global.yaml")
+    monkeypatch.setattr(
+        notices,
+        "dismissals",
+        lambda: {
+            ident: Dismissal(
+                key=ident[0],
+                scope=ident[1],
+                fingerprint="",
+                version="1.3.2",
+                dismissed_at=datetime(2026, 9, 17, tzinfo=UTC),
+            )
+        },
+    )
+    notices.emit(Notice(key=ident[0], scope=ident[1], lines=("`chrome:` is deprecated.",)))
+    results = _check_dismissed_notices()
+    assert [r.ok for r in results] == [False]
+    assert "dismissed 1.3.2" in results[0].detail
+    assert "`chrome:` is deprecated." in results[0].detail
