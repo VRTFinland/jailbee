@@ -181,7 +181,7 @@ def test_switch_refuses_to_activate_the_live_slot(fake_env: Path, mocker) -> Non
     gcfg = mocker.MagicMock()
     mocker.patch.object(engine, "members", return_value=([], []))
 
-    with pytest.raises(models.PoolError):
+    with pytest.raises(models.PoolError, match="already the live account"):
         engine.switch(adapter, cfg, gcfg, "me@example.com", authoritative={"repo"})
 
 

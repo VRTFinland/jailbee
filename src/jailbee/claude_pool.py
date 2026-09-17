@@ -105,8 +105,7 @@ def store_dir() -> Path:
 
 def config_home(cfg: Config) -> Path:
     """This repo's Claude config home on the host — never shared."""
-    assert cfg.shared_dir is not None  # set by load_config
-    return cfg.shared_dir / "claude"
+    return CLAUDE.config_home(cfg)
 
 
 def holder_dir(cfg: Config) -> Path:
@@ -391,7 +390,7 @@ def resolve_interactively(
 ) -> str | None:
     """The reference a `claude use`/`claude rm` invocation should act on."""
     return engine.resolve_interactively(
-        slots, ref, purpose=purpose, picker=picker, is_interactive=is_interactive
+        CLAUDE, slots, ref, purpose=purpose, picker=picker, is_interactive=is_interactive
     )
 
 
@@ -865,9 +864,9 @@ def switch(
 
 def live_account_refusal(name: str) -> str:
     """The one wording for "that slot is the live login, park it first"."""
-    return engine.live_account_refusal(name)
+    return engine.live_account_refusal(CLAUDE, name)
 
 
 def remove_slot(slot: Slot) -> None:
     """Delete a parked login permanently."""
-    engine.remove_slot(slot)
+    engine.remove_slot(CLAUDE, slot)

@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import logging
 import os
 import shutil
 import tempfile
@@ -74,8 +73,6 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
-
-log = logging.getLogger(__name__)
 
 
 def store_dir(adapter: AccountAdapter) -> Path:
@@ -198,6 +195,7 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
 
 
 def resolve_interactively(
+    adapter: AccountAdapter,
     slots: Sequence[Slot],
     ref: str | None,
     *,
@@ -228,7 +226,7 @@ def resolve_interactively(
     parked = [s for s in slots if not s.live]
     if not parked:
         raise PoolError(
-            f"no stored login to {purpose}. `jailbee claude park` stores the one in "
+            f"no stored login to {purpose}. `jailbee {adapter.name} park` stores the one in "
             "use, and the next `/login` in a container of this holder adds another."
         )
     if not is_interactive():
@@ -575,14 +573,14 @@ def _disambiguated_slot(
                 "could not read both files to tell whether that is the same login as "
                 "the one being parked. Nothing was moved; the live credential is still "
                 "in place. Compare the two files, and remove the stored one with "
-                f"`jailbee claude rm {_slot_name(other)}` if it is the stale copy."
+                f"`jailbee {adapter.name} rm {_slot_name(other)}` if it is the stale copy."
             )
         if _same_grant(adapter, live_grant, other_grant):
             raise PoolError(
                 f"the login being parked is already stored as `{_slot_name(other)}` "
                 f"({other}). Parking it again would leave one refresh-token lineage in "
                 "two files, and the first token rotation would kill one of them. "
-                f"Run `jailbee claude rm {_slot_name(other)}` first if the stored copy "
+                f"Run `jailbee {adapter.name} rm {_slot_name(other)}` first if the stored copy "
                 "is not the one to keep."
             )
     stamp = when.strftime("%Y%m%d-%H%M%S")
@@ -653,9 +651,10 @@ def _park_locked(
     the two are no longer interchangeable: `switch`'s rollback has to move back
     the file that was actually written, not the one its name was derived from.
 
-    What else travels with a parked grant is the adapter's business:
-    `on_park` gets the file it landed in and the holder it left, and for Claude
-    that is where the account record is stamped and the holder's note retired.
+    What else travels with a parked grant is the adapter's business: `on_park`
+    gets the file it landed in and the holder it left, which is where an agent
+    whose record travels with the grant (see `ACCOUNT_RECORD_KEY`) stamps it and
+    retires whatever the holder was carrying.
     """
     live = live_credential_path(adapter, cfg)
     if not live.exists():
@@ -693,9 +692,9 @@ def park(
     where the command does nothing. The check is repeated under the lock by
     `_park_locked`, which is what makes it safe to do it early.
 
-    `incus` and `holder_users` are the switch-blocker inputs (see `switch`);
-    they are accepted here so both mutations take one shape, and phase 3 wires
-    them from the CLI.
+    `incus` and `holder_users` name the containers to check for a running agent,
+    as in `switch`: taking the credential out from under one is the same hazard
+    as swapping it. Phase 3 wires them from the CLI.
     """
     found, unreachable = members(adapter, cfg, gcfg)
     account = adapter.live_account(
@@ -703,6 +702,20 @@ def park(
     )
     parked: Path | None = None
     if live_credential_path(adapter, cfg).exists():
+        # Inside the `exists()` check, not above it: a park with nothing to park
+        # does nothing, and refusing a no-op would be noise. Everything below
+        # this line writes.
+        if not adapter.live_switch:
+            assert incus is not None  # see `switch`
+            blocking = adapter.blockers(cfg, incus, holder_users)
+            if blocking:
+                raise PoolError(
+                    f"{adapter.name} is running in: {', '.join(blocking)}. "
+                    f"Stop it there first — a park under a running {adapter.name} "
+                    "takes away the credential it is holding, and its next token "
+                    "refresh can write that account's tokens into the holder it "
+                    "no longer owns."
+                )
         holder = holder_dir(adapter, cfg)
         holder.mkdir(parents=True, exist_ok=True)
         with adapter.locks(holder):
@@ -762,8 +775,8 @@ def switch(
     if not adapter.live_switch:
         # Reachable only for an agent whose running session cannot survive a
         # switch, and such a caller has an `Incus` already — it is what named
-        # the holder's containers. Claude short-circuits above, which is why
-        # the parameter can default to None at all.
+        # the holder's containers. An adapter with `live_switch = True` never
+        # gets here, which is why the parameter can default to None at all.
         assert incus is not None
         blocking = adapter.blockers(cfg, incus, holder_users)
         if blocking:
@@ -825,18 +838,18 @@ def switch(
     )
 
 
-def live_account_refusal(name: str) -> str:
+def live_account_refusal(adapter: AccountAdapter, name: str) -> str:
     """The one wording for "that slot is the live login, park it first".
 
     `cli.claude_rm_cmd` refuses before it prompts, so the user is not asked to
     confirm a deletion that was never going to happen; `remove_slot` refuses
     again because it is callable without the CLI. Two sites, one sentence.
     """
-    return f"`{name}` is the live account — run `jailbee claude park` first."
+    return f"`{name}` is the live account — run `jailbee {adapter.name} park` first."
 
 
-def remove_slot(slot: Slot) -> None:
+def remove_slot(adapter: AccountAdapter, slot: Slot) -> None:
     """Delete a parked login permanently."""
     if slot.live:
-        raise PoolError(live_account_refusal(slot.name))
+        raise PoolError(live_account_refusal(adapter, slot.name))
     slot.path.unlink()

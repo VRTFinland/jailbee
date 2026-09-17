@@ -709,7 +709,7 @@ def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
     from jailbee import claude_groups
     from jailbee.global_config import GlobalConfig
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch(
         "jailbee.cli._load_global",
         return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "demo"}}),
@@ -728,7 +728,7 @@ def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mock
     directory under it would leave it mounting nothing."""
     from jailbee import claude_groups
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     claude_groups.group_dir("personal").mkdir(parents=True)
 
     result = runner.invoke(app, ["claude", "group", "rm", "personal"])
@@ -742,7 +742,7 @@ def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mock
 def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     from jailbee import claude_groups, claude_pool
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch("jailbee.cli._is_tty", return_value=True)
     holder = claude_groups.group_dir("demo")
     holder.mkdir(parents=True)
@@ -779,7 +779,7 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
 def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, mocker):
     from jailbee import claude_groups, claude_pool
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     # Without this the command refuses for want of a TTY, and the test would
     # pass without ever reaching the prompt it is about.
     mocker.patch("jailbee.cli._is_tty", return_value=True)
@@ -800,7 +800,7 @@ def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
     script may still be pointing at — so it stays an explicit request."""
     from jailbee import claude_groups, claude_pool
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch("jailbee.cli._is_tty", return_value=False)
     holder = claude_groups.group_dir("demo")
     holder.mkdir(parents=True)
@@ -819,7 +819,7 @@ def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
     command says what stopped it instead of removing it."""
     from jailbee import claude_groups
 
-    mocker.patch("jailbee.claude_pool.registered_repos", return_value=[])
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     holder = claude_groups.group_dir("demo")
     holder.mkdir(parents=True)
     (holder / "notes.txt").write_text("mine")

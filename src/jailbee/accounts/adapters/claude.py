@@ -78,8 +78,9 @@ class ClaudeAdapter:
         """Stamp the account into the parked file and retire the holder's note.
 
         Both belong to the grant that just left: `_stamp_account_record` keeps
-        Claude Code's own `oauthAccount` inside the file, and the note
-        describes a credential this holder no longer has.
+        Claude Code's own `oauthAccount` inside the file (see
+        `ACCOUNT_RECORD_KEY`), and the note describes a credential this holder
+        no longer has.
         """
         from jailbee import claude_pool
 
