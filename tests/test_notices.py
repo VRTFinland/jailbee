@@ -138,3 +138,40 @@ def test_dismissals_reads_the_database_once_per_process(monkeypatch, db_engine) 
     notices.dismissals()
     notices.dismissals()
     assert len(calls) == 1
+
+
+def test_legacy_config_dir_notice_is_dismissible(capsys, monkeypatch, tmp_path) -> None:
+    from jailbee import notices
+    from jailbee.paths import _warn_legacy_config_dir
+
+    path = tmp_path / ".gie" / "config.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+
+    _warn_legacy_config_dir.cache_clear()
+    notices.reset_caches()
+    _warn_legacy_config_dir(path)
+    assert "stops working in" in capsys.readouterr().err
+
+    _warn_legacy_config_dir.cache_clear()
+    ident = ("legacy-config-dir", str(path))
+    monkeypatch.setattr(notices, "dismissals", lambda: {ident: _dismissal(*ident)})
+    _warn_legacy_config_dir(path)
+    assert capsys.readouterr().err == ""
+
+
+def test_legacy_chrome_notice_is_dismissible_per_file(capsys, monkeypatch) -> None:
+    """Two files spelling `chrome:` are two decisions: dismissing the global one
+    must not silence a repo's own."""
+    from jailbee import notices
+    from jailbee.config.loader import _warn_legacy_chrome_block
+
+    notices.reset_caches()
+    _warn_legacy_chrome_block.cache_clear()
+    ident = ("legacy-chrome-block", "/g/global.yaml")
+    monkeypatch.setattr(notices, "dismissals", lambda: {ident: _dismissal(*ident)})
+    _warn_legacy_chrome_block("/g/global.yaml")
+    _warn_legacy_chrome_block("/r/.jailbee/config.yaml")
+    err = capsys.readouterr().err
+    assert "/g/global.yaml" not in err
+    assert "/r/.jailbee/config.yaml" in err

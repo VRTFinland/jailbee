@@ -218,13 +218,25 @@ def _warn_legacy_chrome_block(source: str) -> None:
 
     `tests/conftest.py` clears the cache between tests via the autouse
     `_reset_deprecation_notices` fixture.
+
+    Routed through `notices.emit` rather than calling `hint` directly, which
+    is what makes it dismissible (`jb dismiss legacy-chrome-block`) and what
+    adds the footer saying so. `source` is the notice's scope, so two files
+    spelling `chrome:` stay two independent decisions — the same reason the
+    message names the file.
     """
-    hint(
-        [
-            f"`chrome:` in {source} is deprecated and moves to `browsers.chrome` — "
-            f"see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
-            "where it is removed."
-        ]
+    from jailbee.notices import Notice, emit
+
+    emit(
+        Notice(
+            key="legacy-chrome-block",
+            scope=source,
+            lines=(
+                f"`chrome:` in {source} is deprecated and moves to `browsers.chrome` — "
+                f"see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
+                "where it is removed.",
+            ),
+        )
     )
 
 

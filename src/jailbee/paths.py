@@ -69,15 +69,24 @@ def _warn_legacy_config_dir(path: Path) -> None:
     already went. `hint` shares `warn_plain`'s other property too, which this
     message needs: the repo root is data, and Rich markup would read a
     `[...]` in a directory name as a style tag and silently delete it.
-    """
-    from jailbee.tui import hint
 
-    hint(
-        [
-            f"{path.parent.name}/config.yaml is deprecated and stops working in "
-            f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
-            f"in {display_path(path.parent.parent)}."
-        ]
+    Routed through `notices.emit` rather than calling `hint` directly, which
+    is what makes it dismissible (`jb dismiss legacy-config-dir`) and what
+    adds the footer saying so. The notice's scope is the file, for the same
+    reason the message names it — see `notices.Notice`.
+    """
+    from jailbee.notices import Notice, emit
+
+    emit(
+        Notice(
+            key="legacy-config-dir",
+            scope=str(path),
+            lines=(
+                f"{path.parent.name}/config.yaml is deprecated and stops working in "
+                f"{LEGACY_REMOVAL_VERSION} — run `git mv {path.parent.name} .jailbee` "
+                f"in {display_path(path.parent.parent)}.",
+            ),
+        )
     )
 
 

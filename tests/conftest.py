@@ -327,15 +327,24 @@ def _reset_deprecation_notices():
     legacy block would be the only one able to assert on the line, and
     every later test would read an empty stderr — a failure whose cause is
     an unrelated test that happened to run first.
+
+    `notices.reset_caches()` joins them for the same reason and one more:
+    both notices now go through `notices.emit`, whose dismissal lookup is
+    itself cached for the life of the process, and whose registry of applied
+    notices (`notices.active()`) would otherwise carry one test's notices
+    into the next.
     """
+    from jailbee import notices
     from jailbee.config.loader import _warn_legacy_chrome_block
     from jailbee.paths import _warn_legacy_config_dir
 
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
+    notices.reset_caches()
     yield
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
+    notices.reset_caches()
 
 
 @pytest.fixture(autouse=True)

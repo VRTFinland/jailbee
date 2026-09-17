@@ -25,8 +25,6 @@ import functools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jailbee.tui import hint
-
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -209,7 +207,14 @@ def emit(notice: Notice) -> None:
     `hint`, like the notices this replaces: stderr, so a warning never lands in
     the middle of ``jailbee ls --format json``, and no Rich markup, so a
     ``[...]`` in a path is not read as a style tag and silently deleted.
+
+    `hint` is imported here rather than at module level, exactly as the two
+    emit sites this centralises did: a module-level binding would not see
+    ``mocker.patch("jailbee.tui.hint")``, which is how this project's tests
+    assert on advisory output.
     """
+    from jailbee.tui import hint
+
     _ACTIVE[notice.ident] = notice
     if notice.ident in dismissals():
         return
