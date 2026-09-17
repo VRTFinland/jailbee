@@ -3067,3 +3067,97 @@ def test_doctor_update_check_survives_a_broken_state_db(mocker) -> None:
 
     assert got.ok is True
     assert "could not be read" in got.detail
+
+
+# ---- sockets in a shared agent mount ----
+
+
+def _codex_cfg(tmp_path, private):
+    from tests.conftest import make_cfg
+
+    return with_agent(
+        make_cfg(tmp_path),
+        "codex",
+        command="codex",
+        enabled=True,
+        shared=[{"subpath": "codex", "path": "~/.codex", "private": private}],
+    )
+
+
+def _bind_socket(directory):
+    """Bind a real AF_UNIX socket in `directory`.
+
+    Binds from inside the directory: pytest's `tmp_path` regularly exceeds the
+    108-byte sun_path limit, and a relative bind only has to fit the filename.
+    """
+    import os
+    import socket
+
+    directory.mkdir(parents=True, exist_ok=True)
+    s = socket.socket(socket.AF_UNIX)
+    cwd = os.getcwd()
+    try:
+        os.chdir(directory)
+        s.bind("app-server-control.sock")
+    finally:
+        os.chdir(cwd)
+    return s
+
+
+def test_doctor_flags_a_socket_in_a_shared_agent_mount(tmp_path):
+    from jailbee.doctor import _check_shared_agent_sockets
+
+    cfg = _codex_cfg(tmp_path, [])
+    assert cfg.shared_dir is not None
+    sock = _bind_socket(cfg.shared_dir / "codex" / "app-server-control")
+    try:
+        rows = _check_shared_agent_sockets(cfg)
+    finally:
+        sock.close()
+
+    assert len(rows) == 1
+    assert rows[0].ok is False
+    assert "app-server-control" in rows[0].detail
+    assert "private" in rows[0].detail
+
+
+def test_doctor_ignores_a_socket_under_a_private_subpath(tmp_path):
+    """Once carved out, the socket lives in a per-container directory — that
+    is the fix working, not a finding."""
+    from jailbee.doctor import _check_shared_agent_sockets
+
+    cfg = _codex_cfg(tmp_path, ["app-server-control"])
+    assert cfg.shared_dir is not None
+    sock = _bind_socket(cfg.shared_dir / "codex" / "app-server-control")
+    try:
+        assert _check_shared_agent_sockets(cfg) == []
+    finally:
+        sock.close()
+
+
+def test_doctor_is_quiet_when_a_shared_mount_has_no_socket(tmp_path):
+    from jailbee.doctor import _check_shared_agent_sockets
+
+    cfg = _codex_cfg(tmp_path, [])
+    assert cfg.shared_dir is not None
+    (cfg.shared_dir / "codex" / "sessions").mkdir(parents=True)
+    (cfg.shared_dir / "codex" / "config.toml").write_text("")
+
+    assert _check_shared_agent_sockets(cfg) == []
+
+
+def test_doctor_reports_a_socket_at_the_root_of_a_shared_mount(tmp_path):
+    """No containing subdirectory to name — the advice must still say what to
+    carve out rather than print an empty quote."""
+    from jailbee.doctor import _check_shared_agent_sockets
+
+    cfg = _codex_cfg(tmp_path, [])
+    assert cfg.shared_dir is not None
+    sock = _bind_socket(cfg.shared_dir / "codex")
+    try:
+        rows = _check_shared_agent_sockets(cfg)
+    finally:
+        sock.close()
+
+    assert len(rows) == 1
+    assert "app-server-control.sock" in rows[0].detail
