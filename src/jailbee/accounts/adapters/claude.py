@@ -333,6 +333,12 @@ def _login_block(raw: str | None) -> dict[str, Any] | None:
     One definition of "the login inside a credential", so the fingerprint a
     note is written with and the one it is checked against cannot be read out
     of two differently-shaped dicts.
+
+    **This is what `ClaudeAdapter.grant_block` answers with** (~340 lines
+    below), and through it every lineage comparison the engine makes:
+    `engine.login_of`, `engine._same_grant`, `engine.holds_same_login` and
+    `engine.grant_fingerprint` all reach Claude's credential shape here and
+    nowhere else. The engine's knowledge of `claudeAiOauth` is this function.
     """
     data = _credential_object(raw)
     if data is None:
