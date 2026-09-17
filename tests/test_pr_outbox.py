@@ -439,6 +439,7 @@ def _pr_info(number=1234, head_sha="abc1234", head_ref="feat/foo"):
 
 def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
     """Host-side mocks shared by the gate tests."""
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=[])
     mocker.patch("jailbee.git.get_remote_url", return_value="git@github.com:acme/widgets.git")
     mocker.patch("jailbee.pr.resolve_pr", return_value=pr or _pr_info())
     incus = mocker.MagicMock()
@@ -450,6 +451,7 @@ def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
 def test_resolve_target_accepts_the_containers_own_pr_scope(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import parse_manifest, resolve_target
 
+    mocker.patch("subprocess.run", side_effect=AssertionError("unexpected real subprocess"))
     incus = _target_setup(mocker, tmp_path)
     cfg = make_cfg(tmp_path)
     manifest = parse_manifest("001-x.json", _manifest_text(), {})
