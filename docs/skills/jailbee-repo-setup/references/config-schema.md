@@ -65,13 +65,18 @@ container:
   env:
     NODE_OPTIONS: "--max-old-space-size=4096"
     EXAMPLE_VAR: "bar"
+  path:
+    - scripts           # -> /home/dev/<container_prefix>/scripts
+    - ~/bin             # -> /home/dev/bin
+    - /opt/vendor/bin   # used as given
 ```
 
 Container-wide settings applied via the base Incus profile.
 
 - `env` (map, default `{}`) — env vars injected into every process Incus starts in the container: `jailbee shell`, `jailbee tmux`, autostart steps, and any nested tmux/shell window. Values are passed through verbatim (no shell expansion). Key names must match `[A-Za-z_][A-Za-z0-9_]*`. Per-step `autostart.env` and step `env` override on collision.
+- `path` (list, default `[]`) — container-side directories prepended to `PATH`, in the order written. This is where a repo's own `scripts/`/`bin/` goes so its commands work unqualified. A relative entry resolves against the container's repo checkout, a leading `~` against `/home/dev`, and an absolute entry is used as given; the host never resolves them, so a typo is silent. An entry may not be blank or contain `:` or a newline. Empty (the default) means no `PATH` is set at all; set it and the profile replaces `PATH` with these entries plus `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`. A `container.env.PATH` entry overrides the whole thing (`jailbee config validate` flags that combination). Layered like other lists: global entries first, repo's appended.
 
-`jailbee apply` re-applies the profile and prompts to restart running containers so they pick up the new env.
+`jailbee apply` re-applies the profile and prompts to restart running containers so they pick up the new env. `environment.*` is read at `incus exec` time, so a restart is not actually required for these two keys.
 
 ## `shared_dir`
 

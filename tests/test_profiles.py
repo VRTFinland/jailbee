@@ -186,6 +186,68 @@ def test_base_profile_container_env_overrides_gie_defaults():
     assert parsed["config"]["environment.DISPLAY"] == ":1"
 
 
+# ---------- container.path -> environment.PATH
+
+
+def test_base_profile_omits_path_when_container_path_is_unset(make_cfg, tmp_path):
+    """The promise a repo that has not opted in rests on: no `environment.PATH`
+    key at all, so Incus keeps supplying its own default."""
+    cfg = make_cfg(tmp_path)
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert "environment.PATH" not in parsed["config"]
+
+
+def test_base_profile_prepends_repo_relative_container_path(make_cfg, tmp_path):
+    """A relative entry resolves against the container's repo checkout, and the
+    additions come before the system directories so repo scripts shadow them.
+
+    The base is spelled out rather than imported: the whole point of setting
+    `environment.PATH` is that the profile *replaces* the value Incus would
+    supply, so the exact string is the contract.
+    """
+    cfg = make_cfg(
+        tmp_path, container_prefix="myrepo", container={"path": ["scripts", "tools/bin"]}
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.PATH"] == (
+        "/home/dev/myrepo/scripts:/home/dev/myrepo/tools/bin:"
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+
+
+def test_base_profile_container_path_keeps_an_absolute_entry_verbatim(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path, container_prefix="myrepo", container={"path": ["/opt/vendor/bin"]})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.PATH"].startswith("/opt/vendor/bin:/usr/local/sbin:")
+
+
+def test_base_profile_container_path_expands_a_leading_tilde(make_cfg, tmp_path):
+    """`~` is the container user's home, not the host's: these are container
+    paths, and the host never resolves them."""
+    cfg = make_cfg(tmp_path, container_prefix="myrepo", container={"path": ["~/bin"]})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.PATH"].startswith("/home/dev/bin:")
+
+
+def test_base_profile_container_path_normalises_an_entry(make_cfg, tmp_path):
+    """A trailing slash or a `.` segment must not reach PATH verbatim."""
+    cfg = make_cfg(tmp_path, container_prefix="myrepo", container={"path": ["./scripts/"]})
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.PATH"].startswith("/home/dev/myrepo/scripts:")
+
+
+def test_base_profile_container_env_path_overrides_container_path(make_cfg, tmp_path):
+    """`container.env` is the escape hatch that wins over every jailbee-derived
+    `environment.*` value — PATH included."""
+    cfg = make_cfg(
+        tmp_path,
+        container_prefix="myrepo",
+        container={"path": ["scripts"], "env": {"PATH": "/only/this"}},
+    )
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+    assert parsed["config"]["environment.PATH"] == "/only/this"
+
+
 def test_base_profile_sets_claude_config_dir_when_enabled(make_cfg, tmp_path):
     """`CLAUDE_CONFIG_DIR` must reach every `incus exec`, login shell or not
     — belt-and-suspenders for the `/etc/profile.d` export, which only

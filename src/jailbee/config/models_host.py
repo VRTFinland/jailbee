@@ -77,6 +77,22 @@ class ContainerConfig(BaseModel):
         ),
     )
 
+    path: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Container-side directories prepended to `PATH` for every process Incus "
+            "starts in the container. A relative entry resolves against the "
+            "container's repo checkout (`scripts` -> `/home/dev/<container_prefix>/"
+            "scripts`), a leading `~` against the container user's home; absolute "
+            "entries are used as given. These are container paths — the host never "
+            "resolves them, so nothing here is checked for existence. Leave empty "
+            "(the default) and jailbee sets no `PATH` at all, letting Incus supply "
+            "its own; set it and the profile replaces `PATH` with these entries "
+            "followed by the standard system directories. A `container.env.PATH` "
+            "entry overrides this outright."
+        ),
+    )
+
     @field_validator("env")
     @classmethod
     def _validate_env_names(cls, v: dict[str, str]) -> dict[str, str]:
@@ -85,6 +101,24 @@ class ContainerConfig(BaseModel):
                 raise ValueError(
                     f"invalid env var name: {name!r}. Must match "
                     r"[A-Za-z_][A-Za-z0-9_]*"
+                )
+        return v
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path_entries(cls, v: list[str]) -> list[str]:
+        """Reject entries that cannot survive being joined into `PATH`.
+
+        A `:` is the separator itself, so one entry would silently become two;
+        a newline would break the `incus profile edit` YAML round-trip. Blank
+        entries mean `PATH` gains an empty element, which POSIX shells read as
+        the current directory — a quiet security downgrade nobody asked for.
+        """
+        for entry in v:
+            if not entry.strip() or ":" in entry or "\n" in entry or "\r" in entry:
+                raise ValueError(
+                    f"invalid container.path entry: {entry!r}. Must be a non-blank "
+                    "container path containing no ':' or newline"
                 )
         return v
 

@@ -182,6 +182,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "group already holds"
         ),
     ),
+    UpgradeNote(
+        version=(1, 5, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the base profile carries the new `container.path` entries as "
+            "`environment.PATH` — nothing to re-apply unless you set that key"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

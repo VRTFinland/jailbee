@@ -829,6 +829,19 @@ class Config(BaseModel):
                 self.loose_auto_revert.duration()
             except ValueError as e:
                 issues.append(f"loose_auto_revert.after is unusable: {e}")
+        if self.container.path and "PATH" in self.container.env:
+            # Not a breakage: `container.env` is documented to win over every
+            # jailbee-derived `environment.*` value, and it does here too. But
+            # the losing key leaves no other trace — the rendered profile
+            # simply holds the env value — so this is the one place that can
+            # say the `container.path` entries are being ignored. Host-level
+            # only, so no branch's autostart graft can introduce it (see
+            # `deprecation_notices` for why that matters).
+            issues.append(
+                "container.env.PATH overrides container.path — the "
+                f"{len(self.container.path)} container.path entries are ignored. "
+                "Drop one of the two."
+            )
         if self.jetbrains.enabled and self.jetbrains.userprefs_from_host:
             host_path = Path.home() / ".java" / ".userPrefs" / "jetbrains"
             if not host_path.is_dir():
