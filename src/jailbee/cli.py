@@ -7027,9 +7027,7 @@ def pr_cmd(
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
-    scope = pr_flow.PrScope(
-        repo_root=cfg.repo_root, remote=cfg.upstream_remote, prefix="", subpath=None
-    )
+    scope = pr_flow.PrScope.for_repo(cfg)
     state = pr_flow.ContainerLabelState(incus, full, short=short)
     stacked_state = pr_flow.ContainerLabelState(
         incus, full, short=short, prefix=pr_flow.STACKED_LABEL_PREFIX
@@ -7821,14 +7819,9 @@ def submodule_pr_cmd(
         cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
     )
 
-    remote = submodule_pr.resolve_remote(cfg.repo_root, subpath)
+    scope = pr_flow.PrScope.for_submodule(cfg, subpath)
+    remote = scope.remote
     resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
-    scope = pr_flow.PrScope(
-        repo_root=cfg.repo_root / subpath,
-        remote=remote,
-        prefix=f"submodule '{subpath}': ",
-        subpath=subpath,
-    )
     if pr_number is not None:
         # After the transport, not before: for a submodule the host has never
         # seen, `scope.repo_root` does not exist as a git repo until the

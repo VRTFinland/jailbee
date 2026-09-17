@@ -52,6 +52,26 @@ class PrScope:
     prefix: str
     subpath: str | None
 
+    @classmethod
+    def for_repo(cls, cfg: Config) -> PrScope:
+        return cls(
+            repo_root=cfg.repo_root,
+            remote=cfg.upstream_remote,
+            prefix="",
+            subpath=None,
+        )
+
+    @classmethod
+    def for_submodule(cls, cfg: Config, subpath: str) -> PrScope:
+        from jailbee import submodule_pr
+
+        return cls(
+            repo_root=cfg.repo_root / subpath,
+            remote=submodule_pr.resolve_remote(cfg.repo_root, subpath),
+            prefix=f"submodule '{subpath}': ",
+            subpath=subpath,
+        )
+
     def noun(self, pr_label: str | None) -> str:
         """How to name the PR under discussion in a message."""
         base = f"PR #{pr_label}" if pr_label else "the container's PR"
@@ -61,6 +81,19 @@ class PrScope:
     def command(self) -> str:
         """The CLI invocation to point users at for follow-up commands."""
         return "jailbee submodule pr" if self.subpath else "jailbee pr"
+
+
+def candidate_scopes(cfg: Config) -> list[PrScope]:
+    """The superproject and initialized host submodules eligible for PR work."""
+    from jailbee import submodules
+
+    return [
+        PrScope.for_repo(cfg),
+        *(
+            PrScope.for_submodule(cfg, path)
+            for path in sorted(submodules.host_submodule_paths(cfg.repo_root))
+        ),
+    ]
 
 
 def reject_as_on_pr_update(

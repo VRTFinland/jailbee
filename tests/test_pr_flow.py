@@ -23,6 +23,43 @@ def _sub_scope(tmp_path: Path) -> pr_flow.PrScope:
     )
 
 
+def test_scope_for_repo_uses_superproject_settings(tmp_path):
+    cfg = _cfg(tmp_path)
+
+    assert pr_flow.PrScope.for_repo(cfg) == pr_flow.PrScope(
+        repo_root=cfg.repo_root,
+        remote=cfg.upstream_remote,
+        prefix="",
+        subpath=None,
+    )
+
+
+def test_scope_for_submodule_resolves_its_remote(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+
+    assert pr_flow.PrScope.for_submodule(cfg, "libs/foo") == pr_flow.PrScope(
+        repo_root=cfg.repo_root / "libs/foo",
+        remote="upstream",
+        prefix="submodule 'libs/foo': ",
+        subpath="libs/foo",
+    )
+
+
+def test_candidate_scopes_returns_repo_then_sorted_submodules(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["z", "a"])
+    mocker.patch(
+        "jailbee.submodule_pr.resolve_remote",
+        side_effect=lambda _repo_root, subpath: {"a": "a-upstream", "z": "z-origin"}[subpath],
+    )
+
+    scopes = pr_flow.candidate_scopes(cfg)
+
+    assert [scope.subpath for scope in scopes] == [None, "a", "z"]
+    assert [scope.remote for scope in scopes] == [cfg.upstream_remote, "a-upstream", "z-origin"]
+
+
 def test_noun_names_the_pr_number(tmp_path):
     assert _super_scope(tmp_path).noun("12") == "PR #12"
 

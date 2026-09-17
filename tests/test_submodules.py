@@ -6,6 +6,44 @@ from jailbee import submodules
 from jailbee.incus import IncusError
 
 
+def test_host_submodule_paths_returns_top_relative_paths_recursively(tmp_path, mocker):
+    repo_root = tmp_path / "repo"
+
+    def run_capture(cwd, args):
+        assert args[-1] == r"^submodule\..*\.path$"
+        paths = {
+            repo_root: "submodule.a.path libs/a\n",
+            repo_root / "libs/a": "submodule.b.path vendor/b\n",
+            repo_root / "libs/a/vendor/b": "",
+        }
+        return (bool(paths[cwd]), paths[cwd])
+
+    mocker.patch("jailbee.submodules.git.run_capture", side_effect=run_capture)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+
+    assert submodules.host_submodule_paths(repo_root) == ["libs/a", "libs/a/vendor/b"]
+
+
+def test_host_submodule_paths_omits_uninitialized_declared_checkout(tmp_path, mocker):
+    repo_root = tmp_path / "repo"
+
+    def run_capture(cwd, _args):
+        paths = {
+            repo_root: "submodule.a.path libs/a\nsubmodule.missing.path libs/missing\n",
+            repo_root / "libs/a": "",
+            repo_root / "libs/missing": "",
+        }
+        return (bool(paths[cwd]), paths[cwd])
+
+    mocker.patch("jailbee.submodules.git.run_capture", side_effect=run_capture)
+    mocker.patch(
+        "jailbee.submodules.host_subrepo_exists",
+        side_effect=lambda _root, subpath: subpath == "libs/a",
+    )
+
+    assert submodules.host_submodule_paths(repo_root) == ["libs/a"]
+
+
 def _exec_router(responses):
     """Return a side_effect that matches on a substring of the joined cmd.
 
