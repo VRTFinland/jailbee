@@ -1051,7 +1051,9 @@ def test_create_or_view_records_authorship_on_create(tmp_path, mocker):
     state.record.assert_called_once_with(head="feat/foo", author=True, adopted=False, number=123)
 
 
-@pytest.mark.parametrize(("is_update", "already_exists"), [(False, False), (False, True), (True, True)])
+@pytest.mark.parametrize(
+    ("is_update", "already_exists"), [(False, False), (False, True), (True, True)]
+)
 def test_outbox_create_and_existing_lookup_pin_scope_repo(
     tmp_path, mocker, is_update, already_exists
 ):
@@ -1068,8 +1070,10 @@ def test_outbox_create_and_existing_lookup_pin_scope_repo(
         assert kwargs["cwd"] == tmp_path / "libs/foo"
         if cmd[:3] == ["gh", "pr", "create"]:
             return CompletedProcess(
-                cmd, 1 if already_exists else 0,
-                "https://github.com/acme/library/pull/42", "already exists" if already_exists else ""
+                cmd,
+                1 if already_exists else 0,
+                "https://github.com/acme/library/pull/42",
+                "already exists" if already_exists else "",
             )
         return CompletedProcess(
             cmd, 0, '{"number": 42, "url": "https://github.com/acme/library/pull/42"}', ""
@@ -1077,9 +1081,16 @@ def test_outbox_create_and_existing_lookup_pin_scope_repo(
 
     mocker.patch("subprocess.run", side_effect=run)
     created = pr_flow.create_or_view_pr(
-        _sub_scope(tmp_path), mocker.MagicMock(), is_update=is_update,
-        head="library-head", base="main", title="Library title", body="Library body",
-        draft=True, label="jailbee submodule pr", use_outbox=True,
+        _sub_scope(tmp_path),
+        mocker.MagicMock(),
+        is_update=is_update,
+        head="library-head",
+        base="main",
+        title="Library title",
+        body="Library body",
+        draft=True,
+        label="jailbee submodule pr",
+        use_outbox=True,
     )
 
     assert created.number == 42
@@ -1118,9 +1129,16 @@ def test_outbox_create_refuses_an_unresolvable_scope(tmp_path, mocker):
 
     with pytest.raises(PrError, match="GitHub repository"):
         pr_flow.create_or_view_pr(
-            _sub_scope(tmp_path), mocker.MagicMock(), is_update=False,
-            head="library-head", base="main", title="t", body="b", draft=True,
-            label="jailbee submodule pr", use_outbox=True,
+            _sub_scope(tmp_path),
+            mocker.MagicMock(),
+            is_update=False,
+            head="library-head",
+            base="main",
+            title="t",
+            body="b",
+            draft=True,
+            label="jailbee submodule pr",
+            use_outbox=True,
         )
     create.assert_not_called()
 

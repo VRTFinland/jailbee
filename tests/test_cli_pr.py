@@ -107,10 +107,18 @@ def test_pr_outbox_pins_creation_and_update_lookup(mocker, tmp_path, is_update):
 
     labels = {"user.jailbee.base_branch": "main", "user.jailbee.branch": "feat/foo"}
     if is_update:
-        labels.update({"user.jailbee.pr": "123", "user.jailbee.pr_branch": "feat/foo", "user.jailbee.pr_author": "true"})
+        labels.update(
+            {
+                "user.jailbee.pr": "123",
+                "user.jailbee.pr_branch": "feat/foo",
+                "user.jailbee.pr_author": "true",
+            }
+        )
     _setup(mocker, tmp_path, labels=labels)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
-    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo"))
+    mocker.patch(
+        "jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source(branch="feat/foo")
+    )
     mocker.patch("jailbee.pr_outbox.record_consumed")
     mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
     commands = []
@@ -919,9 +927,7 @@ def test_pr_update_uses_the_outbox_instead_of_offering_a_regeneration(mocker, tm
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    assert edit.call_args.kwargs == {
-        "title": "feat: x", "body": "Body.", "repo": "acme/widgets"
-    }
+    assert edit.call_args.kwargs == {"title": "feat: x", "body": "Body.", "repo": "acme/widgets"}
     gen.assert_not_called()
     confirm.assert_not_called()
     record.assert_called_once()

@@ -542,8 +542,11 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
     from jailbee.submodule_pr import SubPublishResult
 
     cfg, incus, _record = _setup(
-        mocker, tmp_path,
-        state_record=pr_flow.PrRecord(123, "feat/foo", True, False) if outcome == "update" else None,
+        mocker,
+        tmp_path,
+        state_record=pr_flow.PrRecord(123, "feat/foo", True, False)
+        if outcome == "update"
+        else None,
     )
     mocker.patch(
         "jailbee.submodule_pr.publish_submodule_branch",
@@ -567,7 +570,9 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
         if cmd[:3] == ["gh", "pr", "create"]:
             existing = outcome in {"existing", "failed_edit"}
             return CompletedProcess(
-                cmd, 1 if existing else 0, "https://github.com/acme/lib-a/pull/123",
+                cmd,
+                1 if existing else 0,
+                "https://github.com/acme/lib-a/pull/123",
                 "already exists" if existing else "",
             )
         if cmd[:3] == ["gh", "pr", "view"]:
@@ -598,8 +603,12 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
     else:
         consumption.assert_called_once()
         consumed.assert_called_once_with(
-            incus, "sampleapp-feat-foo", source.manifest, 0,
-            "https://github.com/acme/lib-a/pull/123", uid=cfg.container_user.uid,
+            incus,
+            "sampleapp-feat-foo",
+            source.manifest,
+            0,
+            "https://github.com/acme/lib-a/pull/123",
+            uid=cfg.container_user.uid,
         )
 
 

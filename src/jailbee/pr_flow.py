@@ -1362,7 +1362,9 @@ def apply_pr_updates(
     if edit is not None:
         try:
             repo_args = {"repo": _outbox_repo(scope)} if edit.source is not None else {}
-            pr_module.edit_pr(scope.repo_root, number, title=edit.title, body=edit.body, **repo_args)
+            pr_module.edit_pr(
+                scope.repo_root, number, title=edit.title, body=edit.body, **repo_args
+            )
             title_changed = edit.title is not None
             body_changed = edit.body is not None
         except pr_module.PrError as exc:

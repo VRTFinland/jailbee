@@ -14,9 +14,9 @@ that loop into `pr_outbox` leaves them passing unchanged.
 from __future__ import annotations
 
 import json
-import pytest
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -302,7 +302,9 @@ def test_apply_publishes_without_a_prompt_off_a_tty_with_yes(mocker, tmp_path):
 @pytest.mark.parametrize(
     ("subpath", "command"), [(None, "jailbee pr"), ("libs/foo", "jailbee submodule pr")]
 )
-def test_apply_routes_a_pr_null_manifest_to_its_publishing_command(mocker, tmp_path, subpath, command):
+def test_apply_routes_a_pr_null_manifest_to_its_publishing_command(
+    mocker, tmp_path, subpath, command
+):
     from dataclasses import replace
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})

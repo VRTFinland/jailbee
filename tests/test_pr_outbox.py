@@ -644,9 +644,12 @@ def test_recorded_transported_submodule_description_then_comments_are_publishabl
     comment = mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/comment")
 
     if check_other_scope:
-        assert pending_pr_text(
-            cfg, incus, "c", scope=PrScope.for_repo(cfg), source_branch="super-head", uid=1000
-        ) is None
+        assert (
+            pending_pr_text(
+                cfg, incus, "c", scope=PrScope.for_repo(cfg), source_branch="super-head", uid=1000
+            )
+            is None
+        )
         warn.assert_not_called()
     selected = pending_pr_text(
         cfg,
@@ -1004,10 +1007,19 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
     assert outcome.failure is None
     assert outcome.applied == (0, 1, 2, 3)
     calls["review"].assert_called_once_with(
-        scope.repo_root, 1234, commit_id="abc1234", body="review body", comments=[], repo="acme/library"
+        scope.repo_root,
+        1234,
+        commit_id="abc1234",
+        body="review body",
+        comments=[],
+        repo="acme/library",
     )
-    calls["reply"].assert_called_once_with(scope.repo_root, 1234, 7, "reply body", repo="acme/library")
-    calls["comment"].assert_called_once_with(scope.repo_root, 1234, "comment body", repo="acme/library")
+    calls["reply"].assert_called_once_with(
+        scope.repo_root, 1234, 7, "reply body", repo="acme/library"
+    )
+    calls["comment"].assert_called_once_with(
+        scope.repo_root, 1234, "comment body", repo="acme/library"
+    )
     calls["edit"].assert_called_once_with(
         scope.repo_root, 1234, title="title", body="description body", repo="acme/library"
     )
