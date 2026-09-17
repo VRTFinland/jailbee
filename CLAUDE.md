@@ -49,6 +49,18 @@ isolated per-branch development environments using Incus system containers. See
   "one module runs `incus` outside `incus.py`" rule above.
   `registry.py` runs the mirror through the `Incus` wrapper and calls no
   `subprocess` of its own.
+- **`accounts/` is the agent account pool: the engine knows no agent, an
+  adapter knows one.** `accounts/engine.py` is the generic store —
+  park/switch/remove, slot naming, member resolution — driven only through
+  the `AccountAdapter` protocol in `accounts/adapters/base.py` (also home to
+  `Wiring` and the `ADAPTERS` registry); `accounts/models.py` carries the
+  agent-agnostic types (`Identity`, `Slot`, `Member`, `LiveAccount`);
+  `accounts/groups.py` resolves a container's credential group;
+  `accounts/overview.py` renders every login on the host, across holders.
+  `accounts/adapters/claude.py` is the only adapter so far, holding
+  everything Claude-specific. A second agent's pool is a new adapter module,
+  not a change to `engine.py`. Not to be confused with the container pool,
+  `pool.py`, above — same word, unrelated concern.
 
 ## Essential commands
 

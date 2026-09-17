@@ -4,8 +4,8 @@
 answers with lives here: where a login is recorded, how an account is named,
 which siblings of a credential belong to the machine rather than to the
 account, and what has to be written beside a credential the engine just moved.
-This is the only home of those names: `cli.py`, `doctor.py` and the tests
-import them from here directly.
+This is the only home of those names: every direct importer reaches them
+from here.
 """
 
 from __future__ import annotations
