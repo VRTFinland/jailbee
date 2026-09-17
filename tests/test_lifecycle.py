@@ -85,8 +85,13 @@ def _container(
     memory="4GB",
     created_at=None,
     user_config=None,
+    pid=None,
+    cpu_usage=None,
+    cpu_limit=None,
 ):
     config = {"limits.memory": memory}
+    if cpu_limit is not None:
+        config["limits.cpu"] = cpu_limit
     if user_config:
         config.update(user_config)
     raw = {
@@ -99,6 +104,10 @@ def _container(
         },
         "config": config,
     }
+    if pid is not None:
+        raw["state"]["pid"] = pid
+    if cpu_usage is not None:
+        raw["state"]["cpu"] = {"usage": cpu_usage}
     if created_at is not None:
         raw["created_at"] = created_at
     return raw
@@ -7930,3 +7939,77 @@ def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
     )
 
     set_group.assert_not_called()
+
+
+# ---- CPU activity inputs ----
+
+
+def test_list_containers_reads_the_cpu_inputs_from_the_payload(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-a", pid=4242, cpu_usage=7_000_000_000, cpu_limit="4")
+    ]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid == 4242
+    assert info.cpu_usage_ns == 7_000_000_000
+    assert info.cpu_limit == "4"
+    # Derived fields stay empty until a sampler fills them.
+    assert info.cpu_percent is None
+    assert info.activity == ()
+
+
+def test_list_containers_tolerates_a_payload_without_cpu_keys(make_cfg, tmp_path):
+    """Not every Incus build or instance state carries them, and a missing
+    key must leave a None rather than raise."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-a")]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid is None
+    assert info.cpu_usage_ns is None
+    assert info.cpu_limit is None
+
+
+def test_list_containers_ignores_a_zero_or_non_integer_pid(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    raw = _container(name="myrepo-a")
+    raw["state"]["pid"] = 0  # Incus reports 0 for an instance that is not running
+    incus.list_containers.return_value = [raw]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("4", 4),
+        ("0-3", 4),
+        ("0,2,4", 3),
+        ("2-3,8", 3),
+        (None, None),
+        ("", None),
+        ("0", None),
+        ("banana", None),
+        ("3-1", None),
+    ],
+)
+def test_parse_cpu_limit_counts_every_incus_spelling(raw, expected):
+    """Incus accepts a count ("4"), a pinned range ("0-3") and a pinned set
+    ("0,2,4"). Rendering a set as if it were a count would be a lie."""
+    from jailbee.lifecycle import _parse_cpu_limit
+
+    assert _parse_cpu_limit(raw) == expected

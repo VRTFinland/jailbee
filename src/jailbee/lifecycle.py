@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
+    from jailbee.procstat import ProcessActivity
 
 
 @dataclass
@@ -68,6 +69,16 @@ class ContainerInfo:
     claude_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
+    # Raw inputs for the CPU/DOING columns, from the same `incus list`
+    # payload as `memory_usage`. `init_pid` is the container's pid 1 on the
+    # host, which is how `procstat` finds the container's cgroup.
+    init_pid: int | None = None
+    cpu_usage_ns: int | None = None
+    cpu_limit: str | None = None  # raw `limits.cpu`; see `_parse_cpu_limit`
+    # Derived from two readings, written in place by `annotate_activity` the
+    # way `git_status` is written by the git tier — never by `list_containers`.
+    cpu_percent: float | None = None
+    activity: tuple[ProcessActivity, ...] = ()
     git_status: GitStatus | None = None
     job_phase: str | None = None
     job_pid: int | None = None
@@ -91,6 +102,38 @@ _SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
 # Sentinel used to sort containers with no known creation time first (they are
 # either mid-creation background rows or legacy containers) under "newest first".
 _NEWEST_FIRST = datetime.max.replace(tzinfo=UTC)
+
+
+def _parse_cpu_limit(raw: str | None) -> int | None:
+    """How many CPUs a ``limits.cpu`` value grants, or None if it says nothing.
+
+    Incus accepts three spellings: a count (``"4"``), a pinned range
+    (``"0-3"``) and a pinned set (``"0,2,4"``). They are not
+    interchangeable — rendering a set's first number as a count would
+    misreport the container's width — so anything unrecognised returns None
+    and the column simply shows no cap.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.isdigit():
+        return int(text) or None
+    total = 0
+    for part in text.split(","):
+        item = part.strip()
+        low, sep, high = item.partition("-")
+        if sep:
+            if not (low.isdigit() and high.isdigit()):
+                return None
+            span = int(high) - int(low) + 1
+            if span <= 0:
+                return None
+            total += span
+        elif item.isdigit():
+            total += 1
+        else:
+            return None
+    return total or None
 
 
 def _parse_incus_timestamp(raw: object) -> datetime | None:
@@ -217,6 +260,14 @@ def list_containers(
         mem_usage_raw = (state_data.get("memory") or {}).get("usage")
         memory_usage = mem_usage_raw if isinstance(mem_usage_raw, int) else None
 
+        pid_raw = state_data.get("pid")
+        init_pid = pid_raw if isinstance(pid_raw, int) and pid_raw > 0 else None
+
+        cpu_usage_raw = (state_data.get("cpu") or {}).get("usage")
+        cpu_usage_ns = cpu_usage_raw if isinstance(cpu_usage_raw, int) else None
+
+        cpu_limit = config.get("limits.cpu")
+
         mode_value = config.get("user.jailbee.mode") or "clone"
 
         base_branch_raw = config.get("user.jailbee.base_branch")
@@ -267,6 +318,9 @@ def list_containers(
                 claude_group=claude_group_raw or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
+                init_pid=init_pid,
+                cpu_usage_ns=cpu_usage_ns,
+                cpu_limit=cpu_limit,
             )
         )
 
