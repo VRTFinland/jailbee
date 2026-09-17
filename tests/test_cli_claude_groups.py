@@ -242,7 +242,7 @@ def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, t
     # myrepo-b, not myrepo-a, is the one Claude is running in.
     mocker.patch(
         "jailbee.accounts.groups.agent_running",
-        side_effect=lambda cfg, incus, container, command: container == "myrepo-b",
+        side_effect=lambda cfg, incus, container, *, command: container == "myrepo-b",
     )
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
@@ -278,7 +278,7 @@ def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker,
     writer = mocker.patch("jailbee.cli._write_repo_group")
     mocker.patch(
         "jailbee.accounts.groups.agent_running",
-        side_effect=lambda cfg, incus, container, command: container == "myrepo-a",
+        side_effect=lambda cfg, incus, container, *, command: container == "myrepo-a",
     )
 
     result = runner.invoke(app, ["claude", "group", "unset"])
