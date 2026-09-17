@@ -48,8 +48,13 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
             "jailbee.submodule_pr.detect_candidates",
             return_value=[
                 SubCandidate(
-                    path="lib/a", commits=2, branch="feat/foo", dirty=False,
-                    head_sha="aaa", recorded_sha="aaa", subject="feat: work",
+                    path="lib/a",
+                    commits=2,
+                    branch="feat/foo",
+                    dirty=False,
+                    head_sha="aaa",
+                    recorded_sha="aaa",
+                    subject="feat: work",
                 )
             ],
         )
@@ -59,7 +64,8 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
         mocker.patch(
             "jailbee.submodule_pr.SubmodulePrState.read",
             return_value=pr_flow.PrRecord(42, "feat/foo", True, False)
-            if authored else pr_flow.PrRecord(None, None, False, False),
+            if authored
+            else pr_flow.PrRecord(None, None, False, False),
         )
         mocker.patch("jailbee.pr.assert_github_remote")
         mocker.patch(
@@ -73,10 +79,15 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
             "jailbee.sync.publish_branch_from_container",
             return_value=PublishResult(
                 fetch=FetchResult(
-                    branch="feat/foo", old_oid="aaa", new_oid="bbb",
-                    base_oid="aaa", commits_added=2,
+                    branch="feat/foo",
+                    old_oid="aaa",
+                    new_oid="bbb",
+                    base_oid="aaa",
+                    commits_added=2,
                 ),
-                dirty=False, publish_name="feat/foo", forced=False,
+                dirty=False,
+                publish_name="feat/foo",
+                forced=False,
             ),
         )
     mocker.patch("jailbee.git.get_remote_url", return_value=f"https://github.com/{slug}")
@@ -86,14 +97,24 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
 
 @pytest.mark.parametrize("submodule", [False, True], ids=["pr", "submodule-pr"])
 @pytest.mark.parametrize("as_name", [False, True], ids=["branch", "as"])
-def test_already_exists_without_outbox_hint_uses_scoped_number(mocker, tmp_path, submodule, as_name):
+def test_already_exists_without_outbox_hint_uses_scoped_number(
+    mocker, tmp_path, submodule, as_name
+):
     cfg, incus, args, root, slug = _setup_command(mocker, tmp_path, submodule=submodule)
     files = {
         f"{number}-description.json": json.dumps(
             {
-                "version": 1, "repo": slug, "pr": number, "head_sha": None,
-                "actions": [{"type": "description", "title": f"Title for {number}",
-                             "body": f"Body for {number}"}],
+                "version": 1,
+                "repo": slug,
+                "pr": number,
+                "head_sha": None,
+                "actions": [
+                    {
+                        "type": "description",
+                        "title": f"Title for {number}",
+                        "body": f"Body for {number}",
+                    }
+                ],
             }
         )
         for number in (42, 99)
@@ -117,9 +138,12 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(mocker, tmp_path,
             return CompletedProcess(cmd, 1, "", "already exists")
         if cmd[:3] == ["gh", "pr", "view"]:
             number = 42 if repo == slug else 99
-            return CompletedProcess(cmd, 0, json.dumps(
-                {"number": number, "url": f"https://github.com/{repo}/pull/{number}"}
-            ), "")
+            return CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"number": number, "url": f"https://github.com/{repo}/pull/{number}"}),
+                "",
+            )
         assert cmd[:3] == ["gh", "pr", "edit"]
         edits.append((repo, cmd[3], cmd[cmd.index("--title") + 1], cmd[cmd.index("--body") + 1]))
         return CompletedProcess(cmd, 0, "", "")
@@ -133,8 +157,12 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(mocker, tmp_path,
     assert [call.kwargs.get("for_pr") for call in selected.call_args_list] == [None, 42]
     assert all(cmd[cmd.index("--repo") + 1] == slug for cmd in commands)
     consumed.assert_called_once_with(
-        incus, "sampleapp-feat-foo", "42-description.json", 0,
-        f"https://github.com/{slug}/pull/42", uid=cfg.container_user.uid,
+        incus,
+        "sampleapp-feat-foo",
+        "42-description.json",
+        0,
+        f"https://github.com/{slug}/pull/42",
+        uid=cfg.container_user.uid,
     )
     assert "#42" in result.output and "#99" not in result.output
 
@@ -174,9 +202,12 @@ def test_update_mutations_keep_lookup_repository(
         if cmd[:3] == ["gh", "pr", "view"]:
             number = 42 if repo == slug else 99
             lookups.append((repo, str(number)))
-            return CompletedProcess(cmd, 0, json.dumps(
-                {"number": number, "url": f"https://github.com/{repo}/pull/{number}"}
-            ), "")
+            return CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"number": number, "url": f"https://github.com/{repo}/pull/{number}"}),
+                "",
+            )
         assert cmd[:3] in (["gh", "pr", "edit"], ["gh", "pr", "ready"])
         mutations.append((repo, cmd[3], cmd))
         return CompletedProcess(cmd, 0, "", "")

@@ -1239,10 +1239,21 @@ def test_outbox_updates_refuse_mutations_without_a_repository(tmp_path, mocker, 
     warn = mocker.patch("jailbee.pr_flow.warn")
 
     updated = pr_flow.apply_pr_updates(
-        _cfg(tmp_path), mocker.MagicMock(), "c1", _super_scope(tmp_path),
-        number=42, branch="feat/foo", base="main", title=title, body=None,
-        description=False, ready=True, ai_on=False, foreign_head=False,
-        url="https://github.com/acme/widgets/pull/42", use_outbox=True,
+        _cfg(tmp_path),
+        mocker.MagicMock(),
+        "c1",
+        _super_scope(tmp_path),
+        number=42,
+        branch="feat/foo",
+        base="main",
+        title=title,
+        body=None,
+        description=False,
+        ready=True,
+        ai_on=False,
+        foreign_head=False,
+        url="https://github.com/acme/widgets/pull/42",
+        use_outbox=True,
     )
 
     run.assert_not_called()
