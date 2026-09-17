@@ -81,3 +81,82 @@ def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
         )
     except (IndexError, ValueError):
         return None
+
+
+def _unified_cgroup_path(raw: str) -> str:
+    """The cgroup path from a /proc/<pid>/cgroup file.
+
+    Prefers the v2 unified line (``0::<path>``) and falls back to the first
+    v1 line, so a hybrid host still yields a usable path.
+    """
+    fallback = ""
+    for line in raw.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        if parts[0] == "0" and parts[1] == "":
+            return parts[2]
+        if not fallback:
+            fallback = parts[2]
+    return fallback
+
+
+def _container_cgroup(raw: str, container: str) -> str | None:
+    """Cut init's cgroup path back to the container's own cgroup.
+
+    systemd inside the container puts pid 1 in ``init.scope``, so init's
+    path names a child of what we want. The cut is made after the first
+    component carrying the container's name — which assumes only that Incus
+    names the cgroup after the instance, not where it puts it — and falls
+    back to the topmost component for a layout that does not.
+    """
+    parts = [p for p in _unified_cgroup_path(raw).split("/") if p]
+    if not parts:
+        return None
+    for i, part in enumerate(parts):
+        if container in part:
+            return "/".join(parts[: i + 1])
+    return parts[0]
+
+
+def read_container_pids(
+    init_pid: int,
+    container: str,
+    *,
+    proc_root: Path = PROC_ROOT,
+    cgroup_root: Path = CGROUP_ROOT,
+) -> list[int]:
+    """Every pid inside the container whose init process is ``init_pid``.
+
+    Under cgroup v2 a ``cgroup.procs`` file lists only the processes sitting
+    directly in that cgroup, and a systemd container spreads its work across
+    ``system.slice/<unit>.service``, ``user.slice/…`` and more — so the
+    whole subtree is walked and the pids unioned.
+
+    Returns an empty list for anything unreadable: the caller renders a
+    dash, and a gather must never fail over this.
+    """
+    try:
+        raw = (proc_root / str(init_pid) / "cgroup").read_text()
+    except OSError:
+        return []
+    rel = _container_cgroup(raw, container)
+    if rel is None:
+        return []
+    base = cgroup_root / rel
+    pids: list[int] = []
+    try:
+        procs_files = sorted(base.rglob("cgroup.procs"))
+    except OSError:
+        return []
+    for procs in procs_files:
+        try:
+            text = procs.read_text()
+        except OSError:
+            continue  # a cgroup can be torn down mid-walk
+        for token in text.split():
+            try:
+                pids.append(int(token))
+            except ValueError:
+                continue
+    return pids

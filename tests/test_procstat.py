@@ -70,3 +70,72 @@ def test_read_process_returns_none_for_a_truncated_stat_line(tmp_path):
     (d / "stat").write_text("8 (claude) S 1 1\n")
 
     assert procstat.read_process(8, proc_root=tmp_path) is None
+
+
+def write_cgroup(proc_root: Path, pid: int, path: str) -> None:
+    """Write a cgroup v2 line for `pid` (``0::<path>``)."""
+    d = proc_root / str(pid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "cgroup").write_text(f"0::{path}\n")
+
+
+def write_cgroup_procs(cgroup_root: Path, path: str, pids: list[int]) -> None:
+    d = cgroup_root / path.lstrip("/")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "cgroup.procs").write_text("".join(f"{p}\n" for p in pids))
+
+
+def test_read_container_pids_walks_the_whole_subtree(tmp_path):
+    """A systemd container keeps almost nothing in its root cgroup: pid 1 is
+    in init.scope and the real work is under system.slice/user.slice.
+    Reading only the root's cgroup.procs reports an empty container, which
+    looks exactly like the feature not working."""
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/lxc.payload.gie-demo/init.scope")
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo", [])
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo/init.scope", [500])
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo/system.slice/ssh.service", [610])
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo/user.slice/session.scope", [700, 701])
+
+    pids = procstat.read_container_pids(500, "gie-demo", proc_root=proc, cgroup_root=cg)
+
+    assert sorted(pids) == [500, 610, 700, 701]
+
+
+def test_read_container_pids_climbs_out_of_init_scope(tmp_path):
+    """init's own cgroup is a CHILD of the container's. Using it as the base
+    would return pid 1 and nothing else."""
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/lxc.payload.gie-demo/init.scope")
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo/init.scope", [500])
+    write_cgroup_procs(cg, "/lxc.payload.gie-demo/system.slice/work.service", [900])
+
+    pids = procstat.read_container_pids(500, "gie-demo", proc_root=proc, cgroup_root=cg)
+
+    assert 900 in pids
+
+
+def test_read_container_pids_falls_back_to_the_first_component(tmp_path):
+    """The container's name is the cut marker, but a cgroup layout that does
+    not carry it must still yield a base rather than nothing."""
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/some.scope/deeper")
+    write_cgroup_procs(cg, "/some.scope/deeper", [501])
+
+    assert procstat.read_container_pids(500, "gie-demo", proc_root=proc, cgroup_root=cg) == [501]
+
+
+def test_read_container_pids_is_empty_when_the_cgroup_is_unreadable(tmp_path):
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    write_cgroup(proc, 500, "/lxc.payload.gie-demo")
+
+    assert procstat.read_container_pids(500, "gie-demo", proc_root=proc, cgroup_root=cg) == []
+
+
+def test_read_container_pids_is_empty_without_a_cgroup_file(tmp_path):
+    assert (
+        procstat.read_container_pids(
+            500, "gie-demo", proc_root=tmp_path / "proc", cgroup_root=tmp_path / "cgroup"
+        )
+        == []
+    )
