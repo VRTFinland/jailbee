@@ -11,13 +11,13 @@ import os
 import re
 import tarfile
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import local
-from typing import Iterator, Literal, TypeGuard
+from typing import Literal, TypeGuard
 
 from jailbee.db import state_dir
 from jailbee.incus import Incus, IncusError
