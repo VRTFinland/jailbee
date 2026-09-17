@@ -7149,10 +7149,12 @@ def pr_cmd(
             pr_label = str(found_number)
             stored_pr_branch = found_head
 
-    # A container whose PR jailbee did not create (`jailbee new --pr`, adopted or not).
-    # Two things follow: --force needs its own confirmation (it rewrites a
-    # branch the PR author may own), and the interactive "regenerate the
-    # description?" offer is suppressed — adoption only ever promised commits.
+    # A container whose PR jailbee did not create (`jailbee new --pr`, or a PR
+    # adopted by number or by branch name). Three things follow: --force needs
+    # its own confirmation (it rewrites a branch the PR author may own), the
+    # interactive "regenerate the description?" offer is suppressed — adoption
+    # only ever promised commits — and an outbox description is narrowed to one
+    # that names this PR, then confirmed once before it replaces the body.
     is_foreign_pr_head = bool(pr_label) and not is_author
     if force and pr_label and not is_author:
         pr_flow.confirm_foreign_force_push(scope, short, pr_label, stored_pr_branch, yes=yes)
@@ -7314,7 +7316,7 @@ def pr_cmd(
             description=description,
             ready=ready,
             ai_on=ai_on,
-            offer_regen=not is_foreign_pr_head,
+            foreign_head=is_foreign_pr_head,
             url=created.url,
             use_outbox=not no_outbox,
             # What the create path already resolved this run, when `gh pr
@@ -7978,7 +7980,7 @@ def submodule_pr_cmd(
             description=description,
             ready=ready,
             ai_on=ai_on,
-            offer_regen=not is_foreign,
+            foreign_head=is_foreign,
             # No `use_outbox`: a submodule PR is a different repository from
             # the one the container's outbox manifests name.
             url=created.url,

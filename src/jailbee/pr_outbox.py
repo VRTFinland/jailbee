@@ -533,10 +533,13 @@ def resolve_target(
        slug matches ``manifest.repo``. This is the gate that matters most —
        without it a container could aim the host's `gh` at an unrelated
        repository.
-    2. PR lock (skipped when ``manifest.pr is None``): ``manifest.pr`` must
-       be among the numbers the container itself owns — its
-       ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX`` labels, or,
-       when neither is set, the PR (if any) for the container's own branch.
+    2. PR lock: ``manifest.pr`` must be among the numbers the container itself
+       owns — its ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX``
+       labels, or, when neither is set, the PR (if any) for the container's
+       own branch. A ``pr: null`` manifest names no PR to lock, so it instead
+       *resolves* to the container's one bound PR when there is exactly one,
+       and stays unresolved (``Target.pr is None`` — the caller's deferral to
+       `jailbee pr`) when there is none or when both labels are set.
     3. Staleness: computed for every manifest with a PR, but it only raises
        (as `StaleError`, the one refusal `force` relaxes) when the manifest
        carries a `ReviewAction` and `force` was not given — a moved head
@@ -555,9 +558,6 @@ def resolve_target(
             f"manifest {manifest.name} targets {manifest.repo}, but this repo is {slug}"
         )
 
-    if manifest.pr is None:
-        return Target(manifest=manifest, pr=None, stale=False)
-
     # Imported lazily: pr_flow will import this module once the CLI (Task 9)
     # and `jb pr` (Tasks 10-12) are wired up, and a module-level import here
     # would close that into an import cycle.
@@ -572,20 +572,37 @@ def resolve_target(
             except ValueError:
                 pass  # a non-numeric label value is not a PR this container owns
 
-    if not owned_numbers:
-        branch = incus.config_get(container, "user.jailbee.branch")
-        if branch is not None:
-            found = pr.find_pr_for_branch(cfg.repo_root, branch)
-            if found is not None:
-                owned_numbers.add(found.number)
+    if manifest.pr is None:
+        # `pr: null` is "the PR `jailbee pr` would open from this container".
+        # Once the container HAS one bound — jailbee opened it, or the user
+        # bound it with `jailbee pr --pr N` — that IS the PR the description was
+        # written for, so it resolves to it. Without this, an adopted
+        # container's `pr: null` description could be published by neither
+        # command: `jailbee pr` withholds it (`_eligible_for`'s `numbered_only`)
+        # and this one would defer it to `jailbee pr` for ever.
+        #
+        # A *label* is the whole condition. The branch lookup below is not
+        # consulted: it finds a PR nobody has adopted, and binding an agent's
+        # description to one is a decision only the user makes.
+        if len(owned_numbers) != 1:
+            return Target(manifest=manifest, pr=None, stale=False)
+        number = next(iter(owned_numbers))
+    else:
+        if not owned_numbers:
+            branch = incus.config_get(container, "user.jailbee.branch")
+            if branch is not None:
+                found = pr.find_pr_for_branch(cfg.repo_root, branch)
+                if found is not None:
+                    owned_numbers.add(found.number)
 
-    if manifest.pr not in owned_numbers:
-        raise GateError(
-            f"manifest {manifest.name} references PR #{manifest.pr}, which "
-            f"container {container} does not own"
-        )
+        if manifest.pr not in owned_numbers:
+            raise GateError(
+                f"manifest {manifest.name} references PR #{manifest.pr}, which "
+                f"container {container} does not own"
+            )
+        number = manifest.pr
 
-    info = pr.resolve_pr(cfg.repo_root, manifest.pr, remote=cfg.upstream_remote)
+    info = pr.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
     stale = manifest.head_sha not in (None, info.head_sha)
     if stale and not force and any(isinstance(a, ReviewAction) for a in manifest.actions):
         raise StaleError(
@@ -1403,7 +1420,7 @@ def _description_title(action: DescriptionAction, fallback: str) -> str:
     return candidate
 
 
-def _eligible_for(manifest: Manifest, for_pr: int | None) -> bool:
+def _eligible_for(manifest: Manifest, for_pr: int | None, *, numbered_only: bool = False) -> bool:
     """True if `manifest`'s description belongs to the PR this run is about.
 
     `pr: null` means "the PR `jailbee pr` is about to open from this
@@ -1414,9 +1431,18 @@ def _eligible_for(manifest: Manifest, for_pr: int | None) -> bool:
     post it where it belongs. The update path passes its own number and accepts
     both — `pr: null` because the container may have written the description
     before the PR existed, `for_pr` because that is the PR being updated.
+
+    `numbered_only` drops the `pr: null` half of that update-path answer: it is
+    set on a PR jailbee did not open, where "the PR this container is about to
+    open" is not a statement about *this* PR at all, and a description written
+    before any PR existed must not land on a stranger's. A manifest that names
+    `for_pr` still passes — naming the number is the container saying which PR
+    it meant.
     """
     if for_pr is None:
         return manifest.pr is None
+    if numbered_only:
+        return manifest.pr == for_pr
     return manifest.pr in (None, for_pr)
 
 
@@ -1450,6 +1476,7 @@ def pending_pr_text(
     *,
     uid: int | None,
     for_pr: int | None = None,
+    numbered_only: bool = False,
     pick: Callable[[list[str]], str | None] | None = None,
 ) -> OutboxPrText | None:
     """The pending `description` action, as a `PrText`, or None.
@@ -1469,10 +1496,18 @@ def pending_pr_text(
        upstream remote. This is the gate the design calls the costliest to
        skip: without it a container could hand `jailbee pr` text written for
        an unrelated repository. Failing it warns and skips.
-    2. PR ownership — `for_pr`; see `_eligible_for`. A manifest for some other
-       PR is skipped *silently*: a review container legitimately carries such
-       manifests for `jailbee review apply`, and warning about them on every
-       `jailbee pr` run would be noise, not news.
+    2. PR ownership — `for_pr` and `numbered_only`; see `_eligible_for`. A
+       manifest for some other PR is skipped *silently*: a review container
+       legitimately carries such manifests for `jailbee review apply`, and
+       warning about them on every `jailbee pr` run would be noise, not news.
+
+    `numbered_only` is the exception to that silence. It is set on a PR jailbee
+    did not open, where it withholds a `pr: null` description the caller would
+    otherwise have used — so the run *would* differ had the manifest named its
+    PR, and saying nothing would leave the user watching `jailbee pr` ignore a
+    description with no way to tell why. Each withheld manifest is named, with
+    the reason and nothing else: what to do about it is the offer's line, once
+    the PR is up.
     """
     try:
         outbox = read_outbox(incus, container, uid=uid)
@@ -1493,6 +1528,7 @@ def pending_pr_text(
         return None
 
     candidates: list[tuple[str, int, DescriptionAction]] = []
+    withheld: list[str] = []
     for name in outbox.manifest_names:
         try:
             manifest = parse_manifest(name, outbox.files[name], outbox.files)
@@ -1502,14 +1538,29 @@ def pending_pr_text(
         if manifest.repo != slug:
             warn(f"Ignoring outbox manifest {name}: it targets {manifest.repo}, not {slug}.")
             continue
-        if not _eligible_for(manifest, for_pr):
-            continue
-        candidates.extend(
+        described = [
             (name, index, action)
             for index in pending_indices(manifest, read_progress(outbox, name))
             if isinstance(action := manifest.actions[index], DescriptionAction)
-        )
+        ]
+        if not _eligible_for(manifest, for_pr, numbered_only=numbered_only):
+            # Only the `numbered_only` half of the gate is announced, and only
+            # when it actually held something back: `_eligible_for`'s other
+            # refusals are about manifests that were never this run's to use.
+            if described and numbered_only and _eligible_for(manifest, for_pr):
+                withheld.append(name)
+            continue
+        candidates.extend(described)
 
+    for name in withheld:
+        # The reason only. What to do about it is the offer's line, printed
+        # once the PR is up for every description this run left pending —
+        # saying it here as well would be the same remedy twice in one run.
+        warn(
+            f"{name} proposes a description for the PR this container would open "
+            f"(`pr: null`), and PR #{for_pr} was not opened by jailbee; not putting "
+            f"an agent's text on a PR it was not written for."
+        )
     if not candidates:
         return None
 
@@ -1736,11 +1787,18 @@ def _gate_manifests(
 
     `comments_only` is the offer's rule and it changes two things. It narrows
     the candidates to manifests that still hold an unapplied non-`description`
-    action (see `_has_pending_comment`), and it turns every refusal into a
+    action (see `_offerable_indices`), and it turns every refusal into a
     warning: `jailbee pr` has already created or updated the PR, so nothing a
     container wrote may turn that run into a failure. A malformed manifest, a
     moved head, a `gh` that would not answer — each is reported as held back,
     with the command that deals with it, and the run goes on.
+
+    A manifest narrowed *out* by that rule still holding a pending description
+    gets a note of its own. It is the run's only word about a description
+    `jailbee pr` did not use — the explicit-flag case, a declined confirmation,
+    a manifest for another PR — and without it a description-only manifest
+    passes through the whole command without ever being mentioned, which is
+    how a staged description could be ignored with nothing on screen to say so.
 
     Without it — `jailbee review apply`'s own mode — a manifest that cannot be
     published is a refusal the caller exits non-zero on, and a ``pr: null``
@@ -1761,8 +1819,18 @@ def _gate_manifests(
             else:
                 refusals.append(str(e))
             continue
-        if comments_only and not _offerable_indices(manifest, read_progress(outbox, name)):
-            continue
+        if comments_only:
+            progress = read_progress(outbox, name)
+            if not _offerable_indices(manifest, progress):
+                if pending_indices(manifest, progress):
+                    # Two lines, as with the `pr: null` deferral below: the
+                    # command must not be split across a wrap, which is what
+                    # one long line does at 80 columns.
+                    notes.append(
+                        f"{name} still holds a description this run did not use.\n"
+                        f"  `jailbee review apply {short}` publishes it."
+                    )
+                continue
         try:
             target = resolve_target(cfg, incus, container, manifest, force=force)
         except GateError as e:

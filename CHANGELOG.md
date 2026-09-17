@@ -112,6 +112,23 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **A PR adopted by number ignored the description its own agent wrote.**
+  `jailbee pr` suppresses the "regenerate the description with Claude?" offer
+  on a PR it did not open, and the outbox lookup shared that one flag — so a
+  container whose PR was bound with `jailbee pr --pr N` (your own PR, opened
+  from another container) silently dropped a staged description and reported
+  `description unchanged`, with nothing on screen to say a manifest existed.
+  The two are now separate decisions. On such a PR the lookup is *narrowed*
+  to a description that names that PR number, and applying it asks once
+  (`Replace PR #N's description with the one <manifest> proposes?`; off a TTY
+  the answer is no, and declining consumes nothing). A `pr: null`
+  description — "the PR this container would open", which that PR is not —
+  stays withheld, and is now named rather than passed over in silence.
+  `jailbee review apply` no longer refuses it either: a `pr: null` manifest
+  resolves to the container's own PR when exactly one is bound to it, which
+  previously left such a description publishable by neither command. Every
+  description `jailbee pr` leaves pending, for any reason, is now named in
+  the offer it makes once the PR is up.
 - **The `codex` agent preset could not install itself.** It ran `npm i -g
   @openai/codex`, but npm is in the golden image only when
   `golden.stacks.node` is on — so on any image without the node stack

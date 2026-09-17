@@ -35,7 +35,7 @@ manifest by hand, follow it exactly rather than guessing from the examples.
 |---|---|
 | `version` | Must be `1`. Anything else is refused by name ("manifest version 2 needs a newer JailBee"). |
 | `repo` | `owner/name`. Checked against the host's origin (gate 1). |
-| `pr` | Integer, checked against the container's own PR (gate 2) — or `null`, meaning "the PR `jb pr` is about to open from this container". A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. |
+| `pr` | Integer, checked against the container's own PR (gate 2) — or `null`, meaning "the PR `jb pr` is about to open from this container". A `pr: null` manifest may contain **only** a single `description` action: comments need a PR that exists and a diff to anchor to. **Name the number whenever the PR already exists** (`gh pr view --json number`): on a PR JailBee did not open — including the user's own, adopted with `jb pr --pr N` — `jb pr` uses only a description that names the PR it is updating. |
 | `head_sha` | Full sha as GitHub reports `headRefOid`. Checked for staleness (gate 3), which applies only to `review` actions. `null` is allowed on a `pr: null` manifest. |
 | `actions` | Non-empty list, applied in order. |
 
@@ -222,6 +222,10 @@ Notes on this example:
   this manifest may contain **only** the single `description` action; a
   `pr: null` manifest with a `review`, `reply`, or `comment` action is
   refused, since there is no PR to anchor them to.
+- Check first. If `gh pr view` finds a PR for this branch, write its number
+  instead of `null`: `jb pr` will not put a `pr: null` description on a PR it
+  did not open itself, and the number is what tells it this text was written
+  for that PR.
 - `branch` is populated because this text is meant for the `jb pr` **create**
   path, where a proposed head branch name matters. On the `jb review apply`
   update path, `branch` is ignored.

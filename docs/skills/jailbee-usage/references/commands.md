@@ -884,8 +884,10 @@ manifest still references) and gets a line in
 `~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
 nothing left to publish for it — nothing double-posts. A manifest naming a
 PR the container does not own, a repo mismatch, or a malformed field is a
-refusal (exit non-zero); a `pr: null` manifest is left as a deferral for
-`jailbee pr` to consume, not a refusal.
+refusal (exit non-zero). A `pr: null` manifest resolves to the container's
+own PR when exactly one is bound to it (opened by `jailbee pr`, or adopted
+with `jailbee pr --pr N`); with none bound — or with both a PR and a stacked
+PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
 
 ### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
 
@@ -922,14 +924,24 @@ it. Omit `MANIFEST` to drop everything pending in the container.
 - **`--no-ai` does not disable the outbox.** A manifest is text that
   already exists, not an AI run; `--no-ai` only turns off the *generation*
   step.
+- **On a PR jailbee did not open** — `jailbee new --pr N`, or your own PR
+  adopted with `jailbee pr --pr N` — the outbox is narrowed and confirmed
+  rather than skipped: only a description that *names* that PR number is
+  considered (a `pr: null` one is not, and is reported as withheld), and
+  applying it asks once, `Replace PR #N's description with the one
+  <manifest> proposes? [y/N]`. Off a TTY the answer is no. Declining
+  consumes nothing — `jailbee review apply` still publishes it.
 - **`claude.ai_pr_branch: false` does not suppress a rename the manifest
   itself proposes.** The branch field in a `description` action is
   confirmed like an AI-proposed name regardless of that toggle.
 - After a successful create or update, if non-description actions
   (comments, replies) are still pending, `jailbee pr` offers to publish
   them: `Post N pending PR comment(s) now? [y/N]`. A pending description is
-  never part of that offer. Declining, or running off a TTY, prints the
-  count and the `jailbee review apply` command to run later.
+  never part of that offer, but it is always *named* in it — a description
+  the run did not use prints `<manifest> still holds a description this run
+  did not use.` with the `jailbee review apply` command that publishes it,
+  so a staged description is never ignored in silence. Declining, or running
+  off a TTY, prints the count and the same command to run later.
 
 ### Elsewhere this shows up
 

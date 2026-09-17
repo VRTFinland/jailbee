@@ -182,12 +182,33 @@ autostart:
   step_timeout: 600
   on_create:
     # `uv` itself is baked into the golden image (.jailbee/install.d/45-uv.sh).
-    # sync-deps still runs here because it needs the cloned source tree
-    # and pulls Python packages from PyPI (hence `network: loose`).
-    - name: sync-deps
-      run: UV_LINK_MODE=copy ~/.local/bin/uv sync
+    # sync-deps still runs here because it needs the cloned source tree and
+    # pulls Python packages from PyPI — hence the stage's `network: loose`.
+    # `network:` belongs on the stage, not on the step: the step-level spelling
+    # still runs, but it is deprecated (removal in 2.0.0) and makes
+    # `jailbee config validate` exit non-zero.
+    - stage: sync-deps
       network: loose
+      steps:
+        - name: sync-deps
+          run: UV_LINK_MODE=copy ~/.local/bin/uv sync
   on_start: []
+  # No `detach: true` anywhere above, on purpose — it would cost the one thing
+  # it looks like it buys. `agents.claude.autostart` (global.yaml) launches
+  # Claude from the reserved `agents` stage, which jailbee inserts at the
+  # *attach boundary* of on_start, so `jailbee new --tmux` (or `after_new:
+  # tmux`) lands in the `claude` window with Claude already up. A `detach: true`
+  # in on_create hands the session over before on_start is reached at all;
+  # on_start then runs entirely in the background supervisor and the claude
+  # window is created *after* the attach, where `_attach_tmux` can no longer
+  # select it by name and silently falls back to window 0. What it would buy
+  # back is ~0.5 s: the uv cache is a shared mount (see `shared_caches`), so a
+  # fresh container syncs from a warm cache.
+  #
+  # Detaching only pays off with the work moved into on_start *behind* an
+  # explicit `- stage: agents` carrying `detach: true` — that one stage stays
+  # blocking and defers what follows. Not worth it here: it would re-run
+  # `uv sync` (and its loose-network window) on every single container start.
 
 new:
   clone_from: local

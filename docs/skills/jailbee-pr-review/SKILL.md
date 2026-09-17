@@ -61,6 +61,11 @@ published with `jb pr`, a pending description manifest **replaces the
 in-container Claude run** that would otherwise write the title and body. So
 write it the way that run would:
 
+- First, `gh pr view --json number` for this branch. A PR that already exists
+  goes in the manifest's `pr` field; only a branch with no PR at all gets
+  `pr: null`. `jb pr` will not apply a `pr: null` description to a PR it did
+  not open itself, and an existing PR is often exactly that — one the user
+  opened elsewhere and bound with `jb pr --pr N`.
 - Read `git log <base>..HEAD` and `git diff <base>...HEAD` for the commits
   and cumulative diff.
 - Follow `.github/pull_request_template.md`, or a file under
