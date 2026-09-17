@@ -8,7 +8,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, Mock
 
 import asyncssh
 import pytest
@@ -16,11 +16,11 @@ from sqlmodel import Session
 
 from jailbee.config import ConfigError
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
+from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import GlobalConfig, default_global_config_path
 from jailbee.remote_ssh import server
 from jailbee.remote_ssh.keys import ssh_paths
 from jailbee.remote_ssh.pty import ChildSpec, PTYError
-from jailbee.db.models import RegisteredRepo
 
 PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsz47IcK4hPdHS7xOXNGafb/Uw3epmEsD7xIJn434n6"
 FINGERPRINT = "SHA256:qLBHzrI/tje39Belv8gH7aaz1iprjQMjKh4sbnQnFT4"
@@ -84,7 +84,9 @@ def test_unknown_key_is_rejected(ssh_server, connection, authorized_file):
     assert connection.get_extra_info("jailbee_key_fingerprint") is None
 
 
-def test_each_auth_reads_added_and_removed_keys(ssh_server, connection, authorized_file, public_key):
+def test_each_auth_reads_added_and_removed_keys(
+    ssh_server, connection, authorized_file, public_key
+):
     replacement = asyncssh.generate_private_key("ssh-ed25519")
     ssh_server.begin_auth("jailbee")
     assert ssh_server.validate_public_key("jailbee", public_key) is True
@@ -237,7 +239,8 @@ def session(command=None, **kwargs):
 
 def output(channel, datatype=None):
     return b"".join(
-        data for data, stream in (item.args for item in channel.write.call_args_list)
+        data
+        for data, stream in (item.args for item in channel.write.call_args_list)
         if stream == datatype
     )
 
@@ -262,11 +265,13 @@ def repo(tmp_path, db_engine, monkeypatch):
     root = tmp_path / "project"
     root.mkdir()
     with Session(db_engine) as db:
-        db.add(RegisteredRepo(
-            container_prefix="project",
-            repo_root=str(root),
-            registered_at=datetime(2026, 9, 18, tzinfo=UTC),
-        ))
+        db.add(
+            RegisteredRepo(
+                container_prefix="project",
+                repo_root=str(root),
+                registered_at=datetime(2026, 9, 18, tzinfo=UTC),
+            )
+        )
         db.commit()
     monkeypatch.setattr("jailbee.remote_ssh.router.get_engine", lambda: db_engine)
     return root
@@ -287,7 +292,9 @@ def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
     path.write_text("remote:\n  ssh:\n    exec: true\n    commands:\n      mode: full\n")
     _, first = session("--repo project ls")
     first.exit.assert_called_once_with(7)
-    path.write_text("remote:\n  ssh:\n    dashboard: false\n    shell: true\n    commands:\n      mode: full\n")
+    path.write_text(
+        "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    commands:\n      mode: full\n"
+    )
     _, help_channel = session()
     assert output(help_channel) == b"Available remote commands:\n  shell [--repo PREFIX]\n"
     _, last = session("--repo project ls")
@@ -321,11 +328,14 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
     fallback = tmp_path / "state"
     mocker.patch.object(server, "state_dir", return_value=fallback)
     process, channel = session(command, term="xterm" if requires_pty else None)
-    child.assert_awaited_once_with(process, ChildSpec(
-        argv=(sys.executable, "-m", "jailbee", *arguments),
-        cwd=repo if has_repo else fallback,
-        requires_pty=requires_pty,
-    ))
+    child.assert_awaited_once_with(
+        process,
+        ChildSpec(
+            argv=(sys.executable, "-m", "jailbee", *arguments),
+            cwd=repo if has_repo else fallback,
+            requires_pty=requires_pty,
+        ),
+    )
     configured.assert_called_once_with(default_global_config_path())
     channel.exit.assert_called_once_with(7)
 
@@ -376,9 +386,14 @@ def test_missing_registered_repo_is_not_recreated(child, configured, repo):
 )
 def test_disabled_entrypoint_cannot_spawn(command, settings, message, child, mocker):
     config = RemoteSSHConfig(**settings, commands=RemoteCommandPolicy(mode="full"))
-    mocker.patch.object(server, "load_global_config", return_value=(
-        GlobalConfig(remote=RemoteConfig(ssh=config)), [],
-    ))
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(
+            GlobalConfig(remote=RemoteConfig(ssh=config)),
+            [],
+        ),
+    )
     _, channel = session(command, term="xterm")
     assert message in output(channel, 1)
     channel.exit.assert_called_once_with(2)
@@ -440,7 +455,9 @@ def test_child_exit_audit_preserves_status_signal_and_original_callbacks(
 ):
     async def completed(process, spec):
         if signaled:
-            process.exit_with_signal("TERM", core_dumped=True, msg="private signal detail", lang="fi")
+            process.exit_with_signal(
+                "TERM", core_dumped=True, msg="private signal detail", lang="fi"
+            )
         else:
             process.exit(status=23)
 
@@ -448,7 +465,9 @@ def test_child_exit_audit_preserves_status_signal_and_original_callbacks(
     with caplog.at_level(logging.INFO):
         _, channel = session('--repo project ls "sensitive-argument"')
     if signaled:
-        channel.exit_with_signal.assert_called_once_with("TERM", True, "private signal detail", "fi")
+        channel.exit_with_signal.assert_called_once_with(
+            "TERM", True, "private signal detail", "fi"
+        )
         channel.exit.assert_not_called()
         assert "status=signal:TERM" in caplog.text
     else:
@@ -465,10 +484,17 @@ def test_child_exit_audit_preserves_status_signal_and_original_callbacks(
 
 
 def test_rejected_command_audit_records_only_public_path(child, repo, caplog, mocker):
-    config = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
-    mocker.patch.object(server, "load_global_config", return_value=(
-        GlobalConfig(remote=RemoteConfig(ssh=config)), [],
-    ))
+    config = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(
+            GlobalConfig(remote=RemoteConfig(ssh=config)),
+            [],
+        ),
+    )
     with caplog.at_level(logging.INFO):
         _, channel = session('--repo project git pull "credential-secret"')
     assert b"not allowed: git pull" in output(channel, 1)
@@ -509,7 +535,9 @@ def test_child_failures_close_only_channel_and_restore_exit_callbacks(
 
 
 def test_config_failure_rejects_channel_without_dispatch(child, mocker):
-    mocker.patch.object(server, "load_global_config", side_effect=ConfigError("invalid configuration"))
+    mocker.patch.object(
+        server, "load_global_config", side_effect=ConfigError("invalid configuration")
+    )
     _, channel = session("dashboard", term="xterm")
     assert b"invalid configuration" in output(channel, 1)
     channel.exit.assert_called_once_with(2)
@@ -559,7 +587,9 @@ def test_cancellation_restores_callbacks_and_does_not_log_terminal_input(
 @pytest.fixture
 def listener(mocker):
     value = SimpleNamespace(wait_closed=AsyncMock(), close=Mock())
-    listen = mocker.patch.object(server.asyncssh, "listen", new_callable=AsyncMock, return_value=value)
+    listen = mocker.patch.object(
+        server.asyncssh, "listen", new_callable=AsyncMock, return_value=value
+    )
     return value, listen
 
 
@@ -567,7 +597,8 @@ def test_listener_exposes_only_binary_session_capabilities(listener):
     value, listen = listener
     asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123)))
     listen.assert_awaited_once_with(
-        "127.0.0.2", 8123,
+        "127.0.0.2",
+        8123,
         server_factory=server.JailbeeSSHServer,
         process_factory=server.handle_process,
         server_host_keys=[str(ssh_paths().host_key)],
@@ -615,7 +646,9 @@ def test_listener_stays_alive_until_closed_then_closes_once(listener):
     value.close.assert_called_once_with()
 
 
-@pytest.mark.parametrize("failure", [OSError("address already in use"), ValueError("invalid host key")])
+@pytest.mark.parametrize(
+    "failure", [OSError("address already in use"), ValueError("invalid host key")]
+)
 def test_bind_or_configuration_failure_reaches_sync_caller(listener, failure):
     value, listen = listener
     listen.side_effect = failure
