@@ -10,6 +10,36 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Autostart runs in stages, and can hand the rest to the background.** An
+  `on_create` / `on_start` trigger may now be a list of **stages** instead of
+  a flat list of steps. A stage holds **chains** that run in parallel, each
+  chain's own steps still in order, and the stage — not the step — owns the
+  network profile and the `optional_mounts` for everything inside it: it
+  switches the network once on entry and restores it once on exit, which is
+  what makes running chains side by side safe. `steps:` on a stage is
+  shorthand for a single chain named `main`.
+
+  A stage marked `detach: true` moves itself and every stage after it into a
+  background supervisor, so `jailbee new` / `start` / `restart` hand you the
+  session as soon as the last blocking stage finishes rather than after the
+  whole run. `jailbee autostart status <name>` shows how far the detached
+  stages have got, step by step, and `jailbee autostart cancel <name>`
+  unwinds the one in flight — interrupting its step, detaching its mounts and
+  restoring the network without stepping on a `jailbee net` run made since.
+  `jailbee stop` refuses while a run is in flight (`--force` cuts it off) and
+  `jailbee restart` refuses outright; `jailbee job log` follows the
+  supervisor like any other worker. `--wait` (every stage in the foreground,
+  the old behaviour) and `--no-wait` (hand over after the first stage)
+  override the config per invocation.
+
+  **The flat list of steps still works exactly as before**, and a config with
+  no `detach: true` anywhere blocks stage by stage as it always did. A step's
+  own `network` / `mounts` keys are legal only in that flat form — inside a
+  stage they are a config error, because the stage owns both. Two known gaps
+  are documented: `jailbee destroy` carries no guard against a detached run,
+  and on `jailbee new --background` the GUI autostart apps wait behind the
+  whole deferred run. See
+  [docs/config.md](https://jailbee.gisgro.io/docs/config/#stages-and-chains).
 - **JailBee tells you when a newer release is out.** `jailbee ls` / `new` /
   `shell` print one stderr line naming the version and the upgrade command
   for the install at hand (`uv tool upgrade jailbee`, `pipx upgrade
@@ -82,6 +112,29 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **Both dashboards opened on an empty table.** `jailbee dashboard` and the
+  Qt window drew their frontend first and only then asked Incus what was
+  there, so the first thing on screen was a blank view — and the snapshot
+  that finally filled it was the git-inclusive one, the slowest tier there
+  is. Both now gather the cheap tier before the frontend appears (behind a
+  `Surveying containers…` spinner in the TUI) and let the git columns land on
+  the worker's first tick. A survey that fails now says so on your own
+  terminal instead of flashing the alternate screen and handing it straight
+  back.
+- **`jailbee config validate` deleted the name of the thing it was warning
+  about.** Runtime warnings name their subject in square brackets, and they
+  were printed through the markup parser, which read
+  `autostart.on_create[legacy-bootstrap].network` as a style tag and dropped
+  the half that says *which* step to fix. `host_mounts[0].host does not
+  exist` lost its index the same way. Both now print literally.
+- **`jailbee config edit` labelled a collection inside an entry
+  `(default)`.** A list nested one level down — `autostart ▸ on_start ▸ 0 ▸
+  chains`, or `agents.<name>.shared` — is not in the resolved origin map, and
+  the help pane fell back to reporting it as an unset default, showing
+  `Now: [] (default)` directly above `In this layer: 2 entries` on a screen
+  listing both. Such a field is now labelled `set` / `default` from its own
+  value, like the rows of an entry form. Fields that do have a layer to name
+  still say `(repo)` / `(global)`.
 - **A scratch directory was told to run the `apply` that `jailbee new` had
   just run for it.** The first container in a directory with no
   `.jailbee/config.yaml` creates that directory's profile set through an
