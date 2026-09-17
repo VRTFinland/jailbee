@@ -61,6 +61,12 @@ published with `jb pr`, a pending description manifest **replaces the
 in-container Claude run** that would otherwise write the title and body. So
 write it the way that run would:
 
+`repo` may name the superproject or any submodule repository. Inside the
+container, read a submodule's real upstream with
+`git -C <subpath> remote get-url origin`. A matching description is consumed
+by `jb submodule pr` for that submodule; its comments remain publishable with
+`jb review apply`.
+
 - First, `gh pr view --json number` for this branch. A PR that already exists
   goes in the manifest's `pr` field; only a branch with no PR at all gets
   `pr: null`. `jb pr` will not apply a `pr: null` description to a PR it did

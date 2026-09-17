@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jb submodule pr` now consumes matching PR descriptions from the container's
+  review outbox, and `jb review apply` can publish comments staged for a
+  submodule repository.
+
 - **Autostart runs in stages, and can hand the rest to the background.** An
   `on_create` / `on_start` trigger may now be a list of **stages** instead of
   a flat list of steps. A stage holds **chains** that run in parallel, each
