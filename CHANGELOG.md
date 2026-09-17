@@ -135,6 +135,12 @@ before editing `## Unreleased`.
   listing both. Such a field is now labelled `set` / `default` from its own
   value, like the rows of an entry form. Fields that do have a layer to name
   still say `(repo)` / `(global)`.
+- **Autostart stole the screen from whoever was attached.** Every step
+  window was created with plain `tmux new-window`, which makes the new window
+  the session's current one — so a run still starting steps yanked the view
+  of anyone sitting in `jailbee tmux` from one step to the next. Step windows
+  are now created detached; `jailbee tmux` still lands you in the agent's
+  window, because it selects that one explicitly.
 - **A scratch directory was told to run the `apply` that `jailbee new` had
   just run for it.** The first container in a directory with no
   `.jailbee/config.yaml` creates that directory's profile set through an

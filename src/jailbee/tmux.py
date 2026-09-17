@@ -142,6 +142,25 @@ def _env_flags(env: dict[str, str]) -> str:
     return " ".join(parts)
 
 
+def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_flags: str) -> None:
+    """Create one detached tmux window running ``shell_cmd`` in a login shell.
+
+    ``-d`` is what keeps the window out of the way: without it tmux makes
+    every new window the session's current one, so a run that starts steps
+    while somebody is attached with `jailbee tmux` yanked their view to each
+    step in turn. Focus is chosen explicitly instead — `_attach_tmux` calls
+    :func:`select_window` on the agent window before it attaches.
+
+    """
+    inner = f"bash -lc {shlex.quote(shell_cmd)}"
+    incus.exec(
+        container,
+        _runuser(
+            f"tmux new-window -d -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
+        ),
+    )
+
+
 def run_step(
     incus: Incus,
     container: str,
@@ -178,11 +197,7 @@ def run_step(
             f"trap 'tmux wait-for -S {shlex.quote(probe_sig)}' EXIT; "
             f"cd {shlex.quote(cwd)} && {command}"
         )
-        inner = f"bash -lc {shlex.quote(shell_cmd)}"
-        new_window = (
-            f"tmux new-window -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
-        )
-        incus.exec(container, _runuser(new_window))
+        _new_window(incus, container, window, shell_cmd, env_flags)
 
         # Brief probe: surface early failure (e.g. command-not-found)
         # instead of silently continuing. If the EXIT trap fires within
@@ -209,9 +224,7 @@ def run_step(
         f"rc=$?; echo $rc > {shlex.quote(sentinel)}; "
         f"tmux wait-for -S {shlex.quote(sig)}; exit $rc"
     )
-    inner = f"bash -lc {shlex.quote(shell_cmd)}"
-    new_window = f"tmux new-window -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
-    incus.exec(container, _runuser(new_window))
+    _new_window(incus, container, window, shell_cmd, env_flags)
 
     try:
         incus.exec(
@@ -322,17 +335,6 @@ def launch_step(
         sentinel=sentinel,
         background=False,
         deadline=time.monotonic() + timeout,
-    )
-
-
-def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_flags: str) -> None:
-    """Create one tmux window running ``shell_cmd`` in a login shell."""
-    inner = f"bash -lc {shlex.quote(shell_cmd)}"
-    incus.exec(
-        container,
-        _runuser(
-            f"tmux new-window -t {SESSION_NAME}: -n {window} {env_flags} {shlex.quote(inner)}"
-        ),
     )
 
 

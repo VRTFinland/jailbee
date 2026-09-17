@@ -547,3 +547,57 @@ def test_launch_step_background_returns_a_handle_when_the_step_survives_the_prob
     new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
     assert "trap" in new_window_args
     assert "tmux wait-for -S" in new_window_args
+
+
+def test_new_windows_are_detached_so_they_do_not_steal_focus(mocker):
+    """`tmux new-window` makes the new window current unless `-d` is given.
+
+    An autostart run creating windows while someone is attached with
+    `jailbee tmux` would otherwise yank their view to every step in turn.
+    """
+    incus = mocker.Mock()
+    incus.exec.side_effect = ["", "", IncusError("exit 124: still alive")]
+    tmux.run_step(
+        incus,
+        "c1",
+        name="frontend",
+        command="pnpm dev",
+        env={},
+        cwd="/r",
+        background=True,
+        timeout=60,
+    )
+    new_window_args = " ".join(incus.exec.call_args_list[1].args[1])
+    assert "new-window -d " in new_window_args
+
+
+def test_sync_new_window_is_detached(mocker):
+    incus = mocker.Mock()
+    incus.exec.side_effect = ["", "", "", "0\n", ""]
+    tmux.run_step(
+        incus,
+        "c1",
+        name="build",
+        command="make",
+        env={},
+        cwd="/r",
+        background=False,
+        timeout=60,
+    )
+    assert "new-window -d " in " ".join(incus.exec.call_args_list[1].args[1])
+
+
+def test_launch_step_new_window_is_detached(mocker):
+    incus = mocker.Mock()
+    incus.exec.return_value = ""
+    tmux.launch_step(
+        incus,
+        "c1",
+        name="uv-sync",
+        command="uv sync",
+        env={},
+        cwd="/r",
+        background=False,
+        timeout=60,
+    )
+    assert "new-window -d " in " ".join(incus.exec.call_args_list[1].args[1])

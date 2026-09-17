@@ -1543,8 +1543,10 @@ window per step. To attach interactively:
 jailbee tmux <container>
 ```
 
-Sync steps' output stays visible in their window after they finish (the
-session has `remain-on-exit on`). Background steps (e.g. `pnpm dev`) keep
+Every step window is created in the background, so attaching while a run is
+still going does not drag your view from step to step. Sync steps' output
+stays visible in their window after they finish (the session has
+`remain-on-exit on`). Background steps (e.g. `pnpm dev`) keep
 running in their own window until the container stops.
 
 #### Where does the autostart config come from?
