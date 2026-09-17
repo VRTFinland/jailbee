@@ -29,6 +29,318 @@ exit
 jailbee destroy feat-smoke --force
 ```
 
+## Optional SSH service loopback smoke test
+
+This recipe exercises the real SSH listener, PTY relay and systemd user unit.
+It deliberately uses only `127.0.0.1` / `localhost`; do not open a firewall
+port or change the listener to a non-loopback address for this test. Run it
+from an initialized repo which appears in the registered-repository dashboard.
+
+### Prepare the service and two client keys
+
+Install the optional dependency, create disposable client keys, and configure
+the host-global policy. Replace `sampleapp` below with this repo's exact
+registered `container_prefix`, not its filesystem path.
+
+```bash
+uv tool install 'jailbee[ssh]'
+ssh-keygen -q -t ed25519 -N '' -C jailbee-valid \
+  -f /tmp/jailbee-ssh-valid
+ssh-keygen -q -t ed25519 -N '' -C jailbee-invalid \
+  -f /tmp/jailbee-ssh-invalid
+
+jb remote ssh key add /tmp/jailbee-ssh-valid.pub
+jb remote ssh key ls
+jb config edit --global
+```
+
+Use this block in `~/.config/jailbee/global.yaml` for the smoke run:
+
+```yaml
+remote:
+  ssh:
+    listen: 127.0.0.1
+    port: 8022
+    dashboard: true
+    shell: true
+    exec: true
+    commands:
+      mode: allowlist
+      allow:
+        - exec
+        - ls
+        - new
+        - shell
+        - tmux
+        - version
+```
+
+Then start and inspect the service:
+
+```bash
+jb config validate
+jb remote ssh enable
+jb remote ssh status
+systemctl --user status jailbee-ssh.service
+journalctl --user -u jailbee-ssh.service -n 30
+```
+
+Expect `installed`, `enabled`, and `active` to be `yes`, listener
+`127.0.0.1:8022`, entry points `dashboard, shell, exec`, and one authorized
+key. The journal must not print a complete remote argv, key material, or
+terminal input.
+
+The remaining snippets use Bash arrays to keep the client options identical:
+
+```bash
+rm -f /tmp/jailbee-ssh-known-hosts
+JB_SSH_PREFIX=sampleapp
+JB_SSH_CONTAINER=feat-ssh-smoke
+JB_SSH_COMMON=(
+  -o IdentitiesOnly=yes
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts
+  -i /tmp/jailbee-ssh-valid
+  -p 8022
+)
+```
+
+### Authentication, host identity and commandless help
+
+Make the first valid connection:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Expect the normal first-contact host-key prompt. Answer `yes`; the connection
+then prints `Available remote commands:` with `dashboard`, `shell [--repo
+PREFIX]`, and `--repo PREFIX COMMAND [ARGS...]`, and exits zero. It must not
+choose a repo or open a UI. Compare the shown host fingerprint when desired:
+
+```bash
+ssh-keygen -y -f ~/.local/share/jailbee/ssh/host_key \
+  | ssh-keygen -lf - -E sha256
+```
+
+A key which was not added must fail public-key authentication:
+
+```bash
+ssh -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-invalid -p 8022 jailbee@localhost
+```
+
+Expect `Permission denied (publickey)` and a nonzero status. Password and
+keyboard-interactive fallbacks must not be offered.
+
+### Dashboard, console and one-shot routing
+
+First prove the PTY requirement:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+```
+
+Both must fail with `This entry point requires a PTY; retry with ssh -t.` and
+status 2. With `-t`, the existing interfaces should render normally:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+```
+
+In the dashboard, verify only registered repos appear. Press `n` on this repo,
+enter a branch and base, and confirm that the normal `jailbee new` questions
+are interactive; decline once before accepting. In the console, run `help`,
+`repos`, `use $JB_SSH_PREFIX`, `ls`, and `dashboard`; exiting the dashboard
+must return to `jb[$JB_SSH_PREFIX]>`, and `exit` must close the SSH session.
+
+Run a one-shot command without a PTY:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls
+```
+
+Expect the repo's normal `jb ls` output and exit status. A path in place of
+the prefix, an unknown prefix, an omitted `--repo`, or `dashboard extra` must
+be rejected before JailBee starts.
+
+If the dashboard step did not create a disposable container, run the same
+creation path directly. Choose an existing branch/base combination which
+causes JailBee's normal confirmation, decline it once, then repeat and accept:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" new feat/ssh-smoke
+```
+
+### Container terminals, resize, Ctrl-C and disconnect cleanup
+
+The word `shell` after `--repo` is the ordinary JailBee container-shell leaf,
+not the reserved remote console entry point:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+```
+
+Inside the container run `stty size`, resize the local terminal, and run it
+again. Expect the rows/columns to follow the client window. Exit back to the
+client, then exercise tmux in the same PTY:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" tmux "$JB_SSH_CONTAINER"
+```
+
+Expect the real tmux session; detach normally and confirm the SSH command
+returns. Next start a long foreground command and press Ctrl-C:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" exec "$JB_SSH_CONTAINER" -- sleep 300
+```
+
+Expect Ctrl-C to reach the foreground process group, the remote command to
+end, and `jb remote ssh status` to remain active.
+
+For abrupt-disconnect cleanup, enter a container shell, create a recognizable
+process, then type OpenSSH's `~.` escape at the start of a line:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+# inside the container:
+echo $$ >/tmp/jailbee-ssh-smoke.pid
+exec sleep 300
+# client: press Enter, then type ~.
+```
+
+Back on the host, the process must be gone rather than orphaned:
+
+```bash
+jb exec "$JB_SSH_CONTAINER" -- sh -lc \
+  '! kill -0 "$(cat /tmp/jailbee-ssh-smoke.pid)" 2>/dev/null'
+```
+
+Open a dashboard in one terminal and a console in another. Both must remain
+usable concurrently; closing one must not disturb the other.
+
+### Live key and policy reload
+
+Keep an authenticated console open. In another host terminal, copy its full
+fingerprint from `ls` and remove it:
+
+```bash
+jb remote ssh key ls
+jb remote ssh key rm SHA256:REPLACE_WITH_FULL_FINGERPRINT
+ssh -o BatchMode=yes "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+The existing console must continue to work, while the new connection fails
+public-key authentication. Re-authorize the same public key; a new connection
+must work immediately, without restarting the unit:
+
+```bash
+jb remote ssh key add /tmp/jailbee-ssh-valid.pub
+```
+
+For policy reload, open a console while the allowlist above is active. Edit
+the global block so `allow` contains only `version`, then validate it. `ls` in
+the already-open console must still use its startup policy. A new one-shot
+session must reject `ls` and accept `version`:
+
+```bash
+jb config edit --global
+jb config validate
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" version
+```
+
+Restore the original allowlist for the remaining checks. No service restart is
+needed for policy. Now restart the unit explicitly:
+
+```bash
+jb remote ssh restart
+jb remote ssh status
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Expect active sessions to close, the unit to return active, the reconnect to
+succeed, and no new host-key prompt because restart preserved the host key.
+
+### Rejected SSH features
+
+SFTP and both modern and legacy SCP must fail rather than expose files:
+
+```bash
+sftp -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 jailbee@localhost
+scp -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 /etc/hosts jailbee@localhost:ignored
+scp -O -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 /etc/hosts jailbee@localhost:ignored
+```
+
+Expect subsystem/route rejection and no transferred file. Agent and X11
+forwarding requests are also refused. Run these with `-vv` (and a live local
+agent / graphical session respectively) and inspect the client debug output:
+
+```bash
+ssh -vv -A -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh -vv -X -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+```
+
+The dashboard may still run, but the forwarding request must report failure;
+the remote process must receive neither `SSH_AUTH_SOCK` nor an X11 display.
+
+Remote forwarding is refused at setup. Local forwarding can bind locally, so
+open it in one terminal and trigger a channel from another:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -R 18023:localhost:22 \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost
+
+ssh -N -L 18022:localhost:22 \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost
+# another terminal while the -L client is open:
+nc -v 127.0.0.1 18022
+```
+
+Expect `-R` to fail, and the `-L` client's attempted channel to be rejected;
+stop the waiting `-L` client with Ctrl-C. Finally, force a client environment
+request:
+
+```bash
+JAILBEE_SMOKE=blocked ssh -o SendEnv=JAILBEE_SMOKE \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls
+```
+
+Expect `SSH environment requests are not supported`, status 2, and no child
+command. Check the journal for bounded rejected-session audit rows.
+
+After the smoke run, destroy the disposable container if it was created,
+remove the client key, and disable the service. The host key deliberately
+remains so a later re-enable retains the known-host identity:
+
+```bash
+jb destroy "$JB_SSH_CONTAINER" --force
+jb remote ssh key ls
+jb remote ssh key rm SHA256:REPLACE_WITH_FULL_FINGERPRINT
+jb remote ssh disable
+rm -f /tmp/jailbee-ssh-valid /tmp/jailbee-ssh-valid.pub \
+  /tmp/jailbee-ssh-invalid /tmp/jailbee-ssh-invalid.pub \
+  /tmp/jailbee-ssh-known-hosts
+```
+
 ## `jailbee git fetch / checkout` smoke test
 
 `jailbee git fetch` fetches into `refs/jailbee/<short>/<branch>`, then points

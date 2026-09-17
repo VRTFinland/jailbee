@@ -20,6 +20,7 @@ Common conventions:
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`)](#setup--host)
+- [Remote SSH (`remote ssh`)](#remote-ssh)
 - [Config (`config show|validate|init|edit`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
@@ -53,6 +54,52 @@ speculatively.
 | `jailbee registry up [--recreate]\|down\|status\|verify [--purge]` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. `verify` checks cached blobs/manifests against their digests and removes corrupt ones on confirmation (`--purge`: without asking) — the fix when a pull fails with `unexpected commit digest`. Host-only: the container has no `jailbee`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
 | `jailbee version` / `jailbee --version` | Print the version. |
+
+## Remote SSH
+
+The optional SSH service runs as a systemd user unit and exposes JailBee, not
+a host shell. Install the `jailbee[ssh]` extra separately; neither package
+installation nor `jailbee setup` enables the service.
+
+| Command | What it does |
+|---|---|
+| `jb remote ssh enable` | Check for the optional dependency and installed `jailbee` executable, create/preserve the private Ed25519 host key and authorized-key file, install the user unit, and enable/start it. An empty authorized-key file admits nobody. |
+| `jb remote ssh disable` | Stop and disable the unit. Leaves global config, client keys and host key intact. |
+| `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
+| `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
+| `jb remote ssh serve` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. |
+| `jb remote ssh key add PATH` | Read one plain OpenSSH public key, reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
+| `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
+| `jb remote ssh key rm SHA256:FINGERPRINT` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
+
+The fixed username is `jailbee`. At the default loopback listener, client
+grammar is exactly:
+
+```text
+ssh -t -p 8022 jailbee@localhost dashboard
+ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+```
+
+A commandless login prints help listing only configured entry points and exits
+zero. `dashboard` and the restricted console require a PTY. One-shot commands
+do not require one at the SSH layer, though a selected JailBee command may.
+Every one-shot request starts with `--repo PREFIX`; it is an exact registered
+repository prefix, never a path, and its registered root becomes cwd.
+
+The console either takes `--repo PREFIX` or prompts from live registered repos.
+Local commands are `repos`, `use PREFIX`, `dashboard`, `help`, and `exit`/EOF.
+Other input is parsed as a JailBee argv, checked against the same command
+policy as one-shot execution, run, and returned to the prompt. There are no
+pipes, redirections, shell operators, glob/variable/command expansion, aliases
+or executable lookup.
+
+Policy lives only in host-global `remote.ssh`. Defaults are
+`127.0.0.1:8022`, dashboard on, console/exec off and command mode disabled.
+An allowlist names exact public leaves (`git pull`, not `git`); `full` includes
+all current and future public leaves but never hidden internal commands. All
+authorized keys share the same policy and every registered repo. Treat `full`
+and the dashboard as host-capable access, not a read-only view.
 
 ## Config
 

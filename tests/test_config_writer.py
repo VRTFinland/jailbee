@@ -347,6 +347,33 @@ def test_render_global_yaml_round_trips_through_the_loader(tmp_path):
     validate_global_raw(reparsed, tmp_path / "global.yaml")
 
 
+def test_render_global_yaml_round_trips_a_remote_ssh_block(tmp_path):
+    """The host half keeps the complete nested SSH policy when regenerated."""
+    import yaml
+
+    from jailbee.config_writer import render_global_yaml
+    from jailbee.global_config import validate_global_raw
+
+    raw = {
+        "remote": {
+            "ssh": {
+                "listen": "::1",
+                "port": 22022,
+                "dashboard": True,
+                "shell": True,
+                "exec": True,
+                "commands": {"mode": "allowlist", "allow": ["ls", "git pull"]},
+            }
+        }
+    }
+
+    reparsed = yaml.safe_load(render_global_yaml(raw))
+
+    assert reparsed == raw
+    config = validate_global_raw(reparsed, tmp_path / "global.yaml")
+    assert config.remote.ssh.commands.allow == ["ls", "git pull"]
+
+
 def test_write_text_atomic_creates_at_0600_and_preserves_an_existing_mode(tmp_path):
     import stat
 

@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr`/`jailbee submodule pr`, and publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), the optional remote SSH service (`jailbee remote ssh`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr`/`jailbee submodule pr`, and publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "jailbee remote ssh", "connect to Jailbee over SSH", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -671,6 +671,45 @@ and apply to every container of the repo. `jailbee port to-host` has no
 config equivalent by design — it's per-container and ad hoc, because a host
 listener is a machine-wide resource that containers of the same repo would
 otherwise fight over.
+
+## Remote SSH access
+
+The optional SSH service exposes JailBee rather than a host shell. It needs the
+`jailbee[ssh]` extra, an authorized public key, and explicit enablement:
+
+```bash
+jb remote ssh key add ~/.ssh/id_ed25519.pub
+jb remote ssh enable
+jb remote ssh status
+```
+
+Administration is `jb remote ssh enable|disable|restart|status|serve`; key
+management is `jb remote ssh key add|ls|rm`. `rm` takes the full SHA256
+fingerprint printed by `add` or `ls`. Key edits apply to new connections
+without a restart. `disable` preserves keys and config; `restart` is needed
+after changing `listen` or `port`; `serve` is the foreground diagnostic path.
+
+Client forms at the default loopback endpoint:
+
+```text
+ssh -t -p 8022 jailbee@localhost dashboard
+ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+```
+
+A commandless login prints the enabled forms and exits. Dashboard and the
+restricted JailBee console need `-t`. Every one-shot command requires an exact
+registered `PREFIX`; `--repo` never accepts a path. The console's local
+commands are `repos`, `use PREFIX`, `dashboard`, `help`, and `exit`; every other
+line is a JailBee argv checked against `remote.ssh.commands`. It has no shell
+operators, expansion or executable lookup.
+
+The service runs as the same host UID as local JailBee, and every authorized
+key has identical access to the configured surface across all registered
+repos. Keep the default listener on `127.0.0.1`; prefer exact-leaf allowlists.
+`commands.mode: full` includes all current and future public commands and is a
+high-trust setting. See the full command behavior and security boundary in
+[`references/commands.md`](references/commands.md#remote-ssh).
 
 ## Other day-to-day commands
 

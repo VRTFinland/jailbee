@@ -2155,8 +2155,8 @@ opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `browsers`, `agents`).
 `agents:` is valid at both layers, though — see [`agents`](#agents) above —
 and a repo entry merges over a global one, so a team default set globally
 can still be adjusted per repo.
-Two blocks are unique to this file: the Docker registry mirror overrides,
-and `claude_credentials` (below).
+Three blocks are unique to this file: the Docker registry mirror overrides,
+`remote` (below), and `claude_credentials` (below).
 
 ```yaml
 docker_registry_mirror:
@@ -2198,6 +2198,85 @@ by it — start it and run `jailbee apply` again.
 
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).
+
+### `remote.ssh`
+
+Host-global policy for the optional authenticated SSH service. It can only be
+set in `~/.config/jailbee/global.yaml`; a repo's committed config cannot enable
+or broaden remote access. Installing JailBee does not start a listener. See
+[Installation](installation.md#optional-ssh-service) for the explicit install
+and enable steps and [Security and limitations](security.md#remote-ssh) for
+the trust boundary.
+
+The built-in defaults are dashboard-only on IPv4 loopback:
+
+```yaml
+remote:
+  ssh:
+    listen: 127.0.0.1
+    port: 8022
+    dashboard: true
+    shell: false
+    exec: false
+    commands:
+      mode: disabled
+      allow: []
+```
+
+To opt into the interactive JailBee console and selected one-shot commands:
+
+```yaml
+remote:
+  ssh:
+    listen: 127.0.0.1
+    port: 8022
+    dashboard: true
+    shell: true
+    exec: true
+    commands:
+      mode: allowlist
+      allow:
+        - ls
+        - new
+        - shell
+        - tmux
+        - git pull
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
+| `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
+| `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts `jailbee dashboard --registered-only` and requires a PTY. |
+| `shell` | bool | `false` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Requires `commands.mode` to be `allowlist` or `full`. |
+| `exec` | bool | `false` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. Requires `commands.mode` to be `allowlist` or `full`. |
+| `commands.mode` | `disabled` \| `allowlist` \| `full` | `disabled` | Policy shared by the interactive console and one-shot execution. `disabled` rejects JailBee commands; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts every public leaf. It does not control the separately enabled dashboard entry point. |
+| `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
+
+An allowlist matches the exact public command leaf, not a prefix and not its
+arguments. `git pull` permits `git pull feat-x --cleanup`; `git` is not a leaf
+and does not grant every `git ...` command. Options cannot precede the command
+path. Hidden internal commands, including `_remote-console`, are never valid
+allowlist entries and are never included by `full`.
+
+`full` includes **all current and future public commands** after an upgrade.
+It never includes hidden internal commands, but it does include public
+host-affecting commands such as service administration, config editing and
+container lifecycle operations. Treat it as an explicit high-trust choice.
+
+Validation rejects all of these combinations:
+
+- `dashboard: false`, `shell: false`, and `exec: false` together;
+- `shell: true` or `exec: true` while `commands.mode: disabled`;
+- `commands.mode: allowlist` with an empty `allow` list;
+- duplicate, malformed, or unknown command paths; unknown fields; a non-IP
+  `listen` value; and a port outside `1..65535`.
+
+The `allow` list may remain populated in `disabled` or `full` mode so a later
+switch back to `allowlist` does not discard policy. Listener address and port
+are fixed until `jb remote ssh restart`. Entry-point and command policy are
+loaded for each new SSH session; an already-running dashboard or console keeps
+the policy it started with.
 
 ### `claude_credentials`
 

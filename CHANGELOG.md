@@ -10,6 +10,15 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Optional authenticated SSH access to JailBee.** Install `jailbee[ssh]`,
+  authorize client public keys, and explicitly enable the per-user service with
+  `jb remote ssh enable` to reach the registered-repository dashboard, a
+  restricted interactive JailBee console, or policy-controlled one-shot
+  commands. It defaults to dashboard-only on `127.0.0.1:8022`; console and
+  command execution require an exact-leaf allowlist or the explicit
+  high-trust `full` policy. Password login, host shells, file transfer,
+  forwarding and client environment requests are not exposed.
+
 - `jb submodule pr` now consumes matching PR descriptions from the container's
   review outbox, and `jb review apply` can publish comments staged for a
   submodule repository.

@@ -4,6 +4,8 @@
 |---|---|
 | `jailbee init` | First-time setup: create Incus profiles, ACLs, shared directories |
 | `jailbee apply [-y] [--no-restart]` | Re-apply current config (profiles, ACL, /etc/hosts, dockerd proxy); prompt to restart containers if profiles changed, and dockerd if the proxy config changed |
+| `jb remote ssh enable` / `disable` / `restart` / `status` / `serve` | Manage the optional per-user SSH service. `enable` installs, enables and starts it; `disable` stops and disables it without deleting keys; `restart` applies listener changes; `status` inspects service/config/key state; `serve` runs it in the foreground for diagnostics. |
+| `jb remote ssh key add PATH` / `ls` / `rm SHA256:FINGERPRINT` | Add one plain OpenSSH public key, list every key, or remove one by its full SHA256 fingerprint. All authorized keys have the same access. |
 | `jailbee new <name> [<base>] [opts]` | Create container, clone repo, run autostart. `<name>` names the environment (used as the branch inside the container, slugified into the container name). `<base>` sets the container's base branch: it is branched off when `<name>` is new, and used purely as the comparison anchor when `<name>` already exists (that branch is cloned as-is for review, after a confirmation). Without `<base>` the base is the repo's default branch. `--current`, `--pr <N>`, `--mount`, `--background`, `--tmux`, `--shell`, `--attach shell|tmux|none`, `--no-clone`, `--no-autostart`, `--yes`, `--name <container>`, `--net strict|loose`, `--memory <size>`, `--cpu <n>`, `--claude-group <g>`, `--from-base <image>` (create from an image other than the golden one), `--wait`/`--no-wait` (override a `detach: true` autostart stage for this run — see below). See `jailbee new --help` for what each does |
 | `jailbee ls [--all] [-o json] [--fields …]` | List managed containers + their git status (own repo by default; `--all` for every repo). `LOCAL ±`/`L↑` — the diff vs the host's *currently checked-out* branch, as opposed to `AHEAD ±`'s pinned base — are off by default; opt in with `--fields` or the `ls:` config block (table output only; `-o json` always keeps its built-in field set unless `--fields` is passed). See [Configuration](config.md#ls--dashboard--remembered-columns) |
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
@@ -66,6 +68,63 @@
 | `jailbee config show/validate/init` | Configuration. `show`'s effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
 | `jailbee config edit [--global] [--write patch\|regenerate]` | Interactive editor for either config layer, with each field's own help text, its origin (`default`/`global`/`repo`) and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Structured lists (`host_mounts`, `agents`, `autostart` steps, …) open a drill-down screen — `n` new, `x` delete, `J`/`K` reorder, `Enter` to open an entry. `github.api_tokens` can be set but is never displayed |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
+
+### Remote SSH service
+
+The optional SSH service exposes JailBee, not a host shell. Installation and
+startup are separate opt-ins; see [Installation](installation.md#optional-ssh-service)
+and [`remote.ssh` configuration](config.md#remotessh).
+
+Service and key commands:
+
+```text
+jb remote ssh enable
+jb remote ssh disable
+jb remote ssh restart
+jb remote ssh status
+jb remote ssh serve
+
+jb remote ssh key add PATH
+jb remote ssh key ls
+jb remote ssh key rm SHA256:FINGERPRINT
+```
+
+`key add` reads exactly one plain OpenSSH public key from `PATH`, rejects
+options, certificates and duplicates, preserves its comment, and prints
+`<fingerprint>  <algorithm>  <comment>`. `key ls` uses the same one-line
+format. `key rm` requires the complete fingerprint printed by `add` or `ls`.
+New connections reload the key file, so adding or removing a client key needs
+no service restart; an already-authenticated connection is not revoked.
+
+`status` prints whether the unit is installed, enabled and active, the
+configured address and port, enabled entry points, authorized-key count and
+each detected problem. A deliberately absent, disabled or inactive service
+and an empty key list are reported without making status fail; invalid config
+or an unsafe, missing or uninspectable host key produces a nonzero exit.
+`serve` runs the same listener in the foreground and is intended for
+diagnostics. `disable` preserves global configuration, client keys and the
+server host key.
+
+The SSH username is always `jailbee`. With the default listener port, the
+accepted client forms are:
+
+```text
+ssh -t -p 8022 jailbee@localhost dashboard
+ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+```
+
+A commandless `ssh -p 8022 jailbee@localhost` prints help containing only the
+configured entry points and exits successfully. `dashboard` and the remote
+console require `-t`; one-shot commands do not inherently require a PTY, though
+an interactive JailBee command may. The console offers `repos`, `use PREFIX`,
+`dashboard`, `help`, and `exit`; every other line is an allowed JailBee command.
+It performs no shell expansion, pipes, redirection or executable lookup.
+
+Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
+repository prefix, never a filesystem path; the registered root becomes the
+command's working directory. The same rule applies to `shell --repo PREFIX`.
+See [Security and limitations](security.md#remote-ssh) before granting access.
 
 ### Top-level app promotion
 

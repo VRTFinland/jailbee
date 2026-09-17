@@ -320,6 +320,25 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     assert cfg.chrome.dark_mode is False
 
 
+def test_global_template_round_trip_preserves_default_remote_ssh_policy(tmp_path, monkeypatch):
+    """The generated file must retain host-global SSH defaults through its real loader."""
+    from jailbee.global_config import load_global_config
+
+    target = tmp_path / "global.yaml"
+    target.write_text(render_global_template())
+
+    global_config, warnings = load_global_config(target)
+
+    assert warnings == []
+    assert global_config.remote.ssh.listen == "127.0.0.1"
+    assert global_config.remote.ssh.port == 8022
+    assert global_config.remote.ssh.dashboard is True
+    assert global_config.remote.ssh.shell is False
+    assert global_config.remote.ssh.exec is False
+    assert global_config.remote.ssh.commands.mode == "disabled"
+    assert global_config.remote.ssh.commands.allow == []
+
+
 # `test_global_template_documents_all_new_blocks` checked that specific
 # blocks were documented with specific substrings from the hand-written
 # prose. That's now covered generically and unconditionally by

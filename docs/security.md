@@ -24,6 +24,63 @@ into a container — those are ordinary files. That is why running an agent
 with its own guardrails off is reasonable *inside* a `jailbee` container —
 see [Running an agent without prompts](#running-an-agent-without-prompts).
 
+### Remote SSH
+
+The optional SSH server is a capability boundary inside the current user's
+account, not a second kernel sandbox. The service runs as the same Unix UID
+that runs the local `jailbee` CLI and has the same Incus access. It never
+deliberately launches a host shell, but every enabled JailBee command keeps
+the host-side effects it has locally: it can change the host repo, Incus
+containers, host-local configuration and other user-owned state according to
+that command's normal behavior.
+
+Every authorized client key has identical access. There are no per-key repos,
+roles or command policies, and the fixed SSH username `jailbee` does not map
+keys to different operating-system users. Authorize a key only when its holder
+may exercise the complete configured remote surface across every registered
+repo. Removing a key blocks new connections immediately but does not revoke an
+already-authenticated connection.
+
+The default listener is IPv4 loopback only (`127.0.0.1:8022`). It is not a
+network authentication boundary and is not remote-device deployment guidance:
+changing `listen`, exposing the port through a tunnel, VPN, firewall rule or
+port forward, and securing that route are the operator's responsibility.
+JailBee does not configure TLS, a firewall, a VPN or NAT for this service.
+
+Entry points are deliberately narrow, but they are not read-only. In
+particular, the remote dashboard runs the existing dashboard with registered
+repos only and exposes its normal actions. Creating, starting, stopping or
+destroying containers and moving commits can therefore affect host state.
+GUI actions may fail when the systemd user service has no graphical-session
+environment; there is no special remote GUI transport.
+
+`commands.mode: full` is a high-trust setting. It grants every current public
+JailBee command and automatically grants public commands added by future
+versions, including host-affecting service, configuration and lifecycle
+commands. Hidden internal commands are never included, but that exclusion does
+not make `full` a safe default. Prefer an exact-leaf allowlist such as `ls` or
+`git pull`; allowing `git pull` does not grant sibling `git` commands.
+
+The SSH protocol surface is also fail-closed:
+
+- public-key authentication is the only authentication method; password,
+  keyboard-interactive, host-based and GSS authentication are disabled;
+- SFTP, SCP, agent forwarding, X11 forwarding, TCP and Unix-socket forwarding,
+  and remote listeners are disabled;
+- client environment requests, including `SendEnv`, are rejected;
+- the interactive `shell` entry point is a restricted JailBee console, not a
+  POSIX shell, and implements no pipes, redirection, expansion or executable
+  lookup; and
+- one-shot commands are parsed into an argv without invoking a shell, and
+  `--repo` resolves an exact registered prefix rather than a client-supplied
+  filesystem path.
+
+The user journal records source address, authorized-key fingerprint, bounded
+route/repository/command identifiers, decision and exit status. It does not
+record key material, complete argv, environment values, terminal contents or
+user input. See [Installation](installation.md#optional-ssh-service) for key
+rotation, service status, journal inspection and recovery operations.
+
 ### Running an agent without prompts
 
 A coding agent asks before it acts because on your own host a wrong command
