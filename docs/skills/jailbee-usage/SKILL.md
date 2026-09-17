@@ -325,13 +325,20 @@ container to merge into instead of quietly merging into the host.
   host sub-repo can still be created, for a submodule born in the source
   container). The merge runs inside the target on whatever it has checked
   out, so conflicts are resolved there, in `jailbee shell <target>`.
-  - `--into <target>` — never inferred. Omit it on a TTY and jailbee asks
-    which container to merge into.
+  - `--into <target>` — never inferred. Repeat it for several targets; each
+    one takes every source. Omit it on a TTY and jailbee asks which containers
+    to merge into.
   - Omit the sources too (`jailbee git merge`) and jailbee asks for those
-    first, then the target. The source prompt is a checkbox and merges in the
-    order the rows were **listed**, not the order they were ticked — the
-    prompt says so. With `-b` the source prompt is single-select, since one
-    branch cannot describe several sources. Off a TTY both ends must be given.
+    first, then the targets. Both prompts are checkboxes, and the sources are
+    merged in the order the rows were **listed**, not the order they were
+    ticked — the prompt says so. With `-b` the source prompt is single-select,
+    since one branch cannot describe several sources; the target prompt stays
+    a checkbox. Off a TTY both ends must be given.
+  - **A container cannot be named at both ends** — merging a container into
+    itself would merge a branch into that same container's checked-out branch,
+    which its own `git merge` says better. Each prompt hides the rows the other
+    end holds, and a typed collision (`--into` naming a source) is exit 2
+    before anything is merged.
   - `-b <branch>` — read this branch from the source container (only valid with
     one source). **Not submodule-safe:** the submodule transport enumerates the
     source's *checked-out* state, so a submodule that exists only on `<branch>`
@@ -341,18 +348,23 @@ container to merge into instead of quietly merging into the host.
     in the container first and merge without `-b`.
   - `--plain` — transport the refs only; run no merge. The summary then says
     "transported", not "merged" — `--plain` is not a kind of merge.
-  - Several sources are merged **one at a time, in the order given**; the run
-    stops at the first conflict or failure and always reports what landed,
-    what stopped it, what was not attempted, and the command to resume.
+  - Several sources are merged into each target **one at a time, in the order
+    given**, and stop at that target's first conflict or failure — the next
+    source would land on a tree left in merge state. Targets are separate
+    containers, so **a target that stops does not stop the ones after it**.
+    Every target reports what landed, what stopped it, what was not attempted,
+    and the command to resume; a run with several targets closes with a
+    roll-up naming the state of each one.
   - Each source that lands prints its own `── Submodules` block naming the
     gitlinks that merge moved, read **inside the target container** (the
     merge commit exists nowhere else, so the host cannot diff it).
 
   ```bash
-  jailbee git merge                        # pick the sources, then the target
+  jailbee git merge                        # pick the sources, then the targets
   jailbee git merge c1 --into c4
   jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
-  jailbee git merge c1                     # pick the target only
+  jailbee git merge c1 --into c4 --into c5 # both targets take c1
+  jailbee git merge c1                     # pick the targets only
   jailbee git merge c1 --into c4 --plain   # transport only
   jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
   ```

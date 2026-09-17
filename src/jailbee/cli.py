@@ -6163,6 +6163,22 @@ class _MergeFailure:
     conflict: bool
 
 
+@dataclass(frozen=True)
+class _TargetOutcome:
+    """What one target of a `jailbee git merge` run ended up with.
+
+    One run can carry several targets, each with its own sources, its own stop
+    point and its own resume recipe, so the state of a run is a list of these
+    rather than a single triple. The roll-up reads them back; the per-target
+    summary has already printed each one in full.
+    """
+
+    target: str
+    merged: list[str]
+    failure: _MergeFailure | None
+    remaining: list[str]
+
+
 def _print_container_merge_result(
     source: str,
     target: str,
@@ -6313,6 +6329,110 @@ def _print_merge_summary(
     console.print(recipe, markup=False, highlight=False)
 
 
+def _print_multi_target_summary(outcomes: list[_TargetOutcome], *, plain: bool) -> None:
+    """One line per target, after every target's own block has scrolled past.
+
+    Printed only for a run with several targets: with one, this would repeat
+    the block directly above it. Targets are independent — a conflict in one
+    does not stop the next — so the run's state is not a single outcome but one
+    per target, and this is the only place all of them are visible at once.
+
+    `console.print(markup=False, highlight=False)` for the reason the
+    `*_plain` helpers exist: a failure reason is git's or pydantic's own text
+    and can carry square brackets, which Rich's markup parser deletes silently.
+    """
+    from jailbee.tui import console
+
+    verb = "transported" if plain else "merged"
+    complete = sum(1 for o in outcomes if o.failure is None)
+    width = max(len(o.target) for o in outcomes)
+    lines = [f"\nSummary: {complete} of {len(outcomes)} targets complete"]
+    for outcome in outcomes:
+        landed = ", ".join(outcome.merged) if outcome.merged else "nothing"
+        if outcome.failure is None:
+            status, detail = "ok", f"{verb} {landed}"
+        else:
+            status = "stopped"
+            detail = (
+                f"{verb} {landed} — stopped at {outcome.failure.source}: {outcome.failure.reason}"
+            )
+            if outcome.remaining:
+                detail += f" ({', '.join(outcome.remaining)} not attempted)"
+        lines.append(f"  {outcome.target:<{width}}  {status:<7}  {detail}")
+    console.print("\n".join(lines), markup=False, highlight=False)
+
+
+def _merge_sources_into_target(
+    cfg: "Config",
+    incus: "IncusType",
+    sources: list[str],
+    target: str,
+    *,
+    branch: str | None,
+    plain: bool,
+    heading: bool,
+) -> _TargetOutcome:
+    """Merge every source into one target, stopping at the first failure.
+
+    The sources of a *single* target are sequential and fail fast: each merge
+    lands a commit in the same working tree, so continuing past a conflict
+    would stack the next source on a tree left in merge state. Targets do not
+    share that constraint — they are separate containers — so the caller runs
+    the next one regardless, and this reports rather than raises.
+
+    Prints as it goes: each source's own result, then the target's summary and
+    resume recipe, whatever the outcome. A run that stops halfway is only
+    usable if the user can see the boundary.
+
+    `heading` draws a rule naming the target first, in the style of the
+    submodule report's. The caller passes it only for a run with several
+    targets, where one target's per-source lines otherwise follow the previous
+    target's resume recipe with nothing between them; a single target needs no
+    boundary because there is nothing for it to be a boundary to.
+    """
+    from jailbee import git as git_helpers
+    from jailbee import sync
+    from jailbee.tui import console
+
+    if heading:
+        # markup=False/highlight=False as everywhere else here: a container
+        # name is user data, and Rich would eat square brackets in it.
+        console.print(f"\n── into {target} ".ljust(36, "─"), markup=False, highlight=False)
+
+    merged: list[str] = []
+    failure: _MergeFailure | None = None
+    remaining: list[str] = []
+    for index, source in enumerate(sources):
+        try:
+            result = sync.merge_container_into_container(
+                cfg, incus, source, target, branch=branch, plain=plain
+            )
+        except sync.MergeConflictError as exc:
+            error_plain(str(exc))
+            _emit_conflict_report(exc)
+            # A short reason, not `str(exc)`: the exception's own text was just
+            # printed in full, and the summary is a summary.
+            failure = _MergeFailure(source, "merge conflicts", conflict=True)
+            remaining = list(sources[index + 1 :])
+            break
+        except (sync.SyncError, git_helpers.GitError) as exc:
+            error_plain(str(exc))
+            extra = _ff_only_divergence_hint(str(exc), source=source, target=target, branch=branch)
+            if extra is not None:
+                warn_plain(extra)
+            # First non-blank line only: git's output can run to many lines and
+            # the whole of it is already above, unabridged.
+            lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+            failure = _MergeFailure(source, lines[0] if lines else str(exc), conflict=False)
+            remaining = list(sources[index + 1 :])
+            break
+        _print_container_merge_result(source, target, result, plain=plain)
+        merged.append(source)
+
+    _print_merge_summary(target, merged, failure, remaining, plain=plain, branch=branch)
+    return _TargetOutcome(target, merged, failure, remaining)
+
+
 def _eligible_merge_containers(cfg: "Config", incus: "IncusType") -> list["ContainerInfo"]:
     """The containers a cross-container merge can name at either end.
 
@@ -6335,38 +6455,58 @@ def _eligible_merge_containers(cfg: "Config", incus: "IncusType") -> list["Conta
     ]
 
 
+def _without_containers(
+    cfg: "Config", candidates: list["ContainerInfo"], taken: list[str]
+) -> list["ContainerInfo"]:
+    """Drop the rows naming a container the merge's *other* end already holds.
+
+    A container cannot merge into itself, so the end being asked for must not
+    offer what the other end already holds. `taken` carries whatever the user typed
+    or ticked, which may be a short name or a full one, so both spellings of
+    each candidate are compared.
+    """
+    from jailbee.lifecycle import short_name
+
+    names = set(taken)
+    return [c for c in candidates if c.name not in names and short_name(cfg, c.name) not in names]
+
+
 def _prompt_merge_endpoints(
     cfg: "Config",
     sources: list[str] | None,
-    into: str | None,
+    into: list[str] | None,
     *,
     branch: str | None,
-) -> tuple[list[str], str]:
+) -> tuple[list[str], list[str]]:
     """Fill in whichever end of a merge was not given, interactively.
 
     Returns `(sources, into)` as **short** names, so the caller's own
     resolution path runs unchanged for a picked container and a typed one
     alike — one code path, one behaviour to test.
 
-    Sources are asked for first and the target second, and the source prompt
+    Sources are asked for first and the targets second, and the source prompt
     says it merges in *listed* order: `tui.pick_containers_multi` returns rows
     in the order they were displayed, not the order they were ticked, and merge
-    order decides which source hits a conflict first and stops the run.
+    order decides which source hits a conflict first and stops that target.
 
     With `-b` the source prompt is single-select instead: one branch cannot
     describe several sources, so a checkbox would offer an answer the command
     must then reject. The constraint is made unreachable rather than checked
-    after the user has done the work.
+    after the user has done the work. `-b` says nothing about the targets,
+    which stay a checkbox.
 
-    The target list is deliberately *not* filtered against the chosen sources.
-    Merging a container into itself means merging branch X into that
-    container's own checked-out branch Y, which is coherent and unguarded
-    elsewhere; hiding those rows here would be the only place that disagrees.
+    Whichever end is being asked for is offered the eligible containers *minus*
+    the ones the other end already holds: a container cannot merge into itself,
+    so interactively the illegal choice is never presented — the typed path
+    enforces the same rule with `git_merge`'s own guard. The filter can empty
+    the list even though candidates exist (every eligible container ticked as
+    a source), which is reported rather than rendered as an empty picker.
 
-    Raises `typer.Exit(1)` off a TTY (naming both ends when both are missing)
-    and when no container is eligible, `typer.Abort` when the user cancels a
-    prompt, and `typer.Exit(0)` when the source checkbox comes back empty —
-    ticking nothing is a decision not to merge, not an error.
+    Raises `typer.Exit(1)` off a TTY (naming both ends when both are missing),
+    when no container is eligible and when the filter leaves the end being
+    asked for nothing to offer, `typer.Abort` when the user cancels a prompt,
+    and `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
+    decision not to merge, not an error.
     """
     from jailbee import tui
     from jailbee.incus import Incus
@@ -6394,16 +6534,21 @@ def _prompt_merge_endpoints(
         raise typer.Exit(1)
 
     if sources is None:
-        if branch is not None:
-            picked_one = tui.pick_container(
-                candidates, message="Select the container to merge FROM:"
+        offer = _without_containers(cfg, candidates, into or [])
+        if not offer:
+            error(
+                "no eligible container left to merge from: every running clone-mode "
+                "container is already named as a target."
             )
+            raise typer.Exit(1)
+        if branch is not None:
+            picked_one = tui.pick_container(offer, message="Select the container to merge FROM:")
             if picked_one is None:
                 raise typer.Abort()
             sources = [short_name(cfg, picked_one)]
         else:
             picked = tui.pick_containers_multi(
-                candidates,
+                offer,
                 message="Select containers to merge FROM (merged in listed order):",
             )
             if picked is None:
@@ -6414,10 +6559,22 @@ def _prompt_merge_endpoints(
             sources = [short_name(cfg, full) for full in picked]
 
     if into is None:
-        target = tui.pick_container(candidates, message="Select the container to merge INTO:")
-        if target is None:
+        offer = _without_containers(cfg, candidates, sources)
+        if not offer:
+            error(
+                "no eligible container left to merge into: every running clone-mode "
+                "container was chosen as a source."
+            )
+            raise typer.Exit(1)
+        targets = tui.pick_containers_multi(
+            offer, message="Select containers to merge INTO (each takes every source):"
+        )
+        if targets is None:
             raise typer.Abort()
-        into = short_name(cfg, target)
+        if not targets:
+            info("Nothing selected.")
+            raise typer.Exit(0)
+        into = [short_name(cfg, full) for full in targets]
 
     return sources, into
 
@@ -6432,10 +6589,11 @@ def git_merge(
         ),
     ] = None,
     into: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--into",
-            help="Container to merge INTO. Prompted for when omitted; never inferred.",
+            help="Container(s) to merge INTO; repeat the flag for several, each "
+            "taking every source. Prompted for when omitted; never inferred.",
             autocompletion=completion.complete_container,
         ),
     ] = None,
@@ -6462,89 +6620,95 @@ def git_merge(
     inside the target on whatever it has checked out, so conflicts are
     resolved there — `jailbee shell <target>`.
 
-    Several sources are merged one at a time, in the order given. The run stops
-    at the first conflict or failure and always prints what landed, what
-    stopped it, and what was not attempted, followed by the command that
-    resumes where it left off.
+    Both ends take several containers: every source is merged into every
+    target. Within one target the sources are merged one at a time, in the
+    order given, and stop at the first conflict or failure — the next source
+    would otherwise land on a tree left in merge state. Targets are separate
+    containers and do not share that constraint, so a target that stops does
+    not stop the ones after it. Every target prints what landed, what stopped
+    it, what was not attempted and the command that resumes it, and a run with
+    several targets closes with a roll-up of all of them.
+
+    A container may not be named at both ends: merging a container into itself
+    would merge a branch into that same container's checked-out branch, which
+    says nothing the target's own `git merge` does not say better. The prompts
+    hide the rows the other end holds, and a typed collision is refused before
+    anything is merged.
 
     Either end may be left out on a TTY and is then asked for — the sources
-    first, the target second. Off a TTY both must be given.
+    first, the targets second. Off a TTY both must be given.
 
     Examples:
 
-      jailbee git merge                        # pick the sources, then the target
+      jailbee git merge                        # pick the sources, then the targets
       jailbee git merge c1 --into c4
       jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
-      jailbee git merge c1                     # pick the target only
+      jailbee git merge c1 --into c4 --into c5 # both targets take c1
+      jailbee git merge c1                     # pick the targets only
       jailbee git merge c1 --into c4 --plain   # transport only
       jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
     """
-    from jailbee import git as git_helpers
-    from jailbee import sync
     from jailbee.lifecycle import short_name
 
     # Checked on the *typed* sources, before the config is loaded: an explicit
     # `-b` with several sources is a usage error and must fail before anything
     # else runs. The interactive path cannot reproduce it — `-b` makes that
-    # prompt single-select — so there is nothing to re-check afterwards.
+    # prompt single-select — so there is nothing to re-check afterwards. It
+    # constrains the sources only; a single branch is read once and merged into
+    # as many targets as were named.
     if branch is not None and sources is not None and len(sources) > 1:
         error("-b/--branch applies to a single source; pass one source or drop the flag.")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
+    # A repeatable option that was never passed arrives as an empty list from
+    # some click versions and as None from others; the prompt path keys on
+    # None for "not given", so the two are made one.
+    into = list(into) if into else None
     if sources is None or into is None:
         sources, into = _prompt_merge_endpoints(cfg, sources, into, branch=branch)
 
-    incus, target_full = _resolve_existing(cfg, into)
-    target_short = short_name(cfg, target_full)
-
-    # Every source name is resolved up front, before anything is merged.
+    # Every name at both ends is resolved up front, before anything is merged.
     # `_resolve_existing` exits the process itself on a name it cannot resolve,
-    # and doing that from inside the loop would kill the run *after* an earlier
-    # source had already landed in the target — and past
+    # and doing that from inside the loops would kill the run *after* an
+    # earlier source had already landed in a target — and past
     # `_print_merge_summary`, so the user would never learn what landed, what
-    # stopped the run, or how to resume, with a half-applied multi-source merge
-    # on disk. Resolution is therefore all-or-nothing: the same
-    # fail-before-acting shape as the `-b` guard above.
+    # stopped the run, or how to resume, with a half-applied merge on disk.
+    # Resolution is therefore all-or-nothing: the same fail-before-acting shape
+    # as the `-b` guard above and the self-merge guard below.
+    # `into` is never empty here: typer hands over at least one value when the
+    # flag was passed, and the prompt exits 0 rather than returning an empty
+    # tick — so the first target is what the `Incus` handle comes from.
+    incus, first_target = _resolve_existing(cfg, into[0])
+    targets = [short_name(cfg, first_target)]
+    for name in into[1:]:
+        _, target_full = _resolve_existing(cfg, name)
+        targets.append(short_name(cfg, target_full))
     resolved: list[str] = []
     for name in sources:
         _, source_full = _resolve_existing(cfg, name)
         resolved.append(short_name(cfg, source_full))
 
-    merged: list[str] = []
-    failure: _MergeFailure | None = None
-    remaining: list[str] = []
-    for index, source_short in enumerate(resolved):
-        try:
-            result = sync.merge_container_into_container(
-                cfg, incus, source_short, target_short, branch=branch, plain=plain
-            )
-        except sync.MergeConflictError as exc:
-            error_plain(str(exc))
-            _emit_conflict_report(exc)
-            # A short reason, not `str(exc)`: the exception's own text was just
-            # printed in full, and the summary is a summary.
-            failure = _MergeFailure(source_short, "merge conflicts", conflict=True)
-            remaining = list(resolved[index + 1 :])
-            break
-        except (sync.SyncError, git_helpers.GitError) as exc:
-            error_plain(str(exc))
-            extra = _ff_only_divergence_hint(
-                str(exc), source=source_short, target=target_short, branch=branch
-            )
-            if extra is not None:
-                warn_plain(extra)
-            # First non-blank line only: git's output can run to many lines and
-            # the whole of it is already above, unabridged.
-            lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
-            failure = _MergeFailure(source_short, lines[0] if lines else str(exc), conflict=False)
-            remaining = list(resolved[index + 1 :])
-            break
-        _print_container_merge_result(source_short, target_short, result, plain=plain)
-        merged.append(source_short)
+    # Compared on the resolved short names rather than on what was typed: `c1`
+    # and `sampleapp-c1` are one container, and only resolution knows that.
+    source_names = set(resolved)
+    overlap = [t for t in dict.fromkeys(targets) if t in source_names]
+    if overlap:
+        error(
+            f"cannot merge a container into itself: {', '.join(overlap)} "
+            f"{'is' if len(overlap) == 1 else 'are'} named as both source and target."
+        )
+        raise typer.Exit(2)
 
-    _print_merge_summary(target_short, merged, failure, remaining, plain=plain, branch=branch)
-    if failure is not None:
+    outcomes = [
+        _merge_sources_into_target(
+            cfg, incus, resolved, target, branch=branch, plain=plain, heading=len(targets) > 1
+        )
+        for target in targets
+    ]
+    if len(outcomes) > 1:
+        _print_multi_target_summary(outcomes, plain=plain)
+    if any(outcome.failure is not None for outcome in outcomes):
         raise typer.Exit(1)
 
 

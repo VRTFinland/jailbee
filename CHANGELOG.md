@@ -29,6 +29,16 @@ before editing `## Unreleased`.
   shell`, `jailbee exec`, tmux windows, autostart steps and GUI launches
   alike. `jailbee apply` picks them up with no image rebuild. See
   [docs/config.md](https://jailbee.gisgro.io/docs/config/#containerpath).
+- **`jailbee git merge` takes several targets**, not just several sources:
+  repeat `--into` (`jailbee git merge c1 c2 --into c4 --into c5`) and every
+  source is merged into every target. The interactive target prompt is a
+  checkbox too, so a bare `jailbee git merge` now picks both ends that way —
+  the sources first, the targets second. Each target is merged into
+  independently: its sources still stop at its first conflict (the next one
+  would land on a tree left in merge state), but the targets after it are
+  attempted regardless, and each prints its own summary and resume command.
+  A run with several targets closes with a roll-up naming what every target
+  ended with.
 
 ### Changed
 
@@ -51,6 +61,12 @@ before editing `## Unreleased`.
   The shared `jailbee-scratch-base` image is not affected and does not need
   rebuilding. The same applies from now on whenever a scratch directory is
   *moved*: its identity follows the path.
+- **`jailbee git merge` refuses a container named at both ends.** Merging a
+  container into itself merged a branch into that same container's
+  checked-out branch — something the target's own `git merge` does better,
+  and now the one arrangement the command will not accept. Each prompt hides
+  the rows the other end already holds, and a typed collision
+  (`jailbee git merge c1 --into c1`) exits 2 before anything is merged.
 
 ## 1.4.0 - 2026-09-15
 

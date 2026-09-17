@@ -401,6 +401,170 @@ def test_git_merge_resolves_every_source_before_merging_any(merge_repo, mocker):
     called.assert_not_called()
 
 
+# --- several targets -----------------------------------------------------------
+
+
+def test_git_merge_merges_every_source_into_every_target(merge_repo, mocker):
+    """`--into` is repeatable: every target takes every source, target by target."""
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "t1", "--into", "t2"])
+
+    assert result.exit_code == 0, result.output
+    assert [(c.args[2], c.args[3]) for c in called.call_args_list] == [
+        ("c1", "t1"),
+        ("c2", "t1"),
+        ("c1", "t2"),
+        ("c2", "t2"),
+    ]
+    flat = flat_output(result.output)
+    assert "merged into t1: c1, c2" in flat
+    assert "merged into t2: c1, c2" in flat
+
+
+def test_git_merge_carries_on_to_the_next_target_after_a_failure(merge_repo, mocker):
+    """A target that stops must not take the targets after it down with it.
+
+    Within one target the sources still stop at the first failure — merging on
+    top of a conflicted tree is not safe — but the next target has its own
+    working tree, untouched by that conflict, and is attempted in full.
+    """
+
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+        if (source, target) == ("c1", "t1"):
+            raise MergeConflictError("conflicts", report=_conflict_report())
+        return _result(source=source)
+
+    called = mocker.patch("jailbee.sync.merge_container_into_container", side_effect=side_effect)
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "t1", "--into", "t2"])
+
+    assert result.exit_code == 1
+    assert [(c.args[2], c.args[3]) for c in called.call_args_list] == [
+        ("c1", "t1"),
+        ("c1", "t2"),
+        ("c2", "t2"),
+    ]
+    flat = flat_output(result.output)
+    assert "merged into t1: nothing" in flat
+    assert "not attempted: c2" in flat
+    assert "merged into t2: c1, c2" in flat
+
+
+def test_git_merge_rolls_up_what_each_target_ended_with(merge_repo, mocker):
+    """With several targets the per-target blocks scroll away; the roll-up does not.
+
+    It is the only place the user can read the state of every target at once:
+    which ones are complete, which one stopped, on what, and what it never
+    attempted.
+    """
+
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+        if (source, target) == ("c2", "t1"):
+            raise SyncError("Container 'c2' is not running.")
+        return _result(source=source)
+
+    mocker.patch("jailbee.sync.merge_container_into_container", side_effect=side_effect)
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "c3", "--into", "t1", "--into", "t2"])
+
+    assert result.exit_code == 1
+    flat = flat_output(result.output)
+    assert "Summary: 1 of 2 targets complete" in flat
+    # `flat_output` collapses runs of whitespace, so the column padding is not
+    # what is asserted here — the words are.
+    assert (
+        "t1 stopped merged c1 — stopped at c2: Container 'c2' is not running. "
+        "(c3 not attempted)" in flat
+    )
+    assert "t2 ok merged c1, c2, c3" in flat
+
+
+def test_git_merge_roll_up_reports_a_plain_run_as_a_transport(merge_repo, mocker):
+    """`--plain` merges nothing, so the roll-up must not claim a merge either."""
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "t1", "--into", "t2", "--plain"])
+
+    assert result.exit_code == 0, result.output
+    flat = flat_output(result.output)
+    assert "t1 ok transported c1" in flat
+    assert "merged c1" not in flat
+
+
+def test_git_merge_heads_each_target_block_when_there_are_several(merge_repo, mocker):
+    """Several targets print several blocks in a row; each says which one it is.
+
+    Without a heading the next target's per-source lines follow the previous
+    target's resume recipe with nothing between them.
+    """
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "t1", "--into", "t2"])
+
+    assert result.exit_code == 0, result.output
+    flat = flat_output(result.output)
+    assert "── into t1 ─" in flat
+    assert "── into t2 ─" in flat
+
+
+def test_git_merge_into_a_single_target_has_no_heading(merge_repo, mocker):
+    """One target needs no boundary: there is nothing for it to be a boundary to."""
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert "── into" not in flat_output(result.output)
+
+
+def test_git_merge_into_a_single_target_prints_no_roll_up(merge_repo, mocker):
+    """One target is already summarised by its own block; a roll-up would repeat it."""
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert "targets complete" not in flat_output(result.output)
+
+
+def test_git_merge_resolves_every_target_before_merging_any(merge_repo, mocker):
+    """An unresolvable target name must fail before anything lands anywhere.
+
+    Same all-or-nothing rule as the sources: `_resolve_existing` exits the
+    process itself, and doing that from inside the loop would kill the run
+    after an earlier target had already taken every source — past its summary,
+    so the half-applied run would be reported to nobody.
+    """
+    _cfg, incus = merge_repo
+
+    def resolve(_cfg, name):
+        if name == "t2typo":
+            raise typer.Exit(1)  # what `_resolve_existing` does for an unknown name
+        return (incus, f"sampleapp-{name}")
+
+    mocker.patch("jailbee.cli._resolve_existing", side_effect=resolve)
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "t1", "--into", "t2typo"])
+
+    assert result.exit_code == 1
+    called.assert_not_called()
+
+
+def test_git_merge_branch_override_still_allows_several_targets(merge_repo, mocker):
+    """`-b` constrains the sources to one; it says nothing about the targets."""
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(
+        app, ["git", "merge", "c1", "--into", "t1", "--into", "t2", "-b", "feat/x"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[3] for c in called.call_args_list] == ["t1", "t2"]
+    assert all(c.kwargs["branch"] == "feat/x" for c in called.call_args_list)
+
+
 # --- argument validation -------------------------------------------------------
 
 
@@ -412,6 +576,52 @@ def test_git_merge_rejects_branch_override_with_several_sources(merge_repo, mock
 
     assert result.exit_code == 2
     assert "single source" in flat_output(result.output)
+    called.assert_not_called()
+
+
+def test_git_merge_refuses_a_container_named_at_both_ends(merge_repo, mocker):
+    """A container cannot be its own merge source.
+
+    The interactive path hides the rows the other end has taken, so this shape
+    can only be typed — and it is refused whole, before anything is merged,
+    rather than merging the legal pairs and leaving the user to work out which
+    of them ran.
+    """
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c1", "--into", "t2"])
+
+    assert result.exit_code == 2
+    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert "c1" in combined
+    assert "into itself" in combined
+    called.assert_not_called()
+
+
+def test_git_merge_self_merge_guard_compares_resolved_names(merge_repo, mocker):
+    """`c1` and `sampleapp-c1` are one container, so naming both ends is refused.
+
+    The guard runs on the resolved short names rather than on what was typed;
+    comparing the raw arguments would let the same container through under its
+    other spelling.
+    """
+    _cfg, incus = merge_repo
+    # The fixture's resolver prefixes unconditionally; the real one resolves
+    # both spellings of one container to the same full name, which is the
+    # behaviour the guard leans on.
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        side_effect=lambda _cfg, name: (
+            incus,
+            name if name.startswith("sampleapp-") else f"sampleapp-{name}",
+        ),
+    )
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "sampleapp-c1"])
+
+    assert result.exit_code == 2
+    assert "into itself" in flat_output((result.output or "") + (result.stderr or ""))
     called.assert_not_called()
 
 
@@ -482,41 +692,48 @@ def _info(short: str, *, mode: str = "clone", state: str = "Running") -> Contain
 
 
 class _Pickers:
-    """Handle over the two patched `jailbee.tui` pickers.
+    """Handle over the patched `jailbee.tui` pickers.
 
-    `sources` / `target` are the patched functions themselves (so call
-    arguments can be asserted) and `order` records which prompt ran first —
-    the requirement is sources *then* target.
+    Both ends are checkboxes, so both run through the *same*
+    `pick_containers_multi`; they are told apart by their message — "FROM" or
+    "INTO" — which is also what distinguishes them for the user. `order`
+    records which prompt ran first (the requirement is sources, then targets),
+    `offered` what each was shown, `messages` what each asked.
 
-    `target` is `tui.pick_container`, which the command also uses for the
-    *source* when `-b` is given: one branch cannot describe several sources,
-    so that prompt is single-select. Tests of that path read the same slot.
+    The third end name, "single", is `tui.pick_container` — reached only by
+    `-b`, since one branch cannot describe several sources, so that prompt
+    alone is single-select.
     """
 
     def __init__(self, mocker) -> None:
         self._mocker = mocker
         self.order: list[str] = []
+        self.offered: dict[str, list[str]] = {}
+        self.messages: dict[str, str] = {}
+        # What each prompt answers, set per test: a list is a tick, `None` a
+        # cancel, `[]` an empty selection.
         self.source_answer: list[str] | None = []
-        self.target_answer: str | None = None
-        self.sources = mocker.patch(
-            "jailbee.tui.pick_containers_multi", side_effect=self._sources_asked
-        )
-        self.target = mocker.patch("jailbee.tui.pick_container", side_effect=self._target_asked)
+        self.target_answer: list[str] | None = []
+        self.single_answer: str | None = None
+        mocker.patch("jailbee.tui.pick_containers_multi", side_effect=self._multi_asked)
+        mocker.patch("jailbee.tui.pick_container", side_effect=self._single_asked)
 
-    def _sources_asked(self, _containers, **_kwargs):
-        self.order.append("sources")
-        return self.source_answer
+    def _multi_asked(self, containers, *, message: str):
+        end = "sources" if "FROM" in message else "targets"
+        self._record(end, containers, message)
+        return self.source_answer if end == "sources" else self.target_answer
 
-    def _target_asked(self, _containers, **_kwargs):
-        self.order.append("target")
-        return self.target_answer
+    def _single_asked(self, containers, *, message: str):
+        self._record("single", containers, message)
+        return self.single_answer
+
+    def _record(self, end: str, containers, message: str) -> None:
+        self.order.append(end)
+        self.offered[end] = [c.name for c in containers]
+        self.messages[end] = message
 
     def offer(self, *containers: ContainerInfo) -> None:
         self._mocker.patch("jailbee.lifecycle.list_containers", return_value=list(containers))
-
-    def answer(self, *, sources: list[str] | None = None, target: str | None = None) -> None:
-        self.source_answer = sources
-        self.target_answer = target
 
 
 @pytest.fixture
@@ -532,20 +749,35 @@ def merge_pickers(merge_repo, mocker):
     return _Pickers(mocker)
 
 
-def test_git_merge_with_no_arguments_asks_for_sources_then_the_target(merge_pickers, mocker):
+def test_git_merge_with_no_arguments_asks_for_sources_then_the_targets(merge_pickers, mocker):
     """A bare `jailbee git merge` prompts for both ends, sources first."""
     p = merge_pickers
     p.offer(_info("c1"), _info("c2"), _info("c4"))
-    p.answer(sources=["sampleapp-c1", "sampleapp-c2"], target="sampleapp-c4")
+    p.source_answer = ["sampleapp-c1", "sampleapp-c2"]
+    p.target_answer = ["sampleapp-c4"]
     called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 0, result.output
-    assert p.order == ["sources", "target"]
+    assert p.order == ["sources", "targets"]
     # Short names reach `sync`, in the order the checkbox listed them.
     assert [c.args[2] for c in called.call_args_list] == ["c1", "c2"]
     assert all(c.args[3] == "c4" for c in called.call_args_list)
+
+
+def test_git_merge_target_prompt_is_a_checkbox_too(merge_pickers, mocker):
+    """Several targets can be ticked in one pass, and each takes every source."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("t1"), _info("t2"))
+    p.source_answer = ["sampleapp-c1"]
+    p.target_answer = ["sampleapp-t1", "sampleapp-t2"]
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge"])
+
+    assert result.exit_code == 0, result.output
+    assert [(c.args[2], c.args[3]) for c in called.call_args_list] == [("c1", "t1"), ("c1", "t2")]
 
 
 def test_git_merge_source_prompt_says_the_order_it_will_merge_in(merge_pickers, mocker):
@@ -556,24 +788,25 @@ def test_git_merge_source_prompt_says_the_order_it_will_merge_in(merge_pickers, 
     """
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=["sampleapp-c1"], target="sampleapp-c4")
+    p.source_answer = ["sampleapp-c1"]
+    p.target_answer = ["sampleapp-c4"]
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     runner.invoke(app, ["git", "merge"])
 
-    assert "listed order" in p.sources.call_args.kwargs["message"]
+    assert "listed order" in p.messages["sources"]
 
 
-def test_git_merge_prompts_only_for_the_target_when_sources_are_given(merge_pickers, mocker):
+def test_git_merge_prompts_only_for_the_targets_when_sources_are_given(merge_pickers, mocker):
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(target="sampleapp-c4")
+    p.target_answer = ["sampleapp-c4"]
     called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "c1"])
 
     assert result.exit_code == 0, result.output
-    p.sources.assert_not_called()
+    assert p.order == ["targets"]
     assert [c.args[2] for c in called.call_args_list] == ["c1"]
     assert called.call_args.args[3] == "c4"
 
@@ -581,13 +814,13 @@ def test_git_merge_prompts_only_for_the_target_when_sources_are_given(merge_pick
 def test_git_merge_prompts_only_for_the_sources_when_into_is_given(merge_pickers, mocker):
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=["sampleapp-c1"])
+    p.source_answer = ["sampleapp-c1"]
     called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "--into", "c4"])
 
     assert result.exit_code == 0, result.output
-    p.target.assert_not_called()
+    assert p.order == ["sources"]
     assert called.call_args.args[2] == "c1"
     assert called.call_args.args[3] == "c4"
 
@@ -600,13 +833,13 @@ def test_git_merge_with_a_branch_override_asks_for_exactly_one_source(merge_pick
     """
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(target="sampleapp-c1")  # the source picker is `pick_container` here
+    p.single_answer = "sampleapp-c1"
     called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge", "--into", "c4", "-b", "feat/x"])
 
     assert result.exit_code == 0, result.output
-    p.sources.assert_not_called()
+    assert p.order == ["single"]
     assert called.call_args.args[2] == "c1"
     assert called.call_args.kwargs["branch"] == "feat/x"
 
@@ -625,49 +858,89 @@ def test_git_merge_offers_only_running_clone_mode_containers(merge_pickers, mock
         _info("cold", state="Stopped"),
         _info("c4"),
     )
-    p.answer(sources=["sampleapp-c1"], target="sampleapp-c4")
+    p.source_answer = ["sampleapp-c1"]
+    p.target_answer = ["sampleapp-c4"]
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 0, result.output
-    for picker in (p.sources, p.target):
-        offered = [c.name for c in picker.call_args.args[0]]
-        assert offered == ["sampleapp-c1", "sampleapp-c4"]
+    assert p.offered["sources"] == ["sampleapp-c1", "sampleapp-c4"]
 
 
-def test_git_merge_still_offers_a_chosen_source_as_the_target(merge_pickers, mocker):
-    """Merging a container into itself is deliberately unguarded.
+def test_git_merge_target_prompt_hides_the_chosen_sources(merge_pickers, mocker):
+    """A container cannot merge into itself, so its row is not offered as a target.
 
-    It means merging branch X into that container's own checked-out branch Y,
-    which is coherent — so the target prompt must not hide the rows the source
-    prompt just took.
+    Hiding the row is how the rule is enforced interactively: the choice that
+    the command would refuse is never presented.
     """
     p = merge_pickers
-    p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=["sampleapp-c1"], target="sampleapp-c1")
-    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+    p.offer(_info("c1"), _info("c2"), _info("c4"))
+    p.source_answer = ["sampleapp-c1", "sampleapp-c2"]
+    p.target_answer = ["sampleapp-c4"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 0, result.output
-    assert "sampleapp-c1" in [c.name for c in p.target.call_args.args[0]]
-    assert called.call_args.args[2] == "c1"
-    assert called.call_args.args[3] == "c1"
+    assert p.offered["targets"] == ["sampleapp-c4"]
+
+
+def test_git_merge_source_prompt_hides_the_targets_given_on_the_command_line(merge_pickers, mocker):
+    """The same rule from the other side: a named target cannot also be a source."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("c4"))
+    p.source_answer = ["sampleapp-c1"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert p.offered["sources"] == ["sampleapp-c1"]
+
+
+def test_git_merge_says_so_when_the_sources_leave_no_target(merge_pickers, mocker):
+    """Ticking every eligible container as a source leaves nothing to merge into."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("c2"))
+    p.source_answer = ["sampleapp-c1", "sampleapp-c2"]
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge"])
+
+    assert result.exit_code == 1
+    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert "no eligible container left to merge into" in combined
+    assert "targets" not in p.order
+    called.assert_not_called()
+
+
+def test_git_merge_says_so_when_the_targets_leave_no_source(merge_pickers, mocker):
+    """Naming every eligible container with `--into` leaves nothing to merge from."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("c4"))
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "--into", "c1", "--into", "c4"])
+
+    assert result.exit_code == 1
+    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert "no eligible container left to merge from" in combined
+    assert p.order == []
+    called.assert_not_called()
 
 
 def test_git_merge_cancelled_source_prompt_merges_nothing(merge_pickers, mocker):
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=None)
+    p.source_answer = None
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 1
     assert "Aborted" in flat_output((result.output or "") + (result.stderr or ""))
-    p.sources.assert_called_once()
-    p.target.assert_not_called()
+    assert p.order == ["sources"]
     called.assert_not_called()
 
 
@@ -675,14 +948,14 @@ def test_git_merge_empty_source_selection_merges_nothing(merge_pickers, mocker):
     """Enter with nothing ticked is not an error, and not a merge either."""
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=[])
+    p.source_answer = []
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 0, result.output
     assert "Nothing selected" in flat_output(result.output)
-    p.target.assert_not_called()
+    assert p.order == ["sources"]
     called.assert_not_called()
 
 
@@ -690,14 +963,30 @@ def test_git_merge_cancelled_target_prompt_merges_nothing(merge_pickers, mocker)
     """Cancelling the second prompt must not merge the sources anywhere."""
     p = merge_pickers
     p.offer(_info("c1"), _info("c4"))
-    p.answer(sources=["sampleapp-c1"], target=None)
+    p.source_answer = ["sampleapp-c1"]
+    p.target_answer = None
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 1
     assert "Aborted" in flat_output((result.output or "") + (result.stderr or ""))
-    assert p.order == ["sources", "target"]
+    assert p.order == ["sources", "targets"]
+    called.assert_not_called()
+
+
+def test_git_merge_empty_target_selection_merges_nothing(merge_pickers, mocker):
+    """Ticking no target is a decision not to merge, not an error."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("c4"))
+    p.source_answer = ["sampleapp-c1"]
+    p.target_answer = []
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge"])
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing selected" in flat_output(result.output)
     called.assert_not_called()
 
 
@@ -710,6 +999,5 @@ def test_git_merge_without_eligible_containers_says_so(merge_pickers, mocker):
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 1
-    p.sources.assert_not_called()
-    p.target.assert_not_called()
+    assert p.order == []
     called.assert_not_called()
