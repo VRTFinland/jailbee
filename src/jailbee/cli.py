@@ -1,6 +1,7 @@
 """CLI entry point for jailbee."""
 
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -45,6 +46,180 @@ config_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(config_app)
+
+remote_app = typer.Typer(
+    name="remote",
+    help="Restricted remote access.",
+    no_args_is_help=True,
+)
+ssh_remote_app = typer.Typer(
+    name="ssh",
+    help="Jailbee SSH server.",
+    no_args_is_help=True,
+)
+ssh_key_app = typer.Typer(
+    name="key",
+    help="Authorized SSH keys.",
+    no_args_is_help=True,
+)
+app.add_typer(remote_app)
+remote_app.add_typer(ssh_remote_app)
+ssh_remote_app.add_typer(ssh_key_app)
+
+
+def _remote_ssh_service_action(name: Literal["enable", "disable", "restart"]) -> None:
+    from jailbee.remote_ssh import keys, service
+
+    try:
+        getattr(service, name)()
+    except (
+        keys.SSHDependencyError,
+        keys.SSHKeyError,
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@ssh_remote_app.command("enable")
+def remote_ssh_enable_cmd() -> None:
+    """Install, enable, and start the SSH service."""
+    _remote_ssh_service_action("enable")
+
+
+@ssh_remote_app.command("disable")
+def remote_ssh_disable_cmd() -> None:
+    """Disable and stop the SSH service."""
+    _remote_ssh_service_action("disable")
+
+
+@ssh_remote_app.command("restart")
+def remote_ssh_restart_cmd() -> None:
+    """Restart the installed SSH service."""
+    _remote_ssh_service_action("restart")
+
+
+@ssh_remote_app.command("status")
+def remote_ssh_status_cmd() -> None:
+    """Show service, configuration, and key status."""
+    from jailbee.remote_ssh import service
+
+    status = service.status()
+    typer.echo(f"installed: {'yes' if status.installed else 'no'}")
+    typer.echo(f"enabled: {'yes' if status.enabled else 'no'}")
+    typer.echo(f"active: {'yes' if status.active else 'no'}")
+    typer.echo(f"listen: {status.listen}:{status.port}")
+    typer.echo(f"entry points: {', '.join(status.entrypoints) or 'none'}")
+    typer.echo(f"authorized keys: {status.authorized_keys}")
+    for problem in status.problems:
+        typer.echo(f"problem: {problem}")
+
+    fatal_prefixes = (
+        "Global config is invalid:",
+        "Host key ",
+        "Could not inspect host key:",
+    )
+    if any(problem.startswith(fatal_prefixes) for problem in status.problems):
+        raise typer.Exit(1)
+
+
+def _remote_ssh_key_line(key: Any) -> str:
+    return f"{key.fingerprint}  {key.algorithm}  {key.comment}"
+
+
+@ssh_key_app.command("add")
+def remote_ssh_key_add_cmd(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            help="OpenSSH public-key file to authorize.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+) -> None:
+    """Authorize one public key read from SOURCE."""
+    from jailbee.remote_ssh import keys
+
+    try:
+        key = keys.add_authorized_key(source.read_text())
+    except (keys.SSHDependencyError, keys.SSHKeyError, OSError, UnicodeError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    typer.echo(_remote_ssh_key_line(key))
+
+
+@ssh_key_app.command("ls")
+def remote_ssh_key_list_cmd() -> None:
+    """List authorized public keys."""
+    from jailbee.remote_ssh import keys
+
+    try:
+        authorized = keys.read_authorized_keys()
+    except (keys.SSHKeyError, OSError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    for key in authorized:
+        typer.echo(_remote_ssh_key_line(key))
+
+
+@ssh_key_app.command("rm")
+def remote_ssh_key_remove_cmd(
+    fingerprint: Annotated[
+        str,
+        typer.Argument(help="Full SHA256 fingerprint of the key to remove."),
+    ],
+) -> None:
+    """Remove one authorized public key by full fingerprint."""
+    from jailbee.remote_ssh import keys
+
+    if re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint) is None:
+        raise typer.BadParameter("expected a full SHA256 fingerprint")
+    try:
+        keys.remove_authorized_key(fingerprint)
+    except (keys.SSHKeyError, OSError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@ssh_remote_app.command("serve")
+def remote_ssh_serve_cmd() -> None:
+    """Run the SSH server in the foreground."""
+    from jailbee.remote_ssh import keys
+
+    global_config = _load_global()
+    try:
+        keys.ensure_key_files()
+        try:
+            from jailbee.remote_ssh import server
+        except ModuleNotFoundError as exc:
+            if exc.name != "asyncssh":
+                raise
+            raise keys.SSHDependencyError(
+                "The SSH server requires the optional 'ssh' extra. "
+                "Install it with: uv tool install 'jailbee[ssh]'"
+            ) from exc
+        server.serve(global_config.remote.ssh)
+    except (keys.SSHDependencyError, keys.SSHKeyError, OSError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@app.command("_remote-console", hidden=True)
+def remote_console_cmd(
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Initial registered repository prefix."),
+    ] = None,
+) -> None:
+    """Run the restricted interactive console for an SSH child."""
+    from jailbee.remote_ssh.console import run
+
+    raise typer.Exit(run(repo))
 
 
 ConfigOption = Annotated[
