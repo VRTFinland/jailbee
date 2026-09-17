@@ -81,7 +81,15 @@ CONTAINER_USERNAME = "dev"
 # top-level key, and `Config` is extra="forbid" — every command in every
 # configured repo on the host would start failing validation.
 _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"docker_registry_mirror", "ls", "dashboard", "claude_credentials", "scratch", "config_edit"}
+    {
+        "docker_registry_mirror",
+        "ls",
+        "dashboard",
+        "claude_credentials",
+        "scratch",
+        "config_edit",
+        "update_check",
+    }
 )
 
 

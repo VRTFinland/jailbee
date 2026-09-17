@@ -200,6 +200,20 @@ class GlobalConfig(BaseModel):
             "top-level key there."
         ),
     )
+    update_check: bool = Field(
+        default=True,
+        description=(
+            "Whether jailbee tells you when a newer release is on PyPI. The check "
+            "itself never runs on a command's path: a command reads the last answer "
+            "from its state database and, when that is over a day old, starts a "
+            "detached probe that fetches "
+            "`https://pypi.org/pypi/jailbee/json` for the next run. Nothing "
+            "identifying you or your repos is sent. `false` turns it off, as does "
+            "`JAILBEE_NO_UPDATE_CHECK=1` for a single command. Host-level only "
+            "(`common.py`'s `_HOST_LEVEL_KEYS`): whether your machine talks to PyPI "
+            "is not a repo's decision."
+        ),
+    )
     config_edit: ConfigEditPolicy = Field(
         default_factory=ConfigEditPolicy,
         description=(

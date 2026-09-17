@@ -25,7 +25,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 def state_dir() -> Path:
@@ -193,6 +193,14 @@ def _migrate_to_v10(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v11(conn: Connection) -> None:
+    """v10 -> v11: add the update_check_state table. ``create_all`` (run
+    before the migration loop in ``_ensure_schema``) already creates the new
+    table, so this step is an idempotent no-op guard whose job is to let the
+    version bump to 11 — the same shape as ``_migrate_to_v7``."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -204,6 +212,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     8: _migrate_to_v8,
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
 
 
