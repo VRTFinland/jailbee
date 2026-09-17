@@ -9475,6 +9475,59 @@ def test_new_checks_all_four_profile_names(tmp_path, monkeypatch, mocker):
     assert new_container.call_count == 1
 
 
+def test_new_records_the_watermark_for_the_apply_it_runs(tmp_path, monkeypatch, mocker):
+    """The implicit apply writes what `apply` writes, so it satisfies an
+    `apply` upgrade note exactly as `jb init` and `jb apply` do — the other
+    two `_record_upgrade_action` call sites. Without the watermark the
+    directory is told to run an `apply` that `jb new` has already run for
+    it, on every `jb ls` / `jb new` / `jb shell` from then on.
+    """
+    from sqlmodel import Session
+    from typer.testing import CliRunner
+
+    from jailbee import __version__
+    from jailbee.cli import app
+    from jailbee.db import get_engine
+    from jailbee.db.models import RepoUpgradeState
+
+    _new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = False
+    mocker.patch("jailbee.apply.run_apply")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    with Session(get_engine()) as session:
+        row = session.get(RepoUpgradeState, "tutkimus")
+    assert row is not None
+    assert (row.apply_version, row.apply_observed) == (__version__, True)
+
+
+def test_new_advises_after_the_implicit_apply(tmp_path, monkeypatch, mocker):
+    """Order is the guarantee, not the call: advice asked for *before* the
+    pre-flight describes a profile set that does not exist yet, and tells the
+    user to run the very `apply` the next line of output performs.
+    """
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _new_container, incus = _scratch_new_cmd_env(tmp_path, monkeypatch, mocker, git=True)
+    incus.profile_exists.return_value = False
+    run_apply = mocker.patch("jailbee.apply.run_apply")
+    advice = mocker.patch("jailbee.upgrade.advice_lines", return_value=[])
+
+    # A shared parent is the only way mock records a cross-mock call order.
+    calls = mocker.MagicMock()
+    calls.attach_mock(run_apply, "apply")
+    calls.attach_mock(advice, "advice")
+
+    result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert [name for name, _, _ in calls.mock_calls] == ["apply", "advice"]
+
+
 # ---------------------------------------------------------------------------
 # `jb new` pre-flight: the scratch notice
 # ---------------------------------------------------------------------------

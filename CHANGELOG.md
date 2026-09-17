@@ -8,6 +8,18 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- **A scratch directory was told to run the `apply` that `jailbee new` had
+  just run for it.** The first container in a directory with no
+  `.jailbee/config.yaml` creates that directory's profile set through an
+  implicit `apply`, but the run was never recorded as one — so the upgrade
+  hint kept advising `jb apply` on every later `jailbee ls`/`new`/`shell`
+  there, and printed once more in the creating command itself, ahead of the
+  profiles it was talking about. The implicit run now records its watermark
+  like `jailbee init` and `jailbee apply` do, and `jailbee new` asks for the
+  advice after the pre-flight rather than before it.
+
 ## 1.4.0 - 2026-09-15
 
 ### Added
