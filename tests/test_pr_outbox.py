@@ -463,6 +463,118 @@ def test_resolve_target_accepts_the_containers_own_pr_scope(mocker, make_cfg, tm
     assert target.scope == PrScope.for_repo(cfg)
 
 
+@pytest.mark.parametrize("subpath", [None, "deps/library"])
+def test_outbox_reads_pin_validated_repo_despite_another_gh_default(
+    mocker, make_cfg, tmp_path, subpath
+):
+    from subprocess import CompletedProcess
+
+    from jailbee.pr_outbox import _current_pr_body, parse_manifest, resolve_target
+
+    cfg = make_cfg(tmp_path)
+    scope = PrScope(tmp_path / subpath if subpath else tmp_path, "origin", "", subpath)
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[scope])
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/library")
+    labels = (
+        {"user.jailbee.sub_pr": json.dumps({subpath: {"branch": "library-head"}})}
+        if subpath
+        else {"user.jailbee.branch": "library-head"}
+    )
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda container, key: labels.get(key)
+    commands = []
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "git":
+            return CompletedProcess(cmd, 0, "https://github.com/acme/library\n", "")
+        commands.append(cmd)
+        assert kwargs["cwd"] == scope.repo_root
+        # Model a checkout whose gh default/other preferred remote is unrelated.
+        pinned = "--repo" in cmd and cmd[cmd.index("--repo") + 1] == "acme/library"
+        data = (
+            {"body": "library description" if pinned else "unrelated description"}
+            if "body" in cmd
+            else {
+                "number": 42 if pinned else 999,
+                "headRefName": "library-head",
+                "headRefOid": "abc1234",
+                "state": "OPEN",
+                "baseRefName": "main",
+            }
+        )
+        return CompletedProcess(cmd, 0, json.dumps(data), "")
+
+    mocker.patch("subprocess.run", side_effect=run)
+    manifest = parse_manifest(
+        "sub.json",
+        _manifest_text(
+            repo="acme/library", pr=42, actions=[{"type": "description", "body": "new"}]
+        ),
+        {},
+    )
+
+    target = resolve_target(cfg, incus, "c", manifest, force=False)
+
+    assert target.pr.number == 42
+    assert _current_pr_body(cfg, target, None) == "library description"
+    assert len(commands) == 3  # ownership, PR metadata, current description
+    assert all(cmd[cmd.index("--repo") + 1] == "acme/library" for cmd in commands)
+
+
+@pytest.mark.parametrize(
+    ("action", "command_prefix"),
+    [
+        (
+            {"type": "review", "body": "review", "comments": []},
+            ["gh", "api", "--method", "POST", "repos/acme/library/pulls/42/reviews"],
+        ),
+        (
+            {"type": "reply", "comment_id": 7, "body": "reply"},
+            ["gh", "api", "--method", "POST", "repos/acme/library/pulls/42/comments/7/replies"],
+        ),
+        (
+            {"type": "comment", "body": "comment"},
+            ["gh", "api", "--method", "POST", "repos/acme/library/issues/42/comments"],
+        ),
+        (
+            {"type": "description", "title": "title", "body": "description"},
+            ["gh", "pr", "edit", "42", "--repo", "acme/library"],
+        ),
+    ],
+)
+def test_outbox_mutations_pin_validated_repo_despite_another_gh_default(
+    mocker, make_cfg, tmp_path, action, command_prefix
+):
+    from subprocess import CompletedProcess
+
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    scope = PrScope(tmp_path / "deps/library", "origin", "", "deps/library")
+    manifest = parse_manifest(
+        "sub.json", _manifest_text(repo="acme/library", pr=42, actions=[action]), {}
+    )
+    run = mocker.patch(
+        "subprocess.run", return_value=CompletedProcess([], 0, '{"html_url": "https://x"}', "")
+    )
+    # GH_REPO can otherwise override cwd-based repository detection.
+    mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        Target(manifest=manifest, pr=_pr_info(42), stale=False, scope=scope),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.failure is None
+    assert outcome.applied == (0,)
+    run.assert_called_once()
+    assert run.call_args.args[0][: len(command_prefix)] == command_prefix
+    assert run.call_args.kwargs["cwd"] == scope.repo_root
+
+
 def _submodule_gate_setup(mocker, make_cfg, tmp_path, *, records=None, labels=None):
     """Keep scope construction and recorded ownership real; fake git and Incus I/O."""
     cfg = make_cfg(tmp_path)
@@ -515,7 +627,7 @@ def test_submodule_scope_uses_each_duplicate_heads_ownership_fallback(mocker, ma
 
     assert target.scope == sub_scope
     assert target.pr is not None and target.pr.number == 42
-    find.assert_called_once_with(tmp_path / "deps/two", "library-head")
+    find.assert_called_once_with(tmp_path / "deps/two", "library-head", repo="acme/library")
 
 
 def test_scope_mismatch_names_requested_and_all_known_github_repos(mocker, make_cfg, tmp_path):
@@ -595,7 +707,7 @@ def test_submodule_scope_staleness_uses_its_root_and_remote(mocker, make_cfg, tm
     with pytest.raises(StaleError, match="head moved"):
         resolve_target(cfg, incus, "c", manifest, force=False)
 
-    resolve.assert_called_once_with(sub_scope.repo_root, 42, remote="upstream")
+    resolve.assert_called_once_with(sub_scope.repo_root, 42, remote="upstream", repo="acme/library")
     target = resolve_target(cfg, incus, "c", manifest, force=True)
     assert target.scope == sub_scope
     assert target.stale is True
@@ -810,12 +922,12 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
     assert outcome.failure is None
     assert outcome.applied == (0, 1, 2, 3)
     calls["review"].assert_called_once_with(
-        scope.repo_root, 1234, commit_id="abc1234", body="review body", comments=[]
+        scope.repo_root, 1234, commit_id="abc1234", body="review body", comments=[], repo="acme/library"
     )
-    calls["reply"].assert_called_once_with(scope.repo_root, 1234, 7, "reply body")
-    calls["comment"].assert_called_once_with(scope.repo_root, 1234, "comment body")
+    calls["reply"].assert_called_once_with(scope.repo_root, 1234, 7, "reply body", repo="acme/library")
+    calls["comment"].assert_called_once_with(scope.repo_root, 1234, "comment body", repo="acme/library")
     calls["edit"].assert_called_once_with(
-        scope.repo_root, 1234, title="title", body="description body"
+        scope.repo_root, 1234, title="title", body="description body", repo="acme/library"
     )
 
 
@@ -827,7 +939,7 @@ def test_current_pr_body_reads_target_submodule_scope(mocker, make_cfg, tmp_path
     target = Target(manifest=_null_pr_manifest(), pr=_pr_info(), stale=False, scope=scope)
 
     assert _current_pr_body(make_cfg(tmp_path), target, None) == "current library description"
-    body.assert_called_once_with(scope.repo_root, 1234)
+    body.assert_called_once_with(scope.repo_root, 1234, repo="acme/widgets")
 
 
 def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_path):

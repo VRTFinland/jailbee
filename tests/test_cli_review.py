@@ -149,8 +149,12 @@ def test_apply_submodule_repo_manifest_without_an_extra_option(mocker, tmp_path)
 
     assert result.exit_code == 0, result.output
     assert "https://x/sub-comment" in result.output
-    resolve.assert_called_once_with(cfg.repo_root / "deps/library", 42, remote="upstream")
-    comment.assert_called_once_with(cfg.repo_root / "deps/library", 42, "looks good")
+    resolve.assert_called_once_with(
+        cfg.repo_root / "deps/library", 42, remote="upstream", repo="acme/library"
+    )
+    comment.assert_called_once_with(
+        cfg.repo_root / "deps/library", 42, "looks good", repo="acme/library"
+    )
 
 
 def test_apply_reports_nothing_pending(mocker, tmp_path):

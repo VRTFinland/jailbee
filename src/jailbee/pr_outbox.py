@@ -588,7 +588,7 @@ def resolve_target(
                 branch = record.head
 
         if manifest.pr is not None and not scope_numbers and branch is not None:
-            found = pr.find_pr_for_branch(matched.repo_root, branch)
+            found = pr.find_pr_for_branch(matched.repo_root, branch, repo=manifest.repo)
             if found is not None:
                 scope_numbers.add(found.number)
         owned_numbers.update(scope_numbers)
@@ -616,7 +616,7 @@ def resolve_target(
             )
         number = manifest.pr
 
-    info = pr.resolve_pr(scope.repo_root, number, remote=scope.remote)
+    info = pr.resolve_pr(scope.repo_root, number, remote=scope.remote, repo=manifest.repo)
     stale = manifest.head_sha not in (None, info.head_sha)
     if stale and not force and any(isinstance(a, ReviewAction) for a in manifest.actions):
         raise StaleError(
@@ -981,17 +981,26 @@ def _apply_one(target: Target, action: Action) -> str:
         commit_id = target.manifest.head_sha or target.pr.head_sha
         comments = [_comment_payload(c) for c in action.comments]
         return pr.submit_review(
-            repo_root, number, commit_id=commit_id, body=action.body, comments=comments
+            repo_root,
+            number,
+            commit_id=commit_id,
+            body=action.body,
+            comments=comments,
+            repo=target.manifest.repo,
         )
     elif isinstance(action, ReplyAction):
-        return pr.reply_to_review_comment(repo_root, number, action.comment_id, action.body)
+        return pr.reply_to_review_comment(
+            repo_root, number, action.comment_id, action.body, repo=target.manifest.repo
+        )
     elif isinstance(action, CommentAction):
         body = action.body
         if action.reply_to is not None:
             body = _reply_permalink(target.manifest.repo, number, action.reply_to) + body
-        return pr.add_issue_comment(repo_root, number, body)
+        return pr.add_issue_comment(repo_root, number, body, repo=target.manifest.repo)
     elif isinstance(action, DescriptionAction):
-        pr.edit_pr(repo_root, number, title=action.title, body=action.body)
+        pr.edit_pr(
+            repo_root, number, title=action.title, body=action.body, repo=target.manifest.repo
+        )
         return ""  # edit_pr updates an existing object; there is no new receipt
     else:
         assert_never(action)
@@ -1662,7 +1671,7 @@ def _current_pr_body(cfg: Config, target: Target, indices: frozenset[int] | None
     ):
         return None
     try:
-        return pr.pr_body(target.scope.repo_root, target.pr.number)
+        return pr.pr_body(target.scope.repo_root, target.pr.number, repo=target.manifest.repo)
     except pr.PrError as e:
         warn_plain(
             f"could not read PR #{target.pr.number}'s current description ({e}); "
