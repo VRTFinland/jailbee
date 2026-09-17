@@ -3058,12 +3058,16 @@ def _run_dashboard(
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
+        child_command = (
+            ["dashboard", "--gui", "--foreground", "--registered-only"]
+            if registered_only
+            else ["gui", "--foreground"]
+        )
         child_argv = [
             sys.executable,
             "-m",
             "jailbee",
-            "gui",
-            "--foreground",
+            *child_command,
             "--git-interval",
             str(git_interval),
         ]

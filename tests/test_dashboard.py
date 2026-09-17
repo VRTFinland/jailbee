@@ -2892,6 +2892,25 @@ def test_registered_only_dashboard_flag_is_hidden_from_help() -> None:
     assert "--registered-only" not in result.output
 
 
+def test_registered_only_dashboard_gui_detach_reexecs_registered_only(mocker) -> None:
+    load = mocker.patch("jailbee.config.load_repo_config")
+    advise = mocker.patch("jailbee.cli._advise_setup")
+    mocker.patch("jailbee.incus.Incus")
+    preflight = mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
+    qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
+    popen = mocker.patch("subprocess.Popen")
+
+    result = CliRunner().invoke(app, ["dashboard", "--registered-only", "--gui"])
+
+    assert result.exit_code == 0
+    load.assert_not_called()
+    advise.assert_not_called()
+    preflight.assert_called_once_with(None)
+    qrun.assert_not_called()
+    argv = popen.call_args.args[0]
+    assert argv[3:7] == ["dashboard", "--gui", "--foreground", "--registered-only"]
+
+
 def test_dashboard_command_lets_a_programming_error_out_of_the_probe(mocker):
     """The widened `except` is `(ConfigError, OSError)`, not `Exception`.
 
