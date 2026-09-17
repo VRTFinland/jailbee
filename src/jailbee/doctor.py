@@ -710,6 +710,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # the generic "missing" row advises `jailbee init` — which errors once
     # profiles exist, i.e. on every upgrade path. See `_check_pool_roots`.
     results.extend(_check_pool_roots(cfg))
+    results.extend(_check_shared_agent_sockets(cfg))
 
     missing = [s for s in expected if not (cfg.shared_dir / s).is_dir()]
     if missing:
@@ -1288,6 +1289,57 @@ def _net_refresh_binary_check() -> CheckResult | None:
             "auto-revert with it); run `jailbee init` to rewrite the unit"
         ),
     )
+
+
+def _check_shared_agent_sockets(cfg: Config) -> list[CheckResult]:
+    """One row per AF_UNIX socket found inside a shared agent mount.
+
+    A *pathname* socket is reachable from every container the directory is
+    mounted into — a network namespace does not confine one — so a daemon
+    listening on it can be driven from a container it does not belong to, and
+    the working directory it is handed resolves against the wrong rootfs.
+    Codex's app-server is the case that motivated this; the `gemini`,
+    `opencode` and `grok` presets also share a whole home directory and ship
+    unverified, which is why this looks rather than assumes.
+
+    Subpaths already named in `private` are skipped: those are mounted over
+    per container, so a socket there is the carve-out working.
+    """
+    from jailbee.agents import enabled_agent_specs
+
+    assert cfg.shared_dir is not None  # set by load_config
+    rows: list[CheckResult] = []
+    for spec in enabled_agent_specs(cfg):
+        carved = {p.host_subpath for p in spec.private}
+        for subpath in spec.dir_subpaths:
+            root = cfg.shared_dir / subpath
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                rel = path.relative_to(cfg.shared_dir).as_posix()
+                if any(rel == c or rel.startswith(f"{c}/") for c in carved):
+                    continue
+                try:
+                    if not path.is_socket():
+                        continue
+                except OSError:
+                    continue
+                # The directory holding the socket is what goes into
+                # `private`; a socket sitting directly in the mount root has
+                # none, so name the file itself rather than quoting "".
+                entry = path.relative_to(root).parent.as_posix()
+                if entry == ".":
+                    entry = path.name
+                rows.append(
+                    CheckResult(
+                        f"agent {spec.name} shared mount",
+                        False,
+                        f"{path} is a socket shared with every container — add "
+                        f"'{entry}' to agents.{spec.name}.shared[].private and "
+                        f"restart the containers",
+                    )
+                )
+    return rows
 
 
 def _check_pool_roots(cfg: Config) -> list[CheckResult]:

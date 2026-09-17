@@ -6,6 +6,7 @@ subclass), plus the GitHub CLI integration and the top-level autostart block.
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -274,6 +275,14 @@ class AgentSharedMount(BaseModel):
     per-container; a generically-named file (e.g. `~/.env`) must never be
     shared, because the mount would collide with unrelated tools and leak
     their secrets between containers.
+
+    A shared directory must never carry an IPC socket, a pid file or a lock.
+    A *pathname* AF_UNIX socket is not confined by a network namespace —
+    `connect()` resolves the path to an inode, and the inode is in the shared
+    mount — and a PID means nothing across a PID namespace, so sharing either
+    hands one container the ability to drive a daemon inside another. Codex
+    is the case this was found on. Name such subpaths in `private` and each is
+    mounted over with a per-container directory.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -304,10 +313,32 @@ class AgentSharedMount(BaseModel):
         ),
     )
 
+    private: list[str] = Field(
+        default=[],
+        description=(
+            "Mount-relative subpaths that must NOT be shared: each is mounted over with "
+            "a per-container directory. For runtime state whose sharing breaks the "
+            "container boundary — an IPC socket, a pid file, a lock. `dir` mounts only."
+        ),
+    )
+
     @model_validator(mode="after")
     def _seed_is_file_only(self) -> AgentSharedMount:
         if self.type == "dir" and self.seed is not None:
             raise ValueError(f"seed is only valid for type: file (subpath {self.subpath!r})")
+        return self
+
+    @model_validator(mode="after")
+    def _private_is_dir_only(self) -> AgentSharedMount:
+        if self.private and self.type != "dir":
+            raise ValueError(f"private is only valid for type: dir (subpath {self.subpath!r})")
+        for entry in self.private:
+            parts = PurePosixPath(entry).parts
+            if not entry or entry.startswith("/") or not parts or {"..", "."} & set(parts):
+                raise ValueError(
+                    f"private subpath {entry!r} must be a relative path inside the mount "
+                    f"(subpath {self.subpath!r})"
+                )
         return self
 
 

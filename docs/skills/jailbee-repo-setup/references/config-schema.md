@@ -823,15 +823,25 @@ agents:
 | `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
 | `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
 | `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
-| `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. |
+| `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. `private` (dir only) names subpaths inside the mount that stay per container. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow--strict-mode-allowlist). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
 
 `jailbee config validate` additionally rejects: an agent name outside
 `[a-z0-9-]+`; `enabled: true` with an empty `command`; `autostart: true`
-without `enabled: true`; and a `shared` subpath colliding with a built-in
+without `enabled: true`; a `shared` subpath colliding with a built-in
 shared subdir or with a different mount target another agent already
-claimed.
+claimed; and a `private` entry on a `type: file` mount or one that is
+absolute or escapes the mount with `..`.
+
+A shared directory is mounted into **every** container of the repo, so it
+must not carry an IPC socket, a pid file or a lock: a pathname AF_UNIX
+socket is not confined by a network namespace, and a PID means nothing
+across a PID namespace, so one container could drive a daemon running in
+another. Name such subpaths in `private` and each is mounted over with a
+per-container directory — that is why the `codex` preset ships with
+`private: [app-server-control, app-server-daemon]`. `jailbee doctor`
+reports a socket found in a shared agent mount that is not carved out.
 
 A full custom (non-preset) entry:
 

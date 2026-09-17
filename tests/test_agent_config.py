@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from jailbee.config import (
     AgentConfig,
@@ -7,6 +8,7 @@ from jailbee.config import (
     device_name,
     resolve_agents_raw,
 )
+from jailbee.config.models_agents import AgentSharedMount
 from tests.conftest import make_cfg
 
 
@@ -192,3 +194,48 @@ def test_with_agent_helper_actually_changes_the_config(tmp_path):
 
     cfg = with_agent(make_cfg(tmp_path), "claude", enabled=True)
     assert cfg.claude.enabled is True
+
+
+def test_private_subpaths_are_accepted_on_a_dir_mount():
+    m = AgentSharedMount.model_validate(
+        {
+            "subpath": "codex",
+            "path": "~/.codex",
+            "private": ["app-server-control", "app-server-daemon"],
+        }
+    )
+    assert m.private == ["app-server-control", "app-server-daemon"]
+
+
+def test_private_defaults_to_empty():
+    m = AgentSharedMount.model_validate({"subpath": "codex", "path": "~/.codex"})
+    assert m.private == []
+
+
+def test_private_is_rejected_on_a_file_mount():
+    with pytest.raises(ValidationError, match="private is only valid for type: dir"):
+        AgentSharedMount.model_validate(
+            {
+                "subpath": "aider.conf.yml",
+                "path": "~/.aider.conf.yml",
+                "type": "file",
+                "private": ["nope"],
+            }
+        )
+
+
+@pytest.mark.parametrize("bad", ["", "/abs", "../escape", "a/../../b", "."])
+def test_private_rejects_paths_that_escape_the_mount(bad):
+    with pytest.raises(ValidationError, match="private subpath"):
+        AgentSharedMount.model_validate({"subpath": "codex", "path": "~/.codex", "private": [bad]})
+
+
+def test_codex_preset_keeps_the_app_server_dirs_per_container():
+    """The socket in app-server-control lets one container's Codex frontend
+    drive another container's daemon, which then resolves the working
+    directory against its own rootfs and edits the wrong clone."""
+    from jailbee.agent_presets import AGENT_PRESETS
+
+    shared = AGENT_PRESETS["codex"]["shared"]
+    assert isinstance(shared, list)
+    assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]

@@ -92,11 +92,20 @@ is just an ordinary step, and the generated steps are appended after all of
 your own `on_start` steps regardless.
 
 Which window an attach (`jailbee tmux`, or `--attach tmux`) actually lands
-on is chosen **by name** — the last *autostarting* agent (one with
-`autostart: true`), `claude` sorted last among them — not by tmux's own
-"most recently created" default. So the `agents` stage's position only
-controls *when* the agent's window comes up relative to the hand-off, not
-which window ends up focused once you're in.
+on depends on whether you have been in the session before:
+
+- **The first attach** picks a window **by name** — the last *autostarting*
+  agent (one with `autostart: true`), `claude` sorted last among them — not
+  by tmux's own "most recently created" default. So the `agents` stage's
+  position only controls *when* the agent's window comes up relative to the
+  hand-off, not which window ends up focused once you're in.
+- **Every attach after that** lands on the window you detached from. tmux
+  tracks that itself; jailbee simply stops overriding it once
+  `#{session_last_attached}` says a client has been there. Switch to `codex`,
+  detach, and the next `jailbee tmux` puts you back in `codex`.
+
+Restarting the container resets this — the tmux server dies with it, so the
+next attach is a first attach again and lands on the agent window.
 
 ## 2. Enabling a preset
 
@@ -187,7 +196,7 @@ append/reset semantics.
 | `update` | string \| null | `null` | Shell command line run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
 | `auto_update` | bool | `true` | When `false`, an existing install is left untouched; a missing one is still installed. |
 | `install_network` | `"strict"` \| `"loose"` | `"strict"` | Network mode for the install/update step only — widen it when the installer's own hosts aren't known (see `grok` below). |
-| `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist. |
+| `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist; `private` (dir only) names subpaths inside the mount that stay per container — see §5. |
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step *and* the autostart launch step. |
 
@@ -251,6 +260,55 @@ The `aider` preset is the worked example. Aider writes four things into
 When you write your own `agents.<name>.shared` list, ask "does this file hold
 something I'd lose by re-authenticating, or is it a cache/history/log the
 agent would happily regenerate?" Only the former belongs in `shared`.
+
+### A shared directory must not carry a socket
+
+The rule above is about secrets. There is a second one, about control.
+
+`agents.<name>.shared` bind-mounts one host directory into **every**
+container of the repo. That is what makes a single login, a single settings
+file and a single session history serve every branch. It also means the
+directory must not contain an IPC socket, a pid file or a lock:
+
+- A **pathname** AF_UNIX socket is not confined by a network namespace.
+  `connect()` resolves the path to an inode, the inode lives in the shared
+  mount, and container A therefore reaches a listener running inside
+  container B.
+- A **PID** means nothing across a PID namespace, so the usual "is the daemon
+  still alive?" check reads as true against an unrelated process — or against
+  nothing at all.
+- Agent daemons take the working directory as a **string**. Every container
+  clones the repo to the same path, so the daemon resolves it against its own
+  rootfs and edits the wrong checkout.
+
+Codex is the case this was found on. It keeps its app-server control socket
+under `$CODEX_HOME` and offers no way to relocate it, so a Codex session
+driven from one container edited files and committed in another container's
+clone.
+
+Name such subpaths in `private` and each is mounted over with a
+per-container directory:
+
+```yaml
+agents:
+  codex:
+    shared:
+      - subpath: codex
+        path: ~/.codex
+        private: [app-server-control, app-server-daemon]
+```
+
+`private` is valid on `type: dir` mounts only, and each entry is a relative
+path inside the mount. The directories start empty, are never seeded, and are
+removed when the container is destroyed. Existing containers pick the
+carve-out up on their next `jailbee start` — there is no `jailbee apply` to
+run, because the devices are per-container rather than part of the binds
+profile.
+
+`jailbee doctor` reports any socket it finds in a shared agent mount that is
+not already carved out. The `gemini`, `opencode` and `grok` presets share a
+whole home directory too and ship unverified (see §3); that doctor row is
+what tells you if one of them grows a daemon.
 
 ## 6. Finding an agent's hosts
 
@@ -325,7 +383,7 @@ path in sections 2–4 above is what makes shipping them acceptable.
 
 | Preset | Install | Config paths | Egress | Verification status |
 | --- | --- | --- | --- | --- |
-| `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**) | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
+| `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**), with `app-server-control/` and `app-server-daemon/` private per container | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
 | `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443` | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
 | `opencode` | `npm i -g opencode-ai@latest` | `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | provider-dependent | Verified. |

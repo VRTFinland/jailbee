@@ -260,8 +260,10 @@ def agent_autostart_steps(cfg: Config) -> list[AutostartStep]:
     Appended (not prepended) to on_start so user steps finish first, and
     ordered with `claude` last (see `agents.enabled_agent_specs`) because
     `_attach_tmux` selects the *last* one of these by name
-    (`tmux.select_window`) when it lands you in the session — not because
-    tmux itself would otherwise focus the most-recently-created window.
+    (`tmux.select_window`) when it first lands you in the session — not
+    because tmux itself would otherwise focus the most-recently-created
+    window. That pick applies to the first attach only; after that the
+    window the user detached from wins (`tmux.ever_attached`).
 
     Each step's network is left unset (`None`): the agent's egress hosts
     are already folded into `effective_egress_allow()` when the agent is

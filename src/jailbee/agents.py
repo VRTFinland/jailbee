@@ -23,6 +23,20 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class PrivateSubpath:
+    """One subpath of a shared agent mount that stays per container.
+
+    `container_path` keeps its leading `~`: expansion is the attaching
+    module's job, exactly as it is for `SharedCache.container_path` in
+    `lifecycle._under_repo_shared_caches`.
+    """
+
+    name: str
+    host_subpath: str
+    container_path: str
+
+
+@dataclass(frozen=True)
 class AgentSpec:
     name: str
     command: str
@@ -36,6 +50,7 @@ class AgentSpec:
     update: str | None
     install_network: str
     env: tuple[tuple[str, str], ...] = ()
+    private: tuple[PrivateSubpath, ...] = ()
 
 
 def _spec(name: str, agent: AgentConfig) -> AgentSpec:
@@ -49,6 +64,15 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
     )
     dirs = tuple(m.subpath for m in agent.shared if m.type == "dir")
     seeds = tuple((m.subpath, m.seed or "") for m in agent.shared if m.type == "file")
+    private = tuple(
+        PrivateSubpath(
+            name=f"private-{device_name(m.subpath)}-{device_name(entry.replace('/', '-'))}",
+            host_subpath=f"{m.subpath}/{entry}",
+            container_path=f"{m.path.rstrip('/')}/{entry}",
+        )
+        for m in agent.shared
+        for entry in m.private
+    )
     egress = tuple(agent.egress_allow)
     env = dict(agent.env)
     if isinstance(agent, ClaudeAgentConfig) and agent.plugins_enabled:
@@ -75,16 +99,19 @@ def _spec(name: str, agent: AgentConfig) -> AgentSpec:
         update=agent.update,
         install_network=agent.install_network,
         env=tuple(env.items()),
+        private=private,
     )
 
 
 def enabled_agent_specs(cfg: Config) -> list[AgentSpec]:
     """Specs for every enabled agent: others by name, then `claude` last.
 
-    `claude` last preserves today's tmux behaviour: `_attach_tmux` selects
-    the *last* generated launch step's window by name
+    `claude` last preserves today's tmux behaviour: on the *first* attach
+    `_attach_tmux` selects the last generated launch step's window by name
     (`tmux.select_window`), so whichever spec this function orders last is
-    the one `jailbee tmux` lands in — not tmux's own creation-order default.
+    the one `jailbee tmux` lands in — not tmux's own creation-order
+    default. Later attaches keep the window the user detached from
+    (`tmux.ever_attached`) and never consult this order at all.
 
     A single sorted pass over `cfg.agents`, keyed on `n == "claude"` to put
     claude at the end, rather than one pass for the other agents plus a

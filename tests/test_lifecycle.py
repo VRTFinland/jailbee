@@ -8173,3 +8173,86 @@ def test_doing_json_is_a_list_of_objects():
     assert _cpu_spec("doing").json(_running(activity=(ProcessActivity("claude", 98.5, 2),))) == [
         {"comm": "claude", "percent": 98.5, "count": 2}
     ]
+
+
+# ---- private agent subpaths ----
+
+
+def test_new_container_attaches_private_subpaths_before_autostart(tmp_path, mocker):
+    """The carve-out must exist before `ensure_agents` installs and launches
+    the agents that write into it."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.exec.return_value = ""
+    events: list[str] = []
+    mocker.patch("jailbee.pool.allocate_startup")
+    attach = mocker.patch(
+        "jailbee.agent_private.attach", side_effect=lambda *a, **kw: events.append("private")
+    )
+    mocker.patch(
+        "jailbee.agents.ensure_agents", side_effect=lambda *a, **kw: events.append("agents")
+    )
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    attach.assert_called_once_with(cfg, incus, "repo-feat-x")
+    assert events == ["private", "agents"]
+
+
+def test_boot_container_attaches_private_subpaths_after_starting(tmp_path, mocker):
+    """After `incus.start`, not before: the device has to be hot-plugged into
+    an already-mounted parent for the nested mount to land on top of the
+    shared one."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped"}]
+    events: list[str] = []
+    mocker.patch("jailbee.pool.allocate_startup")
+    incus.start.side_effect = lambda _n: events.append("start")
+    attach = mocker.patch(
+        "jailbee.agent_private.attach", side_effect=lambda *a, **kw: events.append("private")
+    )
+    mocker.patch("jailbee.runtime_mounts.attach_runtime_devices")
+    mocker.patch("jailbee.runtime_mounts.detach_runtime_devices")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    attach.assert_called_once_with(cfg, incus, "feat-x")
+    assert events == ["start", "private"]
+
+
+def test_destroy_container_releases_private_subpaths(tmp_path, mocker):
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": "x", "status": "Stopped", "profiles": []}]
+    release = mocker.patch("jailbee.agent_private.release")
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    release.assert_called_once_with(cfg, incus, "x")
+
+
+def test_destroy_container_survives_a_private_release_failure(tmp_path, mocker):
+    """A failure here must warn, not block a destroy the user asked for."""
+    cfg = _cfg_for_destroy(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": "x", "status": "Stopped", "profiles": []}]
+    mocker.patch("jailbee.agent_private.release", side_effect=RuntimeError("boom"))
+
+    destroy_container(cfg, incus, "x", force=True)
+
+    incus.delete.assert_called_once_with("x", force=True)

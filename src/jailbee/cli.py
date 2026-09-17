@@ -2817,15 +2817,23 @@ def _attach_shell(cfg: "Config", incus: "IncusType", name: str, user: str = "dev
 
 
 def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
-    """Attach to the autostart tmux session, creating it on demand."""
+    """Attach to the autostart tmux session, creating it on demand.
+
+    Focus is forced onto the last autostarting agent's window only on the
+    first attach; from then on tmux restores the window the user detached
+    from. See `tmux.ever_attached`.
+    """
     from jailbee.autostart import agent_autostart_steps
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.lifecycle import container_repo_dir
-    from jailbee.tmux import SESSION_NAME, ensure_session, select_window
+    from jailbee.tmux import SESSION_NAME, ensure_session, ever_attached, select_window
 
     ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
     steps = agent_autostart_steps(cfg)
-    if steps:
+    if steps and not ever_attached(incus, name):
+        # Only the first attach picks the window: afterwards tmux's own
+        # current window is the one the user detached from, and yanking
+        # them back to the agent every time would lose it.
         # Best-effort: the window may have died; fall through to the
         # default focus rather than blocking the attach.
         select_window(incus, name, steps[-1].name)
