@@ -2661,7 +2661,7 @@ def _tty(mocker):
     )
 
 
-def _pending_comment_manifest(mocker, actions=None):
+def _pending_comment_manifest(mocker, tmp_path, actions=None):
     """One pending manifest in the container's outbox, already gated.
 
     Patches the three reads the offer makes — `read_outbox`, `resolve_target`
@@ -2671,6 +2671,7 @@ def _pending_comment_manifest(mocker, actions=None):
     import json
 
     from jailbee.pr import PrInfo
+    from jailbee.pr_flow import PrScope
     from jailbee.pr_outbox import Outbox, Progress, Target, parse_manifest
 
     text = json.dumps(
@@ -2693,6 +2694,7 @@ def _pending_comment_manifest(mocker, actions=None):
             base_ref="main",
         ),
         stale=False,
+        scope=PrScope(tmp_path, "origin", "", None),
     )
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
     mocker.patch(
@@ -2716,7 +2718,7 @@ def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
         return_value=ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
     )
     mocker.patch("jailbee.pr_outbox.finalize")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
 
@@ -2733,7 +2735,7 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="n\n")
 
@@ -2758,7 +2760,7 @@ def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
     # construction — the asymmetry §F.2 describes, and the only gate `--force`
     # relaxes.
     _pending_comment_manifest(
-        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+        mocker, tmp_path, actions=[{"type": "review", "body": "looks good", "comments": []}]
     )
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
@@ -2785,7 +2787,7 @@ def test_a_non_stale_refusal_is_not_told_to_retry_with_force(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     _pending_comment_manifest(
-        mocker, actions=[{"type": "review", "body": "looks good", "comments": []}]
+        mocker, tmp_path, actions=[{"type": "review", "body": "looks good", "comments": []}]
     )
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
@@ -2811,6 +2813,7 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
     # offer would publish, and must not call a body rewrite a "comment".
     _pending_comment_manifest(
         mocker,
+        tmp_path,
         actions=[
             {"type": "comment", "body": "ok"},
             {"type": "description", "body": "a new body"},
@@ -2845,7 +2848,7 @@ def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
-    _pending_comment_manifest(mocker)
+    _pending_comment_manifest(mocker, tmp_path)
     mocker.patch(
         "jailbee.pr_outbox.apply_manifest",
         return_value=ApplyOutcome(applied=(), urls=(), failure="HTTP 500"),
@@ -2868,7 +2871,7 @@ def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    _pending_comment_manifest(mocker, actions=[{"type": "description", "body": "a body"}])
+    _pending_comment_manifest(mocker, tmp_path, actions=[{"type": "description", "body": "a body"}])
     resolve = mocker.patch("jailbee.pr_outbox.resolve_target")
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
@@ -2899,6 +2902,7 @@ def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.pr_outbox.finalize")
     _pending_comment_manifest(
         mocker,
+        tmp_path,
         actions=[
             {"type": "comment", "body": "ok"},
             {"type": "description", "body": "the agent's body"},

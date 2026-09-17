@@ -37,10 +37,10 @@ from jailbee.tui import console, error_plain, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from pathlib import Path
 
     from jailbee.config import Config
     from jailbee.pr import PrInfo
+    from jailbee.pr_flow import PrScope
 
 OUTBOX_SUBPATH = ".jailbee/pr-outbox"
 
@@ -496,6 +496,11 @@ def github_slug(url: str) -> str | None:
     return f"{match.group(1)}/{match.group(2)}"
 
 
+def scope_slug(scope: PrScope) -> str | None:
+    """The GitHub slug of a scope's own configured remote, when available."""
+    return github_slug(git.get_remote_url(scope.repo_root, scope.remote) or "")
+
+
 class GateError(Exception):
     """A manifest failed a host-side validation gate.
 
@@ -522,6 +527,7 @@ class Target:
     manifest: Manifest
     pr: PrInfo | None
     stale: bool
+    scope: PrScope
 
 
 def resolve_target(
@@ -529,48 +535,63 @@ def resolve_target(
 ) -> Target:
     """Run the validation gates for `manifest` and resolve what it targets.
 
-    1. Repo lock: the host's configured remote must be a GitHub URL whose
+    1. Repo lock: a host repository scope must have a GitHub remote whose
        slug matches ``manifest.repo``. This is the gate that matters most —
        without it a container could aim the host's `gh` at an unrelated
        repository.
     2. PR lock: ``manifest.pr`` must be among the numbers the container itself
        owns — its ``pr_flow.PR_LABEL_PREFIX`` / ``STACKED_LABEL_PREFIX``
-       labels, or, when neither is set, the PR (if any) for the container's
-       own branch. A ``pr: null`` manifest names no PR to lock, so it instead
-       *resolves* to the container's one bound PR when there is exactly one,
-       and stays unresolved (``Target.pr is None`` — the caller's deferral to
-       `jailbee pr`) when there is none or when both labels are set.
+       labels for the superproject, or a submodule's recorded PR. Numbered
+       manifests may fall back to each scope's recorded branch when no PR
+       number is recorded. Ownership is unioned across matching scopes.
+       A ``pr: null`` manifest resolves only when exactly one unique PR is
+       recorded; otherwise it stays unresolved for the publishing command.
     3. Staleness: computed for every manifest with a PR, but it only raises
        (as `StaleError`, the one refusal `force` relaxes) when the manifest
        carries a `ReviewAction` and `force` was not given — a moved head
        invalidates line anchors, but `reply`, `comment` and `description`
        actions don't depend on `head_sha`.
     """
-    remote_url = git.get_remote_url(cfg.repo_root, cfg.upstream_remote)
-    slug = github_slug(remote_url or "")
-    if slug is None:
-        raise GateError(
-            f"manifest {manifest.name}: no GitHub remote configured for this repo "
-            f"(remote {cfg.upstream_remote!r} is not a GitHub URL)"
-        )
-    if slug != manifest.repo:
-        raise GateError(
-            f"manifest {manifest.name} targets {manifest.repo}, but this repo is {slug}"
-        )
+    # Imported lazily because pr_flow also consumes this module.
+    from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX, candidate_scopes
+    from jailbee.submodule_pr import SubmodulePrState
 
-    # Imported lazily: pr_flow will import this module once the CLI (Task 9)
-    # and `jb pr` (Tasks 10-12) are wired up, and a module-level import here
-    # would close that into an import cycle.
-    from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
+    scopes = [(scope, scope_slug(scope)) for scope in candidate_scopes(cfg)]
+    matches = [scope for scope, slug in scopes if slug == manifest.repo]
+    if not matches:
+        known = ", ".join(sorted({slug for _, slug in scopes if slug is not None})) or "none"
+        raise GateError(
+            f"manifest {manifest.name} targets {manifest.repo}, but no repository scope matches "
+            f"(known GitHub repos: {known})"
+        )
+    scope = matches[0]
 
     owned_numbers: set[int] = set()
-    for prefix in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
-        value = incus.config_get(container, prefix)
-        if value is not None:
-            try:
-                owned_numbers.add(int(value))
-            except ValueError:
-                pass  # a non-numeric label value is not a PR this container owns
+    for matched in matches:
+        scope_numbers: set[int] = set()
+        branch: str | None = None
+        if matched.subpath is None:
+            for prefix in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
+                value = incus.config_get(container, prefix)
+                if value is not None:
+                    try:
+                        scope_numbers.add(int(value))
+                    except ValueError:
+                        pass  # a non-numeric label is not an owned PR
+            if not scope_numbers and manifest.pr is not None:
+                branch = incus.config_get(container, "user.jailbee.branch")
+        else:
+            record = SubmodulePrState(incus, container, matched.subpath).read()
+            if record.number is not None:
+                scope_numbers.add(record.number)
+            else:
+                branch = record.head
+
+        if manifest.pr is not None and not scope_numbers and branch is not None:
+            found = pr.find_pr_for_branch(matched.repo_root, branch)
+            if found is not None:
+                scope_numbers.add(found.number)
+        owned_numbers.update(scope_numbers)
 
     if manifest.pr is None:
         # `pr: null` is "the PR `jailbee pr` would open from this container".
@@ -581,20 +602,13 @@ def resolve_target(
         # command: `jailbee pr` withholds it (`_eligible_for`'s `numbered_only`)
         # and this one would defer it to `jailbee pr` for ever.
         #
-        # A *label* is the whole condition. The branch lookup below is not
+        # A recorded number is the whole condition. Branch lookup is not
         # consulted: it finds a PR nobody has adopted, and binding an agent's
         # description to one is a decision only the user makes.
         if len(owned_numbers) != 1:
-            return Target(manifest=manifest, pr=None, stale=False)
+            return Target(manifest=manifest, pr=None, stale=False, scope=scope)
         number = next(iter(owned_numbers))
     else:
-        if not owned_numbers:
-            branch = incus.config_get(container, "user.jailbee.branch")
-            if branch is not None:
-                found = pr.find_pr_for_branch(cfg.repo_root, branch)
-                if found is not None:
-                    owned_numbers.add(found.number)
-
         if manifest.pr not in owned_numbers:
             raise GateError(
                 f"manifest {manifest.name} references PR #{manifest.pr}, which "
@@ -602,7 +616,7 @@ def resolve_target(
             )
         number = manifest.pr
 
-    info = pr.resolve_pr(cfg.repo_root, number, remote=cfg.upstream_remote)
+    info = pr.resolve_pr(scope.repo_root, number, remote=scope.remote)
     stale = manifest.head_sha not in (None, info.head_sha)
     if stale and not force and any(isinstance(a, ReviewAction) for a in manifest.actions):
         raise StaleError(
@@ -611,7 +625,7 @@ def resolve_target(
             "(ask the agent to re-read the diff) or pass --force"
         )
 
-    return Target(manifest=manifest, pr=info, stale=stale)
+    return Target(manifest=manifest, pr=info, stale=stale, scope=scope)
 
 
 def _first_line(body: str, width: int = 68) -> str:
@@ -958,9 +972,10 @@ def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
     return f"> [Replying to this comment](https://github.com/{slug}/pull/{number}#issuecomment-{comment_id})\n\n"
 
 
-def _apply_one(repo_root: Path, target: Target, action: Action) -> str:
+def _apply_one(target: Target, action: Action) -> str:
     """Post one action to GitHub via `pr.py`; return its receipt URL (or "")."""
     assert target.pr is not None  # apply_manifest's own precondition
+    repo_root = target.scope.repo_root
     number = target.pr.number
     if isinstance(action, ReviewAction):
         commit_id = target.manifest.head_sha or target.pr.head_sha
@@ -1050,7 +1065,7 @@ def apply_manifest(
         if index in progress.applied or (indices is not None and index not in indices):
             continue
         try:
-            url = _apply_one(cfg.repo_root, target, manifest.actions[index])
+            url = _apply_one(target, manifest.actions[index])
         except pr.PrError as e:
             failure = str(e)
             break
@@ -1635,7 +1650,7 @@ def _current_pr_body(cfg: Config, target: Target, indices: frozenset[int] | None
     ):
         return None
     try:
-        return pr.pr_body(cfg.repo_root, target.pr.number)
+        return pr.pr_body(target.scope.repo_root, target.pr.number)
     except pr.PrError as e:
         warn_plain(
             f"could not read PR #{target.pr.number}'s current description ({e}); "

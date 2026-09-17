@@ -6,8 +6,11 @@ import base64
 import io
 import json
 import tarfile
+from pathlib import Path
 
 import pytest
+
+from jailbee.pr_flow import PrScope
 
 
 def _manifest_text(**overrides) -> str:
@@ -444,7 +447,7 @@ def _target_setup(mocker, tmp_path, *, labels=None, pr=None):
     return incus
 
 
-def test_resolve_target_accepts_the_containers_own_pr(mocker, make_cfg, tmp_path):
+def test_resolve_target_accepts_the_containers_own_pr_scope(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import parse_manifest, resolve_target
 
     incus = _target_setup(mocker, tmp_path)
@@ -455,6 +458,145 @@ def test_resolve_target_accepts_the_containers_own_pr(mocker, make_cfg, tmp_path
 
     assert target.pr is not None and target.pr.number == 1234
     assert target.stale is False
+    assert target.scope == PrScope.for_repo(cfg)
+
+
+def _submodule_gate_setup(mocker, make_cfg, tmp_path, *, records=None, labels=None):
+    """Keep scope construction and recorded ownership real; fake git and Incus I/O."""
+    cfg = make_cfg(tmp_path)
+    paths = ["deps/one", "deps/two"]
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=paths)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+    urls = {
+        (tmp_path, cfg.upstream_remote): "git@github.com:acme/widgets.git",
+        (tmp_path / "deps/one", "upstream"): "https://github.com/acme/library.git",
+        (tmp_path / "deps/two", "upstream"): "https://github.com/acme/library.git",
+    }
+    mocker.patch("jailbee.git.get_remote_url", side_effect=lambda root, remote: urls[root, remote])
+    label_map = {"user.jailbee.sub_pr": json.dumps(records or {}), **(labels or {})}
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda container, key: label_map.get(key)
+    mocker.patch("jailbee.pr.resolve_pr", side_effect=lambda root, n, **kw: _pr_info(number=n))
+    return cfg, incus, PrScope.for_submodule(cfg, "deps/one"), urls
+
+
+@pytest.mark.parametrize("recorded_path", ["deps/one", "deps/two"])
+def test_submodule_scope_accepts_owned_number_from_either_duplicate_path(
+    mocker, make_cfg, tmp_path, recorded_path
+):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    cfg, incus, sub_scope, _ = _submodule_gate_setup(
+        mocker, make_cfg, tmp_path, records={recorded_path: {"pr": 42}}
+    )
+    manifest = parse_manifest("sub.json", _manifest_text(repo="acme/library", pr=42), {})
+
+    target = resolve_target(cfg, incus, "c", manifest, force=False)
+
+    assert target.scope == sub_scope
+    assert target.pr is not None and target.pr.number == 42
+
+
+def test_submodule_scope_uses_each_duplicate_heads_ownership_fallback(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    cfg, incus, sub_scope, _ = _submodule_gate_setup(
+        mocker,
+        make_cfg,
+        tmp_path,
+        records={"deps/one": {"pr": 9}, "deps/two": {"branch": "library-head"}},
+    )
+    find = mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info(number=42))
+    manifest = parse_manifest("sub.json", _manifest_text(repo="acme/library", pr=42), {})
+
+    target = resolve_target(cfg, incus, "c", manifest, force=False)
+
+    assert target.scope == sub_scope
+    assert target.pr is not None and target.pr.number == 42
+    find.assert_called_once_with(tmp_path / "deps/two", "library-head")
+
+
+def test_scope_mismatch_names_requested_and_all_known_github_repos(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    cfg, incus, _, urls = _submodule_gate_setup(mocker, make_cfg, tmp_path)
+    urls[tmp_path / "deps/two", "upstream"] = "https://gitlab.com/acme/private.git"
+    manifest = parse_manifest("sub.json", _manifest_text(repo="unknown/repo"), {})
+
+    with pytest.raises(GateError) as exc:
+        resolve_target(cfg, incus, "c", manifest, force=False)
+
+    assert all(slug in str(exc.value) for slug in ("unknown/repo", "acme/widgets", "acme/library"))
+    assert "acme/private" not in str(exc.value)
+    incus.config_get.assert_not_called()
+
+
+def test_submodule_scope_cannot_borrow_superproject_ownership(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    cfg, incus, _, _ = _submodule_gate_setup(
+        mocker, make_cfg, tmp_path, labels={"user.jailbee.pr": "42"}
+    )
+    manifest = parse_manifest("sub.json", _manifest_text(repo="acme/library", pr=42), {})
+
+    with pytest.raises(GateError, match="does not own"):
+        resolve_target(cfg, incus, "c", manifest, force=False)
+
+
+@pytest.mark.parametrize(
+    ("records", "expected_number"),
+    [
+        ({}, None),
+        ({"deps/one": {"branch": "unbound-head"}}, None),
+        ({"deps/two": {"pr": 42}}, 42),
+        ({"deps/one": {"pr": 42}, "deps/two": {"pr": 42}}, 42),
+        ({"deps/one": {"pr": 9}, "deps/two": {"pr": 42}}, None),
+    ],
+)
+def test_submodule_scope_null_pr_only_binds_one_unique_recorded_number(
+    mocker, make_cfg, tmp_path, records, expected_number
+):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    cfg, incus, sub_scope, _ = _submodule_gate_setup(mocker, make_cfg, tmp_path, records=records)
+    find = mocker.patch("jailbee.pr.find_pr_for_branch")
+    manifest = parse_manifest(
+        "sub.json",
+        _manifest_text(
+            repo="acme/library", pr=None, actions=[{"type": "description", "body": "B"}]
+        ),
+        {},
+    )
+
+    target = resolve_target(cfg, incus, "c", manifest, force=False)
+
+    assert target.scope == sub_scope
+    assert (target.pr.number if target.pr else None) == expected_number
+    find.assert_not_called()
+
+
+def test_submodule_scope_staleness_uses_its_root_and_remote(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import StaleError, parse_manifest, resolve_target
+
+    cfg, incus, sub_scope, _ = _submodule_gate_setup(
+        mocker, make_cfg, tmp_path, records={"deps/one": {"pr": 42}}
+    )
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(42, head_sha="new-head"))
+    manifest = parse_manifest(
+        "sub.json",
+        _manifest_text(
+            repo="acme/library", pr=42, actions=[{"type": "review", "body": "B", "comments": []}]
+        ),
+        {},
+    )
+
+    with pytest.raises(StaleError, match="head moved"):
+        resolve_target(cfg, incus, "c", manifest, force=False)
+
+    resolve.assert_called_once_with(sub_scope.repo_root, 42, remote="upstream")
+    target = resolve_target(cfg, incus, "c", manifest, force=True)
+    assert target.scope == sub_scope
+    assert target.stale is True
 
 
 def test_resolve_target_refuses_a_foreign_repo(mocker, make_cfg, tmp_path):
@@ -601,7 +743,13 @@ def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():
         {},
     )
     lines = plan_lines(
-        Target(manifest=manifest, pr=_pr_info(), stale=False), current_body="Old body.\n"
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
+        current_body="Old body.\n",
     )
     joined = "\n".join(lines)
 
@@ -625,6 +773,59 @@ def _apply_mocks(mocker):
         "comment": mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/c"),
         "edit": mocker.patch("jailbee.pr.edit_pr"),
     }
+
+
+def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.pr_outbox import Progress, Target, apply_manifest, parse_manifest
+
+    calls = _apply_mocks(mocker)
+    scope = PrScope(tmp_path / "deps/one", "upstream", "submodule: ", "deps/one")
+    manifest = parse_manifest(
+        "sub.json",
+        _manifest_text(
+            repo="acme/library",
+            actions=[
+                {"type": "review", "body": "review body", "comments": []},
+                {"type": "reply", "comment_id": 7, "body": "reply body"},
+                {"type": "comment", "body": "comment body"},
+                {"type": "description", "body": "description body", "title": "title"},
+            ],
+        ),
+        {},
+    )
+
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        mocker.MagicMock(),
+        "c",
+        Target(manifest=manifest, pr=_pr_info(), stale=False, scope=scope),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+    )
+
+    assert outcome.failure is None
+    assert outcome.applied == (0, 1, 2, 3)
+    calls["review"].assert_called_once_with(
+        scope.repo_root, 1234, commit_id="abc1234", body="review body", comments=[]
+    )
+    calls["reply"].assert_called_once_with(scope.repo_root, 1234, 7, "reply body")
+    calls["comment"].assert_called_once_with(scope.repo_root, 1234, "comment body")
+    calls["edit"].assert_called_once_with(
+        scope.repo_root, 1234, title="title", body="description body"
+    )
+
+
+def test_current_pr_body_reads_target_submodule_scope(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import Target, _current_pr_body
+
+    scope = PrScope(tmp_path / "deps/one", "upstream", "submodule: ", "deps/one")
+    body = mocker.patch("jailbee.pr.pr_body", return_value="current library description")
+    target = Target(manifest=_null_pr_manifest(), pr=_pr_info(), stale=False, scope=scope)
+
+    assert _current_pr_body(make_cfg(tmp_path), target, None) == "current library description"
+    body.assert_called_once_with(scope.repo_root, 1234)
 
 
 def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_path):
@@ -652,7 +853,12 @@ def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_
         make_cfg(tmp_path),
         incus,
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
     )
@@ -678,7 +884,12 @@ def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_p
         make_cfg(tmp_path),
         mocker.MagicMock(),
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
     )
@@ -707,7 +918,12 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
         make_cfg(tmp_path),
         mocker.MagicMock(),
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
     )
@@ -740,7 +956,12 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
         make_cfg(tmp_path),
         incus,
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
     )
@@ -777,7 +998,12 @@ def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, t
         make_cfg(tmp_path),
         incus,
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         indices=frozenset({0}),
@@ -815,7 +1041,12 @@ def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, 
         make_cfg(tmp_path),
         incus,
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
     )
@@ -862,7 +1093,12 @@ def test_apply_reports_a_recording_failure_after_a_successful_post_and_stops(
         make_cfg(tmp_path),
         incus,
         "c",
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         Progress(applied=frozenset(), urls={}),
         uid=1000,
     )
@@ -901,7 +1137,12 @@ def test_finalize_does_not_append_a_stale_log_line_when_nothing_new_applied(mock
         incus,
         "c",
         outbox,
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(), urls=(), failure="HTTP 500"),
         uid=1000,
     )
@@ -945,7 +1186,12 @@ def test_finalize_raises_when_the_sidecar_write_fails(mocker):
             incus,
             "c",
             Outbox(files={"001-x.json": "…"}),
-            Target(manifest=manifest, pr=_pr_info(), stale=False),
+            Target(
+                manifest=manifest,
+                pr=_pr_info(),
+                stale=False,
+                scope=PrScope(Path("/repo"), "origin", "", None),
+            ),
             ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
             uid=1000,
         )
@@ -985,7 +1231,12 @@ def test_finalize_raises_when_deleting_a_fully_applied_manifest_fails(mocker):
             incus,
             "c",
             Outbox(files={"001-x.json": "…"}),
-            Target(manifest=manifest, pr=_pr_info(), stale=False),
+            Target(
+                manifest=manifest,
+                pr=_pr_info(),
+                stale=False,
+                scope=PrScope(Path("/repo"), "origin", "", None),
+            ),
             ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
             uid=1000,
         )
@@ -1026,7 +1277,12 @@ def test_finalize_deletes_a_fully_applied_manifest_and_its_own_bodies(mocker):
         incus,
         "c",
         outbox,
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
         uid=1000,
     )
@@ -1057,7 +1313,12 @@ def test_finalize_keeps_a_shared_body_file_referenced_by_another_manifest(mocker
         incus,
         "c",
         outbox,
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(0,), urls=("https://x/c",), failure=None),
         uid=1000,
     )
@@ -1085,7 +1346,12 @@ def test_finalize_keeps_a_partly_applied_manifest_and_writes_progress(mocker):
         incus,
         "c",
         Outbox(files={"001-x.json": "…"}),
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(0,), urls=("https://x/c",), failure="HTTP 500"),
         uid=1000,
     )
@@ -1124,7 +1390,12 @@ def test_finalize_merges_new_progress_with_what_a_previous_run_already_landed(mo
         incus,
         "c",
         outbox,
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(1,), urls=("https://x/b",), failure=None),
         uid=1000,
     )
@@ -1154,7 +1425,12 @@ def test_finalize_appends_one_applied_log_line(mocker):
         incus,
         "c",
         Outbox(files={"001-x.json": "…"}),
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(0, 1), urls=("https://x/a", "https://x/b"), failure=None),
         uid=1000,
     )
@@ -1191,7 +1467,12 @@ def test_finalize_presents_an_empty_receipt_url_as_a_placeholder_not_a_blank_lin
         incus,
         "c",
         Outbox(files={"001-x.json": "…"}),
-        Target(manifest=manifest, pr=_pr_info(), stale=False),
+        Target(
+            manifest=manifest,
+            pr=_pr_info(),
+            stale=False,
+            scope=PrScope(Path("/repo"), "origin", "", None),
+        ),
         ApplyOutcome(applied=(0,), urls=("",), failure=None),
         uid=1000,
     )

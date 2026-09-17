@@ -14,10 +14,12 @@ that loop into `pr_outbox` leaves them passing unchanged.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from jailbee.pr_flow import PrScope
 
 runner = CliRunner()
 
@@ -48,7 +50,12 @@ def _a_target(name: str = "001-x.json", *, text: str | None = None, stale: bool 
         state="OPEN",
         base_ref="main",
     )
-    return Target(manifest=manifest, pr=info, stale=stale)
+    return Target(
+        manifest=manifest,
+        pr=info,
+        stale=stale,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
 
 
 def _null_pr_target(name: str = "001-x.json"):
@@ -56,7 +63,12 @@ def _null_pr_target(name: str = "001-x.json"):
     from jailbee.pr_outbox import Target, parse_manifest
 
     text = _manifest_text(pr=None, actions=[{"type": "description", "body": "new body"}])
-    return Target(manifest=parse_manifest(name, text, {}), pr=None, stale=False)
+    return Target(
+        manifest=parse_manifest(name, text, {}),
+        pr=None,
+        stale=False,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+    )
 
 
 def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = 1, state: str = "Running"):
@@ -102,6 +114,43 @@ def _setup(mocker, tmp_path, *, files=None):
 
 
 # ---- apply ----------------------------------------------------------------
+
+
+def test_apply_submodule_repo_manifest_without_an_extra_option(mocker, tmp_path):
+    from jailbee.pr import PrInfo
+
+    text = _manifest_text(repo="acme/library", pr=42)
+    cfg, incus = _setup(mocker, tmp_path, files={"sub.json": text})
+    mocker.patch("jailbee.submodules.host_submodule_paths", return_value=["deps/library"])
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="upstream")
+    mocker.patch(
+        "jailbee.git.get_remote_url",
+        side_effect=lambda root, remote: {
+            (tmp_path, "origin"): "https://github.com/acme/widgets.git",
+            (tmp_path / "deps/library", "upstream"): "https://github.com/acme/library.git",
+        }[root, remote],
+    )
+    incus.config_get.side_effect = lambda container, key: {
+        "user.jailbee.sub_pr": json.dumps({"deps/library": {"pr": 42}}),
+    }.get(key)
+    resolve = mocker.patch(
+        "jailbee.pr.resolve_pr",
+        return_value=PrInfo(
+            number=42,
+            head_ref="library-head",
+            head_sha="abc1234",
+            state="OPEN",
+            base_ref="main",
+        ),
+    )
+    comment = mocker.patch("jailbee.pr.add_issue_comment", return_value="https://x/sub-comment")
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 0, result.output
+    assert "https://x/sub-comment" in result.output
+    resolve.assert_called_once_with(cfg.repo_root / "deps/library", 42, remote="upstream")
+    comment.assert_called_once_with(cfg.repo_root / "deps/library", 42, "looks good")
 
 
 def test_apply_reports_nothing_pending(mocker, tmp_path):
@@ -358,7 +407,12 @@ def test_apply_deletes_a_body_file_shared_by_two_completed_manifests(mocker, tmp
     )
 
     def _target(name):
-        return Target(manifest=parse_manifest(name, text, bodies), pr=_a_target().pr, stale=False)
+        return Target(
+            manifest=parse_manifest(name, text, bodies),
+            pr=_a_target().pr,
+            stale=False,
+            scope=PrScope(tmp_path, "origin", "", None),
+        )
 
     mocker.patch(
         "jailbee.pr_outbox.resolve_target",
