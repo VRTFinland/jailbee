@@ -1,6 +1,6 @@
-"""Every Claude login on this host, and who reads it.
+"""Every agent login on this host, and who reads it.
 
-`jailbee claude ls` used to be a *holder* view: one live row — the calling
+`jailbee account ls` used to be a *holder* view: one live row — the calling
 repo's — plus the host-wide parked store. Which account a credential group
 held was answerable only by naming that group with ``-g``, and a group
 reachable only as one container's temporary override (`accounts.groups`) was
@@ -69,7 +69,7 @@ class Row:
 
     @property
     def name(self) -> str | None:
-        """The slot name — the reference `claude use` and `claude rm` take."""
+        """The slot name — the reference `account use` and `account rm` take."""
         return None if self.slot is None else self.slot.name
 
     @property
@@ -94,7 +94,7 @@ class Overview:
 
 
 def _config_homes(adapter: AccountAdapter, cfg: Config) -> tuple[dict[str, Path], list[str]]:
-    """The Claude config home of every registered repo, and the unreadable ones.
+    """The config home of every registered repo, and the unreadable ones.
 
     The calling repo is included whether or not it is registered: it is the
     one repo whose config we already hold, and a table that omitted the
@@ -277,7 +277,7 @@ def _named(slot: Slot | None, taken: set[str]) -> Slot | None:
 
     The rule `engine._slots_for` applies inside one holder, applied here
     across the host for the same reason: one account can legitimately hold two
-    grants, and the name in this table is the reference `claude use` takes.
+    grants, and the name in this table is the reference `account use` takes.
     """
     from dataclasses import replace
 

@@ -1040,6 +1040,7 @@ def test_group_ls_json_carries_the_same_fields_as_claude_ls(group_env, mocker):
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == [
         {
+            "agent": "claude",
             "account": "staff@corp.com",
             "org": None,
             "state": "live",

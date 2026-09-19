@@ -113,7 +113,7 @@ def test_a_group_row_names_the_login_from_the_holder_note(tmp_path: Path, mocker
     assert row is not None
     assert row.state == "live"
     # `display_name` drops the org: the ORG column carries that half, and
-    # repeating it in both is what `cli._claude_fields` already avoids.
+    # repeating it in both is what `cli._account_fields` already avoids.
     assert row.account == "work@corp.com"
     assert row.org_hint == "ccccdddd"
 
