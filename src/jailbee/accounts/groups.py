@@ -138,7 +138,7 @@ def container_override(incus: Incus, container: str) -> Override | None:
 
         warn(
             f"Ignoring {GROUP_LABEL} on '{container}' — {raw!r} is not a valid "
-            "group name. Re-set it with `jailbee claude group use <name> "
+            "group name. Re-set it with `jailbee account group use <name> "
             f"{container}`."
         )
         return None
@@ -402,11 +402,15 @@ def container_groups(
     return sorted(out, key=lambda triple: triple[0])
 
 
-def agent_running(cfg: Config, incus: Incus, container: str, *, command: str) -> bool | None:
+def agent_running(incus: Incus, container: str, *, command: str) -> bool | None:
     """Whether `command`'s binary looks to be running in `container`.
 
     `None` means the probe could not run — a stopped container, an Incus
     error — and callers must treat it as "cannot tell", never as "no".
+
+    The first token of `command` names the binary to match. The caller
+    resolves an agent with no configured command to its own name before
+    calling, so this probes exactly what it is handed and invents no default.
 
     `pgrep -x`, not `-f`: `-f` matches the whole command line and would match
     the `sh -c` wrapper running the probe itself, so the answer would always be
@@ -419,9 +423,9 @@ def agent_running(cfg: Config, incus: Incus, container: str, *, command: str) ->
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.incus import IncusError
 
-    command = Path(command.split()[0]).name if command.strip() else "claude"
+    binary = Path(command.split()[0]).name
     script = (
-        f"pgrep -u {CONTAINER_USERNAME} -x {shlex.quote(command)} "
+        f"pgrep -u {CONTAINER_USERNAME} -x {shlex.quote(binary)} "
         ">/dev/null && echo running || echo idle"
     )
     try:

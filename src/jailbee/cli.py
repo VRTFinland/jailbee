@@ -3123,6 +3123,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.accounts import overview as accounts_overview
+    from jailbee.accounts.adapters.base import AccountAdapter
     from jailbee.accounts.models import PoolChange
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
@@ -11642,10 +11643,10 @@ def claude_ls_cmd(
 
     One row per login: every credential group with the account it holds, every
     repo keeping its own login, and the parked store. `USED BY` says who reads
-    each holder — including containers moved by `jailbee claude group use`,
+    each holder — including containers moved by `jailbee account group use`,
     which is the only evidence a group no repo resolves to is in use at all.
 
-    `jailbee claude group ls` narrows the same rows to the credential groups
+    `jailbee account group ls` narrows the same rows to the credential groups
     themselves, which is what `create`, `rm` and `set` act on. The reference
     lives in the help rather than under every table: one more line on every
     run is a line that stops being read.
@@ -11927,7 +11928,7 @@ def _resolve_group_container(
     incus: "IncusType",
     name: str | None,
 ) -> str:
-    """The container a `claude group use`/`reset` acts on.
+    """The container an `account group use`/`reset` acts on.
 
     One container in the repo → that one, named out loud. Several → a
     picker. No TTY → an error listing the candidates, so a script author
@@ -11968,61 +11969,85 @@ def _resolve_group_container(
     return picked
 
 
-def _refuse_if_claude_running(
+def _agent_command(cfg: "Config", adapter: "AccountAdapter") -> str:
+    """The binary to probe for `adapter` — its configured command, or its name.
+
+    A blank `command` means the agent's binary is its own name. The loader
+    refuses to *enable* such an agent, so this is a fallback for a `Config`
+    built without going through it — a test, or an older jailbee.
+    """
+    return cfg.agents[adapter.name].command or adapter.name
+
+
+def _running_agents(cfg: "Config", incus: "IncusType", containers: list[str]) -> list[str]:
+    """`agent: container` pairs for every pooled agent running in `containers`.
+
+    One probe per agent per container, each against that agent's own binary.
+    `None` from a probe is "cannot tell" and never counts as running.
+    """
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters import base
+
+    running: list[str] = []
+    for adapter in base.pooled_adapters(cfg):
+        command = _agent_command(cfg, adapter)
+        for container in containers:
+            if groups.agent_running(incus, container, command=command) is True:
+                running.append(f"{adapter.name}: {container}")
+    return sorted(running)
+
+
+def _refuse_if_agent_running(
     cfg: "Config", incus: "IncusType", container: str, force: bool
 ) -> None:
-    """Block a group swap under a live Claude unless `--force`.
+    """Block a group swap under a live pooled agent unless `--force`.
 
     A running process holds the old group's token; if it refreshes before
     it re-reads, it writes that grant into the *target* group's file and
-    the target's login is gone. Whether Claude Code really orders it that
-    way is unverified — see the spec's §8 — so this is a precaution
-    against an irrecoverable outcome, not a description of observed
-    behaviour. `None` from the probe means "cannot tell" and must not
-    read as a refusal.
+    the target's login is gone. Whether an agent really orders it that way
+    is unverified — see the spec's §8 — so this is a precaution against an
+    irrecoverable outcome, not a description of observed behaviour. `None`
+    from a probe means "cannot tell" and must not read as a refusal.
     """
-    from jailbee.accounts import groups
-
     if force:
         return
-    if groups.agent_running(cfg, incus, container, command=cfg.claude.command) is not True:
+    running = _running_agents(cfg, incus, [container])
+    if not running:
         return
     error(
-        f"Claude is running in {container}. Swapping the credential group under a "
-        "live session can overwrite the target group's login with this one's on "
-        "the next token refresh, and that login cannot be recovered.\n"
-        "Close Claude in that container and run this again, or pass --force if "
-        "you are sure."
+        f"An agent is running in {', '.join(running)}. Swapping the credential "
+        "group under a live session can overwrite the target group's login with "
+        "this one's on the next token refresh, and that login cannot be recovered.\n"
+        "Close it in that container and run this again, or pass --force if you "
+        "are sure."
     )
     raise typer.Exit(2)
 
 
-def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
-    """Block a repo-wide group change under a live Claude unless `--force`.
+def _refuse_if_agent_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
+    """Block a repo-wide group change under a live pooled agent unless `--force`.
 
-    `jb claude group set`/`unset` reconciles credentials across every
-    container of the repo (`ClaudeAdapter.prepare_config_home`'s four-case
-    handling), so the single-container hazard `_refuse_if_claude_running`
-    guards applies here too, but to every container at once — see the
+    `jb account group set`/`unset` reconciles credentials across every
+    container of the repo (each adapter's `prepare_config_home` handling), so
+    the single-container hazard `_refuse_if_agent_running` guards applies here
+    too, but to every container of every enabled agent at once — see the
     design's §6.1/§8.
     """
-    from jailbee.accounts import groups
-
     if force:
         return
-    running = sorted(
+    names = [
         str(row["name"])
         for row in incus.list_containers()
         if str(row.get("name", "")).startswith(f"{cfg.container_prefix}-")
-        and groups.agent_running(cfg, incus, str(row["name"]), command=cfg.claude.command) is True
-    )
+    ]
+    running = _running_agents(cfg, incus, names)
     if not running:
         return
     error(
-        "Claude is running in " + ", ".join(running) + ". Changing this repo's "
+        "An agent is running in " + ", ".join(running) + ". Changing this repo's "
         "credential group under a live session can overwrite another group's "
         "login on the next token refresh, and that login cannot be recovered.\n"
-        "Close Claude in those containers and run this again, or pass --force if "
+        "Close it in those containers and run this again, or pass --force if "
         "you are sure."
     )
     raise typer.Exit(2)
@@ -12068,7 +12093,7 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
 
 
 def _global_config_path_for_write() -> Path:
-    """Where `jailbee claude group set` writes. A seam for tests."""
+    """Where `jailbee account group set` writes. A seam for tests."""
     from jailbee.global_config import default_global_config_path
 
     return default_global_config_path()
@@ -12168,7 +12193,7 @@ def claude_group_ls_cmd(
         console=console,
         title="Credential groups on this host",
         empty_message=(
-            "No credential groups on this host. `jailbee claude group create <name>` "
+            "No credential groups on this host. `jailbee account group create <name>` "
             "makes one; without any, every repo keeps its own login."
         ),
     )
@@ -12211,8 +12236,8 @@ def claude_group_create_cmd(
     else:
         success(f"Created group `{group}` → {display_path(created)}")
     info(
-        f"It holds no login yet. `jailbee claude group set {group}` moves this repo "
-        f"into it, `jailbee claude group use {group} <container>` moves one "
+        f"It holds no login yet. `jailbee account group set {group}` moves this repo "
+        f"into it, `jailbee account group use {group} <container>` moves one "
         f"container, and `jailbee claude use -g {group} <account>` activates a "
         "stored login into it."
     )
@@ -12273,8 +12298,8 @@ def claude_group_rm_cmd(
     if members:
         error(
             f"`{group}` is the credential group of: {', '.join(members)}. "
-            "Move them off it first (`jailbee claude group set <other>` or "
-            "`jailbee claude group unset` in each), or the next `jailbee apply` "
+            "Move them off it first (`jailbee account group set <other>` or "
+            "`jailbee account group unset` in each), or the next `jailbee apply` "
             "recreates the directory and until then their containers mount an "
             "empty one."
         )
@@ -12309,7 +12334,7 @@ def claude_group_rm_cmd(
     if labelled:
         error(
             f"These containers are in `{group}` for their own lifetime: "
-            f"{', '.join(labelled)}. Move each off it with `jailbee claude group "
+            f"{', '.join(labelled)}. Move each off it with `jailbee account group "
             "reset <container>` (or destroy it) first."
         )
         raise typer.Exit(2)
@@ -12384,7 +12409,7 @@ def claude_group_set_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Change the group even if Claude is running in any of this repo's containers.",
+            help="Change the group even if an agent is running in any of this repo's containers.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -12392,16 +12417,17 @@ def claude_group_set_cmd(
     """Set this repo's credential group. Permanent — writes `global.yaml`.
 
     Every container of this repo follows it, except any with a temporary
-    override from `jailbee claude group use`. Use `jailbee claude group
+    override from `jailbee account group use`. Use `jailbee account group
     unset` to fall back to the host-wide default instead.
     """
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
+    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    _refuse_if_claude_running_in_repo(cfg, incus, force)
+    _refuse_if_agent_running_in_repo(cfg, incus, force)
 
     value: object
     if group == "none":
@@ -12420,15 +12446,15 @@ def claude_group_set_cmd(
         error(f"Could not write the global config: {e}")
         raise typer.Exit(2) from e
 
-    # The repo's `oauthAccount` now describes an account this repo may no
+    # The repo's recorded account now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    invalidate_identity(CLAUDE.config_home(cfg))
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
 
     where = "no credential group" if value is None else f"group `{value}`"
     success(f"This repo now uses {where}.")
     _drop_redundant_overrides(cfg, incus, _group_after_write(cfg))
-    info("Restart Claude in this repo's containers to pick up the new login.")
+    info("Restart the agent in this repo's containers to pick up the new login.")
 
 
 @group_app.command("unset")
@@ -12437,19 +12463,19 @@ def claude_group_unset_cmd(
         bool,
         typer.Option(
             "--force",
-            help="Change the group even if Claude is running in any of this repo's containers.",
+            help="Change the group even if an agent is running in any of this repo's containers.",
         ),
     ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
     from jailbee import config_writer
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    _refuse_if_claude_running_in_repo(cfg, incus, force)
+    _refuse_if_agent_running_in_repo(cfg, incus, force)
 
     try:
         _write_repo_group(config, config_writer.DELETE)
@@ -12459,10 +12485,10 @@ def claude_group_unset_cmd(
 
     cfg = _load_or_exit(config)
 
-    # The repo's `oauthAccount` now describes an account this repo may no
+    # The repo's recorded account now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    invalidate_identity(CLAUDE.config_home(cfg))
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
 
     repo = _group_after_write(cfg)
     where = "no credential group" if repo is None else f"group `{repo}`"
@@ -12487,21 +12513,21 @@ def claude_group_use_cmd(
         ),
     ] = None,
     force: Annotated[
-        bool, typer.Option("--force", help="Change the group even if Claude is running.")
+        bool, typer.Option("--force", help="Change the group even if an agent is running.")
     ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Move one container to another credential group, for its lifetime.
 
     This does not touch `global.yaml` and does not affect any other
-    container. `jailbee claude group reset` puts the container back on the
+    container. `jailbee account group reset` puts the container back on the
     repo's group; destroying the container drops the override with it.
 
     Naming the repo's *own* group drops the override instead of writing
     one — an override that repeats the repo would outrank a later
-    `jailbee claude group set` and leave this container behind.
+    `jailbee account group set` and leave this container behind.
 
-    Claude must be restarted in that container afterwards to pick up the
+    The agent must be restarted in that container afterwards to pick up the
     new login — this command never kills a session.
     """
     from jailbee.accounts import groups
@@ -12518,7 +12544,7 @@ def claude_group_use_cmd(
 
     incus = Incus()
     name = _resolve_group_container(cfg, incus, container)
-    _refuse_if_claude_running(cfg, incus, name, force)
+    _refuse_if_agent_running(cfg, incus, name, force)
 
     before = groups.effective_group(cfg, incus, name)
     redundant = groups.override_is_redundant(cfg, target)
@@ -12534,6 +12560,30 @@ def claude_group_use_cmd(
     _report_group_change(cfg, name, before=before, after=target, redundant=redundant)
 
 
+def _invalidate_repo_accounts(cfg: "Config", adapters: list["AccountAdapter"]) -> None:
+    """Clear every adapter's recorded account for this repo's config home.
+
+    The repo's recorded account (`oauthAccount` for Claude) now describes an
+    account this repo may no longer use; left in place it would make the repo
+    look authoritative for the wrong account — see the spec's §7.2.
+
+    Each adapter clears its own through `on_switch`, the same path a switch
+    takes: `record=None` means "no trustworthy record to write", and
+    `authoritative` names this repo so an adapter that keeps a record beside
+    the credential clears rather than rewrites it. A no-op for an agent that
+    records nothing.
+    """
+    from jailbee.accounts.models import Member
+
+    for adapter in adapters:
+        adapter.on_switch(
+            [Member(cfg.container_prefix, adapter.config_home(cfg))],
+            [],
+            None,
+            {cfg.container_prefix},
+        )
+
+
 def _report_group_change(
     cfg: "Config",
     container: str,
@@ -12544,15 +12594,14 @@ def _report_group_change(
 ) -> None:
     """Report one container's group change, and invalidate only if it moved.
 
-    `adapters.claude.invalidate_identity` exists because the repo's
-    `oauthAccount` would otherwise name an account this container no longer
+    A recorded account would otherwise name one this container no longer
     reads (§7.2). When the container's *effective* group did not change —
     dropping an override that only repeated the repo, or naming the group it
     already inherited — the account did not change either, and invalidating
-    would throw away a name nothing else can supply until a container runs
-    Claude again.
+    would throw away a name nothing else can supply until a container runs an
+    agent again.
     """
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
 
     where = "no credential group" if after is None else f"group `{after}`"
     if redundant:
@@ -12562,8 +12611,8 @@ def _report_group_change(
     if before == after:
         info("Nothing else changed: that is the group it was already reading.")
         return
-    invalidate_identity(CLAUDE.config_home(cfg))
-    info("Restart Claude in that container to pick up the new login.")
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
+    info("Restart the agent in that container to pick up the new login.")
 
 
 @group_app.command("reset")
@@ -12576,7 +12625,7 @@ def claude_group_reset_cmd(
         ),
     ] = None,
     force: Annotated[
-        bool, typer.Option("--force", help="Reset even if Claude is running.")
+        bool, typer.Option("--force", help="Reset even if an agent is running.")
     ] = False,
     config: ConfigOption = None,
 ) -> None:
@@ -12587,7 +12636,7 @@ def claude_group_reset_cmd(
     cfg = _load_or_exit(config)
     incus = Incus()
     name = _resolve_group_container(cfg, incus, container)
-    _refuse_if_claude_running(cfg, incus, name, force)
+    _refuse_if_agent_running(cfg, incus, name, force)
 
     before = groups.effective_group(cfg, incus, name)
     groups.clear_container_group(cfg, incus, name)

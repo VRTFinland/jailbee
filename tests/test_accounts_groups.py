@@ -74,6 +74,15 @@ def test_container_override_ignores_a_garbage_label(mocker):
     assert groups.container_override(incus, "myrepo-x") is None
 
 
+def test_container_override_warning_names_the_account_group_command(mocker):
+    """The repair direction must not point at the deprecated `claude` tree."""
+    warn = mocker.patch("jailbee.tui.warn")
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = "../../etc"
+    assert groups.container_override(incus, "myrepo-x") is None
+    assert "jailbee account group use" in warn.call_args.args[0]
+
+
 def test_new_group_label_wins_over_legacy_label(mocker):
     """The canonical label outranks the pre-rename spelling when both exist."""
     incus = mocker.MagicMock()
@@ -463,35 +472,31 @@ def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, 
     assert groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {"clean"}
 
 
-def test_claude_running_true(mocker, tmp_path):
+def test_agent_running_true(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = "running\n"
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is True
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is True
 
 
-def test_claude_running_false(mocker, tmp_path):
+def test_agent_running_false(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = "idle\n"
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is False
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is False
 
 
-def test_claude_running_unknown_when_the_probe_fails(mocker, tmp_path):
+def test_agent_running_unknown_when_the_probe_fails(mocker):
     from jailbee.incus import IncusError
 
     incus = mocker.MagicMock()
     incus.exec.side_effect = IncusError("container is not running")
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is None
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is None
 
 
-def test_claude_running_probe_uses_pgrep_x_not_f(mocker, tmp_path):
+def test_agent_running_probe_uses_pgrep_x_not_f(mocker):
     """`pgrep -f` matches its own command line and would always say yes."""
     incus = mocker.MagicMock()
     incus.exec.return_value = "idle\n"
-    cfg = _cfg(tmp_path)
-    groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command)
+    groups.agent_running(incus, "myrepo-a", command="claude")
     script = incus.exec.call_args.args[1][-1]
     assert "pgrep -u" in script
     assert " -x " in script

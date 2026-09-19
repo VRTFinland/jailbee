@@ -41,6 +41,25 @@ def group_env(mocker, tmp_path, monkeypatch):
     return cfg, incus
 
 
+class _ProbeAdapter:
+    """A minimal pooled adapter, for tests that enable a second agent.
+
+    Only what the group-change path calls: `name`, `config_home` (through
+    `_invalidate_repo_accounts`) and `on_switch`.
+    """
+
+    def __init__(self, name: str, log: list[str]) -> None:
+        self.name = name
+        self._log = log
+
+    def config_home(self, cfg):
+        return cfg.shared_dir / self.name
+
+    def on_switch(self, found, unreachable, record, authoritative):
+        self._log.append(f"switch:{self.name}:{[m.container_prefix for m in found]}")
+        return [], list(unreachable)
+
+
 def test_bare_group_is_a_command_group_not_a_status_command(group_env):
     """`jailbee claude ls` states which holder this repo reads, `jailbee ls`'s
     CLAUDE column the per-container labels, and `jailbee doctor` the overrides
@@ -71,6 +90,7 @@ def test_use_refuses_while_claude_runs(group_env, mocker):
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code != 0
     assert "--force" in result.output
+    assert "An agent is running" in result.output
     setter.assert_not_called()
 
 
@@ -89,6 +109,46 @@ def test_use_proceeds_when_the_probe_cannot_tell(group_env, mocker):
     result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code == 0
     setter.assert_called_once()
+
+
+def test_use_probes_the_agent_name_when_the_command_is_empty(group_env, mocker):
+    """A blank `command` is probed by the agent's own name: the CLI resolves it,
+    because `agent_running` no longer carries a Claude fallback."""
+    from tests.conftest import with_agent
+
+    cfg, _incus = group_env
+    cfg = with_agent(cfg, "claude", command="")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    probe = mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.accounts.groups.set_container_group")
+
+    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+
+    assert result.exit_code == 0, result.output
+    assert probe.call_args.kwargs["command"] == "claude"
+
+
+def test_use_checks_and_clears_every_enabled_agent(group_env, mocker):
+    """A group change probes each pooled agent's own binary and clears each
+    adapter's recorded account — not Claude's alone."""
+    from jailbee.accounts.adapters import base
+    from tests.conftest import with_agent
+
+    cfg, _incus = group_env
+    cfg = with_agent(cfg, "fakeb", enabled=True, command="fakeb")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    log: list[str] = []
+    base.register(_ProbeAdapter("fakeb", log))
+    try:
+        probe = mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+        mocker.patch("jailbee.accounts.groups.set_container_group")
+        result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    finally:
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert result.exit_code == 0, result.output
+    assert {call.kwargs["command"] for call in probe.call_args_list} == {"claude", "fakeb"}
+    assert log == ["switch:fakeb:['myrepo']"]
 
 
 def test_use_none_sets_no_group(group_env, mocker):
@@ -247,7 +307,7 @@ def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, t
     # myrepo-b, not myrepo-a, is the one Claude is running in.
     mocker.patch(
         "jailbee.accounts.groups.agent_running",
-        side_effect=lambda cfg, incus, container, *, command: container == "myrepo-b",
+        side_effect=lambda incus, container, *, command: container == "myrepo-b",
     )
 
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
@@ -284,7 +344,7 @@ def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker,
     writer = mocker.patch("jailbee.cli._write_repo_group")
     mocker.patch(
         "jailbee.accounts.groups.agent_running",
-        side_effect=lambda cfg, incus, container, *, command: container == "myrepo-a",
+        side_effect=lambda incus, container, *, command: container == "myrepo-a",
     )
 
     result = runner.invoke(app, ["claude", "group", "unset"])
@@ -657,7 +717,7 @@ def test_create_names_what_to_do_with_the_new_group(group_env):
     use are not guessable from `--help` alone."""
     result = runner.invoke(app, ["claude", "group", "create", "fresh"])
 
-    assert "group set" in result.output
+    assert "jailbee account group set" in result.output
     assert "claude use -g" in result.output
 
 
