@@ -276,10 +276,23 @@ def _host_skills_opt_in() -> bool:
     `install_host_skills` in `global.yaml`, default off. Read here rather
     than threaded through every caller, so the hint path (`jailbee ls`),
     `jailbee setup` and `jailbee doctor` cannot disagree about it.
+
+    Tolerant on purpose: a schema-invalid `global.yaml` raises `ConfigError`
+    from the loader, and `jailbee setup` is the command a user runs to repair
+    exactly such a host. Warn and treat it as opted out rather than letting
+    the error escape through the status probes as a traceback.
     """
+    from jailbee.config.errors import ConfigError
     from jailbee.global_config import default_global_config_path, load_global_config
 
-    gcfg, _ = load_global_config(default_global_config_path())
+    path = default_global_config_path()
+    try:
+        gcfg, _ = load_global_config(path)
+    except ConfigError as exc:
+        # `warn_plain`: the error body carries pydantic's bracketed detail,
+        # which `warn`'s Rich markup parser would silently swallow.
+        warn_plain(f"ignoring {path}: {exc} — host agent skills treated as opted out")
+        return False
     return gcfg.install_host_skills
 
 

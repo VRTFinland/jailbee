@@ -212,6 +212,61 @@ def test_skills_status_checks_every_detected_agent(home: Path, mocker: MockerFix
     assert str(home / ".codex" / "skills") in status.detail
 
 
+def _global_config(content: str, home: Path) -> Path:
+    """Write a raw global.yaml body into this test's home."""
+    path = home / ".config" / "jailbee" / "global.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path
+
+
+def test_skills_status_tolerates_a_schema_invalid_global_yaml(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A schema-invalid global.yaml must not crash the probe: `jailbee setup`
+    is the repair command, so the skills step reads as opted out and warns."""
+    path = _global_config("install_host_skills: maybe\n", home)
+    from jailbee.setup_command import skills_status
+
+    status = skills_status()
+
+    assert status.installed is True
+    assert "opt-in: off" in status.detail
+    # Collapse the lines Rich may fold a long tmp path across.
+    assert str(path) in capsys.readouterr().out.replace("\n", "")
+
+
+def test_skills_status_tolerates_an_unrelated_schema_error(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The "broken host needs the repair command" case: a pre-existing
+    docker_registry_mirror error is not about skills, and must not be fatal."""
+    path = _global_config("docker_registry_mirror:\n  port: banana\n", home)
+    from jailbee.setup_command import skills_status
+
+    status = skills_status()
+
+    assert status.installed is True
+    assert "opt-in: off" in status.detail
+    assert str(path) in capsys.readouterr().out.replace("\n", "")
+
+
+def test_run_setup_survives_a_schema_invalid_global_yaml(
+    home: Path, capsys: pytest.CaptureFixture[str], mocker: MockerFixture
+) -> None:
+    """`jailbee setup --only skills` on a broken host: no exception, the step
+    is "ran" (it reported), and nothing is installed under the opted-out home."""
+    _global_config("install_host_skills: maybe\n", home)
+    mocker.patch("shutil.which", _which("claude"))
+    from jailbee.setup_command import run_setup
+
+    ran = run_setup(keys=["skills"], shells=["bash"], confirm=None)
+
+    assert ran == ["skills"]
+    assert not (home / ".claude" / "skills").exists()
+    assert "opt-in" in capsys.readouterr().out
+
+
 def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
     """Files removed upstream must disappear, as `make install-skill` did."""
     from jailbee.agent_skills import install_host_skills
