@@ -226,12 +226,12 @@ def override_is_redundant(cfg: Config, group: str | None) -> bool:
     behind on the old one.
 
     A named group is redundant only when the profile really carries the same
-    device. With ``claude.enabled: false`` it carries none (no pooled adapter
-    claims it), so the label is the only thing mounting the credential and
-    dropping it would change what the container reads. ``None`` — the
-    explicit "no group" override — is redundant whenever the repo shares no
-    group either: neither side then mounts anything, and the env key the
-    label writes names the config home Claude Code defaults to.
+    device. With ``claude.enabled: false`` no pooled adapter claims it, so the
+    label mounts nothing: returning False keeps an inert label, which is
+    over-conservative but harmless. ``None`` — the explicit "no group"
+    override — is redundant whenever the repo shares no group either: neither
+    side then mounts anything, and the env key the label writes names the
+    config home Claude Code defaults to.
     """
     from jailbee.accounts.adapters import base
     from jailbee.accounts.engine import repo_group
@@ -266,8 +266,12 @@ def clear_container_group(cfg: Config, incus: Incus, container: str) -> None:
     """Drop the override so the container inherits the repo's group again.
 
     Every pooled adapter is asked to remove its own instance-local wiring
-    first; the shared label goes last, so no reader can see a label naming a
-    holder whose device has already been torn down.
+    first; the shared label goes last. That window — a label still naming a
+    holder whose device is already gone — is the conservative one: a reader
+    acting mid-teardown resolves to the old group and reads nothing, rather
+    than inheriting the repo's group while the old holder's wiring is still in
+    place. It mirrors `set_container_group`, which writes the label only after
+    every device exists.
     """
     from jailbee.accounts.adapters import base
 

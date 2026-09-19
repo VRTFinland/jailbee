@@ -238,9 +238,6 @@ def default_confirm(msg: str) -> bool:
 CredentialSide = Literal["group", "repo"]
 """Which of two competing Claude logins the credential group keeps."""
 
-ChooseCredentialFn = Callable[[Path, Path, str], "CredentialSide | None"]
-"""Resolve the two-credential clash; ``None`` means the user cancelled."""
-
 
 def choose_shared_credential(
     group_dir: Path,

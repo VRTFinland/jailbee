@@ -12028,11 +12028,16 @@ def _pool_use(
         adapter = adapters[0]
         target = ref
     else:
+        if adapters:
+            agents = " or ".join(f"-a {a.name}" for a in adapters)
+            park = f"`jailbee account park {agents}`"
+        else:
+            park = "`jailbee account park`"
         choice = _choose_account_choice(
             _matching_choices(adapters, cfg, gcfg, ref, removable=False),
             ref=ref,
             nothing=(
-                "no stored login to switch to. `jailbee account park` stores the one "
+                f"no stored login to switch to. {park} stores the one "
                 "in use, and the next `/login` in a container adds another."
             ),
             message="Switch this repo to:",
