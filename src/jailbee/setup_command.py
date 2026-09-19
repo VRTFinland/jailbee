@@ -9,8 +9,8 @@ inline and that a `uv tool install jailbee` therefore never performed:
   one script cannot serve both),
 * **timer** — the singleton `jailbee-net-refresh` user timer that keeps the
   egress pool fresh and expires `jailbee net loose` TTLs,
-* **skills** — jailbee's bundled Claude Code skills in the host's
-  `~/.claude/skills`.
+* **skills** — jailbee's bundled agent skills for the agents found on the
+  host (opt-in, `install_host_skills` in `global.yaml`).
 
 Every step is idempotent, and every step has a probe that costs one `stat`
 and never shells out: `jailbee doctor` reports them, and `consume_hint`
@@ -48,7 +48,7 @@ STEP_KEYS: tuple[StepKey, ...] = ("completions", "timer", "skills")
 STEP_TITLES: dict[StepKey, str] = {
     "completions": "shell completions",
     "timer": "egress refresh timer",
-    "skills": "Claude Code skills (host)",
+    "skills": "agent skills (host)",
 }
 
 PROG_NAMES: tuple[str, ...] = ("jailbee", "jb")
@@ -266,34 +266,75 @@ def timer_status() -> StepStatus:
 
 
 # --------------------------------------------------------------------------
-# host Claude skills
+# host agent skills
 # --------------------------------------------------------------------------
 
 
-def skills_status() -> StepStatus:
-    """Installed when every bundled skill has a directory in `~/.claude/skills`.
+def _host_skills_opt_in() -> bool:
+    """Whether the user asked `jailbee setup` to manage host-side skills.
 
-    An install that ships no skills at all has nothing to owe, so it reports
-    installed — the alternative is a hint nobody can ever satisfy.
+    `install_host_skills` in `global.yaml`, default off. Read here rather
+    than threaded through every caller, so the hint path (`jailbee ls`),
+    `jailbee setup` and `jailbee doctor` cannot disagree about it.
     """
-    from jailbee.agent_skills import bundled_skill_names, host_skills_dir
+    from jailbee.global_config import default_global_config_path, load_global_config
+
+    gcfg, _ = load_global_config(default_global_config_path())
+    return gcfg.install_host_skills
+
+
+def skills_status() -> StepStatus:
+    """Installed when every detected agent has every bundled skill.
+
+    Opt-in governs: with `install_host_skills` off (the default) the step
+    reports installed — the containers' skills need no host action, so their
+    absence is a preference, not a fault, and neither the first-run hint nor
+    `jailbee doctor` may nag about it. An install that ships no skills at
+    all, or a host with none of the agents, has nothing to owe either.
+    """
+    from jailbee.agent_skills import bundled_skill_names, host_skill_targets
+    from jailbee.global_config import default_global_config_path
 
     title = STEP_TITLES["skills"]
+    if not _host_skills_opt_in():
+        return StepStatus(
+            key="skills",
+            title=title,
+            installed=True,
+            detail=f"opt-in: off — set install_host_skills: true in {default_global_config_path()}",
+        )
     names = bundled_skill_names()
-    dest = host_skills_dir()
     if not names:
         return StepStatus(
             key="skills", title=title, installed=True, detail="no skills bundled in this install"
         )
-    missing = [n for n in names if not (dest / n).is_dir()]
+    targets = host_skill_targets()
+    if not targets:
+        return StepStatus(
+            key="skills",
+            title=title,
+            installed=True,
+            detail="no skill-capable agents found on this host",
+        )
+    missing = [
+        f"{name} in {target}"
+        for target in targets
+        for name in names
+        if not (target / name).is_dir()
+    ]
     if missing:
         return StepStatus(
             key="skills",
             title=title,
             installed=False,
-            detail=f"missing in {dest}: " + ", ".join(missing),
+            detail="missing: " + ", ".join(missing),
         )
-    return StepStatus(key="skills", title=title, installed=True, detail=f"{len(names)} in {dest}")
+    return StepStatus(
+        key="skills",
+        title=title,
+        installed=True,
+        detail=f"{len(names)} skills in each of " + ", ".join(str(t) for t in targets),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -407,10 +448,21 @@ def _install(
 
         install_systemd_units()
         return
-    from jailbee.agent_skills import host_skills_dir, install_host_skills
+    from jailbee.agent_skills import host_skill_targets, install_host_skills
 
-    written = install_host_skills()
-    success_plain(f"Installed {len(written)} skills in {host_skills_dir()}")
+    if not _host_skills_opt_in():
+        # Only reachable through an explicit "Refresh" answer while opted
+        # out — say why nothing happens rather than installing anyway.
+        info("agent skills: opt-in is off — set install_host_skills: true in the global config")
+        return
+    targets = host_skill_targets()
+    if not targets:
+        info("agent skills: no skill-capable agents found on this host")
+        return
+    written = install_host_skills(targets)
+    success_plain(f"Installed {len(written)} skill directories across {len(targets)} agents")
+    for target in targets:
+        info(f"    {target}")
 
 
 def run_setup(

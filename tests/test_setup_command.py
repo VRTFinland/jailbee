@@ -145,19 +145,71 @@ def test_detect_shell_returns_none_when_nothing_is_supported(
 
 
 # --------------------------------------------------------------------------
-# host Claude skills
+# host agent skills
 # --------------------------------------------------------------------------
 
 
-def test_install_host_skills_copies_every_bundled_skill(home: Path) -> None:
-    from jailbee.agent_skills import bundled_skill_names, install_host_skills
+def _opt_in(host_skills: bool, home: Path) -> Path:
+    """Write the global.yaml that turns the host-skills install on (or off)."""
+    path = home / ".config" / "jailbee" / "global.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"install_host_skills: {str(host_skills).lower()}\n")
+    return path
 
-    written = install_host_skills()
 
-    names = bundled_skill_names()
-    assert "jailbee-usage" in names
-    assert {p.name for p in written} == set(names)
-    assert (home / ".claude" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+def _which(*binaries: str) -> object:
+    """A `shutil.which` stand-in that finds exactly `binaries`."""
+    return lambda binary: f"/usr/bin/{binary}" if binary in binaries else None
+
+
+def test_skills_status_reports_opt_in_when_flag_off(home: Path) -> None:
+    from jailbee.setup_command import skills_status
+
+    status = skills_status()
+
+    assert status.installed is True
+    assert "opt-in" in status.detail
+    assert str(home / ".config" / "jailbee" / "global.yaml") in status.detail
+
+
+def test_skills_status_flips_after_install(home: Path, mocker: MockerFixture) -> None:
+    _opt_in(True, home)
+    mocker.patch("shutil.which", _which("claude"))
+    from jailbee.agent_skills import bundled_skill_names, host_skill_targets, install_host_skills
+    from jailbee.setup_command import skills_status
+
+    assert skills_status().installed is False
+    install_host_skills(host_skill_targets())
+    status = skills_status()
+    assert status.installed is True
+    assert str(home / ".claude" / "skills") in status.detail
+    assert len(bundled_skill_names()) == 3  # detail says "3 skills", keep it honest
+
+
+def test_skills_status_no_agents_found_when_flag_on(home: Path, mocker: MockerFixture) -> None:
+    """A host with none of the agents installed owes nothing."""
+    _opt_in(True, home)
+    mocker.patch("shutil.which", return_value=None)
+    from jailbee.setup_command import skills_status
+
+    status = skills_status()
+
+    assert status.installed is True
+    assert "no skill-capable agents" in status.detail
+
+
+def test_skills_status_checks_every_detected_agent(home: Path, mocker: MockerFixture) -> None:
+    """Skills installed for claude but not for the codex the host also has."""
+    _opt_in(True, home)
+    mocker.patch("shutil.which", _which("claude", "codex"))
+    from jailbee.agent_skills import host_skill_targets, install_host_skills
+    from jailbee.setup_command import skills_status
+
+    install_host_skills(host_skill_targets()[:1])  # claude only
+
+    status = skills_status()
+    assert status.installed is False
+    assert str(home / ".codex" / "skills") in status.detail
 
 
 def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
@@ -168,7 +220,7 @@ def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
     stale.parent.mkdir(parents=True)
     stale.write_text("removed upstream")
 
-    install_host_skills()
+    install_host_skills([home / ".claude" / "skills"])
 
     assert not stale.exists()
     assert (stale.parent / "SKILL.md").is_file()
@@ -181,19 +233,9 @@ def test_install_host_skills_leaves_unrelated_skills_alone(home: Path) -> None:
     mine.parent.mkdir(parents=True)
     mine.write_text("mine")
 
-    install_host_skills()
+    install_host_skills([home / ".claude" / "skills"])
 
     assert mine.read_text() == "mine"
-
-
-def test_skills_status_flips_after_install(home: Path) -> None:
-    _ = home
-    from jailbee.agent_skills import install_host_skills
-    from jailbee.setup_command import skills_status
-
-    assert skills_status().installed is False
-    install_host_skills()
-    assert skills_status().installed is True
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +269,8 @@ def test_run_setup_installs_every_step_when_not_interactive(
     from jailbee.setup_command import STEP_KEYS, run_setup
 
     units = mocker.patch("jailbee.init_command.install_systemd_units")
+    mocker.patch("shutil.which", _which("claude"))
+    _opt_in(True, home)
 
     ran = run_setup(shells=["bash"], confirm=None)
 
@@ -248,9 +292,29 @@ def test_run_setup_honours_the_keys_it_is_given(home: Path, mocker: MockerFixtur
     assert not (home / ".local" / "share" / "bash-completion").exists()
 
 
-def test_run_setup_skips_a_step_the_callback_declines(home: Path, mocker: MockerFixture) -> None:
+def test_run_setup_does_not_install_skills_when_opted_out(
+    home: Path, capsys: pytest.CaptureFixture[str], mocker: MockerFixture
+) -> None:
+    """The step reports installed while opted out, so even `--yes` installs
+    nothing and says why."""
+    mocker.patch("shutil.which", _which("claude"))
+    _opt_in(False, home)
     from jailbee.setup_command import run_setup
 
+    ran = run_setup(keys=["skills"], shells=["bash"], confirm=None)
+
+    assert ran == ["skills"]
+    assert not (home / ".claude" / "skills").exists()
+    assert "opt-in" in capsys.readouterr().out
+
+
+def test_run_setup_skips_a_step_the_callback_declines(home: Path, mocker: MockerFixture) -> None:
+    """Opted in, so skills is genuinely missing — every step is offered with
+    a "yes" default, and the declined ones are not run."""
+    from jailbee.setup_command import run_setup
+
+    mocker.patch("shutil.which", _which("claude"))
+    _opt_in(True, home)
     units = mocker.patch("jailbee.init_command.install_systemd_units")
     asked: list[tuple[str, bool]] = []
 
@@ -377,17 +441,17 @@ def test_consume_hint_fires_only_once(home: Path) -> None:
 
 
 def test_consume_hint_is_silent_when_nothing_is_missing(home: Path, mocker: MockerFixture) -> None:
-    from jailbee.agent_skills import install_host_skills
     from jailbee.setup_command import consume_hint, install_completions
 
     mocker.patch("shutil.which", return_value="/usr/local/bin/jailbee")
     mocker.patch("subprocess.run")
     from jailbee.init_command import install_systemd_units
 
+    # Completions and timer in place; skills opted out, which also counts
+    # as nothing-missing for the hint.
     install_completions(["bash"])
-    install_host_skills()
     install_systemd_units()
-    _ = home
+    _opt_in(False, home)
 
     with _session() as session:
         assert consume_hint(session, shells=["bash"], now=_NOW) == []
@@ -488,9 +552,10 @@ def test_linger_tip_survives_a_missing_loginctl(home: Path, capsys, mocker: Mock
 # --------------------------------------------------------------------------
 
 
-def test_hint_pending_returns_the_missing_steps_once(home: Path) -> None:
+def test_hint_pending_returns_the_missing_steps_once(home: Path, mocker: MockerFixture) -> None:
     """The gate both the printed hint and the offer sit behind."""
-    _ = home
+    mocker.patch("shutil.which", _which("claude"))
+    _opt_in(True, home)
     from jailbee.setup_command import hint_pending
 
     with _session() as session:

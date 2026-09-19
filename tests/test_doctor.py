@@ -1636,7 +1636,7 @@ def test_doctor_flags_missing_shell_completions(tmp_path: Path, mocker) -> None:
     )
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup(_cfg(tmp_path))
+    results = _check_user_setup()
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is False
@@ -1654,7 +1654,7 @@ def test_doctor_passes_installed_shell_completions(tmp_path: Path, mocker) -> No
     )
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup(_cfg(tmp_path))
+    results = _check_user_setup()
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is True
@@ -1669,7 +1669,7 @@ def test_doctor_does_not_fail_completions_on_an_unknown_shell(tmp_path: Path, mo
     status = mocker.patch("jailbee.setup_command.completions_status")
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup(_cfg(tmp_path))
+    results = _check_user_setup()
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is True
@@ -1677,7 +1677,7 @@ def test_doctor_does_not_fail_completions_on_an_unknown_shell(tmp_path: Path, mo
     status.assert_not_called()
 
 
-def test_doctor_flags_missing_host_claude_skills(tmp_path: Path, mocker) -> None:
+def test_doctor_flags_missing_host_agent_skills(tmp_path: Path, mocker) -> None:
     from jailbee.doctor import _check_user_setup
 
     mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
@@ -1687,30 +1687,28 @@ def test_doctor_flags_missing_host_claude_skills(tmp_path: Path, mocker) -> None
         return_value=_step(False, "missing in /home/u/.claude/skills: jailbee-usage"),
     )
 
-    results = _check_user_setup(_cfg(tmp_path))
+    results = _check_user_setup()
 
-    check = next(r for r in results if r.name == "claude skills (host)")
+    check = next(r for r in results if r.name == "agent skills (host)")
     assert check.ok is False
     assert "jb setup" in check.detail
 
 
-def test_doctor_skips_host_skills_when_claude_is_disabled(tmp_path: Path, mocker) -> None:
-    """Nothing on the host would read them, so their absence is not a fault."""
+def test_doctor_always_reports_the_host_skills_check(tmp_path: Path, mocker) -> None:
+    """The check is host-level policy, not repo-level: it appears for every
+    config, and an opted-out host reads as ok rather than as a fault."""
     from jailbee.doctor import _check_user_setup
 
-    # `Config.claude` is a property, so `model_copy(update={"claude": ...})`
-    # is silently ignored — `with_agent` is the only working route.
-    cfg = with_agent(_cfg(tmp_path), "claude", enabled=False)
     mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
     mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
     skills = mocker.patch("jailbee.setup_command.skills_status")
 
-    results = _check_user_setup(cfg)
+    results = _check_user_setup()
 
     names = [r.name for r in results]
     assert "shell completions" in names
-    assert "claude skills (host)" not in names
-    skills.assert_not_called()
+    assert "agent skills (host)" in names
+    skills.assert_called_once_with()
 
 
 def test_run_checks_includes_the_user_setup_checks(tmp_path: Path, mocker) -> None:
@@ -1725,7 +1723,7 @@ def test_run_checks_includes_the_user_setup_checks(tmp_path: Path, mocker) -> No
 
     names = [r.name for r in results]
     assert "shell completions" in names
-    assert "claude skills (host)" in names
+    assert "agent skills (host)" in names
 
 
 def test_doctor_points_at_jb_setup_for_an_inactive_timer(tmp_path: Path, mocker) -> None:
@@ -2906,7 +2904,7 @@ def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mo
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "ok"))
     mocker.patch("jailbee.setup_command.qt_dashboard_status", return_value=(False, "not installed"))
 
-    results = _check_user_setup(_cfg(tmp_path))
+    results = _check_user_setup()
 
     check = next(r for r in results if r.name == "qt dashboard (optional)")
     assert check.ok is True, "an optional extra must not fail doctor"

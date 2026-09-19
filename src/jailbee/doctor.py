@@ -860,7 +860,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 10b. Post-install steps `jailbee setup` owns. Plain file checks, so they
     # sit outside the `incus_available` gate — and a missing one is silent
     # otherwise: the first-run hint fires once and then never again.
-    results.extend(_check_user_setup(cfg))
+    results.extend(_check_user_setup())
 
     # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
     # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
@@ -1469,7 +1469,7 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
     return results
 
 
-def _check_user_setup(cfg: Config) -> list[CheckResult]:
+def _check_user_setup() -> list[CheckResult]:
     """Report the `jailbee setup` steps missing on this machine.
 
     The refresh timer is deliberately absent: `_check_egress_pool` already
@@ -1505,17 +1505,18 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
             )
         )
 
-    # Only the host's own Claude reads these, so with the integration off
-    # their absence is a preference, not a fault.
-    if cfg.claude.enabled:
-        status = skills_status()
-        results.append(
-            CheckResult(
-                name="claude skills (host)",
-                ok=status.installed,
-                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
-            )
+    # Host-level policy, not repo-level: the check itself decides what "not
+    # set up" means — an opted-out host reports ok inside `skills_status`,
+    # so no repo config gates this (an opted-in host missing the skills is
+    # the fault; an opted-out one is a preference).
+    status = skills_status()
+    results.append(
+        CheckResult(
+            name="agent skills (host)",
+            ok=status.installed,
+            detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
         )
+    )
 
     # `ok` regardless: the Qt dashboard is an extra nobody has to want, and
     # `jailbee setup` cannot install it anyway (it would have to reinstall

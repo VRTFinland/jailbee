@@ -239,3 +239,32 @@ def test_sync_lock_lives_at_the_shared_dir_root(tmp_path: Path, monkeypatch) -> 
     agent_skills.sync_agent_skills(cfg)
     assert (shared / ".jailbee-skills.lock").exists()
     assert not (shared / "claude" / ".jailbee-skills.lock").exists()
+
+
+# --------------------------------------------------------------------------
+# the host-side install
+# --------------------------------------------------------------------------
+
+
+def test_host_skill_targets_follow_installed_binaries(tmp_path: Path, monkeypatch, mocker) -> None:
+    """Detection is `shutil.which` per preset binary: an agent the user has
+    not installed on the host owes no skills directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    mocker.patch("shutil.which", side_effect=lambda b: f"/usr/bin/{b}" if b == "claude" else None)
+
+    targets = agent_skills.host_skill_targets()
+
+    assert targets == [tmp_path / ".claude" / "skills"]
+
+
+def test_install_host_skills_writes_every_given_target(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    written = agent_skills.install_host_skills(
+        [tmp_path / ".claude" / "skills", tmp_path / ".codex" / "skills"]
+    )
+
+    assert (tmp_path / ".claude" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert (tmp_path / ".codex" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert len(written) == 4  # two skills, two targets

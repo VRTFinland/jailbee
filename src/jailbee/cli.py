@@ -1000,13 +1000,15 @@ def setup(
         typer.Option("--status", help="Report each step's state and exit, installing nothing"),
     ] = False,
 ) -> None:
-    """Set up this machine: shell completions, the refresh timer, Claude skills.
+    """Set up this machine: shell completions, the refresh timer, agent skills.
 
     The machine-level counterpart to `jailbee init`, which sets up a repo.
     These are the steps a `uv tool install jailbee` cannot perform for you:
     completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user
     timer (egress pool refresh and `jailbee net loose` TTL expiry), and
-    jailbee's Claude Code skills in `~/.claude/skills`.
+    jailbee's agent skills for the agents found on this host (opt-in — set
+    `install_host_skills: true` in `~/.config/jailbee/global.yaml`; the
+    containers' skills are installed without any host action).
 
     Interactive by default and idempotent, so re-run it after upgrading
     jailbee. `--yes` installs everything without asking, which is what

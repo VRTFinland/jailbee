@@ -13,6 +13,7 @@ from __future__ import annotations
 import fcntl
 import importlib.resources
 import shutil
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -45,12 +46,37 @@ def bundled_skill_names() -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
-def host_skills_dir() -> Path:
-    """Where Claude Code on the *host* reads user skills from.
+def _preset_skill_locations() -> list[tuple[str, str]]:
+    """(binary, skills_dir) for every preset that declares a skills directory.
 
-    Resolved on each call, not at import: tests point ``HOME`` elsewhere.
+    The host-side detection table, read from the presets so a new skill-capable
+    agent needs a preset entry, not a change here.
     """
-    return Path.home() / ".claude" / "skills"
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    presets: dict[str, dict[str, object]] = {**AGENT_PRESETS, "claude": claude_preset()}
+    out: list[tuple[str, str]] = []
+    for name in sorted(presets):
+        entry = presets[name]
+        skills_dir = entry.get("skills_dir")
+        if isinstance(skills_dir, str) and skills_dir:
+            binary = str(entry.get("command", name)).split()[0]
+            out.append((binary, skills_dir))
+    return out
+
+
+def host_skill_targets() -> list[Path]:
+    """Skills directories of the skill-capable agents installed on this host.
+
+    `shutil.which` on each preset's binary decides: an agent the user has not
+    installed on the host gets no directory written. Container-side skills are
+    unaffected — they ride the shared mounts, not this.
+    """
+    return [
+        Path(skills_dir).expanduser()
+        for binary, skills_dir in _preset_skill_locations()
+        if shutil.which(binary)
+    ]
 
 
 def _copy_skills_into(dest: Path) -> list[Path]:
@@ -74,15 +100,19 @@ def _copy_skills_into(dest: Path) -> list[Path]:
     return written
 
 
-def install_host_skills() -> list[Path]:
-    """Install the bundled skills for the host's own Claude Code.
+def install_host_skills(targets: Sequence[Path]) -> list[Path]:
+    """Copy the bundled skills into each of ``targets``, returning what was written.
 
-    The counterpart to `sync_agent_skills`, which serves the *containers*:
-    this one teaches the Claude the user runs on the host about `jailbee`
-    itself. Installed by `jailbee setup`; it used to be `make install-skill`,
-    which meant a PyPI install never got them.
+    The counterpart to `sync_agent_skills`, which serves the *containers*: this
+    one teaches the agents the user runs on the host about `jailbee` itself.
+    Callers pass `host_skill_targets()` — the detection and the opt-in policy
+    live in `setup_command`, not here. Installed by `jailbee setup`; it used to
+    be `make install-skill`, which meant a PyPI install never got them.
     """
-    return _copy_skills_into(host_skills_dir())
+    written: list[Path] = []
+    for dest in targets:
+        written.extend(_copy_skills_into(dest))
+    return written
 
 
 def sync_agent_skills(cfg: Config) -> None:
