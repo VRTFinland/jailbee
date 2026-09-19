@@ -167,8 +167,8 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # intermittently. Same reasoning as `codex` and `grok`.
         "install_network": "loose",
         # `~/.opencode` is where the installer puts the binary, and sharing it
-        # means the 88MB payload is downloaded once per repo rather than once
-        # per branch. It holds only `bin/` today; if a future release puts a
+        # means the 88MB download (198MB on disk) happens once per repo rather
+        # than once per branch. It holds only `bin/` today; if a future release puts a
         # control socket in there, `jailbee doctor` reports it and the fix is a
         # `private:` carve-out, exactly as for codex.
         "shared": [

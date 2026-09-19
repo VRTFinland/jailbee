@@ -190,8 +190,8 @@ before editing `## Unreleased`.
   binary and needs no toolchain. That installer hardcodes `~/.opencode/bin`,
   which is on no PATH jailbee sets, so the preset also links the binary into
   `~/.local/bin` — without it `opencode` would install and still not be
-  found. `~/.opencode` joins the preset's shared mounts, so the ~88MB payload
-  is fetched once per repo rather than once per branch, and a second branch
+  found. `~/.opencode` joins the preset's shared mounts, so the 88MB download
+  (198MB on disk) happens once per repo rather than once per branch, and a second branch
   relinks instead of re-downloading. The install step asks for `loose` while
   it runs, because both of the installer's hosts (`opencode.ai`,
   `registry.npmjs.org`) are CDN-fronted and rotate their IPs;
