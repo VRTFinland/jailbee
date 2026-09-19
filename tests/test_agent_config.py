@@ -241,7 +241,6 @@ def test_codex_preset_keeps_the_app_server_dirs_per_container():
     assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
 
 
-
 def _run_opencode_step(which, tmp_path, *, installer_body):
     """Run the opencode preset's install/update line in a real bash.
 
