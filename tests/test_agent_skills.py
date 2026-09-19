@@ -226,6 +226,116 @@ def test_sync_warns_when_no_shared_mount_covers_skills_dir(
     assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
 
 
+def test_sync_prefers_the_deepest_matching_mount(tmp_path: Path, monkeypatch) -> None:
+    """With nested dir mounts the narrowest one shadows the broad one
+    in-container, so the skills must land under the narrow mount's subpath —
+    writing under the broad mount puts them behind the shadow and the agent
+    never sees them, with no warning."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [
+                    {"subpath": "home", "path": "~"},
+                    {"subpath": "my-agent", "path": "~/.mine"},
+                ],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert not (shared / "home" / ".mine" / "skills").exists()
+
+
+def test_sync_skips_a_mount_whose_subpath_escapes_shared_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Defense in depth: a `..` in a mount's own `subpath` spelling reaches the
+    host-side join, and `_copy_skills_into` would `mkdir`/`rmtree` outside
+    `<shared_dir>`. Such an agent is warned and skipped instead."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [{"subpath": "mine/../../evil", "path": "~/.mine"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    out = capsys.readouterr().out
+    assert "mine" in out
+    assert "~/.mine/skills" in out
+    assert not (tmp_path / "evil").exists()
+    assert not (shared / "mine" / "skills").exists()
+
+
+def test_sync_warning_preserves_bracketed_skills_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """`warn` runs the message through Rich markup, which eats a bracketed
+    path segment; `warn_plain` keeps the warning truthful."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/[weird]/skills",
+                "shared": [{"subpath": "mine", "path": "~/.mine"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    out = capsys.readouterr().out
+    assert "~/[weird]/skills" in out
+
+
+def test_sync_dedupes_two_agents_resolving_to_one_host_dir(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """Two agents may legitimately share a host directory (claude and a custom
+    agent reading ~/.claude/skills). The bytes are copied once, no error, and
+    a third agent with its own directory is unaffected."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.claude/skills",
+                "shared": [{"subpath": "claude", "path": "~/.claude"}],
+            },
+            "codex": {"enabled": True},
+        },
+    )
+    spy = mocker.spy(agent_skills, "_copy_skills_into")
+    agent_skills.sync_agent_skills(cfg)
+    calls = [call.args[0] for call in spy.call_args_list]
+    assert calls.count(shared / "claude" / "skills") == 1
+    assert calls.count(shared / "codex" / "skills") == 1
+    assert (shared / "claude" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert (shared / "codex" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
 def test_sync_lock_lives_at_the_shared_dir_root(tmp_path: Path, monkeypatch) -> None:
     """One lock serialises every agent's copy, so it sits beside the
     `.agent-install.lock`, not inside one agent's mount."""
@@ -268,3 +378,21 @@ def test_install_host_skills_writes_every_given_target(tmp_path: Path, monkeypat
     assert (tmp_path / ".claude" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
     assert (tmp_path / ".codex" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
     assert len(written) == 4  # two skills, two targets
+
+
+def test_install_host_skills_warns_and_continues_past_a_bad_target(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """One unwritable target must not abort the command and leave every other
+    agent unwritten — warn with the target and continue."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    bad = tmp_path / "bad"
+    bad.write_text("a file where a directory is needed\n")
+    good = tmp_path / "good" / "skills"
+
+    written = agent_skills.install_host_skills([bad, good])
+
+    out = capsys.readouterr().out
+    assert str(bad) in out
+    assert (good / "jailbee-usage" / "SKILL.md").is_file()
+    assert len(written) == 2  # only the good target's two skills

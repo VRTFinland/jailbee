@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from jailbee.tui import warn
+from jailbee.tui import warn_plain
 
 if TYPE_CHECKING:
     from jailbee.config import AgentConfig, Config
@@ -108,10 +108,17 @@ def install_host_skills(targets: Sequence[Path]) -> list[Path]:
     Callers pass `host_skill_targets()` — the detection and the opt-in policy
     live in `setup_command`, not here. Installed by `jailbee setup`; it used to
     be `make install-skill`, which meant a PyPI install never got them.
+
+    A target that cannot be written (a path owned by another user, a file where
+    a directory is needed) warns and is skipped: `jailbee setup` used to die
+    mid-run on the first one, leaving every later agent unwritten.
     """
     written: list[Path] = []
     for dest in targets:
-        written.extend(_copy_skills_into(dest))
+        try:
+            written.extend(_copy_skills_into(dest))
+        except OSError as exc:
+            warn_plain(f"agent skills: cannot write to {dest}: {exc}")
     return written
 
 
@@ -126,22 +133,22 @@ def sync_agent_skills(cfg: Config) -> None:
     `_copy_skills_into` for the replacement semantics.
     """
     assert cfg.shared_dir is not None  # set by load_config
-    targets: dict[Path, str] = {}
+    targets: set[Path] = set()
     for name in sorted(cfg.agents):
         agent = cfg.agents[name]
         if not agent.enabled or not agent.install_jailbee_skills or not agent.skills_dir:
             continue
         host_dir = _skills_host_dir(cfg.shared_dir, agent)
         if host_dir is None:
-            warn(
+            warn_plain(
                 f"agents.{name}: skills_dir {agent.skills_dir} matches no shared "
                 "mount — skipping jailbee skills for this agent"
             )
             continue
-        # First declaration wins: two agents resolving to the same directory
-        # (claude and a custom agent reading ~/.claude/skills, say) owe the
-        # same bytes, so the second copy is skipped, not layered.
-        targets.setdefault(host_dir, name)
+        # Two agents may resolve to the same directory (claude and a custom
+        # agent reading ~/.claude/skills, say); they owe the same bytes, so the
+        # directory is copied once, never layered.
+        targets.add(host_dir)
     if not targets:
         return
     lock_path = cfg.shared_dir / ".jailbee-skills.lock"
@@ -158,14 +165,19 @@ def sync_agent_skills(cfg: Config) -> None:
 def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> Path | None:
     """The host-side copy of `agent.skills_dir`, or None when nothing covers it.
 
-    Walks the agent's `shared` mounts and picks the first whose `path` prefixes
-    `skills_dir` (both `~`-relative by convention, so the match is textual).
-    The remainder maps onto the mount's `subpath` under `<shared_dir>`:
+    Walks the agent's `shared` mounts and picks the one whose `path` prefixes
+    `skills_dir` most deeply (both `~`-relative by convention, so the match is
+    textual). The deepest match wins because the narrowest mount shadows the
+    broad ones in-container: with ``~`` and ``~/.claude`` both mounted and
+    ``~/.claude/skills`` the skills dir, writing under ``~``'s subpath would be
+    hidden behind ``~/.claude`` and the agent would never see the skills. The
+    remainder maps onto the mount's `subpath` under `<shared_dir>`:
     ``~/.claude/skills`` over ``~/.claude`` (subpath ``claude``) lands at
     ``<shared_dir>/claude/skills``. Matching against the mount list rather
     than a hardcoded subpath is what makes a user's own mount layout work.
     """
     skills = PurePosixPath(agent.skills_dir or "")
+    best: tuple[int, Path] | None = None
     for mount in agent.shared:
         if mount.type != "dir":
             continue
@@ -174,7 +186,22 @@ def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> Path | None:
             rel = skills.relative_to(base)
         except ValueError:
             continue
-        if not rel.parts:
-            return shared_dir / mount.subpath
-        return shared_dir / mount.subpath / Path(*rel.parts)
-    return None
+        candidate = (
+            shared_dir / mount.subpath
+            if not rel.parts
+            else shared_dir / mount.subpath / Path(*rel.parts)
+        )
+        # Ties keep the first: a strictly deeper base wins.
+        depth = len(base.parts)
+        if best is None or depth > best[0]:
+            best = (depth, candidate)
+    if best is None:
+        return None
+    candidate = best[1]
+    # Defense in depth: a `..` (or an absolute path) in a mount's `subpath`
+    # reaches this join without passing through `AgentConfig.skills_dir`
+    # validation. A candidate escaping `<shared_dir>` would be `mkdir`d and
+    # `rmtree`d by `_copy_skills_into`, so drop it and let the caller warn.
+    if not candidate.resolve().is_relative_to(shared_dir.resolve()):
+        return None
+    return candidate
