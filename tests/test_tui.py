@@ -230,56 +230,85 @@ def test_picker_row_shows_the_live_conflict_marker() -> None:
     assert "conflict!" in _format_choice_title(c, widths)
 
 
-def test_claude_picker_lines_up_the_accounts_and_appends_the_org() -> None:
-    """The picker mirrors `claude ls`'s split: the account column carries
-    `display_name` (no `#<org8>` inside it) and the org follows, padded so the
-    org column lines up across rows of differing email length."""
+def test_account_picker_lines_up_the_agents_accounts_and_orgs() -> None:
+    """The picker renders AGENT, ACCOUNT and ORG as columns: with no `-a` the
+    list spans agents, and one email can be parked under two of them."""
     from pathlib import Path
+    from types import SimpleNamespace
 
     from jailbee.accounts.models import Slot
-    from jailbee.tui import _claude_choice_title
+    from jailbee.tui import _account_choice_title, _account_choice_widths
 
+    claude = SimpleNamespace(name="claude")
+    codex = SimpleNamespace(name="codex")
     long = Slot("a.long.address@example.com#c0ffee12", Path("/s/a.json"), live=False)
     short = Slot("me@x.com#aaaabbbb", Path("/s/b.json"), live=False)
-    width = max(len(s.display_name) for s in (long, short))
+    choices = [(claude, long), (codex, short)]
+    widths = _account_choice_widths(choices)
 
-    long_title = _claude_choice_title(long, width)
-    short_title = _claude_choice_title(short, width)
-    assert long_title == "a.long.address@example.com  c0ffee12"
+    long_title = _account_choice_title((claude, long), widths)
+    short_title = _account_choice_title((codex, short), widths)
+
+    assert long_title == "claude  a.long.address@example.com  c0ffee12"
+    assert short_title.split() == ["codex", "me@x.com", "aaaabbbb"]
+    # The org column starts at the same offset in both rows.
+    assert long_title.index("c0ffee12") == short_title.index("aaaabbbb")
     assert "#c0ffee12" not in long_title
-    # The short row's org starts at the same column as the long row's.
-    assert short_title.index("aaaabbbb") == long_title.index("c0ffee12")
 
 
-def test_claude_picker_omits_the_org_for_an_account_without_one() -> None:
+def test_account_picker_omits_the_org_column_when_no_account_has_one() -> None:
+    """A store of personal accounts has no organization anywhere, and a column
+    of "-" earns no width — the same rule `jailbee account ls` uses."""
     from pathlib import Path
+    from types import SimpleNamespace
 
     from jailbee.accounts.models import Slot
-    from jailbee.tui import _claude_choice_title
+    from jailbee.tui import _account_choice_title, _account_choice_widths
 
-    plain = Slot("me@personal.com", Path("/s/b.json"), live=False)
-    # Padded to a wider column, it would still carry no trailing whitespace:
-    # nothing follows the account when there is no organization.
-    assert _claude_choice_title(plain, 40) == "me@personal.com"
+    agent = SimpleNamespace(name="claude")
+    choices = [(agent, Slot("me@personal.com", Path("/s/a.json"), live=False))]
+    widths = _account_choice_widths(choices)
+
+    assert widths["org"] == 0
+    assert _account_choice_title(choices[0], widths) == "claude  me@personal.com"
 
 
-def test_claude_picker_offers_the_slot_name_as_the_value(mocker) -> None:
-    """The picker's *value* must be the full slot name, not the shortened
-    display text — the name is what `claude use`/`rm` resolve."""
+def test_account_picker_offers_the_agent_and_slot_names_as_the_value(mocker) -> None:
+    """The picker's *value* is the pair the engine re-resolves: the agent name
+    picks the pool, and the slot name is what `use`/`rm` resolve."""
     from pathlib import Path
+    from types import SimpleNamespace
 
     from jailbee.accounts.models import Slot
-    from jailbee.tui import pick_claude_account
+    from jailbee.tui import pick_account
 
     select = mocker.patch("questionary.select")
-    select.return_value.ask.return_value = "me@corp.com#c0ffee12"
-    slots = [Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False)]
+    select.return_value.ask.return_value = ("claude", "me@corp.com#c0ffee12")
+    agent = SimpleNamespace(name="claude")
+    choices = [(agent, Slot("me@corp.com#c0ffee12", Path("/s/a.json"), live=False))]
 
-    result = pick_claude_account(slots, message="Switch this repo to:")
+    result = pick_account(choices, "Switch this repo to:")
 
-    assert result == "me@corp.com#c0ffee12"
-    assert [c.value for c in select.call_args.kwargs["choices"]] == ["me@corp.com#c0ffee12"]
+    assert result == ("claude", "me@corp.com#c0ffee12")
+    assert [c.value for c in select.call_args.kwargs["choices"]] == [
+        ("claude", "me@corp.com#c0ffee12")
+    ]
     assert select.call_args.args[0] == "Switch this repo to:"
+
+
+def test_account_picker_returns_none_when_cancelled(mocker) -> None:
+    """Ctrl+C / ESC is a cancel, not an answer: the caller aborts quietly."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from jailbee.accounts.models import Slot
+    from jailbee.tui import pick_account
+
+    select = mocker.patch("questionary.select")
+    select.return_value.ask.return_value = None
+    choices = [(SimpleNamespace(name="claude"), Slot("me@x.com", Path("/s/a.json"), live=False))]
+
+    assert pick_account(choices, "Switch:") is None
 
 
 def test_choice_widths_size_the_job_column_to_the_full_label(mocker) -> None:
@@ -720,7 +749,9 @@ def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(mocker
     assert values == ["group", "repo", "cancel"]
     out = capsys.readouterr()
     combined = out.out + out.err
-    assert "claude_credentials" in combined
+    assert "credentials.repos" in combined
+    assert "  credentials:" in combined
+    assert "claude_credentials" not in combined
     assert "global.yaml" in combined
     # The block must be copy-pasteable: `repos` is keyed by container_prefix,
     # and a placeholder there is the one part the user cannot fill in from

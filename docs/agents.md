@@ -386,7 +386,7 @@ path in sections 2–4 above is what makes shipping them acceptable.
 | `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**), with `app-server-control/` and `app-server-daemon/` private per container | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
 | `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443` | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
-| `opencode` | `npm i -g opencode-ai@latest` | `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | provider-dependent | Verified. |
+| `opencode` | `curl -fsSL https://opencode.ai/v2/install \| bash -s -- --no-modify-path` — **not npm** — followed by a `~/.local/bin/opencode` symlink | `~/.opencode` (dir — **the binary**), `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | `opencode.ai:443` (the built-in "zen" gateway at `/zen/v1/...`, and the version pointer a self-update reads); `models.dev:443` (the model catalogue fetched at startup). **Provider hosts are yours to add** — opencode is a multi-provider client, so which inference host it needs follows the provider you configure, not opencode itself. `install_network: loose` for the installer's own hosts (`opencode.ai`, `registry.npmjs.org`) | Install verified end-to-end against the live installer (v2.0.9): it runs non-interactively, drops a 198MB static binary in `~/.opencode/bin`, and the preset's `~/.local/bin/opencode` link resolves to it; the `~/.local/bin` link, the already-installed short-circuit and the failed-download check are covered by unit tests. Not exercised against a real account — the runtime host list is best-effort like the rest of this table. |
 | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` — **not npm** | `~/.grok` (dir — `config.toml`, `auth.json`) | `api.x.ai:443` (API-key path); `x.ai:443` (installer); `auth.x.ai:443` (OIDC device-code + refresh); `cli-chat-proxy.grok.com:443` (SuperGrok inference and hosted web_search). `install_network: loose` because the installer's redirect target is undocumented. This list is runtime hosts only — it does not open arbitrary HTTPS for `web_fetch`. | Install + config dir verified against vendor docs. SuperGrok hosts checked against a live device-auth session in a strict-mode container: without the chat proxy, inference retries `https://cli-chat-proxy.grok.com/v1/responses` until it fails. API key env var is `XAI_API_KEY` per vendor docs; a third-party guide claims `GROK_CODE_XAI_API_KEY` — the vendor spelling wins, and that discrepancy is exactly why presets are templates. |
 
 Source of truth for the exact values: `src/jailbee/agent_presets.py`.
@@ -407,11 +407,11 @@ jailbee exec <container> -- tmux capture-pane -p -t autostart:install-gemini
 
 | Preset | Needs | Which is present when |
 | --- | --- | --- |
-| `gemini`, `opencode` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
+| `gemini` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
 | `aider` | `uv` | your own `install.d/` snippet installs it — jailbee's golden image does not ship `uv` |
-| `claude`, `codex`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
+| `claude`, `codex`, `opencode`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
 
-For the npm pair, add the stack and rebuild the base image:
+For `gemini`, add the stack and rebuild the base image:
 
 ```yaml
 golden:
@@ -423,20 +423,20 @@ golden:
 jailbee base build
 ```
 
-`codex` used to be in the npm row and no longer is. If you added the node
-stack solely to get `codex` working, you can drop it again; and if a
-container already has an `npm i -g @openai/codex` install, remove it
-(`npm uninstall -g @openai/codex`), because `/etc/profile.d` puts
+`codex` and `opencode` used to be in the npm row and no longer are. If you
+added the node stack solely to get one of them working, you can drop it again;
+and if a container already has the npm install, remove it (`npm uninstall -g
+@openai/codex`, `npm uninstall -g opencode-ai`), because `/etc/profile.d` puts
 `~/.npm-global/bin` ahead of `~/.local/bin` and the old copy would shadow the
 new one.
 
-### Pinning codex's install back to strict
+### Pinning an install step back to strict
 
-The codex install step asks for `install_network: loose` because all four of
-the installer's hosts are CDN-fronted and rotate their IPs, which is the case
-the strict ACL's resolve-at-apply-time pooling handles worst on a first run.
-To keep the step strict instead, name the hosts yourself and accept that the
-first attempt may need a retry while the pool fills:
+`codex`, `opencode` and `grok` ask for `install_network: loose` because their
+installers' hosts are CDN-fronted and rotate their IPs, which is the case the
+strict ACL's resolve-at-apply-time pooling handles worst on a first run. To
+keep a step strict instead, name the hosts yourself and accept that the first
+attempt may need a retry while the pool fills:
 
 ```yaml
 agents:
@@ -445,6 +445,11 @@ agents:
     egress_allow:
       - chatgpt.com:443
       - releases.openai.com:443
+  opencode:
+    install_network: strict
+    egress_allow:
+      - opencode.ai:443
+      - registry.npmjs.org:443
 ```
 
 Those entries join the container's runtime allowlist too — `egress_allow`
@@ -478,13 +483,15 @@ Full field-by-field descriptions for these live in the
 section stays the authoritative reference for the Claude-only fields; this
 page covers the generic `agents:` mechanism they sit on top of.
 
-### Shared credential groups (`claude_credentials`)
+### Shared credential groups (`credentials`)
 
-Several repos on one host can share a single Claude Code login instead of
+Several repos on one host can share a single login per agent instead of
 each holding its own. Configuration is host-level only — see
-[`claude_credentials` in the Configuration reference](config.md#claude_credentials)
+[`credentials` in the Configuration reference](config.md#credentials)
 for the `global.yaml` block, the join/leave flow, and `jailbee doctor`'s
-report. This section documents the mechanism the feature rests on.
+report. One group name is shared by every enabled agent, but each agent keeps
+its own credential in the group; the mechanism below is Claude's, and is what
+the feature rests on today.
 
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
 on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`

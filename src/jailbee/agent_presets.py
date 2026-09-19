@@ -12,6 +12,34 @@ docs/agents.md for how to correct one.
 
 from jailbee.constants import CLAUDE_API_HOSTS
 
+# opencode's vendor installer. Not interactive (unlike codex's, which needs
+# `CODEX_NON_INTERACTIVE=1`) and it never prompts, so it needs no env guard.
+#
+# `--no-modify-path` because its PATH edit is dead weight here: the installer
+# appends `export PATH=$HOME/.opencode/bin:$PATH` to the END of ~/.bashrc, and
+# Debian's ~/.bashrc returns early when the shell isn't interactive — which
+# every shell jailbee runs an agent under is (`bash -lc`). The symlink below is
+# what actually puts the binary on PATH.
+_OPENCODE_INSTALLER = "curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path"
+
+# The installer hardcodes `INSTALL_DIR=$HOME/.opencode/bin` with no env
+# override, and nothing in the golden image puts that directory on PATH — so
+# without this link `command -v opencode` fails, `_check_installed` reports
+# "not installed" forever (re-downloading 88MB on every `jailbee new`) and the
+# autostart window dies with `opencode: not found`. ~/.local/bin is on PATH via
+# /etc/profile.d/local-bin.sh, and it is per container while ~/.opencode is
+# shared — so the link is re-made on every install/update, exactly as codex's
+# installer re-makes its own ~/.local/bin/codex.
+#
+# The trailing test is the step's real verdict: `curl … | bash` exits 0 when
+# curl fails (bash just reads an empty script), so without it a failed download
+# would look like a successful install step.
+_OPENCODE_LINK = (
+    'mkdir -p "$HOME/.local/bin"; '
+    'ln -sfn "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"; '
+    '[ -x "$HOME/.local/bin/opencode" ]'
+)
+
 AGENT_PRESETS: dict[str, dict[str, object]] = {
     "codex": {
         "command": "codex",
@@ -115,13 +143,49 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
     },
     "opencode": {
         "command": "opencode",
-        "install": "npm i -g opencode-ai@latest",
-        "update": "npm i -g opencode-ai@latest",
+        # The vendor's own installer, not `npm i -g opencode-ai@latest`. Same
+        # reasoning as `codex` above: npm exists in the golden image only when
+        # `golden.stacks.node` is on, so the npm line made enabling this preset
+        # a silent no-op on every image without the node stack. The installer
+        # drops a single static binary and needs no toolchain — only `curl` and
+        # `tar`, both in the base image.
+        #
+        # Install skips the download when the shared store already holds the
+        # binary (a second branch container of the same repo); update always
+        # re-runs the installer, which is how it upgrades.
+        "install": (
+            f'set -e; [ -x "$HOME/.opencode/bin/opencode" ] || {_OPENCODE_INSTALLER}; '
+            f"{_OPENCODE_LINK}"
+        ),
+        "update": f"set -e; {_OPENCODE_INSTALLER}; {_OPENCODE_LINK}",
+        # The installer fetches itself from opencode.ai, reads the current
+        # version from `opencode.ai/update/api/latest/cli/npm`, and pulls the
+        # ~88MB platform tarball from registry.npmjs.org. Both are CDN-fronted
+        # and round-robin their IPs, which is the case the ACL's
+        # resolve-at-apply-time pooling handles worst on a first run — so the
+        # install step gets `loose` rather than a hostname list that fails
+        # intermittently. Same reasoning as `codex` and `grok`.
+        "install_network": "loose",
+        # `~/.opencode` is where the installer puts the binary, and sharing it
+        # means the 88MB download (198MB on disk) happens once per repo rather
+        # than once per branch. It holds only `bin/` today; if a future release puts a
+        # control socket in there, `jailbee doctor` reports it and the fix is a
+        # `private:` carve-out, exactly as for codex.
         "shared": [
+            {"subpath": "opencode-install", "path": "~/.opencode"},
             {"subpath": "opencode-config", "path": "~/.config/opencode"},
             {"subpath": "opencode-data", "path": "~/.local/share/opencode"},
         ],
-        "egress_allow": [],
+        # opencode's *own* hosts only. It is a multi-provider client, so which
+        # inference host it needs depends entirely on the provider the user
+        # configures — those stay the user's to add (see docs/agents.md §6).
+        # `opencode.ai` covers both first-party paths: the built-in "zen"
+        # gateway (`/zen/v1/...`) and the version pointer a self-update reads.
+        # `models.dev` is the model catalogue opencode fetches at startup.
+        "egress_allow": [
+            "opencode.ai:443",
+            "models.dev:443",
+        ],
     },
     "grok": {
         "command": "grok",

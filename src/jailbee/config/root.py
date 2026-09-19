@@ -4,7 +4,7 @@
   * repo_root             — directory containing `.jailbee/`
   * default_branch        — `refs/remotes/<upstream_remote>/HEAD`
   * upstream_remote       — auto-detected via `git.detect_upstream_remote`
-  * claude_credentials_dir — derived from host-level `claude_credentials` block
+  * credential_group      — derived from host-level `credentials` block
 
 `container_prefix` is a real YAML key (documented, hand-edited) whose
 *fallback* is computed: `repo_root.name` when left empty.
@@ -108,12 +108,12 @@ class Config(BaseModel):
             "second `jailbee init`."
         ),
     )
-    # Computed on the load path from the host-level `claude_credentials`
+    # Computed on the load path from the host-level `credentials`
     # block, like repo_root / default_branch / upstream_remote. Never a YAML
-    # key on either layer: `load_config_from_text` refuses both this name and
-    # `claude_credentials` in a repo config. None = this repo keeps its own
-    # credential inside its config home.
-    claude_credentials_dir: Path | None = None
+    # key on either layer: `load_config_from_layers` refuses both this name and
+    # `credentials` (and the legacy `claude_credentials`) in a repo config.
+    # None = this repo keeps its own credential inside its config home.
+    credential_group: str | None = None
     host_mounts: list[HostMount] = Field(
         default=[],
         description=(
@@ -426,7 +426,7 @@ class Config(BaseModel):
     # repo layer was synthesized from `global.yaml`'s `scratch.config`. A
     # private attribute for the reason `_column_warnings` is one: `Config` is
     # extra="forbid", so a declared field would be YAML-settable (needing the
-    # explicit ban `claude_credentials_dir` carries) and would appear in
+    # explicit ban `credential_group` carries) and would appear in
     # `jailbee config show`'s dump as if it were configuration.
     _synthetic: bool = PrivateAttr(default=False)
 

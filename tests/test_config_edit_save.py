@@ -6,6 +6,8 @@ policy and diff story is testable without a terminal.
 
 from __future__ import annotations
 
+import yaml
+
 from jailbee.config_edit.layers import read_layers
 from jailbee.config_edit.save import (
     SavePlan,
@@ -258,6 +260,33 @@ def test_a_plan_over_a_missing_file_starts_from_nothing(tmp_path):
     assert plan.old_text == ""
     assert "container_prefix: demo" in plan.new_text
     assert isinstance(plan, SavePlan)
+
+
+def test_build_plan_migrates_a_legacy_credentials_block(tmp_path):
+    """Both write policies migrate `claude_credentials:` in the same write.
+
+    A save that stages `credentials.repos.<prefix>` over a file still spelling
+    the legacy key must copy the old block, delete the old key and apply the
+    edit — otherwise the rendered file carries both spellings and will not
+    load. Pinning both policies matters: `patch` goes through `patch_yaml` and
+    `regenerate` through `apply_changes` + `render_global_yaml`, two different
+    code paths.
+    """
+    layers = _layers(
+        tmp_path,
+        global_text="claude_credentials:\n  group: work\n  repos:\n    side: old\n",
+    )
+    for policy in ("patch", "regenerate"):
+        plan = build_plan(
+            layers,
+            "global",
+            (YamlChange(("credentials", "repos", "side"), "new"),),
+            global_specs(),
+            policy,
+        )
+        parsed = yaml.safe_load(plan.new_text)
+        assert "claude_credentials" not in parsed, policy
+        assert parsed["credentials"] == {"group": "work", "repos": {"side": "new"}}, policy
 
 
 def test_render_layer_uses_the_two_pass_renderer_for_global(tmp_path):

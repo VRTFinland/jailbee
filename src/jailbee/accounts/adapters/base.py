@@ -96,8 +96,10 @@ class AccountAdapter(Protocol):
     def holder_override(self, cfg: Config) -> Path | None:
         """The credential directory this repo shares, or None for its own.
 
-        Phase 1 reads `Config.claude_credentials_dir`; phase 2 replaces every
-        implementation with the agent-agnostic `Config.credential_group`.
+        Derived from the agent-agnostic `Config.credential_group`: a group name
+        is one value shared by every pooled agent, and each adapter turns it
+        into its own holder directory. `ClaudeAdapter` uses
+        `engine.group_dir`, which is why the on-disk Claude tree is unchanged.
         """
         ...
 
@@ -299,13 +301,53 @@ class AccountAdapter(Protocol):
 
         The seam for whatever an agent needs seeded into a fresh config home —
         an onboarding flag, a trust record — so the user is not sent through a
-        first-run wizard for an account they are already logged into.
+        first-run wizard for an account they are already logged into. Claude's
+        implementation is the credential reconciliation: it makes its holder
+        hold the repo's login, once, before Incus mounts it.
 
-        **Nothing calls this yet**: Claude's seed still lives in
-        `init_command`, and the Claude implementation is a no-op. It is
-        declared here so the seam is the adapter's when that moves. An
-        implementation must never overwrite a config home the agent has
+        Called by `prepare_config_homes` after the repo's shared mounts exist.
+        An implementation must never overwrite a config home the agent has
         already written to.
+        """
+        ...
+
+    def profile_has_group(self, cfg: Config) -> bool:
+        """Whether this repo's rendered profile mounts this agent's credential.
+
+        Derived from `cfg` alone and never read back from Incus, so it cannot
+        disagree with what the next `jailbee apply` writes. `groups.py` asks
+        this to decide whether a container override must *shadow* a profile
+        device or *add* one of its own (`incus.config_device_override` fails
+        when there is nothing to override).
+        """
+        ...
+
+    def set_container_group(
+        self,
+        cfg: Config,
+        incus: Incus,
+        container: str,
+        group_dir: Path | None,
+    ) -> None:
+        """Point `container`'s instance-local wiring at `group_dir`'s credential.
+
+        `group_dir` is the directory `groups.py` computed and created for this
+        adapter's group, or None for an explicit "no group" override. None is
+        not the same as an empty value: the device that mounted the shared
+        credential has to go, and the agent must be pointed back at its own
+        config home rather than merely left unset.
+
+        Every write here is instance-level, so it outranks the profile and a
+        later `jailbee apply` may re-render freely without disturbing it.
+        """
+        ...
+
+    def clear_container_group(self, cfg: Config, incus: Incus, container: str) -> None:
+        """Drop `container`'s instance-local wiring so it inherits the profile.
+
+        The counterpart of `set_container_group`: remove what that method may
+        have written and unset what it may have set. `groups.py` unsets the
+        shared label itself once every pooled adapter has been asked.
         """
         ...
 
@@ -350,3 +392,21 @@ def pooled_adapters(cfg: Config) -> list[AccountAdapter]:
         except KeyError:
             continue
     return found
+
+
+def prepare_config_homes(cfg: Config) -> None:
+    """Run every pooled adapter's config-home preparation.
+
+    The single caller of `AccountAdapter.prepare_config_home`, shared by
+    `init`/`apply` (`init_command._ensure_integration_shared_dirs`) and the
+    repo-group change path (`cli._reapply_binds_profile`), so the adapter-owned
+    seed cannot drift between them.
+
+    `home.mkdir` first: an implementation may write a file into a fresh config
+    home, and for a group-less repo that home is also the credential holder
+    Incus is about to mount.
+    """
+    for adapter in pooled_adapters(cfg):
+        home = adapter.config_home(cfg)
+        home.mkdir(parents=True, exist_ok=True)
+        adapter.prepare_config_home(cfg, home)

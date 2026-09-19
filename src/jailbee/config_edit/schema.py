@@ -56,7 +56,7 @@ COMPUTED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         ("Config", "repo_root"),
         ("Config", "default_branch"),
         ("Config", "upstream_remote"),
-        ("Config", "claude_credentials_dir"),
+        ("Config", "credential_group"),
     }
 )
 """(model, field) pairs that are never YAML keys, so never editable.
@@ -537,7 +537,13 @@ this filter entirely) is the real answer at this schema size.
 
 
 GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
-    {"github", "claude_credentials", "claude_credentials_dir"}
+    {
+        "github",
+        "credentials",
+        "claude_credentials",
+        "credential_group",
+        "claude_credentials_dir",
+    }
 )
 """Top-level keys `load_config_from_layers` refuses in a repo config.
 
@@ -547,7 +553,10 @@ that exists on one machine only. The editor keeps these in the repo tree
 and renders them disabled with the reason (spec 3.3) rather than hiding
 them, so the setting does not appear to have vanished.
 
-Kept in step with the ban list in `config/loader.py` by
+Both spellings of the block and both names of the computed field are listed,
+not just the current ones: the loader still bans the legacy spellings, and a
+set that named only the new keys would silently stop mirroring it. Kept in
+step with the ban list in `config/loader.py` by
 `test_global_only_keys_is_the_documented_ban_list`.
 """
 

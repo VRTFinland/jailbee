@@ -31,9 +31,14 @@ isolated per-branch development environments using Incus system containers. See
   All other modules use `Incus` wrapper methods so they're unit-testable.
 - **`config.py` is read-only after load.** No module mutates the loaded
   `Config` object. Tests construct their own with `make_cfg(tmp_path)` from
-  `tests/conftest.py`. Note: `Config` carries three computed attributes
-  (`repo_root`, `default_branch`, `container_prefix`) set during
-  `load_config()` — these are intentionally not YAML keys.
+  `tests/conftest.py`. Note: `Config` carries computed attributes
+  (`repo_root`, `upstream_remote`, `default_branch`, `credential_group`) set
+  during `load_config()` — these are intentionally not YAML keys.
+  `credential_group` is the host-level, agent-agnostic group *name* from the
+  `credentials` block; the one function that turns it into a per-adapter holder
+  directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
+  `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
+  derivation is never defined in `Config`, the CLI or the overview.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.

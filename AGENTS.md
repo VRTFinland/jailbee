@@ -25,6 +25,20 @@ have, the corrections below win. Everything else in it holds unchanged.
   `.local/superpowers/{specs,plans}/`, which is gitignored and is *its own git
   repository*. Commit there after each meaningful edit to a spec or plan, and
   never add a remote to it.
+- **Do not set `model` on subagent dispatches.** This harness routes subagent
+  models through `~/.config/opencode/opencode.json` (`general`, `explore`,
+  `small_model` — currently `openrouter/~deepseek/deepseek-flash-latest`). A
+  subagent dispatched without an explicit model uses its configured agent
+  model (OpenCode V2 docs: "A subagent uses its configured model, or inherits
+  the parent session's model when none is configured"), so omit the parameter
+  and let the routing apply. The superpowers `subagent-driven-development`
+  skill's Model Selection section ("always specify the model explicitly — an
+  omitted model inherits the session's model") describes Claude Code, not
+  this harness: following it here silently overrides the user's routing.
+  Override only when the user explicitly asks for a specific model, and
+  record the override in the session ledger. Resuming an existing subagent
+  session (SDD fix rounds 1-3) is not a new dispatch and keeps its original
+  model.
 
 ## What this environment adds
 

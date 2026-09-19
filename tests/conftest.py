@@ -102,7 +102,7 @@ def claude_row(
 
     Real `Row`s rather than mocks: the display properties (`state`, `account`,
     `org_hint`) are the module's own, and a stub of them would test nothing.
-    Shared by the `claude ls` and `claude group ls` tests, which render the
+    Shared by the `account ls` and `account group ls` tests, which render the
     same rows through the same field specs and must not drift apart.
     """
     from jailbee.accounts import overview
@@ -287,6 +287,23 @@ def _isolate_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
         yield home
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_xdg_data_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Point ``XDG_DATA_HOME`` at a tmp dir for the whole test session.
+
+    Sibling of ``_isolate_home`` / ``_isolate_global_config`` /
+    ``_isolate_state_dir``: without it, an account-store test on a developer
+    machine that exports ``XDG_DATA_HOME`` can write into the real credential
+    store (``engine.store_dir`` resolves under it). Session-scoped for the
+    same reason as ``_isolate_home`` — a function-scoped fixture can leave
+    module-import-time path caches pointing elsewhere.
+    """
+    data_home = tmp_path_factory.mktemp("xdg-data")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("XDG_DATA_HOME", str(data_home))
+        yield data_home
+
+
 @pytest.fixture
 def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give this one test an empty ``HOME`` of its own.
@@ -435,14 +452,19 @@ def _reset_deprecation_notices():
     into the next.
     """
     from jailbee import notices
-    from jailbee.config.loader import _warn_legacy_chrome_block
+    from jailbee.config.loader import (
+        _warn_legacy_chrome_block,
+        _warn_legacy_credentials_block,
+    )
     from jailbee.paths import _warn_legacy_config_dir
 
     _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
     _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
 

@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from jailbee import completion
 from tests.conftest import _raw_container
 
@@ -23,6 +25,25 @@ from tests.conftest import _raw_container
 def _ctx(**params: Any) -> Any:
     """A stand-in for click's Context: completers only read `.params`."""
     return SimpleNamespace(params=params)
+
+
+def _adapter(name: str) -> SimpleNamespace:
+    """A stand-in for an adapter: the completers only read `.name`."""
+    return SimpleNamespace(name=name)
+
+
+@pytest.fixture
+def group_store(tmp_path, monkeypatch):
+    """A private XDG data home, so a group test starts with no directories.
+
+    The session-wide `isolated_xdg_data_home` fixture is shared by every test,
+    so a group test that created directories would leak them into the next one
+    and make "the store is absent" unobservable.
+    """
+    root = tmp_path / "xdg-data"
+    root.mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(root))
+    return root
 
 
 def test_offers_short_names_when_nothing_typed(completion_repo):
@@ -260,17 +281,19 @@ def test_complete_app_name_empty_when_no_config_can_be_loaded(mocker):
     assert completion.complete_app_name(_ctx(), "") == []
 
 
-# ---- claude accounts ------------------------------------------------------
+# ---- accounts -------------------------------------------------------------
 
 
-def test_complete_claude_account_offers_the_parked_slots_by_prefix(mocker):
+def test_complete_account_offers_the_parked_slots_by_prefix(completion_repo, mocker):
     """Full slot names, narrowed by prefix — a name is always an exact match
-    for `claude use`, while a bare email is ambiguous once one account has two
+    for `account use`, while a bare email is ambiguous once one account has two
     stored logins."""
-    from pathlib import Path
-
     from jailbee.accounts.models import Slot
 
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
     mocker.patch(
         "jailbee.accounts.engine.parked_slots",
         return_value=[
@@ -278,28 +301,268 @@ def test_complete_claude_account_offers_the_parked_slots_by_prefix(mocker):
             Slot("other@x.com", Path("/s/b.json"), live=False),
         ],
     )
-    assert completion.complete_claude_account(_ctx(), "me") == ["me@corp.com#c0ffee12"]
-    assert completion.complete_claude_account(_ctx(), "") == [
+    assert completion.complete_account(_ctx(), "me") == ["me@corp.com#c0ffee12"]
+    assert completion.complete_account(_ctx(), "") == [
         "me@corp.com#c0ffee12",
         "other@x.com",
     ]
 
 
-def test_complete_claude_account_needs_no_repo_config(mocker):
-    """The store is host-wide, so completion must not go through `_load()` —
-    a TAB press outside a repo still has accounts to offer, and `list_slots`
-    would load every registered repo's config to resolve holder members."""
-    load = mocker.patch("jailbee.completion._load")
-    mocker.patch("jailbee.accounts.engine.parked_slots", return_value=[])
-    assert completion.complete_claude_account(_ctx(), "") == []
-    load.assert_not_called()
+def test_complete_account_combines_and_deduplicates_every_pooled_adapter(completion_repo, mocker):
+    """No `--agent`: the union of every enabled agent's parked store.
+
+    One email can legitimately be parked in two agents' stores, so the union is
+    a set, not a concatenation.
+    """
+    from jailbee.accounts.models import Slot
+
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude"), _adapter("codex")],
+    )
+    stores = {
+        "claude": [Slot("me@corp.com", Path("/s/a.json"), live=False)],
+        "codex": [
+            Slot("me@corp.com", Path("/s/b.json"), live=False),
+            Slot("other@x.com", Path("/s/c.json"), live=False),
+        ],
+    }
+    mocker.patch(
+        "jailbee.accounts.engine.parked_slots",
+        side_effect=lambda adapter: stores[adapter.name],
+    )
+    assert completion.complete_account(_ctx(), "") == ["me@corp.com", "other@x.com"]
 
 
-def test_complete_claude_account_survives_an_unreadable_store(mocker):
+def test_complete_account_narrows_to_the_typed_agent(completion_repo, mocker):
+    """`ctx.params["agent"]` is what the parsed `--agent` value becomes."""
+    from jailbee.accounts.models import Slot
+
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude"), _adapter("codex")],
+    )
+    parked = mocker.patch(
+        "jailbee.accounts.engine.parked_slots",
+        return_value=[Slot("only@codex.com", Path("/s/c.json"), live=False)],
+    )
+    assert completion.complete_account(_ctx(agent="codex"), "") == ["only@codex.com"]
+    assert parked.call_count == 1
+    assert parked.call_args.args[0].name == "codex"
+
+
+def test_complete_account_resolves_an_explicit_agent_without_a_repo(mocker):
+    """Outside a repo the parked store is still host-wide and worth offering.
+
+    `_load()` cannot discover enabled adapters there, so an explicit `--agent`
+    is resolved directly instead — the one case where the store outlives the
+    config that names its agent.
+    """
+    from jailbee.accounts.models import Slot
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    mocker.patch(
+        "jailbee.accounts.adapters.base.get_adapter",
+        return_value=_adapter("claude"),
+    )
+    mocker.patch(
+        "jailbee.accounts.engine.parked_slots",
+        return_value=[Slot("me@corp.com", Path("/s/a.json"), live=False)],
+    )
+    assert completion.complete_account(_ctx(agent="claude"), "") == ["me@corp.com"]
+
+
+def test_complete_account_empty_without_a_repo_and_no_agent(mocker):
+    """Without `--agent` there is no way to know which agents exist."""
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    parked = mocker.patch("jailbee.accounts.engine.parked_slots", return_value=[])
+    assert completion.complete_account(_ctx(), "") == []
+    parked.assert_not_called()
+
+
+def test_complete_account_empty_when_the_config_cannot_be_loaded(mocker):
+    from jailbee.config import ConfigError
+
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("bad yaml"))
+    assert completion.complete_account(_ctx(), "") == []
+
+
+def test_complete_account_survives_an_unreadable_store(completion_repo, mocker):
     """`_completion_guard` is the contract for every completer: a TAB press must
     never traceback."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
     mocker.patch("jailbee.accounts.engine.parked_slots", side_effect=OSError("boom"))
-    assert completion.complete_claude_account(_ctx(), "") == []
+    assert completion.complete_account(_ctx(), "") == []
+
+
+def test_complete_account_prints_nothing_when_the_store_fails(completion_repo, mocker, capsys):
+    """A store failure must return [] *and* leave stdout/stderr untouched."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
+
+    def noisy(*_args: Any, **_kwargs: Any) -> Any:
+        print("store advisory")
+        raise OSError("boom")
+
+    mocker.patch("jailbee.accounts.engine.parked_slots", side_effect=noisy)
+    capsys.readouterr()
+    assert completion.complete_account(_ctx(), "") == []
+    assert capsys.readouterr() == ("", "")
+
+
+# ---- agent names ----------------------------------------------------------
+
+
+def test_complete_account_agent_offers_every_enabled_agent(completion_repo, mocker):
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude"), _adapter("codex")],
+    )
+    assert completion.complete_account_agent(_ctx(), "") == ["claude", "codex"]
+    assert completion.complete_account_agent(_ctx(), "co") == ["codex"]
+
+
+def test_complete_account_agent_empty_when_no_config_can_be_loaded(mocker):
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    assert completion.complete_account_agent(_ctx(), "") == []
+
+
+def test_complete_account_agent_survives_an_adapter_failure(completion_repo, mocker):
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        side_effect=RuntimeError("boom"),
+    )
+    assert completion.complete_account_agent(_ctx(), "") == []
+
+
+# ---- credential groups ----------------------------------------------------
+
+
+def _group_dirs(*names: str, agent: str = "claude") -> None:
+    from jailbee.accounts.groups import group_dir
+
+    for name in names:
+        group_dir(agent, name).mkdir(parents=True, exist_ok=True)
+
+
+def test_complete_credential_group_unions_every_adapter_plus_none(
+    completion_repo, group_store, mocker
+):
+    """One group name is one directory per agent; the union is what a user sees."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude"), _adapter("codex")],
+    )
+    _group_dirs("work", "personal", agent="claude")
+    _group_dirs("work", "team", agent="codex")
+
+    assert completion.complete_credential_group(_ctx(), "") == [
+        "none",
+        "personal",
+        "team",
+        "work",
+    ]
+
+
+def test_complete_credential_group_ignores_the_store_directory(
+    completion_repo, group_store, mocker
+):
+    """`_parked` is not a group — the leading underscore keeps it out, the same
+    property `engine.store_dir` relies on for its own name."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
+    _group_dirs("work")
+    _group_dirs("_parked")
+
+    assert completion.complete_credential_group(_ctx(), "") == ["none", "work"]
+
+
+def test_complete_credential_group_narrows_to_the_typed_agent(completion_repo, group_store, mocker):
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude"), _adapter("codex")],
+    )
+    _group_dirs("claude-only", agent="claude")
+    _group_dirs("codex-only", agent="codex")
+
+    assert completion.complete_credential_group(_ctx(agent="codex"), "") == [
+        "codex-only",
+        "none",
+    ]
+
+
+def test_complete_credential_group_filters_by_prefix(completion_repo, group_store, mocker):
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
+    _group_dirs("work", "personal")
+
+    assert completion.complete_credential_group(_ctx(), "pe") == ["personal"]
+
+
+def test_complete_credential_group_offers_none_when_the_store_is_absent(
+    completion_repo, group_store, mocker
+):
+    """A store that does not exist yet is an empty pool, not a failure."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
+    assert completion.complete_credential_group(_ctx(), "") == ["none"]
+
+
+def test_complete_credential_group_empty_when_no_adapter_is_enabled(completion_repo, mocker):
+    """No enabled adapter means no directory to enumerate — not even `none`."""
+    mocker.patch("jailbee.accounts.adapters.base.pooled_adapters", return_value=[])
+    assert completion.complete_credential_group(_ctx(), "") == []
+
+
+def test_complete_credential_group_empty_when_no_config_can_be_loaded(mocker):
+    from jailbee.config import ConfigNotFoundError
+
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=ConfigNotFoundError("no config"),
+    )
+    assert completion.complete_credential_group(_ctx(), "") == []
+
+
+def test_complete_credential_group_empty_when_the_store_is_unreadable(
+    completion_repo, tmp_path, mocker
+):
+    """A store that cannot be read is a failure, not an empty pool: fail closed
+    rather than offer `none` for a host whose groups could not be enumerated."""
+    mocker.patch(
+        "jailbee.accounts.adapters.base.pooled_adapters",
+        return_value=[_adapter("claude")],
+    )
+    not_a_dir = tmp_path / "claude-credentials"
+    not_a_dir.write_text("not a directory")
+    mocker.patch("jailbee.accounts.groups.group_dir", return_value=not_a_dir / "x")
+
+    assert completion.complete_credential_group(_ctx(), "") == []
 
 
 # ---- snapshot tags --------------------------------------------------------

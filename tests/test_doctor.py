@@ -1751,14 +1751,16 @@ def test_doctor_is_silent_for_a_non_group_repo(tmp_path, make_cfg):
     assert _check_claude_credentials(cfg, GlobalConfig()) == []
 
 
-def test_doctor_reports_a_shared_credential(tmp_path, make_cfg):
+def test_doctor_reports_a_shared_credential(tmp_path, make_cfg, monkeypatch):
+    from jailbee.accounts import engine
     from jailbee.doctor import _check_claude_credentials
 
-    creds = tmp_path / "creds" / "work"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    creds = engine.group_dir("claude", "work")
     creds.mkdir(parents=True)
     (creds / ".credentials.json").write_text("{}")
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     results = _check_claude_credentials(cfg, gcfg)
 
@@ -1767,23 +1769,25 @@ def test_doctor_reports_a_shared_credential(tmp_path, make_cfg):
     assert "work" in results[0].detail
 
 
-def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg):
+def test_doctor_flags_a_half_finished_join(tmp_path, make_cfg, monkeypatch):
     """Group dir with no credential while the repo's config home still has one
     means `jailbee apply` has not run since the group was configured."""
+    from jailbee.accounts import engine
     from jailbee.doctor import _check_claude_credentials
 
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     shared = tmp_path / "shared"
     (shared / "claude").mkdir(parents=True)
     (shared / "claude" / ".credentials.json").write_text("{}")
-    creds = tmp_path / "creds" / "work"
+    creds = engine.group_dir("claude", "work")
     creds.mkdir(parents=True)
     cfg = make_cfg(
         tmp_path,
         shared_dir=shared,
         claude={"enabled": True},
-        claude_credentials_dir=creds,
+        credential_group="work",
     )
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     results = _check_claude_credentials(cfg, gcfg)
 
@@ -1810,9 +1814,9 @@ def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, ma
 
     creds = tmp_path / "creds" / "work"
     creds.mkdir(parents=True)
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=creds)
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
     gcfg = GlobalConfig.model_validate(
-        {"claude_credentials": {"group": "work", "repos": {"solo-repo": None}}}
+        {"credentials": {"group": "work", "repos": {"solo-repo": None}}}
     )
     when = datetime(2026, 8, 27, tzinfo=UTC)
 
@@ -2478,7 +2482,7 @@ def test_doctor_reports_a_group_named_none(tmp_path, mocker):
     from jailbee.global_config import GlobalConfig
     from tests.conftest import make_cfg
 
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "none"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "none"}})
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
     results = doctor._check_reserved_group_name(cfg, gcfg)
     assert results and results[0].ok is False
@@ -2490,28 +2494,53 @@ def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
     from jailbee.global_config import GlobalConfig
     from tests.conftest import make_cfg
 
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
     assert doctor._check_reserved_group_name(cfg, gcfg) == []
 
 
 def test_doctor_is_silent_without_a_redundant_override(tmp_path, make_cfg, mocker):
-    from jailbee.doctor import _check_redundant_claude_overrides
+    from jailbee.doctor import _check_redundant_credential_overrides
 
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
         {"name": f"{tmp_path.name}-a", "status": "Running", "profiles": [], "config": {}}
     ]
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
 
-    assert _check_redundant_claude_overrides(cfg, incus) == []
+    assert _check_redundant_credential_overrides(cfg, incus) == []
 
 
 def test_doctor_flags_an_override_that_only_repeats_the_repos_group(tmp_path, make_cfg, mocker):
-    """Nothing clears these but a `claude group use`/`set`/`unset` the user
+    """Nothing clears these but an `account group use`/`set`/`unset` the user
     runs, and until then the label outranks the profile — so the next
-    `claude group set` would leave this container behind on the old group."""
-    from jailbee.doctor import _check_redundant_claude_overrides
+    `account group set` would leave this container behind on the old group."""
+    from jailbee.doctor import _check_redundant_credential_overrides
+
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": f"{tmp_path.name}-a",
+            "status": "Running",
+            "profiles": [],
+            "config": {"user.jailbee.credential_group": "work"},
+        }
+    ]
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+
+    results = _check_redundant_credential_overrides(cfg, incus)
+
+    assert len(results) == 1
+    assert results[0].name == "credential group overrides"
+    assert not results[0].ok
+    assert f"{tmp_path.name}-a" in results[0].detail
+    assert "jailbee account group reset" in results[0].detail
+
+
+def test_doctor_still_reads_the_legacy_group_label(tmp_path, make_cfg, mocker):
+    """A container labelled before the rename must keep its override — the
+    fallback is the whole point of keeping the old label readable."""
+    from jailbee.doctor import _check_redundant_credential_overrides
 
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
@@ -2522,27 +2551,87 @@ def test_doctor_flags_an_override_that_only_repeats_the_repos_group(tmp_path, ma
             "config": {"user.jailbee.claude_group": "work"},
         }
     ]
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
 
-    results = _check_redundant_claude_overrides(cfg, incus)
+    results = _check_redundant_credential_overrides(cfg, incus)
 
     assert len(results) == 1
     assert not results[0].ok
     assert f"{tmp_path.name}-a" in results[0].detail
-    assert "claude group reset" in results[0].detail
 
 
 def test_doctor_stays_quiet_when_the_containers_cannot_be_listed(tmp_path, make_cfg, mocker):
     """A discoverability nicety must not turn an unreachable daemon into a
     failed check — the rule `_check_claude_pool` already follows."""
-    from jailbee.doctor import _check_redundant_claude_overrides
+    from jailbee.doctor import _check_redundant_credential_overrides
     from jailbee.incus import IncusError
 
     incus = mocker.MagicMock()
     incus.list_containers.side_effect = IncusError("connection refused")
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, claude_credentials_dir=tmp_path / "work")
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
 
-    assert _check_redundant_claude_overrides(cfg, incus) == []
+    assert _check_redundant_credential_overrides(cfg, incus) == []
+
+
+# ---- legacy `claude_credentials:` key in global.yaml ----
+
+
+def _write_global_yaml(monkeypatch, tmp_path, text: str) -> Path:
+    """Point the global-config path at a fabricated file for one test."""
+    cfg_dir = tmp_path / "xdg-config"
+    path = cfg_dir / "jailbee" / "global.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_dir))
+    return path
+
+
+def test_doctor_flags_a_legacy_credentials_key(tmp_path, monkeypatch):
+    """The loader folds `claude_credentials` into `credentials` before
+    `GlobalConfig` exists, so the evidence is invisible from there — doctor
+    must read the raw file to still see it."""
+    from jailbee.doctor import _check_legacy_credentials_key
+
+    _write_global_yaml(monkeypatch, tmp_path, "claude_credentials:\n  group: work\n")
+
+    results = _check_legacy_credentials_key()
+
+    assert len(results) == 1
+    assert results[0].name == "legacy credentials key"
+    assert results[0].ok is False
+    assert "claude_credentials" in results[0].detail
+    assert "`credentials`" in results[0].detail
+    assert "2.0.0" in results[0].detail
+
+
+def test_doctor_is_silent_for_the_current_credentials_key(tmp_path, monkeypatch):
+    """The new spelling is the supported one; there is nothing to migrate."""
+    from jailbee.doctor import _check_legacy_credentials_key
+
+    _write_global_yaml(monkeypatch, tmp_path, "credentials:\n  group: work\n")
+
+    assert _check_legacy_credentials_key() == []
+
+
+def test_doctor_is_silent_without_a_global_config(tmp_path, monkeypatch):
+    """An absent file is the default host; there is nothing to diagnose."""
+    from jailbee.doctor import _check_legacy_credentials_key
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
+
+    assert _check_legacy_credentials_key() == []
+
+
+def test_run_checks_includes_the_legacy_credentials_key_check(
+    tmp_path, monkeypatch, make_cfg, mocker
+):
+    from jailbee.doctor import run_checks
+
+    _write_global_yaml(monkeypatch, tmp_path, "claude_credentials: {}\n")
+
+    names = {r.name for r in run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())}
+
+    assert "legacy credentials key" in names
 
 
 # ---- _subid_fix: the remedy must fit the namespace it is given ----

@@ -53,7 +53,7 @@ def _warn_legacy_config_dir(path: Path) -> None:
     refresh do not repeat the line.
 
     The message names the repo the file is in, because the warning is not
-    necessarily about the repo the user is standing in: `jailbee claude ls`
+    necessarily about the repo the user is standing in: `jailbee account ls`
     (`accounts.overview._config_homes`) and the dashboards
     (`dashboard.gather_rows`) load *every* registered repo's config, so one
     unmigrated checkout elsewhere on the host made a migrated repo print

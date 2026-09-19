@@ -284,10 +284,10 @@ GLOBAL_SEED_HOST: dict[str, object] = {
     # Host-level key (`config._HOST_LEVEL_KEYS`): modeled on `GlobalConfig`,
     # not `Config`, so it needs its own `render_documented` pass — see
     # `render_global_template`. New hosts share one Claude Code login out
-    # of the box; see `docs/config.md#claude_credentials` for why the
+    # of the box; see `docs/config.md#credentials` for why the
     # *schema* default stays `None` while the *generated file* ships
     # `"default"`.
-    "claude_credentials": {"group": "default"},
+    "credentials": {"group": "default"},
     # Also host-level. Ships enabled so a fresh install can run `jailbee new`
     # in a directory with no `.jailbee/config.yaml` out of the box, rather
     # than requiring an opt-in edit before the feature does anything.

@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -837,14 +838,20 @@ def config_edit_cmd(
         flag=write_policy,
         configured=configured_policy(global_path),
     )
-    raise typer.Exit(
-        run_editor(
+    try:
+        code = run_editor(
             layer=layer,
             layer_set=layer_set,
             specs=specs,
             policy=policy,
         )
-    )
+    except ConfigError as e:
+        # `run_editor`'s `resolve()` folds the legacy credentials key and can
+        # refuse a both-keys file; without this it reaches Typer as a raw
+        # traceback instead of the `✗ <msg>` every other command renders.
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    raise typer.Exit(code)
 
 
 def _offer_editor(*, global_layer: bool) -> None:
@@ -1154,7 +1161,7 @@ def list_cmd(
                 "full_name, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, ip, memory_limit, mem, cpu, doing, wt, ahead_diff, "
                 "ahead_count, conflict, local_diff, local_count, git_status, "
-                "claude_group, pr."
+                "group, pr."
             ),
         ),
     ] = None,
@@ -1168,6 +1175,7 @@ def list_cmd(
     config: ConfigOption = None,
 ) -> None:
     """List managed containers."""
+    from jailbee.config import models_columns
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
         list_containers,
@@ -1198,7 +1206,11 @@ def list_cmd(
     # error. A typo'd column name is not fatal here (or anywhere but `jailbee
     # config validate`) — the helper already recovered from it and just
     # warns.
-    columns = cfg.effective_ls_columns(_load_global())
+    columns = models_columns.canonicalize_column_config(cfg.effective_ls_columns(_load_global()))
+    # An explicit --fields string reaches `emit` unparsed, so normalize its
+    # legacy group aliases here, before both the cpu/doing scan below and
+    # `emit` itself.
+    fields = models_columns.canonical_ls_fields_spec(fields)
     # An explicit --fields flag beats the configured `fields` list outright: if
     # the config's selection narrowed the candidates first, a flag naming a
     # column outside that selection would have nothing left to pick from.
@@ -1458,13 +1470,22 @@ def new_cmd(
             ),
         ),
     ] = False,
+    credential_group: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-group",
+            help="Credential group for this container only, for its "
+            "lifetime. Use `none` for no group.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ] = None,
     claude_group: Annotated[
         str | None,
         typer.Option(
             "--claude-group",
-            help="Claude credential group for this container only, for its "
-            "lifetime. Use `none` for no group.",
-            autocompletion=completion.complete_claude_group,
+            hidden=True,
+            help="Deprecated alias for --credential-group.",
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     yes: Annotated[
@@ -1849,15 +1870,21 @@ def new_cmd(
                 f"'jailbee registry up && jailbee apply'."
             )
 
-    resolved_claude_group: str | None = None
-    if claude_group is not None:
+    if credential_group is not None and claude_group is not None:
+        error(
+            "--credential-group and --claude-group are the same option, "
+            "under two names; pass only one."
+        )
+        raise typer.Exit(2)
+
+    group_flag = credential_group if credential_group is not None else claude_group
+    resolved_credential_group: str | None = None
+    if group_flag is not None:
         from jailbee.accounts import groups
 
         try:
-            resolved_claude_group = (
-                groups.NO_GROUP
-                if claude_group == "none"
-                else groups.validate_group_name(claude_group)
+            resolved_credential_group = (
+                groups.NO_GROUP if group_flag == "none" else groups.validate_group_name(group_flag)
             )
         except groups.GroupError as e:
             error(str(e))
@@ -1879,7 +1906,7 @@ def new_cmd(
             base=None,
             mount=True,
             assume_yes=yes,
-            claude_group=resolved_claude_group,
+            credential_group=resolved_credential_group,
             autostart_override=autostart_override,
         )
     else:
@@ -1902,7 +1929,7 @@ def new_cmd(
             untrusted_head=pr is not None and pr_info.is_cross_repository,
             clone_commit=pr_clone_commit,
             assume_yes=yes,
-            claude_group=resolved_claude_group,
+            credential_group=resolved_credential_group,
             autostart_override=autostart_override,
         )
 
@@ -3103,7 +3130,8 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from jailbee.accounts import overview as accounts_overview
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts.adapters.base import AccountAdapter
+    from jailbee.accounts.models import PoolChange, Slot
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
@@ -11325,15 +11353,40 @@ def firefox_cmd(
     _launch_registry_app(cfg, name, "firefox", force=force, args=[url] if url else None)
 
 
-claude_app = typer.Typer(
-    name="claude",
-    help="Switch which stored Claude Code login this repo's containers use.",
+account_app = typer.Typer(
+    name="account",
+    help="Manage the stored agent logins this repo's containers use.",
     no_args_is_help=True,
 )
-app.add_typer(claude_app)
+app.add_typer(account_app)
+
+claude_app = typer.Typer(
+    name="claude",
+    help="Deprecated alias for `jailbee account`.",
+    no_args_is_help=True,
+)
+app.add_typer(claude_app, hidden=True)
 
 
-def _claude_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
+def _warn_claude_alias() -> None:
+    """The one deprecation warning every legacy `jailbee claude ...` alias emits.
+
+    The `chrome-pool` -> `pool` pattern, but on stderr: this command tree shares
+    a terminal with output scripts parse (`--format json`), and `hint` is the
+    helper that keeps advisories out of it. The old spelling keeps working until
+    `LEGACY_REMOVAL_VERSION`, and says so exactly once per invocation.
+    """
+    from jailbee.tui import hint
+
+    hint(
+        [
+            "`jailbee claude ...` is deprecated — use `jailbee account ...` instead. "
+            f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+        ]
+    )
+
+
+def _account_ctx(config: Path | None) -> "tuple[Config, GlobalConfig]":
     """The two configs every pool command needs."""
     return _load_or_exit(config), _load_global()
 
@@ -11349,43 +11402,225 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
     if group is None:
         return cfg
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
     try:
         name = groups.validate_group_name(group)
     except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    return cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, name)})
+    return cfg.model_copy(update={"credential_group": name})
 
 
-def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
-    """Members whose `oauthAccount` can be trusted for this repo's holder.
+def _adapter_authoritative(
+    adapter: "AccountAdapter", cfg: "Config", gcfg: "GlobalConfig"
+) -> set[str]:
+    """Members whose recorded account can be trusted for this repo's holder.
 
     One place, so `ls`, `use`, `park` and `rm` cannot disagree about which
     repos are authoritative. A repo that shares no group is its own only
     member and is trivially authoritative for itself — there is no group
     to be ambiguous about, and no `incus list` is worth paying for it.
+
+    The adapter is a parameter because authority is asked of *that agent's*
+    members: a repo's config home names one agent's account, and reading
+    another agent's member list would make the wrong repos authoritative.
     """
     from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.incus import Incus
 
     group = engine.repo_group(cfg)
     if group is None:
         return {cfg.container_prefix}
-    found, _ = engine.members(CLAUDE, cfg, gcfg)
+    found, _ = engine.members(adapter, cfg, gcfg)
     return groups.authoritative_prefixes(gcfg, Incus(), group, [m.container_prefix for m in found])
 
 
-def _claude_group_cell(row: "accounts_overview.Row") -> str:
+AccountChoice = tuple["AccountAdapter", "Slot"]
+"""One stored login and the agent whose pool holds it."""
+
+
+def _account_adapters(cfg: "Config", agent: str | None) -> list["AccountAdapter"]:
+    """The adapters a pool command acts on: `-a`'s one, or every pooled one.
+
+    `-a` is validated here rather than left to fail later inside the engine: an
+    agent this config does not enable has no pool a user can mean, and a name
+    with no adapter is a typo or a build without that agent's module. Both are
+    refused by name, so a script learns what it may pass.
+    """
+    from jailbee.accounts.adapters import base
+    from jailbee.accounts.models import PoolError
+
+    if agent is None:
+        return base.pooled_adapters(cfg)
+    configured = cfg.agents.get(agent)
+    if configured is None or not configured.enabled:
+        known = ", ".join(sorted(cfg.agents)) or "none"
+        raise PoolError(f"no enabled agent `{agent}` in this config. Known: {known}.")
+    try:
+        return [base.get_adapter(agent)]
+    except KeyError:
+        raise PoolError(
+            f"agent `{agent}` has no account pool: jailbee has no adapter for it."
+        ) from None
+
+
+def _names_an_account(ref: str, slots: Sequence["Slot"]) -> bool:
+    """Whether `ref` could name any of `slots`, by `resolve_ref`'s two rules.
+
+    Only used to tell `engine.resolve_ref`'s ambiguity error from its
+    not-found one: it raises one exception type for both, and an ambiguity
+    swallowed because another adapter matched would silently act on the wrong
+    login.
+    """
+    wanted = ref.strip()
+    lowered = wanted.lower()
+    return any(s.name == wanted or (s.email is not None and s.email == lowered) for s in slots)
+
+
+def _matching_choices(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    removable: bool,
+) -> list[AccountChoice]:
+    """Every login `ref` names, across `adapters`; every parked one when None.
+
+    Per adapter the rule is `engine.resolve_ref`'s: an exact slot name wins,
+    then a bare email that matches exactly one account. An ambiguity *inside*
+    one adapter is not filtered out — `-a` cannot solve two grants of one
+    email, so `resolve_ref`'s full-slot-name error propagates. Across adapters
+    every adapter that resolved is kept, and the caller applies the TTY rule
+    to the list.
+
+    `removable` resolves through `engine.resolve_removable`, which lets `rm`
+    reach the parked half of a name the live slot also carries.
+
+    A typed `ref` matching nothing anywhere raises rather than returning an
+    empty list: only the caller knows whether the reference was typed or
+    picked, and only a typed one has an error worth reporting.
+    """
+    from jailbee.accounts import engine
+    from jailbee.accounts.models import PoolError
+
+    choices: list[AccountChoice] = []
+    known: list[str] = []
+    not_found: list[PoolError] = []
+    for adapter in adapters:
+        slots = engine.list_slots(
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+        )
+        known.extend(f"{s.name} ({adapter.name})" for s in slots)
+        if ref is None:
+            choices.extend((adapter, s) for s in slots if not s.live)
+            continue
+        try:
+            slot = (
+                engine.resolve_removable(ref, slots)
+                if removable
+                else engine.resolve_ref(ref, slots)
+            )
+        except PoolError as e:
+            if _names_an_account(ref, slots):
+                # `resolve_ref` found candidates it cannot choose between: the
+                # ambiguity is inside this one adapter, and no `-a` solves it.
+                raise
+            not_found.append(e)
+            continue
+        choices.append((adapter, slot))
+    if ref is not None and not choices:
+        if len(adapters) == 1:
+            raise not_found[0]
+        raise PoolError(
+            f"no stored account matches `{ref}`."
+            + (f" Known: {', '.join(known)}" if known else " No agent has a stored login.")
+        )
+    return choices
+
+
+def _live_choices(
+    adapters: Sequence["AccountAdapter"], cfg: "Config", gcfg: "GlobalConfig"
+) -> list[AccountChoice]:
+    """The live login of every adapter that has one, in adapter order.
+
+    `park`'s candidates: each adapter keeps its own credential file in the
+    same holder, so several can be live at once and one must be chosen.
+    """
+    from jailbee.accounts import engine
+
+    choices: list[AccountChoice] = []
+    for adapter in adapters:
+        slots = engine.list_slots(
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+        )
+        choices.extend((adapter, s) for s in slots if s.live)
+    return choices
+
+
+def _several_choices_error(choices: Sequence[AccountChoice], ref: str | None) -> str:
+    """The non-TTY refusal: name the candidates, and `-a` when it can help.
+
+    Two grants of one email inside one adapter are not solved by `-a`, so there
+    the candidates' full slot names are the only directions. Two adapters are,
+    so those name the `-a` values a script should pass.
+    """
+    agents = list(dict.fromkeys(adapter.name for adapter, _ in choices))
+    if len(agents) > 1:
+        listed = ", ".join(f"{slot.name} ({adapter.name})" for adapter, slot in choices)
+        directions = " or ".join(f"`-a {name}`" for name in agents)
+        subject = f"`{ref}` matches logins" if ref is not None else "the candidates span logins"
+        return f"{subject} of more than one agent: {listed}. Pass {directions}."
+    listed = ", ".join(slot.name for _, slot in choices)
+    return f"specify <email|slot> explicitly (or run in a TTY): {listed}"
+
+
+def _choose_account_choice(
+    choices: Sequence[AccountChoice],
+    *,
+    ref: str | None,
+    nothing: str,
+    message: str,
+) -> AccountChoice | None:
+    """The one choice to act on; None means the user cancelled the picker.
+
+    One candidate needs no prompt. Several are offered on a TTY and refused off
+    one, naming both the candidates and the `-a` values that would pick between
+    them — the TTY rule every picker here follows, with the picker itself kept
+    pure: it renders and returns, and never checks a TTY.
+
+    `nothing` is the caller's error for an empty list: only it knows whether it
+    was choosing a login to switch to or one to delete.
+
+    A cancelled picker returns None *before* any engine mutation runs: the
+    choices come from a read-only listing, and the caller aborts on None.
+    """
+    from jailbee.accounts.models import PoolError
+
+    if not choices:
+        raise PoolError(nothing)
+    if len(choices) == 1:
+        return choices[0]
+    if not _is_tty():
+        raise PoolError(_several_choices_error(choices, ref))
+    from jailbee.tui import pick_account
+
+    picked = pick_account(choices, message)
+    if picked is None:
+        return None
+    # A value the picker was not offered cannot be acted on; `None` is the
+    # safe reading, and the same one a cancelled prompt gets.
+    return {(adapter.name, slot.name): (adapter, slot) for adapter, slot in choices}.get(picked)
+
+
+def _account_group_cell(row: "accounts_overview.Row") -> str:
     """The GROUP cell: the group, `(no group)` for a repo's own holder, or `-`."""
     if row.state == "parked":
         return "-"
     return row.group if row.group is not None else "(no group)"
 
 
-def _claude_used_by_cell(row: "accounts_overview.Row", containers_known: bool) -> str:
+def _account_used_by_cell(row: "accounts_overview.Row", containers_known: bool) -> str:
     """Who reads this holder: the repos resolving to it, and its containers.
 
     Container *names* appear only when no repo resolves to the holder. That is
@@ -11408,7 +11643,7 @@ def _claude_used_by_cell(row: "accounts_overview.Row", containers_known: bool) -
     return f"{repos} · {count} container{plural}: {', '.join(row.containers)}"
 
 
-def _claude_account_cell(row: "accounts_overview.Row") -> str:
+def _account_cell(row: "accounts_overview.Row") -> str:
     """The ACCOUNT cell, bold on the holder this repo reads.
 
     The text comes first and the markup second: an empty group has no account
@@ -11418,14 +11653,19 @@ def _claude_account_cell(row: "accounts_overview.Row") -> str:
     return f"[bold]{text}[/bold]" if row.mine else text
 
 
-def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[accounts_overview.Row]]":
+def _account_fields(
+    containers_known: bool,
+) -> "list[table_format.FieldSpec[accounts_overview.Row]]":
     from jailbee import table_format
 
     return [
         table_format.FieldSpec(
+            name="agent", header="AGENT", cell=lambda r: r.agent, json=lambda r: r.agent
+        ),
+        table_format.FieldSpec(
             name="group",
             header="GROUP",
-            cell=_claude_group_cell,
+            cell=_account_group_cell,
             json=lambda r: r.group,
         ),
         table_format.FieldSpec(
@@ -11435,12 +11675,12 @@ def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[accou
             # `#<org8>` half, which `Slot.org_hint` parses back out of the
             # name, so rendering both repeats the same eight characters in
             # every row. JSON keeps the whole name — it is the reference a
-            # script feeds back to `claude use`/`claude rm`, and nothing there
+            # script feeds back to `account use`/`account rm`, and nothing there
             # is reading a second column to reassemble it.
             #
             # Bold marks the holder *this repo* reads, which is no longer the
             # same thing as `live`: every holder on the host has a live row.
-            cell=_claude_account_cell,
+            cell=_account_cell,
             json=lambda r: r.name,
         ),
         table_format.FieldSpec(
@@ -11461,8 +11701,8 @@ def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[accou
         table_format.FieldSpec(
             name="used_by",
             header="USED BY",
-            cell=lambda r: _claude_used_by_cell(r, containers_known),
-            json=lambda r: _claude_used_by_cell(r, containers_known),
+            cell=lambda r: _account_used_by_cell(r, containers_known),
+            json=lambda r: _account_used_by_cell(r, containers_known),
             # A rendered sentence is for a reader; JSON carries the two lists
             # it is made of, so a script never has to parse it back apart.
             default_json=False,
@@ -11484,96 +11724,72 @@ def _claude_fields(containers_known: bool) -> "list[table_format.FieldSpec[accou
     ]
 
 
-def _claude_holder_line(cfg: "Config") -> None:
-    """State which holder *this* repo reads, under a host-wide table.
+def _account_holder_line(adapters: Sequence["AccountAdapter"], cfg: "Config") -> None:
+    """State which holder *this* repo reads, per agent, under a host-wide table.
 
-    Shared by `claude ls` and `claude group ls`: the row is bold in both, and
-    the fact behind the bold has to be spelled out somewhere.
+    Shared by `account ls` and `account group ls`: the row is bold in both, and
+    the fact behind the bold has to be spelled out somewhere. One line per
+    adapter because the shared group resolves to a different holder directory
+    for each agent's store.
     """
     from jailbee.accounts import engine
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.paths import display_path
 
     group = engine.repo_group(cfg)
     where = "no credential group" if group is None else f"group `{group}`"
-    info(
-        f"This repo ({cfg.container_prefix}) → {where} "
-        f"· {display_path(engine.holder_dir(CLAUDE, cfg))}"
-    )
+    for adapter in adapters:
+        info(
+            f"This repo ({cfg.container_prefix}) → {where} "
+            f"· {display_path(engine.holder_dir(adapter, cfg))}"
+        )
 
 
-def _claude_listing_warnings(overview: "accounts_overview.Overview") -> None:
+def _account_listing_warnings(containers_known: bool, unreachable: Sequence[str]) -> None:
     """What could not be read while building the table, for either listing."""
-    if not overview.containers_known:
+    if not containers_known:
         warn(
             "Containers could not be listed, so USED BY names repos only. "
             "An empty container column here does not mean a holder is unused."
         )
-    if overview.unreachable:
+    if unreachable:
         warn(
             "Could not read the config of: "
-            f"{', '.join(overview.unreachable)}. A holder of theirs may be "
+            f"{', '.join(unreachable)}. A holder of theirs may be "
             "missing from this table."
         )
 
 
-def _claude_ref_or_pick(
-    cfg: "Config",
-    gcfg: "GlobalConfig",
-    ref: str | None,
-    *,
-    purpose: str,
-    message: str,
-) -> str | None:
-    """`ref`, or the account the user picks when they gave none.
-
-    The store is listed only on the picker path: a caller who named an account
-    should not pay a store read this command does not need, and `switch` /
-    `resolve_removable` list it again anyway.
-
-    `None` means cancelled — callers abort without an error line.
-    """
-    from jailbee.accounts import engine
-    from jailbee.accounts.adapters.claude import CLAUDE
-    from jailbee.tui import pick_claude_account
-
-    if ref is not None:
-        return ref
-    authoritative = _claude_authoritative(cfg, gcfg)
-    return engine.resolve_interactively(
-        CLAUDE,
-        engine.list_slots(CLAUDE, cfg, gcfg, authoritative=authoritative),
-        None,
-        purpose=purpose,
-        picker=lambda slots: pick_claude_account(slots, message=message),
-        is_interactive=_is_tty,
-    )
-
-
-def _report_side_effects(change: "PoolChange", *, session_note: str) -> None:
+def _report_side_effects(
+    adapter: "AccountAdapter", change: "PoolChange", *, session_note: str
+) -> None:
     """The parts of a pool change that are the same for `use` and `park`.
 
     `session_note` is the caller's, because the two commands leave a running
     session in opposite states: `use` swaps one credential for another, while
     `park` leaves the holder empty and that session unauthenticated. One shared
     sentence would be a false reassurance in the command that removes auth.
+
+    `adapter` names the agent in the generic lines; the record file's name
+    (`.claude.json` and its like) is the adapter's business, not this shared
+    reporter's, so the wording here stays agent-agnostic.
     """
     from jailbee.accounts.models import is_unidentified
 
     if change.parked_as is not None and is_unidentified(change.parked_as):
         # The design requires this warning, and its absence is why an
-        # unidentified park was only ever discovered later, from `claude ls`.
+        # unidentified park was only ever discovered later, from `account ls`.
         # The file is a working login; only the record of *which* account it
         # holds is missing, and it is missing because nothing on the host could
         # be read to supply it.
         warn(
             f"`{change.parked_as}` does not say which account it holds: jailbee "
-            "could not read the account from any member repo's `.claude.json`, "
+            "could not read the account from any member repo's record, "
             "and this holder carries no note of its own (it does once jailbee "
             "has activated a login into it). "
             "The login itself is intact. To give it its real name, activate it "
-            "with `jailbee claude use`, run `claude` once in a container of this "
-            "holder, then `jailbee claude park` again."
+            f"with `jailbee account use -a {adapter.name}`, run the agent once in "
+            "a container of this holder, then "
+            f"`jailbee account park -a {adapter.name}` again."
         )
     if change.updated:
         info(f"Recorded account updated in: {', '.join(change.updated)}")
@@ -11585,7 +11801,168 @@ def _report_side_effects(change: "PoolChange", *, session_note: str) -> None:
             "unaffected."
         )
     if change.live_sessions:
-        warn(f"A Claude session looks live in: {', '.join(change.live_sessions)}. {session_note}")
+        warn(
+            f"A {adapter.name} session looks live in: "
+            f"{', '.join(change.live_sessions)}. {session_note}"
+        )
+
+
+def _account_ls(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    *,
+    fmt: str,
+    fields: str | None,
+    group: str | None,
+) -> None:
+    """Render the combined account table and its per-command facts.
+
+    One `overview.build` per adapter, always against the repo's *own* config: a
+    `-g` holder view would conflate the calling repo's holder with the one being
+    filtered to (see `_holder_view`). Rows keep adapter order and then each
+    build's own row order — concatenation is exactly that, because `build`
+    already sorts its rows.
+    """
+    from jailbee.accounts import groups
+    from jailbee.accounts.overview import build as build_overview
+    from jailbee.incus import Incus
+    from jailbee.tui import console
+
+    ungrouped_only = group == "none"
+    if group is not None and not ungrouped_only:
+        # The same names are refused here as where a group is written: `-g`
+        # reaches `group_dir` as a path component in the sibling commands, and a
+        # rule that held only in the writing path would teach the wrong grammar
+        # in the one command users reach for first.
+        try:
+            group = groups.validate_group_name(group)
+        except groups.GroupError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+
+    incus = Incus()
+    builds = [(adapter, build_overview(adapter, cfg, gcfg, incus)) for adapter in adapters]
+    rows = [row for _, overview in builds for row in overview.rows]
+    unreachable = tuple(sorted({p for _, overview in builds for p in overview.unreachable}))
+    # Known only when every build knew them: one unreachable daemon costs the
+    # whole column, not just one agent's rows.
+    containers_known = all(overview.containers_known for _, overview in builds)
+
+    # A parked login can be activated into any group, so it belongs in a
+    # filtered view too — the row it would become is exactly what `-g` is about
+    # to be used for.
+    def _kept(row: "accounts_overview.Row") -> bool:
+        if group is None:
+            return True
+        return (row.group is None if ungrouped_only else row.group == group) or (
+            row.state == "parked"
+        )
+
+    shown = [row for row in rows if _kept(row)]
+    table_format.emit(
+        shown,
+        _account_fields(containers_known),
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        # "on this host", not "for group X": the table spans every holder, and a
+        # title naming one group read as a claim over all of it.
+        title="Logins on this host",
+        # The caller's own holder is always a row, so an empty table means a
+        # `-g` that matched nothing — and the line below says which group.
+        empty_message="No logins in this view.",
+    )
+    if fmt != "table":
+        # Everything below is a per-command fact, not a row. In JSON mode it
+        # would make the payload unparseable for the caller that asked for it.
+        return
+
+    _account_holder_line(adapters, cfg)
+    if group is not None and not ungrouped_only and not any(r.group == group for r in rows):
+        info(
+            f"Nothing on this host uses group `{group}`: no repo resolves to it, "
+            "no container was moved into it, and it has no directory yet. "
+            "`jailbee account use -g` creates one by activating a login into it."
+        )
+    if group is not None and any(r.state == "parked" for r in shown):
+        # Unfiltered, every row names its own group and the two scopes are
+        # visible. Under `-g` the parked rows sit beside one group again, which
+        # is what made a user ask why an account had "appeared in" a group they
+        # had never touched.
+        info(
+            "Parked logins are host-wide — any of them can be activated into "
+            "any group, which is why they are listed here too."
+        )
+    _account_listing_warnings(containers_known, unreachable)
+    if not any(r.state in ("live", "parked") for r in rows):
+        info(
+            "No login on this host yet: run an agent in a container and /login, "
+            "then `jailbee account park` stores it for the pool."
+        )
+
+
+@account_app.command("ls")
+def account_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help="Comma-separated fields. Allowed: agent, group, account, org, state, "
+            "used_by, repos, containers.",
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            "-a",
+            help="Only this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
+        ),
+    ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Show only this credential group, or `none` for the holders that "
+            "share no group. The parked store stays listed either way.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List every stored login on this host and which holder each is live in.
+
+    One row per login: every credential group with the account it holds, every
+    repo keeping its own login, and the parked store. `AGENT` names the agent
+    whose pool holds the login; `-a` narrows the table to one agent. `USED BY`
+    says who reads each holder — including containers moved by `jailbee account
+    group use`, which is the only evidence a group no repo resolves to is in use
+    at all.
+
+    `jailbee account group ls` narrows the same rows to the credential groups
+    themselves, which is what `create`, `rm` and `set` act on.
+    """
+    from jailbee.accounts.models import PoolError
+
+    cfg, gcfg = _account_ctx(config)
+    try:
+        adapters = _account_adapters(cfg, agent)
+        _account_ls(adapters, cfg, gcfg, fmt=fmt, fields=fields, group=group)
+    except (PoolError, OSError) as e:
+        error(str(e))
+        raise typer.Exit(2) from e
 
 
 @claude_app.command("ls")
@@ -11603,7 +11980,7 @@ def claude_ls_cmd(
         str | None,
         typer.Option(
             "--fields",
-            help="Comma-separated fields. Allowed: group, account, org, state, "
+            help="Comma-separated fields. Allowed: agent, group, account, org, state, "
             "used_by, repos, containers.",
         ),
     ] = None,
@@ -11614,116 +11991,132 @@ def claude_ls_cmd(
             "-g",
             help="Show only this credential group, or `none` for the holders that "
             "share no group. The parked store stays listed either way.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """List every Claude login on this host and which holder each is live in.
+    """Deprecated: use `jailbee account ls`."""
+    _warn_claude_alias()
+    account_ls_cmd(fmt=fmt, fields=fields, agent="claude", group=group, config=config)
 
-    One row per login: every credential group with the account it holds, every
-    repo keeping its own login, and the parked store. `USED BY` says who reads
-    each holder — including containers moved by `jailbee claude group use`,
-    which is the only evidence a group no repo resolves to is in use at all.
 
-    `jailbee claude group ls` narrows the same rows to the credential groups
-    themselves, which is what `create`, `rm` and `set` act on. The reference
-    lives in the help rather than under every table: one more line on every
-    run is a line that stops being read.
+def _pool_use(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    group: str | None,
+) -> "PoolChange":
+    """Switch a holder to a stored login, choosing the agent and login.
+
+    With one adapter and a typed reference there is nothing to choose: the
+    reference goes straight to `engine.switch`, which re-resolves it under the
+    credential locks — the one resolution that is authoritative. Several
+    adapters need a store read to tell which agent's login `ref` names, and no
+    reference at all needs the picker.
+
+    The `-g` holder view is applied only after the adapter and login are chosen:
+    the switch acts on the view, while the choice was made against the repo's
+    own config.
     """
-    from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import CLAUDE
-    from jailbee.accounts.models import PoolError
-    from jailbee.accounts.overview import build as build_overview
+    from jailbee.accounts import engine
     from jailbee.incus import Incus
-    from jailbee.paths import display_path
-    from jailbee.tui import console
 
-    cfg, gcfg = _claude_ctx(config)
-    # `none` spells "no credential group" everywhere else on the command line
-    # (`group set`, `group use`, `new --claude-group`), so here it filters to
-    # the holders that share none rather than being refused as the reserved
-    # word it is in the writing paths.
-    ungrouped_only = group == "none"
-    if group is not None and not ungrouped_only:
-        # Otherwise the same names are refused here as where a group is
-        # written: `-g` reaches `group_dir` as a path component in the sibling
-        # commands, and a rule that held only in the writing path would teach
-        # the wrong grammar in the one command users reach for first.
-        try:
-            group = groups.validate_group_name(group)
-        except groups.GroupError as e:
-            error(str(e))
-            raise typer.Exit(2) from e
+    if ref is not None and len(adapters) == 1:
+        adapter = adapters[0]
+        target = ref
+    else:
+        if adapters:
+            agents = " or ".join(f"-a {a.name}" for a in adapters)
+            park = f"`jailbee account park {agents}`"
+        else:
+            park = "`jailbee account park`"
+        choice = _choose_account_choice(
+            _matching_choices(adapters, cfg, gcfg, ref, removable=False),
+            ref=ref,
+            nothing=(
+                f"no stored login to switch to. {park} stores the one "
+                "in use, and the next `/login` in a container adds another."
+            ),
+            message="Switch this repo to:",
+        )
+        if choice is None:
+            raise typer.Abort()
+        adapter, slot = choice
+        target = slot.name
+    view = _holder_view(cfg, group)
+    change = engine.switch(
+        adapter,
+        view,
+        gcfg,
+        target,
+        authoritative=_adapter_authoritative(adapter, view, gcfg),
+        incus=Incus(),
+    )
+    success(f"Switched to {change.activated}")
+    if change.parked_as is not None:
+        info(f"Parked the previous login as `{change.parked_as}`.")
+    _report_side_effects(
+        adapter,
+        change,
+        session_note=(
+            "The credential swaps on that session's next turn; the account shown "
+            "in /status may lag until it restarts."
+        ),
+    )
+    return change
+
+
+@account_app.command("use")
+def account_use_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name for an exact match. "
+            "Omit to pick from a menu.",
+            autocompletion=completion.complete_account,
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            "-a",
+            help="Act on this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
+        ),
+    ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Switch this repo's containers to a stored login.
+
+    Omit the account to choose from a menu of the stored ones. With several
+    agents pooled, `-a` names the one whose login to switch. The switch is
+    holder-wide: every repo sharing this credential group moves with it. A
+    running session picks the new credential up on its next turn when the agent
+    supports it — no restart.
+    """
+    from jailbee.accounts.models import PoolError
+    from jailbee.claude_locks import ClaudeLockTimeoutError
+
+    cfg, gcfg = _account_ctx(config)
     try:
-        # The repo's own config, never a `-g` holder view: `build` reads both
-        # the holder and the calling repo's config home, and a view conflates
-        # them (see `_holder_view`). Filtering is this command's job.
-        overview = build_overview(CLAUDE, cfg, gcfg, Incus())
-    except (PoolError, OSError) as e:
+        adapters = _account_adapters(cfg, agent)
+        _pool_use(adapters, cfg, gcfg, ref, group=group)
+    except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
-
-    # A parked login can be activated into any group, so it belongs in a
-    # filtered view too — the row it would become is exactly what `-g` is
-    # about to be used for.
-    def _kept(row: "accounts_overview.Row") -> bool:
-        if group is None:
-            return True
-        return (row.group is None if ungrouped_only else row.group == group) or (
-            row.state == "parked"
-        )
-
-    rows = [r for r in overview.rows if _kept(r)]
-    table_format.emit(
-        rows,
-        _claude_fields(overview.containers_known),
-        fmt=fmt,
-        fields=fields,
-        console=console,
-        # "on this host", not "for group X": the table spans every holder, and
-        # a title naming one group read as a claim over all of it.
-        title="Claude logins on this host",
-        # The caller's own holder is always a row, so an empty table means a
-        # `-g` that matched nothing — and the line below says which group.
-        empty_message="No logins in this view.",
-    )
-    if fmt != "table":
-        # Everything below is a per-command fact, not a row. In JSON mode it
-        # would make the payload unparseable for the caller that asked for it.
-        return
-
-    holder_group = engine.repo_group(cfg)
-    where = "no credential group" if holder_group is None else f"group `{holder_group}`"
-    info(
-        f"This repo ({cfg.container_prefix}) → {where} "
-        f"· {display_path(engine.holder_dir(CLAUDE, cfg))}"
-    )
-    if (
-        group is not None
-        and not ungrouped_only
-        and not any(r.group == group for r in overview.rows)
-    ):
-        info(
-            f"Nothing on this host uses group `{group}`: no repo resolves to it, "
-            "no container was moved into it, and it has no directory yet. "
-            "`jailbee claude use -g` creates one by activating a login into it."
-        )
-    if group is not None and any(r.state == "parked" for r in rows):
-        # Unfiltered, every row names its own group and the two scopes are
-        # visible. Under `-g` the parked rows sit beside one group again, which
-        # is what made a user ask why an account had "appeared in" a group they
-        # had never touched.
-        info(
-            "Parked logins are host-wide — any of them can be activated into "
-            "any group, which is why they are listed here too."
-        )
-    _claude_listing_warnings(overview)
-    if not any(r.state in ("live", "parked") for r in overview.rows):
-        info(
-            "No login on this host yet: run `claude` in a container and /login, "
-            "then `jailbee claude park` stores it for the pool."
-        )
 
 
 @claude_app.command("use")
@@ -11733,7 +12126,7 @@ def claude_use_cmd(
         typer.Argument(
             help="Account email, or the full slot name for an exact match. "
             "Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
         ),
     ] = None,
     group: Annotated[
@@ -11742,48 +12135,119 @@ def claude_use_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """Switch this repo's containers to a stored login.
+    """Deprecated: use `jailbee account use`."""
+    _warn_claude_alias()
+    account_use_cmd(ref, agent="claude", group=group, config=config)
 
-    Omit the account to choose from a menu of the stored ones. The switch is
-    holder-wide: every repo sharing this credential group moves with it. A
-    running Claude session picks the new credential up on its next turn — no
-    restart.
+
+def _pool_park(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    *,
+    group: str | None,
+) -> "PoolChange":
+    """Store one agent's live login and leave the holder empty.
+
+    With one adapter there is nothing to choose: `engine.park` reports an empty
+    holder itself. Several agents can be live in the same holder at once, so
+    each live login is a candidate and the picker (or `-a`) decides which.
+
+    The `-g` holder view is applied first, because which login is live is a
+    property of the holder being emptied.
     """
     from jailbee.accounts import engine
-    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.models import PoolError
+    from jailbee.incus import Incus
+
+    if not adapters:
+        raise PoolError("no enabled agent has an account pool to park from.")
+    view = _holder_view(cfg, group)
+    if len(adapters) == 1:
+        adapter = adapters[0]
+    else:
+        choices = _live_choices(adapters, view, gcfg)
+        if choices:
+            chosen = _choose_account_choice(
+                choices,
+                ref=None,
+                nothing="no live login to park.",
+                message="Park the login in use:",
+            )
+            if chosen is None:
+                raise typer.Abort()
+            adapter = chosen[0]
+        else:
+            # Nothing is live: ask the first adapter, whose engine path words
+            # "nothing to park" — an empty candidate list is not an error.
+            adapter = adapters[0]
+    change = engine.park(
+        adapter,
+        view,
+        gcfg,
+        authoritative=_adapter_authoritative(adapter, view, gcfg),
+        incus=Incus(),
+    )
+    if change.parked_as is None:
+        info("Nothing to park: this holder has no stored login.")
+        return change
+    success(f"Parked `{change.parked_as}`")
+    _report_side_effects(
+        adapter,
+        change,
+        session_note=(
+            "This holder is now empty, so that session has no login: it will ask "
+            f"for /login on its next turn, unless you run `jailbee account use -a "
+            f"{adapter.name} <account>` first."
+        ),
+    )
+    info(f"The next `{adapter.name}` in a container of this holder will prompt /login.")
+    return change
+
+
+@account_app.command("park")
+def account_park_cmd(
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            "-a",
+            help="Park this agent's live login. Default: the one live login, or a picker.",
+            autocompletion=completion.complete_account_agent,
+        ),
+    ] = None,
+    group: Annotated[
+        str | None,
+        typer.Option(
+            "--group",
+            "-g",
+            help="Act on this credential group instead of the repo's.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Store the login in use and leave this repo's holder empty.
+
+    This is how a new account enters the pool: with no credential to find, the
+    next login in a container of this holder lands straight in the holder. With
+    several agents live at once, `-a` (or the picker) names which to park.
+    """
     from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
-    cfg, gcfg = _claude_ctx(config)
-    cfg = _holder_view(cfg, group)
+    cfg, gcfg = _account_ctx(config)
     try:
-        target = _claude_ref_or_pick(
-            cfg, gcfg, ref, purpose="switch to", message="Switch this repo to:"
-        )
-        if target is None:
-            raise typer.Abort()
-        change = engine.switch(
-            CLAUDE, cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
-        )
+        adapters = _account_adapters(cfg, agent)
+        _pool_park(adapters, cfg, gcfg, group=group)
     except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
-
-    success(f"Switched to {change.activated}")
-    if change.parked_as is not None:
-        info(f"Parked the previous login as `{change.parked_as}`.")
-    _report_side_effects(
-        change,
-        session_note=(
-            "The credential swaps on that session's next turn; the account shown "
-            "in /status may lag until it restarts."
-        ),
-    )
 
 
 @claude_app.command("park")
@@ -11794,52 +12258,78 @@ def claude_park_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """Store the login in use and leave this repo's holder empty.
+    """Deprecated: use `jailbee account park`."""
+    _warn_claude_alias()
+    account_park_cmd(agent="claude", group=group, config=config)
 
-    This is how a new account enters the pool: with no credential to find, the
-    next `claude` in a container of this holder prompts `/login`, and that
-    login lands straight in the holder.
+
+def _pool_rm(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    yes: bool,
+) -> None:
+    """Delete a stored login, choosing the agent and login.
+
+    `removable=True` lets `rm` reach the parked half of a name the live slot
+    also carries: such a name is ambiguous for a switch but not for a deletion,
+    and `rm` is the command that clears that state.
     """
     from jailbee.accounts import engine
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.accounts.models import PoolError
-    from jailbee.claude_locks import ClaudeLockTimeoutError
 
-    cfg, gcfg = _claude_ctx(config)
-    cfg = _holder_view(cfg, group)
-    try:
-        change = engine.park(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
-    except (PoolError, ClaudeLockTimeoutError, OSError) as e:
-        error(str(e))
-        raise typer.Exit(2) from e
-
-    if change.parked_as is None:
-        info("Nothing to park: this holder has no stored login.")
-        return
-    success(f"Parked `{change.parked_as}`")
-    _report_side_effects(
-        change,
-        session_note=(
-            "This holder is now empty, so that session has no login: it will ask "
-            "for /login on its next turn, unless you run `jailbee claude use "
-            "<account>` first."
+    choice = _choose_account_choice(
+        _matching_choices(adapters, cfg, gcfg, ref, removable=True),
+        ref=ref,
+        nothing=(
+            "no stored login to delete. `jailbee account ls` lists what is stored, "
+            "and `jailbee account park` stores the one in use."
         ),
+        message="Delete stored login:",
     )
-    info("The next `claude` in a container of this holder will prompt /login.")
+    if choice is None:
+        raise typer.Abort()
+    adapter, slot = choice
+    if slot.live:
+        # Pre-checked so the confirmation prompt is never shown for a deletion
+        # that `remove_slot` would refuse anyway.
+        raise PoolError(engine.live_account_refusal(adapter, slot.name))
+    if not yes and not typer.confirm(
+        f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
+        default=False,
+    ):
+        raise typer.Exit(1)
+    try:
+        engine.remove_slot(adapter, slot)
+    except (PoolError, OSError) as e:
+        error(f"could not delete `{slot.name}`: {e}")
+        raise typer.Exit(2) from e
+    success(f"Deleted `{slot.name}` — a browser /login is the only way back")
 
 
-@claude_app.command("rm")
-def claude_rm_cmd(
+@account_app.command("rm")
+def account_rm_cmd(
     ref: Annotated[
         str | None,
         typer.Argument(
             help="Account email, or the full slot name. Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            "-a",
+            help="Delete from this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
         ),
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
@@ -11848,59 +12338,55 @@ def claude_rm_cmd(
     """Delete a stored login permanently.
 
     Omit the account to choose from a menu of the stored ones. JailBee never
-    contacts Anthropic, so a deleted login can only come back through a
-    browser `/login`.
+    contacts the agent's vendor, so a deleted login can only come back through a
+    fresh login in a container.
     """
-    from jailbee.accounts import engine
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.accounts.models import PoolError
 
-    cfg, gcfg = _claude_ctx(config)
+    cfg, gcfg = _account_ctx(config)
     try:
-        target = _claude_ref_or_pick(
-            cfg, gcfg, ref, purpose="delete", message="Delete stored login:"
-        )
-        if target is None:
-            raise typer.Abort()
-        # `resolve_removable`, not `resolve_ref`: a name shared by the live slot
-        # and a parked file is ambiguous for a switch but not for a deletion,
-        # and `rm` is the command that clears that state.
-        slot = engine.resolve_removable(
-            target,
-            engine.list_slots(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
-        )
-        if slot.live:
-            # Pre-checked so the confirmation prompt is never shown for a
-            # deletion that `remove_slot` would refuse anyway.
-            raise PoolError(engine.live_account_refusal(CLAUDE, slot.name))
+        adapters = _account_adapters(cfg, agent)
+        _pool_rm(adapters, cfg, gcfg, ref, yes=yes)
     except (PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
-    if not yes and not typer.confirm(
-        f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
-        default=False,
-    ):
-        raise typer.Exit(1)
-    try:
-        engine.remove_slot(CLAUDE, slot)
-    except (PoolError, OSError) as e:
-        error(f"could not delete `{slot.name}`: {e}")
-        raise typer.Exit(2) from e
-    success(f"Deleted `{slot.name}` — a browser /login is the only way back")
+
+@claude_app.command("rm")
+def claude_rm_cmd(
+    ref: Annotated[
+        str | None,
+        typer.Argument(
+            help="Account email, or the full slot name. Omit to pick from a menu.",
+            autocompletion=completion.complete_account,
+        ),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account rm`."""
+    _warn_claude_alias()
+    account_rm_cmd(ref, agent="claude", yes=yes, config=config)
 
 
 group_app = typer.Typer(
     name="group",
-    help="Create, remove and assign Claude credential groups.",
+    help="Create, remove and assign credential groups.",
     # A pure command group: the status view it used to print with no
-    # subcommand is `jailbee claude ls` (which holder each login is live in),
-    # `jailbee ls`'s CLAUDE column (per-container labels) and `jailbee doctor`
+    # subcommand is `jailbee account ls` (which holder each login is live in),
+    # `jailbee ls`'s GROUP column (per-container labels) and `jailbee doctor`
     # (overrides that only repeat the repo). A fourth, partial view here was
     # one more place for the four to disagree.
     no_args_is_help=True,
 )
-claude_app.add_typer(group_app)
+account_app.add_typer(group_app)
+
+claude_group_app = typer.Typer(
+    name="group",
+    help="Deprecated alias for `jailbee account group`.",
+    no_args_is_help=True,
+)
+claude_app.add_typer(claude_group_app, hidden=True)
 
 
 def _resolve_group_container(
@@ -11908,7 +12394,7 @@ def _resolve_group_container(
     incus: "IncusType",
     name: str | None,
 ) -> str:
-    """The container a `claude group use`/`reset` acts on.
+    """The container an `account group use`/`reset` acts on.
 
     One container in the repo → that one, named out loud. Several → a
     picker. No TTY → an error listing the candidates, so a script author
@@ -11949,61 +12435,85 @@ def _resolve_group_container(
     return picked
 
 
-def _refuse_if_claude_running(
+def _agent_command(cfg: "Config", adapter: "AccountAdapter") -> str:
+    """The binary to probe for `adapter` — its configured command, or its name.
+
+    A blank `command` means the agent's binary is its own name. The loader
+    refuses to *enable* such an agent, so this is a fallback for a `Config`
+    built without going through it — a test, or an older jailbee.
+    """
+    return cfg.agents[adapter.name].command or adapter.name
+
+
+def _running_agents(cfg: "Config", incus: "IncusType", containers: list[str]) -> list[str]:
+    """`agent: container` pairs for every pooled agent running in `containers`.
+
+    One probe per agent per container, each against that agent's own binary.
+    `None` from a probe is "cannot tell" and never counts as running.
+    """
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters import base
+
+    running: list[str] = []
+    for adapter in base.pooled_adapters(cfg):
+        command = _agent_command(cfg, adapter)
+        for container in containers:
+            if groups.agent_running(incus, container, command=command) is True:
+                running.append(f"{adapter.name}: {container}")
+    return sorted(running)
+
+
+def _refuse_if_agent_running(
     cfg: "Config", incus: "IncusType", container: str, force: bool
 ) -> None:
-    """Block a group swap under a live Claude unless `--force`.
+    """Block a group swap under a live pooled agent unless `--force`.
 
     A running process holds the old group's token; if it refreshes before
     it re-reads, it writes that grant into the *target* group's file and
-    the target's login is gone. Whether Claude Code really orders it that
-    way is unverified — see the spec's §8 — so this is a precaution
-    against an irrecoverable outcome, not a description of observed
-    behaviour. `None` from the probe means "cannot tell" and must not
-    read as a refusal.
+    the target's login is gone. Whether an agent really orders it that way
+    is unverified — see the spec's §8 — so this is a precaution against an
+    irrecoverable outcome, not a description of observed behaviour. `None`
+    from a probe means "cannot tell" and must not read as a refusal.
     """
-    from jailbee.accounts import groups
-
     if force:
         return
-    if groups.agent_running(cfg, incus, container, command=cfg.claude.command) is not True:
+    running = _running_agents(cfg, incus, [container])
+    if not running:
         return
     error(
-        f"Claude is running in {container}. Swapping the credential group under a "
-        "live session can overwrite the target group's login with this one's on "
-        "the next token refresh, and that login cannot be recovered.\n"
-        "Close Claude in that container and run this again, or pass --force if "
-        "you are sure."
+        f"An agent is running in {', '.join(running)}. Swapping the credential "
+        "group under a live session can overwrite the target group's login with "
+        "this one's on the next token refresh, and that login cannot be recovered.\n"
+        "Close it in that container and run this again, or pass --force if you "
+        "are sure."
     )
     raise typer.Exit(2)
 
 
-def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
-    """Block a repo-wide group change under a live Claude unless `--force`.
+def _refuse_if_agent_running_in_repo(cfg: "Config", incus: "IncusType", force: bool) -> None:
+    """Block a repo-wide group change under a live pooled agent unless `--force`.
 
-    `jb claude group set`/`unset` reconciles credentials across every
-    container of the repo (`_ensure_claude_credentials_dir`'s four-case
-    handling), so the single-container hazard `_refuse_if_claude_running`
-    guards applies here too, but to every container at once — see the
+    `jb account group set`/`unset` reconciles credentials across every
+    container of the repo (each adapter's `prepare_config_home` handling), so
+    the single-container hazard `_refuse_if_agent_running` guards applies here
+    too, but to every container of every enabled agent at once — see the
     design's §6.1/§8.
     """
-    from jailbee.accounts import groups
-
     if force:
         return
-    running = sorted(
+    names = [
         str(row["name"])
         for row in incus.list_containers()
         if str(row.get("name", "")).startswith(f"{cfg.container_prefix}-")
-        and groups.agent_running(cfg, incus, str(row["name"]), command=cfg.claude.command) is True
-    )
+    ]
+    running = _running_agents(cfg, incus, names)
     if not running:
         return
     error(
-        "Claude is running in " + ", ".join(running) + ". Changing this repo's "
+        "An agent is running in " + ", ".join(running) + ". Changing this repo's "
         "credential group under a live session can overwrite another group's "
         "login on the next token refresh, and that login cannot be recovered.\n"
-        "Close Claude in those containers and run this again, or pass --force if "
+        "Close it in those containers and run this again, or pass --force if "
         "you are sure."
     )
     raise typer.Exit(2)
@@ -12020,8 +12530,7 @@ def _group_after_write(cfg: "Config") -> str | None:
     from jailbee.global_config import load_global_config
 
     gcfg, _ = load_global_config(_global_config_path_for_write())
-    resolved = gcfg.claude_credentials.dir_for(cfg.container_prefix)
-    return None if resolved is None else resolved.name
+    return gcfg.credentials.group_for(cfg.container_prefix)
 
 
 def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:
@@ -12037,13 +12546,11 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
     that one container behind (`accounts.groups.override_is_redundant`).
     """
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
-    holder = None if group is None else groups.group_dir(CLAUDE.name, group)
-    view = cfg.model_copy(update={"claude_credentials_dir": holder})
+    view = cfg.model_copy(update={"credential_group": group})
     names = groups.redundant_overrides(view, incus)
     for name in names:
-        groups.clear_container_group(incus, name)
+        groups.clear_container_group(cfg, incus, name)
     if names:
         info(
             f"Dropped the now-redundant override on: {', '.join(names)} — "
@@ -12052,7 +12559,7 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
 
 
 def _global_config_path_for_write() -> Path:
-    """Where `jailbee claude group set` writes. A seam for tests."""
+    """Where `jailbee account group set` writes. A seam for tests."""
     from jailbee.global_config import default_global_config_path
 
     return default_global_config_path()
@@ -12061,37 +12568,48 @@ def _global_config_path_for_write() -> Path:
 def _reapply_binds_profile(config: Path | None) -> None:
     """Re-render `<prefix>-binds` after the repo's group changed.
 
-    Two steps, both existing code. `_ensure_claude_credentials_dir` is not
-    just a `mkdir`: it carries the four-case credential reconciliation,
+    Two steps, both existing code. `base.prepare_config_homes` is not
+    just a `mkdir`: it runs each pooled adapter's `prepare_config_home`,
+    and Claude's carries the four-case credential reconciliation,
     including the case where **both** the target group and this repo hold
     a login — which prompts for which to keep and deletes the other.
     Moving a repo into a populated group is exactly how that case is
     reached, so this must not create the directory itself.
     """
+    from jailbee.accounts.adapters import base
     from jailbee.incus import Incus
-    from jailbee.init_command import _ensure_claude_credentials_dir
     from jailbee.profiles import binds_profile_yaml, profile_names
 
     cfg = _load_or_exit(config)  # reloaded, so it sees the new group
-    _ensure_claude_credentials_dir(cfg)
+    base.prepare_config_homes(cfg)
     Incus().profile_set_yaml(profile_names(cfg).binds, binds_profile_yaml(cfg))
 
 
 def _write_repo_group(config: Path | None, value: object) -> None:
-    """Apply one `claude_credentials.repos.<prefix>` change and re-render."""
+    """Apply one `credentials.repos.<prefix>` change and re-render.
+
+    A global.yaml still spelling the legacy `claude_credentials:` block is
+    migrated in the same write: the block is copied to `credentials`, the old
+    key deleted, then this repo's entry applied — see
+    `config_writer.credential_key_migration`. Reading the raw mapping first is
+    what lets the helper see the legacy key.
+    """
     from jailbee import config_writer
+    from jailbee.config.common import _read_yaml_or_empty
 
     cfg = _load_or_exit(config)
     path = _global_config_path_for_write()
-    config_writer.patch_file(
-        path,
-        [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
+    raw = _read_yaml_or_empty(path)
+    changes = config_writer.credential_key_migration(
+        raw,
+        [config_writer.YamlChange(("credentials", "repos", cfg.container_prefix), value)],
     )
+    config_writer.patch_file(path, changes)
     _reapply_binds_profile(config)
 
 
 @group_app.command("ls")
-def claude_group_ls_cmd(
+def account_group_ls_cmd(
     fmt: Annotated[
         str,
         typer.Option(
@@ -12105,7 +12623,7 @@ def claude_group_ls_cmd(
         str | None,
         typer.Option(
             "--fields",
-            help="Comma-separated fields. Allowed: group, account, org, state, "
+            help="Comma-separated fields. Allowed: agent, group, account, org, state, "
             "used_by, repos, containers.",
         ),
     ] = None,
@@ -12113,57 +12631,67 @@ def claude_group_ls_cmd(
 ) -> None:
     """List the credential groups on this host and what each one holds.
 
-    `jailbee claude ls` answers the wider question — every login, parked ones
+    `jailbee account ls` answers the wider question — every login, parked ones
     and repos keeping their own included. This is the same rows narrowed to
-    the groups themselves, which is what `create`, `rm` and `set` act on.
+    the groups themselves, which is what `create`, `rm` and `set` act on. One
+    group name is one directory per enabled agent, so the rows span every
+    adapter and `AGENT` names which pool each comes from.
     """
-    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
     from jailbee.accounts.overview import build as build_overview
     from jailbee.incus import Incus
     from jailbee.tui import console
 
-    cfg, gcfg = _claude_ctx(config)
+    cfg, gcfg = _account_ctx(config)
+    adapters = base.pooled_adapters(cfg)
     try:
-        overview = build_overview(CLAUDE, cfg, gcfg, Incus())
+        incus = Incus()
+        builds = [(adapter, build_overview(adapter, cfg, gcfg, incus)) for adapter in adapters]
     except (PoolError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
 
     # A parked login belongs to no group and an ungrouped holder is one repo's
-    # own; both are `claude ls`'s subject, not this command's.
-    rows = [r for r in overview.rows if r.group is not None]
+    # own; both are `account ls`'s subject, not this command's.
+    rows = [r for _, overview in builds for r in overview.rows if r.group is not None]
+    unreachable = tuple(sorted({p for _, overview in builds for p in overview.unreachable}))
+    # Known only when every build knew them: one unreachable daemon costs the
+    # whole column, not just one agent's rows.
+    containers_known = all(overview.containers_known for _, overview in builds)
     table_format.emit(
         rows,
-        _claude_fields(overview.containers_known),
+        _account_fields(containers_known),
         fmt=fmt,
         fields=fields,
         console=console,
         title="Credential groups on this host",
         empty_message=(
-            "No credential groups on this host. `jailbee claude group create <name>` "
+            "No credential groups on this host. `jailbee account group create <name>` "
             "makes one; without any, every repo keeps its own login."
         ),
     )
     if fmt != "table":
         return
-    _claude_holder_line(cfg)
-    _claude_listing_warnings(overview)
-    info("Every login on this host, parked ones included: `jailbee claude ls`.")
+    _account_holder_line(adapters, cfg)
+    _account_listing_warnings(containers_known, unreachable)
+    info("Every login on this host, parked ones included: `jailbee account ls`.")
 
 
 @group_app.command("create")
-def claude_group_create_cmd(
+def account_group_create_cmd(
     group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    config: ConfigOption = None,
 ) -> None:
     """Create an empty credential group, before anything is assigned to it.
 
-    Nothing else has to exist first: `set`, `use` and `claude use -g` all
-    create the directory on demand. This is for the case where the group
-    wants to exist before any of them runs.
+    One 0700 directory per enabled agent: the group name is shared, but each
+    agent keeps its own credential there. Nothing else has to exist first:
+    `set`, `use` and `account use -g` all create the directories on demand.
+    This is for the case where the group wants to exist before any of them runs.
     """
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.accounts.adapters import base
     from jailbee.paths import display_path
 
     try:
@@ -12172,32 +12700,38 @@ def claude_group_create_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
-    existed = groups.group_dir(CLAUDE.name, group).is_dir()
-    try:
-        created = groups.ensure_group_dir(CLAUDE.name, group)
-    except OSError as e:
-        error(f"could not create the group directory: {e}")
-        raise typer.Exit(2) from e
+    cfg = _load_or_exit(config)
+    adapters = base.pooled_adapters(cfg)
+    if not adapters:
+        error("no enabled agent has an account pool, so there is no group directory to make.")
+        raise typer.Exit(2)
 
-    if existed:
-        info(f"Group `{group}` already exists → {display_path(created)}")
-    else:
-        success(f"Created group `{group}` → {display_path(created)}")
+    for adapter in adapters:
+        existed = groups.group_dir(adapter.name, group).is_dir()
+        try:
+            created = groups.ensure_group_dir(adapter.name, group)
+        except OSError as e:
+            error(f"could not create the `{adapter.name}` group directory: {e}")
+            raise typer.Exit(2) from e
+        if existed:
+            info(f"Group `{group}` already exists for {adapter.name} → {display_path(created)}")
+        else:
+            success(f"Created group `{group}` for {adapter.name} → {display_path(created)}")
     info(
-        f"It holds no login yet. `jailbee claude group set {group}` moves this repo "
-        f"into it, `jailbee claude group use {group} <container>` moves one "
-        f"container, and `jailbee claude use -g {group} <account>` activates a "
+        f"It holds no login yet. `jailbee account group set {group}` moves this repo "
+        f"into it, `jailbee account group use {group} <container>` moves one "
+        f"container, and `jailbee account use -g {group} <account>` activates a "
         "stored login into it."
     )
 
 
 @group_app.command("rm")
-def claude_group_rm_cmd(
+def account_group_rm_cmd(
     group: Annotated[
         str,
         typer.Argument(
             help="Credential group to remove.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     yes: Annotated[
@@ -12210,21 +12744,23 @@ def claude_group_rm_cmd(
 
     Refuses while any repo resolves to the group, while it is the host's
     default, or while any container has been moved into it: removing the
-    directory under any of those leaves them mounting nothing, and the next
-    `jailbee apply` would recreate it anyway.
+    directories under any of those leaves them mounting nothing, and the next
+    `jailbee apply` would recreate them anyway.
 
     A login the group still holds is **parked**, never deleted — it lands in
     the host-wide store and can be activated into any other group.
-    `jailbee claude rm` remains the only command that destroys a credential.
+    `jailbee account rm` remains the only command that destroys a credential.
+    One group name is one directory per enabled agent, so every adapter's
+    directory is parked and removed, and a failure names the adapter.
     """
     from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import CLAUDE, note_account_at
+    from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
     from jailbee.incus import Incus, IncusError
     from jailbee.paths import display_path
 
-    cfg, gcfg = _claude_ctx(config)
+    cfg, gcfg = _account_ctx(config)
     try:
         group = groups.validate_group_name(group)
     except groups.GroupError as e:
@@ -12234,10 +12770,10 @@ def claude_group_rm_cmd(
     # The host default first: it is the one blocker the registry cannot
     # speak for, since a host with no registered repo still resolves every
     # repo to it.
-    if gcfg.claude_credentials.group == group:
+    if gcfg.credentials.group == group:
         error(
             f"`{group}` is this host's default credential group. Change or remove "
-            "`claude_credentials.group` in ~/.config/jailbee/global.yaml first — "
+            "`credentials.group` in ~/.config/jailbee/global.yaml first — "
             "otherwise every repo without an entry of its own still resolves here."
         )
         raise typer.Exit(2)
@@ -12246,8 +12782,8 @@ def claude_group_rm_cmd(
     if members:
         error(
             f"`{group}` is the credential group of: {', '.join(members)}. "
-            "Move them off it first (`jailbee claude group set <other>` or "
-            "`jailbee claude group unset` in each), or the next `jailbee apply` "
+            "Move them off it first (`jailbee account group set <other>` or "
+            "`jailbee account group unset` in each), or the next `jailbee apply` "
             "recreates the directory and until then their containers mount an "
             "empty one."
         )
@@ -12268,90 +12804,117 @@ def claude_group_rm_cmd(
         raise typer.Exit(2) from e
     # The label is the whole truth for an override, so this needs no prefix
     # knowledge — and catches a container of a repo the registry never saw.
+    # Both spellings count: a container labelled before the rename still
+    # mounts the directory this command is about to delete.
     labelled = sorted(
         str(row.get("name", ""))
         for row in rows
-        if (row.get("config") or {}).get(groups.GROUP_LABEL) == group
+        if (
+            (row.get("config") or {}).get(groups.GROUP_LABEL)
+            or (row.get("config") or {}).get(groups.LEGACY_GROUP_LABEL)
+        )
+        == group
     )
     if labelled:
         error(
             f"These containers are in `{group}` for their own lifetime: "
-            f"{', '.join(labelled)}. Move each off it with `jailbee claude group "
+            f"{', '.join(labelled)}. Move each off it with `jailbee account group "
             "reset <container>` (or destroy it) first."
         )
         raise typer.Exit(2)
 
-    holder = groups.group_dir(CLAUDE.name, group)
-    if not holder.exists():
+    adapters = base.pooled_adapters(cfg)
+    holders = [(adapter, groups.group_dir(adapter.name, group)) for adapter in adapters]
+    existing = [(adapter, holder) for adapter, holder in holders if holder.exists()]
+    if not existing:
         info(f"No group `{group}` on this host — nothing to remove.")
         return
 
-    if engine.credential_in(CLAUDE, holder).exists():
-        account = note_account_at(holder)
-        named = "an unidentified login" if account is None else f"`{account.identity.email}`"
-        if not yes:
-            if not _is_tty():
-                error(
-                    f"`{group}` still holds {named}. Re-run with --yes to park it "
-                    "into the host-wide store and remove the group."
-                )
-                raise typer.Exit(2)
-            info(f"Group `{group}` holds {named}.")
-            if not typer.confirm("Park it into the host-wide store and remove the group?"):
-                raise typer.Abort()
-        # Exactly the path `claude park -g` takes: a holder view, because this
-        # repo is not a member of the group being emptied and its own config
-        # home describes a different login.
-        view = _holder_view(cfg, group)
+    live = [
+        (adapter, holder)
+        for adapter, holder in existing
+        if engine.credential_in(adapter, holder).exists()
+    ]
+
+    def _named(adapter: "AccountAdapter", holder: Path) -> str:
+        account = adapter.account_at(holder, [], prefer=cfg.container_prefix, authoritative=set())
+        return "an unidentified login" if account is None else f"`{account.identity.email}`"
+
+    if live and not yes:
+        held = "; ".join(
+            f"`{adapter.name}` holds {_named(adapter, holder)}" for adapter, holder in live
+        )
+        if not _is_tty():
+            error(
+                f"`{group}` still holds: {held}. Re-run with --yes to park every "
+                "login into the host-wide store and remove the group."
+            )
+            raise typer.Exit(2)
+        info(f"Group `{group}`: {held}.")
+        if not typer.confirm("Park them into the host-wide store and remove the group?"):
+            raise typer.Abort()
+
+    # Exactly the path `account park -g` takes: a holder view, because this
+    # repo is not a member of the group being emptied and its own config
+    # home describes a different login.
+    view = _holder_view(cfg, group)
+    for adapter, _holder in live:
         try:
             change = engine.park(
-                CLAUDE, view, gcfg, authoritative=_claude_authoritative(view, gcfg)
+                adapter, view, gcfg, authoritative=_adapter_authoritative(adapter, view, gcfg)
             )
         except (PoolError, ClaudeLockTimeoutError, OSError) as e:
-            error(str(e))
+            # No rollback: a credential already parked stays parked, and is
+            # never copied back out of the store.
+            error(f"could not park `{adapter.name}`'s login in `{group}`: {e}")
             raise typer.Exit(2) from e
         if change.parked_as is not None:
-            success(f"Parked `{change.parked_as}` — activate it anywhere with `jailbee claude use`")
+            success(
+                f"Parked `{change.parked_as}` — activate it anywhere with `jailbee account use`"
+            )
             _report_side_effects(
+                adapter,
                 change,
                 session_note=(
                     "That holder is now empty and about to be removed, so the session "
-                    "has no login: run `jailbee claude use` in a container of its new "
+                    "has no login: run `jailbee account use` in a container of its new "
                     "group."
                 ),
             )
 
-    try:
-        holder.rmdir()
-    except OSError as e:
-        # `rmdir`, never a recursive delete: whatever else is in there is
-        # someone's, and naming it is more use than removing it.
+    for adapter, holder in existing:
         try:
-            leftover = ", ".join(sorted(p.name for p in holder.iterdir())) or str(e)
-        except OSError:
-            leftover = str(e)
-        error(
-            f"could not remove {display_path(holder)} — it still holds: {leftover}. "
-            "jailbee removes a group directory only when it is empty."
-        )
-        raise typer.Exit(2) from e
+            holder.rmdir()
+        except OSError as e:
+            # `rmdir`, never a recursive delete: whatever else is in there is
+            # someone's, and naming it is more use than removing it.
+            try:
+                leftover = ", ".join(sorted(p.name for p in holder.iterdir())) or str(e)
+            except OSError:
+                leftover = str(e)
+            error(
+                f"could not remove the `{adapter.name}` group directory "
+                f"{display_path(holder)} — it still holds: {leftover}. "
+                "jailbee removes a group directory only when it is empty."
+            )
+            raise typer.Exit(2) from e
     success(f"Removed group `{group}`")
 
 
 @group_app.command("set")
-def claude_group_set_cmd(
+def account_group_set_cmd(
     group: Annotated[
         str,
         typer.Argument(
             help="Group name, or `none` to keep this repo on its own login.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     force: Annotated[
         bool,
         typer.Option(
             "--force",
-            help="Change the group even if Claude is running in any of this repo's containers.",
+            help="Change the group even if an agent is running in any of this repo's containers.",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -12359,16 +12922,16 @@ def claude_group_set_cmd(
     """Set this repo's credential group. Permanent — writes `global.yaml`.
 
     Every container of this repo follows it, except any with a temporary
-    override from `jailbee claude group use`. Use `jailbee claude group
+    override from `jailbee account group use`. Use `jailbee account group
     unset` to fall back to the host-wide default instead.
     """
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    _refuse_if_claude_running_in_repo(cfg, incus, force)
+    _refuse_if_agent_running_in_repo(cfg, incus, force)
 
     value: object
     if group == "none":
@@ -12379,7 +12942,11 @@ def claude_group_set_cmd(
         except groups.GroupError as e:
             error(str(e))
             raise typer.Exit(2) from e
-        groups.ensure_group_dir(CLAUDE.name, str(value))
+        # One directory per pooled adapter: the profile about to be rendered
+        # mounts each agent's own group directory, and Incus rejects a device
+        # whose source does not exist.
+        for adapter in base.pooled_adapters(cfg):
+            groups.ensure_group_dir(adapter.name, str(value))
 
     try:
         _write_repo_group(config, value)
@@ -12387,36 +12954,36 @@ def claude_group_set_cmd(
         error(f"Could not write the global config: {e}")
         raise typer.Exit(2) from e
 
-    # The repo's `oauthAccount` now describes an account this repo may no
+    # The repo's recorded account now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    invalidate_identity(CLAUDE.config_home(cfg))
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
 
     where = "no credential group" if value is None else f"group `{value}`"
     success(f"This repo now uses {where}.")
     _drop_redundant_overrides(cfg, incus, _group_after_write(cfg))
-    info("Restart Claude in this repo's containers to pick up the new login.")
+    info("Restart the agent in this repo's containers to pick up the new login.")
 
 
 @group_app.command("unset")
-def claude_group_unset_cmd(
+def account_group_unset_cmd(
     force: Annotated[
         bool,
         typer.Option(
             "--force",
-            help="Change the group even if Claude is running in any of this repo's containers.",
+            help="Change the group even if an agent is running in any of this repo's containers.",
         ),
     ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Remove this repo's entry so the host-wide default applies again."""
     from jailbee import config_writer
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    _refuse_if_claude_running_in_repo(cfg, incus, force)
+    _refuse_if_agent_running_in_repo(cfg, incus, force)
 
     try:
         _write_repo_group(config, config_writer.DELETE)
@@ -12426,10 +12993,10 @@ def claude_group_unset_cmd(
 
     cfg = _load_or_exit(config)
 
-    # The repo's `oauthAccount` now describes an account this repo may no
+    # The repo's recorded account now describes an account this repo may no
     # longer use. Left in place it would make the repo look authoritative
     # for the wrong account — see the spec's §7.2.
-    invalidate_identity(CLAUDE.config_home(cfg))
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
 
     repo = _group_after_write(cfg)
     where = "no credential group" if repo is None else f"group `{repo}`"
@@ -12438,12 +13005,12 @@ def claude_group_unset_cmd(
 
 
 @group_app.command("use")
-def claude_group_use_cmd(
+def account_group_use_cmd(
     group: Annotated[
         str,
         typer.Argument(
             help="Group name, or `none` for no group.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     container: Annotated[
@@ -12454,21 +13021,21 @@ def claude_group_use_cmd(
         ),
     ] = None,
     force: Annotated[
-        bool, typer.Option("--force", help="Change the group even if Claude is running.")
+        bool, typer.Option("--force", help="Change the group even if an agent is running.")
     ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Move one container to another credential group, for its lifetime.
 
     This does not touch `global.yaml` and does not affect any other
-    container. `jailbee claude group reset` puts the container back on the
+    container. `jailbee account group reset` puts the container back on the
     repo's group; destroying the container drops the override with it.
 
     Naming the repo's *own* group drops the override instead of writing
     one — an override that repeats the repo would outrank a later
-    `jailbee claude group set` and leave this container behind.
+    `jailbee account group set` and leave this container behind.
 
-    Claude must be restarted in that container afterwards to pick up the
+    The agent must be restarted in that container afterwards to pick up the
     new login — this command never kills a session.
     """
     from jailbee.accounts import groups
@@ -12485,13 +13052,13 @@ def claude_group_use_cmd(
 
     incus = Incus()
     name = _resolve_group_container(cfg, incus, container)
-    _refuse_if_claude_running(cfg, incus, name, force)
+    _refuse_if_agent_running(cfg, incus, name, force)
 
     before = groups.effective_group(cfg, incus, name)
     redundant = groups.override_is_redundant(cfg, target)
     try:
         if redundant:
-            groups.clear_container_group(incus, name)
+            groups.clear_container_group(cfg, incus, name)
         else:
             groups.set_container_group(cfg, incus, name, target)
     except (groups.GroupError, OSError) as e:
@@ -12499,6 +13066,30 @@ def claude_group_use_cmd(
         raise typer.Exit(2) from e
 
     _report_group_change(cfg, name, before=before, after=target, redundant=redundant)
+
+
+def _invalidate_repo_accounts(cfg: "Config", adapters: list["AccountAdapter"]) -> None:
+    """Clear every adapter's recorded account for this repo's config home.
+
+    The repo's recorded account (`oauthAccount` for Claude) now describes an
+    account this repo may no longer use; left in place it would make the repo
+    look authoritative for the wrong account — see the spec's §7.2.
+
+    Each adapter clears its own through `on_switch`, the same path a switch
+    takes: `record=None` means "no trustworthy record to write", and
+    `authoritative` names this repo so an adapter that keeps a record beside
+    the credential clears rather than rewrites it. A no-op for an agent that
+    records nothing.
+    """
+    from jailbee.accounts.models import Member
+
+    for adapter in adapters:
+        adapter.on_switch(
+            [Member(cfg.container_prefix, adapter.config_home(cfg))],
+            [],
+            None,
+            {cfg.container_prefix},
+        )
 
 
 def _report_group_change(
@@ -12511,15 +13102,14 @@ def _report_group_change(
 ) -> None:
     """Report one container's group change, and invalidate only if it moved.
 
-    `adapters.claude.invalidate_identity` exists because the repo's
-    `oauthAccount` would otherwise name an account this container no longer
+    A recorded account would otherwise name one this container no longer
     reads (§7.2). When the container's *effective* group did not change —
     dropping an override that only repeated the repo, or naming the group it
     already inherited — the account did not change either, and invalidating
-    would throw away a name nothing else can supply until a container runs
-    Claude again.
+    would throw away a name nothing else can supply until a container runs an
+    agent again.
     """
-    from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
+    from jailbee.accounts.adapters import base
 
     where = "no credential group" if after is None else f"group `{after}`"
     if redundant:
@@ -12529,11 +13119,168 @@ def _report_group_change(
     if before == after:
         info("Nothing else changed: that is the group it was already reading.")
         return
-    invalidate_identity(CLAUDE.config_home(cfg))
-    info("Restart Claude in that container to pick up the new login.")
+    _invalidate_repo_accounts(cfg, base.pooled_adapters(cfg))
+    info("Restart the agent in that container to pick up the new login.")
 
 
 @group_app.command("reset")
+def account_group_reset_cmd(
+    container: Annotated[
+        str | None,
+        typer.Argument(
+            help="Container to reset. Omit to pick from this repo's containers.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Reset even if an agent is running.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Drop a container's override so it inherits the repo's group again."""
+    from jailbee.accounts import engine, groups
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    name = _resolve_group_container(cfg, incus, container)
+    _refuse_if_agent_running(cfg, incus, name, force)
+
+    before = groups.effective_group(cfg, incus, name)
+    groups.clear_container_group(cfg, incus, name)
+    repo = engine.repo_group(cfg)
+    _report_group_change(cfg, name, before=before, after=repo, redundant=True)
+
+
+# --- The hidden `jailbee claude group` aliases --------------------------------
+#
+# Each one warns once and forwards to the canonical `account group` command.
+# Group membership is a single shared name, so the wrappers add no `agent`
+# option: `account group` acts on every enabled adapter already.
+
+
+@claude_group_app.command("ls")
+def claude_group_ls_cmd(
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help="Comma-separated fields. Allowed: agent, group, account, org, state, "
+            "used_by, repos, containers.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group ls`."""
+    _warn_claude_alias()
+    account_group_ls_cmd(fmt=fmt, fields=fields, config=config)
+
+
+@claude_group_app.command("create")
+def claude_group_create_cmd(
+    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group create`."""
+    _warn_claude_alias()
+    account_group_create_cmd(group, config=config)
+
+
+@claude_group_app.command("rm")
+def claude_group_rm_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Credential group to remove.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group rm`."""
+    _warn_claude_alias()
+    account_group_rm_cmd(group, yes=yes, config=config)
+
+
+@claude_group_app.command("set")
+def claude_group_set_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Group name, or `none` to keep this repo on its own login.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if an agent is running in any of this repo's containers.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group set`."""
+    _warn_claude_alias()
+    account_group_set_cmd(group, force=force, config=config)
+
+
+@claude_group_app.command("unset")
+def claude_group_unset_cmd(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Change the group even if an agent is running in any of this repo's containers.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group unset`."""
+    _warn_claude_alias()
+    account_group_unset_cmd(force=force, config=config)
+
+
+@claude_group_app.command("use")
+def claude_group_use_cmd(
+    group: Annotated[
+        str,
+        typer.Argument(
+            help="Group name, or `none` for no group.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ],
+    container: Annotated[
+        str | None,
+        typer.Argument(
+            help="Container to change. Omit to pick from this repo's containers.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Change the group even if an agent is running.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Deprecated: use `jailbee account group use`."""
+    _warn_claude_alias()
+    account_group_use_cmd(group, container, force=force, config=config)
+
+
+@claude_group_app.command("reset")
 def claude_group_reset_cmd(
     container: Annotated[
         str | None,
@@ -12543,23 +13290,13 @@ def claude_group_reset_cmd(
         ),
     ] = None,
     force: Annotated[
-        bool, typer.Option("--force", help="Reset even if Claude is running.")
+        bool, typer.Option("--force", help="Reset even if an agent is running.")
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Drop a container's override so it inherits the repo's group again."""
-    from jailbee.accounts import groups
-    from jailbee.incus import Incus
-
-    cfg = _load_or_exit(config)
-    incus = Incus()
-    name = _resolve_group_container(cfg, incus, container)
-    _refuse_if_claude_running(cfg, incus, name, force)
-
-    before = groups.effective_group(cfg, incus, name)
-    groups.clear_container_group(incus, name)
-    repo = groups.repo_group(cfg)
-    _report_group_change(cfg, name, before=before, after=repo, redundant=True)
+    """Deprecated: use `jailbee account group reset`."""
+    _warn_claude_alias()
+    account_group_reset_cmd(container, force=force, config=config)
 
 
 pool_app = typer.Typer(
