@@ -93,6 +93,7 @@ import typer
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jailbee.accounts.adapters.base import AccountAdapter
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -267,36 +268,119 @@ def complete_app_name(ctx: typer.Context, incomplete: str) -> list[str]:
     return [s.name for s in resolve_apps(cfg) if s.name.startswith(incomplete)]
 
 
+def _agent_param(ctx: typer.Context) -> str | None:
+    """The parsed `--agent` value, or None when the command has no such option.
+
+    The same read `complete_snapshot` makes of `ctx.params["name"]`: a
+    completer sees the options already parsed on the command line, so a user
+    who typed `-a codex` gets codex's pool without the command ever running.
+    """
+    agent = ctx.params.get("agent") if ctx.params else None
+    return agent if isinstance(agent, str) and agent else None
+
+
+def _adapters_for_completion(agent: str | None) -> list[AccountAdapter]:
+    """The adapters a pool completer may read, or [] when nothing is known.
+
+    `_load()` is what discovers *enabled* agents — the config is the only
+    source of the pooled set — so it is the first source. It is allowed to
+    fail: with an explicit `--agent` the adapter is resolved directly instead,
+    because the parked store is host-wide and a TAB press outside a repo still
+    has logins to offer. Without one there is no way to know which agents
+    exist, and the honest answer is nothing.
+
+    The two halves of the no-config branch matter: `get_adapter` imports an
+    adapter module lazily and raises `KeyError` for a name that has none, which
+    must degrade to [] like every other failure here.
+    """
+    from jailbee.accounts.adapters import base
+
+    loaded = _load()
+    if loaded is None:
+        if agent is None:
+            return []
+        try:
+            return [base.get_adapter(agent)]
+        except KeyError:
+            return []
+    cfg, _incus = loaded
+    pooled = base.pooled_adapters(cfg)
+    if agent is None:
+        return pooled
+    return [a for a in pooled if a.name == agent]
+
+
 @_completion_guard
-def complete_claude_account(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Complete a stored Claude login for `jailbee claude use`/`rm`.
+def complete_account(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a stored login for `jailbee account use`/`rm`.
+
+    `--agent` narrows the pool to one adapter; without it the names of every
+    enabled agent's store are unioned. The union is deduplicated because the
+    same email can be parked in two agents' stores, and a candidate offered
+    twice is a candidate the shell shows twice.
 
     Only the *parked* slots, which is what both commands accept — each refuses
-    the live one. `parked_slots` also globs the store with no config to load
-    and no Incus call, unlike `list_slots`, which resolves the holder's members
-    by loading every registered repo's config: far too much for a TAB press.
+    the live one. `parked_slots` also globs the store with no Incus call,
+    unlike `list_slots`, which resolves the holder's members by loading every
+    registered repo's config: far too much for a TAB press.
 
     Full slot names rather than bare emails: a name is always an exact match,
     while an email is ambiguous once one account has two stored logins.
     """
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.accounts.engine import parked_slots
 
-    return [s.name for s in parked_slots(CLAUDE) if s.name.startswith(incomplete)]
+    adapters = _adapters_for_completion(_agent_param(ctx))
+    names = {s.name for adapter in adapters for s in parked_slots(adapter)}
+    return sorted(n for n in names if n.startswith(incomplete))
 
 
 @_completion_guard
-def complete_claude_group(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Complete a credential group name from the ones present on this host."""
-    from jailbee.accounts.adapters.claude import CLAUDE
-    from jailbee.accounts.groups import group_dir
+def complete_credential_group(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete a credential group name from the ones present on this host.
 
-    root = group_dir(CLAUDE.name, "x").parent
-    try:
-        names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
-    except OSError:
-        names = []
-    return [n for n in [*names, "none"] if n.startswith(incomplete)]
+    One group name is one directory per agent, so the candidates are the union
+    of every adapter's directories, plus the literal `none` that spells "no
+    group" on the command line. `--agent` narrows the union to one adapter's
+    directories when the command has that option.
+
+    A missing store is an empty pool (`none` is still offered); a store that
+    cannot be read is a failure and yields [] — the same never-guess rule the
+    rest of the module follows.
+    """
+    from jailbee.accounts import groups
+
+    adapters = _adapters_for_completion(_agent_param(ctx))
+    if not adapters:
+        return []
+    names = {"none"}
+    for adapter in adapters:
+        root = groups.group_dir(adapter.name, "x").parent
+        try:
+            entries = sorted(root.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return []
+        names.update(p.name for p in entries if p.is_dir() and not p.name.startswith("_"))
+    return sorted(n for n in names if n.startswith(incomplete))
+
+
+@_completion_guard
+def complete_account_agent(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Complete an agent name for the account pool's `--agent` option.
+
+    The candidates are the *enabled* agents that have an adapter, which is
+    exactly the set `_account_adapters` accepts — a name this offers cannot
+    then be refused. Discovering them needs a config, so outside a repo the
+    answer is []: the pool commands need one anyway.
+    """
+    from jailbee.accounts.adapters import base
+
+    loaded = _load()
+    if loaded is None:
+        return []
+    cfg, _incus = loaded
+    return sorted(a.name for a in base.pooled_adapters(cfg) if a.name.startswith(incomplete))
 
 
 def _resolve_typed_container(cfg: Config, incus: Incus, typed: str) -> str | None:

@@ -1470,7 +1470,7 @@ def new_cmd(
             "--credential-group",
             help="Credential group for this container only, for its "
             "lifetime. Use `none` for no group.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     claude_group: Annotated[
@@ -1479,7 +1479,7 @@ def new_cmd(
             "--claude-group",
             hidden=True,
             help="Deprecated alias for --credential-group.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     yes: Annotated[
@@ -11921,6 +11921,7 @@ def account_ls_cmd(
             "--agent",
             "-a",
             help="Only this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
         ),
     ] = None,
     group: Annotated[
@@ -11930,7 +11931,7 @@ def account_ls_cmd(
             "-g",
             help="Show only this credential group, or `none` for the holders that "
             "share no group. The parked store stays listed either way.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -11984,7 +11985,7 @@ def claude_ls_cmd(
             "-g",
             help="Show only this credential group, or `none` for the holders that "
             "share no group. The parked store stays listed either way.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -12064,7 +12065,7 @@ def account_use_cmd(
         typer.Argument(
             help="Account email, or the full slot name for an exact match. "
             "Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
         ),
     ] = None,
     agent: Annotated[
@@ -12073,6 +12074,7 @@ def account_use_cmd(
             "--agent",
             "-a",
             help="Act on this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
         ),
     ] = None,
     group: Annotated[
@@ -12081,7 +12083,7 @@ def account_use_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -12113,7 +12115,7 @@ def claude_use_cmd(
         typer.Argument(
             help="Account email, or the full slot name for an exact match. "
             "Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
         ),
     ] = None,
     group: Annotated[
@@ -12122,7 +12124,7 @@ def claude_use_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -12205,6 +12207,7 @@ def account_park_cmd(
             "--agent",
             "-a",
             help="Park this agent's live login. Default: the one live login, or a picker.",
+            autocompletion=completion.complete_account_agent,
         ),
     ] = None,
     group: Annotated[
@@ -12213,7 +12216,7 @@ def account_park_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -12244,7 +12247,7 @@ def claude_park_cmd(
             "--group",
             "-g",
             help="Act on this credential group instead of the repo's.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ] = None,
     config: ConfigOption = None,
@@ -12306,7 +12309,7 @@ def account_rm_cmd(
         str | None,
         typer.Argument(
             help="Account email, or the full slot name. Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
         ),
     ] = None,
     agent: Annotated[
@@ -12315,6 +12318,7 @@ def account_rm_cmd(
             "--agent",
             "-a",
             help="Delete from this agent's pool. Default: every enabled agent.",
+            autocompletion=completion.complete_account_agent,
         ),
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
@@ -12343,7 +12347,7 @@ def claude_rm_cmd(
         str | None,
         typer.Argument(
             help="Account email, or the full slot name. Omit to pick from a menu.",
-            autocompletion=completion.complete_claude_account,
+            autocompletion=completion.complete_account,
         ),
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
@@ -12716,7 +12720,7 @@ def account_group_rm_cmd(
         str,
         typer.Argument(
             help="Credential group to remove.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     yes: Annotated[
@@ -12892,7 +12896,7 @@ def account_group_set_cmd(
         str,
         typer.Argument(
             help="Group name, or `none` to keep this repo on its own login.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     force: Annotated[
@@ -12995,7 +12999,7 @@ def account_group_use_cmd(
         str,
         typer.Argument(
             help="Group name, or `none` for no group.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     container: Annotated[
@@ -13186,7 +13190,7 @@ def claude_group_rm_cmd(
         str,
         typer.Argument(
             help="Credential group to remove.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     yes: Annotated[
@@ -13206,7 +13210,7 @@ def claude_group_set_cmd(
         str,
         typer.Argument(
             help="Group name, or `none` to keep this repo on its own login.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     force: Annotated[
@@ -13245,7 +13249,7 @@ def claude_group_use_cmd(
         str,
         typer.Argument(
             help="Group name, or `none` for no group.",
-            autocompletion=completion.complete_claude_group,
+            autocompletion=completion.complete_credential_group,
         ),
     ],
     container: Annotated[
