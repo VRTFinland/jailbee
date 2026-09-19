@@ -7,15 +7,19 @@ from tests.conftest import make_config
 
 
 def _fake_skills_root(tmp_path: Path) -> Path:
-    """Build a synthetic bundled-skills tree with two skills."""
+    """Build a synthetic bundled-skills tree with two skills.
+
+    Idempotent: `_copy_skills_into` re-resolves `_skills_root()` once per
+    destination, so a multi-agent sync builds this tree several times.
+    """
     root = tmp_path / "bundled-skills"
     usage = root / "jailbee-usage"
-    usage.mkdir(parents=True)
+    usage.mkdir(parents=True, exist_ok=True)
     (usage / "SKILL.md").write_text("usage skill\n")
-    (usage / "references").mkdir()
+    (usage / "references").mkdir(exist_ok=True)
     (usage / "references" / "commands.md").write_text("commands\n")
     setup = root / "jailbee-repo-setup"
-    setup.mkdir(parents=True)
+    setup.mkdir(parents=True, exist_ok=True)
     (setup / "SKILL.md").write_text("setup skill\n")
     return root
 
@@ -34,6 +38,8 @@ def test_sync_noop_when_claude_disabled(tmp_path: Path, monkeypatch) -> None:
     cfg = make_config(tmp_path / "repo", shared_dir=shared, claude={"enabled": False})
     agent_skills.sync_agent_skills(cfg)
     assert not (shared / "claude" / "skills").exists()
+    # No agent wanted skills, so no lock is created either.
+    assert not (shared / ".jailbee-skills.lock").exists()
 
 
 def test_sync_noop_when_install_flag_off(tmp_path: Path, monkeypatch) -> None:
@@ -95,3 +101,141 @@ def test_sync_leaves_unrelated_skills_untouched(tmp_path: Path, monkeypatch) -> 
     (other / "SKILL.md").write_text("mine\n")
     agent_skills.sync_agent_skills(cfg)
     assert (other / "SKILL.md").read_text() == "mine\n"
+
+
+# --------------------------------------------------------------------------
+# the multi-agent sync
+# --------------------------------------------------------------------------
+
+
+def test_sync_copies_to_every_enabled_agents_skills_dir(tmp_path: Path, monkeypatch) -> None:
+    """Claude, codex, gemini and opencode each get the skills in their own
+    shared skills directory — the mount subpath each preset declares."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "codex": {"enabled": True},
+            "gemini": {"enabled": True},
+            "opencode": {"enabled": True},
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    # opencode's ~/.config/opencode mount is the "opencode-config" subpath.
+    for subpath in ("claude", "codex", "gemini", "opencode-config"):
+        skills = shared / subpath / "skills"
+        assert (skills / "jailbee-usage" / "SKILL.md").read_text() == "usage skill\n"
+        assert (skills / "jailbee-repo-setup" / "SKILL.md").is_file()
+
+
+def test_sync_skips_a_disabled_agent(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "codex": {"enabled": False},
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
+    assert not (shared / "codex" / "skills").exists()
+
+
+def test_sync_honours_the_per_agent_install_flag(tmp_path: Path, monkeypatch) -> None:
+    """`install_jailbee_skills: false` opts one agent out, not everyone."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "codex": {"enabled": True, "install_jailbee_skills": False},
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
+    assert not (shared / "codex" / "skills").exists()
+
+
+def test_sync_skips_agents_without_a_skills_dir(tmp_path: Path, monkeypatch) -> None:
+    """aider and grok have no skills mechanism; enabling them owes nothing."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={"aider": {"enabled": True}, "grok": {"enabled": True}},
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert not (shared / "aider" / "skills").exists()
+    assert not (shared / "grok" / "skills").exists()
+    assert not (shared / ".jailbee-skills.lock").exists()
+
+
+def test_sync_follows_a_custom_agents_own_mount(tmp_path: Path, monkeypatch) -> None:
+    """A from-scratch agent gets its skills wherever its own mount says."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [{"subpath": "my-agent", "path": "~/.mine"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_sync_warns_when_no_shared_mount_covers_skills_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A skills_dir nothing mounts is a config mistake, not a crash: warn,
+    skip that agent, still serve the others."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/nowhere/skills",
+                "shared": [{"subpath": "mine", "path": "~/.mine"}],
+            },
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    out = capsys.readouterr().out
+    assert "mine" in out
+    assert "~/nowhere/skills" in out
+    assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
+
+
+def test_sync_lock_lives_at_the_shared_dir_root(tmp_path: Path, monkeypatch) -> None:
+    """One lock serialises every agent's copy, so it sits beside the
+    `.agent-install.lock`, not inside one agent's mount."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={"claude": {"enabled": True}, "codex": {"enabled": True}},
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / ".jailbee-skills.lock").exists()
+    assert not (shared / "claude" / ".jailbee-skills.lock").exists()

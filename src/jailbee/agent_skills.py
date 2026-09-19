@@ -1,10 +1,11 @@
 """Sync jailbee's bundled agent skills into the shared skills directories.
 
-``~/.claude`` is a shared bind mount (``<shared_dir>/claude``) common to every
-container of a repo, and ``raw.idmap`` is 1:1, so files the host dev user writes
-into ``<shared_dir>/claude/skills/`` appear correctly owned inside every
-container. Writing them here once therefore updates the in-container view for
-all containers — no ``incus exec`` or byte-transfer needed.
+Each enabled agent's config home (``~/.claude``, ``~/.codex``, …) is a shared
+bind mount under ``<shared_dir>`` common to every container of a repo, and
+``raw.idmap`` is 1:1, so files the host dev user writes into e.g.
+``<shared_dir>/claude/skills/`` appear correctly owned inside every container.
+Writing them here once therefore updates the in-container view for all
+containers — no ``incus exec`` or byte-transfer needed.
 """
 
 from __future__ import annotations
@@ -12,11 +13,13 @@ from __future__ import annotations
 import fcntl
 import importlib.resources
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from jailbee.tui import warn
+
 if TYPE_CHECKING:
-    from jailbee.config import Config
+    from jailbee.config import AgentConfig, Config
 
 
 def _skills_root() -> Path:
@@ -83,20 +86,65 @@ def install_host_skills() -> list[Path]:
 
 
 def sync_agent_skills(cfg: Config) -> None:
-    """Copy each bundled skill into ``<shared_dir>/claude/skills/<name>/``.
+    """Copy each bundled skill into every enabled agent's shared skills dir.
 
-    No-op unless ``claude.enabled`` and ``claude.install_jailbee_skills``. A
-    host-side flock serializes concurrent ``jailbee new`` runs sharing the
-    mount; see `_copy_skills_into` for the replacement semantics.
+    One host-side destination per agent with a `skills_dir` that some `shared`
+    mount covers: claude's is ``<shared_dir>/claude/skills``, codex's
+    ``<shared_dir>/codex/skills``, and so on. A `skills_dir` no mount covers is
+    a config mistake — warned, skipped, never fatal. A host-side flock
+    serializes concurrent ``jailbee new`` runs sharing the mount; see
+    `_copy_skills_into` for the replacement semantics.
     """
-    if not cfg.claude.enabled or not cfg.claude.install_jailbee_skills:
-        return
     assert cfg.shared_dir is not None  # set by load_config
-    lock_path = cfg.shared_dir / "claude" / ".jailbee-skills.lock"
+    targets: dict[Path, str] = {}
+    for name in sorted(cfg.agents):
+        agent = cfg.agents[name]
+        if not agent.enabled or not agent.install_jailbee_skills or not agent.skills_dir:
+            continue
+        host_dir = _skills_host_dir(cfg.shared_dir, agent)
+        if host_dir is None:
+            warn(
+                f"agents.{name}: skills_dir {agent.skills_dir} matches no shared "
+                "mount — skipping jailbee skills for this agent"
+            )
+            continue
+        # First declaration wins: two agents resolving to the same directory
+        # (claude and a custom agent reading ~/.claude/skills, say) owe the
+        # same bytes, so the second copy is skipped, not layered.
+        targets.setdefault(host_dir, name)
+    if not targets:
+        return
+    lock_path = cfg.shared_dir / ".jailbee-skills.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            _copy_skills_into(cfg.shared_dir / "claude" / "skills")
+            for host_dir in sorted(targets):
+                _copy_skills_into(host_dir)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> Path | None:
+    """The host-side copy of `agent.skills_dir`, or None when nothing covers it.
+
+    Walks the agent's `shared` mounts and picks the first whose `path` prefixes
+    `skills_dir` (both `~`-relative by convention, so the match is textual).
+    The remainder maps onto the mount's `subpath` under `<shared_dir>`:
+    ``~/.claude/skills`` over ``~/.claude`` (subpath ``claude``) lands at
+    ``<shared_dir>/claude/skills``. Matching against the mount list rather
+    than a hardcoded subpath is what makes a user's own mount layout work.
+    """
+    skills = PurePosixPath(agent.skills_dir or "")
+    for mount in agent.shared:
+        if mount.type != "dir":
+            continue
+        base = PurePosixPath(mount.path)
+        try:
+            rel = skills.relative_to(base)
+        except ValueError:
+            continue
+        if not rel.parts:
+            return shared_dir / mount.subpath
+        return shared_dir / mount.subpath / Path(*rel.parts)
+    return None

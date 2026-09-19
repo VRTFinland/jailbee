@@ -115,6 +115,26 @@ def test_generic_agent_rejects_claude_only_fields():
         AgentConfig.model_validate({"enabled": True, "ai_pr_timeout": 900})
 
 
+def test_generic_agent_accepts_install_jailbee_skills():
+    """The flag is agent-generic: opting codex out is the same YAML key as
+    opting claude out."""
+    cfg = AgentConfig.model_validate({"install_jailbee_skills": False})
+    assert cfg.install_jailbee_skills is False
+
+
+def test_presets_declare_skills_dir_only_for_skill_capable_agents():
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    presets = {**AGENT_PRESETS, "claude": claude_preset()}
+    with_dir = {name for name, preset in presets.items() if preset.get("skills_dir")}
+    assert with_dir == {"claude", "codex", "gemini", "opencode"}
+    # Each must land inside a mount the preset itself declares.
+    assert presets["claude"]["skills_dir"] == "~/.claude/skills"
+    assert presets["codex"]["skills_dir"] == "~/.codex/skills"
+    assert presets["gemini"]["skills_dir"] == "~/.gemini/skills"
+    assert presets["opencode"]["skills_dir"] == "~/.config/opencode/skills"
+
+
 def test_install_check_defaults_from_command():
     cfg = AgentConfig.model_validate({"enabled": True, "command": "codex --yolo"})
     assert cfg.effective_install_check() == "command -v codex"

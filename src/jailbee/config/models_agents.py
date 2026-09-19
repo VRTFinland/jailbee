@@ -416,6 +416,26 @@ class AgentConfig(BaseModel):
         description="Environment variables passed to both the install/update step and the "
         "autostart launch step.",
     )
+    skills_dir: str | None = Field(
+        default=None,
+        description=(
+            "Container-side directory this agent reads user-level skills from — e.g. "
+            "`~/.codex/skills`. When set and covered by a `shared` mount, `jailbee "
+            "new`/`jailbee apply` copy jailbee's bundled skills into the shared copy "
+            "of it (see `install_jailbee_skills`). Presets set it for the agents with "
+            "a skills mechanism; leave unset for agents without one."
+        ),
+    )
+    install_jailbee_skills: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
+            "skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into "
+            "this agent's shared `skills_dir` so the in-container agent understands "
+            "jailbee. Host-side file copy only, no network. Does nothing when "
+            "`skills_dir` is unset or no `shared` mount covers it."
+        ),
+    )
 
     def effective_install_check(self) -> str:
         """The command that decides install-vs-update.
@@ -455,15 +475,6 @@ class ClaudeAgentConfig(AgentConfig):
             "`CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so Claude Code's plugin marketplace, "
             "skills and SessionStart hooks load. Set to false to keep the API reachable "
             "while blocking marketplace traffic. Has no effect when `enabled` is false."
-        ),
-    )
-    install_jailbee_skills: bool = Field(
-        default=True,
-        description=(
-            "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
-            "Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into the shared "
-            "`<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. "
-            "Host-side file copy only, no network. Has no effect when `enabled` is false."
         ),
     )
     seed_onboarding: bool = Field(

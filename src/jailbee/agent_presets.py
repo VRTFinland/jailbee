@@ -97,6 +97,10 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
                 "private": ["app-server-control", "app-server-daemon"],
             }
         ],
+        # Where Codex reads user-level skills (`CODEX_HOME/skills`). Inside the
+        # `~/.codex` mount above, so jailbee's bundled skills land there once
+        # and serve every container of the repo.
+        "skills_dir": "~/.codex/skills",
         # Runtime hosts, all three needed by an ordinary signed-in session:
         # `api.openai.com` is the API-key path (`/v1/responses`, `/auth`),
         # `auth.openai.com` is the sign-in itself — the device-code flow posts
@@ -118,6 +122,8 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         "install": "npm i -g @google/gemini-cli",
         "update": "npm i -g @google/gemini-cli@latest",
         "shared": [{"subpath": "gemini", "path": "~/.gemini"}],
+        # Where gemini-cli reads user-level skills (`~/.gemini/skills`).
+        "skills_dir": "~/.gemini/skills",
         "egress_allow": [
             "generativelanguage.googleapis.com:443",
             "cloudcode-pa.googleapis.com:443",
@@ -176,6 +182,11 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
             {"subpath": "opencode-config", "path": "~/.config/opencode"},
             {"subpath": "opencode-data", "path": "~/.local/share/opencode"},
         ],
+        # Where opencode reads user-level skills (`~/.config/opencode/skills`).
+        # It also scans Claude-compatible `~/.claude/skills`, but its own
+        # directory is the canonical one — relying on claude's mount would
+        # break the moment claude is not enabled.
+        "skills_dir": "~/.config/opencode/skills",
         # opencode's *own* hosts only. It is a multi-provider client, so which
         # inference host it needs depends entirely on the provider the user
         # configures — those stay the user's to add (see docs/agents.md §6).
@@ -216,5 +227,8 @@ def claude_preset() -> dict[str, object]:
             {"subpath": "claude", "path": "~/.claude"},
             {"subpath": "claude-install", "path": "~/.local/share/claude"},
         ],
+        # Where Claude Code reads user-level skills; inside the `~/.claude`
+        # mount above.
+        "skills_dir": "~/.claude/skills",
         "egress_allow": list(CLAUDE_API_HOSTS),
     }
