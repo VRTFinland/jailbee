@@ -838,14 +838,20 @@ def config_edit_cmd(
         flag=write_policy,
         configured=configured_policy(global_path),
     )
-    raise typer.Exit(
-        run_editor(
+    try:
+        code = run_editor(
             layer=layer,
             layer_set=layer_set,
             specs=specs,
             policy=policy,
         )
-    )
+    except ConfigError as e:
+        # `run_editor`'s `resolve()` folds the legacy credentials key and can
+        # refuse a both-keys file; without this it reaches Typer as a raw
+        # traceback instead of the `✗ <msg>` every other command renders.
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    raise typer.Exit(code)
 
 
 def _offer_editor(*, global_layer: bool) -> None:
