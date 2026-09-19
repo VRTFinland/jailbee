@@ -17,8 +17,9 @@ before editing `## Unreleased`.
   agent-agnostic — each enabled agent keeps its own login in the group, and a
   holder can have one live login per agent. The `jailbee ls` column is
   `GROUP`, the `jailbee new` flag is `--credential-group`, and the container
-  label is `user.jailbee.credential_group`. Every pool command takes an
-  optional `-a/--agent`; omitting it acts on every enabled pooled agent, and
+  label is `user.jailbee.credential_group`. Every account command takes an
+  optional `-a/--agent` (the `account group` subcommands take none, since a
+  group name is shared); omitting it acts on every enabled pooled agent, and
   a typed account reference that matches more than one agent is an error
   naming the `-a` values to pass (Claude is the only pooled agent so far, so
   that case cannot arise yet). The old spellings keep working as hidden

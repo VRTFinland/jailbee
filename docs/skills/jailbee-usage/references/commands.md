@@ -1143,7 +1143,7 @@ above), with no separate apply step needed.
 
 ## Accounts
 
-### `jailbee account ls [-o json] [--fields group,account,org,state,used_by,repos,containers] [-a/--agent <agent>] [-g/--group <name>]`
+### `jailbee account ls [-o json] [--fields agent,group,account,org,state,used_by,repos,containers] [-a/--agent <agent>] [-g/--group <name>]`
 
 **Every stored login on this host, and which holder each one is live in.** One
 row per login file:

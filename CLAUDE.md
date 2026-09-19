@@ -35,9 +35,10 @@ isolated per-branch development environments using Incus system containers. See
   (`repo_root`, `upstream_remote`, `default_branch`, `credential_group`) set
   during `load_config()` — these are intentionally not YAML keys.
   `credential_group` is the host-level, agent-agnostic group *name* from the
-  `credentials` block; it becomes a per-adapter holder directory only inside
-  `accounts/engine.py` (`engine.group_dir(adapter.name, group)`), never in
-  `Config`, the CLI or the overview.
+  `credentials` block; the one function that turns it into a per-adapter holder
+  directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
+  `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
+  derivation is never defined in `Config`, the CLI or the overview.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
