@@ -8,6 +8,7 @@ with the names changed.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
@@ -151,6 +152,12 @@ def fake_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """An XDG data home the engine's store lands in."""
     monkeypatch.setattr("jailbee.paths.xdg_data_home", lambda: tmp_path / "xdg")
     return tmp_path
+
+
+@pytest.fixture
+def fake_adapter(tmp_path: Path) -> FakeAdapter:
+    """A bare `FakeAdapter`, for tests that only need `adapter.name`."""
+    return FakeAdapter(tmp_path / "home")
 
 
 def test_park_moves_the_live_credential_into_the_store(fake_env: Path, mocker) -> None:
@@ -348,3 +355,12 @@ def test_the_store_is_named_after_the_agent(fake_env: Path) -> None:
     adapter = FakeAdapter(fake_env / "home")
     assert engine.store_dir(adapter).parent.name == "fake-credentials"
     assert engine.store_dir(adapter).name == "_parked"
+
+
+def test_account_store_is_inside_the_test_data_home(
+    fake_adapter, isolated_xdg_data_home: Path
+) -> None:
+    from jailbee.accounts import engine
+
+    assert Path(os.environ["XDG_DATA_HOME"]) == isolated_xdg_data_home
+    assert engine.store_dir(fake_adapter).is_relative_to(isolated_xdg_data_home)
