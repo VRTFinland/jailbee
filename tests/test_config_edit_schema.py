@@ -333,6 +333,10 @@ def test_global_specs_keeps_the_config_overlay_keys():
     assert ("gpg", "enabled") in paths
     assert ("host_mounts",) in paths
     assert ("credentials", "group") in paths, "host-level, from GlobalConfig"
+    assert ("credentials", "repos") in paths, "the per-repo overrides are editable too"
+    # The editor exposes the generic key only: a legacy `claude_credentials`
+    # row would offer the user a key the loader folds away on the next load.
+    assert not any(path and path[0] == "claude_credentials" for path in paths)
 
 
 def test_loose_auto_revert_appears_once_on_the_config_side():
@@ -354,11 +358,23 @@ def test_global_only_keys_is_the_documented_ban_list():
     The loader is the source of truth; this only holds `GLOBAL_ONLY_KEYS`
     to the list as documented, so a silent edit to the constant is caught.
     It does not derive the list from the loader, so it cannot notice the
-    loader growing a fourth ban.
+    loader growing a sixth ban.
+
+    Both spellings of the credential block and both names of the computed
+    field are pinned: the loader bans the legacy spellings too, and a set
+    naming only the current keys would no longer mirror it.
     """
     from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
 
-    assert GLOBAL_ONLY_KEYS == frozenset({"github", "credentials", "credential_group"})
+    assert GLOBAL_ONLY_KEYS == frozenset(
+        {
+            "github",
+            "credentials",
+            "claude_credentials",
+            "credential_group",
+            "claude_credentials_dir",
+        }
+    )
 
 
 def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():

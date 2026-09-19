@@ -313,6 +313,27 @@ def test_global_config_parses_legacy_claude_credentials(tmp_path):
     assert any("credentials" in line for line in active[0].lines)
 
 
+def test_validate_global_raw_stays_silent_with_emit_hint_false(tmp_path):
+    """The editor's save handler calls this synchronously while the full-screen
+    `Application` is live, so `emit_hint=False` must suppress the legacy
+    `claude_credentials:` notice even though the fold still happens.
+
+    Pins the editor-silence guarantee the `emit_hint` parameter exists for; the
+    chrome twin lives in `tests/test_config_browsers.py`.
+    """
+    from jailbee import notices
+    from jailbee.global_config import validate_global_raw
+
+    gcfg = validate_global_raw(
+        {"claude_credentials": {"group": "work"}},
+        tmp_path / "global.yaml",
+        emit_hint=False,
+    )
+
+    assert gcfg.credentials.group == "work"
+    assert notices.active() == ()
+
+
 def test_credentials_is_a_host_level_key():
     """It must never reach the Config layer's `deep_merge`: `Config` has
     `extra='forbid'` and no such field, so an unsplit key would make every

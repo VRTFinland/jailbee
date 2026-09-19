@@ -303,7 +303,7 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     raw = yaml_mod.safe_load(text)
     _check_retired_keys(raw)  # must not raise
 
-    # Host-level keys (`claude_credentials`, `ls`, `dashboard`, ...) never
+    # Host-level keys (`credentials`, `ls`, `dashboard`, ...) never
     # reach the Config layer: `load_config` splits them off before merging,
     # and `Config` forbids extras. Split them here the same way, or a live
     # host-level block in the template fails validation that never runs in
@@ -383,7 +383,7 @@ def test_global_template_github_roundtrips_through_schema():
     GithubConfig.model_validate(parsed["github"])
 
 
-# --- claude_credentials block in the generated global template --------------
+# --- credentials block in the generated global template ---------------------
 
 
 def test_global_template_ships_a_default_credential_group():
@@ -397,13 +397,14 @@ def test_global_template_ships_a_default_credential_group():
     template-only default deliberately avoids.
     """
     parsed = yaml.safe_load(render_global_template())
-    assert parsed["claude_credentials"]["group"] == "default"
+    assert parsed["credentials"]["group"] == "default"
+    assert "claude_credentials" not in parsed
 
 
 def test_global_template_credential_group_round_trips_through_global_config(tmp_path, monkeypatch):
     """The rendered block must survive the real loader, not just yaml.safe_load.
 
-    `claude_credentials` is host-level, so it reaches `GlobalConfig` through
+    `credentials` is host-level, so it reaches `GlobalConfig` through
     `_split_host_keys` and never through the Config layer.
     """
     from jailbee.global_config import load_global_config
@@ -606,16 +607,15 @@ def test_generated_global_documents_the_host_level_credentials_block():
     checks. Pin its description separately so the `render_documented`
     pass doesn't silently regress to an undocumented raw value.
 
-    Rendered from the new key directly: `config_init.GLOBAL_SEED_HOST` still
-    spells the legacy `claude_credentials` until the writer migration lands,
-    and the schema no longer documents that name. This keeps the documentation
-    mechanism covered in the meantime.
+    Exercised through `render_global_template()` so the generated file's own
+    seed is what is checked: a seed that named the wrong key would drop the
+    schema comment (and, until the loader's legacy fold, still load).
     """
-    from jailbee.config_writer import render_global_yaml
     from jailbee.global_config import GlobalConfig
 
-    text = render_global_yaml({"credentials": {"group": "default"}})
+    text = render_global_template()
 
+    assert "claude_credentials" not in text
     info = GlobalConfig.model_fields["credentials"]
     assert info.description
     first_line = " ".join(info.description.strip().splitlines()[0].split())

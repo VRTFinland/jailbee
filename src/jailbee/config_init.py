@@ -287,7 +287,7 @@ GLOBAL_SEED_HOST: dict[str, object] = {
     # of the box; see `docs/config.md#claude_credentials` for why the
     # *schema* default stays `None` while the *generated file* ships
     # `"default"`.
-    "claude_credentials": {"group": "default"},
+    "credentials": {"group": "default"},
     # Also host-level. Ships enabled so a fresh install can run `jailbee new`
     # in a directory with no `.jailbee/config.yaml` out of the box, rather
     # than requiring an opt-in edit before the feature does anything.

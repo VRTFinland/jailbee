@@ -167,6 +167,7 @@ def test_unset_invalidates_the_repos_recorded_account(group_env, mocker, tmp_pat
 
 
 def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
+    """A write over a legacy file migrates it in the same write."""
     global_yaml = tmp_path / "global.yaml"
     global_yaml.write_text("claude_credentials:\n  group: work\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
@@ -179,9 +180,10 @@ def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
     import yaml
 
     loaded = yaml.safe_load(global_yaml.read_text())
-    assert loaded["claude_credentials"]["repos"]["myrepo"] == "personal"
-    # The host default is untouched — `set` is repo-scoped.
-    assert loaded["claude_credentials"]["group"] == "work"
+    assert "claude_credentials" not in loaded
+    assert loaded["credentials"]["repos"]["myrepo"] == "personal"
+    # The host default is carried over — `set` is repo-scoped.
+    assert loaded["credentials"]["group"] == "work"
 
 
 def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
@@ -195,7 +197,9 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
 
     import yaml
 
-    repos = yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+    loaded = yaml.safe_load(global_yaml.read_text())
+    assert "claude_credentials" not in loaded
+    repos = loaded["credentials"]["repos"]
     assert "myrepo" in repos and repos["myrepo"] is None
 
 
@@ -210,7 +214,9 @@ def test_unset_removes_the_entry(group_env, mocker, tmp_path):
 
     import yaml
 
-    assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+    loaded = yaml.safe_load(global_yaml.read_text())
+    assert "claude_credentials" not in loaded
+    assert "myrepo" not in loaded["credentials"]["repos"]
 
 
 def test_set_rejects_the_reserved_name_before_writing(group_env, mocker, tmp_path):
@@ -266,7 +272,8 @@ def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
     import yaml
 
     loaded = yaml.safe_load(global_yaml.read_text())
-    assert loaded["claude_credentials"]["repos"]["myrepo"] == "personal"
+    assert "claude_credentials" not in loaded
+    assert loaded["credentials"]["repos"]["myrepo"] == "personal"
 
 
 def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):
@@ -301,7 +308,9 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     assert result.exit_code == 0
     import yaml
 
-    assert "myrepo" not in yaml.safe_load(global_yaml.read_text())["claude_credentials"]["repos"]
+    loaded = yaml.safe_load(global_yaml.read_text())
+    assert "claude_credentials" not in loaded
+    assert "myrepo" not in loaded["credentials"]["repos"]
 
 
 def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):

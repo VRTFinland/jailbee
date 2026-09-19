@@ -12074,15 +12074,25 @@ def _reapply_binds_profile(config: Path | None) -> None:
 
 
 def _write_repo_group(config: Path | None, value: object) -> None:
-    """Apply one `claude_credentials.repos.<prefix>` change and re-render."""
+    """Apply one `credentials.repos.<prefix>` change and re-render.
+
+    A global.yaml still spelling the legacy `claude_credentials:` block is
+    migrated in the same write: the block is copied to `credentials`, the old
+    key deleted, then this repo's entry applied — see
+    `config_writer.credential_key_migration`. Reading the raw mapping first is
+    what lets the helper see the legacy key.
+    """
     from jailbee import config_writer
+    from jailbee.config.common import _read_yaml_or_empty
 
     cfg = _load_or_exit(config)
     path = _global_config_path_for_write()
-    config_writer.patch_file(
-        path,
-        [config_writer.YamlChange(("claude_credentials", "repos", cfg.container_prefix), value)],
+    raw = _read_yaml_or_empty(path)
+    changes = config_writer.credential_key_migration(
+        raw,
+        [config_writer.YamlChange(("credentials", "repos", cfg.container_prefix), value)],
     )
+    config_writer.patch_file(path, changes)
     _reapply_binds_profile(config)
 
 

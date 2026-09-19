@@ -28,9 +28,13 @@ from jailbee.config import ConfigError, load_config_from_layers, resolve_browser
 # This module reports what a save will do, so it has to agree with that
 # routing exactly — a key on one side of the boundary merges by
 # `deep_merge`'s rules, a key on the other by `Config._effective_columns`.
-from jailbee.config.common import _HOST_LEVEL_KEYS, _read_yaml_or_empty
+from jailbee.config.common import (
+    _HOST_LEVEL_KEYS,
+    _read_yaml_or_empty,
+    normalize_credentials_key,
+)
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted, entry_model
-from jailbee.config_writer import DELETE, KeyPath, YamlChange
+from jailbee.config_writer import DELETE, KeyPath, YamlChange, credential_key_migration
 from jailbee.global_config import validate_global_raw
 
 if TYPE_CHECKING:
@@ -126,19 +130,22 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     Looks up paths through `resolve_browsers_raw`'s fold rather than
     `layer_set.repo_raw`/`global_raw` directly, so a legacy top-level
     `chrome:` block still reports a real origin for `browsers.chrome.*`
-    instead of lying and saying "default". The fold is silent by
-    construction — the deprecation notice lives in
-    `loader.load_config_from_layers`, not in the fold — which is what this
+    instead of lying and saying "default". The same goes for a legacy
+    `claude_credentials:` block, folded to `credentials` on a copy of the
+    global layer so its rows report the real origin. Both folds are silent
+    by construction — the deprecation notices live in
+    `loader.load_config_from_layers`, not in the folds — which is what this
     reload path needs: it runs on every reload, including while the editor
     `Application` is live, where a notice written to the terminal
     mid-session would corrupt the display. The stored
     `layer_set.repo_raw`/`global_raw` are left untouched: they are also the
     write path's base mapping (`raw_for`), and folding there would rewrite a
-    user's `chrome:` block into `browsers:` as a side effect of an unrelated
-    save.
+    user's legacy block as a side effect of an unrelated save.
     """
     repo_raw = resolve_browsers_raw(layer_set.repo_raw)
-    global_raw = resolve_browsers_raw(layer_set.global_raw)
+    global_raw = resolve_browsers_raw(
+        normalize_credentials_key(layer_set.global_raw, str(layer_set.global_path))[0]
+    )
     out: dict[KeyPath, Origin] = {}
     for spec in specs:
         present, value = lookup(repo_raw, spec.path)
@@ -169,14 +176,14 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     the reason next to it (spec 3.3). A silently missing setting reads as
     a bug; a disabled one with a reason reads as a rule.
 
-    `GLOBAL_ONLY_KEYS` is checked against `spec.path[0]`. Of its three
+    `GLOBAL_ONLY_KEYS` is checked against `spec.path[0]`. Of its five
     members, only `github` appears as a top-level key in `repo_specs()`;
-    the other two (`claude_credentials` and `claude_credentials_dir`) are
-    either not `Config` fields at all or are in `COMPUTED_FIELDS` so
-    `build_specs` skips them. The set is kept complete to mirror the ban
-    list in `config/loader.py` exactly — a future maintainer should not
-    expect a fourth key to silence a repo-layer setting that has no visible
-    `repo_specs()` entry.
+    the other four (`credentials`, `claude_credentials`, `credential_group`
+    and `claude_credentials_dir`) are either not `Config` fields at all or
+    are in `COMPUTED_FIELDS` so `build_specs` skips them. The set is kept
+    complete to mirror the ban list in `config/loader.py` exactly — a future
+    maintainer should not expect a sixth key to silence a repo-layer setting
+    that has no visible `repo_specs()` entry.
     """
     if layer == "repo" and spec.path[0] in GLOBAL_ONLY_KEYS:
         return (
@@ -329,7 +336,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
 
     A staged *global* layer gets a second pass, `validate_global_raw`,
     because the loader splits the `_HOST_LEVEL_KEYS` off and uses them for
-    one thing only (`claude_credentials`); the rest of `global.yaml`'s
+    one thing only (`credentials`); the rest of `global.yaml`'s
     host-level half — `docker_registry_mirror`, `ls`, `dashboard`,
     `scratch` — reaches no schema at all on that path. The loader runs
     first: it is the broader check (it scans the whole global mapping for
@@ -344,9 +351,17 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
     """
     global_raw = layer_set.global_raw
     repo_raw = layer_set.repo_raw
+    # A write that touches a legacy `claude_credentials:` block must migrate it
+    # in the same write (copy to `credentials`, delete the old key) or the
+    # staged mapping would carry both spellings and `normalize_credentials_key`
+    # would refuse it. The editor's staged changes name `credentials.*`, so the
+    # migration has to run *before* `apply_changes`, exactly as it does in
+    # `save.build_plan` and the account-group writer.
     if layer == "repo":
+        changes = credential_key_migration(repo_raw, changes)
         repo_raw = apply_changes(repo_raw, changes)
     else:
+        changes = credential_key_migration(global_raw, changes)
         global_raw = apply_changes(global_raw, changes)
         if not layer_set.repo_path.exists() and not (
             lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]
