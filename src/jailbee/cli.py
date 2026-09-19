@@ -11981,7 +11981,7 @@ def _refuse_if_claude_running_in_repo(cfg: "Config", incus: "IncusType", force: 
     """Block a repo-wide group change under a live Claude unless `--force`.
 
     `jb claude group set`/`unset` reconciles credentials across every
-    container of the repo (`_ensure_claude_credentials_dir`'s four-case
+    container of the repo (`ClaudeAdapter.prepare_config_home`'s four-case
     handling), so the single-container hazard `_refuse_if_claude_running`
     guards applies here too, but to every container at once — see the
     design's §6.1/§8.
@@ -12039,7 +12039,7 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
     view = cfg.model_copy(update={"credential_group": group})
     names = groups.redundant_overrides(view, incus)
     for name in names:
-        groups.clear_container_group(incus, name)
+        groups.clear_container_group(cfg, incus, name)
     if names:
         info(
             f"Dropped the now-redundant override on: {', '.join(names)} — "
@@ -12057,19 +12057,20 @@ def _global_config_path_for_write() -> Path:
 def _reapply_binds_profile(config: Path | None) -> None:
     """Re-render `<prefix>-binds` after the repo's group changed.
 
-    Two steps, both existing code. `_ensure_claude_credentials_dir` is not
-    just a `mkdir`: it carries the four-case credential reconciliation,
+    Two steps, both existing code. `base.prepare_config_homes` is not
+    just a `mkdir`: it runs each pooled adapter's `prepare_config_home`,
+    and Claude's carries the four-case credential reconciliation,
     including the case where **both** the target group and this repo hold
     a login — which prompts for which to keep and deletes the other.
     Moving a repo into a populated group is exactly how that case is
     reached, so this must not create the directory itself.
     """
+    from jailbee.accounts.adapters import base
     from jailbee.incus import Incus
-    from jailbee.init_command import _ensure_claude_credentials_dir
     from jailbee.profiles import binds_profile_yaml, profile_names
 
     cfg = _load_or_exit(config)  # reloaded, so it sees the new group
-    _ensure_claude_credentials_dir(cfg)
+    base.prepare_config_homes(cfg)
     Incus().profile_set_yaml(profile_names(cfg).binds, binds_profile_yaml(cfg))
 
 
@@ -12497,7 +12498,7 @@ def claude_group_use_cmd(
     redundant = groups.override_is_redundant(cfg, target)
     try:
         if redundant:
-            groups.clear_container_group(incus, name)
+            groups.clear_container_group(cfg, incus, name)
         else:
             groups.set_container_group(cfg, incus, name, target)
     except (groups.GroupError, OSError) as e:
@@ -12563,7 +12564,7 @@ def claude_group_reset_cmd(
     _refuse_if_claude_running(cfg, incus, name, force)
 
     before = groups.effective_group(cfg, incus, name)
-    groups.clear_container_group(incus, name)
+    groups.clear_container_group(cfg, incus, name)
     repo = engine.repo_group(cfg)
     _report_group_change(cfg, name, before=before, after=repo, redundant=True)
 

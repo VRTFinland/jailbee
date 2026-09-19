@@ -9,9 +9,11 @@ from pathlib import Path
 import yaml
 
 from jailbee.accounts.adapters import base
-from jailbee.accounts.adapters.claude import CLAUDE
 from jailbee.accounts.adapters.claude import CLAUDE_CREDS_DEVICE as CLAUDE_CREDS_DEVICE
 from jailbee.accounts.adapters.claude import CLAUDE_CREDS_DIRNAME as CLAUDE_CREDS_DIRNAME
+from jailbee.accounts.adapters.claude import (
+    CLAUDE_SECURESTORAGE_ENV as CLAUDE_SECURESTORAGE_ENV,
+)
 from jailbee.config import CONTAINER_USERNAME, NET_DESCRIPTIONS, Config
 from jailbee.gui import host_wayland_socket
 from jailbee.network import acl_name
@@ -88,36 +90,11 @@ def claude_config_dir_env(cfg: Config) -> tuple[str, str]:
     )
 
 
-# CLAUDE_CREDS_DIRNAME and CLAUDE_CREDS_DEVICE now live on the adapter
-# (`jailbee.accounts.adapters.claude`), which is the single source of truth
-# for the shared-credential device and env key; re-imported above so every
-# existing caller of `jailbee.profiles.CLAUDE_CREDS_*` keeps working.
-
-
-def claude_securestorage_dir_env(cfg: Config) -> tuple[str, str] | None:
-    """The `(key, value)` that points Claude Code at a shared credential.
-
-    `None` when this repo shares no credential, when Claude is disabled, or
-    when the resolved value is empty. That last case is not paranoia: an empty
-    `CLAUDE_SECURESTORAGE_CONFIG_DIR` is *not* the same as an unset one —
-    Claude Code falls back to `~/.claude` for it, silently sending credential
-    lookup back into the per-repo config home.
-
-    A thin wrapper around `ClaudeAdapter.wiring`, which is the actual single
-    source of truth for this value now: `base_profile_yaml` reads it through
-    the pooled-adapter loop below, and `init_command`'s one-key `jailbee new`
-    repair reads it through this function, so the two cannot drift.
-    """
-    # Keyed, not unpacked: `((key, value),) = env.items()` raised `ValueError`
-    # the moment `wiring` returned anything but exactly one variable, and that
-    # is the adapter's business to change, not an invariant this caller can
-    # enforce. This function is about one key, so it asks for that key.
-    value = CLAUDE.wiring(cfg, CLAUDE.holder_override(cfg)).env.get(
-        "CLAUDE_SECURESTORAGE_CONFIG_DIR"
-    )
-    if not value:
-        return None
-    return ("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", value)
+# CLAUDE_CREDS_DIRNAME, CLAUDE_CREDS_DEVICE and CLAUDE_SECURESTORAGE_ENV now
+# live on the adapter (`jailbee.accounts.adapters.claude`), which is the single
+# source of truth for the shared-credential device and env key; re-imported
+# above so every existing caller of `jailbee.profiles.CLAUDE_CREDS_*` keeps
+# working.
 
 
 DEFAULT_CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -289,8 +266,9 @@ def base_profile_yaml(cfg: Config) -> str:
     # it ended up empty. Scoped to this one key on purpose: other
     # env vars keep their existing "repo override always wins, even empty"
     # behaviour.
-    if not profile_config.get("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"):
-        profile_config.pop("environment.CLAUDE_SECURESTORAGE_CONFIG_DIR", None)
+    securestorage_key = f"environment.{CLAUDE_SECURESTORAGE_ENV}"
+    if not profile_config.get(securestorage_key):
+        profile_config.pop(securestorage_key, None)
 
     profile = {
         "name": profile_names(cfg).base,

@@ -317,8 +317,7 @@ def test_base_profile_omits_securestorage_dir_when_claude_is_disabled(make_cfg, 
 def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
     """An empty value is NOT the same as an unset variable: Claude Code falls
     back to `~/.claude` for it, silently pointing credential lookup back at the
-    config home. A `container.env` entry set to "" must therefore drop the key
-    rather than write it."""
+    config home. The adapter must therefore omit the key entirely."""
     from jailbee.accounts.adapters.claude import CLAUDE
 
     cfg = make_cfg(
@@ -328,9 +327,19 @@ def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
         container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
     )
     assert CLAUDE.wiring(cfg, tmp_path / "creds" / "work").env == {}
-    # The helper returning None is not enough on its own: base_profile_yaml
-    # also runs an unconditional `container.env` passthrough loop that could
-    # re-write the same key to "". Assert on the actual rendered profile.
+
+
+def test_an_empty_user_override_does_not_render_securestorage_dir(make_cfg, tmp_path):
+    """The rendered-profile half, asserted explicitly: the pooled-adapter loop
+    omits the key, then the unconditional `container.env` passthrough can
+    re-write it as "", so `base_profile_yaml` drops it. Omitting it from the
+    helper alone would not be enough."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        credential_group="work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
+    )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
     assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
 

@@ -2010,3 +2010,179 @@ def test_registered_repos_is_public(tmp_path: Path) -> None:
     _register("other", tmp_path / "other")
 
     assert ("other", tmp_path / "other") in engine.registered_repos()
+
+
+# --- `prepare_config_home`: seeding a fresh holder --------------------------
+#
+# Moved here from `test_init.py`: the reconciliation now lives on the adapter,
+# so its behaviour is tested beside it. `init_command` only wires it into the
+# shared-dirs helper (covered there).
+
+
+def _prepared_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A group repo whose config home exists, with an isolated store root."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg = _cfg(tmp_path, group="work")
+    (cfg.shared_dir / "claude").mkdir(parents=True, exist_ok=True)
+    return cfg
+
+
+def _prepare(cfg) -> None:
+    CLAUDE.prepare_config_home(cfg, CLAUDE.config_home(cfg))
+
+
+def _holder_cred(cfg) -> Path:
+    return engine.credential_in(CLAUDE, engine.holder_dir(CLAUDE, cfg))
+
+
+def test_prepare_config_home_creates_the_holder_0700(tmp_path: Path, monkeypatch) -> None:
+    cfg = _prepared_cfg(tmp_path, monkeypatch)
+
+    _prepare(cfg)
+
+    holder = engine.holder_dir(CLAUDE, cfg)
+    assert holder.is_dir()
+    assert holder.stat().st_mode & 0o777 == 0o700
+
+
+def test_prepare_config_home_moves_the_repos_credential_in(tmp_path: Path, monkeypatch) -> None:
+    """Moved, never copied: two copies of one grant means two refreshers, and
+    the first rotation logs one side out."""
+    cfg = _prepared_cfg(tmp_path, monkeypatch)
+    repo_cred = engine.credential_in(CLAUDE, CLAUDE.config_home(cfg))
+    repo_cred.write_text('{"token": "sentinel"}')
+
+    _prepare(cfg)
+
+    assert not repo_cred.exists()
+    assert _holder_cred(cfg).read_text() == '{"token": "sentinel"}'
+
+
+def _two_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cfg = _prepared_cfg(tmp_path, monkeypatch)
+    holder = engine.holder_dir(CLAUDE, cfg)
+    holder.mkdir(parents=True)
+    holder_cred = engine.credential_in(CLAUDE, holder)
+    holder_cred.write_text("group")
+    repo_cred = engine.credential_in(CLAUDE, CLAUDE.config_home(cfg))
+    repo_cred.write_text("repo")
+    return cfg, holder_cred, repo_cred
+
+
+def test_prepare_config_home_adopting_the_holder_deletes_the_repos_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg, holder_cred, repo_cred = _two_credentials(tmp_path, monkeypatch)
+    monkeypatch.setattr(claude_adapter, "choose_shared_credential", lambda *_a: "group")
+
+    _prepare(cfg)
+
+    assert holder_cred.read_text() == "group"
+    assert not repo_cred.exists()
+
+
+def test_prepare_config_home_promoting_this_repo_replaces_the_holders_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg, holder_cred, repo_cred = _two_credentials(tmp_path, monkeypatch)
+    monkeypatch.setattr(claude_adapter, "choose_shared_credential", lambda *_a: "repo")
+
+    _prepare(cfg)
+
+    assert holder_cred.read_text() == "repo"
+    assert not repo_cred.exists()
+
+
+def test_prepare_config_home_cancelled_is_refused_and_changes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from jailbee.config import ConfigError
+
+    cfg, holder_cred, repo_cred = _two_credentials(tmp_path, monkeypatch)
+    monkeypatch.setattr(claude_adapter, "choose_shared_credential", lambda *_a: None)
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _prepare(cfg)
+
+    assert holder_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_prepare_config_home_without_a_tty_is_refused(tmp_path: Path, monkeypatch, mocker) -> None:
+    """The default chooser must not block a piped/CI `jailbee apply` on stdin."""
+    from jailbee.config import ConfigError
+
+    cfg, holder_cred, repo_cred = _two_credentials(tmp_path, monkeypatch)
+    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    select = mocker.patch("questionary.select")
+
+    with pytest.raises(ConfigError, match="already holds a credential"):
+        _prepare(cfg)
+
+    select.assert_not_called()
+    assert holder_cred.read_text() == "group"
+    assert repo_cred.read_text() == "repo"
+
+
+def test_prepare_config_home_never_asks_when_only_one_side_has_a_credential(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """The prompt exists for the ambiguous case only — a plain join stays silent."""
+    cfg = _prepared_cfg(tmp_path, monkeypatch)
+    repo_cred = engine.credential_in(CLAUDE, CLAUDE.config_home(cfg))
+    repo_cred.write_text("repo")
+    chooser = mocker.patch.object(claude_adapter, "choose_shared_credential")
+
+    _prepare(cfg)
+
+    chooser.assert_not_called()
+    assert _holder_cred(cfg).read_text() == "repo"
+
+
+def test_prepare_config_home_leaves_an_existing_holder_credential_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg = _prepared_cfg(tmp_path, monkeypatch)
+    holder = engine.holder_dir(CLAUDE, cfg)
+    holder.mkdir(parents=True)
+    holder_cred = engine.credential_in(CLAUDE, holder)
+    holder_cred.write_text("group")
+
+    _prepare(cfg)
+
+    assert holder_cred.read_text() == "group"
+
+
+def test_prepare_config_home_is_a_noop_for_a_group_less_repo(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    shared = tmp_path / "shared"
+    (shared / "claude").mkdir(parents=True)
+    cfg = make_cfg(tmp_path, shared_dir=shared, claude={"enabled": True})
+    repo_cred = shared / "claude" / ".credentials.json"
+    repo_cred.write_text("repo")
+
+    _prepare(cfg)
+
+    assert repo_cred.read_text() == "repo"
+
+
+# --- The single shared-credential env constant ------------------------------
+
+
+def test_wiring_env_key_follows_the_shared_constant(tmp_path: Path, monkeypatch) -> None:
+    """Carryover item 3: one constant, so a rename cannot desync the profile
+    render from the adapter's own wiring. Patching it rewrites the key
+    `ClaudeAdapter.wiring` emits — the same key `profiles` and the `jailbee
+    new` repair read — rather than leaving a literal behind."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(claude_adapter, "CLAUDE_SECURESTORAGE_ENV", "JAILBEE_SECURESTORAGE")
+    cfg = make_cfg(
+        tmp_path / "repo",
+        shared_dir=tmp_path / "shared",
+        claude={"enabled": True},
+        credential_group="work",
+    )
+
+    env = CLAUDE.wiring(cfg, CLAUDE.holder_override(cfg)).env
+
+    assert env == {"JAILBEE_SECURESTORAGE": "/home/dev/.claude-creds"}

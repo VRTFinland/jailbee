@@ -393,7 +393,7 @@ def test_global_template_ships_a_default_credential_group():
     overwrite an existing file without --force, so no host that predates the
     key is opted in behind the user's back. That matters because joining a
     group MOVES a repo's credential and refuses when two repos each hold one
-    (`init_command._ensure_claude_credentials_dir`) — a migration this
+    (`ClaudeAdapter.prepare_config_home`) — a migration this
     template-only default deliberately avoids.
     """
     parsed = yaml.safe_load(render_global_template())

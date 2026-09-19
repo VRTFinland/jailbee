@@ -151,69 +151,12 @@ def ensure_group_dir(agent: str, name: str) -> Path:
     Incus rejects a disk device whose source path does not exist, so this
     runs before any device is attached. 0700 because the directory holds a
     live credential and lives outside every repo — the same mode
-    `init_command._ensure_claude_credentials_dir` uses.
+    `ClaudeAdapter.prepare_config_home` uses.
     """
     target = group_dir(agent, validate_group_name(name))
     target.mkdir(parents=True, exist_ok=True)
     target.chmod(0o700)
     return target
-
-
-# The five helpers below are Claude-specific wiring: how the credential
-# device and its env key are named, and where the container's local
-# override device already lives. Phase 2 is expected to fold these into
-# the Claude adapter as a second `base.Wiring`-like hook that models the
-# per-container `incus config_set` path (today's `base.Wiring` only models
-# the profile render) — design work out of scope for phase 1, whose mandate
-# is no behaviour change.
-
-
-def _creds_env_key() -> str:
-    return "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"
-
-
-def _creds_mount_path() -> str:
-    from jailbee.config import CONTAINER_USERNAME
-    from jailbee.profiles import CLAUDE_CREDS_DIRNAME
-
-    return f"/home/{CONTAINER_USERNAME}/{CLAUDE_CREDS_DIRNAME}"
-
-
-def _config_home_path() -> str:
-    from jailbee.config import CONTAINER_USERNAME
-
-    return f"/home/{CONTAINER_USERNAME}/.claude"
-
-
-def _profile_has_creds_device(cfg: Config) -> bool:
-    """Whether `<prefix>-binds` carries the shared-credential device.
-
-    `profiles.py` renders it only when the repo itself resolves a group,
-    and `config_device_override` fails when there is nothing to override
-    (`incus.py:504`). Derived from the config rather than read back from
-    Incus so it cannot disagree with what the next `jailbee apply` writes.
-    """
-    return cfg.claude.enabled and cfg.credential_group is not None
-
-
-def _local_creds_device(incus: Incus, container: str) -> dict[str, str] | None:
-    """The container's own instance-local `claude-creds` device, or None.
-
-    Reads `devices` (instance-local), not `expanded_devices` (profile-merged)
-    — the question is whether a local override already shadows the profile,
-    exactly as `egress_scope._local_eth0` asks for `eth0`. Needed because
-    `config_device_override` fails once a local device already exists
-    (`incus.py:504`), which a second `set_container_group` call on the same
-    container — the feature's whole point — would otherwise hit.
-    """
-    from jailbee.profiles import CLAUDE_CREDS_DEVICE
-
-    for raw in incus.list_containers():
-        if raw.get("name") == container:
-            devices = raw.get("devices") or {}
-            device = devices.get(CLAUDE_CREDS_DEVICE)
-            return dict(device) if device else None
-    return None
 
 
 def set_container_group(
@@ -224,42 +167,34 @@ def set_container_group(
 ) -> None:
     """Point one container at `group`, or at no group when `group is None`.
 
-    Three instance-level writes, all of which outrank the profile, so a
-    later `jailbee apply` may re-render `<prefix>-binds` freely without
-    disturbing the override.
+    The group is one value shared by every pooled agent, so each adapter wires
+    its own instance-local device and env key, and the shared label is written
+    **once, after** every adapter has been asked: a reader must never see a
+    label naming a holder whose device is not mounted yet.
 
-    The environment key is written **always**, not only when the repo has
-    no group of its own: `profiles.claude_securestorage_dir_env` returns
-    None for a group-less repo, so the profile carries no such key, and if
-    the repo's group is later removed the profile would drop the key out
-    from under a still-overridden container.
+    Every write is instance-level, so it outranks the profile: a later
+    `jailbee apply` may re-render `<prefix>-binds` freely without disturbing
+    the override.
+
+    `group is None` is an explicit "no group" override, not a clear. Each
+    adapter is told to point the container back at its own config home — for
+    Claude that means removing `claude-creds` and setting secure storage to
+    `~/.claude`, which omitting the env value alone would not achieve. The
+    label becomes `NO_GROUP`, so an unlabelled container still means "inherit".
     """
-    from jailbee.profiles import CLAUDE_CREDS_DEVICE
+    from jailbee.accounts.adapters import base
 
+    adapters = base.pooled_adapters(cfg)
     if group is None:
-        incus.config_device_remove(container, CLAUDE_CREDS_DEVICE, missing_ok=True)
-        incus.config_set(container, _creds_env_key(), _config_home_path())
+        for adapter in adapters:
+            adapter.set_container_group(cfg, incus, container, None)
         incus.config_set(container, GROUP_LABEL, NO_GROUP)
         return
 
-    source = str(ensure_group_dir("claude", group))
-    existing = _local_creds_device(incus, container)
-    if existing is not None:
-        # A local device already shadows the profile (this container has
-        # been switched before) — update it in place, since
-        # `config_device_override` only works the first time.
-        incus.config_device_set(container, CLAUDE_CREDS_DEVICE, {"source": source})
-    elif _profile_has_creds_device(cfg):
-        incus.config_device_override(container, CLAUDE_CREDS_DEVICE, {"source": source})
-    else:
-        incus.config_device_add(
-            container,
-            CLAUDE_CREDS_DEVICE,
-            "disk",
-            {"source": source, "path": _creds_mount_path()},
-        )
-    incus.config_set(container, _creds_env_key(), _creds_mount_path())
-    incus.config_set(container, GROUP_LABEL, group)
+    name = validate_group_name(group)
+    for adapter in adapters:
+        adapter.set_container_group(cfg, incus, container, ensure_group_dir(adapter.name, name))
+    incus.config_set(container, GROUP_LABEL, name)
 
 
 def override_is_redundant(cfg: Config, group: str | None) -> bool:
@@ -271,18 +206,20 @@ def override_is_redundant(cfg: Config, group: str | None) -> bool:
     behind on the old one.
 
     A named group is redundant only when the profile really carries the same
-    device. With ``claude.enabled: false`` it carries none
-    (`_profile_has_creds_device`), so the label is the only thing mounting
-    the credential and dropping it would change what the container reads.
-    ``None`` — the explicit "no group" override — is redundant whenever the
-    repo shares no group either: neither side then mounts anything, and the
-    env key the label writes names the config home Claude Code defaults to.
+    device. With ``claude.enabled: false`` it carries none (no pooled adapter
+    claims it), so the label is the only thing mounting the credential and
+    dropping it would change what the container reads. ``None`` — the
+    explicit "no group" override — is redundant whenever the repo shares no
+    group either: neither side then mounts anything, and the env key the
+    label writes names the config home Claude Code defaults to.
     """
+    from jailbee.accounts.adapters import base
     from jailbee.accounts.engine import repo_group
 
     if group != repo_group(cfg):
         return False
-    return group is None or _profile_has_creds_device(cfg)
+    adapters = base.pooled_adapters(cfg)
+    return group is None or any(adapter.profile_has_group(cfg) for adapter in adapters)
 
 
 def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
@@ -305,12 +242,17 @@ def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
     return sorted(out)
 
 
-def clear_container_group(incus: Incus, container: str) -> None:
-    """Drop the override so the container inherits the repo's group again."""
-    from jailbee.profiles import CLAUDE_CREDS_DEVICE
+def clear_container_group(cfg: Config, incus: Incus, container: str) -> None:
+    """Drop the override so the container inherits the repo's group again.
 
-    incus.config_device_remove(container, CLAUDE_CREDS_DEVICE, missing_ok=True)
-    incus.config_unset(container, _creds_env_key())
+    Every pooled adapter is asked to remove its own instance-local wiring
+    first; the shared label goes last, so no reader can see a label naming a
+    holder whose device has already been torn down.
+    """
+    from jailbee.accounts.adapters import base
+
+    for adapter in base.pooled_adapters(cfg):
+        adapter.clear_container_group(cfg, incus, container)
     incus.config_unset(container, GROUP_LABEL)
 
 

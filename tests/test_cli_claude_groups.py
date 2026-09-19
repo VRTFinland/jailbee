@@ -486,7 +486,7 @@ def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker
     """Moving a container back onto the repo's own group must leave no override
     behind: the label outranks the profile, so the container would otherwise
     stay on `work` the next time the repo's group changed."""
-    _, incus = group_env
+    cfg, incus = group_env
     incus.config_get.side_effect = _labels(mocker, **{"myrepo-b": "personal"})
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
@@ -495,7 +495,7 @@ def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker
     result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
 
     assert result.exit_code == 0, result.output
-    clearer.assert_called_once_with(incus, "myrepo-b")
+    clearer.assert_called_once_with(cfg, incus, "myrepo-b")
     setter.assert_not_called()
 
 
@@ -575,8 +575,8 @@ def test_set_drops_an_override_the_change_made_redundant(group_env, mocker, tmp_
     result = runner.invoke(app, ["claude", "group", "set", "personal"])
 
     assert result.exit_code == 0, result.output
-    _, incus = group_env
-    clearer.assert_called_once_with(incus, "myrepo-b")
+    cfg, incus = group_env
+    clearer.assert_called_once_with(cfg, incus, "myrepo-b")
     assert "myrepo-b" in result.output
 
 
@@ -629,8 +629,8 @@ def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mock
     result = runner.invoke(app, ["claude", "group", "unset"])
 
     assert result.exit_code == 0, result.output
-    _, incus = group_env
-    clearer.assert_called_once_with(incus, "myrepo-b")
+    cfg, incus = group_env
+    clearer.assert_called_once_with(cfg, incus, "myrepo-b")
 
 
 # --- Creating and removing a credential group --------------------------------

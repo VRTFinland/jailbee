@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +20,8 @@ from jailbee.accounts import engine
 from jailbee.accounts.adapters import base
 from jailbee.accounts.models import Identity, LiveAccount, slug_for
 from jailbee.claude_locks import ClaudeLockTimeoutError, config_lock
-from jailbee.config import CONTAINER_USERNAME
+from jailbee.config import CONTAINER_USERNAME, ConfigError
+from jailbee.tui import choose_shared_credential, success
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -35,6 +37,16 @@ log = logging.getLogger(__name__)
 
 CREDENTIAL_FILE = ".credentials.json"
 """The filename Claude Code reads a login from, inside whichever holder it uses."""
+
+
+CLAUDE_SECURESTORAGE_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+"""The environment variable Claude Code reads a shared credential from.
+
+Every reader and writer imports this one name — the profile render, its
+empty-value guard, and the `jailbee new` repair — so a rename cannot split
+`ClaudeAdapter.wiring` from the profile that mirrors it (carryover item 3).
+The `environment.` prefix a profile key needs is added by the caller.
+"""
 
 
 def identity_file(home: Path) -> Path:
@@ -677,6 +689,39 @@ def _stamp_account_record(path: Path, record: dict[str, Any] | None) -> None:
         log.debug("could not record the account of the login parked at %s", path, exc_info=True)
 
 
+def _creds_env_key() -> str:
+    """The profile/config key that names Claude Code's credential directory."""
+    return f"environment.{CLAUDE_SECURESTORAGE_ENV}"
+
+
+def _creds_mount_path() -> str:
+    """Where a shared credential directory mounts inside the container."""
+    return f"/home/{CONTAINER_USERNAME}/{CLAUDE_CREDS_DIRNAME}"
+
+
+def _config_home_path() -> str:
+    """Claude Code's own config home, the explicit no-group override target."""
+    return f"/home/{CONTAINER_USERNAME}/.claude"
+
+
+def _local_creds_device(incus: Incus, container: str) -> dict[str, str] | None:
+    """The container's own instance-local `claude-creds` device, or None.
+
+    Reads `devices` (instance-local), not `expanded_devices` (profile-merged)
+    — the question is whether a local override already shadows the profile,
+    exactly as `egress_scope._local_eth0` asks for `eth0`. Needed because
+    `config_device_override` fails once a local device already exists
+    (`incus.py:504`), which a second `set_container_group` call on the same
+    container — the feature's whole point — would otherwise hit.
+    """
+    for raw in incus.list_containers():
+        if raw.get("name") == container:
+            devices = raw.get("devices") or {}
+            device = devices.get(CLAUDE_CREDS_DEVICE)
+            return dict(device) if device else None
+    return None
+
+
 class ClaudeAdapter:
     name = "claude"
     credential_file = CREDENTIAL_FILE
@@ -759,10 +804,8 @@ class ClaudeAdapter:
         if not cfg.claude.enabled or group_dir is None:
             return base.Wiring()
         home = f"/home/{CONTAINER_USERNAME}"
-        value = cfg.container.env.get(
-            "CLAUDE_SECURESTORAGE_CONFIG_DIR", f"{home}/{CLAUDE_CREDS_DIRNAME}"
-        )
-        env = {"CLAUDE_SECURESTORAGE_CONFIG_DIR": value} if value else {}
+        value = cfg.container.env.get(CLAUDE_SECURESTORAGE_ENV, f"{home}/{CLAUDE_CREDS_DIRNAME}")
+        env = {CLAUDE_SECURESTORAGE_ENV: value} if value else {}
         return base.Wiring(
             devices={
                 CLAUDE_CREDS_DEVICE: {
@@ -775,8 +818,137 @@ class ClaudeAdapter:
         )
 
     def prepare_config_home(self, cfg: Config, home: Path) -> None:
-        """No-op here; `init_command` still owns the onboarding seed."""
-        return None
+        """Make `home` hold this repo's login, before a container reads it.
+
+        Runs on both `jailbee init` and `jailbee apply` via
+        `base.prepare_config_homes`, for the same reason as the shared-mount
+        creation: the binds profile names the holder directory as a disk
+        source, and Incus rejects every `profile edit`/`profile assign` when a
+        source path is missing.
+
+        Four cases, and the two-credential one is the interesting one:
+
+        * holder empty, repo has a credential → **move** it in. A copy would
+          give one refresh-token lineage two refreshers, and the first
+          rotation silently logs one side out.
+        * both hold one → **ask** (`choose_shared_credential`). Exactly one
+          login can be shared and the other becomes unused, so the answer is
+          the user's; the loser is deleted rather than kept, since nothing
+          would ever read it again and a stale grant left in the shared tree
+          only invites confusion. Cancelling — or having no TTY to ask on —
+          raises the original `ConfigError`, which still names the
+          `credentials.repos` opt-out for a user who wants neither shared
+          login. Deleting a credential is safe here precisely because the two
+          are *independent* grants: two `/login`s to one account each mint
+          their own refresh-token lineage, so deleting one leaves the
+          survivor's untouched. (Copying a credential blob to two places is
+          the operation that logs one side out; deleting one of two grants is
+          not.)
+        * only the holder holds one → nothing to do; the mount does the rest.
+        * neither → nothing to do; the first `/login` in any member lands here.
+
+        A repo that shares no group has `home == holder`, so there is no
+        reconciliation to do and this returns immediately.
+
+        Mode 0700: unlike the rest of the shared tree this directory holds a
+        live credential, and it lives outside every repo. The container's dev
+        user is idmapped to the host user, so 0700 is still readable inside.
+
+        No `.owner` stamp (see `init_command._ensure_shared_owner`): being
+        shared by several repos is the entire point here.
+        """
+        holder = engine.holder_dir(self, cfg)
+        if holder == home:
+            return
+
+        holder_cred = engine.credential_in(self, holder)
+        repo_cred = engine.credential_in(self, home)
+
+        if holder_cred.exists() and repo_cred.exists():
+            keep = choose_shared_credential(holder, repo_cred, cfg.container_prefix)
+            if keep is None:
+                raise ConfigError(
+                    f"{holder} already holds a credential, and so does this repo "
+                    f"({repo_cred}). Sharing one account means one of the two logins "
+                    f"becomes unused, and jailbee will not choose for you. Either "
+                    f"delete this repo's copy to adopt the group's login, or point "
+                    f"this repo at another group (or `null`) under "
+                    f"`credentials.repos` in ~/.config/jailbee/global.yaml."
+                )
+            if keep == "group":
+                repo_cred.unlink()
+                success(f"Adopted the group's Claude login; deleted this repo's copy: {repo_cred}")
+            else:
+                holder_cred.unlink()
+                success(f"Replaced the group's Claude login with this repo's: {holder}")
+
+        holder.mkdir(parents=True, exist_ok=True)
+        holder.chmod(0o700)
+
+        if not holder_cred.exists() and repo_cred.exists():
+            # shutil.move, not Path.rename: `shared_dir` can be overridden to
+            # another filesystem, where rename fails with EXDEV.
+            shutil.move(str(repo_cred), str(holder_cred))
+            success(f"Moved this repo's Claude credential into the shared group dir: {holder}")
+
+    def profile_has_group(self, cfg: Config) -> bool:
+        """Whether `<prefix>-binds` carries Claude's shared-credential device.
+
+        `profiles.py` renders it only when the repo itself resolves a group,
+        and `config_device_override` fails when there is nothing to override
+        (`incus.py:504`). Derived from the config rather than read back from
+        Incus so it cannot disagree with what the next `jailbee apply` writes.
+        """
+        return cfg.claude.enabled and cfg.credential_group is not None
+
+    def set_container_group(
+        self,
+        cfg: Config,
+        incus: Incus,
+        container: str,
+        group_dir: Path | None,
+    ) -> None:
+        """Point `container` at `group_dir`'s credential, or back at `~/.claude`.
+
+        `group_dir` is None for the explicit no-group override: remove the
+        device and set secure storage to the config home. Writing the key is
+        what distinguishes this from `clear_container_group` — the instance
+        override outranks the profile, so it must carry the env it needs even
+        when the profile has none.
+
+        The env key is written **always**, not only when the repo has no group
+        of its own: `ClaudeAdapter.wiring` returns nothing for a group-less
+        repo, so the profile carries no such key, and if the repo's group is
+        later removed the profile would drop the key out from under a
+        still-overridden container.
+        """
+        if group_dir is None:
+            incus.config_device_remove(container, CLAUDE_CREDS_DEVICE, missing_ok=True)
+            incus.config_set(container, _creds_env_key(), _config_home_path())
+            return
+
+        source = str(group_dir)
+        existing = _local_creds_device(incus, container)
+        if existing is not None:
+            # A local device already shadows the profile (this container has
+            # been switched before) — update it in place, since
+            # `config_device_override` only works the first time.
+            incus.config_device_set(container, CLAUDE_CREDS_DEVICE, {"source": source})
+        elif self.profile_has_group(cfg):
+            incus.config_device_override(container, CLAUDE_CREDS_DEVICE, {"source": source})
+        else:
+            incus.config_device_add(
+                container,
+                CLAUDE_CREDS_DEVICE,
+                "disk",
+                {"source": source, "path": _creds_mount_path()},
+            )
+        incus.config_set(container, _creds_env_key(), _creds_mount_path())
+
+    def clear_container_group(self, cfg: Config, incus: Incus, container: str) -> None:
+        """Remove the device and unset the env key, restoring inheritance."""
+        incus.config_device_remove(container, CLAUDE_CREDS_DEVICE, missing_ok=True)
+        incus.config_unset(container, _creds_env_key())
 
 
 CLAUDE = ClaudeAdapter()

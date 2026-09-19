@@ -248,7 +248,7 @@ def choose_shared_credential(
 ) -> CredentialSide | None:
     """Ask which login a credential group should keep; ``None`` to cancel.
 
-    Reached only from `init_command._ensure_claude_credentials_dir`, and only
+    Reached only from `ClaudeAdapter.prepare_config_home`, and only
     in the one ambiguous case: the group directory and the joining repo both
     already hold a `.credentials.json`. Exactly one can survive — the loser is
     an independent grant that nothing would ever read again — and this is the

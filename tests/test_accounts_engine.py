@@ -92,6 +92,17 @@ class FakeAdapter:
     def prepare_config_home(self, cfg: Any, home: Path) -> None:
         return None
 
+    def profile_has_group(self, cfg: Any) -> bool:
+        return False
+
+    def set_container_group(
+        self, cfg: Any, incus: Any, container: str, group_dir: Path | None
+    ) -> None:
+        return None
+
+    def clear_container_group(self, cfg: Any, incus: Any, container: str) -> None:
+        return None
+
 
 class NoLiveSwitchAdapter(FakeAdapter):
     """An agent whose running session cannot survive a switch.
