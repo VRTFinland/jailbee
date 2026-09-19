@@ -1,4 +1,4 @@
-"""`jailbee claude group` — the CLI surface."""
+"""`jailbee account group` — the CLI surface."""
 
 from __future__ import annotations
 
@@ -61,11 +61,11 @@ class _ProbeAdapter:
 
 
 def test_bare_group_is_a_command_group_not_a_status_command(group_env):
-    """`jailbee claude ls` states which holder this repo reads, `jailbee ls`'s
+    """`jailbee account ls` states which holder this repo reads, `jailbee ls`'s
     CLAUDE column the per-container labels, and `jailbee doctor` the overrides
     that only repeat the repo — so a fourth, partial view here was just one
     more place to disagree with them."""
-    result = runner.invoke(app, ["claude", "group"])
+    result = runner.invoke(app, ["account", "group"])
 
     assert "create" in result.output
     assert "rm" in result.output
@@ -79,7 +79,7 @@ def test_use_applies_the_override(group_env, mocker):
     _, _incus = group_env
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code == 0
     assert setter.call_args.args[3] == "personal"
 
@@ -87,7 +87,7 @@ def test_use_applies_the_override(group_env, mocker):
 def test_use_refuses_while_claude_runs(group_env, mocker):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code != 0
     assert "--force" in result.output
     assert "An agent is running" in result.output
@@ -97,7 +97,7 @@ def test_use_refuses_while_claude_runs(group_env, mocker):
 def test_use_force_overrides_the_refusal(group_env, mocker):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a", "--force"])
+    result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a", "--force"])
     assert result.exit_code == 0
     setter.assert_called_once()
 
@@ -106,7 +106,7 @@ def test_use_proceeds_when_the_probe_cannot_tell(group_env, mocker):
     """`None` is "cannot tell" — it must not read as a refusal."""
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=None)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
     assert result.exit_code == 0
     setter.assert_called_once()
 
@@ -122,7 +122,7 @@ def test_use_probes_the_agent_name_when_the_command_is_empty(group_env, mocker):
     probe = mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     mocker.patch("jailbee.accounts.groups.set_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
 
     assert result.exit_code == 0, result.output
     assert probe.call_args.kwargs["command"] == "claude"
@@ -142,7 +142,7 @@ def test_use_checks_and_clears_every_enabled_agent(group_env, mocker):
     try:
         probe = mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
         mocker.patch("jailbee.accounts.groups.set_container_group")
-        result = runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+        result = runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
     finally:
         base.ADAPTERS.pop("fakeb", None)
 
@@ -154,20 +154,20 @@ def test_use_checks_and_clears_every_enabled_agent(group_env, mocker):
 def test_use_none_sets_no_group(group_env, mocker):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    runner.invoke(app, ["claude", "group", "use", "none", "myrepo-a"])
+    runner.invoke(app, ["account", "group", "use", "none", "myrepo-a"])
     assert setter.call_args.args[3] is None
 
 
 def test_use_rejects_a_bad_group_name(group_env, mocker):
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
-    result = runner.invoke(app, ["claude", "group", "use", "Work", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "Work", "myrepo-a"])
     assert result.exit_code != 0
     setter.assert_not_called()
 
 
 def test_use_without_a_container_errors_without_a_tty(group_env, mocker):
     mocker.patch("jailbee.cli._is_tty", return_value=False)
-    result = runner.invoke(app, ["claude", "group", "use", "personal"])
+    result = runner.invoke(app, ["account", "group", "use", "personal"])
     assert result.exit_code != 0
     assert "myrepo-a" in result.output
     assert "myrepo-b" in result.output
@@ -176,7 +176,7 @@ def test_use_without_a_container_errors_without_a_tty(group_env, mocker):
 def test_reset_clears_the_override(group_env, mocker):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
-    result = runner.invoke(app, ["claude", "group", "reset", "myrepo-b"])
+    result = runner.invoke(app, ["account", "group", "reset", "myrepo-b"])
     assert result.exit_code == 0
     clearer.assert_called_once()
 
@@ -188,7 +188,7 @@ def test_use_invalidates_the_repos_recorded_account(group_env, mocker):
     invalidate = mocker.patch(
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
-    runner.invoke(app, ["claude", "group", "use", "personal", "myrepo-a"])
+    runner.invoke(app, ["account", "group", "use", "personal", "myrepo-a"])
     invalidate.assert_called_once()
 
 
@@ -203,7 +203,7 @@ def test_set_invalidates_the_repos_recorded_account(group_env, mocker, tmp_path)
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
 
-    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+    result = runner.invoke(app, ["account", "group", "set", "personal"])
 
     assert result.exit_code == 0
     invalidate.assert_called_once()
@@ -220,7 +220,7 @@ def test_unset_invalidates_the_repos_recorded_account(group_env, mocker, tmp_pat
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
 
-    result = runner.invoke(app, ["claude", "group", "unset"])
+    result = runner.invoke(app, ["account", "group", "unset"])
 
     assert result.exit_code == 0
     invalidate.assert_called_once()
@@ -234,7 +234,7 @@ def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
-    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+    result = runner.invoke(app, ["account", "group", "set", "personal"])
     assert result.exit_code == 0
 
     import yaml
@@ -253,7 +253,7 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
-    runner.invoke(app, ["claude", "group", "set", "none"])
+    runner.invoke(app, ["account", "group", "set", "none"])
 
     import yaml
 
@@ -270,7 +270,7 @@ def test_unset_removes_the_entry(group_env, mocker, tmp_path):
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
-    runner.invoke(app, ["claude", "group", "unset"])
+    runner.invoke(app, ["account", "group", "unset"])
 
     import yaml
 
@@ -287,14 +287,14 @@ def test_set_rejects_the_reserved_name_before_writing(group_env, mocker, tmp_pat
 
     # `none` is the CLI's word for "no group", so it can never be written as a
     # group name; the refusal must come from a name that only *looks* usable.
-    result = runner.invoke(app, ["claude", "group", "set", "Work"])
+    result = runner.invoke(app, ["account", "group", "set", "Work"])
     assert result.exit_code != 0
     assert global_yaml.read_bytes() == before
 
 
 def test_set_takes_no_container_argument(group_env):
     """Scope separation: the permanent verb must not accept a container."""
-    result = runner.invoke(app, ["claude", "group", "set", "personal", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "set", "personal", "myrepo-a"])
     assert result.exit_code != 0
 
 
@@ -310,7 +310,7 @@ def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, t
         side_effect=lambda incus, container, *, command: container == "myrepo-b",
     )
 
-    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+    result = runner.invoke(app, ["account", "group", "set", "personal"])
 
     assert result.exit_code != 0
     assert "--force" in result.output
@@ -326,7 +326,7 @@ def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
 
-    result = runner.invoke(app, ["claude", "group", "set", "personal", "--force"])
+    result = runner.invoke(app, ["account", "group", "set", "personal", "--force"])
 
     assert result.exit_code == 0
     import yaml
@@ -347,7 +347,7 @@ def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker,
         side_effect=lambda incus, container, *, command: container == "myrepo-a",
     )
 
-    result = runner.invoke(app, ["claude", "group", "unset"])
+    result = runner.invoke(app, ["account", "group", "unset"])
 
     assert result.exit_code != 0
     assert "--force" in result.output
@@ -363,7 +363,7 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
 
-    result = runner.invoke(app, ["claude", "group", "unset", "--force"])
+    result = runner.invoke(app, ["account", "group", "unset", "--force"])
 
     assert result.exit_code == 0
     import yaml
@@ -373,7 +373,7 @@ def test_unset_force_overrides_the_refusal(group_env, mocker, tmp_path):
     assert "myrepo" not in loaded["credentials"]["repos"]
 
 
-def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
+def test_account_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
     """`-g` narrows the host-wide table; it must not point the *config* at
     another group. A holder view keeps the calling repo's config home while
     naming another group's directory (see `cli._holder_view`), and
@@ -388,7 +388,7 @@ def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
 
     mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
 
-    runner.invoke(app, ["claude", "ls", "-g", "personal"])
+    runner.invoke(app, ["account", "ls", "-g", "personal"])
 
     assert captured["holder"] == "work"
 
@@ -405,7 +405,7 @@ def holder_view_env(mocker, tmp_path, monkeypatch):
     from jailbee.global_config import GlobalConfig
     from tests.conftest import make_cfg
 
-    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
     cfg = cfg.model_copy(update={"credential_group": "work"})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch(
@@ -433,7 +433,7 @@ def _write_json(path, payload):
 def test_park_on_another_group_leaves_this_repos_recorded_account_alone(holder_view_env, mocker):
     """`-g` acts on a holder this repo is not a member of, so the repo's own
     `oauthAccount` — which describes *its* group's login — must not be touched.
-    Clearing it there is how a later `jailbee claude park` loses its name."""
+    Clearing it there is how a later `jailbee account park` loses its name."""
     import json
 
     from jailbee.accounts import groups
@@ -447,7 +447,7 @@ def test_park_on_another_group_leaves_this_repos_recorded_account_alone(holder_v
         {"claudeAiOauth": {"refreshToken": "rt-personal"}},
     )
 
-    result = runner.invoke(app, ["claude", "park", "-g", "personal"])
+    result = runner.invoke(app, ["account", "park", "-g", "personal"])
 
     assert result.exit_code == 0
     assert "myrepo" not in result.output.replace("myrepo-a", "")
@@ -484,10 +484,10 @@ def test_use_on_another_group_cannot_rename_this_repos_next_park(holder_view_env
     groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True, exist_ok=True)
 
     assert (
-        runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
+        runner.invoke(app, ["account", "use", "personal@example.com", "-g", "personal"]).exit_code
         == 0
     )
-    assert runner.invoke(app, ["claude", "park"]).exit_code == 0
+    assert runner.invoke(app, ["account", "park"]).exit_code == 0
 
     stored = {
         p.name: json.loads(p.read_text())["claudeAiOauth"]["refreshToken"]
@@ -516,10 +516,10 @@ def test_park_on_another_group_keeps_the_name_jailbee_activated(holder_view_env)
     groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True, exist_ok=True)
 
     assert (
-        runner.invoke(app, ["claude", "use", "personal@example.com", "-g", "personal"]).exit_code
+        runner.invoke(app, ["account", "use", "personal@example.com", "-g", "personal"]).exit_code
         == 0
     )
-    result = runner.invoke(app, ["claude", "park", "-g", "personal"])
+    result = runner.invoke(app, ["account", "park", "-g", "personal"])
 
     assert result.exit_code == 0
     assert "unknown-" not in result.output
@@ -554,7 +554,7 @@ def test_use_of_the_repos_own_group_drops_the_override_instead(group_env, mocker
     setter = mocker.patch("jailbee.accounts.groups.set_container_group")
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+    result = runner.invoke(app, ["account", "group", "use", "work", "myrepo-b"])
 
     assert result.exit_code == 0, result.output
     clearer.assert_called_once_with(cfg, incus, "myrepo-b")
@@ -567,7 +567,7 @@ def test_use_of_the_repos_own_group_says_no_override_was_written(group_env, mock
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     mocker.patch("jailbee.accounts.groups.clear_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+    result = runner.invoke(app, ["account", "group", "use", "work", "myrepo-b"])
 
     assert "override" in result.output
     assert "work" in result.output
@@ -586,7 +586,7 @@ def test_use_of_the_repos_own_group_keeps_the_account_when_nothing_changes(group
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
 
-    result = runner.invoke(app, ["claude", "group", "use", "work", "myrepo-a"])
+    result = runner.invoke(app, ["account", "group", "use", "work", "myrepo-a"])
 
     assert result.exit_code == 0, result.output
     invalidate.assert_not_called()
@@ -603,7 +603,7 @@ def test_use_of_the_repos_own_group_invalidates_when_the_holder_changes(group_en
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
 
-    runner.invoke(app, ["claude", "group", "use", "work", "myrepo-b"])
+    runner.invoke(app, ["account", "group", "use", "work", "myrepo-b"])
 
     invalidate.assert_called_once()
 
@@ -617,7 +617,7 @@ def test_reset_keeps_the_account_when_the_override_was_redundant(group_env, mock
         "jailbee.accounts.adapters.claude.invalidate_identity", return_value=True
     )
 
-    result = runner.invoke(app, ["claude", "group", "reset", "myrepo-b"])
+    result = runner.invoke(app, ["account", "group", "reset", "myrepo-b"])
 
     assert result.exit_code == 0, result.output
     invalidate.assert_not_called()
@@ -634,7 +634,7 @@ def test_set_drops_an_override_the_change_made_redundant(group_env, mocker, tmp_
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "set", "personal"])
+    result = runner.invoke(app, ["account", "group", "set", "personal"])
 
     assert result.exit_code == 0, result.output
     cfg, incus = group_env
@@ -650,7 +650,7 @@ def test_set_keeps_an_override_that_still_deviates(group_env, mocker, tmp_path):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "set", "third"])
+    result = runner.invoke(app, ["account", "group", "set", "third"])
 
     assert result.exit_code == 0, result.output
     clearer.assert_not_called()
@@ -673,7 +673,7 @@ def test_set_re_renders_the_profile_before_dropping_an_override(group_env, mocke
         side_effect=lambda *a, **k: order.append("clear"),
     )
 
-    runner.invoke(app, ["claude", "group", "set", "personal"])
+    runner.invoke(app, ["account", "group", "set", "personal"])
 
     assert order == ["profile", "clear"]
 
@@ -688,7 +688,7 @@ def test_unset_drops_an_override_the_host_default_made_redundant(group_env, mock
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")
 
-    result = runner.invoke(app, ["claude", "group", "unset"])
+    result = runner.invoke(app, ["account", "group", "unset"])
 
     assert result.exit_code == 0, result.output
     cfg, incus = group_env
@@ -704,7 +704,7 @@ def test_create_makes_the_directory_0700(group_env):
     from jailbee.accounts import groups
     from jailbee.accounts.adapters.claude import CLAUDE
 
-    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
+    result = runner.invoke(app, ["account", "group", "create", "fresh"])
 
     assert result.exit_code == 0, result.output
     created = groups.group_dir(CLAUDE.name, "fresh")
@@ -715,10 +715,10 @@ def test_create_makes_the_directory_0700(group_env):
 def test_create_names_what_to_do_with_the_new_group(group_env):
     """An empty group does nothing on its own, and the three ways to put it to
     use are not guessable from `--help` alone."""
-    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
+    result = runner.invoke(app, ["account", "group", "create", "fresh"])
 
     assert "jailbee account group set" in result.output
-    assert "claude use -g" in result.output
+    assert "account use -g" in result.output
 
 
 def test_create_is_idempotent(group_env):
@@ -727,7 +727,7 @@ def test_create_is_idempotent(group_env):
 
     groups.group_dir(CLAUDE.name, "fresh").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "create", "fresh"])
+    result = runner.invoke(app, ["account", "group", "create", "fresh"])
 
     assert result.exit_code == 0, result.output
     assert "already" in result.output
@@ -737,7 +737,7 @@ def test_create_is_idempotent(group_env):
 def test_create_refuses_a_name_it_could_not_address(group_env, bad):
     """`none` is the CLI's word for "no group", and the rest are outside the
     grammar that makes a group name safe as a path component."""
-    result = runner.invoke(app, ["claude", "group", "create", bad])
+    result = runner.invoke(app, ["account", "group", "create", bad])
 
     assert result.exit_code == 2
     # The refusal has to be *this* command's, not typer's "no such command":
@@ -752,7 +752,7 @@ def test_rm_removes_an_unused_empty_group(group_env):
 
     groups.group_dir(CLAUDE.name, "demo").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+    result = runner.invoke(app, ["account", "group", "rm", "demo"])
 
     assert result.exit_code == 0, result.output
     assert not groups.group_dir(CLAUDE.name, "demo").exists()
@@ -760,7 +760,7 @@ def test_rm_removes_an_unused_empty_group(group_env):
 
 def test_rm_of_a_group_that_does_not_exist_is_not_an_error(group_env):
     """The end state the caller asked for already holds."""
-    result = runner.invoke(app, ["claude", "group", "rm", "gone"])
+    result = runner.invoke(app, ["account", "group", "rm", "gone"])
 
     assert result.exit_code == 0, result.output
 
@@ -783,7 +783,7 @@ def test_rm_refuses_while_a_repo_resolves_to_the_group(holder_view_env, mocker):
     )
     groups.group_dir(CLAUDE.name, "work").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "rm", "work"])
+    result = runner.invoke(app, ["account", "group", "rm", "work"])
 
     assert result.exit_code == 2
     assert "myrepo" in result.output
@@ -804,7 +804,7 @@ def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
     )
     groups.group_dir(CLAUDE.name, "demo").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+    result = runner.invoke(app, ["account", "group", "rm", "demo"])
 
     assert result.exit_code == 2
     assert "global.yaml" in result.output
@@ -820,7 +820,7 @@ def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mock
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "rm", "personal"])
+    result = runner.invoke(app, ["account", "group", "rm", "personal"])
 
     assert result.exit_code == 2
     assert "myrepo-b" in result.output
@@ -847,7 +847,7 @@ def test_rm_refuses_while_a_container_carries_only_the_legacy_label(group_env, m
     ]
     groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True)
 
-    result = runner.invoke(app, ["claude", "group", "rm", "personal"])
+    result = runner.invoke(app, ["account", "group", "rm", "personal"])
 
     assert result.exit_code == 2
     assert "myrepo-b" in result.output
@@ -883,7 +883,7 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
         )[1],
     )
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"], input="y\n")
+    result = runner.invoke(app, ["account", "group", "rm", "demo"], input="y\n")
 
     assert result.exit_code == 0, result.output
     park.assert_called_once()
@@ -907,7 +907,7 @@ def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, 
     (holder / CREDENTIAL_FILE).write_text("{}")
     park = mocker.patch("jailbee.accounts.engine.park")
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"], input="n\n")
+    result = runner.invoke(app, ["account", "group", "rm", "demo"], input="n\n")
 
     assert result.exit_code != 0
     park.assert_not_called()
@@ -927,7 +927,7 @@ def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
     (holder / CREDENTIAL_FILE).write_text("{}")
     park = mocker.patch("jailbee.accounts.engine.park")
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+    result = runner.invoke(app, ["account", "group", "rm", "demo"])
 
     assert result.exit_code == 2
     assert "--yes" in result.output
@@ -945,7 +945,7 @@ def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
     holder.mkdir(parents=True)
     (holder / "notes.txt").write_text("mine")
 
-    result = runner.invoke(app, ["claude", "group", "rm", "demo"])
+    result = runner.invoke(app, ["account", "group", "rm", "demo"])
 
     assert result.exit_code == 2
     assert "notes.txt" in result.output
@@ -956,7 +956,7 @@ def test_rm_reports_what_it_refused_to_delete(group_env, mocker):
 
 
 def _built(mocker, *rows, **kwargs) -> None:
-    """Point `claude group ls` at a fabricated host-wide overview."""
+    """Point `account group ls` at a fabricated host-wide overview."""
     mocker.patch(
         "jailbee.accounts.overview.build", return_value=claude_overview_of(*rows, **kwargs)
     )
@@ -969,7 +969,7 @@ def test_group_ls_lists_every_group_and_what_it_holds(group_env, mocker):
         claude_row(None, group="fresh"),
     )
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "staff@corp.com" in result.output
@@ -980,7 +980,7 @@ def test_group_ls_lists_every_group_and_what_it_holds(group_env, mocker):
 
 def test_group_ls_leaves_out_the_parked_store_and_ungrouped_holders(group_env, mocker):
     """The subject here is the group, not the login: a parked file belongs to
-    no group, and an ungrouped holder is one repo's own. Both are `claude ls`."""
+    no group, and an ungrouped holder is one repo's own. Both are `account ls`."""
     _built(
         mocker,
         claude_row("staff@corp.com", group="staff"),
@@ -988,7 +988,7 @@ def test_group_ls_leaves_out_the_parked_store_and_ungrouped_holders(group_env, m
         claude_row("old@corp.com", live=False),
     )
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "staff@corp.com" in result.output
@@ -999,19 +999,19 @@ def test_group_ls_leaves_out_the_parked_store_and_ungrouped_holders(group_env, m
 def test_group_ls_says_which_group_this_repo_uses(group_env, mocker):
     _built(mocker, claude_row("staff@corp.com", group="work", mine=True))
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
     assert f"This repo ({group_env[0].container_prefix}) → group `work`" in _flat(result.output)
 
 
-def test_group_ls_points_at_claude_ls_for_the_whole_host(group_env, mocker):
-    """`claude group --help` names no way to see the logins themselves, and the
+def test_group_ls_points_at_account_ls_for_the_whole_host(group_env, mocker):
+    """`account group --help` names no way to see the logins themselves, and the
     parked store is invisible from this table by design."""
     _built(mocker, claude_row("staff@corp.com", group="staff"))
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
-    assert "jailbee claude ls" in _flat(result.output)
+    assert "jailbee account ls" in _flat(result.output)
 
 
 def test_group_ls_says_when_the_host_has_no_groups(group_env, mocker):
@@ -1019,13 +1019,13 @@ def test_group_ls_says_when_the_host_has_no_groups(group_env, mocker):
     not "nothing here" — and the next step is `create`."""
     _built(mocker, claude_row("old@corp.com", live=False))
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "group create" in _flat(result.output)
 
 
-def test_group_ls_json_carries_the_same_fields_as_claude_ls(group_env, mocker):
+def test_group_ls_json_carries_the_same_fields_as_account_ls(group_env, mocker):
     """One field set for both tables: two renderings of one row model could
     only disagree."""
     import json
@@ -1035,7 +1035,7 @@ def test_group_ls_json_carries_the_same_fields_as_claude_ls(group_env, mocker):
         claude_row("staff@corp.com", group="staff", repos=("myrepo",), containers=("myrepo-a",)),
     )
 
-    result = runner.invoke(app, ["claude", "group", "ls", "-o", "json"])
+    result = runner.invoke(app, ["account", "group", "ls", "-o", "json"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == [
@@ -1054,7 +1054,7 @@ def test_group_ls_json_carries_the_same_fields_as_claude_ls(group_env, mocker):
 def test_group_ls_warns_when_the_containers_could_not_be_listed(group_env, mocker):
     _built(mocker, claude_row("staff@corp.com", group="staff"), containers_known=False)
 
-    result = runner.invoke(app, ["claude", "group", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
 
     assert "could not be listed" in _flat(result.output)
 
@@ -1062,7 +1062,181 @@ def test_group_ls_warns_when_the_containers_could_not_be_listed(group_env, mocke
 def test_group_ls_exits_2_when_the_store_cannot_be_read(group_env, mocker):
     mocker.patch("jailbee.accounts.overview.build", side_effect=OSError("permission denied"))
 
-    result = runner.invoke(app, ["claude", "group", "ls"])
+    result = runner.invoke(app, ["account", "group", "ls"])
 
     assert result.exit_code == 2
     assert "permission denied" in result.output
+
+
+# --- Every enabled adapter, not Claude alone ----------------------------------
+
+
+class _GroupAdapter:
+    """A named second adapter, for the group commands' multi-agent paths.
+
+    Only what they call: `.name`, `credential_file`, `config_home` (through
+    `engine.members`) and `holder_override` (through `engine.holder_dir`).
+    `account_at` answers None, the "cannot name it" case.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.credential_file = ".credentials.json"
+
+    def config_home(self, cfg):
+        return cfg.shared_dir / self.name
+
+    def holder_override(self, cfg):
+        return None
+
+    def account_at(self, holder, found, *, prefer, authoritative):
+        return None
+
+
+@pytest.fixture
+def two_agents(group_env, mocker):
+    """`group_env`, plus a second enabled and registered pooled adapter."""
+    from jailbee.accounts.adapters import base
+    from tests.conftest import with_agent
+
+    cfg, incus = group_env
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    base.register(_GroupAdapter("fakea"))
+    yield cfg, incus
+    base.ADAPTERS.pop("fakea", None)
+
+
+def test_group_ls_combines_every_adapter_and_names_the_agent(two_agents, mocker):
+    """The shared group name resolves to one directory per agent, so the table
+    is every adapter's rows and `AGENT` is what tells them apart."""
+    from dataclasses import replace
+
+    def fake_build(adapter, cfg, gcfg, incus):
+        if adapter.name == "fakea":
+            return claude_overview_of(replace(claude_row("a@corp.com", group="a"), agent="fakea"))
+        return claude_overview_of(claude_row("c@corp.com", group="c"))
+
+    mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
+
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "c@corp.com" in result.output
+    assert "a@corp.com" in result.output
+    assert "fakea" in result.output
+
+
+def test_create_makes_a_directory_for_every_pooled_adapter(two_agents):
+    import stat
+
+    from jailbee.accounts import groups
+
+    result = runner.invoke(app, ["account", "group", "create", "fresh"])
+
+    assert result.exit_code == 0, result.output
+    for agent in ("claude", "fakea"):
+        created = groups.group_dir(agent, "fresh")
+        assert created.is_dir()
+        assert stat.S_IMODE(created.stat().st_mode) == 0o700
+
+
+def test_rm_parks_and_removes_the_group_for_every_adapter(two_agents, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.models import PoolChange
+
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    holders: dict[str, object] = {}
+    for agent in ("claude", "fakea"):
+        holder = groups.group_dir(agent, "demo")
+        holder.mkdir(parents=True)
+        (holder / ".credentials.json").write_text("{}")
+        holders[agent] = holder
+
+    def park(adapter, *args, **kwargs):
+        (holders[adapter.name] / ".credentials.json").unlink()
+        return PoolChange(f"{adapter.name}@corp.com", None, [], [], [])
+
+    park_mock = mocker.patch("jailbee.accounts.engine.park", side_effect=park)
+
+    result = runner.invoke(app, ["account", "group", "rm", "demo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert park_mock.call_count == 2
+    assert {call.args[0].name for call in park_mock.call_args_list} == {"claude", "fakea"}
+    for holder in holders.values():
+        assert not holder.exists()
+
+
+def test_rm_reports_the_adapter_that_failed_and_keeps_earlier_parks(two_agents, mocker):
+    """A failure on the second adapter must not roll the first one's moved
+    grant back by copying it: it is parked, and it stays parked."""
+    from jailbee.accounts import groups
+    from jailbee.accounts.models import PoolChange, PoolError
+
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    holders: dict[str, object] = {}
+    for agent in ("claude", "fakea"):
+        holder = groups.group_dir(agent, "demo")
+        holder.mkdir(parents=True)
+        (holder / ".credentials.json").write_text("{}")
+        holders[agent] = holder
+
+    def park(adapter, *args, **kwargs):
+        if adapter.name == "fakea":
+            raise PoolError("the credential lock is held")
+        (holders[adapter.name] / ".credentials.json").unlink()
+        return PoolChange("claude@corp.com", None, [], [], [])
+
+    mocker.patch("jailbee.accounts.engine.park", side_effect=park)
+
+    result = runner.invoke(app, ["account", "group", "rm", "demo"], input="y\n")
+
+    assert result.exit_code == 2
+    assert "fakea" in result.output
+    assert "claude@corp.com" in result.output
+    # The first adapter's credential is parked (gone from its empty directory,
+    # which was left in place rather than removed mid-failure); the second's is
+    # untouched.
+    assert not (holders["claude"] / ".credentials.json").exists()
+    assert holders["claude"].is_dir()
+    assert (holders["fakea"] / ".credentials.json").exists()
+
+
+# --- The hidden `jailbee claude` aliases --------------------------------------
+
+
+def test_claude_ls_alias_warns_once_and_forwards(mocker):
+    canonical = mocker.patch("jailbee.cli.account_ls_cmd")
+
+    result = runner.invoke(app, ["claude", "ls"])
+
+    assert "deprecated" in result.stderr.lower()
+    assert result.stderr.lower().count("deprecated") == 1
+    assert canonical.call_args.kwargs["agent"] == "claude"
+
+
+def test_claude_use_alias_warns_once_and_forwards_the_mutation(mocker):
+    canonical = mocker.patch("jailbee.cli.account_use_cmd")
+
+    result = runner.invoke(app, ["claude", "use", "new@x.com"])
+
+    assert "deprecated" in result.stderr.lower()
+    assert result.stderr.lower().count("deprecated") == 1
+    assert canonical.call_args.args[0] == "new@x.com"
+    assert canonical.call_args.kwargs["agent"] == "claude"
+
+
+def test_claude_group_ls_alias_warns_once_and_forwards(mocker):
+    """The nested tree too: a group wrapper forwards without an agent option,
+    because the membership name is shared by every adapter."""
+    canonical = mocker.patch("jailbee.cli.account_group_ls_cmd")
+
+    result = runner.invoke(app, ["claude", "group", "ls"])
+
+    assert "deprecated" in result.stderr.lower()
+    assert result.stderr.lower().count("deprecated") == 1
+    canonical.assert_called_once()
+    assert "agent" not in canonical.call_args.kwargs

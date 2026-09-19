@@ -711,6 +711,15 @@ def test_chrome_pool_ls_alias_keeps_its_help_text():
     assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
 
 
+def test_claude_command_tree_is_hidden_from_help():
+    """The legacy `jailbee claude ...` tree is kept as a deprecated alias, so it
+    must not appear in the top-level list of commands."""
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "claude" not in result.output
+
+
 def test_ls_without_dot_jailbee_config_synthesizes_by_default(tmp_path, monkeypatch, mocker):
     """Superseded expectation: this used to assert `ls` exits 1 in a
     config-less directory. Scratch-config synthesis (`scratch.enabled`
