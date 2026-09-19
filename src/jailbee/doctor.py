@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from sqlmodel import Session, select
 
-from jailbee.config import Config
+from jailbee.config import Config, ConfigError, normalize_credentials_key
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
@@ -247,7 +249,7 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
 
     The one failure it can report is a half-finished join: the group directory
     holds no credential while this repo's config home still does, which means
-    `jailbee apply` has not run since `claude_credentials` was configured.
+    `jailbee apply` has not run since `credentials` was configured.
     Until it does, the container mounts an empty directory and Claude Code
     answers "Not logged in".
 
@@ -284,10 +286,10 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
 def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
     """Report a configured credential group whose name the CLI cannot address.
 
-    `jailbee claude group` spells "no credential group" as the word
+    `jailbee account group` spells "no credential group" as the word
     `none`, so a group literally named `none` cannot be set or selected
     from the command line. This is reported rather than validated in
-    `ClaudeCredentials`, because a host that already has one must keep
+    `Credentials`, because a host that already has one must keep
     loading — turning a working config into a hard load failure on upgrade
     would be worse than the ambiguity.
     """
@@ -299,13 +301,58 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
         return []
     return [
         CheckResult(
-            "claude credential group name",
+            "credential group name",
             False,
             f"`credentials` names a group called {', '.join(offending)}, "
-            "which `jailbee claude group` cannot address — it uses that word "
+            "which `jailbee account group` cannot address — it uses that word "
             "for 'no credential group'. Rename the group in "
             "~/.config/jailbee/global.yaml and rename its directory under "
             "<XDG_DATA_HOME>/jailbee/claude-credentials/ to match.",
+        )
+    ]
+
+
+def _check_legacy_credentials_key() -> list[CheckResult]:
+    """Report a `global.yaml` still spelling the credential block the old way.
+
+    `claude_credentials:` is deprecated in favour of `credentials:`, and the
+    config loader folds the old spelling into the new one before
+    `GlobalConfig` is built — by the time any check here holds the config, the
+    evidence is gone. That fold is why this reads the raw YAML itself, and why
+    the dismissible notice the loader prints is not enough: a dismissal is
+    invisible to doctor.
+
+    Not-ok, like the other legacy checks: the key keeps working only until
+    `LEGACY_REMOVAL_VERSION`, and nothing else says so on every run.
+    """
+    from jailbee.global_config import default_global_config_path
+
+    path = default_global_config_path()
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except OSError:  # an absent or unreadable file is not a diagnosis
+        return []
+    except yaml.YAMLError:
+        # A malformed file already fails the config load before doctor runs;
+        # this check owns only the key spelling.
+        return []
+    if not isinstance(raw, dict):
+        return []
+    try:
+        _, folded = normalize_credentials_key(raw, str(path))
+    except ConfigError:
+        # Both spellings at once is a hard load error the user already sees.
+        return []
+    if not folded:
+        return []
+    return [
+        CheckResult(
+            "legacy credentials key",
+            False,
+            f"`{path}` sets `claude_credentials`, deprecated and renamed to "
+            f"`credentials` — rename the key. The old spelling keeps working "
+            f"until {LEGACY_REMOVAL_VERSION}, where it is removed. See "
+            f"docs/config.md.",
         )
     ]
 
@@ -468,20 +515,23 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
-def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckResult]:
+def _check_redundant_credential_overrides(cfg: Config, incus: Incus) -> list[CheckResult]:
     """Report containers whose group override only repeats the repo's group.
 
     Silent when there are none — the rule every optional check here follows.
     Reported as a failure when there are, because it is state that changes
     behaviour later rather than now: the override outranks the profile, so
-    the next `jailbee claude group set` would leave exactly these containers
+    the next `jailbee account group set` would leave exactly these containers
     behind on the group the repo just left.
 
-    `jailbee claude group use`/`set`/`unset` clear such an override as they
+    `jailbee account group use`/`set`/`unset` clear such an override as they
     go, so what this finds is either a leftover from before that rule existed
-    or one written by hand. Degrades to silence when the daemon cannot be
-    reached, as `_check_claude_pool` does: a discoverability nicety must not
-    turn an unreachable Incus into a failed check.
+    or one written by hand. The override label is read new-first with the
+    pre-rename spelling as fallback (see `accounts.groups`), so a container
+    labelled by an older jailbee is still diagnosed. Degrades to silence when
+    the daemon cannot be reached, as `_check_claude_pool` does: a
+    discoverability nicety must not turn an unreachable Incus into a failed
+    check.
     """
     from jailbee.accounts import groups
 
@@ -493,11 +543,11 @@ def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckRe
         return []
     return [
         CheckResult(
-            "claude group overrides",
+            "credential group overrides",
             False,
             f"{', '.join(names)} carry a credential-group override that only "
             "repeats this repo's group, and it would outrank the next `jailbee "
-            "claude group set` — drop one with `jailbee claude group reset "
+            "account group set` — drop one with `jailbee account group reset "
             "<container>`.",
         )
     ]
@@ -594,12 +644,13 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     results.extend(_check_dismissed_notices())
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
+    results.extend(_check_legacy_credentials_key())
     results.extend(_check_claude_pool(cfg, incus, gcfg))
     if incus_available:
         # Behind the gate, unlike its neighbours: this one always reads
         # `incus list`, and a host with no `incus` binary must see no Incus
         # call at all rather than one that fails quietly.
-        results.extend(_check_redundant_claude_overrides(cfg, incus))
+        results.extend(_check_redundant_credential_overrides(cfg, incus))
 
     # 2c. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
