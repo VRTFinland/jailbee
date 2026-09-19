@@ -6,7 +6,7 @@ place that knows both:
 1. ``global.yaml``'s ``credentials`` (or its legacy spelling
    ``claude_credentials``) — the repo's permanent group, resolved onto
    ``Config.credential_group`` at load time.
-2. The container's ``user.jailbee.claude_group`` label — a temporary
+2. The container's ``user.jailbee.credential_group`` label — a temporary
    override for the length of that container's life.
 
 The container wins. Unlike ``egress_scope``'s three sources these are
@@ -33,8 +33,16 @@ if TYPE_CHECKING:
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
-GROUP_LABEL = "user.jailbee.claude_group"
+GROUP_LABEL = "user.jailbee.credential_group"
 """Container label naming this container's credential group."""
+
+LEGACY_GROUP_LABEL = "user.jailbee.claude_group"
+"""Pre-rename spelling of `GROUP_LABEL`.
+
+Read as a fallback so a container labelled by an older jailbee keeps its
+override; never written, and unset by every write so a container migrates to
+the canonical spelling the first time its group is touched.
+"""
 
 NO_GROUP = "_none"
 """Label value meaning "this container shares no group".
@@ -120,6 +128,8 @@ def container_override(incus: Incus, container: str) -> Override | None:
     """
     raw = incus.config_get(container, GROUP_LABEL)
     if not raw:
+        raw = incus.config_get(container, LEGACY_GROUP_LABEL)
+    if not raw:
         return None
     if raw == NO_GROUP:
         return Override(None)
@@ -159,6 +169,16 @@ def ensure_group_dir(agent: str, name: str) -> Path:
     return target
 
 
+def _write_group_label(incus: Incus, container: str, value: str) -> None:
+    """Set the canonical label and drop the pre-rename spelling.
+
+    The canonical value is written first: a reader mid-migration always sees
+    it, and never sees the legacy value once the new one exists.
+    """
+    incus.config_set(container, GROUP_LABEL, value)
+    incus.config_unset(container, LEGACY_GROUP_LABEL)
+
+
 def set_container_group(
     cfg: Config,
     incus: Incus,
@@ -188,13 +208,13 @@ def set_container_group(
     if group is None:
         for adapter in adapters:
             adapter.set_container_group(cfg, incus, container, None)
-        incus.config_set(container, GROUP_LABEL, NO_GROUP)
+        _write_group_label(incus, container, NO_GROUP)
         return
 
     name = validate_group_name(group)
     for adapter in adapters:
         adapter.set_container_group(cfg, incus, container, ensure_group_dir(adapter.name, name))
-    incus.config_set(container, GROUP_LABEL, name)
+    _write_group_label(incus, container, name)
 
 
 def override_is_redundant(cfg: Config, group: str | None) -> bool:
@@ -254,11 +274,12 @@ def clear_container_group(cfg: Config, incus: Incus, container: str) -> None:
     for adapter in base.pooled_adapters(cfg):
         adapter.clear_container_group(cfg, incus, container)
     incus.config_unset(container, GROUP_LABEL)
+    incus.config_unset(container, LEGACY_GROUP_LABEL)
 
 
 def _label_group(raw_config: dict[str, str]) -> str | _Inherit | None:
     """Read the group out of an `incus list` payload's config dict."""
-    raw = raw_config.get(GROUP_LABEL)
+    raw = raw_config.get(GROUP_LABEL) or raw_config.get(LEGACY_GROUP_LABEL)
     if not raw:
         return INHERIT
     if raw == NO_GROUP:

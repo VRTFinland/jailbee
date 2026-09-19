@@ -64,10 +64,11 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
-    # The container's Claude credential group, from
-    # `user.jailbee.claude_group`. None means it inherits the repo's group;
-    # `accounts.groups.NO_GROUP` means it deliberately shares none.
-    claude_group: str | None = None
+    # The container's credential group, from
+    # `user.jailbee.credential_group` (or its legacy spelling). None means it
+    # inherits the repo's group; `accounts.groups.NO_GROUP` means it
+    # deliberately shares none.
+    credential_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
@@ -210,6 +211,8 @@ def list_containers(
     per-instance state is not fetched; callers that only need names (shell
     completion) use it.
     """
+    from jailbee.accounts import groups
+
     own_names = profile_names(cfg)
     own_net_to_mode = {v: k for k, v in own_names.net_by_mode.items()}
 
@@ -294,7 +297,9 @@ def list_containers(
                 pr_number = None
         pr_author = config.get("user.jailbee.pr_author") == "1"
 
-        claude_group_raw = config.get("user.jailbee.claude_group")
+        credential_group_raw = config.get(groups.GROUP_LABEL) or config.get(
+            groups.LEGACY_GROUP_LABEL
+        )
 
         loose_until_raw = config.get("user.jailbee.loose_until")
         loose_until: datetime | None = None
@@ -320,7 +325,7 @@ def list_containers(
                 repo_dir=repo_dir,
                 pr_number=pr_number,
                 pr_author=pr_author,
-                claude_group=claude_group_raw or None,
+                credential_group=credential_group_raw or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
                 init_pid=init_pid,
@@ -638,11 +643,11 @@ class NewContainerOptions:
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     autofetch_done: bool = False
     # Credential group this container joins for its lifetime
-    # (`jailbee new --claude-group`). None means it inherits the repo's
-    # group. Applied before `incus start` so Claude finds the right
+    # (`jailbee new --credential-group`). None means it inherits the repo's
+    # group. Applied before `incus start` so the agent finds the right
     # credential on its first run. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
-    claude_group: str | None = None
+    credential_group: str | None = None
     # `jailbee new --wait` / `--no-wait`: force every autostart stage into the
     # foreground, or defer everything after the first stage to the detached
     # supervisor, whatever `detach:` says. None leaves the decision to the
@@ -1228,13 +1233,13 @@ def new_container(
         )
 
     # Before `start`: the credential mount and its env key must be in place
-    # when autostart first runs `claude`, or the container's first session
+    # when autostart first runs the agent, or the container's first session
     # authenticates against the repo's group and only picks up the override
     # after a restart.
-    if opts.claude_group is not None:
+    if opts.credential_group is not None:
         from jailbee.accounts import groups
 
-        wanted = None if opts.claude_group == groups.NO_GROUP else opts.claude_group
+        wanted = None if opts.credential_group == groups.NO_GROUP else opts.credential_group
         # An override naming the group this repo already resolves to is not a
         # preference but leftover state: it outranks the profile, so the next
         # `jailbee claude group set` would leave this one container behind on
@@ -1826,7 +1831,7 @@ def destroy_container(
     from jailbee.accounts import groups
 
     state = "Stopped"
-    had_claude_override = False
+    had_group_override = False
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
@@ -1837,8 +1842,11 @@ def destroy_container(
             # validity (spec §7.2), so this reads the raw config directly
             # rather than through `accounts.groups.container_override` (which
             # also validates and would need a second `incus.config_get`
-            # round trip for data already in hand).
-            had_claude_override = bool((raw.get("config") or {}).get(groups.GROUP_LABEL))
+            # round trip for data already in hand). Both spellings count.
+            labels = raw.get("config") or {}
+            had_group_override = bool(
+                labels.get(groups.GROUP_LABEL) or labels.get(groups.LEGACY_GROUP_LABEL)
+            )
             break
 
     if state == "Running":
@@ -1910,7 +1918,7 @@ def destroy_container(
     # repo that never touches `jailbee claude group` pays nothing extra.
     # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
     # and the destroy path."
-    if had_claude_override:
+    if had_group_override:
         from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
 
         invalidate_identity(CLAUDE.config_home(cfg))
@@ -2601,13 +2609,13 @@ def ls_field_specs(
             ),
         ),
         table_format.FieldSpec(
-            name="claude_group",
-            header="CLAUDE",
-            cell=lambda c: c.claude_group or "",
-            json=lambda c: c.claude_group,
+            name="group",
+            header="GROUP",
+            cell=lambda c: c.credential_group or "",
+            json=lambda c: c.credential_group,
             # Only worth a column when a container actually deviates: on
             # every other host every row would carry the same value, or
             # none at all.
-            show_if=lambda rows: any(c.claude_group for c in rows),
+            show_if=lambda rows: any(c.credential_group for c in rows),
         ),
     ]

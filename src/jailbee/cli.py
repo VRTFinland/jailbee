@@ -1154,7 +1154,7 @@ def list_cmd(
                 "full_name, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, ip, memory_limit, mem, cpu, doing, wt, ahead_diff, "
                 "ahead_count, conflict, local_diff, local_count, git_status, "
-                "claude_group, pr."
+                "group, pr."
             ),
         ),
     ] = None,
@@ -1168,6 +1168,7 @@ def list_cmd(
     config: ConfigOption = None,
 ) -> None:
     """List managed containers."""
+    from jailbee.config import models_columns
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
         list_containers,
@@ -1198,7 +1199,11 @@ def list_cmd(
     # error. A typo'd column name is not fatal here (or anywhere but `jailbee
     # config validate`) — the helper already recovered from it and just
     # warns.
-    columns = cfg.effective_ls_columns(_load_global())
+    columns = models_columns.canonicalize_column_config(cfg.effective_ls_columns(_load_global()))
+    # An explicit --fields string reaches `emit` unparsed, so normalize its
+    # legacy group aliases here, before both the cpu/doing scan below and
+    # `emit` itself.
+    fields = models_columns.canonical_ls_fields_spec(fields)
     # An explicit --fields flag beats the configured `fields` list outright: if
     # the config's selection narrowed the candidates first, a flag naming a
     # column outside that selection would have nothing left to pick from.
@@ -1458,12 +1463,21 @@ def new_cmd(
             ),
         ),
     ] = False,
+    credential_group: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-group",
+            help="Credential group for this container only, for its "
+            "lifetime. Use `none` for no group.",
+            autocompletion=completion.complete_claude_group,
+        ),
+    ] = None,
     claude_group: Annotated[
         str | None,
         typer.Option(
             "--claude-group",
-            help="Claude credential group for this container only, for its "
-            "lifetime. Use `none` for no group.",
+            hidden=True,
+            help="Deprecated alias for --credential-group.",
             autocompletion=completion.complete_claude_group,
         ),
     ] = None,
@@ -1849,15 +1863,21 @@ def new_cmd(
                 f"'jailbee registry up && jailbee apply'."
             )
 
-    resolved_claude_group: str | None = None
-    if claude_group is not None:
+    if credential_group is not None and claude_group is not None:
+        error(
+            "--credential-group and --claude-group are the same option, "
+            "under two names; pass only one."
+        )
+        raise typer.Exit(2)
+
+    group_flag = credential_group if credential_group is not None else claude_group
+    resolved_credential_group: str | None = None
+    if group_flag is not None:
         from jailbee.accounts import groups
 
         try:
-            resolved_claude_group = (
-                groups.NO_GROUP
-                if claude_group == "none"
-                else groups.validate_group_name(claude_group)
+            resolved_credential_group = (
+                groups.NO_GROUP if group_flag == "none" else groups.validate_group_name(group_flag)
             )
         except groups.GroupError as e:
             error(str(e))
@@ -1879,7 +1899,7 @@ def new_cmd(
             base=None,
             mount=True,
             assume_yes=yes,
-            claude_group=resolved_claude_group,
+            credential_group=resolved_credential_group,
             autostart_override=autostart_override,
         )
     else:
@@ -1902,7 +1922,7 @@ def new_cmd(
             untrusted_head=pr is not None and pr_info.is_cross_repository,
             clone_commit=pr_clone_commit,
             assume_yes=yes,
-            claude_group=resolved_claude_group,
+            credential_group=resolved_credential_group,
             autostart_override=autostart_override,
         )
 

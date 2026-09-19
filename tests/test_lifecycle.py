@@ -7753,7 +7753,53 @@ def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_
     invalidate.assert_not_called()
 
 
-def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker):
+def test_destroy_container_detects_an_override_under_the_canonical_label(
+    make_cfg, tmp_path, mocker
+):
+    """The canonical label is what every writer sets now; destroy must see it."""
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {"user.jailbee.credential_group": "personal"},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.accounts.adapters.claude.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_called_once_with(CLAUDE.config_home(cfg))
+
+
+def test_list_containers_reads_the_credential_group_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    payload = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {"user.jailbee.credential_group": "personal"},
+            "state": None,
+        }
+    ]
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = payload
+    rows = list_containers(cfg, incus)
+    assert rows[0].credential_group == "personal"
+
+
+def test_list_containers_reads_the_legacy_group_label(make_cfg, tmp_path, mocker):
+    """A container labelled before the rename keeps its override."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -7769,10 +7815,10 @@ def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker
     incus = mocker.MagicMock()
     incus.list_containers.return_value = payload
     rows = list_containers(cfg, incus)
-    assert rows[0].claude_group == "personal"
+    assert rows[0].credential_group == "personal"
 
 
-def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
+def test_list_containers_credential_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -7787,14 +7833,14 @@ def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_pa
         }
     ]
     rows = list_containers(cfg, incus)
-    assert rows[0].claude_group is None
+    assert rows[0].credential_group is None
 
 
 def test_ls_hides_the_group_column_when_nothing_deviates():
     from jailbee.lifecycle import ContainerInfo, ls_field_specs
 
     specs = {f.name: f for f in ls_field_specs(now=datetime.now(UTC))}
-    field = specs["claude_group"]
+    field = specs["group"]
     plain = [ContainerInfo(name="a", state="Running", network=None, ip=None, memory_limit=None)]
     assert field.show_if is not None
     assert field.show_if(plain) is False
@@ -7805,7 +7851,7 @@ def test_ls_hides_the_group_column_when_nothing_deviates():
             network=None,
             ip=None,
             memory_limit=None,
-            claude_group="personal",
+            credential_group="personal",
         )
     ]
     assert field.show_if(deviating) is True
@@ -7837,7 +7883,7 @@ def test_new_container_applies_the_group_before_start(tmp_path, mocker):
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group="personal",
+            credential_group="personal",
         ),
     )
 
@@ -7875,7 +7921,7 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group="personal",
+            credential_group="personal",
         ),
     )
 
@@ -7905,7 +7951,7 @@ def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group=groups.NO_GROUP,
+            credential_group=groups.NO_GROUP,
         ),
     )
 

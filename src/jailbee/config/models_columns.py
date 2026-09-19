@@ -71,6 +71,52 @@ class ColumnConfig(BaseModel):
 _COLUMN_DEFAULT = ColumnConfig()
 
 
+# Column-name aliases from the Claude-specific era of the credential-group
+# column. The canonical name is `group`; a config block or an explicit
+# `--fields` string spelling either alias is normalized before it is
+# validated or rendered, so `claude_group` (the name shipped before the
+# rename) and the short `claude` both keep working.
+_LS_FIELD_ALIASES: dict[str, str] = {
+    "claude": "group",
+    "claude_group": "group",
+}
+
+
+def canonical_ls_field(name: str) -> str:
+    """`name` with a legacy credential-group alias normalized to `group`."""
+    return _LS_FIELD_ALIASES.get(name, name)
+
+
+def canonical_ls_fields_spec(spec: str | None) -> str | None:
+    """Normalize the comma-separated names in an explicit `--fields` string.
+
+    ``None`` passes through, as does a string already naming only canonical
+    columns; the result is what ``table_format.emit`` parses.
+    """
+    if spec is None:
+        return None
+    return ",".join(canonical_ls_field(part.strip()) for part in spec.split(",") if part.strip())
+
+
+def canonicalize_column_config(block: ColumnConfig) -> ColumnConfig:
+    """`block` with legacy field aliases rewritten to canonical names.
+
+    Returns ``block`` itself when it names no alias, so the caller's
+    ``model_fields_set`` — and thus the repo-vs-global merge in
+    ``Config._effective_columns`` — is untouched for the common case.
+    """
+    fields = None if block.fields is None else [canonical_ls_field(n) for n in block.fields]
+    hide = [canonical_ls_field(n) for n in block.hide]
+    if fields == block.fields and hide == block.hide:
+        return block
+    updates: dict[str, object] = {}
+    if fields != block.fields:
+        updates["fields"] = fields
+    if hide != block.hide:
+        updates["hide"] = hide
+    return block.model_copy(update=updates)
+
+
 def _known_ls_field_names() -> set[str]:
     """Real `jailbee ls` / dashboard column names, including the LOCAL ones.
 
@@ -113,14 +159,16 @@ def validate_column_blocks(blocks: Sequence[tuple[str, ColumnConfig]]) -> list[s
                 f"name at least one column"
             )
         seen: set[str] = set()
-        for name in block.fields or []:
+        for raw_name in block.fields or []:
+            name = canonical_ls_field(raw_name)
             if name in seen:
                 issues.append(
                     f"{block_name}: duplicate field {name!r} in fields; "
                     f"each column may be named once"
                 )
             seen.add(name)
-        for name in list(block.fields or []) + list(block.hide):
+        for raw_name in list(block.fields or []) + list(block.hide):
+            name = canonical_ls_field(raw_name)
             if name not in known:
                 issues.append(f"{block_name}: unknown field {name!r}; allowed: {allowed}")
     return issues
@@ -177,12 +225,13 @@ def sanitize_column_blocks(
         updates: dict[str, object] = {}
 
         hide: list[str] = []
-        for name in block.hide:
+        for raw_name in block.hide:
+            name = canonical_ls_field(raw_name)
             if name in known:
                 hide.append(name)
             else:
                 warnings.append(
-                    f"{block_name}.hide: unknown field {name!r} ignored; allowed: {allowed}"
+                    f"{block_name}.hide: unknown field {raw_name!r} ignored; allowed: {allowed}"
                 )
         if hide != block.hide:
             updates["hide"] = hide
@@ -200,10 +249,12 @@ def sanitize_column_blocks(
         else:
             seen: set[str] = set()
             cleaned: list[str] = []
-            for name in block.fields:
+            for raw_name in block.fields:
+                name = canonical_ls_field(raw_name)
                 if name not in known:
                     warnings.append(
-                        f"{block_name}.fields: unknown field {name!r} ignored; allowed: {allowed}"
+                        f"{block_name}.fields: unknown field {raw_name!r} "
+                        f"ignored; allowed: {allowed}"
                     )
                     continue
                 if name in seen:

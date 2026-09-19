@@ -476,6 +476,8 @@ def _labels(mocker, **labels: str):
     from jailbee.accounts import groups
 
     def fake(container: str, key: str) -> str | None:
+        if key == groups.LEGACY_GROUP_LABEL:
+            return None
         assert key == groups.GROUP_LABEL
         return labels.get(container)
 

@@ -74,6 +74,35 @@ def test_container_override_ignores_a_garbage_label(mocker):
     assert groups.container_override(incus, "myrepo-x") is None
 
 
+def test_new_group_label_wins_over_legacy_label(mocker):
+    """The canonical label outranks the pre-rename spelling when both exist."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda _name, key: {
+        groups.GROUP_LABEL: "new",
+        groups.LEGACY_GROUP_LABEL: "old",
+    }.get(key)
+    assert groups.container_override(incus, "app-x") == groups.Override("new")
+
+
+def test_legacy_group_label_is_still_read(mocker):
+    """A container labelled before the rename keeps its override."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda _name, key: (
+        "old" if key == groups.LEGACY_GROUP_LABEL else None
+    )
+    assert groups.container_override(incus, "app-x") == groups.Override("old")
+
+
+def test_label_group_prefers_the_new_label():
+    assert (
+        groups._label_group({groups.GROUP_LABEL: "new", groups.LEGACY_GROUP_LABEL: "old"}) == "new"
+    )
+
+
+def test_label_group_falls_back_to_the_legacy_label():
+    assert groups._label_group({groups.LEGACY_GROUP_LABEL: "old"}) == "old"
+
+
 def test_effective_group_prefers_the_container(mocker, tmp_path: Path):
     incus = mocker.MagicMock()
     incus.config_get.return_value = "personal"
@@ -187,6 +216,19 @@ def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Pat
     assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, "personal")]
 
 
+def test_set_container_group_drops_the_legacy_label(monkeypatch, mocker, tmp_path: Path):
+    """One write path, one spelling: the new label is set and the old one gone."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> override path
+
+    groups.set_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x", "personal")
+
+    label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
+    assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, "personal")]
+    assert mocker.call("myrepo-x", groups.LEGACY_GROUP_LABEL) in incus.config_unset.call_args_list
+
+
 def test_set_container_group_updates_an_already_local_device(monkeypatch, mocker, tmp_path: Path):
     """A second `use` call must update the device in place, not override it.
 
@@ -229,6 +271,7 @@ def test_set_container_group_to_no_group_removes_the_device(monkeypatch, mocker,
     assert env_calls[0].args[2].endswith("/.claude")
     label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
     assert label_calls[0].args[2] == groups.NO_GROUP
+    assert mocker.call("myrepo-x", groups.LEGACY_GROUP_LABEL) in incus.config_unset.call_args_list
 
 
 def test_set_container_group_rejects_a_reserved_name(mocker, tmp_path: Path):
@@ -246,7 +289,7 @@ def test_clear_container_group_removes_all_three(monkeypatch, mocker, tmp_path: 
         "myrepo-x", CLAUDE_CREDS_DEVICE, missing_ok=True
     )
     unset = [c.args[1] for c in incus.config_unset.call_args_list]
-    assert unset == [_ENV_KEY, groups.GROUP_LABEL]
+    assert unset == [_ENV_KEY, groups.GROUP_LABEL, groups.LEGACY_GROUP_LABEL]
 
 
 class _RecordingAdapter:
