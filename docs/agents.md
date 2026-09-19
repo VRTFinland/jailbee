@@ -483,13 +483,15 @@ Full field-by-field descriptions for these live in the
 section stays the authoritative reference for the Claude-only fields; this
 page covers the generic `agents:` mechanism they sit on top of.
 
-### Shared credential groups (`claude_credentials`)
+### Shared credential groups (`credentials`)
 
-Several repos on one host can share a single Claude Code login instead of
+Several repos on one host can share a single login per agent instead of
 each holding its own. Configuration is host-level only — see
-[`claude_credentials` in the Configuration reference](config.md#claude_credentials)
+[`credentials` in the Configuration reference](config.md#credentials)
 for the `global.yaml` block, the join/leave flow, and `jailbee doctor`'s
-report. This section documents the mechanism the feature rests on.
+report. One group name is shared by every enabled agent, but each agent keeps
+its own credential in the group; the mechanism below is Claude's, and is what
+the feature rests on today.
 
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
 on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`

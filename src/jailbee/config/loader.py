@@ -212,7 +212,7 @@ def _warn_legacy_chrome_block(source: str) -> None:
     by construction instead of re-arming that bug, and keyed on `source` —
     like `paths._warn_legacy_config_dir` — because the notice names the file
     to edit. Naming it matters for the same reason it does there: a
-    host-wide command (`jailbee claude ls`, the dashboards) loads every
+    host-wide command (`jailbee account ls`, the dashboards) loads every
     registered repo's config, so an unnamed notice sent the user looking in
     the wrong file. Two files carrying a `chrome:` block therefore get a
     line each: they are two edits, not one.

@@ -381,12 +381,12 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
 
 
 def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
-    """One failed check per staging file an interrupted `jailbee claude use`
+    """One failed check per staging file an interrupted `jailbee account use`
     left in the store.
 
     `accounts.engine.switch` renames its target to `<name>.json.activating` before
     anything else moves, so a hard kill in that window leaves a login in a file
-    `parked_slots()` does not list — invisible to `jailbee claude ls`, and
+    `parked_slots()` does not list — invisible to `jailbee account ls`, and
     invisible here too unless something goes looking for it.
 
     Reported, never repaired. Renaming it back is safe only if that grant is
@@ -398,7 +398,7 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
 
     **The rename is only advised when the destination name is free.** It need
     not be: after the kill, a fresh `/login` as the same account followed by
-    `jailbee claude park` lands on exactly `<name>.json`, because nothing was
+    `jailbee account park` lands on exactly `<name>.json`, because nothing was
     occupying it. `mv` would then overwrite a newer, different grant without a
     word — one login destroyed by following this very message. When the name is
     taken, the two files are named and the choice is left to the reader, with
@@ -466,7 +466,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     slots is nevertheless holding a login.
 
     The other failure it reports is a holder with parked logins and no live
-    one, which is what a `jailbee claude park` leaves behind until someone logs
+    one, which is what a `jailbee account park` leaves behind until someone logs
     in or switches. Not a broken state, but one worth naming, because the
     symptom inside a container is "Not logged in" with no explanation.
     """
@@ -507,7 +507,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
                 "claude account pool",
                 False,
                 f"{count}, but {holder} holds no live login — run "
-                "`jailbee claude use <account>`, or `/login` in a container.",
+                "`jailbee account use <account>`, or `/login` in a container.",
             ),
             *orphans,
         ]

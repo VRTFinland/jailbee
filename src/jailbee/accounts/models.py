@@ -131,7 +131,7 @@ class Slot:
         that half is load-bearing: it is what distinguishes two grants of one
         account, and `resolve_ref` needs it typed.
 
-        Not the reference to feed back to `jailbee claude use`: for an account
+        Not the reference to feed back to `jailbee account use`: for an account
         stored under two organizations that is `name`, and the ambiguity error
         names it. This is display only, like `email` and `org_hint`.
         """

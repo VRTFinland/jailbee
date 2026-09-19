@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr`/`jailbee submodule pr`, and publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee claude ls/use/park", "switch the Claude account", "change which Claude login the container uses", "store this Claude login", "vaihda Claude-tili", "mikä Claude-tili kontissa on käytössä", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), `jailbee dashboard`, `jailbee config edit`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr`/`jailbee submodule pr`, and publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop`. Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee account ls/use/park", "jailbee claude ls/use/park", "switch which account the container uses", "switch the Claude account", "change which Claude login the container uses", "store this login", "store this Claude login", "vaihda tili", "vaihda Claude-tili", "mikä tili kontissa on käytössä", "mikä Claude-tili kontissa on käytössä", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -529,11 +529,11 @@ Three facts that matter when explaining this:
 Also available as the short root alias `jailbee egress add|rm|ls|export`.
 Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 
-## The Claude login is often shared between repos — `claude_credentials`
+## The login is often shared between repos — `credentials`
 
-Several repos on one host can share a **single Claude Code login**, and on a
-recently set-up host they usually do: a `global.yaml` written by
-`jailbee config init --global` ships `claude_credentials.group: default`, which
+Several repos on one host can share a **single login per agent** (Claude
+today), and on a recently set-up host they usually do: a `global.yaml` written
+by `jailbee config init --global` ships `credentials.group: default`, which
 puts every repo on that host in one group. Hosts whose `global.yaml` predates
 that key, or that set `group: null`, keep one login per repo.
 
@@ -554,7 +554,7 @@ means it keeps its own login.
 **To change which account the group uses:** `/login` inside any member
 container writes straight into the shared directory, and every other member
 picks the new account up on its next Claude Code start. If the account is
-already stored from an earlier `jailbee claude park`, `jailbee claude use
+already stored from an earlier `jailbee account park`, `jailbee account use
 <email>` (see below) switches the whole group to it without a fresh login.
 
 **"Why did my Claude account change?"** Almost always: someone ran `/login` in
@@ -562,7 +562,7 @@ a container of *another* repo in the same group. Point the user at the host —
 `jailbee doctor` there names this repo's group and lists its other member
 repos, and prints nothing at all when the repo shares no credential.
 
-**Joining or leaving a group** is a host-side edit to `claude_credentials` in
+**Joining or leaving a group** is a host-side edit to `credentials` in
 `~/.config/jailbee/global.yaml` followed by `jailbee apply` in each affected
 repo. Two things about that are worth warning a user about before they run it:
 
@@ -576,31 +576,36 @@ repo. Two things about that are worth warning a user about before they run it:
 Neither is reversible by jailbee, and neither can be run from inside a
 container — there is no `jb` binary there.
 
-## Switching which Claude account is in use — `jailbee claude`
+## Switching which account is in use — `jailbee account`
 
-A *holder* is whatever directory a repo's containers read `.credentials.json`
-from: the credential group directory when `claude_credentials` puts the repo in
-a group, otherwise the repo's own config home. One holder has at most one live
-login; every other stored login sits parked in a host-wide store.
+A *holder* is whatever directory a repo's containers read a credential from:
+the credential group directory when `credentials` puts the repo in a group,
+otherwise the repo's own config home. One holder has at most one live login
+*per agent*; every other stored login sits parked in a host-wide store.
 
 ```bash
-jailbee claude ls                  # every login on the host, and where each is live
-jailbee claude use me@work.com     # switch this holder to a stored login
-jailbee claude park                # store the current one; next `claude` asks /login
-jailbee claude rm old@work.com     # delete a stored login for good
+jailbee account ls                  # every login on the host, and where each is live
+jailbee account use me@work.com     # switch this holder to a stored login
+jailbee account park                # store the current one; next agent run asks /login
+jailbee account rm old@work.com     # delete a stored login for good
 
-jailbee claude group ls            # the groups themselves, and what each holds
-jailbee claude group create staff  # an empty credential group, before anything uses it
-jailbee claude group rm staff      # remove one nothing uses (parks any login it holds)
+jailbee account group ls            # the groups themselves, and what each holds
+jailbee account group create staff  # an empty credential group, before anything uses it
+jailbee account group rm staff      # remove one nothing uses (parks any login it holds)
 ```
 
-Four things worth knowing:
+Five things worth knowing:
 
 - **A switch is holder-wide.** In a credential group, every member repo moves
-  with it. `jailbee claude ls` is host-wide: one row per login, with the group
+  with it. `jailbee account ls` is host-wide: one row per login, with the group
   it is live in, the repos sharing that holder, and the containers reading it —
-  including a container moved by `jailbee claude group use`, which is the only
+  including a container moved by `jailbee account group use`, which is the only
   evidence a group no repo resolves to is in use.
+- **`-a/--agent` picks the pool.** Every command acts on all enabled pooled
+  agents by default; with more than one, `-a <agent>` narrows it. A typed
+  account reference matching more than one agent's store is ambiguous, and off
+  a TTY the error names the `-a` values to pass. `account group` commands take
+  no `-a` — a group name is shared.
 - **No restart.** Claude Code re-reads the credential when the file's mtime
   changes, so a session that is open right now picks the new account up on its
   next turn. The account shown by `/status` can lag until the session restarts;

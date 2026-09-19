@@ -102,7 +102,7 @@ def claude_row(
 
     Real `Row`s rather than mocks: the display properties (`state`, `account`,
     `org_hint`) are the module's own, and a stub of them would test nothing.
-    Shared by the `claude ls` and `claude group ls` tests, which render the
+    Shared by the `account ls` and `account group ls` tests, which render the
     same rows through the same field specs and must not drift apart.
     """
     from jailbee.accounts import overview

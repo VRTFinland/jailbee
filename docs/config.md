@@ -84,16 +84,16 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 Six top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
-`claude_credentials`, `scratch` and `config_edit`. `ls`'s column block is
+`credentials`, `scratch` and `config_edit`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
 than let one replace the other. `dashboard` is deprecated and is never
 merged this way — see
 [`ls:`/`dashboard:`](#ls--dashboard--remembered-columns).
-`claude_credentials` is resolved to the single computed field
-`Config.claude_credentials_dir` instead of being merged at all — see
-[`claude_credentials`](#claude_credentials) below. `scratch` and
+`credentials` is resolved to the single computed field
+`Config.credential_group` instead of being merged at all — see
+[`credentials`](#credentials) below. `scratch` and
 `config_edit` describe this host rather than any one repo — what a directory
 with no config file gets, and how jailbee writes your files — so there is no
 repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
@@ -1254,7 +1254,7 @@ out.
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
 | `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
-| `claude.seed_onboarding` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded (`hasCompletedOnboarding`) and accept the trust dialog for the repo's in-container path, but only when this repo's credential group (see [`claude_credentials`](#claude_credentials)) already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this every new container — and every scratch directory, which has no repo config to inherit state from — asks for a `/login` the shared credential has already answered. With no shared login there is nothing to adopt and the wizard runs as before, which is what walks the user through the login that does have to happen. A config home Claude Code has already written is never touched. Has no effect when `claude.enabled: false`. |
+| `claude.seed_onboarding` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded (`hasCompletedOnboarding`) and accept the trust dialog for the repo's in-container path, but only when this repo's credential group (see [`credentials`](#credentials)) already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this every new container — and every scratch directory, which has no repo config to inherit state from — asks for a `/login` the shared credential has already answered. With no shared login there is nothing to adopt and the wizard runs as before, which is what walks the user through the login that does have to happen. A config home Claude Code has already written is never touched. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_model` | string \| null | `"sonnet"` | Model passed to `claude --model` when generating the PR text. Writing a description is a bounded job, and pinning it means the generation does not compete for the same budget as the coding work that just happened in the container. Accepts an alias (`sonnet`, `opus`, `haiku`) or a full model ID; `null` omits the flag so the container's own default model applies. `haiku` works but has a smaller context window, so a large cumulative diff may not fit. Rejected at load if it is not a single whitespace-free token. Has no effect when `claude.enabled: false` or `claude.ai_pr_description: false`. |
@@ -1958,7 +1958,8 @@ the command line still wins in **every** format, table or JSON.
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `ip`, `memory_limit`, `mem`, `wt`, `ahead_diff`,
-`ahead_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`.
+`ahead_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
+`group`. `claude` and `claude_group` are accepted aliases for `group`.
 
 Three things are problems: an unknown name (reported with the allowed set
 listed), `fields: []` (a table with no columns at all — write `fields: null`
@@ -2031,7 +2032,7 @@ the Grid card style but never Compact. Switch card style to see it.
 
 ## Computed attributes
 
-The `Config` object exposes four attributes set at load time, not from
+The `Config` object exposes five attributes set at load time, not from
 YAML:
 
 - `repo_root` — directory containing `.jailbee/`.
@@ -2041,6 +2042,10 @@ YAML:
 - `default_branch` — auto-detected. See
   [Which branch is the default?](#which-branch-is-the-default) below.
   Fallback `main`.
+- `credential_group` — the host-level [`credentials`](#credentials) group
+  this repo resolves to, or `None` when it keeps its own login. A shared
+  *name* only: each enabled agent turns it into its own holder directory
+  inside the account adapters.
 - `container_prefix` — defaults to `repo_root.name`, overridable via the
   optional `container_prefix:` YAML key. Used as the prefix for every
   jailbee-owned Incus resource (containers, profiles, ACL).
@@ -2158,7 +2163,7 @@ opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `browsers`, `agents`).
 and a repo entry merges over a global one, so a team default set globally
 can still be adjusted per repo.
 Two blocks are unique to this file: the Docker registry mirror overrides,
-and `claude_credentials` (below).
+and `credentials` (below).
 
 ```yaml
 docker_registry_mirror:
@@ -2201,16 +2206,16 @@ by it — start it and run `jailbee apply` again.
 Lifecycle commands: `jailbee registry up`, `jailbee registry down`,
 `jailbee registry status` (`running` / `stopped` / `degraded` / `missing`).
 
-### `claude_credentials`
+### `credentials`
 
-Lets several repos on this host share one Claude Code login. Host-level
-only, like `scratch` and `config_edit`: setting `claude_credentials` or the
-computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is
+Lets several repos on this host share one login per agent. Host-level
+only, like `scratch` and `config_edit`: setting `credentials` or the
+computed `credential_group` in a repo's `.jailbee/config.yaml` is
 rejected at load time, because a repo config is typically committed and a
 group name is a property of this one machine, not the team.
 
 ```yaml
-claude_credentials:
+credentials:
   group: work                    # default for every repo on this host
   repos:                         # exceptions, keyed by container_prefix
     my-side-project: personal
@@ -2222,11 +2227,14 @@ claude_credentials:
 | `group` | `str \| None` | `None` (unset); `default` in a freshly generated `global.yaml` | Default credential group for every repo on the host. Absent means no sharing. |
 | `repos` | `dict[str, str \| None]` | `{}` | Per-repo override keyed by `container_prefix`. Wins over `group`, **including when the value is `null`** — that is the only way to keep one repo on its own credential while the rest of the host shares one. |
 
-A group name must match `[a-z0-9][a-z0-9-]*`: it becomes a directory name
-under `<xdg_data_home>/jailbee/claude-credentials/<group>/`.
+A group name must match `[a-z0-9][a-z0-9-]*`: it becomes one directory name
+per agent, under `<xdg_data_home>/jailbee/<agent>-credentials/<group>/`
+(Claude's is `claude-credentials/`). The name itself is agent-agnostic: each
+enabled agent keeps its own credential in the group, and **one login per
+agent** can be live there at a time.
 
 **New hosts share by default.** `jailbee config init --global` writes
-`claude_credentials: {group: default}` into the generated `global.yaml`, so
+`credentials: {group: default}` into the generated `global.yaml`, so
 every repo on a fresh host shares one login without any configuration: the
 first `/login` in any container lands in the group directory, and the next
 repo is already logged in. The *schema* default is still `None` — an
@@ -2237,10 +2245,15 @@ host that already has several logged-in repos means answering the
 two-credential prompt below on every repo but the first, which is a
 migration, not a default. To opt a whole host out, set `group: null`.
 
-Only the *credential* is shared — each repo keeps its own `~/.claude`, so
-project history, MCP config, sessions and onboarding state never cross
-repos. See [Shared credential groups](agents.md#shared-credential-groups-claude_credentials)
+Only the *credential* is shared — each repo keeps its own agent config home
+(for Claude, `~/.claude`), so project history, MCP config, sessions and
+onboarding state never cross repos. See [Shared credential groups](agents.md#shared-credential-groups-credentials)
 in `agents.md` for the mechanism.
+
+> **Compatibility.** The old `claude_credentials:` spelling of this key is
+> still read, with a deprecation warning; setting both keys is an error.
+> `jailbee claude ...` remains as a hidden alias for `jailbee account ...`,
+> warning once per invocation. Both are removed in 2.0.0.
 
 Joining a group requires `jailbee apply`: it creates the group directory
 (mode `0700`) and **moves** this repo's `.credentials.json` into it.
@@ -2277,85 +2290,95 @@ repos.
 
 If the file is absent, defaults apply silently. Invalid YAML → error.
 
-#### Per-container override: `jailbee claude group`
+#### Per-container override: `jailbee account group`
 
 Everything above is the repo's *permanent* group, written to `global.yaml`
 and shared by every container of that repo. A single container can also
-carry a **temporary** override, stored in its own `user.jailbee.claude_group`
-instance label rather than in any file:
+carry a **temporary** override, stored in its own
+`user.jailbee.credential_group` instance label rather than in any file:
 
-* `jailbee claude group use <name>|none [<container>]` sets it — `<name>`
+* `jailbee account group use <name>|none [<container>]` sets it — `<name>`
   moves that one container into another group (creating the group directory
   if needed), `none` opts it out of grouping entirely, for as long as the
   container lives.
-* `jailbee claude group reset [<container>]` drops the override, so the
+* `jailbee account group reset [<container>]` drops the override, so the
   container falls back to inheriting the repo's group again.
-* `jailbee new --claude-group <name>|none` applies the override at creation
-  time, in one step.
+* `jailbee new --credential-group <name>|none` applies the override at
+  creation time, in one step.
 
-**Precedence: container override beats the repo's `claude_credentials` entry,
+**Precedence: container override beats the repo's `credentials` entry,
 which beats the host's `group` default.** A container with no override reads
 the repo's setting (`repos.<container_prefix>` if present, else `group`); a
 container with an override ignores both.
 
 **An override that names the repo's own group is dropped rather than kept.**
 Because the label outranks the repo, one that merely repeats it would look
-like "follows the repo" right up to the next `jailbee claude group set`, and
+like "follows the repo" right up to the next `jailbee account group set`, and
 then silently keep that one container on the old group. So:
 
-* `jailbee claude group use <the repo's own group>` clears the override
+* `jailbee account group use <the repo's own group>` clears the override
   instead of writing one, and says so;
-* `jailbee claude group set`/`unset` clear every override of this repo's
+* `jailbee account group set`/`unset` clear every override of this repo's
   containers that the change has made redundant, after the profile has been
   re-rendered;
-* `jailbee new --claude-group <the repo's own group>` creates no override at
-  all.
+* `jailbee new --credential-group <the repo's own group>` creates no override
+  at all.
 
-The one exception is `claude.enabled: false`, where the repo's profile carries
-no credential device: the label is then the only thing mounting one, so it is
-not redundant and is left alone. Overrides that already existed are not
-touched until one of those commands runs — `jailbee claude group` names them.
+The one exception is an agent that is disabled in this repo (`claude.enabled:
+false`), where the repo's profile carries no credential device: the label is
+then the only thing mounting one, so it is not redundant and is left alone.
+Overrides that already existed are not touched until one of those commands
+runs — `jailbee account group` names them.
 
-`jailbee claude group` is a command group with no status view of its own: the
-host-wide picture is `jailbee claude ls`, per-container labels are `jailbee
-ls`'s `CLAUDE` column, and `jailbee doctor` reports an override that only
-repeats this repo's group. `jailbee claude group ls` lists the groups
-themselves and what each holds, `jailbee claude group create <name>` creates
-an empty group, and `jailbee claude group rm <name>` removes one nothing uses
-(parking any login it holds rather than deleting it). `jailbee claude
-group set <name>|none` and `jailbee claude group unset` are the permanent,
+`jailbee account group` is a command group with no status view of its own:
+the host-wide picture is `jailbee account ls`, per-container labels are
+`jailbee ls`'s `GROUP` column, and `jailbee doctor` reports an override that
+only repeats this repo's group. `jailbee account group ls` lists the groups
+themselves and what each holds, `jailbee account group create <name>` creates
+an empty group, and `jailbee account group rm <name>` removes one nothing uses
+(parking any login it holds rather than deleting it). `jailbee account
+group set <name>|none` and `jailbee account group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `global.yaml`'s
-`claude_credentials.repos.<container_prefix>` instead of a container label,
+`credentials.repos.<container_prefix>` instead of a container label,
 so unlike `use`/`reset` they affect every container of the repo that has no
 override of its own.
 
 The override lives on the Incus instance, not in any file under version
 control: it **dies with the container**, a recreated same-named container
 starts without it, and it is **not committable and cannot reach a
-teammate** — there is nothing to `git add`. Restarting Claude in the
+teammate** — there is nothing to `git add`. Restarting the agent in the
 affected container is still required to pick up the new login either way;
 none of these commands touch a running session.
 
-`jailbee claude use` and `jailbee claude park` take a `-g/--group <name>`
+`jailbee account use` and `jailbee account park` take a `-g/--group <name>`
 flag that points the command at that group's holder instead of the repo's
 own. This matters when a group is otherwise unreachable through this repo —
 e.g. one only a container override uses, with no repo permanently assigned to
-it via `claude_credentials` — since without the flag those commands only ever
+it via `credentials` — since without the flag those commands only ever
 act on the repo's own group.
 
-`jailbee claude ls` takes `-g` too, but there it only **filters**: the
+`jailbee account ls` takes `-g` too, but there it only **filters**: the
 listing is host-wide, so every group and the account it holds is already
 visible without the flag, including a group reachable only as a container
 override.
 
+**`-a/--agent` picks the pool.** A host can have more than one pooled agent,
+so `account ls`, `use`, `park` and `rm` act on every enabled agent by default
+and `-a <agent>` narrows them to one. A typed account reference that matches
+in more than one agent's store is ambiguous, and off a TTY the error names
+the `-a` values to pass; `account park` with several agents live opens a
+picker on a TTY and refuses with the candidates off one. `account group`
+commands act on every enabled agent already — a group name is shared — so
+they take no `-a`.
+
 **A `-g` command does not touch this repo's own config home.** A repo is a
-member of the holder its `claude_credentials` entry resolves to, and of no
+member of the holder its `credentials` entry resolves to, and of no
 other: its `~/.claude` records the account of *that* group's login, so a
 command aimed elsewhere neither reads it (it would name the wrong account)
 nor rewrites it (it would destroy the name of the login this repo does use).
 The account of a login in such a holder is known from the note JailBee keeps
 beside a login it activated there itself; one that arrived by `/login` in a
-group no repo resolves to has no record to read, and `jailbee claude park`
+group no repo resolves to has no record to read, and `jailbee account park`
 stores it as `unknown-<timestamp>` — a working login whose account name is
 missing, recoverable by activating it, running `claude` once in a container of
 that holder, and parking it again.
@@ -2365,7 +2388,7 @@ that holder, and parking it again.
 Lets `jailbee new` (and every other command) work in a directory that has no
 `<repo>/.jailbee/config.yaml` — a repo you're only poking at for an
 afternoon, or a folder that isn't a repo config's business at all. Host-level
-only, like `claude_credentials`: `scratch` cannot be set in a repo's own
+only, like `credentials`: `scratch` cannot be set in a repo's own
 `.jailbee/config.yaml` — it would be an unknown top-level key there.
 
 ```yaml
@@ -2495,7 +2518,7 @@ defaults shared with every other directory on the machine.
 ### `config_edit`
 
 Settings for `jailbee config edit` itself. Host-level only, like
-`claude_credentials` and `scratch`: how your own files get written is a
+`credentials` and `scratch`: how your own files get written is a
 personal editing habit, so a repo's `.jailbee/config.yaml` cannot set it.
 
 ```yaml
@@ -2514,7 +2537,7 @@ diff and asks first — that confirmation cannot be turned off.
 ### `update_check`
 
 Whether JailBee tells you when a newer release is on PyPI. Host-level only,
-like `claude_credentials`, `scratch` and `config_edit`: whether your machine
+like `credentials`, `scratch` and `config_edit`: whether your machine
 talks to PyPI is not a repo's decision.
 
 ```yaml

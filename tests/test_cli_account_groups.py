@@ -62,7 +62,7 @@ class _ProbeAdapter:
 
 def test_bare_group_is_a_command_group_not_a_status_command(group_env):
     """`jailbee account ls` states which holder this repo reads, `jailbee ls`'s
-    CLAUDE column the per-container labels, and `jailbee doctor` the overrides
+    GROUP column the per-container labels, and `jailbee doctor` the overrides
     that only repeat the repo — so a fourth, partial view here was just one
     more place to disagree with them."""
     result = runner.invoke(app, ["account", "group"])

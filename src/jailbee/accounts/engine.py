@@ -857,7 +857,7 @@ def switch(
 def live_account_refusal(adapter: AccountAdapter, name: str) -> str:
     """The one wording for "that slot is the live login, park it first".
 
-    `cli.claude_rm_cmd` refuses before it prompts, so the user is not asked to
+    `cli._pool_rm` refuses before it prompts, so the user is not asked to
     confirm a deletion that was never going to happen; `remove_slot` refuses
     again because it is callable without the CLI. Two sites, one sentence.
     """

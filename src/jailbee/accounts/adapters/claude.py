@@ -366,7 +366,7 @@ ACCOUNT_NOTE_FILE = ".jailbee-account.json"
 and a config home belongs to a *repo*, not to a holder: one `~/.claude` is
 shared by every container of the repo whatever group each reads, so it can name
 only one account while such a repo has two live logins. For a group no repo
-resolves to — the one `jailbee claude use -g` exists to fill — there is no
+resolves to — the one `jailbee account use -g` exists to fill — there is no
 config home to read at all, and a `park` of a login jailbee had itself just
 activated could only name the file `unknown-<timestamp>`, losing the one record
 of what it contains (`ACCOUNT_RECORD_KEY` documents the same loss for the other

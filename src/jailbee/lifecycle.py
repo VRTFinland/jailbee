@@ -1242,7 +1242,7 @@ def new_container(
         wanted = None if opts.credential_group == groups.NO_GROUP else opts.credential_group
         # An override naming the group this repo already resolves to is not a
         # preference but leftover state: it outranks the profile, so the next
-        # `jailbee claude group set` would leave this one container behind on
+        # `jailbee account group set` would leave this one container behind on
         # the old group. See `accounts.groups.override_is_redundant`.
         if not groups.override_is_redundant(cfg, wanted):
             groups.set_container_group(cfg, incus, name, wanted)
@@ -1915,8 +1915,8 @@ def destroy_container(
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login
     # this container was actually using instead. Gated on the override so a
-    # repo that never touches `jailbee claude group` pays nothing extra.
-    # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    # repo that never touches `jailbee account group` pays nothing extra.
+    # Spec §7.2: "One rule, two call sites — `jb account group use`/`reset`
     # and the destroy path."
     if had_group_override:
         from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity

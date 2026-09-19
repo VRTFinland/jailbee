@@ -52,7 +52,7 @@ class Notice:
     """One deprecation advisory, identified by what it is about.
 
     `scope` is the config file the notice names, never the repo the user
-    happens to stand in: a host-wide command (`jailbee claude ls`, the
+    happens to stand in: a host-wide command (`jailbee account ls`, the
     dashboards) loads every registered repo's config, so two files spelling
     ``chrome:`` are two notices and two independent decisions.
 

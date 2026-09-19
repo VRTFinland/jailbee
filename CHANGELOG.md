@@ -10,6 +10,25 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Agent accounts are generic.** The stored-login pool is managed with
+  `jailbee account ls|use|park|rm` and `jailbee account group
+  ls|create|rm|set|unset|use|reset`, and configured with a host-level
+  `credentials:` block (`group` plus per-repo `repos:`) whose name is
+  agent-agnostic — each enabled agent keeps its own login in the group, and a
+  holder can have one live login per agent. The `jailbee ls` column is
+  `GROUP`, the `jailbee new` flag is `--credential-group`, and the container
+  label is `user.jailbee.credential_group`. Every pool command takes an
+  optional `-a/--agent`; omitting it acts on every enabled pooled agent, and
+  a typed account reference that matches more than one agent is an error
+  naming the `-a` values to pass (Claude is the only pooled agent so far, so
+  that case cannot arise yet). The old spellings keep working as hidden
+  aliases that warn once per invocation — `jailbee claude …`,
+  `claude_credentials:`, `--claude-group`, the `user.jailbee.claude_group`
+  label, and the `claude` / `claude_group` column names — and are removed in
+  2.0.0. See
+  [docs/config.md](https://jailbee.gisgro.io/docs/config/#credentials) and
+  [docs/commands.md](https://jailbee.gisgro.io/docs/commands/).
+
 - **The dashboards show what a container is actually doing.** Two new
   columns: `CPU`, the share of a core the container is burning right now
   (`182%·4` — 1.8 cores of the 4 it is allowed), and `DOING`, the programs
