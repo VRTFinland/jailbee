@@ -609,6 +609,19 @@ def test_upgrade_note_for_the_pr_review_skill_advises_apply() -> None:
     assert notes[0].actions == frozenset({"apply"})
 
 
+def test_upgrade_note_for_multi_agent_skill_sync_advises_apply() -> None:
+    """`jailbee apply`/`jailbee new` now sync the bundled skills into every
+    enabled skill-capable agent's shared directory, not only claude's."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "skill-capable" in n.reason]
+    assert len(notes) == 1
+    note = notes[0]
+    assert note.actions == frozenset({"apply"})
+    assert "not just `claude`" in note.reason
+    assert all(agent in note.reason for agent in ("codex", "gemini", "opencode"))
+
+
 def test_the_rendered_hint_names_only_the_apply_action() -> None:
     """One entry, one reason: a note declaring two actions prints each
     action against the other's reasons. Render the real manifest through

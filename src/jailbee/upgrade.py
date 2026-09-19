@@ -208,6 +208,17 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "container — nothing to re-apply unless you enable that agent"
         ),
     ),
+    UpgradeNote(
+        version=(1, 5, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply`/`jailbee new` sync the bundled skills into every "
+            "enabled skill-capable agent's shared skills directory (`codex`, "
+            "`gemini`, `opencode`, not just `claude`) — nothing to re-apply "
+            "unless you enable one of those agents; existing containers pick "
+            "them up on the next `apply` or on re-creation"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
