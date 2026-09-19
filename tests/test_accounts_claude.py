@@ -599,7 +599,7 @@ def test_park_refuses_to_store_the_same_login_twice(tmp_path: Path, monkeypatch)
     # The message says what is true — this login is already stored — and names
     # the escape, rather than telling the user to delete an unrelated file.
     assert "already stored as `me@corp.com`" in message
-    assert "jailbee claude rm me@corp.com" in message
+    assert "jailbee account rm -a claude me@corp.com" in message
     # The live credential is untouched: a refused park must not lose a login.
     assert engine.live_credential_path(CLAUDE, cfg).exists()
 

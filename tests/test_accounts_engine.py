@@ -454,3 +454,50 @@ def test_members_of_an_ungrouped_real_config_skips_the_registry(
     assert [(m.container_prefix, m.config_home) for m in found] == [("alpha", home)]
     assert unreachable == []
     registry.assert_not_called()
+
+
+def test_live_account_refusal_names_the_canonical_command(fake_adapter) -> None:
+    """The one wording for "that slot is the live login" points at the
+    `jailbee account` tree, with the `-a` that names the adapter."""
+    from jailbee.accounts import engine
+
+    assert engine.live_account_refusal(fake_adapter, "me@x.com") == (
+        "`me@x.com` is the live account — run `jailbee account park -a fake` first."
+    )
+
+
+def test_resolve_interactively_names_the_canonical_park_command(fake_adapter) -> None:
+    """The empty-pool direction must not send the user to the deprecated
+    `jailbee <agent> park` tree."""
+    from jailbee.accounts import engine
+
+    with pytest.raises(models.PoolError) as e:
+        engine.resolve_interactively(
+            fake_adapter,
+            [],
+            None,
+            purpose="switch to",
+            picker=lambda _slots: "never",
+            is_interactive=lambda: True,
+        )
+
+    assert "jailbee account park -a fake" in str(e.value)
+
+
+def test_the_duplicate_login_error_names_the_canonical_rm_command(fake_env: Path, mocker) -> None:
+    """Parking a grant the store already holds names the escape as
+    `jailbee account rm -a fake <slot>`."""
+    from jailbee.accounts import engine
+
+    home = fake_env / "home"
+    adapter = FakeAdapter(home)
+    _write(home / adapter.credential_file, "me@example.com", "r1")
+    _write(engine.store_dir(adapter) / "me@example.com.json", "me@example.com", "r1")
+    cfg = mocker.MagicMock(container_prefix="repo")
+    gcfg = mocker.MagicMock()
+    mocker.patch.object(engine, "members", return_value=([], []))
+
+    with pytest.raises(models.PoolError) as e:
+        engine.park(adapter, cfg, gcfg, authoritative={"repo"})
+
+    assert "jailbee account rm -a fake me@example.com" in str(e.value)

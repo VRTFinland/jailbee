@@ -373,36 +373,84 @@ def test_use_without_an_account_picks_from_a_menu(repo, mocker):
         "jailbee.accounts.engine.list_slots",
         return_value=[
             Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
-            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     switch = mocker.patch(
         "jailbee.accounts.engine.switch",
-        return_value=PoolChange("live@corp.com", "parked@corp.com", [], [], []),
+        return_value=PoolChange("live@corp.com", "two@corp.com", [], [], []),
     )
     result = runner.invoke(app, ["claude", "use"])
     assert result.exit_code == 0, result.output
     # The live slot is not a candidate: `switch` would refuse it.
-    offered = [s.name for s in pick.call_args.args[0]]
-    assert offered == ["parked@corp.com"]
+    offered = [s.name for _, s in pick.call_args.args[0]]
+    assert offered == ["one@corp.com", "two@corp.com"]
     switch.assert_called_once()
-    assert switch.call_args.args[3] == "parked@corp.com"
+    assert switch.call_args.args[3] == "two@corp.com"
+
+
+def test_use_without_an_account_auto_selects_a_lone_candidate(repo, mocker):
+    """One stored login needs no prompt — a one-row picker is noise, and a
+    script with no TTY should still get the switch it asked for."""
+    mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        return_value=[
+            Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
+            Slot("only@corp.com", Path("/s/only.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+    switch = mocker.patch(
+        "jailbee.accounts.engine.switch",
+        return_value=PoolChange("live@corp.com", "only@corp.com", [], [], []),
+    )
+    result = runner.invoke(app, ["claude", "use"])
+    assert result.exit_code == 0, result.output
+    pick.assert_not_called()
+    assert switch.call_args.args[3] == "only@corp.com"
 
 
 def test_use_without_an_account_aborts_when_the_menu_is_cancelled(repo, mocker):
     """ESC must not switch anything, and must not print a failure either."""
     mocker.patch(
         "jailbee.accounts.engine.list_slots",
-        return_value=[Slot("parked@corp.com", Path("/s/parked.json"), live=False)],
+        return_value=[
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
+        ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    mocker.patch("jailbee.tui.pick_claude_account", return_value=None)
+    mocker.patch("jailbee.tui.pick_account", return_value=None)
     switch = mocker.patch("jailbee.accounts.engine.switch")
     result = runner.invoke(app, ["claude", "use"])
     assert result.exit_code != 0
     switch.assert_not_called()
+
+
+def test_cancelling_the_picker_leaves_the_store_untouched(repo, mocker):
+    """The selection path only reads: a cancel returns None before any engine
+    mutation runs, so nothing on disk can move."""
+    mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        return_value=[
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_account", return_value=None)
+    switch = mocker.patch("jailbee.accounts.engine.switch")
+    park = mocker.patch("jailbee.accounts.engine.park")
+    remove = mocker.patch("jailbee.accounts.engine.remove_slot")
+    result = runner.invoke(app, ["claude", "use"])
+    assert result.exit_code != 0
+    switch.assert_not_called()
+    park.assert_not_called()
+    remove.assert_not_called()
 
 
 def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, mocker):
@@ -411,14 +459,16 @@ def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, moc
         "jailbee.accounts.engine.list_slots",
         return_value=[
             Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
-            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=False)
     switch = mocker.patch("jailbee.accounts.engine.switch")
     result = runner.invoke(app, ["claude", "use"])
     assert result.exit_code == 2
-    assert "parked@corp.com" in result.output
+    assert "one@corp.com" in result.output
+    assert "two@corp.com" in result.output
     switch.assert_not_called()
 
 
@@ -438,18 +488,23 @@ def test_use_with_an_account_does_not_read_the_store(repo, mocker):
 def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
     """`rm` has the same signature as `use`, so it gets the same menu — and its
     own confirmation still stands in front of the deletion."""
-    parked = Slot("parked@corp.com", Path("/s/parked.json"), live=False)
+    parked = Slot("two@corp.com", Path("/s/two.json"), live=False)
     mocker.patch(
         "jailbee.accounts.engine.list_slots",
-        return_value=[Slot("live@corp.com", Path("/h/c.json"), live=True), parked],
+        return_value=[
+            Slot("live@corp.com", Path("/h/c.json"), live=True),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            parked,
+        ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
     result = runner.invoke(app, ["claude", "rm"], input="y\n")
     assert result.exit_code == 0, result.output
-    assert [s.name for s in pick.call_args.args[0]] == ["parked@corp.com"]
+    assert [s.name for _, s in pick.call_args.args[0]] == ["one@corp.com", "two@corp.com"]
     remove.assert_called_once()
+    assert remove.call_args.args[1] is parked
 
 
 def test_park_warns_when_the_slot_name_says_nothing_about_the_account(repo, mocker):
@@ -699,3 +754,274 @@ def test_ls_filters_to_the_ungrouped_holders(repo, mocker):
     assert "me@corp.com" in result.output
     assert "staff@corp.com" not in result.output
     assert "old@corp.com" in result.output
+
+
+class _NamedAdapter:
+    """A named adapter stub: the selection helpers only read `.name`."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _list_slots(mocker, by_agent: dict[str, list[Slot]]):
+    """Patch `engine.list_slots` to answer per adapter name."""
+    return mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
+    )
+
+
+def test_matching_choices_offers_every_parked_slot_of_every_adapter(repo, mocker):
+    """No reference means every parked login of every selected adapter is on
+    offer, and each choice carries the adapter that holds it."""
+    from jailbee.cli import _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [
+                Slot("a@x.com", Path("/s/a.json"), live=False),
+                Slot("live-a@x.com", Path("/h/a.json"), live=True),
+            ],
+            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+
+    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), None, removable=False)
+
+    # The live login is not a candidate: `switch` would refuse it.
+    assert [(a.name, s.name) for a, s in choices] == [("fakea", "a@x.com"), ("fakeb", "b@x.com")]
+
+
+def test_matching_choices_resolves_a_ref_in_one_adapter(repo, mocker):
+    """A reference that matches one adapter selects it, by `resolve_ref`'s own
+    exact-name-then-unique-email rule."""
+    from jailbee.cli import _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("a@x.com", Path("/s/a.json"), live=False)],
+            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+
+    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "a@x.com", removable=False)
+
+    assert [(a.name, s.name) for a, s in choices] == [("fakea", "a@x.com")]
+
+
+def test_matching_choices_keeps_a_ref_that_matches_two_adapters(repo, mocker):
+    """One email parked under two agents is two successful matches, not a
+    failure: the caller decides between them."""
+    from jailbee.cli import _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
+            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+
+    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
+
+    assert [(a.name, s.name) for a, s in choices] == [
+        ("fakea", "me@x.com"),
+        ("fakeb", "me@x.com"),
+    ]
+
+
+def test_matching_choices_does_not_suppress_an_ambiguity_inside_one_adapter(repo, mocker):
+    """Two grants of one email in one adapter are not solved by `-a`, so
+    `resolve_ref`'s full-slot-name error is kept even when another adapter
+    matched: silently picking the other agent could act on the wrong login."""
+    from jailbee.cli import _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [
+                Slot("me@x.com#aaaa", Path("/s/a1.json"), live=False),
+                Slot("me@x.com#bbbb", Path("/s/a2.json"), live=False),
+            ],
+            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+
+    with pytest.raises(PoolError, match="matches several accounts"):
+        _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
+
+
+def test_matching_choices_raises_when_a_ref_matches_nothing(repo, mocker):
+    """A typed reference with no match is an error, not an empty picker: only
+    the caller knows whether the reference was typed or picked."""
+    from jailbee.cli import _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    _list_slots(mocker, {"fakea": [Slot("a@x.com", Path("/s/a.json"), live=False)]})
+
+    with pytest.raises(PoolError, match="no stored account matches"):
+        _matching_choices([fakea], repo, GlobalConfig(), "nope@x.com", removable=False)
+
+
+def test_account_adapters_without_an_agent_returns_every_pooled_one(repo):
+    """No `-a` is normal: the command spans every enabled agent, `claude`
+    first."""
+    from jailbee.accounts.adapters import base
+    from jailbee.cli import _account_adapters
+    from tests.conftest import with_agent
+
+    cfg = with_agent(repo, "claude", enabled=True, command="claude")
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    base.register(_NamedAdapter("fakea"))
+    try:
+        assert [a.name for a in _account_adapters(cfg, None)] == ["claude", "fakea"]
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+
+def test_account_adapters_with_an_agent_returns_only_that_one(repo):
+    """`-a` narrows before any store is read, so a reference is resolved
+    against one adapter's slots."""
+    from jailbee.accounts.adapters import base
+    from jailbee.cli import _account_adapters
+    from tests.conftest import with_agent
+
+    cfg = with_agent(repo, "claude", enabled=True, command="claude")
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    base.register(_NamedAdapter("fakea"))
+    try:
+        assert [a.name for a in _account_adapters(cfg, "fakea")] == ["fakea"]
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+
+def test_account_adapters_refuses_an_unknown_or_disabled_agent(repo):
+    """A name this config does not enable has no pool a user can mean; the
+    refusal says so instead of silently acting on every agent."""
+    from jailbee.cli import _account_adapters
+    from tests.conftest import with_agent
+
+    with pytest.raises(PoolError, match="no enabled agent `nope`"):
+        _account_adapters(repo, "nope")
+
+    disabled = with_agent(repo, "fakea", enabled=False, command="fakea")
+    with pytest.raises(PoolError, match="no enabled agent `fakea`"):
+        _account_adapters(disabled, "fakea")
+
+
+def test_a_ref_across_two_adapters_opens_the_picker_on_a_tty(repo, mocker):
+    from jailbee.cli import _choose_account_choice, _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
+            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "me@x.com"))
+
+    choice = _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+
+    assert choice is not None
+    assert (choice[0].name, choice[1].name) == ("fakeb", "me@x.com")
+    assert pick.call_args.args[0] == choices
+    assert pick.call_args.args[1] == "Switch:"
+
+
+def test_a_ref_across_two_adapters_off_a_tty_names_the_agent_options(repo, mocker):
+    """A script cannot answer a picker, so the failure names the `-a` values
+    it should have passed."""
+    from jailbee.cli import _choose_account_choice, _matching_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
+            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+
+    with pytest.raises(PoolError) as e:
+        _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+
+    assert "-a fakea" in str(e.value)
+    assert "-a fakeb" in str(e.value)
+    pick.assert_not_called()
+
+
+def test_live_choices_selects_the_one_adapter_with_a_login(repo, mocker):
+    """`park`'s candidates: an adapter with no live credential contributes
+    nothing, and a lone login needs no prompt."""
+    from jailbee.cli import _choose_account_choice, _live_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("live-a@x.com", Path("/h/a.json"), live=True)],
+            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
+        },
+    )
+
+    choices = _live_choices([fakea, fakeb], repo, GlobalConfig())
+
+    assert [(a.name, s.name) for a, s in choices] == [("fakea", "live-a@x.com")]
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+    choice = _choose_account_choice(choices, ref=None, nothing="nothing", message="Park:")
+    assert choice is not None
+    assert choice[0].name == "fakea"
+    pick.assert_not_called()
+
+
+def test_live_choices_picks_when_several_adapters_have_one(repo, mocker):
+    from jailbee.cli import _choose_account_choice, _live_choices
+    from jailbee.global_config import GlobalConfig
+
+    fakea = _NamedAdapter("fakea")
+    fakeb = _NamedAdapter("fakeb")
+    _list_slots(
+        mocker,
+        {
+            "fakea": [Slot("a@x.com", Path("/h/a.json"), live=True)],
+            "fakeb": [Slot("b@x.com", Path("/h/b.json"), live=True)],
+        },
+    )
+    choices = _live_choices([fakea, fakeb], repo, GlobalConfig())
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "b@x.com"))
+
+    choice = _choose_account_choice(choices, ref=None, nothing="nothing", message="Park:")
+
+    assert choice is not None
+    assert (choice[0].name, choice[1].name) == ("fakeb", "b@x.com")
+    assert [s.name for _, s in pick.call_args.args[0]] == ["a@x.com", "b@x.com"]

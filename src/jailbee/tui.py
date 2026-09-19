@@ -18,6 +18,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from rich.status import Status
 
+    from jailbee.accounts.adapters.base import AccountAdapter
     from jailbee.accounts.models import Slot
     from jailbee.config import Config
     from jailbee.destroy_guard import RiskSummary
@@ -262,7 +263,7 @@ def choose_shared_credential(
     apply` still fails loudly instead of blocking on a prompt no one can
     answer.
 
-    The printed note names the `claude_credentials.repos` opt-out, because
+    The printed note names the `credentials.repos` opt-out, because
     "keep this repo on its own login" is a *config* answer, not a runtime one:
     it is not offered as a third choice (jailbee does not edit `global.yaml`),
     so without the note a user who wants neither shared login sees no way out.
@@ -286,9 +287,9 @@ def choose_shared_credential(
     hint(
         [
             "To keep this repo on its own login instead, cancel and add it "
-            "under `claude_credentials.repos` in "
+            "under `credentials.repos` in "
             "~/.config/jailbee/global.yaml:",
-            "  claude_credentials:",
+            "  credentials:",
             "    repos:",
             f"      {container_prefix}: null",
             "then re-run `jailbee apply`.",
@@ -747,39 +748,69 @@ def pick_containers_multi(
     return [str(v) for v in result]
 
 
-def _claude_choice_title(slot: Slot, width: int) -> str:
-    """One picker line: the account, then its organization when it has one.
+def _account_choice_widths(choices: Sequence[tuple[AccountAdapter, Slot]]) -> dict[str, int]:
+    """Column widths over every choice, so the picker rows line up.
 
-    Mirrors `jailbee claude ls`'s split — the account column carries
-    `display_name`, so the organization is not repeated inside it.
+    `org` is zero when no choice carries an organization: the column is then
+    dropped rather than rendered as a column of dashes — the same rule
+    `jailbee account ls` uses for its ORG field.
     """
-    if not slot.org_hint:
-        # No padding: nothing follows, and trailing spaces are only whitespace
-        # for the terminal to render.
-        return slot.display_name
-    return f"{slot.display_name:<{width}}  {slot.org_hint}"
+    return {
+        "agent": max(len(a.name) for a, _ in choices),
+        "account": max(len(s.display_name) for _, s in choices),
+        "org": (
+            max(len(s.org_hint or "-") for _, s in choices)
+            if any(s.org_hint for _, s in choices)
+            else 0
+        ),
+    }
 
 
-def pick_claude_account(slots: Sequence[Slot], *, message: str) -> str | None:
-    """Arrow-key picker over stored Claude logins. Returns the slot *name*.
+def _account_choice_title(choice: tuple[AccountAdapter, Slot], widths: dict[str, int]) -> str:
+    """One picker line: the agent, the account, then its organization.
 
-    The name, not the `Slot`: it is what `claude use`/`claude rm` resolve, and
-    resolving again under the credential locks is what keeps one resolution
-    authoritative when another process is touching the store.
+    `display_name`, not `name`: the account column carries the email and any
+    disambiguator, and the organization follows in its own column rather than
+    being repeated inside the account. Trailing padding is stripped so a row
+    with no organization ends where its text does.
+    """
+    adapter, slot = choice
+    line = f"{adapter.name:<{widths['agent']}}  {slot.display_name:<{widths['account']}}"
+    if widths["org"]:
+        line += f"  {(slot.org_hint or '-'):<{widths['org']}}"
+    return line.rstrip()
+
+
+def pick_account(
+    choices: Sequence[tuple[AccountAdapter, Slot]], message: str
+) -> tuple[str, str] | None:
+    """Arrow-key picker over stored logins. Returns `(agent name, slot name)`.
+
+    Names, not the live `Slot` objects: the engine re-resolves under its own
+    credential locks, and a slot handed out here is a snapshot of a store
+    another process may have changed since.
+
+    Each row names its agent, because with no `-a` the list spans every pooled
+    agent's slots and one email can be parked under two of them.
 
     Returns None if the user cancels (Ctrl+C / ESC). Caller is responsible for
     the TTY check — this function unconditionally renders the picker.
     """
     import questionary
 
-    width = max(len(s.display_name) for s in slots)
-    choices = [
-        questionary.Choice(title=_claude_choice_title(s, width), value=s.name) for s in slots
+    widths = _account_choice_widths(choices)
+    rows = [
+        questionary.Choice(
+            title=_account_choice_title((adapter, slot), widths),
+            value=(adapter.name, slot.name),
+        )
+        for adapter, slot in choices
     ]
-    result = questionary.select(message, choices=choices, use_shortcuts=True).ask()
+    result = questionary.select(message, choices=rows, use_shortcuts=True).ask()
     if result is None:
         return None
-    return str(result)
+    agent, name = result
+    return str(agent), str(name)
 
 
 def pick_container_for_group(cfg: Config, incus: Incus, names: Sequence[str]) -> str | None:

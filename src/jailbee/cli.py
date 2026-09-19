@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3124,7 +3125,7 @@ if TYPE_CHECKING:
 
     from jailbee.accounts import overview as accounts_overview
     from jailbee.accounts.adapters.base import AccountAdapter
-    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts.models import PoolChange, Slot
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
@@ -11379,23 +11380,206 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
     return cfg.model_copy(update={"credential_group": name})
 
 
-def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
-    """Members whose `oauthAccount` can be trusted for this repo's holder.
+def _adapter_authoritative(
+    adapter: "AccountAdapter", cfg: "Config", gcfg: "GlobalConfig"
+) -> set[str]:
+    """Members whose recorded account can be trusted for this repo's holder.
 
     One place, so `ls`, `use`, `park` and `rm` cannot disagree about which
     repos are authoritative. A repo that shares no group is its own only
     member and is trivially authoritative for itself — there is no group
     to be ambiguous about, and no `incus list` is worth paying for it.
+
+    The adapter is a parameter because authority is asked of *that agent's*
+    members: a repo's config home names one agent's account, and reading
+    another agent's member list would make the wrong repos authoritative.
     """
     from jailbee.accounts import engine, groups
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.incus import Incus
 
     group = engine.repo_group(cfg)
     if group is None:
         return {cfg.container_prefix}
-    found, _ = engine.members(CLAUDE, cfg, gcfg)
+    found, _ = engine.members(adapter, cfg, gcfg)
     return groups.authoritative_prefixes(gcfg, Incus(), group, [m.container_prefix for m in found])
+
+
+AccountChoice = tuple["AccountAdapter", "Slot"]
+"""One stored login and the agent whose pool holds it."""
+
+
+def _account_adapters(cfg: "Config", agent: str | None) -> list["AccountAdapter"]:
+    """The adapters a pool command acts on: `-a`'s one, or every pooled one.
+
+    `-a` is validated here rather than left to fail later inside the engine: an
+    agent this config does not enable has no pool a user can mean, and a name
+    with no adapter is a typo or a build without that agent's module. Both are
+    refused by name, so a script learns what it may pass.
+    """
+    from jailbee.accounts.adapters import base
+    from jailbee.accounts.models import PoolError
+
+    if agent is None:
+        return base.pooled_adapters(cfg)
+    configured = cfg.agents.get(agent)
+    if configured is None or not configured.enabled:
+        known = ", ".join(sorted(cfg.agents)) or "none"
+        raise PoolError(f"no enabled agent `{agent}` in this config. Known: {known}.")
+    try:
+        return [base.get_adapter(agent)]
+    except KeyError:
+        raise PoolError(
+            f"agent `{agent}` has no account pool: jailbee has no adapter for it."
+        ) from None
+
+
+def _names_an_account(ref: str, slots: Sequence["Slot"]) -> bool:
+    """Whether `ref` could name any of `slots`, by `resolve_ref`'s two rules.
+
+    Only used to tell `engine.resolve_ref`'s ambiguity error from its
+    not-found one: it raises one exception type for both, and an ambiguity
+    swallowed because another adapter matched would silently act on the wrong
+    login.
+    """
+    wanted = ref.strip()
+    lowered = wanted.lower()
+    return any(s.name == wanted or (s.email is not None and s.email == lowered) for s in slots)
+
+
+def _matching_choices(
+    adapters: Sequence["AccountAdapter"],
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    ref: str | None,
+    *,
+    removable: bool,
+) -> list[AccountChoice]:
+    """Every login `ref` names, across `adapters`; every parked one when None.
+
+    Per adapter the rule is `engine.resolve_ref`'s: an exact slot name wins,
+    then a bare email that matches exactly one account. An ambiguity *inside*
+    one adapter is not filtered out — `-a` cannot solve two grants of one
+    email, so `resolve_ref`'s full-slot-name error propagates. Across adapters
+    every adapter that resolved is kept, and the caller applies the TTY rule
+    to the list.
+
+    `removable` resolves through `engine.resolve_removable`, which lets `rm`
+    reach the parked half of a name the live slot also carries.
+
+    A typed `ref` matching nothing anywhere raises rather than returning an
+    empty list: only the caller knows whether the reference was typed or
+    picked, and only a typed one has an error worth reporting.
+    """
+    from jailbee.accounts import engine
+    from jailbee.accounts.models import PoolError
+
+    choices: list[AccountChoice] = []
+    known: list[str] = []
+    not_found: list[PoolError] = []
+    for adapter in adapters:
+        slots = engine.list_slots(
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+        )
+        known.extend(f"{s.name} ({adapter.name})" for s in slots)
+        if ref is None:
+            choices.extend((adapter, s) for s in slots if not s.live)
+            continue
+        try:
+            slot = (
+                engine.resolve_removable(ref, slots)
+                if removable
+                else engine.resolve_ref(ref, slots)
+            )
+        except PoolError as e:
+            if _names_an_account(ref, slots):
+                # `resolve_ref` found candidates it cannot choose between: the
+                # ambiguity is inside this one adapter, and no `-a` solves it.
+                raise
+            not_found.append(e)
+            continue
+        choices.append((adapter, slot))
+    if ref is not None and not choices:
+        if len(adapters) == 1:
+            raise not_found[0]
+        raise PoolError(
+            f"no stored account matches `{ref}`."
+            + (f" Known: {', '.join(known)}" if known else " No agent has a stored login.")
+        )
+    return choices
+
+
+def _live_choices(
+    adapters: Sequence["AccountAdapter"], cfg: "Config", gcfg: "GlobalConfig"
+) -> list[AccountChoice]:
+    """The live login of every adapter that has one, in adapter order.
+
+    `park`'s candidates: each adapter keeps its own credential file in the
+    same holder, so several can be live at once and one must be chosen.
+    """
+    from jailbee.accounts import engine
+
+    choices: list[AccountChoice] = []
+    for adapter in adapters:
+        slots = engine.list_slots(
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+        )
+        choices.extend((adapter, s) for s in slots if s.live)
+    return choices
+
+
+def _several_choices_error(choices: Sequence[AccountChoice], ref: str | None) -> str:
+    """The non-TTY refusal: name the candidates, and `-a` when it can help.
+
+    Two grants of one email inside one adapter are not solved by `-a`, so there
+    the candidates' full slot names are the only directions. Two adapters are,
+    so those name the `-a` values a script should pass.
+    """
+    agents = list(dict.fromkeys(adapter.name for adapter, _ in choices))
+    if len(agents) > 1:
+        listed = ", ".join(f"{slot.name} ({adapter.name})" for adapter, slot in choices)
+        directions = " or ".join(f"`-a {name}`" for name in agents)
+        subject = f"`{ref}` matches logins" if ref is not None else "the candidates span logins"
+        return f"{subject} of more than one agent: {listed}. Pass {directions}."
+    listed = ", ".join(slot.name for _, slot in choices)
+    return f"specify <email|slot> explicitly (or run in a TTY): {listed}"
+
+
+def _choose_account_choice(
+    choices: Sequence[AccountChoice],
+    *,
+    ref: str | None,
+    nothing: str,
+    message: str,
+) -> AccountChoice | None:
+    """The one choice to act on; None means the user cancelled the picker.
+
+    One candidate needs no prompt. Several are offered on a TTY and refused off
+    one, naming both the candidates and the `-a` values that would pick between
+    them — the TTY rule every picker here follows, with the picker itself kept
+    pure: it renders and returns, and never checks a TTY.
+
+    `nothing` is the caller's error for an empty list: only it knows whether it
+    was choosing a login to switch to or one to delete.
+
+    A cancelled picker returns None *before* any engine mutation runs: the
+    choices come from a read-only listing, and the caller aborts on None.
+    """
+    from jailbee.accounts.models import PoolError
+
+    if not choices:
+        raise PoolError(nothing)
+    if len(choices) == 1:
+        return choices[0]
+    if not _is_tty():
+        raise PoolError(_several_choices_error(choices, ref))
+    from jailbee.tui import pick_account
+
+    picked = pick_account(choices, message)
+    if picked is None:
+        return None
+    # A value the picker was not offered cannot be acted on; `None` is the
+    # safe reading, and the same one a cancelled prompt gets.
+    return {(adapter.name, slot.name): (adapter, slot) for adapter, slot in choices}.get(picked)
 
 
 def _claude_group_cell(row: "accounts_overview.Row") -> str:
@@ -11545,7 +11729,7 @@ def _claude_ref_or_pick(
     purpose: str,
     message: str,
 ) -> str | None:
-    """`ref`, or the account the user picks when they gave none.
+    """`ref`, or the Claude login the user picks when they gave none.
 
     The store is listed only on the picker path: a caller who named an account
     should not pay a store read this command does not need, and `switch` /
@@ -11553,21 +11737,20 @@ def _claude_ref_or_pick(
 
     `None` means cancelled — callers abort without an error line.
     """
-    from jailbee.accounts import engine
     from jailbee.accounts.adapters.claude import CLAUDE
-    from jailbee.tui import pick_claude_account
 
     if ref is not None:
         return ref
-    authoritative = _claude_authoritative(cfg, gcfg)
-    return engine.resolve_interactively(
-        CLAUDE,
-        engine.list_slots(CLAUDE, cfg, gcfg, authoritative=authoritative),
-        None,
-        purpose=purpose,
-        picker=lambda slots: pick_claude_account(slots, message=message),
-        is_interactive=_is_tty,
+    choice = _choose_account_choice(
+        _matching_choices([CLAUDE], cfg, gcfg, None, removable=False),
+        ref=None,
+        nothing=(
+            f"no stored login to {purpose}. `jailbee account park` stores the one in "
+            "use, and the next `/login` in a container adds another."
+        ),
+        message=message,
     )
+    return None if choice is None else choice[1].name
 
 
 def _report_side_effects(change: "PoolChange", *, session_note: str) -> None:
@@ -11788,7 +11971,7 @@ def claude_use_cmd(
         if target is None:
             raise typer.Abort()
         change = engine.switch(
-            CLAUDE, cfg, gcfg, target, authoritative=_claude_authoritative(cfg, gcfg)
+            CLAUDE, cfg, gcfg, target, authoritative=_adapter_authoritative(CLAUDE, cfg, gcfg)
         )
     except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
@@ -11833,7 +12016,9 @@ def claude_park_cmd(
     cfg, gcfg = _claude_ctx(config)
     cfg = _holder_view(cfg, group)
     try:
-        change = engine.park(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg))
+        change = engine.park(
+            CLAUDE, cfg, gcfg, authoritative=_adapter_authoritative(CLAUDE, cfg, gcfg)
+        )
     except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
         raise typer.Exit(2) from e
@@ -11887,7 +12072,9 @@ def claude_rm_cmd(
         # and `rm` is the command that clears that state.
         slot = engine.resolve_removable(
             target,
-            engine.list_slots(CLAUDE, cfg, gcfg, authoritative=_claude_authoritative(cfg, gcfg)),
+            engine.list_slots(
+                CLAUDE, cfg, gcfg, authoritative=_adapter_authoritative(CLAUDE, cfg, gcfg)
+            ),
         )
         if slot.live:
             # Pre-checked so the confirmation prompt is never shown for a
@@ -12363,7 +12550,7 @@ def claude_group_rm_cmd(
         view = _holder_view(cfg, group)
         try:
             change = engine.park(
-                CLAUDE, view, gcfg, authoritative=_claude_authoritative(view, gcfg)
+                CLAUDE, view, gcfg, authoritative=_adapter_authoritative(CLAUDE, view, gcfg)
             )
         except (PoolError, ClaudeLockTimeoutError, OSError) as e:
             error(str(e))
