@@ -239,3 +239,114 @@ def test_codex_preset_keeps_the_app_server_dirs_per_container():
     shared = AGENT_PRESETS["codex"]["shared"]
     assert isinstance(shared, list)
     assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
+
+
+
+def _run_opencode_step(which, tmp_path, *, installer_body):
+    """Run the opencode preset's install/update line in a real bash.
+
+    That line is the only thing standing between "the vendor installer ran" and
+    "`command -v opencode` works", and none of its logic is Python — so it is
+    exercised as shell. No network: `curl` is a stub on PATH that prints
+    `installer_body`, which the preset then pipes into `bash -s --`.
+
+    Returns the completed process, the fake HOME, and how many times the stub
+    curl was called.
+    """
+    import os
+    import subprocess
+
+    from jailbee.agent_presets import AGENT_PRESETS
+
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    stub_bin = tmp_path / "stub-bin"
+    stub_bin.mkdir()
+    installer = tmp_path / "installer.sh"
+    installer.write_text(installer_body)
+    curl_log = tmp_path / "curl.log"
+    curl = stub_bin / "curl"
+    curl.write_text(f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\n')
+    curl.chmod(0o755)
+
+    command = AGENT_PRESETS["opencode"][which]
+    assert isinstance(command, str)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={"HOME": str(home), "PATH": f"{stub_bin}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = curl_log.read_text().count("called") if curl_log.exists() else 0
+    return result, home, calls
+
+
+# Stands in for https://opencode.ai/v2/install: all this test cares about is
+# that it drops an executable at the hardcoded INSTALL_DIR the real one uses.
+_FAKE_OPENCODE_INSTALLER = (
+    'mkdir -p "$HOME/.opencode/bin"\n'
+    'printf "#!/bin/sh\\n" > "$HOME/.opencode/bin/opencode"\n'
+    'chmod 755 "$HOME/.opencode/bin/opencode"\n'
+)
+
+
+def _seed_shared_binary(tmp_path):
+    binary = tmp_path / "home/.opencode/bin/opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    return binary
+
+
+def test_opencode_install_links_the_binary_onto_path(tmp_path):
+    """The installer hardcodes ~/.opencode/bin, which is on no PATH jailbee
+    sets — without the link `command -v opencode` fails, so every `jailbee new`
+    reinstalls and the autostart window dies with `opencode: not found`."""
+    result, home, calls = _run_opencode_step(
+        "install", tmp_path, installer_body=_FAKE_OPENCODE_INSTALLER
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 1
+    link = home / ".local/bin/opencode"
+    assert link.is_symlink()
+    assert link.resolve() == home / ".opencode/bin/opencode"
+
+
+def test_opencode_install_skips_the_download_when_the_shared_store_has_it(tmp_path):
+    """~/.opencode is shared across a repo's containers, so a second branch
+    must relink rather than re-fetch the 88MB tarball. The stub installer here
+    fails outright: reaching it at all is the bug."""
+    _seed_shared_binary(tmp_path)
+
+    result, home, calls = _run_opencode_step("install", tmp_path, installer_body="exit 1\n")
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 0
+    assert (home / ".local/bin/opencode").is_symlink()
+
+
+def test_opencode_update_always_reruns_the_installer(tmp_path):
+    """Unlike install, update has no already-present short-circuit — rerunning
+    the installer is the whole of how opencode upgrades."""
+    _seed_shared_binary(tmp_path)
+
+    result, home, calls = _run_opencode_step(
+        "update", tmp_path, installer_body=_FAKE_OPENCODE_INSTALLER
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 1
+    assert (home / ".local/bin/opencode").is_symlink()
+
+
+def test_opencode_install_fails_loudly_when_the_installer_produces_nothing(tmp_path):
+    """`curl … | bash` exits 0 when curl fails — bash just reads an empty
+    script. Without the trailing `-x` test a failed download would be reported
+    as a successful install step and only surface later as `opencode: not
+    found` in the autostart window."""
+    result, home, _calls = _run_opencode_step("install", tmp_path, installer_body="")
+
+    assert result.returncode != 0
+    assert not (home / ".local/bin/opencode").exists()

@@ -161,8 +161,8 @@ before editing `## Unreleased`.
   node stack solely to get `codex` working you can drop it again, and an
   existing `npm i -g @openai/codex` install should be removed — `/etc/profile.d`
   puts `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would
-  shadow the new one. `gemini` and `opencode` still install through npm and
-  still need `golden.stacks.node`; that requirement is now documented.
+  shadow the new one. `gemini` still installs through npm and still needs
+  `golden.stacks.node`; that requirement is now documented.
 
   The same preset shared one more thing than it should have. Codex keeps its
   app-server control socket and daemon pid files under `$CODEX_HOME`, which
@@ -180,6 +180,31 @@ before editing `## Unreleased`.
   `jailbee doctor` now reports any socket it finds in a shared agent mount
   that is not carved out — `gemini`, `opencode` and `grok` share a whole home
   directory too and ship unverified.
+- **`opencode` installed through npm, which most images do not have.** Same
+  silent no-op as `codex` above: the preset's `npm i -g opencode-ai@latest`
+  needs `golden.stacks.node`, and without it the install step died with
+  `npm: command not found` — a warning `jailbee new` walks past — and the
+  agent's autostart window then died with `opencode: not found`. The preset
+  now runs the vendor's own installer
+  (`curl -fsSL https://opencode.ai/v2/install | bash`), which drops a static
+  binary and needs no toolchain. That installer hardcodes `~/.opencode/bin`,
+  which is on no PATH jailbee sets, so the preset also links the binary into
+  `~/.local/bin` — without it `opencode` would install and still not be
+  found. `~/.opencode` joins the preset's shared mounts, so the ~88MB payload
+  is fetched once per repo rather than once per branch, and a second branch
+  relinks instead of re-downloading. The install step asks for `loose` while
+  it runs, because both of the installer's hosts (`opencode.ai`,
+  `registry.npmjs.org`) are CDN-fronted and rotate their IPs;
+  `docs/agents.md` has the recipe for pinning it back to strict. The preset's
+  `egress_allow` gains opencode's own two hosts — `opencode.ai:443` (the
+  built-in "zen" gateway and the self-update version pointer) and
+  `models.dev:443` (the model catalogue it fetches at startup); opencode is a
+  multi-provider client, so the inference host for whichever provider you
+  configure stays yours to add. If you added the node stack solely to get
+  `opencode` working you can drop it again, and an existing
+  `npm i -g opencode-ai` install should be removed — `/etc/profile.d` puts
+  `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would shadow
+  the new one.
 - **Both dashboards opened on an empty table.** `jailbee dashboard` and the
   Qt window drew their frontend first and only then asked Incus what was
   there, so the first thing on screen was a blank view — and the snapshot
