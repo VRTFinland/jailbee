@@ -276,7 +276,7 @@ def skills_status() -> StepStatus:
     An install that ships no skills at all has nothing to owe, so it reports
     installed — the alternative is a hint nobody can ever satisfy.
     """
-    from jailbee.claude_skills import bundled_skill_names, host_skills_dir
+    from jailbee.agent_skills import bundled_skill_names, host_skills_dir
 
     title = STEP_TITLES["skills"]
     names = bundled_skill_names()
@@ -407,7 +407,7 @@ def _install(
 
         install_systemd_units()
         return
-    from jailbee.claude_skills import host_skills_dir, install_host_skills
+    from jailbee.agent_skills import host_skills_dir, install_host_skills
 
     written = install_host_skills()
     success_plain(f"Installed {len(written)} skills in {host_skills_dir()}")

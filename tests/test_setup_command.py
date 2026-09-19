@@ -150,7 +150,7 @@ def test_detect_shell_returns_none_when_nothing_is_supported(
 
 
 def test_install_host_skills_copies_every_bundled_skill(home: Path) -> None:
-    from jailbee.claude_skills import bundled_skill_names, install_host_skills
+    from jailbee.agent_skills import bundled_skill_names, install_host_skills
 
     written = install_host_skills()
 
@@ -162,7 +162,7 @@ def test_install_host_skills_copies_every_bundled_skill(home: Path) -> None:
 
 def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
     """Files removed upstream must disappear, as `make install-skill` did."""
-    from jailbee.claude_skills import install_host_skills
+    from jailbee.agent_skills import install_host_skills
 
     stale = home / ".claude" / "skills" / "jailbee-usage" / "GONE.md"
     stale.parent.mkdir(parents=True)
@@ -175,7 +175,7 @@ def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
 
 
 def test_install_host_skills_leaves_unrelated_skills_alone(home: Path) -> None:
-    from jailbee.claude_skills import install_host_skills
+    from jailbee.agent_skills import install_host_skills
 
     mine = home / ".claude" / "skills" / "my-own-skill" / "SKILL.md"
     mine.parent.mkdir(parents=True)
@@ -188,7 +188,7 @@ def test_install_host_skills_leaves_unrelated_skills_alone(home: Path) -> None:
 
 def test_skills_status_flips_after_install(home: Path) -> None:
     _ = home
-    from jailbee.claude_skills import install_host_skills
+    from jailbee.agent_skills import install_host_skills
     from jailbee.setup_command import skills_status
 
     assert skills_status().installed is False
@@ -377,7 +377,7 @@ def test_consume_hint_fires_only_once(home: Path) -> None:
 
 
 def test_consume_hint_is_silent_when_nothing_is_missing(home: Path, mocker: MockerFixture) -> None:
-    from jailbee.claude_skills import install_host_skills
+    from jailbee.agent_skills import install_host_skills
     from jailbee.setup_command import consume_hint, install_completions
 
     mocker.patch("shutil.which", return_value="/usr/local/bin/jailbee")

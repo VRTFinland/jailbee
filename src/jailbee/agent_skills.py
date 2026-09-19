@@ -1,4 +1,4 @@
-"""Sync jailbee's bundled Claude Code skills into the shared ``~/.claude/skills``.
+"""Sync jailbee's bundled agent skills into the shared skills directories.
 
 ``~/.claude`` is a shared bind mount (``<shared_dir>/claude``) common to every
 container of a repo, and ``raw.idmap`` is 1:1, so files the host dev user writes
@@ -30,7 +30,7 @@ def _skills_root() -> Path:
     packaged = Path(str(importlib.resources.files("jailbee"))) / "skills"
     if packaged.is_dir():
         return packaged
-    # claude_skills.py -> jailbee -> src -> repo root
+    # agent_skills.py -> jailbee -> src -> repo root
     return Path(__file__).resolve().parents[2] / "docs" / "skills"
 
 
@@ -74,7 +74,7 @@ def _copy_skills_into(dest: Path) -> list[Path]:
 def install_host_skills() -> list[Path]:
     """Install the bundled skills for the host's own Claude Code.
 
-    The counterpart to `sync_jailbee_skills`, which serves the *containers*:
+    The counterpart to `sync_agent_skills`, which serves the *containers*:
     this one teaches the Claude the user runs on the host about `jailbee`
     itself. Installed by `jailbee setup`; it used to be `make install-skill`,
     which meant a PyPI install never got them.
@@ -82,7 +82,7 @@ def install_host_skills() -> list[Path]:
     return _copy_skills_into(host_skills_dir())
 
 
-def sync_jailbee_skills(cfg: Config) -> None:
+def sync_agent_skills(cfg: Config) -> None:
     """Copy each bundled skill into ``<shared_dir>/claude/skills/<name>/``.
 
     No-op unless ``claude.enabled`` and ``claude.install_jailbee_skills``. A
