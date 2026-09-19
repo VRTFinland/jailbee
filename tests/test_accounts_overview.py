@@ -58,12 +58,12 @@ def _write_repo(root: Path, *, shared: Path) -> None:
 
 
 def _cfg(tmp_path: Path, *, group: str | None = None):
-    extra = {"claude_credentials_dir": groups.group_dir("claude", group)} if group else {}
+    extra = {"credential_group": group} if group else {}
     return make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", **extra)
 
 
 def _gcfg(**creds) -> GlobalConfig:
-    return GlobalConfig.model_validate({"claude_credentials": creds} if creds else {})
+    return GlobalConfig.model_validate({"credentials": creds} if creds else {})
 
 
 def _login_in(holder: Path, token: str, *, account: dict | None = None) -> None:

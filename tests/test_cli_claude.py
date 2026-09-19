@@ -136,7 +136,9 @@ def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
 
 
 def test_ls_says_which_holder_this_repo_uses(repo, mocker):
-    cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
+    from jailbee.paths import display_path
+
+    cfg = repo.model_copy(update={"credential_group": "gisgro"})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     _built(mocker, _overview(_row("me@corp.com", group="gisgro", mine=True)))
 
@@ -145,7 +147,7 @@ def test_ls_says_which_holder_this_repo_uses(repo, mocker):
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
     assert f"This repo ({cfg.container_prefix}) → group `gisgro`" in flat
-    assert "/data/creds/gisgro" in flat
+    assert display_path(engine.group_dir("claude", "gisgro")) in flat
 
 
 def test_ls_says_when_this_repo_shares_no_group(repo, mocker):

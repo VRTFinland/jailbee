@@ -11349,14 +11349,13 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
     if group is None:
         return cfg
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
     try:
         name = groups.validate_group_name(group)
     except groups.GroupError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    return cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, name)})
+    return cfg.model_copy(update={"credential_group": name})
 
 
 def _claude_authoritative(cfg: "Config", gcfg: "GlobalConfig") -> set[str]:
@@ -12020,8 +12019,7 @@ def _group_after_write(cfg: "Config") -> str | None:
     from jailbee.global_config import load_global_config
 
     gcfg, _ = load_global_config(_global_config_path_for_write())
-    resolved = gcfg.claude_credentials.dir_for(cfg.container_prefix)
-    return None if resolved is None else resolved.name
+    return gcfg.credentials.group_for(cfg.container_prefix)
 
 
 def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:
@@ -12037,10 +12035,8 @@ def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | No
     that one container behind (`accounts.groups.override_is_redundant`).
     """
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
-    holder = None if group is None else groups.group_dir(CLAUDE.name, group)
-    view = cfg.model_copy(update={"claude_credentials_dir": holder})
+    view = cfg.model_copy(update={"credential_group": group})
     names = groups.redundant_overrides(view, incus)
     for name in names:
         groups.clear_container_group(incus, name)
@@ -12234,10 +12230,10 @@ def claude_group_rm_cmd(
     # The host default first: it is the one blocker the registry cannot
     # speak for, since a host with no registered repo still resolves every
     # repo to it.
-    if gcfg.claude_credentials.group == group:
+    if gcfg.credentials.group == group:
         error(
             f"`{group}` is this host's default credential group. Change or remove "
-            "`claude_credentials.group` in ~/.config/jailbee/global.yaml first — "
+            "`credentials.group` in ~/.config/jailbee/global.yaml first — "
             "otherwise every repo without an entry of its own still resolves here."
         )
         raise typer.Exit(2)
@@ -12548,7 +12544,7 @@ def claude_group_reset_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Drop a container's override so it inherits the repo's group again."""
-    from jailbee.accounts import groups
+    from jailbee.accounts import engine, groups
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -12558,7 +12554,7 @@ def claude_group_reset_cmd(
 
     before = groups.effective_group(cfg, incus, name)
     groups.clear_container_group(incus, name)
-    repo = groups.repo_group(cfg)
+    repo = engine.repo_group(cfg)
     _report_group_change(cfg, name, before=before, after=repo, redundant=True)
 
 

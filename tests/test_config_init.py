@@ -415,14 +415,10 @@ def test_global_template_credential_group_round_trips_through_global_config(tmp_
     gcfg, warnings = load_global_config(target)
 
     assert warnings == []
-    assert gcfg.claude_credentials.group == "default"
-    assert gcfg.claude_credentials.dir_for("sampleapp") == (
-        tmp_path / "data" / "jailbee" / "claude-credentials" / "default"
-    )
-    # Every repo resolves to the same directory — that is the sharing.
-    assert gcfg.claude_credentials.dir_for("other-repo") == gcfg.claude_credentials.dir_for(
-        "sampleapp"
-    )
+    assert gcfg.credentials.group == "default"
+    assert gcfg.credentials.group_for("sampleapp") == "default"
+    # Every repo resolves to the same group — that is the sharing.
+    assert gcfg.credentials.group_for("other-repo") == gcfg.credentials.group_for("sampleapp")
 
 
 def test_repo_template_does_not_contain_claude_credentials(tmp_path):
@@ -604,19 +600,23 @@ def test_generated_global_names_the_generating_command_in_its_header():
 # for this key.
 
 
-def test_generated_global_documents_the_host_level_claude_credentials_block():
-    """`claude_credentials` is host-level (modeled on `GlobalConfig`, not
+def test_generated_global_documents_the_host_level_credentials_block():
+    """`credentials` is host-level (modeled on `GlobalConfig`, not
     `Config`), so it's outside what `test_generated_global_documents_every_key_it_writes`
-    checks. Pin its description separately so the second `render_documented`
-    pass in `render_global_template` doesn't silently regress to an
-    undocumented raw value."""
+    checks. Pin its description separately so the `render_documented`
+    pass doesn't silently regress to an undocumented raw value.
+
+    Rendered from the new key directly: `config_init.GLOBAL_SEED_HOST` still
+    spells the legacy `claude_credentials` until the writer migration lands,
+    and the schema no longer documents that name. This keeps the documentation
+    mechanism covered in the meantime.
+    """
+    from jailbee.config_writer import render_global_yaml
     from jailbee.global_config import GlobalConfig
 
-    text = render_global_template()
-    parsed = yaml.safe_load(text)
-    assert parsed["claude_credentials"]["group"] == "default"
+    text = render_global_yaml({"credentials": {"group": "default"}})
 
-    info = GlobalConfig.model_fields["claude_credentials"]
+    info = GlobalConfig.model_fields["credentials"]
     assert info.description
     first_line = " ".join(info.description.strip().splitlines()[0].split())
     assert first_line in _flattened_comment_text(text)

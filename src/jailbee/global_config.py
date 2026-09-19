@@ -2,7 +2,7 @@
 
 Stored at $XDG_CONFIG_HOME/jailbee/global.yaml (default
 ~/.config/jailbee/global.yaml). Optional file — if absent, defaults are used.
-Carries `docker_registry_mirror`, `loose_auto_revert`, `claude_credentials`,
+Carries `docker_registry_mirror`, `loose_auto_revert`, `credentials`,
 and the `ls` / `dashboard` column preferences.
 
 Per-repo configuration lives in <repo>/.jailbee/config.yaml — see config.py.
@@ -19,12 +19,13 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationEr
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
-    ClaudeCredentials,
     ColumnConfig,
     ConfigError,
+    Credentials,
     LooseAutoRevert,
     _columns_already_sanitized,
     _split_host_keys,
+    normalize_credentials_key,
 )
 from jailbee.paths import expand_path, xdg_data_home
 
@@ -183,12 +184,12 @@ class GlobalConfig(BaseModel):
             "`jailbee dashboard`, or View ▸ Columns in the GUI."
         ),
     )
-    claude_credentials: ClaudeCredentials = Field(
-        default_factory=ClaudeCredentials,
+    credentials: Credentials = Field(
+        default_factory=Credentials,
         description=(
             "Lets several repos on this host share one Claude Code login instead of "
             "each needing its own `/login`. Host-level only — setting this or the "
-            "computed `claude_credentials_dir` in a repo's `.jailbee/config.yaml` is "
+            "computed `credential_group` in a repo's `.jailbee/config.yaml` is "
             "rejected at load time."
         ),
     )
@@ -228,7 +229,12 @@ _LS_DEFAULT = ColumnConfig()
 _DASHBOARD_DEFAULT = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
 
 
-def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
+def validate_global_raw(
+    raw: dict[str, object],
+    path: Path,
+    *,
+    emit_hint: bool = True,
+) -> GlobalConfig:
     """Validate the host-level half of an already-parsed `global.yaml`.
 
     `global.yaml` is also the source for Config-layer overlay keys (gpg,
@@ -242,6 +248,11 @@ def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
     typo (see ``load_global_config``) there is nothing sensible to recover
     to.
 
+    `emit_hint` gates the legacy `claude_credentials:` deprecation notice,
+    mirroring `config.loader.load_config_from_layers`: the full-screen config
+    editor calls this synchronously from its save handler and passes `False`,
+    so a save never prints to the terminal the editor owns.
+
     Split from ``_load_unsanitized`` so a caller holding a mapping that is
     not on disk — the config editor validating a staged global layer
     before writing it — can reach the same rules. `path` is used only to
@@ -250,6 +261,11 @@ def validate_global_raw(raw: dict[str, object], path: Path) -> GlobalConfig:
     it, ten of the twelve host-level paths the editor offers would be
     written unvalidated.
     """
+    raw, folded = normalize_credentials_key(raw, str(path))
+    if emit_hint and folded:
+        from jailbee.config.loader import _warn_legacy_credentials_block
+
+        _warn_legacy_credentials_block(str(path))
     host_raw, _ = _split_host_keys(raw)
     try:
         return GlobalConfig.model_validate(host_raw)

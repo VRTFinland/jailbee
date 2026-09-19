@@ -7850,12 +7850,8 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
     """`--claude-group X` on a repo already in X must not create an override:
     it outranks the profile, so the next `jailbee claude group set` would
     leave this one container behind on X."""
-    from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
-    cfg = _cfg_for_new(tmp_path).model_copy(
-        update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "personal")}
-    )
+    cfg = _cfg_for_new(tmp_path).model_copy(update={"credential_group": "personal"})
     incus = MagicMock()
     incus.exists.return_value = False
     # A real profile document, not a bare MagicMock: `new_container` reaches
@@ -7891,7 +7887,7 @@ def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker
     and the label would otherwise survive the repo joining a group later."""
     from jailbee.accounts import groups
 
-    cfg = _cfg_for_new(tmp_path)  # no `claude_credentials_dir`
+    cfg = _cfg_for_new(tmp_path)  # no `credential_group`
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)

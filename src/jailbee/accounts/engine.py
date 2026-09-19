@@ -96,20 +96,18 @@ def group_dir(agent: str, name: str) -> Path:
 
 
 def repo_group(cfg: Config) -> str | None:
-    """The credential group this repo resolves to, or None.
-
-    Phase 2 replaces this body with `cfg.credential_group`; until then the
-    group name is the last component of the Claude-era computed attribute.
-    """
-    return None if cfg.claude_credentials_dir is None else cfg.claude_credentials_dir.name
+    """The credential group this repo resolves to, or None."""
+    return cfg.credential_group
 
 
 def holder_dir(adapter: AccountAdapter, cfg: Config) -> Path:
     """The directory whose credential this repo's containers read.
 
-    `holder_override`, not `group_dir(adapter.name, repo_group(cfg))`: tests
-    point `claude_credentials_dir` at arbitrary temporary paths, and deriving
-    the directory from the group name would silently ignore them.
+    `holder_override`, not `group_dir(adapter.name, repo_group(cfg))`: an
+    adapter may derive its holder from the group name (`ClaudeAdapter` does),
+    but a test that wants an arbitrary directory patches `holder_override`
+    directly rather than pointing `credential_group` at one — the group is a
+    bare name, not a path.
     """
     return adapter.holder_override(cfg) or adapter.config_home(cfg)
 
@@ -271,8 +269,8 @@ def registered_repos() -> list[tuple[str, Path]]:
 
 def _resolves_to(gcfg: GlobalConfig, prefix: str, group: str) -> bool:
     """Whether `prefix` resolves to `group` under this host's config."""
-    resolved = gcfg.claude_credentials.dir_for(prefix)
-    return resolved is not None and resolved.name == group
+    resolved = gcfg.credentials.group_for(prefix)
+    return resolved is not None and resolved == group
 
 
 def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
@@ -309,7 +307,7 @@ def members(
     from jailbee.config import load_repo_config
 
     me = Member(cfg.container_prefix, adapter.config_home(cfg))
-    if cfg.claude_credentials_dir is None:
+    if cfg.credential_group is None:
         return [me], []
 
     group = repo_group(cfg)

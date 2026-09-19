@@ -122,8 +122,7 @@ def _config_homes(adapter: AccountAdapter, cfg: Config) -> tuple[dict[str, Path]
 
 
 def _resolved_group(gcfg: GlobalConfig, prefix: str) -> str | None:
-    resolved = gcfg.claude_credentials.dir_for(prefix)
-    return None if resolved is None else resolved.name
+    return gcfg.credentials.group_for(prefix)
 
 
 def _existing_group_dirs(adapter: AccountAdapter) -> list[str]:

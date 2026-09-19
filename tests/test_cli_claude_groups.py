@@ -20,9 +20,8 @@ def group_env(mocker, tmp_path, monkeypatch):
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
     from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
-    cfg = cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "work")})
+    cfg = cfg.model_copy(update={"credential_group": "work"})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
@@ -310,21 +309,19 @@ def test_claude_ls_never_hands_the_overview_a_holder_view(group_env, mocker):
     another group. A holder view keeps the calling repo's config home while
     naming another group's directory (see `cli._holder_view`), and
     `accounts.overview.build` reads both."""
-    from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.accounts.overview import Overview
 
     captured = {}
 
     def fake_build(adapter, cfg, gcfg, incus):
-        captured["holder"] = cfg.claude_credentials_dir
+        captured["holder"] = cfg.credential_group
         return Overview(rows=(), unreachable=(), containers_known=True)
 
     mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
 
     runner.invoke(app, ["claude", "ls", "-g", "personal"])
 
-    assert captured["holder"] == groups.group_dir(CLAUDE.name, "work")
+    assert captured["holder"] == "work"
 
 
 @pytest.fixture
@@ -336,17 +333,15 @@ def holder_view_env(mocker, tmp_path, monkeypatch):
     `oauthAccount` turns into a wrongly named park.
     """
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
     from jailbee.global_config import GlobalConfig
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
-    cfg = cfg.model_copy(update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "work")})
+    cfg = cfg.model_copy(update={"credential_group": "work"})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch(
         "jailbee.cli._load_global",
-        return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "work"}}),
+        return_value=GlobalConfig.model_validate({"credentials": {"group": "work"}}),
     )
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
@@ -713,9 +708,7 @@ def test_rm_refuses_while_a_repo_resolves_to_the_group(holder_view_env, mocker):
 
     mocker.patch(
         "jailbee.cli._load_global",
-        return_value=GlobalConfig.model_validate(
-            {"claude_credentials": {"repos": {"myrepo": "work"}}}
-        ),
+        return_value=GlobalConfig.model_validate({"credentials": {"repos": {"myrepo": "work"}}}),
     )
     groups.group_dir(CLAUDE.name, "work").mkdir(parents=True)
 
@@ -736,7 +729,7 @@ def test_rm_refuses_the_host_default_even_with_no_repos(group_env, mocker):
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     mocker.patch(
         "jailbee.cli._load_global",
-        return_value=GlobalConfig.model_validate({"claude_credentials": {"group": "demo"}}),
+        return_value=GlobalConfig.model_validate({"credentials": {"group": "demo"}}),
     )
     groups.group_dir(CLAUDE.name, "demo").mkdir(parents=True)
 
@@ -798,7 +791,7 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     park.assert_called_once()
     # The holder view, not this repo's own config: parking through the caller's
     # holder would store the wrong group's login.
-    assert park.call_args.args[1].claude_credentials_dir == holder
+    assert park.call_args.args[1].credential_group == "demo"
     assert "demo@corp.com" in result.output
     assert not holder.exists()
 

@@ -20,10 +20,10 @@ from tests.conftest import make_cfg
 def _cfg(tmp_path: Path, *, group: str | None = None):
     """A Config whose shared_dir is under tmp_path, never under $HOME.
 
-    `claude_credentials_dir` is an ordinary Config field, so it is passed as
-    an override — the same form `tests/test_doctor.py:1678` uses.
+    `credential_group` is an ordinary Config field, so it is passed as an
+    override; the holder directory is then derived by `ClaudeAdapter`.
     """
-    extra = {"claude_credentials_dir": tmp_path / "creds" / group} if group is not None else {}
+    extra = {"credential_group": group} if group is not None else {}
     return make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared", **extra)
 
 
@@ -48,7 +48,7 @@ def test_holder_is_the_group_directory_with_a_group(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path, group="work")
     # The config home does NOT move: only the credential is shared.
     assert CLAUDE.config_home(cfg) == tmp_path / "shared" / "claude"
-    assert engine.holder_dir(CLAUDE, cfg) == tmp_path / "creds" / "work"
+    assert engine.holder_dir(CLAUDE, cfg) == engine.group_dir("claude", "work")
 
 
 def test_identity_file_prefers_the_legacy_config_json(tmp_path: Path) -> None:
@@ -416,7 +416,7 @@ def test_members_of_a_group_include_other_registered_repos(tmp_path: Path, mocke
     _register("other", other)
     _register("outsider", tmp_path / "outsider")
     gcfg = GlobalConfig.model_validate(
-        {"claude_credentials": {"group": "work", "repos": {"outsider": None}}}
+        {"credentials": {"group": "work", "repos": {"outsider": None}}}
     )
 
     found, unreachable = engine.members(CLAUDE, cfg, gcfg)
@@ -434,7 +434,7 @@ def test_members_names_a_repo_whose_config_will_not_load(tmp_path: Path, mocker)
     (broken / ".jailbee" / "config.yaml").write_text(": not yaml :", encoding="utf-8")
     _register("broken", broken)
     _register("gone", tmp_path / "gone")  # no config file at all
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
@@ -455,7 +455,7 @@ def test_members_include_a_registered_scratch_repo(tmp_path: Path, mocker) -> No
     scratch.mkdir()  # a real directory, deliberately without .jailbee/
     scratch_prefix = _scratch_prefix(scratch)  # slug plus a digest of the path
     _register(scratch_prefix, scratch)
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
@@ -475,7 +475,7 @@ def test_members_still_names_a_registered_directory_that_is_gone(tmp_path: Path,
     _no_git(mocker)
     cfg = _cfg(tmp_path, group="work")
     _register("vanished", tmp_path / "vanished")  # never created
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
@@ -946,7 +946,7 @@ def test_switch_clears_the_account_in_every_member_including_this_repo(
     _write_repo(other, shared=tmp_path / "other-shared")
     _register("other", other)
     _register(cfg.container_prefix, tmp_path / "repo")
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
     engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
     _write_identity(CLAUDE.config_home(cfg), {"emailAddress": "old@corp.com"})
     _write_identity(tmp_path / "other-shared" / "claude", {"emailAddress": "old@corp.com"})
@@ -1744,7 +1744,7 @@ def test_members_excludes_a_caller_that_does_not_resolve_to_the_holder(
     """
     _no_git(mocker)
     cfg = _cfg(tmp_path, group="personal")
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     found, unreachable = engine.members(CLAUDE, cfg, gcfg)
 
@@ -1762,7 +1762,7 @@ def test_members_include_an_unregistered_caller_that_resolves_to_the_holder(
     """
     _no_git(mocker)
     cfg = _cfg(tmp_path, group="work")
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
 
     found, _ = engine.members(CLAUDE, cfg, gcfg)
 
@@ -1778,7 +1778,7 @@ def test_switch_clears_rather_than_restores_a_non_authoritative_member(
     write, and it is what every switch did before the record existed."""
     _park_carrying(tmp_path, "first@corp.com#ccccdddd", "first", monkeypatch)
     cfg = _cfg(tmp_path, group="work")
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
     engine.holder_dir(CLAUDE, cfg).mkdir(parents=True)
     home = CLAUDE.config_home(cfg)
     _write_identity(home, {"emailAddress": "other@corp.com"})
@@ -1801,7 +1801,7 @@ def test_park_names_the_slot_from_the_holder_note(tmp_path: Path, monkeypatch, m
     _no_git(mocker)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     cfg = _cfg(tmp_path, group="personal")
-    gcfg = GlobalConfig.model_validate({"claude_credentials": {"group": "work"}})
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
     _holder_with(cfg, _grant("rt-personal"))
     claude_adapter.write_account_note(
         engine.holder_dir(CLAUDE, cfg), ACCOUNT_BLOCK, _grant("rt-personal")

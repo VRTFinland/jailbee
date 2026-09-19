@@ -56,7 +56,7 @@ COMPUTED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         ("Config", "repo_root"),
         ("Config", "default_branch"),
         ("Config", "upstream_remote"),
-        ("Config", "claude_credentials_dir"),
+        ("Config", "credential_group"),
     }
 )
 """(model, field) pairs that are never YAML keys, so never editable.
@@ -536,9 +536,7 @@ this filter entirely) is the real answer at this schema size.
 """
 
 
-GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
-    {"github", "claude_credentials", "claude_credentials_dir"}
-)
+GLOBAL_ONLY_KEYS: frozenset[str] = frozenset({"github", "credentials", "credential_group"})
 """Top-level keys `load_config_from_layers` refuses in a repo config.
 
 Tokens and credential-group names are host-local: a repo config is

@@ -364,3 +364,82 @@ def test_account_store_is_inside_the_test_data_home(
 
     assert Path(os.environ["XDG_DATA_HOME"]) == isolated_xdg_data_home
     assert engine.store_dir(fake_adapter).is_relative_to(isolated_xdg_data_home)
+
+
+class CfgHomeAdapter(FakeAdapter):
+    """A fake whose config home follows the config it is asked about.
+
+    `FakeAdapter` answers one fixed home, which is all the store tests need.
+    `engine.members` asks about *every* member config, so the group-resolution
+    tests below need an adapter whose `config_home` is a function of the
+    `Config` it is given.
+    """
+
+    def __init__(self, holder: Path | None = None) -> None:
+        super().__init__(Path(), holder)
+
+    def config_home(self, cfg: Any) -> Path:
+        assert cfg.shared_dir is not None  # set by make_cfg
+        return cfg.shared_dir
+
+
+def test_members_resolves_a_shared_group_from_real_configs(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """The proof phase 1 lacked: real `Config`s, a real group resolution.
+
+    Every earlier engine test patched `members` out, so nothing showed that the
+    engine reads the *generic* `credential_group` rather than a Claude-era
+    attribute. No `MagicMock` config: `members` must run against the real model.
+    """
+    from jailbee.accounts import engine
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    alpha_root = tmp_path / "alpha"
+    beta_root = tmp_path / "beta"
+    alpha_root.mkdir()
+    beta_root.mkdir()
+    alpha_home = tmp_path / "alpha-shared"
+    beta_home = tmp_path / "beta-shared"
+    caller = make_cfg(alpha_root, shared_dir=alpha_home)
+    other = make_cfg(beta_root, shared_dir=beta_home)
+    object.__setattr__(caller, "credential_group", "work")
+    object.__setattr__(other, "credential_group", "work")
+
+    adapter = CfgHomeAdapter()
+    gcfg = GlobalConfig.model_validate({"credentials": {"group": "work"}})
+    mocker.patch.object(
+        engine,
+        "registered_repos",
+        return_value=[("alpha", alpha_root), ("beta", beta_root)],
+    )
+    mocker.patch("jailbee.config.load_repo_config", return_value=other)
+
+    found, unreachable = engine.members(adapter, caller, gcfg)
+
+    assert [m.container_prefix for m in found] == ["alpha", "beta"]
+    assert [m.config_home for m in found] == [alpha_home, beta_home]
+    assert unreachable == []
+
+
+def test_members_of_an_ungrouped_real_config_skips_the_registry(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """A repo sharing no group is its own only member, with no registry read."""
+    from jailbee.accounts import engine
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    home = tmp_path / "alpha-shared"
+    caller = make_cfg(tmp_path / "alpha", shared_dir=home)
+    adapter = CfgHomeAdapter()
+    registry = mocker.patch.object(engine, "registered_repos", side_effect=AssertionError)
+
+    found, unreachable = engine.members(adapter, caller, GlobalConfig())
+
+    assert [(m.container_prefix, m.config_home) for m in found] == [("alpha", home)]
+    assert unreachable == []
+    registry.assert_not_called()

@@ -256,13 +256,12 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
     """
     from jailbee.accounts import engine
 
-    group_dir = cfg.claude_credentials_dir
-    if group_dir is None:
+    group = cfg.credential_group
+    if group is None:
         return []
+    group_dir = engine.group_dir("claude", group)
 
     assert cfg.shared_dir is not None  # set by load_config
-    group = engine.repo_group(cfg)
-    assert group is not None  # group_dir is not None, so neither is this
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
     if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
         return [
@@ -294,7 +293,7 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
     """
     from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 
-    configured = {gcfg.claude_credentials.group, *gcfg.claude_credentials.repos.values()}
+    configured = {gcfg.credentials.group, *gcfg.credentials.repos.values()}
     offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
     if not offending:
         return []
@@ -302,7 +301,7 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
         CheckResult(
             "claude credential group name",
             False,
-            f"`claude_credentials` names a group called {', '.join(offending)}, "
+            f"`credentials` names a group called {', '.join(offending)}, "
             "which `jailbee claude group` cannot address — it uses that word "
             "for 'no credential group'. Rename the group in "
             "~/.config/jailbee/global.yaml and rename its directory under "

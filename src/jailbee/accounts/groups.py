@@ -1,10 +1,11 @@
-"""Which Claude credential group applies to a repo, and to one container.
+"""Which credential group applies to a repo, and to one container.
 
 Two sources feed a container's credential, and this module is the only
 place that knows both:
 
-1. ``global.yaml``'s ``claude_credentials`` — the repo's permanent group,
-   resolved onto ``Config.claude_credentials_dir`` at load time.
+1. ``global.yaml``'s ``credentials`` (or its legacy spelling
+   ``claude_credentials``) — the repo's permanent group, resolved onto
+   ``Config.credential_group`` at load time.
 2. The container's ``user.jailbee.claude_group`` label — a temporary
    override for the length of that container's life.
 
@@ -62,7 +63,7 @@ group-less repo indistinguishable from one deliberately opted out, and
 RESERVED_GROUP_NAMES = frozenset({"none"})
 """Names the CLI refuses to write, because it spells "no group" that way.
 
-Enforced only in the writing path, never in ``ClaudeCredentials``'s field
+Enforced only in the writing path, never in ``Credentials``'s field
 validators: a host whose ``global.yaml`` already names a group ``none``
 must keep loading. ``jailbee doctor`` reports such a group instead.
 """
@@ -108,13 +109,6 @@ def group_dir(agent: str, name: str) -> Path:
     return _dir(agent, name)
 
 
-def repo_group(cfg: Config) -> str | None:
-    """The group this repo resolves to from `global.yaml`, or None."""
-    from jailbee.accounts.engine import repo_group as _repo_group
-
-    return _repo_group(cfg)
-
-
 def container_override(incus: Incus, container: str) -> Override | None:
     """The container's own group setting, or None when it inherits.
 
@@ -143,6 +137,8 @@ def container_override(incus: Incus, container: str) -> Override | None:
 
 def effective_group(cfg: Config, incus: Incus, container: str) -> str | None:
     """The group whose credential `container` reads, or None for no group."""
+    from jailbee.accounts.engine import repo_group
+
     override = container_override(incus, container)
     if override is not None:
         return override.group
@@ -197,7 +193,7 @@ def _profile_has_creds_device(cfg: Config) -> bool:
     (`incus.py:504`). Derived from the config rather than read back from
     Incus so it cannot disagree with what the next `jailbee apply` writes.
     """
-    return cfg.claude.enabled and cfg.claude_credentials_dir is not None
+    return cfg.claude.enabled and cfg.credential_group is not None
 
 
 def _local_creds_device(incus: Incus, container: str) -> dict[str, str] | None:
@@ -282,6 +278,8 @@ def override_is_redundant(cfg: Config, group: str | None) -> bool:
     repo shares no group either: neither side then mounts anything, and the
     env key the label writes names the config home Claude Code defaults to.
     """
+    from jailbee.accounts.engine import repo_group
+
     if group != repo_group(cfg):
         return False
     return group is None or _profile_has_creds_device(cfg)
@@ -350,8 +348,7 @@ def groups_by_prefix_from(
     """
     result: dict[str, set[str | None]] = {}
     for prefix in prefixes:
-        resolved = gcfg.claude_credentials.dir_for(prefix)
-        repo = None if resolved is None else resolved.name
+        repo = gcfg.credentials.group_for(prefix)
         found: set[str | None] = set()
         for row in rows:
             name = str(row.get("name", ""))
@@ -433,9 +430,9 @@ def container_groups(
         prefix = next((p for p in ordered if name.startswith(f"{p}-")), None)
         if prefix is None:
             continue
-        resolved = gcfg.claude_credentials.dir_for(prefix)
+        resolved = gcfg.credentials.group_for(prefix)
         label = _label_group(row.get("config") or {})
-        group = (None if resolved is None else resolved.name) if label is INHERIT else label
+        group = resolved if label is INHERIT else label
         out.append((name, prefix, group))  # type: ignore[arg-type] # narrowed by sentinel
     # By container name only: a `None` group would make a whole-tuple sort
     # raise as soon as two entries shared a name and a prefix.

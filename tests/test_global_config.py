@@ -278,7 +278,23 @@ def test_mirror_enabled_rejects_other_strings(tmp_path):
         load_global_config(path)
 
 
-def test_global_config_parses_claude_credentials(tmp_path):
+def test_global_config_parses_credentials(tmp_path):
+    from jailbee import notices
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text("credentials:\n  group: work\n  repos:\n    side: personal\n    solo: null\n")
+
+    gcfg, warnings = load_global_config(path)
+
+    assert warnings == []
+    assert gcfg.credentials.group == "work"
+    assert gcfg.credentials.repos == {"side": "personal", "solo": None}
+    assert notices.active() == ()
+
+
+def test_global_config_parses_legacy_claude_credentials(tmp_path):
+    from jailbee import notices
     from jailbee.global_config import load_global_config
 
     path = tmp_path / "global.yaml"
@@ -289,20 +305,25 @@ def test_global_config_parses_claude_credentials(tmp_path):
     gcfg, warnings = load_global_config(path)
 
     assert warnings == []
-    assert gcfg.claude_credentials.group == "work"
-    assert gcfg.claude_credentials.repos == {"side": "personal", "solo": None}
+    assert gcfg.credentials.group == "work"
+    assert gcfg.credentials.repos == {"side": "personal", "solo": None}
+    active = notices.active()
+    assert len(active) == 1
+    assert active[0].key == "legacy-credentials-block"
+    assert any("credentials" in line for line in active[0].lines)
 
 
-def test_claude_credentials_is_a_host_level_key():
+def test_credentials_is_a_host_level_key():
     """It must never reach the Config layer's `deep_merge`: `Config` has
     `extra='forbid'` and no such field, so an unsplit key would make every
     load fail for anyone who sets it."""
     from jailbee.config import _HOST_LEVEL_KEYS, _split_host_keys
 
+    assert "credentials" in _HOST_LEVEL_KEYS
     assert "claude_credentials" in _HOST_LEVEL_KEYS
-    host, config_level = _split_host_keys({"claude_credentials": {"group": "work"}, "gpg": {}})
-    assert "claude_credentials" in host
-    assert "claude_credentials" not in config_level
+    host, config_level = _split_host_keys({"credentials": {"group": "work"}, "gpg": {}})
+    assert "credentials" in host
+    assert "credentials" not in config_level
 
 
 def test_scratch_block_reaches_global_config(tmp_path) -> None:

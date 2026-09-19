@@ -689,7 +689,9 @@ class ClaudeAdapter:
         return cfg.shared_dir / "claude"
 
     def holder_override(self, cfg: Config) -> Path | None:
-        return cfg.claude_credentials_dir
+        if cfg.credential_group is None:
+            return None
+        return engine.group_dir(self.name, cfg.credential_group)
 
     def grant_block(self, raw: str | None) -> dict[str, Any] | None:
         return _login_block(raw)

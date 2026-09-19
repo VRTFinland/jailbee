@@ -361,7 +361,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
             emit_hint=False,
         )
         if layer == "global":
-            validate_global_raw(global_raw, layer_set.global_path)
+            validate_global_raw(global_raw, layer_set.global_path, emit_hint=False)
     except ConfigError as e:
         return str(e)
     return None

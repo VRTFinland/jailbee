@@ -324,11 +324,19 @@ def test_full_global_config_with_github_loads_cleanly(repo_and_global):
     assert "api.github.com:443" in cfg.effective_egress_allow()
 
 
-# ---------- claude_credentials block placement / resolution
+# ---------- credentials block placement / resolution
 
 
-def test_claude_credentials_dir_resolves_from_the_global_layer(repo_and_global):
-    from jailbee.paths import xdg_data_home
+def test_new_credentials_key_sets_computed_group(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"credentials": {"group": "work"}})
+    _write(repo_path, {})
+
+    assert load_config(repo_path).credential_group == "work"
+
+
+def test_legacy_claude_credentials_key_sets_the_same_group(repo_and_global):
+    from jailbee import notices
 
     _, repo_path, global_path = repo_and_global
     _write(global_path, {"claude_credentials": {"group": "work"}})
@@ -336,46 +344,73 @@ def test_claude_credentials_dir_resolves_from_the_global_layer(repo_and_global):
 
     cfg = load_config(repo_path)
 
-    assert cfg.claude_credentials_dir == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
+    assert cfg.credential_group == "work"
+    active = notices.active()
+    assert len(active) == 1
+    assert active[0].key == "legacy-credentials-block"
+    assert any("credentials" in line for line in active[0].lines)
 
 
-def test_claude_credentials_dir_is_none_without_the_block(repo_and_global):
-    _, repo_path, _ = repo_and_global
+def test_new_credentials_key_emits_no_deprecation_notice(repo_and_global):
+    from jailbee import notices
+
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"credentials": {"group": "work"}})
     _write(repo_path, {})
 
-    cfg = load_config(repo_path)
+    load_config(repo_path)
 
-    assert cfg.claude_credentials_dir is None
+    assert notices.active() == ()
 
 
-def test_claude_credentials_dir_honours_a_per_repo_opt_out(repo_and_global):
+def test_both_credentials_keys_are_refused(repo_and_global):
     _, repo_path, global_path = repo_and_global
     _write(
         global_path,
-        {"claude_credentials": {"group": "work", "repos": {"myrepo": None}}},
+        {
+            "credentials": {"group": "work"},
+            "claude_credentials": {"group": "personal"},
+        },
     )
     _write(repo_path, {})
 
-    cfg = load_config(repo_path)
+    with pytest.raises(ConfigError, match="Both `credentials` and deprecated"):
+        load_config(repo_path)
 
-    assert cfg.claude_credentials_dir is None
+
+def test_credential_group_is_none_without_the_block(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {})
+
+    assert load_config(repo_path).credential_group is None
 
 
-def test_claude_credentials_in_a_repo_config_is_refused(repo_and_global):
+def test_credential_group_honours_a_per_repo_opt_out(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(
+        global_path,
+        {"credentials": {"group": "work", "repos": {"myrepo": None}}},
+    )
+    _write(repo_path, {})
+
+    assert load_config(repo_path).credential_group is None
+
+
+def test_credentials_in_a_repo_config_is_refused(repo_and_global):
     """Silently ignoring it is the wrong behaviour for a key whose whole point
     is that it is host-only — the same reasoning as the `github` block's ban."""
     _, repo_path, _ = repo_and_global
-    _write(repo_path, {"claude_credentials": {"group": "work"}})
+    _write(repo_path, {"credentials": {"group": "work"}})
 
     with pytest.raises(ConfigError, match=r"global\.yaml"):
         load_config(repo_path)
 
 
-def test_claude_credentials_dir_in_a_repo_config_is_refused(repo_and_global):
+def test_credential_group_in_a_repo_config_is_refused(repo_and_global):
     """The computed attribute is a declared Config field, so YAML could set it
     and be overwritten silently. Ban the name too."""
     _, repo_path, _ = repo_and_global
-    _write(repo_path, {"claude_credentials_dir": "/tmp/x"})
+    _write(repo_path, {"credential_group": "work"})
 
     with pytest.raises(ConfigError, match=r"global\.yaml"):
         load_config(repo_path)

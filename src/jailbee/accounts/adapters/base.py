@@ -96,8 +96,10 @@ class AccountAdapter(Protocol):
     def holder_override(self, cfg: Config) -> Path | None:
         """The credential directory this repo shares, or None for its own.
 
-        Phase 1 reads `Config.claude_credentials_dir`; phase 2 replaces every
-        implementation with the agent-agnostic `Config.credential_group`.
+        Derived from the agent-agnostic `Config.credential_group`: a group name
+        is one value shared by every pooled agent, and each adapter turns it
+        into its own holder directory. `ClaudeAdapter` uses
+        `engine.group_dir`, which is why the on-disk Claude tree is unchanged.
         """
         ...
 

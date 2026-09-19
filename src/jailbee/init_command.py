@@ -407,9 +407,12 @@ def _ensure_claude_credentials_dir(
     No `.owner` stamp (see `_ensure_shared_owner`): being shared by several
     repos is the entire point here.
     """
-    group_dir = cfg.claude_credentials_dir
-    if group_dir is None:
+    from jailbee.accounts import engine
+
+    group = cfg.credential_group
+    if group is None:
         return
+    group_dir = engine.group_dir("claude", group)
     assert cfg.shared_dir is not None  # set by load_config
 
     group_cred = group_dir / ".credentials.json"
@@ -424,7 +427,7 @@ def _ensure_claude_credentials_dir(
                 f"becomes unused, and jailbee will not choose for you. Either "
                 f"delete this repo's copy to adopt the group's login, or point "
                 f"this repo at another group (or `null`) under "
-                f"`claude_credentials.repos` in ~/.config/jailbee/global.yaml."
+                f"`credentials.repos` in ~/.config/jailbee/global.yaml."
             )
         if keep == "group":
             repo_cred.unlink()

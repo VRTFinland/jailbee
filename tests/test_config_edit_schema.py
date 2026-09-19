@@ -168,7 +168,7 @@ def test_computed_fields_are_the_four_that_have_no_yaml_key():
             ("Config", "repo_root"),
             ("Config", "default_branch"),
             ("Config", "upstream_remote"),
-            ("Config", "claude_credentials_dir"),
+            ("Config", "credential_group"),
         }
     )
 
@@ -209,7 +209,7 @@ def test_build_specs_omits_computed_fields():
         "repo_root",
         "default_branch",
         "upstream_remote",
-        "claude_credentials_dir",
+        "credential_group",
     ):
         assert (computed,) not in paths
     assert ("container_prefix",) in paths
@@ -332,7 +332,7 @@ def test_global_specs_keeps_the_config_overlay_keys():
     paths = {s.path for s in global_specs()}
     assert ("gpg", "enabled") in paths
     assert ("host_mounts",) in paths
-    assert ("claude_credentials", "group") in paths, "host-level, from GlobalConfig"
+    assert ("credentials", "group") in paths, "host-level, from GlobalConfig"
 
 
 def test_loose_auto_revert_appears_once_on_the_config_side():
@@ -358,7 +358,7 @@ def test_global_only_keys_is_the_documented_ban_list():
     """
     from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
 
-    assert GLOBAL_ONLY_KEYS == frozenset({"github", "claude_credentials", "claude_credentials_dir"})
+    assert GLOBAL_ONLY_KEYS == frozenset({"github", "credentials", "credential_group"})
 
 
 def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
