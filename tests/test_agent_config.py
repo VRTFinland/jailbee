@@ -122,6 +122,28 @@ def test_generic_agent_accepts_install_jailbee_skills():
     assert cfg.install_jailbee_skills is False
 
 
+@pytest.mark.parametrize(
+    "bad", ["", "../escape", "~/.mine/../evil/skills", "./skills", "~/.mine/./skills"]
+)
+def test_skills_dir_rejects_empty_and_traversal_segments(bad):
+    """A repo-committed `skills_dir` must not step outside the agent's own
+    mount: a `..` segment reaches `_skills_host_dir`'s textual join and lets
+    the copy write (and `rmtree`) outside `<shared_dir>`."""
+    with pytest.raises(ValidationError, match="skills_dir"):
+        AgentConfig.model_validate({"enabled": True, "command": "mine", "skills_dir": bad})
+
+
+def test_skills_dir_accepts_absolute_and_tilde_paths_with_dotfiles():
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "~/.config/my.agent/skills"}
+    )
+    assert cfg.skills_dir == "~/.config/my.agent/skills"
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "/opt/skills"}
+    )
+    assert cfg.skills_dir == "/opt/skills"
+
+
 def test_presets_declare_skills_dir_only_for_skill_capable_agents():
     from jailbee.agent_presets import AGENT_PRESETS, claude_preset
 

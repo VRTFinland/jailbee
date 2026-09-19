@@ -437,6 +437,32 @@ class AgentConfig(BaseModel):
         ),
     )
 
+    @field_validator("skills_dir")
+    @classmethod
+    def _skills_dir_has_no_traversal(cls, v: str | None) -> str | None:
+        """Reject an empty `skills_dir` or one carrying `.` / `..` segments.
+
+        The value is joined onto the covering mount's host-side subpath in
+        `agent_skills._skills_host_dir`; a `..` there would step outside
+        `<shared_dir>` and let the skills copy write and delete arbitrary host
+        paths, driven by a repo-committed config. A `~`-relative or absolute
+        path is legitimate — only traversal segments are invalid. A dotfile
+        such as `~/.config` is not a `.` segment, so this does not
+        false-positive on dotfiles.
+
+        Segments are read off the raw string (`split`), not
+        `PurePosixPath.parts`: pathlib drops `.` segments, so `./skills` would
+        arrive here already normalised to `skills` and slip through.
+        """
+        if v is None:
+            return None
+        segments = v.split("/")
+        if not v or "." in segments or ".." in segments:
+            raise ValueError(
+                f"skills_dir {v!r} must be a non-empty path without '.' / '..' segments"
+            )
+        return v
+
     def effective_install_check(self) -> str:
         """The command that decides install-vs-update.
 
