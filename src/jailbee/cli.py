@@ -12295,10 +12295,16 @@ def claude_group_rm_cmd(
         raise typer.Exit(2) from e
     # The label is the whole truth for an override, so this needs no prefix
     # knowledge — and catches a container of a repo the registry never saw.
+    # Both spellings count: a container labelled before the rename still
+    # mounts the directory this command is about to delete.
     labelled = sorted(
         str(row.get("name", ""))
         for row in rows
-        if (row.get("config") or {}).get(groups.GROUP_LABEL) == group
+        if (
+            (row.get("config") or {}).get(groups.GROUP_LABEL)
+            or (row.get("config") or {}).get(groups.LEGACY_GROUP_LABEL)
+        )
+        == group
     )
     if labelled:
         error(

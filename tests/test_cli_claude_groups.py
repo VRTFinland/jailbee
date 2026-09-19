@@ -768,6 +768,33 @@ def test_rm_refuses_while_a_container_is_overridden_to_the_group(group_env, mock
     assert groups.group_dir(CLAUDE.name, "personal").exists()
 
 
+def test_rm_refuses_while_a_container_carries_only_the_legacy_label(group_env, mocker):
+    """A container labelled before the rename still mounts the directory, so
+    `rm` must see it through the legacy spelling too."""
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    _cfg, incus = group_env
+    mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-b",
+            "status": "Running",
+            "profiles": [],
+            "config": {groups.LEGACY_GROUP_LABEL: "personal"},
+            "state": None,
+        }
+    ]
+    groups.group_dir(CLAUDE.name, "personal").mkdir(parents=True)
+
+    result = runner.invoke(app, ["claude", "group", "rm", "personal"])
+
+    assert result.exit_code == 2
+    assert "myrepo-b" in result.output
+    assert "group reset" in result.output
+    assert groups.group_dir(CLAUDE.name, "personal").exists()
+
+
 def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     from jailbee.accounts import groups
     from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
