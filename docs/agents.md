@@ -199,6 +199,8 @@ append/reset semantics.
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist; `private` (dir only) names subpaths inside the mount that stay per container — see §5. |
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step *and* the autostart launch step. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the [bundled skills](#10-the-bundled-jailbee-skills) into the shared copy of it. Leave unset for an agent with no skills mechanism. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. |
 
 A full custom entry:
 
@@ -466,12 +468,11 @@ spellings; pick one, and prefer `agents.claude`.
 Claude carries every generic field from the table in
 [Writing your own agent](#4-writing-your-own-agent) — `enabled`,
 `autostart`, `command`, `install`/`update`, `auto_update`, `install_network`,
-`shared`, `egress_allow`, `env` — plus Claude-only fields for its deeper
-integration (AI-generated PR descriptions, plugin marketplace egress, the
-bundled jailbee skills):
+`shared`, `egress_allow`, `env`, `skills_dir`, `install_jailbee_skills` —
+plus Claude-only fields for its deeper integration (AI-generated PR
+descriptions, plugin marketplace egress, onboarding seeding):
 
 - `plugins_enabled`
-- `install_jailbee_skills`
 - `ai_pr_description`
 - `ai_pr_branch`
 - `pr_prompt`
@@ -537,3 +538,44 @@ Anthropic:
 - Only the credential is shared. Each repo keeps its own `~/.claude`, so
   project history, MCP config, sessions and onboarding state never cross
   repos.
+
+## 10. The bundled jailbee skills
+
+jailbee ships three skills — `jailbee-usage` (day-to-day commands),
+`jailbee-repo-setup` (first-time repo configuration), `jailbee-pr-review`
+(publishing an in-container agent's staged review comments) — and installs
+them for every enabled agent that has a skills mechanism, not just Claude:
+
+| Agent | Skills directory (in-container) | Shared subpath it lands under |
+|---|---|---|
+| `claude` | `~/.claude/skills` | `claude` |
+| `codex` | `~/.codex/skills` | `codex` |
+| `gemini` | `~/.gemini/skills` | `gemini` |
+| `opencode` | `~/.config/opencode/skills` | `opencode-config` |
+| `aider`, `grok` | — (no skills mechanism) | — |
+
+The copy happens on the *host* side, into `<shared_dir>/<subpath>/skills/`:
+each agent's config home is already a shared bind mount, and `raw.idmap` is
+1:1, so one host-side copy is visible in every container of the repo — no
+`incus exec`, no per-container work. `jailbee new` and `jailbee apply` both
+run it, so a jailbee upgrade reaches existing containers on the next
+`apply`.
+
+Two per-agent fields govern it (both in the
+[§4 table](#4-writing-your-own-agent)): `skills_dir` names the
+container-side directory (the presets set it for the four agents above;
+set it yourself on a from-scratch agent whose mount layout differs), and
+`install_jailbee_skills: false` opts one agent out. A `skills_dir` that no
+`shared` mount covers is a config mistake: `jailbee new` warns and skips
+that agent rather than failing.
+
+The agents' own compatibility is what makes this one table: all four read
+the same `SKILL.md` frontmatter format, and opencode additionally scans
+Claude-compatible `~/.claude/skills` — jailbee still writes each agent's
+own directory, so the skills survive an agent being disabled or removed.
+
+For the *host's* own agents (not the containers), the same skills are
+opt-in: see [`install_host_skills`](config.md#install_host_skills) in the
+global config. The pre-1.0 key `claude.install_gie_skills` was retired in
+1.1.0: a config still using it fails to load with an error naming
+`install_jailbee_skills`.

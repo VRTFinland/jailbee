@@ -189,8 +189,9 @@ It asks about three steps, each idempotent — re-run it after upgrading:
 - **shell completions** for both `jailbee` and `jb` (bash, zsh or fish),
 - the **`jailbee-net-refresh` user timer**, which keeps strict-mode egress
   allowlists current and expires `jailbee net loose --for` TTLs,
-- JailBee's **Claude Code skills** in `~/.claude/skills`, so Claude on your
-  host knows how to drive `jailbee`.
+- JailBee's **agent skills** for the agents found on your host (opt-in via
+  `install_host_skills` in `~/.config/jailbee/global.yaml`), so they know
+  how to drive `jailbee`.
 
 `jailbee doctor` reports any step that is missing. Host prerequisites — Incus,
 the firewall, UID delegation — are separate; see
