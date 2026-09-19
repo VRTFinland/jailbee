@@ -256,7 +256,7 @@ def test_build_specs_covers_every_config_leaf():
     (repo-configurable PATH additions) then added one: 91 + 1 = 92 — and that
     increment is the whole `config edit` story for it, since nothing was added
     to `schema.py` or the curated `BASIC_FIELDS` list.
-    `GlobalConfig`'s includes the `config_edit.write_policy` added in
+    `GlobalConfig`'s 17 includes the `config_edit.write_policy` added in
     Task 1, the `update_check` bool, and the `install_host_skills` bool:
     plain scalar fields on `GlobalConfig`, so `jailbee config edit` offers
     them without anything being added to `schema.py` for them.
