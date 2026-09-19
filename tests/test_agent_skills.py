@@ -281,9 +281,7 @@ def test_sync_skips_a_mount_whose_subpath_escapes_shared_dir(
     assert not (shared / "mine" / "skills").exists()
 
 
-def test_sync_warning_preserves_bracketed_skills_dir(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_sync_warning_preserves_bracketed_skills_dir(tmp_path: Path, monkeypatch, capsys) -> None:
     """`warn` runs the message through Rich markup, which eats a bracketed
     path segment; `warn_plain` keeps the warning truthful."""
     monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
