@@ -31,9 +31,15 @@ _OPENCODE_INSTALLER = "curl -fsSL https://opencode.ai/v2/install | bash -s -- --
 # shared — so the link is re-made on every install/update, exactly as codex's
 # installer re-makes its own ~/.local/bin/codex.
 #
-# The trailing test is the step's real verdict: `curl … | bash` exits 0 when
-# curl fails (bash just reads an empty script), so without it a failed download
-# would look like a successful install step.
+# The trailing test is the step's real verdict on an *install*: `curl … | bash`
+# exits 0 when curl fails (bash just reads an empty script), so without it a
+# failed download would look like a successful install step. It cannot serve an
+# *update*, where the previous release is still on disk and passes the test — so
+# both lines also run under `set -o pipefail`, which is what makes curl's own
+# exit status the pipeline's. Only the update line's `pipefail` is testable:
+# on the install line the pipe runs only when no binary exists, and then the
+# `-x` test below fails anyway (`ln -sfn` makes a dangling symlink happily).
+# It is there for symmetry — one spelling for both lines.
 _OPENCODE_LINK = (
     'mkdir -p "$HOME/.local/bin"; '
     'ln -sfn "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"; '
@@ -97,6 +103,16 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
                 "private": ["app-server-control", "app-server-daemon"],
             }
         ],
+        # Where Codex reads user-level skills (`CODEX_HOME/skills`). Inside the
+        # `~/.codex` mount above, so jailbee's bundled skills land there once
+        # and serve every container of the repo.
+        #
+        # Checked against codex-cli 0.155.1: the bundled skill installer
+        # writes into `$CODEX_HOME/skills`, and `CODEX_HOME` defaults to
+        # `~/.codex` (the same default the mount above relies on). A wrong
+        # path here fails *silently* — the copy succeeds, nothing reads it —
+        # so re-check it against the agent when bumping the preset.
+        "skills_dir": "~/.codex/skills",
         # Runtime hosts, all three needed by an ordinary signed-in session:
         # `api.openai.com` is the API-key path (`/v1/responses`, `/auth`),
         # `auth.openai.com` is the sign-in itself — the device-code flow posts
@@ -118,6 +134,14 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         "install": "npm i -g @google/gemini-cli",
         "update": "npm i -g @google/gemini-cli@latest",
         "shared": [{"subpath": "gemini", "path": "~/.gemini"}],
+        # Where gemini-cli reads user-level skills (`~/.gemini/skills`), inside
+        # the `~/.gemini` mount above.
+        #
+        # Taken from the upstream docs, not verified against a running
+        # gemini-cli. A wrong path here fails *silently* — the copy succeeds,
+        # nothing reads it — so confirm it on a host that has the agent
+        # before relying on it.
+        "skills_dir": "~/.gemini/skills",
         "egress_allow": [
             "generativelanguage.googleapis.com:443",
             "cloudcode-pa.googleapis.com:443",
@@ -154,10 +178,10 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # binary (a second branch container of the same repo); update always
         # re-runs the installer, which is how it upgrades.
         "install": (
-            f'set -e; [ -x "$HOME/.opencode/bin/opencode" ] || {_OPENCODE_INSTALLER}; '
+            f'set -eo pipefail; [ -x "$HOME/.opencode/bin/opencode" ] || {_OPENCODE_INSTALLER}; '
             f"{_OPENCODE_LINK}"
         ),
-        "update": f"set -e; {_OPENCODE_INSTALLER}; {_OPENCODE_LINK}",
+        "update": f"set -eo pipefail; {_OPENCODE_INSTALLER}; {_OPENCODE_LINK}",
         # The installer fetches itself from opencode.ai, reads the current
         # version from `opencode.ai/update/api/latest/cli/npm`, and pulls the
         # ~88MB platform tarball from registry.npmjs.org. Both are CDN-fronted
@@ -176,6 +200,18 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
             {"subpath": "opencode-config", "path": "~/.config/opencode"},
             {"subpath": "opencode-data", "path": "~/.local/share/opencode"},
         ],
+        # Where opencode reads user-level skills (`~/.config/opencode/skills`),
+        # inside the `opencode-config` mount above. It also scans
+        # Claude-compatible `~/.claude/skills`, but its own directory is the
+        # canonical one — relying on claude's mount would break the moment
+        # claude is not enabled.
+        #
+        # Taken from the upstream docs, not verified against a running
+        # opencode (2.0.9's bundle assembles the path at runtime, so it
+        # cannot be read off the binary). A wrong path here fails *silently*
+        # — the copy succeeds, nothing reads it — so confirm it against the
+        # agent before relying on it.
+        "skills_dir": "~/.config/opencode/skills",
         # opencode's *own* hosts only. It is a multi-provider client, so which
         # inference host it needs depends entirely on the provider the user
         # configures — those stay the user's to add (see docs/agents.md §6).
@@ -216,5 +252,9 @@ def claude_preset() -> dict[str, object]:
             {"subpath": "claude", "path": "~/.claude"},
             {"subpath": "claude-install", "path": "~/.local/share/claude"},
         ],
+        # Where Claude Code reads user-level skills; inside the `~/.claude`
+        # mount above. Checked against Claude Code 2.1.278, and the path this
+        # preset has always written to.
+        "skills_dir": "~/.claude/skills",
         "egress_allow": list(CLAUDE_API_HOSTS),
     }

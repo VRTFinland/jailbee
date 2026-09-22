@@ -416,6 +416,52 @@ class AgentConfig(BaseModel):
         description="Environment variables passed to both the install/update step and the "
         "autostart launch step.",
     )
+    skills_dir: str | None = Field(
+        default=None,
+        description=(
+            "Container-side directory this agent reads user-level skills from — e.g. "
+            "`~/.codex/skills`. When set and covered by a `shared` mount, `jailbee "
+            "new`/`jailbee apply` copy jailbee's bundled skills into the shared copy "
+            "of it (see `install_jailbee_skills`). Presets set it for the agents with "
+            "a skills mechanism; leave unset for agents without one."
+        ),
+    )
+    install_jailbee_skills: bool = Field(
+        default=True,
+        description=(
+            "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
+            "skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into "
+            "this agent's shared `skills_dir` so the in-container agent understands "
+            "jailbee. Host-side file copy only, no network. Does nothing when "
+            "`skills_dir` is unset or no `shared` mount covers it."
+        ),
+    )
+
+    @field_validator("skills_dir")
+    @classmethod
+    def _skills_dir_has_no_traversal(cls, v: str | None) -> str | None:
+        """Reject an empty `skills_dir` or one carrying `.` / `..` segments.
+
+        The value is joined onto the covering mount's host-side subpath in
+        `agent_skills._skills_host_dir`; a `..` there would step outside
+        `<shared_dir>` and let the skills copy write and delete arbitrary host
+        paths, driven by a repo-committed config. A `~`-relative or absolute
+        path is legitimate — only traversal segments are invalid. A dotfile
+        such as `~/.config` is not a `.` segment, so this does not
+        false-positive on dotfiles.
+
+        Segments are read off the raw string (`split`), not
+        `PurePosixPath.parts`: pathlib drops `.` segments, so `./skills` would
+        arrive here already normalised to `skills` and slip through.
+        """
+        if v is None:
+            return None
+        segments = v.split("/")
+        if not v or "." in segments or ".." in segments:
+            raise ValueError(
+                f"skills_dir {v!r} must be a non-empty path without '.' / '..' segments"
+            )
+        return v
 
     def effective_install_check(self) -> str:
         """The command that decides install-vs-update.
@@ -455,15 +501,6 @@ class ClaudeAgentConfig(AgentConfig):
             "`CLAUDE_PLUGIN_HOSTS` (GitHub + npm) so Claude Code's plugin marketplace, "
             "skills and SessionStart hooks load. Set to false to keep the API reachable "
             "while blocking marketplace traffic. Has no effect when `enabled` is false."
-        ),
-    )
-    install_jailbee_skills: bool = Field(
-        default=True,
-        description=(
-            "When true (default), `jailbee new`/`jailbee apply` copy jailbee's bundled "
-            "Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into the shared "
-            "`<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. "
-            "Host-side file copy only, no network. Has no effect when `enabled` is false."
         ),
     )
     seed_onboarding: bool = Field(

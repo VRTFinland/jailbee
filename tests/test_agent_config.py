@@ -115,6 +115,48 @@ def test_generic_agent_rejects_claude_only_fields():
         AgentConfig.model_validate({"enabled": True, "ai_pr_timeout": 900})
 
 
+def test_generic_agent_accepts_install_jailbee_skills():
+    """The flag is agent-generic: opting codex out is the same YAML key as
+    opting claude out."""
+    cfg = AgentConfig.model_validate({"install_jailbee_skills": False})
+    assert cfg.install_jailbee_skills is False
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "../escape", "~/.mine/../evil/skills", "./skills", "~/.mine/./skills"]
+)
+def test_skills_dir_rejects_empty_and_traversal_segments(bad):
+    """A repo-committed `skills_dir` must not step outside the agent's own
+    mount: a `..` segment reaches `_skills_host_dir`'s textual join and lets
+    the copy write (and `rmtree`) outside `<shared_dir>`."""
+    with pytest.raises(ValidationError, match="skills_dir"):
+        AgentConfig.model_validate({"enabled": True, "command": "mine", "skills_dir": bad})
+
+
+def test_skills_dir_accepts_absolute_and_tilde_paths_with_dotfiles():
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "~/.config/my.agent/skills"}
+    )
+    assert cfg.skills_dir == "~/.config/my.agent/skills"
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "/opt/skills"}
+    )
+    assert cfg.skills_dir == "/opt/skills"
+
+
+def test_presets_declare_skills_dir_only_for_skill_capable_agents():
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    presets = {**AGENT_PRESETS, "claude": claude_preset()}
+    with_dir = {name for name, preset in presets.items() if preset.get("skills_dir")}
+    assert with_dir == {"claude", "codex", "gemini", "opencode"}
+    # Each must land inside a mount the preset itself declares.
+    assert presets["claude"]["skills_dir"] == "~/.claude/skills"
+    assert presets["codex"]["skills_dir"] == "~/.codex/skills"
+    assert presets["gemini"]["skills_dir"] == "~/.gemini/skills"
+    assert presets["opencode"]["skills_dir"] == "~/.config/opencode/skills"
+
+
 def test_install_check_defaults_from_command():
     cfg = AgentConfig.model_validate({"enabled": True, "command": "codex --yolo"})
     assert cfg.effective_install_check() == "command -v codex"
@@ -241,13 +283,14 @@ def test_codex_preset_keeps_the_app_server_dirs_per_container():
     assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
 
 
-def _run_opencode_step(which, tmp_path, *, installer_body):
+def _run_opencode_step(which, tmp_path, *, installer_body, curl_exit=0):
     """Run the opencode preset's install/update line in a real bash.
 
     That line is the only thing standing between "the vendor installer ran" and
     "`command -v opencode` works", and none of its logic is Python — so it is
     exercised as shell. No network: `curl` is a stub on PATH that prints
     `installer_body`, which the preset then pipes into `bash -s --`.
+    `curl_exit` stands in for a download that fails (DNS, 404, a dead CDN).
 
     Returns the completed process, the fake HOME, and how many times the stub
     curl was called.
@@ -265,7 +308,9 @@ def _run_opencode_step(which, tmp_path, *, installer_body):
     installer.write_text(installer_body)
     curl_log = tmp_path / "curl.log"
     curl = stub_bin / "curl"
-    curl.write_text(f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\n')
+    curl.write_text(
+        f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\nexit {curl_exit}\n'
+    )
     curl.chmod(0o755)
 
     command = AGENT_PRESETS["opencode"][which]
@@ -349,3 +394,16 @@ def test_opencode_install_fails_loudly_when_the_installer_produces_nothing(tmp_p
 
     assert result.returncode != 0
     assert not (home / ".local/bin/opencode").exists()
+
+
+def test_opencode_update_fails_loudly_when_the_download_fails(tmp_path):
+    """The `-x` test cannot catch a failed *update*: the previous release is
+    still in the shared store, so the link is remade and the step would report
+    success while the new version was never fetched. `set -o pipefail` is what
+    makes curl's own exit status the pipeline's."""
+    _seed_shared_binary(tmp_path)
+
+    result, _home, calls = _run_opencode_step("update", tmp_path, installer_body="", curl_exit=6)
+
+    assert calls == 1
+    assert result.returncode != 0

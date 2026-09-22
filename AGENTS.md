@@ -55,6 +55,17 @@ have, the corrections below win. Everything else in it holds unchanged.
 - **Git and GPG operations can block on a physical YubiKey touch.** A `git`,
   `gh` or GPG command that hangs or times out often means the key is waiting to
   be touched. Say so and let the human touch it; do not retry in a loop.
+- **Coding subagents run on the build model; reviews stay on the orchestrator
+  model.** The OpenRouter whitelist in `~/.config/opencode/opencode.json`
+  admits exactly two models — `z-ai/glm-5.3` (orchestrator, `final-review`)
+  and `deepseek/deepseek-v4.1-flash` (`build`, `task-review`) — and rejects
+  every other model, so never offer or request a third. Dispatch subagent work
+  that writes code through the `build` agent (cheaper, still a good coder);
+  when `build` is not dispatchable in the current session, use `general` with
+  `model: openrouter/deepseek/deepseek-v4.1-flash` — the one model override
+  this environment sanctions. Brainstorming, planning, coordination and code
+  review stay on the orchestrator model: a review's value is the reviewer's
+  fresh context, not a different model.
 
 ## Definition of done
 

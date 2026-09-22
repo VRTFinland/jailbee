@@ -8,10 +8,11 @@ SHELL := /bin/bash
 # Install/reinstall the `jailbee` CLI globally from the current checkout WITH
 # the optional Qt GUI extra (PySide6), then run the post-install steps:
 # shell completions for `jailbee` and `jb`, the egress-refresh user timer,
-# and the bundled Claude skills. `jailbee setup` is idempotent and `--yes`
-# keeps it non-interactive (it never edits a shell rc in that mode), so
-# re-running this target is safe. Requires libGL on the host; `jailbee gui`
-# and `jailbee dashboard --gui` work after this.
+# and the bundled agent skills when host-level `install_host_skills` is on
+# (off by default). `jailbee setup` is idempotent and `--yes` keeps it
+# non-interactive (it never edits a shell rc in that mode), so re-running
+# this target is safe. Requires libGL on the host; `jailbee gui` and
+# `jailbee dashboard --gui` work after this.
 install:
 	uv tool install '.[gui]' --force --reinstall
 	jailbee setup --yes
@@ -20,10 +21,11 @@ install:
 # `make install` includes the optional Qt GUI extra by default.
 install-gui: install
 
-# Just the bundled Claude skills, for when only they changed. `make install`
-# does this too, via `jailbee setup`, which is also what an end user runs —
-# the copying lives in the package, not here, so there is one implementation
-# to keep correct. Deliberately `uv run`, not the installed `jailbee`: from
+# Just the bundled agent skills, for when only they changed and host-level
+# `install_host_skills` is on (off by default). `make install` does this too,
+# via `jailbee setup`, which is also what an end user runs — the copying
+# lives in the package, not here, so there is one implementation to keep
+# correct. Deliberately `uv run`, not the installed `jailbee`: from
 # a checkout the skills to install are this tree's `docs/skills`, and the
 # installed wheel carries the copy from whenever it was last built.
 install-skill:

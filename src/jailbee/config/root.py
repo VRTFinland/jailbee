@@ -485,7 +485,7 @@ class Config(BaseModel):
         falls back to a disabled default otherwise, so letting a plain
         `AgentConfig` stand would split the config in two — `agents["claude"]`
         enabled (mounts, egress and install all active) while `cfg.claude`
-        reports disabled (`pr_ai`, `claude_skills`, `apply` and `doctor` all
+        reports disabled (`pr_ai`, `agent_skills`, `apply` and `doctor` all
         see Claude off). Not reachable from YAML, since the dict branch below
         already dispatches on the key, but it is the shape a caller
         constructing `Config` in Python will write.
@@ -509,7 +509,7 @@ class Config(BaseModel):
     def claude(self) -> ClaudeAgentConfig:
         """The `agents.claude` entry, or a disabled default when absent.
 
-        Kept so `pr_ai`, `claude_skills`, `doctor`, `apply` and `cli` can go on
+        Kept so `pr_ai`, `agent_skills`, `doctor`, `apply` and `cli` can go on
         reading `cfg.claude.*`. Precedent: `repo_root`, `default_branch` and
         `upstream_remote` are also computed rather than YAML keys.
 

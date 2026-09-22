@@ -5360,7 +5360,7 @@ def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
-    sync = mocker.patch("jailbee.claude_skills.sync_jailbee_skills")
+    sync = mocker.patch("jailbee.agent_skills.sync_agent_skills")
 
     new_container(cfg, incus, _new_opts())
 

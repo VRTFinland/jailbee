@@ -92,6 +92,7 @@ _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
         "scratch",
         "config_edit",
         "update_check",
+        "install_host_skills",
     }
 )
 
