@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.5.0 - 2026-09-21
+
 ### Added
 
 - **The dashboards show what a container is actually doing.** Two new
