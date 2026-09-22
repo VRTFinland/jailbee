@@ -68,11 +68,11 @@
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
 
 > **Compatibility aliases.** `jailbee claude ls|use|park|rm|group …` still
-> works as a hidden alias for the matching `jailbee account` command and
-> warns once per invocation. `jailbee new --claude-group` is the same
-> hidden alias for `--credential-group`, and a container labelled
-> `user.jailbee.claude_group` (the pre-rename spelling) is read but never
-> written. All are removed in 2.0.0.
+> works as a hidden alias for the matching `jailbee account` command, and
+> `jailbee new --claude-group` for `--credential-group`; both warn once per
+> invocation. A container labelled `user.jailbee.claude_group` (the
+> pre-rename spelling) is read but never written, and is not warned about —
+> nobody is being asked to retype it. All are removed in 2.0.0.
 
 ### Top-level app promotion
 

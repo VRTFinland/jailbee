@@ -2036,8 +2036,8 @@ the Grid card style but never Compact. Switch card style to see it.
 
 ## Computed attributes
 
-The `Config` object exposes five attributes set at load time, not from
-YAML:
+The `Config` object exposes four attributes set at load time, not from YAML,
+plus `container_prefix`, a real YAML key whose fallback is computed:
 
 - `repo_root` — directory containing `.jailbee/`.
 - `upstream_remote` — which of the repo's git remotes jailbee treats as the
