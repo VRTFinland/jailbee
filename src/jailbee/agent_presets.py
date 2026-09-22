@@ -31,9 +31,12 @@ _OPENCODE_INSTALLER = "curl -fsSL https://opencode.ai/v2/install | bash -s -- --
 # shared — so the link is re-made on every install/update, exactly as codex's
 # installer re-makes its own ~/.local/bin/codex.
 #
-# The trailing test is the step's real verdict: `curl … | bash` exits 0 when
-# curl fails (bash just reads an empty script), so without it a failed download
-# would look like a successful install step.
+# The trailing test is the step's real verdict on an *install*: `curl … | bash`
+# exits 0 when curl fails (bash just reads an empty script), so without it a
+# failed download would look like a successful install step. It cannot serve an
+# *update*, where the previous release is still on disk and passes the test — so
+# both lines also run under `set -o pipefail`, which is what makes curl's own
+# exit status the pipeline's.
 _OPENCODE_LINK = (
     'mkdir -p "$HOME/.local/bin"; '
     'ln -sfn "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"; '
@@ -160,10 +163,10 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # binary (a second branch container of the same repo); update always
         # re-runs the installer, which is how it upgrades.
         "install": (
-            f'set -e; [ -x "$HOME/.opencode/bin/opencode" ] || {_OPENCODE_INSTALLER}; '
+            f'set -eo pipefail; [ -x "$HOME/.opencode/bin/opencode" ] || {_OPENCODE_INSTALLER}; '
             f"{_OPENCODE_LINK}"
         ),
-        "update": f"set -e; {_OPENCODE_INSTALLER}; {_OPENCODE_LINK}",
+        "update": f"set -eo pipefail; {_OPENCODE_INSTALLER}; {_OPENCODE_LINK}",
         # The installer fetches itself from opencode.ai, reads the current
         # version from `opencode.ai/update/api/latest/cli/npm`, and pulls the
         # ~88MB platform tarball from registry.npmjs.org. Both are CDN-fronted

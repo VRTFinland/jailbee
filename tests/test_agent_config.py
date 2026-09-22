@@ -283,13 +283,14 @@ def test_codex_preset_keeps_the_app_server_dirs_per_container():
     assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
 
 
-def _run_opencode_step(which, tmp_path, *, installer_body):
+def _run_opencode_step(which, tmp_path, *, installer_body, curl_exit=0):
     """Run the opencode preset's install/update line in a real bash.
 
     That line is the only thing standing between "the vendor installer ran" and
     "`command -v opencode` works", and none of its logic is Python — so it is
     exercised as shell. No network: `curl` is a stub on PATH that prints
     `installer_body`, which the preset then pipes into `bash -s --`.
+    `curl_exit` stands in for a download that fails (DNS, 404, a dead CDN).
 
     Returns the completed process, the fake HOME, and how many times the stub
     curl was called.
@@ -307,7 +308,9 @@ def _run_opencode_step(which, tmp_path, *, installer_body):
     installer.write_text(installer_body)
     curl_log = tmp_path / "curl.log"
     curl = stub_bin / "curl"
-    curl.write_text(f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\n')
+    curl.write_text(
+        f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\nexit {curl_exit}\n'
+    )
     curl.chmod(0o755)
 
     command = AGENT_PRESETS["opencode"][which]
@@ -388,6 +391,27 @@ def test_opencode_install_fails_loudly_when_the_installer_produces_nothing(tmp_p
     as a successful install step and only surface later as `opencode: not
     found` in the autostart window."""
     result, home, _calls = _run_opencode_step("install", tmp_path, installer_body="")
+
+    assert result.returncode != 0
+    assert not (home / ".local/bin/opencode").exists()
+
+
+def test_opencode_update_fails_loudly_when_the_download_fails(tmp_path):
+    """The `-x` test cannot catch a failed *update*: the previous release is
+    still in the shared store, so the link is remade and the step would report
+    success while the new version was never fetched. `set -o pipefail` is what
+    makes curl's own exit status the pipeline's."""
+    _seed_shared_binary(tmp_path)
+
+    result, _home, calls = _run_opencode_step("update", tmp_path, installer_body="", curl_exit=6)
+
+    assert calls == 1
+    assert result.returncode != 0
+
+
+def test_opencode_install_fails_loudly_when_the_download_fails(tmp_path):
+    """Same on the install line, which has its own pipe."""
+    result, home, _calls = _run_opencode_step("install", tmp_path, installer_body="", curl_exit=6)
 
     assert result.returncode != 0
     assert not (home / ".local/bin/opencode").exists()
