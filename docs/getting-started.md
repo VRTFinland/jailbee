@@ -193,9 +193,10 @@ What turning it on gets you:
   GitHub + npm hosts the plugin marketplace and skills reach. You don't
   list them by hand.
 - **The agents know JailBee.** JailBee's own `jailbee-usage`,
-  `jailbee-repo-setup` and `jailbee-pr-review` skills are copied into each
-  enabled agent's shared skills directory, so the in-container agents can
-  drive `jailbee` commands for you.
+  `jailbee-repo-setup` and `jailbee-pr-review` skills are copied into the
+  shared skills directory of every enabled agent that has one (claude, codex,
+  gemini, opencode), so the in-container agents can drive `jailbee` commands
+  for you.
 - **AI-written PRs.** `jailbee pr <name>` asks the in-container Claude for
   the title, body, and branch name (`--no-ai` opts out per call). It runs on
   Sonnet by default (`claude.ai_pr_model`), and follows your project's own
