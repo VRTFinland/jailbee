@@ -115,7 +115,9 @@ park/switch/remove, slot naming, member resolution — and knows nothing about
 which agent it serves; `accounts/models.py` carries the agent-agnostic types
 (`Identity`, `Slot`, `Member`, `LiveAccount`); `accounts/groups.py` resolves a
 container's credential group; `accounts/overview.py` renders every login on
-the host, across holders. Everything agent-specific — the credential
+the host, across holders; `accounts/selection.py` decides which login, and
+whose, a command acts on when a reference or a menu spans several agents'
+pools. Everything agent-specific — the credential
 filename, how an account is named, session detection, what has to be
 recorded beside a credential the engine just moved — lives behind the
 `AccountAdapter` protocol in `accounts/adapters/base.py`;
