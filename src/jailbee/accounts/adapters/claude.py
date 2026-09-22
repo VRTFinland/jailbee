@@ -734,7 +734,9 @@ class ClaudeAdapter:
         return cfg.shared_dir / "claude"
 
     def holder_override(self, cfg: Config) -> Path | None:
-        if cfg.credential_group is None:
+        # Falsy, not `is None`: an empty group name would resolve the holder to
+        # the credential *root* — the parent of `_parked` and of every group.
+        if not cfg.credential_group:
             return None
         return engine.group_dir(self.name, cfg.credential_group)
 

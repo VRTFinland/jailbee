@@ -1039,3 +1039,101 @@ def test_opting_out_restores_the_shared_gradle_mount(tmp_path):
     ).model_copy(update={"shared_dir": tmp_path / "shared"})
     profile = yaml.safe_load(binds_profile_yaml(cfg))
     assert "shared-gradle" in profile["devices"]
+
+
+class _SecondPoolAdapter:
+    """A second pooled agent, wiring an env var and a device of its own.
+
+    Deliberately *unlike* Claude in both names: a `profiles.py` that had kept
+    any Claude knowledge in the rendering loops would produce Claude's key and
+    Claude's device here, or nothing at all.
+    """
+
+    name = "fakeagent"
+    credential_file = "cred.json"
+    refresh_token_key = "refresh"
+    live_switch = True
+
+    def config_home(self, cfg):
+        return cfg.shared_dir / self.name
+
+    def holder_override(self, cfg):
+        from jailbee.accounts import engine
+
+        if not cfg.credential_group:
+            return None
+        return engine.group_dir(self.name, cfg.credential_group)
+
+    def wiring(self, cfg, group_dir):
+        from jailbee.accounts.adapters import base
+
+        if group_dir is None:
+            return base.Wiring()
+        return base.Wiring(
+            devices={
+                "fake-creds": {
+                    "type": "disk",
+                    "source": str(group_dir),
+                    "path": "/home/dev/.fake-creds",
+                }
+            },
+            env={"FAKE_CRED_DIR": "/home/dev/.fake-creds"},
+        )
+
+
+@pytest.fixture
+def second_pool_adapter():
+    from jailbee.accounts.adapters import base
+
+    base.register(_SecondPoolAdapter())
+    try:
+        yield
+    finally:
+        base.ADAPTERS.pop("fakeagent", None)
+
+
+def test_base_profile_renders_a_second_agents_env(make_cfg, tmp_path, second_pool_adapter):
+    """The point of the `Wiring` protocol: a second pooled agent's env reaches
+    `<prefix>-base` without a branch in `profiles.py`. Claude-hardcoded
+    rendering would pass every other test in this file."""
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=True, command="fakeagent")
+
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+
+    assert parsed["config"]["environment.FAKE_CRED_DIR"] == "/home/dev/.fake-creds"
+    # Claude's is still there: the loop renders every pooled agent, not one.
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        "/home/dev/.claude-creds"
+    )
+
+
+def test_binds_profile_renders_a_second_agents_device(make_cfg, tmp_path, second_pool_adapter):
+    """The device half of the same promise, pointed at that agent's own holder
+    directory rather than Claude's."""
+    from jailbee.accounts import engine
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=True, command="fakeagent")
+
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+
+    assert parsed["devices"]["fake-creds"]["source"] == str(engine.group_dir("fakeagent", "work"))
+    assert "claude-creds" in parsed["devices"]
+
+
+def test_a_disabled_second_agent_renders_nothing(make_cfg, tmp_path, second_pool_adapter):
+    """The write direction keeps the `enabled` filter."""
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=False, command="fakeagent")
+
+    base_parsed = yaml.safe_load(base_profile_yaml(cfg))
+    binds_parsed = yaml.safe_load(binds_profile_yaml(cfg))
+
+    assert "environment.FAKE_CRED_DIR" not in base_parsed["config"]
+    assert "fake-creds" not in binds_parsed["devices"]

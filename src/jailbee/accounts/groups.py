@@ -228,8 +228,12 @@ def override_is_redundant(cfg: Config, group: str | None) -> bool:
     behind on the old one.
 
     A named group is redundant only when the profile really carries the same
-    device. With ``claude.enabled: false`` no pooled adapter claims it, so the
-    label mounts nothing: returning False keeps an inert label, which is
+    device — `any`, not `all`, once two agents are pooled: the question is
+    whether the label adds anything, and one adapter already carrying the
+    device answers it. (`all` would keep an inert label alive because a second
+    agent happened not to be wired; neither reading is reachable today, with
+    Claude the only pooled adapter.) With ``claude.enabled: false`` no pooled
+    adapter claims it, so the label mounts nothing: returning False keeps an inert label, which is
     over-conservative but harmless. ``None`` — the explicit "no group"
     override — is redundant whenever the repo shares no group either: neither
     side then mounts anything, and the env key the label writes names the
@@ -430,7 +434,12 @@ def agent_running(incus: Incus, container: str, *, command: str) -> bool | None:
     from jailbee.config import CONTAINER_USERNAME
     from jailbee.incus import IncusError
 
-    binary = Path(command.split()[0]).name
+    # `split()` on a blank command yields [], and this function is
+    # module-public: "cannot tell" is the honest answer, not an IndexError.
+    tokens = command.split()
+    if not tokens:
+        return None
+    binary = Path(tokens[0]).name
     script = (
         f"pgrep -u {CONTAINER_USERNAME} -x {shlex.quote(binary)} "
         ">/dev/null && echo running || echo idle"

@@ -100,6 +100,17 @@ class AccountAdapter(Protocol):
         is one value shared by every pooled agent, and each adapter turns it
         into its own holder directory. `ClaudeAdapter` uses
         `engine.group_dir`, which is why the on-disk Claude tree is unchanged.
+
+        **An implementation must return exactly
+        `engine.group_dir(self.name, cfg.credential_group)`** (or None). This
+        is an invariant, not a convention: `groups.set_container_group` mounts
+        `engine.group_dir(adapter.name, name)` and `accounts.overview` reads
+        the same path, and neither asks the adapter. An adapter that derives
+        its holder some other way would have `group use` mount one directory
+        while `park`/`switch`/`ls` operate on another — the container then
+        reads an empty holder and the user is silently logged out, with
+        nothing raising anywhere. Layout below that directory is the adapter's
+        own business; the directory itself is not.
         """
         ...
 
@@ -430,6 +441,12 @@ def prepare_config_homes(cfg: Config) -> None:
     `home.mkdir` first: an implementation may write a file into a fresh config
     home, and for a group-less repo that home is also the credential holder
     Incus is about to mount.
+
+    An implementation may raise — `ClaudeAdapter.prepare_config_home` raises
+    `ConfigError` when the holder and the repo each hold a different login, a
+    conflict only the user can resolve. The raise aborts the loop, so a later
+    adapter's home is not prepared until that one is settled. Deliberate: the
+    alternative is reporting a half-done `jailbee apply` as a success.
     """
     for adapter in pooled_adapters(cfg):
         home = adapter.config_home(cfg)

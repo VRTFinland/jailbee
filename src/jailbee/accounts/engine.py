@@ -479,10 +479,11 @@ def _login_block(adapter: AccountAdapter, raw: str | None) -> dict[str, Any] | N
 
 
 def _same_grant(adapter: AccountAdapter, left: dict[str, Any], right: dict[str, Any]) -> bool:
-    """Whether two `claudeAiOauth` blocks are one refresh-token lineage.
+    """Whether two login blocks are one refresh-token lineage.
 
-    Equal blocks are trivially the same grant. A shared, non-empty
-    `refreshToken` is the stronger test and the reason this is not just `==`:
+    Equal blocks are trivially the same grant. A shared, non-empty refresh
+    token — `adapter.refresh_token_key`, whatever the agent calls it — is the
+    stronger test and the reason this is not just `==`:
     an access token rotates while the lineage behind it does not, so two blocks
     can differ field by field and still be one login in two files — the exact
     state this module exists to prevent.

@@ -501,3 +501,78 @@ def test_the_duplicate_login_error_names_the_canonical_rm_command(fake_env: Path
         engine.park(adapter, cfg, gcfg, authoritative={"repo"})
 
     assert "jailbee account rm -a fake me@example.com" in str(e.value)
+
+
+def test_prepare_config_homes_serves_every_pooled_adapter(tmp_path, make_cfg):
+    """`prepare_config_homes` had no direct test: its only coverage ran through
+    `init_command` with Claude as the single adapter, so a Claude-hardcoded
+    implementation would have passed. Each pooled agent must get its own home
+    created and its own `prepare_config_home` called with it."""
+    from jailbee.accounts.adapters import base
+    from tests.conftest import with_agent
+
+    seen: list[tuple[str, Path]] = []
+
+    class _Adapter:
+        credential_file = "cred.json"
+        refresh_token_key = "refresh"
+        live_switch = True
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def config_home(self, cfg):
+            return cfg.shared_dir / self.name
+
+        def prepare_config_home(self, cfg, home):
+            seen.append((self.name, home))
+
+    base.register(_Adapter("fakea"))
+    base.register(_Adapter("fakeb"))
+    cfg = make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared")
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    cfg = with_agent(cfg, "fakeb", enabled=True, command="fakeb")
+    try:
+        base.prepare_config_homes(cfg)
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert seen == [
+        ("fakea", tmp_path / "shared" / "fakea"),
+        ("fakeb", tmp_path / "shared" / "fakeb"),
+    ]
+    # Created before the call, not by it: a home an implementation writes into
+    # has to exist first.
+    assert (tmp_path / "shared" / "fakea").is_dir()
+    assert (tmp_path / "shared" / "fakeb").is_dir()
+
+
+def test_prepare_config_homes_skips_a_disabled_agent(tmp_path, make_cfg):
+    from jailbee.accounts.adapters import base
+    from tests.conftest import with_agent
+
+    seen: list[str] = []
+
+    class _Adapter:
+        name = "fakea"
+        credential_file = "cred.json"
+        refresh_token_key = "refresh"
+        live_switch = True
+
+        def config_home(self, cfg):
+            return cfg.shared_dir / self.name
+
+        def prepare_config_home(self, cfg, home):
+            seen.append(self.name)
+
+    base.register(_Adapter())
+    cfg = make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared")
+    cfg = with_agent(cfg, "fakea", enabled=False, command="fakea")
+    try:
+        base.prepare_config_homes(cfg)
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+    assert seen == []
+    assert not (tmp_path / "shared" / "fakea").exists()
