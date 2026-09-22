@@ -346,9 +346,14 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # module-level import would form a cycle.
     from jailbee.config import sanitize_column_blocks
 
+    # Applied unconditionally, not `if warnings`: an alias rewrite
+    # (`claude_group` -> `group`) is a fix that produces no warning by design,
+    # so gating on the warning list would drop it and leave the deprecated
+    # spelling in the loaded block — where nothing downstream understands it.
+    # `sanitize_column_blocks` returns each block unchanged (the same object)
+    # when it needed no fix, so this costs nothing in the common case.
     fixed, warnings = sanitize_column_blocks([("ls", gcfg.ls), ("dashboard", gcfg.dashboard)])
-    if warnings:
-        gcfg = gcfg.model_copy(update=fixed)
+    gcfg = gcfg.model_copy(update=fixed)
     return gcfg, warnings
 
 

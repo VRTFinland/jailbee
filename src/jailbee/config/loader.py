@@ -657,10 +657,11 @@ def _sanitize_columns(cfg: Config) -> Config:
     if _columns_already_sanitized([(cfg.ls, _COLUMN_DEFAULT), (cfg.dashboard, _COLUMN_DEFAULT)]):
         return cfg
 
+    # Applied unconditionally — see the twin in `global_config.load_global_config`
+    # for why: an alias rewrite fixes a block without warning about it.
     fixed, warnings = sanitize_column_blocks([("ls", cfg.ls), ("dashboard", cfg.dashboard)])
-    if warnings:
-        object.__setattr__(cfg, "ls", fixed["ls"])
-        object.__setattr__(cfg, "dashboard", fixed["dashboard"])
+    object.__setattr__(cfg, "ls", fixed["ls"])
+    object.__setattr__(cfg, "dashboard", fixed["dashboard"])
     cfg._column_warnings = warnings
     return cfg
 
