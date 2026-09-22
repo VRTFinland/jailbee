@@ -58,6 +58,8 @@ from jailbee.accounts.models import (
     _SLOT_SUFFIX,
     DISAMBIGUATOR,
     LIVE_UNIDENTIFIED,
+    AccountNotFoundError,
+    AmbiguousAccountError,
     Identity,
     LiveAccount,
     Member,
@@ -162,12 +164,18 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
     An exact slot name wins; otherwise a bare email must match exactly one
     account. Nothing is guessed — an ambiguous or unknown reference is an
     error naming the candidates.
+
+    The two failures are distinct types, both `PoolError` subclasses:
+    `AmbiguousAccountError` when this pool has candidates it cannot choose between,
+    `AccountNotFoundError` when it has none. A caller resolving one reference across
+    several agents' pools must not treat the first as the second — see
+    `AccountNotFoundError`.
     """
     wanted = ref.strip()
     exact = [s for s in slots if s.name == wanted]
     if len(exact) > 1:
         where = ", ".join(str(s.path) for s in sorted(exact, key=lambda s: str(s.path)))
-        raise PoolError(
+        raise AmbiguousAccountError(
             f"`{wanted}` is carried by {len(exact)} files ({where}), which jailbee's "
             "slot naming is supposed to make impossible — something else has written "
             "to the store. They may be two different logins, so nothing here can say "
@@ -183,10 +191,12 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         return by_email[0]
     if len(by_email) > 1:
         names = ", ".join(sorted(s.name for s in by_email))
-        raise PoolError(f"`{wanted}` matches several accounts: {names}. Pass the full slot name.")
+        raise AmbiguousAccountError(
+            f"`{wanted}` matches several accounts: {names}. Pass the full slot name."
+        )
 
     known = ", ".join(sorted(s.name for s in slots))
-    raise PoolError(
+    raise AccountNotFoundError(
         f"no stored account matches `{wanted}`."
         + (f" Known: {known}" if known else " The pool is empty.")
     )

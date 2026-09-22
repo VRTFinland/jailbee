@@ -38,6 +38,28 @@ class PoolError(Exception):
     """A pool operation cannot proceed; the message is user-facing."""
 
 
+class AccountNotFoundError(PoolError):
+    """A reference names no stored login in the pool it was looked up in.
+
+    Split from `AmbiguousAccountError` because a caller resolving one reference
+    against *several* agents' pools has to tell the two apart: "not in this
+    agent's store" is ordinary — try the next one — while "this agent has
+    candidates it cannot choose between" must stop the search, or an ambiguity
+    would be swallowed because another agent happened to match and the wrong
+    login would be acted on. A `PoolError` subclass, so every caller that only
+    reports the message is unaffected.
+    """
+
+
+class AmbiguousAccountError(PoolError):
+    """A reference names more than one stored login, and none can be preferred.
+
+    Either two files carry one slot name, or one email has several grants. See
+    `AccountNotFoundError` for why the distinction is a type rather than a
+    message.
+    """
+
+
 @dataclass(frozen=True)
 class Identity:
     """An agent account as its config home names it.

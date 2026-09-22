@@ -576,3 +576,56 @@ def test_prepare_config_homes_skips_a_disabled_agent(tmp_path, make_cfg):
 
     assert seen == []
     assert not (tmp_path / "shared" / "fakea").exists()
+
+
+def test_resolve_ref_raises_not_found_for_an_unknown_reference(tmp_path):
+    """The type is the contract, not the message: a caller resolving one
+    reference across several agents' pools moves on from this one."""
+    from jailbee.accounts.engine import resolve_ref
+    from jailbee.accounts.models import AccountNotFoundError, Slot
+
+    slots = [Slot("me@x.com", tmp_path / "me.json", live=False)]
+
+    with pytest.raises(AccountNotFoundError):
+        resolve_ref("other@x.com", slots)
+
+
+def test_resolve_ref_raises_ambiguous_for_an_email_with_several_grants(tmp_path):
+    """And this one must stop the search: no `-a` picks between two grants of
+    one email inside a single adapter, so swallowing it would act on whichever
+    login another agent happened to match."""
+    from jailbee.accounts.engine import resolve_ref
+    from jailbee.accounts.models import AmbiguousAccountError, Slot
+
+    # Two independent grants of one account, both carrying the `~`
+    # disambiguator: they report the same email, and neither slot *name* is the
+    # bare email, so the exact-name branch cannot resolve it either.
+    slots = [
+        Slot("me@x.com~a", tmp_path / "a.json", live=False),
+        Slot("me@x.com~b", tmp_path / "b.json", live=False),
+    ]
+    assert [s.email for s in slots] == ["me@x.com", "me@x.com"]
+
+    with pytest.raises(AmbiguousAccountError, match="matches several accounts"):
+        resolve_ref("me@x.com", slots)
+
+
+def test_resolve_ref_raises_ambiguous_when_two_files_carry_one_name(tmp_path):
+    from jailbee.accounts.engine import resolve_ref
+    from jailbee.accounts.models import AmbiguousAccountError, Slot
+
+    slots = [
+        Slot("me@x.com", tmp_path / "a.json", live=False),
+        Slot("me@x.com", tmp_path / "b.json", live=False),
+    ]
+
+    with pytest.raises(AmbiguousAccountError, match="carried by 2 files"):
+        resolve_ref("me@x.com", slots)
+
+
+def test_both_failures_stay_pool_errors(tmp_path):
+    """Every existing `except PoolError` call site has to keep working."""
+    from jailbee.accounts.models import AccountNotFoundError, AmbiguousAccountError, PoolError
+
+    assert issubclass(AccountNotFoundError, PoolError)
+    assert issubclass(AmbiguousAccountError, PoolError)

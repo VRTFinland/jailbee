@@ -11495,19 +11495,6 @@ def _account_adapters(cfg: "Config", agent: str | None) -> list["AccountAdapter"
         ) from None
 
 
-def _names_an_account(ref: str, slots: Sequence["Slot"]) -> bool:
-    """Whether `ref` could name any of `slots`, by `resolve_ref`'s two rules.
-
-    Only used to tell `engine.resolve_ref`'s ambiguity error from its
-    not-found one: it raises one exception type for both, and an ambiguity
-    swallowed because another adapter matched would silently act on the wrong
-    login.
-    """
-    wanted = ref.strip()
-    lowered = wanted.lower()
-    return any(s.name == wanted or (s.email is not None and s.email == lowered) for s in slots)
-
-
 def _matching_choices(
     adapters: Sequence["AccountAdapter"],
     cfg: "Config",
@@ -11533,12 +11520,12 @@ def _matching_choices(
     picked, and only a typed one has an error worth reporting.
     """
     from jailbee.accounts import engine
-    from jailbee.accounts.models import PoolError
+    from jailbee.accounts.models import AccountNotFoundError, PoolError
     from jailbee.incus import Incus
 
     choices: list[AccountChoice] = []
     known: list[str] = []
-    not_found: list[PoolError] = []
+    not_found: list[AccountNotFoundError] = []
     # One client for the whole loop: `_adapter_authoritative` costs an
     # `incus list` per adapter otherwise.
     incus = Incus()
@@ -11556,11 +11543,11 @@ def _matching_choices(
                 if removable
                 else engine.resolve_ref(ref, slots)
             )
-        except PoolError as e:
-            if _names_an_account(ref, slots):
-                # `resolve_ref` found candidates it cannot choose between: the
-                # ambiguity is inside this one adapter, and no `-a` solves it.
-                raise
+        except AccountNotFoundError as e:
+            # Only "this agent's store has no such login" is ordinary enough to
+            # try the next agent. `AmbiguousAccountError` — candidates inside this
+            # one adapter that it cannot choose between — propagates, because
+            # no `-a` solves it and swallowing it would act on the wrong login.
             not_found.append(e)
             continue
         choices.append((adapter, slot))
