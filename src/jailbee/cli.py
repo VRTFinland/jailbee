@@ -321,8 +321,9 @@ def _advise_setup(*, offer: bool = False) -> None:
 
     Same contract as `_advise_upgrade`: stderr, and wrapped broadly because a
     courtesy must never take down the command the user actually ran.
-    `hint_pending` is what makes this fire at most once — the probes it runs
-    are `stat`s, so this costs nothing on the commands it decorates.
+    `hint_pending` is what makes this fire at most once, which is also what
+    keeps its cost off the commands it decorates: the probes are `stat`s plus,
+    for the skills step, one `global.yaml` read.
 
     With `offer`, and only on a terminal, the hint becomes a question. The
     commands that survey the fleet (`jailbee ls`, `jailbee dashboard`) can

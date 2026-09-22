@@ -12,9 +12,12 @@ inline and that a `uv tool install jailbee` therefore never performed:
 * **skills** — jailbee's bundled agent skills for the agents found on the
   host (opt-in, `install_host_skills` in `global.yaml`).
 
-Every step is idempotent, and every step has a probe that costs one `stat`
-and never shells out: `jailbee doctor` reports them, and `consume_hint`
-prints a one-shot hint from the commands users run daily.
+Every step is idempotent, and no step's probe ever shells out: `jailbee
+doctor` reports them, and `consume_hint` prints a one-shot hint from the
+commands users run daily. Completions and the timer cost one `stat`; the
+skills probe additionally reads and validates `global.yaml` for the opt-in
+(once — `hint_pending` fires at most once per host) and, when opted in,
+scans `PATH` for each preset's binary.
 
 Host prerequisites — Incus itself, the firewall, UID delegation — are
 deliberately *not* here. They need root, they are already diagnosed by
@@ -72,12 +75,20 @@ class StepStatus:
     `detail` is shown to the user in `jailbee setup`, in `jailbee doctor` and
     in the first-run hint, so it names paths rather than summarising them:
     "missing: /home/x/.zfunc/_jb" is actionable, "not installed" is not.
+
+    `actionable` is false for a step that has nothing it *could* do — the
+    host skills with the opt-in off, an install bundling no skills, a host
+    with none of the agents. Such a step is `installed` in the only sense
+    that matters (it owes nothing, so nothing may nag about it), but saying
+    "installed" of it reads as a claim that files are on disk, and offering
+    to "Refresh" it offers a no-op. Both callers key off this instead.
     """
 
     key: StepKey
     title: str
     installed: bool
     detail: str
+    actionable: bool = True
 
 
 # --------------------------------------------------------------------------
@@ -296,30 +307,66 @@ def _host_skills_opt_in() -> bool:
     return gcfg.install_host_skills
 
 
-def skills_status() -> StepStatus:
+def _orphaned_host_skills() -> list[Path]:
+    """Directories still holding bundled skills that nothing refreshes now.
+
+    Before the opt-in existed, `jailbee setup` wrote the skills into the
+    host's `~/.claude/skills` unconditionally. Those files survive the
+    upgrade and then quietly rot as the bundled set evolves, and the step
+    reports `installed` — so the one population that needs to know would
+    never be told. Named in the opted-out detail instead.
+    """
+    from jailbee.agent_skills import bundled_skill_names, host_skill_targets
+
+    names = bundled_skill_names()
+    if not names:
+        return []
+    return [t for t in host_skill_targets() if any((t / n).is_dir() for n in names)]
+
+
+def skills_status(*, opt_in: bool | None = None) -> StepStatus:
     """Installed when every detected agent has every bundled skill.
 
     Opt-in governs: with `install_host_skills` off (the default) the step
     reports installed — the containers' skills need no host action, so their
     absence is a preference, not a fault, and neither the first-run hint nor
     `jailbee doctor` may nag about it. An install that ships no skills at
-    all, or a host with none of the agents, has nothing to owe either.
+    all, or a host with none of the agents, has nothing to owe either. None
+    of the three is `actionable`: there is nothing to install.
+
+    `opt_in` is the caller's already-loaded `install_host_skills`, so a
+    command holding a `GlobalConfig` (`jailbee doctor`) answers from it
+    rather than from a second read of the same file. `None` — `jailbee
+    setup`, which deliberately loads no config — reads it here.
     """
-    from jailbee.agent_skills import bundled_skill_names, host_skill_targets
     from jailbee.global_config import default_global_config_path
 
     title = STEP_TITLES["skills"]
-    if not _host_skills_opt_in():
+    if opt_in is None:
+        opt_in = _host_skills_opt_in()
+    if not opt_in:
+        detail = f"opt-in: off — set install_host_skills: true in {default_global_config_path()}"
+        orphaned = _orphaned_host_skills()
+        if orphaned:
+            detail = (
+                "opt-in: off — jailbee skills already in "
+                + ", ".join(str(t) for t in orphaned)
+                + " are no longer refreshed; set install_host_skills: true in "
+                + str(default_global_config_path())
+            )
+        return StepStatus(
+            key="skills", title=title, installed=True, detail=detail, actionable=False
+        )
+    from jailbee.agent_skills import bundled_skill_names, host_skill_targets
+
+    names = bundled_skill_names()
+    if not names:
         return StepStatus(
             key="skills",
             title=title,
             installed=True,
-            detail=f"opt-in: off — set install_host_skills: true in {default_global_config_path()}",
-        )
-    names = bundled_skill_names()
-    if not names:
-        return StepStatus(
-            key="skills", title=title, installed=True, detail="no skills bundled in this install"
+            detail="no skills bundled in this install",
+            actionable=False,
         )
     targets = host_skill_targets()
     if not targets:
@@ -328,6 +375,7 @@ def skills_status() -> StepStatus:
             title=title,
             installed=True,
             detail="no skill-capable agents found on this host",
+            actionable=False,
         )
     missing = [
         f"{name} in {target}"
@@ -388,22 +436,22 @@ def qt_dashboard_status() -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 
 
-def status_for(key: StepKey, shells: Sequence[str]) -> StepStatus:
+def status_for(key: StepKey, shells: Sequence[str], *, opt_in: bool | None = None) -> StepStatus:
     if key == "completions":
         return completions_status(shells)
     if key == "timer":
         return timer_status()
-    return skills_status()
+    return skills_status(opt_in=opt_in)
 
 
-def setup_status(shells: Sequence[str]) -> list[StepStatus]:
+def setup_status(shells: Sequence[str], *, opt_in: bool | None = None) -> list[StepStatus]:
     """Every step's status, in `STEP_KEYS` order."""
-    return [status_for(key, shells) for key in STEP_KEYS]
+    return [status_for(key, shells, opt_in=opt_in) for key in STEP_KEYS]
 
 
-def pending_steps(shells: Sequence[str]) -> list[StepStatus]:
+def pending_steps(shells: Sequence[str], *, opt_in: bool | None = None) -> list[StepStatus]:
     """The steps not yet in place, in `STEP_KEYS` order."""
-    return [status for status in setup_status(shells) if not status.installed]
+    return [status for status in setup_status(shells, opt_in=opt_in) if not status.installed]
 
 
 def report_step(status: StepStatus) -> None:
@@ -413,7 +461,11 @@ def report_step(status: StepStatus) -> None:
     and the hint describe the same three probes, and two copies of the
     phrasing drift the moment one of them gains a detail the other lacks.
     """
-    if status.installed:
+    if not status.actionable:
+        # "installed (opt-in: off)" reads as a contradiction: the detail
+        # already says why there is nothing on disk and nothing owed.
+        success_plain(f"{status.title}: {status.detail}")
+    elif status.installed:
         success_plain(f"{status.title}: installed ({status.detail})")
     else:
         warn_plain(f"{status.title}: {status.detail}")
@@ -433,9 +485,10 @@ def report_status(keys: Sequence[StepKey], shells: Sequence[str]) -> None:
     noise, and `info` rather than `warn_plain` keeps a missing one from
     reading like a fault.
     """
+    opt_in = _host_skills_opt_in() if "skills" in keys else None
     for key in STEP_KEYS:
         if key in keys:
-            report_step(status_for(key, shells))
+            report_step(status_for(key, shells, opt_in=opt_in))
     if set(keys) == set(STEP_KEYS):
         installed, detail = qt_dashboard_status()
         if installed:
@@ -463,15 +516,10 @@ def _install(
         return
     from jailbee.agent_skills import host_skill_targets, install_host_skills
 
-    if not _host_skills_opt_in():
-        # Only reachable through an explicit "Refresh" answer while opted
-        # out — say why nothing happens rather than installing anyway.
-        info("agent skills: opt-in is off — set install_host_skills: true in the global config")
-        return
+    # `run_setup` skips a step that is not `actionable`, which covers being
+    # opted out and having no agent on the host — this is the install path
+    # proper, reached only when there is something to write.
     targets = host_skill_targets()
-    if not targets:
-        info("agent skills: no skill-capable agents found on this host")
-        return
     written = install_host_skills(targets)
     success_plain(f"Installed {len(written)} skill directories across {len(targets)} agents")
     for target in targets:
@@ -492,10 +540,16 @@ def run_setup(
     `--yes` passes — every selected step runs, and nothing is asked.
     """
     ran: list[StepKey] = []
+    opt_in = _host_skills_opt_in() if "skills" in keys else None
     for key in STEP_KEYS:
         if key not in keys:
             continue
-        status = status_for(key, shells)
+        status = status_for(key, shells, opt_in=opt_in)
+        if not status.actionable:
+            # Nothing to install and nothing to refresh: say so and move on
+            # rather than offering a question whose yes is a no-op.
+            report_step(status)
+            continue
         if key == "completions" and not shells:
             # Nothing can be written, so nothing may be claimed: skip the
             # step outright rather than "installing" an empty set. Always

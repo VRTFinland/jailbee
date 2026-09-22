@@ -1636,7 +1636,7 @@ def test_doctor_flags_missing_shell_completions(tmp_path: Path, mocker) -> None:
     )
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is False
@@ -1654,7 +1654,7 @@ def test_doctor_passes_installed_shell_completions(tmp_path: Path, mocker) -> No
     )
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is True
@@ -1669,7 +1669,7 @@ def test_doctor_does_not_fail_completions_on_an_unknown_shell(tmp_path: Path, mo
     status = mocker.patch("jailbee.setup_command.completions_status")
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "2 in /home/u"))
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     check = next(r for r in results if r.name == "shell completions")
     assert check.ok is True
@@ -1687,7 +1687,7 @@ def test_doctor_flags_missing_host_agent_skills(tmp_path: Path, mocker) -> None:
         return_value=_step(False, "missing in /home/u/.claude/skills: jailbee-usage"),
     )
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     check = next(r for r in results if r.name == "agent skills (host)")
     assert check.ok is False
@@ -1696,19 +1696,59 @@ def test_doctor_flags_missing_host_agent_skills(tmp_path: Path, mocker) -> None:
 
 def test_doctor_always_reports_the_host_skills_check(tmp_path: Path, mocker) -> None:
     """The check is host-level policy, not repo-level: it appears for every
-    config, and an opted-out host reads as ok rather than as a fault."""
+    config, with no repo config consulted.
+
+    Says nothing about what the probe *answers* — `skills_status` is a mock
+    here, so `installed` is a truthy MagicMock either way. The opted-out
+    verdict is covered end to end by
+    `test_doctor_reports_an_opted_out_host_as_ok` below.
+    """
     from jailbee.doctor import _check_user_setup
 
     mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
     mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
     skills = mocker.patch("jailbee.setup_command.skills_status")
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     names = [r.name for r in results]
     assert "shell completions" in names
     assert "agent skills (host)" in names
-    skills.assert_called_once_with()
+    skills.assert_called_once_with(opt_in=False)
+
+
+def test_doctor_reports_an_opted_out_host_as_ok(tmp_path: Path, monkeypatch, mocker) -> None:
+    """End to end, no mock on the probe: an opted-out host is `ok` with a
+    detail that explains itself, so `jb doctor` exits 0 and nothing nags."""
+    from jailbee.doctor import _check_user_setup
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    mocker.patch("jailbee.setup_command.detect_shell", return_value="bash")
+    mocker.patch("jailbee.setup_command.completions_status", return_value=_step(True, "ok"))
+
+    results = _check_user_setup(GlobalConfig())
+
+    check = next(r for r in results if r.name == "agent skills (host)")
+    assert check.ok is True
+    assert "opt-in: off" in check.detail
+
+
+def test_doctor_reports_on_the_global_config_it_was_handed(tmp_path: Path, monkeypatch) -> None:
+    """The injected `GlobalConfig` is what the skills row answers from — not a
+    second read of `global.yaml`, which no test could point elsewhere."""
+    from jailbee.doctor import _check_user_setup
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    opted_in = _check_user_setup(GlobalConfig(install_host_skills=True))
+    opted_out = _check_user_setup(GlobalConfig(install_host_skills=False))
+
+    detail_in = next(r for r in opted_in if r.name == "agent skills (host)").detail
+    detail_out = next(r for r in opted_out if r.name == "agent skills (host)").detail
+    assert "opt-in: off" in detail_out
+    assert "opt-in: off" not in detail_in
 
 
 def test_run_checks_includes_the_user_setup_checks(tmp_path: Path, mocker) -> None:
@@ -2904,7 +2944,7 @@ def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mo
     mocker.patch("jailbee.setup_command.skills_status", return_value=_step(True, "ok"))
     mocker.patch("jailbee.setup_command.qt_dashboard_status", return_value=(False, "not installed"))
 
-    results = _check_user_setup()
+    results = _check_user_setup(GlobalConfig())
 
     check = next(r for r in results if r.name == "qt dashboard (optional)")
     assert check.ok is True, "an optional extra must not fail doctor"

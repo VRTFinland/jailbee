@@ -254,17 +254,23 @@ def test_skills_status_tolerates_an_unrelated_schema_error(
 def test_run_setup_survives_a_schema_invalid_global_yaml(
     home: Path, capsys: pytest.CaptureFixture[str], mocker: MockerFixture
 ) -> None:
-    """`jailbee setup --only skills` on a broken host: no exception, the step
-    is "ran" (it reported), and nothing is installed under the opted-out home."""
-    _global_config("install_host_skills: maybe\n", home)
+    """`jailbee setup --only skills` on a broken host: no exception, nothing
+    ran, nothing is installed under the opted-out home — and the warning about
+    the unreadable file is printed once, not once per read."""
+    path = _global_config("install_host_skills: maybe\n", home)
     mocker.patch("shutil.which", _which("claude"))
     from jailbee.setup_command import run_setup
 
     ran = run_setup(keys=["skills"], shells=["bash"], confirm=None)
 
-    assert ran == ["skills"]
+    assert ran == []
     assert not (home / ".claude" / "skills").exists()
-    assert "opt-in" in capsys.readouterr().out
+    out = capsys.readouterr().out.replace("\n", "")
+    assert "opt-in" in out
+    # One read, so one warning: `run_setup` used to resolve the opt-in once
+    # for the status and again for the install, printing the whole pydantic
+    # error twice.
+    assert out.count(f"ignoring {path}") == 1
 
 
 def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
@@ -338,6 +344,8 @@ def test_run_setup_installs_every_step_when_not_interactive(
 def test_run_setup_honours_the_keys_it_is_given(home: Path, mocker: MockerFixture) -> None:
     from jailbee.setup_command import run_setup
 
+    _opt_in(True, home)
+    mocker.patch("shutil.which", _which("claude"))
     units = mocker.patch("jailbee.init_command.install_systemd_units")
 
     ran = run_setup(keys=["skills"], shells=["bash"], confirm=None)
@@ -350,17 +358,72 @@ def test_run_setup_honours_the_keys_it_is_given(home: Path, mocker: MockerFixtur
 def test_run_setup_does_not_install_skills_when_opted_out(
     home: Path, capsys: pytest.CaptureFixture[str], mocker: MockerFixture
 ) -> None:
-    """The step reports installed while opted out, so even `--yes` installs
-    nothing and says why."""
+    """Opted out there is nothing to install and nothing to refresh, so even
+    `--yes` writes nothing, claims nothing ran, and says why."""
     mocker.patch("shutil.which", _which("claude"))
     _opt_in(False, home)
     from jailbee.setup_command import run_setup
 
     ran = run_setup(keys=["skills"], shells=["bash"], confirm=None)
 
-    assert ran == ["skills"]
+    assert ran == []
     assert not (home / ".claude" / "skills").exists()
-    assert "opt-in" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "opt-in" in out
+    # Not "installed (opt-in: off)", which reads as a claim about files.
+    assert "installed" not in out
+
+
+def test_run_setup_never_asks_about_an_opted_out_skills_step(
+    home: Path, mocker: MockerFixture
+) -> None:
+    """Interactive: "Refresh agent skills (host)?" would offer a no-op —
+    a yes could only reach an installer with nothing to write."""
+    mocker.patch("shutil.which", _which("claude"))
+    _opt_in(False, home)
+    from jailbee.setup_command import run_setup
+
+    asked: list[str] = []
+
+    def confirm(question: str, default: bool) -> bool:
+        asked.append(question)
+        return True
+
+    ran = run_setup(keys=["skills"], shells=["bash"], confirm=confirm)
+
+    assert asked == []
+    assert ran == []
+    assert not (home / ".claude" / "skills").exists()
+
+
+def test_skills_status_names_skills_left_behind_by_the_opt_in(
+    home: Path, mocker: MockerFixture
+) -> None:
+    """A host that ran `jailbee setup` before the opt-in existed keeps the
+    files it installed then, and nothing refreshes them any more. The step is
+    still ok — it owes nothing — but the detail has to say so, because this is
+    the only surface that population ever sees."""
+    mocker.patch("shutil.which", _which("claude"))
+    from jailbee.agent_skills import host_skill_targets, install_host_skills
+    from jailbee.setup_command import skills_status
+
+    install_host_skills(host_skill_targets())  # the pre-upgrade state
+    _opt_in(False, home)
+
+    status = skills_status()
+
+    assert status.installed is True
+    assert status.actionable is False
+    assert "no longer refreshed" in status.detail
+    assert str(home / ".claude" / "skills") in status.detail
+
+
+def test_skills_status_opt_out_detail_stays_short_on_a_clean_host(home: Path) -> None:
+    """Nothing was ever installed, so there is nothing to warn about."""
+    _opt_in(False, home)
+    from jailbee.setup_command import skills_status
+
+    assert "no longer refreshed" not in skills_status().detail
 
 
 def test_run_setup_skips_a_step_the_callback_declines(home: Path, mocker: MockerFixture) -> None:
