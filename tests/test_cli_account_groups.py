@@ -295,7 +295,10 @@ def test_set_rejects_the_reserved_name_before_writing(group_env, mocker, tmp_pat
 def test_set_takes_no_container_argument(group_env):
     """Scope separation: the permanent verb must not accept a container."""
     result = runner.invoke(app, ["account", "group", "set", "personal", "myrepo-a"])
-    assert result.exit_code != 0
+    assert result.exit_code == 2, result.output
+    # The usage error specifically, not "it failed somehow": a config-load or
+    # Incus failure would satisfy a bare non-zero check just as well.
+    assert "unexpected extra argument" in _flat(result.output).lower()
 
 
 def test_set_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):
@@ -1296,3 +1299,35 @@ def test_claude_ls_alias_still_works_when_the_repo_disables_claude(mocker, tmp_p
 
     assert result.exit_code == 0, result.output
     assert "no enabled agent" not in _flat(result.output)
+
+
+# (alias path, canonical function name, argv tail) for every legacy wrapper.
+# Table-driven because the wrappers are eleven near-identical three-liners:
+# one that forgot `_warn_claude_alias()` or mis-forwarded an argument would
+# otherwise ship silently — only three of the eleven were covered.
+_ALIAS_WRAPPERS = [
+    (["claude", "ls"], "account_ls_cmd", ()),
+    (["claude", "use", "new@x.com"], "account_use_cmd", ("new@x.com",)),
+    (["claude", "park"], "account_park_cmd", ()),
+    (["claude", "rm", "old@x.com"], "account_rm_cmd", ("old@x.com",)),
+    (["claude", "group", "ls"], "account_group_ls_cmd", ()),
+    (["claude", "group", "create", "work"], "account_group_create_cmd", ("work",)),
+    (["claude", "group", "rm", "work"], "account_group_rm_cmd", ("work",)),
+    (["claude", "group", "set", "work"], "account_group_set_cmd", ("work",)),
+    (["claude", "group", "unset"], "account_group_unset_cmd", ()),
+    (["claude", "group", "use", "work"], "account_group_use_cmd", ("work",)),
+    (["claude", "group", "reset"], "account_group_reset_cmd", ()),
+]
+
+
+@pytest.mark.parametrize("argv,canonical,forwarded", _ALIAS_WRAPPERS)
+def test_every_claude_alias_warns_once_and_forwards(mocker, argv, canonical, forwarded):
+    patched = mocker.patch(f"jailbee.cli.{canonical}")
+
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in result.stderr.lower()
+    assert result.stderr.lower().count("deprecated") == 1
+    patched.assert_called_once()
+    assert patched.call_args.args[: len(forwarded)] == forwarded

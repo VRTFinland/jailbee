@@ -11430,7 +11430,10 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
 
 
 def _adapter_authoritative(
-    adapter: "AccountAdapter", cfg: "Config", gcfg: "GlobalConfig"
+    adapter: "AccountAdapter",
+    cfg: "Config",
+    gcfg: "GlobalConfig",
+    incus: "IncusType | None" = None,
 ) -> set[str]:
     """Members whose recorded account can be trusted for this repo's holder.
 
@@ -11442,6 +11445,11 @@ def _adapter_authoritative(
     The adapter is a parameter because authority is asked of *that agent's*
     members: a repo's config home names one agent's account, and reading
     another agent's member list would make the wrong repos authoritative.
+
+    `incus` is a parameter for the same reason as everywhere else in this
+    module: the answer costs one `incus list`, and a caller looping over
+    adapters would otherwise pay for one per agent. Callers with a client in
+    hand pass it; the default keeps the single-adapter call sites short.
     """
     from jailbee.accounts import engine, groups
     from jailbee.incus import Incus
@@ -11450,7 +11458,9 @@ def _adapter_authoritative(
     if group is None:
         return {cfg.container_prefix}
     found, _ = engine.members(adapter, cfg, gcfg)
-    return groups.authoritative_prefixes(gcfg, Incus(), group, [m.container_prefix for m in found])
+    return groups.authoritative_prefixes(
+        gcfg, incus or Incus(), group, [m.container_prefix for m in found]
+    )
 
 
 AccountChoice = tuple["AccountAdapter", "Slot"]
@@ -11524,13 +11534,17 @@ def _matching_choices(
     """
     from jailbee.accounts import engine
     from jailbee.accounts.models import PoolError
+    from jailbee.incus import Incus
 
     choices: list[AccountChoice] = []
     known: list[str] = []
     not_found: list[PoolError] = []
+    # One client for the whole loop: `_adapter_authoritative` costs an
+    # `incus list` per adapter otherwise.
+    incus = Incus()
     for adapter in adapters:
         slots = engine.list_slots(
-            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg, incus)
         )
         known.extend(f"{s.name} ({adapter.name})" for s in slots)
         if ref is None:
@@ -11569,11 +11583,13 @@ def _live_choices(
     same holder, so several can be live at once and one must be chosen.
     """
     from jailbee.accounts import engine
+    from jailbee.incus import Incus
 
     choices: list[AccountChoice] = []
+    incus = Incus()
     for adapter in adapters:
         slots = engine.list_slots(
-            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg)
+            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg, incus)
         )
         choices.extend((adapter, s) for s in slots if s.live)
     return choices
@@ -11677,8 +11693,6 @@ def _account_cell(row: "accounts_overview.Row") -> str:
 def _account_fields(
     containers_known: bool,
 ) -> "list[table_format.FieldSpec[accounts_overview.Row]]":
-    from jailbee import table_format
-
     return [
         table_format.FieldSpec(
             name="agent", header="AGENT", cell=lambda r: r.agent, json=lambda r: r.agent
@@ -12427,7 +12441,10 @@ claude_group_app = typer.Typer(
     help="Deprecated alias for `jailbee account group`.",
     no_args_is_help=True,
 )
-claude_app.add_typer(claude_group_app, hidden=True)
+# Not hidden: the whole `claude` tree already is, and hiding `group` *inside*
+# it left a user migrating a script unable to discover from `jailbee claude
+# --help` that `jailbee claude group ...` exists at all, or what it maps to.
+claude_app.add_typer(claude_group_app)
 
 
 def _resolve_group_container(
