@@ -954,18 +954,47 @@ def test_account_adapters_with_an_agent_returns_only_that_one(repo):
         base.ADAPTERS.pop("fakea", None)
 
 
-def test_account_adapters_refuses_an_unknown_or_disabled_agent(repo):
-    """A name this config does not enable has no pool a user can mean; the
-    refusal says so instead of silently acting on every agent."""
+def test_account_adapters_refuses_an_agent_with_no_adapter(repo):
+    """A name jailbee has no adapter for is a typo or a build without that
+    agent's module; the refusal says so instead of silently acting on every
+    agent, and names what may be passed."""
+    from jailbee.cli import _account_adapters
+
+    with pytest.raises(PoolError, match="agent `nope` has no account pool"):
+        _account_adapters(repo, "nope")
+
+
+def test_account_adapters_accepts_an_agent_this_repo_does_not_enable(repo):
+    """The pool is host-wide: the parked store and the group holders live under
+    `XDG_DATA_HOME`, not in the repo, so `-a claude` in a repo that happens to
+    keep Claude off still names a real pool. Gating this on `enabled` broke
+    every `jailbee claude ...` alias for exactly those repos — all four of them
+    worked before the generic rewrite."""
+    from jailbee.accounts.adapters import base
     from jailbee.cli import _account_adapters
     from tests.conftest import with_agent
 
-    with pytest.raises(PoolError, match="no enabled agent `nope`"):
-        _account_adapters(repo, "nope")
+    disabled = with_agent(repo, "fakea", enabled=False, command="fakea")
+    base.register(_NamedAdapter("fakea"))
+    try:
+        assert [a.name for a in _account_adapters(disabled, "fakea")] == ["fakea"]
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+
+def test_account_adapters_without_an_agent_still_honours_enabled(repo):
+    """The other half: omitting `-a` means "every *enabled* pooled agent", the
+    repo-scoped reading, so a disabled agent must not be acted on implicitly."""
+    from jailbee.accounts.adapters import base
+    from jailbee.cli import _account_adapters
+    from tests.conftest import with_agent
 
     disabled = with_agent(repo, "fakea", enabled=False, command="fakea")
-    with pytest.raises(PoolError, match="no enabled agent `fakea`"):
-        _account_adapters(disabled, "fakea")
+    base.register(_NamedAdapter("fakea"))
+    try:
+        assert "fakea" not in [a.name for a in _account_adapters(disabled, None)]
+    finally:
+        base.ADAPTERS.pop("fakea", None)
 
 
 def test_a_ref_across_two_adapters_opens_the_picker_on_a_tty(repo, mocker):

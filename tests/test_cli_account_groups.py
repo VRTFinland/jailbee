@@ -1240,3 +1240,59 @@ def test_claude_group_ls_alias_warns_once_and_forwards(mocker):
     assert result.stderr.lower().count("deprecated") == 1
     canonical.assert_called_once()
     assert "agent" not in canonical.call_args.kwargs
+
+
+def test_group_ls_with_no_pooled_agent_makes_no_claim_about_the_host(mocker, tmp_path, monkeypatch):
+    """An empty listing built from zero adapters says nothing about the host:
+    another repo may well hold a group login. Claiming "No credential groups on
+    this host" there is a false statement, not a terse one."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+
+    result = runner.invoke(app, ["account", "group", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "No credential groups on this host" not in _flat(result.output)
+    assert "enables no pooled agent" in _flat(result.output)
+
+
+def test_account_ls_with_no_pooled_agent_makes_no_claim_about_the_host(
+    mocker, tmp_path, monkeypatch
+):
+    """The same for the wider listing: "No login on this host yet" is a claim
+    about the host, and this view never looked at one."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "No login on this host yet" not in _flat(result.output)
+    assert "enables no pooled agent" in _flat(result.output)
+
+
+def test_claude_ls_alias_still_works_when_the_repo_disables_claude(mocker, tmp_path, monkeypatch):
+    """`jailbee claude ls` is a read-only, host-wide listing and worked before
+    the generic rewrite regardless of `claude.enabled`. Gating the explicit
+    `-a claude` on enablement regressed it to exit 2 — for exactly the repos
+    most likely to still be running the old spelling."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": False})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+
+    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "no enabled agent" not in _flat(result.output)
