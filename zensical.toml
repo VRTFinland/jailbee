@@ -3,7 +3,7 @@
 #
 # `docs_dir` is NOT `docs/`: Zensical has no way to exclude a file, and this
 # repo keeps maintainer-only pages (manual-testing, releasing) and the bundled
-# Claude skills under `docs/`. `scripts/docs_site.py stage` copies exactly the
+# agent skills under `docs/`. `scripts/docs_site.py stage` copies exactly the
 # pages `nav` names into `_build/docs/`, so `nav` is the publication whitelist.
 # Build with `make site`, never with a bare `zensical build`.
 [project]

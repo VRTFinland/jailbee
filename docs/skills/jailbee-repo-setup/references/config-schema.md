@@ -826,8 +826,8 @@ agents:
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. `private` (dir only) names subpaths inside the mount that stay per container. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow--strict-mode-allowlist). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
-| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new` / `jailbee apply` copy the three bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into the shared copy of it. The four skill-capable presets set it (`claude` `~/.claude/skills`, `codex` `~/.codex/skills`, `gemini` `~/.gemini/skills`, `opencode` `~/.config/opencode/skills`); `aider` and `grok` have none. |
-| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new` / `jailbee apply` copy the three bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into the shared copy of it. The four skill-capable presets set it (`claude` `~/.claude/skills`, `codex` `~/.codex/skills`, `gemini` `~/.gemini/skills`, `opencode` `~/.config/opencode/skills`); `aider` and `grok` have none. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. |
 
 `jailbee config validate` additionally rejects: an agent name outside
 `[a-z0-9-]+`; `enabled: true` with an empty `command`; `autostart: true`
@@ -875,8 +875,10 @@ combined) is a `ConfigError` naming both spellings — pick one, and prefer
 `agents.claude`. Everything below applies identically under either
 spelling, and `claude` also carries every generic field from the `agents`
 table above (`install`, `update`, `install_check`, `install_network`,
-`shared`, `egress_allow`, `env`, `skills_dir`, `install_jailbee_skills`),
-not repeated here.
+`shared`, `egress_allow`, `env`, `skills_dir`), not repeated here.
+`install_jailbee_skills` is repeated below, because this file is the
+in-container agent's only schema reference and that key is what puts it
+there.
 
 Claude Code CLI integration. Defaults to disabled — opt-in via
 `~/.config/jailbee/global.yaml`.

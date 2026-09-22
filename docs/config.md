@@ -81,10 +81,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Six top-level keys are read from `~/.config/jailbee/global.yaml` into
+Eight top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
-`claude_credentials`, `scratch` and `config_edit`. `ls`'s column block is
+`claude_credentials`, `scratch`, `config_edit`, `update_check` and
+`install_host_skills`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -1208,8 +1209,8 @@ to share" rule, and a worked example live in
 | `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
-| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The four skill-capable presets set it; leave unset for an agent with no skills mechanism. |
-| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. The pre-1.0 `claude.install_gie_skills` name was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The four skill-capable presets set it; leave unset for an agent with no skills mechanism. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. The pre-1.0 `claude.install_gie_skills` name was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 
 An agent name that matches one of the six shipped presets is deep-merged
 over that preset (preset → global.yaml → repo, same append/reset rules as
@@ -1236,7 +1237,8 @@ agents:
 Everything below applies identically under either spelling, and `claude`
 also carries the generic `agents` fields from the table above
 (`install`, `update`, `install_check`, `install_network`, `shared`,
-`egress_allow`, `env`) — not repeated here since they mean the same thing
+`egress_allow`, `env`, `skills_dir`, `install_jailbee_skills`) — not
+repeated here since they mean the same thing
 for every agent. See [Generic agent support](agents.md#9-claude) for the
 short version of this same note.
 
