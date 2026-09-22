@@ -529,6 +529,7 @@ def load_config_from_layers(
     path: Path,
     *,
     origin: str,
+    global_origin: str | None = None,
     emit_hint: bool = True,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
@@ -563,16 +564,18 @@ def load_config_from_layers(
     # the path is wanted here — the file itself is never read.
     from jailbee.global_config import default_global_config_path
 
+    # `global_raw` need not have come from the default path — the config editor
+    # validates a staged copy of `layer_set.global_path` — so the caller may
+    # name where it really came from, and every message about it says so.
+    global_from = global_origin or str(default_global_config_path())
     _check_retired_keys(global_raw)
-    global_raw, folded = normalize_credentials_key(global_raw, str(default_global_config_path()))
+    global_raw, folded = normalize_credentials_key(global_raw, global_from)
     if emit_hint and folded:
-        _warn_legacy_credentials_block(str(default_global_config_path()))
+        _warn_legacy_credentials_block(global_from)
     host_raw, global_for_merge = _split_host_keys(global_raw)
     _check_retired_keys(repo_raw)
     if emit_hint:
-        _warn_legacy_chrome_layers(
-            [(str(default_global_config_path()), global_for_merge), (origin, repo_raw)]
-        )
+        _warn_legacy_chrome_layers([(global_from, global_for_merge), (origin, repo_raw)])
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 

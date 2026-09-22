@@ -358,7 +358,11 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
     # migration has to run *before* `apply_changes`, exactly as it does in
     # `save.build_plan` and the account-group writer.
     if layer == "repo":
-        changes = credential_key_migration(repo_raw, changes)
+        # No migration on the repo layer: `credentials:` is host-level, so both
+        # spellings are banned there and `load_config_from_layers` refuses the
+        # file either way. Migrating first would make the refusal name
+        # `credentials` — a key that is not in the user's file — instead of the
+        # `claude_credentials` they actually wrote.
         repo_raw = apply_changes(repo_raw, changes)
     else:
         changes = credential_key_migration(global_raw, changes)
@@ -373,6 +377,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
             repo_raw,
             layer_set.repo_path,
             origin=str(layer_set.repo_path),
+            global_origin=str(layer_set.global_path),
             emit_hint=False,
         )
         if layer == "global":

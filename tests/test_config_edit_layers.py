@@ -658,3 +658,24 @@ def test_resolve_answers_for_every_spec(tmp_path):
     for specs in (repo_specs(), global_specs()):
         origins = layers.resolve(specs, got)
         assert set(origins) == {s.path for s in specs}
+
+
+def test_a_repo_layer_refusal_names_the_key_the_user_wrote(tmp_path):
+    """`credentials:` is host-level, so both spellings are banned in a repo's
+    own file. The refusal has to name `claude_credentials` — the key actually
+    in the file — not the one a migration would have renamed it to."""
+    from jailbee.config_edit.layers import LayerSet, validate
+
+    repo = tmp_path / "repo"
+    (repo / ".jailbee").mkdir(parents=True)
+    layer_set = LayerSet(
+        global_path=tmp_path / "global.yaml",
+        global_raw={},
+        repo_path=repo / ".jailbee" / "config.yaml",
+        repo_raw={"container_prefix": "demo", "claude_credentials": {"group": "work"}},
+    )
+
+    message = validate(layer_set, "repo", [])
+
+    assert message is not None
+    assert "claude_credentials" in message
