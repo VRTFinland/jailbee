@@ -221,8 +221,8 @@ def test_sync_warns_when_no_shared_mount_covers_skills_dir(
         },
     )
     agent_skills.sync_agent_skills(cfg)
-    out = capsys.readouterr().out
-    assert "mine" in out
+    out = capsys.readouterr().out.replace("\n", "")
+    assert "agents.mine:" in out
     assert "~/nowhere/skills" in out
     assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
 
@@ -275,8 +275,8 @@ def test_sync_skips_a_mount_whose_subpath_escapes_shared_dir(
         },
     )
     agent_skills.sync_agent_skills(cfg)
-    out = capsys.readouterr().out
-    assert "mine" in out
+    out = capsys.readouterr().out.replace("\n", "")
+    assert "agents.mine:" in out
     assert "~/.mine/skills" in out
     assert not (tmp_path / "evil").exists()
     assert not (shared / "mine" / "skills").exists()
@@ -368,7 +368,6 @@ def test_host_skill_targets_follow_installed_binaries(tmp_path: Path, monkeypatc
 
 def test_install_host_skills_writes_every_given_target(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
-    monkeypatch.setenv("HOME", str(tmp_path))
 
     written = agent_skills.install_host_skills(
         [tmp_path / ".claude" / "skills", tmp_path / ".codex" / "skills"]
@@ -488,8 +487,8 @@ def test_sync_skips_a_skills_dir_hidden_by_a_private_subpath(
         },
     )
     agent_skills.sync_agent_skills(cfg)
-    out = capsys.readouterr().out
-    assert "mine" in out
+    out = capsys.readouterr().out.replace("\n", "")
+    assert "agents.mine:" in out
     assert "~/.mine/state/skills" in out
     assert "private" in out
     assert not (shared / "my-agent" / "state" / "skills").exists()
@@ -540,3 +539,173 @@ def test_sync_warns_and_continues_past_an_unwritable_destination(
     out = capsys.readouterr().out.replace("\n", "")
     assert str(blocked) in out
     assert (shared / "codex" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_sync_resolves_against_another_enabled_agents_mount(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """opencode reads Claude-compatible `~/.claude/skills` too, and a custom
+    agent may be pointed there deliberately. That directory *is* mounted in
+    the container — by claude — so the skills belong under claude's subpath,
+    not in a warning claiming no mount covers it."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.claude/skills",
+                "shared": [{"subpath": "my-agent", "path": "~/.mine"}],
+            },
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "claude" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert not (shared / "my-agent" / "skills").exists()
+    # The warning would be false on both counts: the directory *is* mounted,
+    # and the skills *are* there.
+    assert "agents.mine:" not in capsys.readouterr().out.replace("\n", "")
+
+
+def test_sync_ignores_a_disabled_agents_mount(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A disabled agent contributes no device to the profile, so its mount
+    cannot carry anybody's skills — the warning is the truthful answer."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": False},
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.claude/skills",
+                "shared": [{"subpath": "my-agent", "path": "~/.mine"}],
+            },
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert "agents.mine:" in capsys.readouterr().out.replace("\n", "")
+    assert not (shared / "claude" / "skills").exists()
+
+
+def test_sync_skips_a_file_mount_covering_the_skills_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A `type: file` mount bind-mounts one file. It can never contain a
+    directory, so it must not be treated as covering one."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [{"subpath": "mine-conf", "path": "~/.mine", "type": "file"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert "agents.mine:" in capsys.readouterr().out.replace("\n", "")
+    assert not (shared / "mine-conf").exists()
+
+
+def test_sync_handles_a_skills_dir_that_is_the_mount_root(tmp_path: Path, monkeypatch) -> None:
+    """`skills_dir` may *be* the mount: the skills then land directly in the
+    mount's own subpath, with no remainder to append."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [{"subpath": "my-skills", "path": "~/.mine/skills"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_copy_survives_one_unreplaceable_skill(tmp_path: Path, monkeypatch, capsys) -> None:
+    """One skill that cannot be replaced must not cost the destination its
+    other skills — the same guarantee one level down from the per-destination
+    guard."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    dest = tmp_path / "dest"
+    real_copytree = agent_skills.shutil.copytree
+
+    def copytree(src, dst, *args, **kwargs):
+        if Path(src).name == "jailbee-repo-setup":
+            raise PermissionError(13, "Permission denied")
+        return real_copytree(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(agent_skills.shutil, "copytree", copytree)
+
+    written = agent_skills._copy_skills_into(dest)
+
+    assert [p.name for p in written] == ["jailbee-usage"]
+    assert (dest / "jailbee-usage" / "SKILL.md").is_file()
+    assert "jailbee-repo-setup" in capsys.readouterr().out.replace("\n", "")
+
+
+def test_copy_leaves_the_previous_skill_behind_when_it_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed replacement must not take the working copy with it: the
+    destination is what every container reads, so the old skill stays."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    dest = tmp_path / "dest"
+    previous = dest / "jailbee-usage" / "SKILL.md"
+    previous.parent.mkdir(parents=True)
+    previous.write_text("the previous version\n")
+    monkeypatch.setattr(
+        agent_skills.shutil,
+        "copytree",
+        lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left on device")),
+    )
+
+    agent_skills._copy_skills_into(dest)
+
+    assert previous.read_text() == "the previous version\n"
+    assert [p.name for p in dest.iterdir()] == ["jailbee-usage"]
+
+
+def test_copy_never_shows_a_half_written_skill(tmp_path: Path, monkeypatch) -> None:
+    """The destination is a live shared mount: an agent starting in another
+    container mid-`apply` must see the old skill or the new one, never a
+    directory with no SKILL.md. The copy therefore lands beside the target
+    and is swapped in, rather than being written into place."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    dest = tmp_path / "dest"
+    target = dest / "jailbee-usage"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("the previous version\n")
+
+    seen: list[bool] = []
+    real_copytree = agent_skills.shutil.copytree
+
+    def copytree(src, dst, *args, **kwargs):
+        out = real_copytree(src, dst, *args, **kwargs)
+        # Mid-run, as far as any reader of `target` is concerned.
+        seen.append((target / "SKILL.md").is_file())
+        return out
+
+    monkeypatch.setattr(agent_skills.shutil, "copytree", copytree)
+
+    agent_skills._copy_skills_into(dest)
+
+    assert seen and all(seen), "the target must stay readable while the copy runs"
+    assert (target / "SKILL.md").read_text() == "usage skill\n"
+    # Nothing staged is left behind for an agent to scan.
+    assert sorted(p.name for p in dest.iterdir()) == ["jailbee-repo-setup", "jailbee-usage"]

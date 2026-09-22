@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib.resources
+import os
 import posixpath
 import shutil
 from collections.abc import Sequence
@@ -63,8 +64,11 @@ def _preset_skill_locations() -> list[tuple[str, str]]:
         entry = presets[name]
         skills_dir = entry.get("skills_dir")
         if isinstance(skills_dir, str) and skills_dir:
-            binary = str(entry.get("command", name)).split()[0]
-            out.append((binary, skills_dir))
+            # `.split()` not `.split(" ")[0]`: an empty or whitespace-only
+            # `command` has no binary to look for, and indexing would raise.
+            binary = next(iter(str(entry.get("command", name)).split()), "")
+            if binary:
+                out.append((binary, skills_dir))
     return out
 
 
@@ -74,20 +78,39 @@ def host_skill_targets() -> list[Path]:
     `shutil.which` on each preset's binary decides: an agent the user has not
     installed on the host gets no directory written. Container-side skills are
     unaffected — they ride the shared mounts, not this.
+
+    Reads `AGENT_PRESETS`, never a repo's `Config`, and that is the invariant
+    rather than a convenience: `skills_dir` is documented as a *container-side*
+    path, so letting a repo-committed value reach this function would let it
+    name a host directory to write into. A preset whose `skills_dir` is not
+    `~`-relative is skipped for the same reason — an absolute container path
+    means something else entirely on the host.
     """
     return [
         Path(skills_dir).expanduser()
         for binary, skills_dir in _preset_skill_locations()
-        if shutil.which(binary)
+        if skills_dir.startswith("~/") and shutil.which(binary)
     ]
 
 
 def _copy_skills_into(dest: Path) -> list[Path]:
     """Replace each bundled skill under ``dest``, returning what was written.
 
-    Each managed skill subdirectory is removed first, so files dropped
-    upstream disappear instead of lingering; unrelated skills in ``dest``
-    are left alone.
+    Each managed skill is replaced wholesale, so files dropped upstream
+    disappear instead of lingering; unrelated skills in ``dest`` are left
+    alone.
+
+    The copy lands beside the target and is swapped in with `os.rename`,
+    never written into place. ``dest`` is a shared bind mount that live
+    containers read: an agent starting mid-`jailbee apply` must find the old
+    skill or the new one, and a copy interrupted halfway must leave the old
+    one behind rather than nothing at all. Both temporary names are
+    dot-prefixed so an agent scanning the directory ignores them, and both
+    are cleaned up on the way through.
+
+    One skill that cannot be replaced warns and is skipped — it must not cost
+    this destination its other skills, the same argument the caller makes
+    one level up for the other destinations.
     """
     root = _skills_root()
     if not root.is_dir():
@@ -96,11 +119,29 @@ def _copy_skills_into(dest: Path) -> list[Path]:
     written: list[Path] = []
     for skill in sorted(p for p in root.iterdir() if p.is_dir()):
         target = dest / skill.name
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(skill, target)
+        try:
+            _swap_in(skill, target)
+        except OSError as exc:
+            warn_plain(f"agent skills: cannot replace {target}: {exc}")
+            continue
         written.append(target)
     return written
+
+
+def _swap_in(source: Path, target: Path) -> None:
+    """Replace ``target`` with a fresh copy of ``source``, visibly atomically."""
+    staged = target.with_name(f".{target.name}.jailbee-new")
+    retired = target.with_name(f".{target.name}.jailbee-old")
+    shutil.rmtree(staged, ignore_errors=True)
+    shutil.rmtree(retired, ignore_errors=True)
+    shutil.copytree(source, staged)
+    try:
+        if target.exists():
+            os.rename(target, retired)
+        os.rename(staged, target)
+    finally:
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.rmtree(retired, ignore_errors=True)
 
 
 def install_host_skills(targets: Sequence[Path]) -> list[Path]:
@@ -130,7 +171,11 @@ def sync_agent_skills(cfg: Config) -> None:
 
     One host-side destination per agent with a `skills_dir` that some `shared`
     mount covers: claude's is ``<shared_dir>/claude/skills``, codex's
-    ``<shared_dir>/codex/skills``, and so on. A `skills_dir` no mount covers —
+    ``<shared_dir>/codex/skills``, and so on. *Some* mount, not necessarily
+    that agent's own — every enabled agent's mounts are devices on the same
+    container, so an agent pointed at ``~/.claude/skills`` (opencode reads
+    the Claude-compatible directory too) is covered by claude's mount and
+    belongs under claude's subpath. A `skills_dir` no mount covers —
     or one a `private` carve-out would hide, or one escaping the shared dir —
     is a config mistake: warned, skipped, never fatal, and never at the other
     agents' expense. A destination that cannot be written warns the same way,
@@ -139,12 +184,20 @@ def sync_agent_skills(cfg: Config) -> None:
     semantics.
     """
     assert cfg.shared_dir is not None  # set by load_config
+    # Only the *enabled* agents': a disabled agent contributes no device to
+    # the profile, so its mount cannot carry anyone's skills.
+    mounts = [
+        m
+        for name in sorted(cfg.agents)
+        if cfg.agents[name].enabled
+        for m in cfg.agents[name].shared
+    ]
     targets: set[Path] = set()
     for name in sorted(cfg.agents):
         agent = cfg.agents[name]
         if not agent.enabled or not agent.install_jailbee_skills or not agent.skills_dir:
             continue
-        host_dir, why = _skills_host_dir(cfg.shared_dir, agent)
+        host_dir, why = _skills_host_dir(cfg.shared_dir, agent, mounts)
         if host_dir is None:
             warn_plain(f"agents.{name}: {why} — skipping jailbee skills for this agent")
             continue
@@ -177,9 +230,12 @@ def _container_abs(path: str) -> PurePosixPath:
     `~`-relative *or* an absolute path, and one config may legitimately mix
     the two — `/home/<user>/.mine` mounted, `~/.mine/skills` the skills dir.
     Comparing the raw strings would call that pair unrelated and silently
-    skip the agent, so both sides are expanded here first, the same
-    substitution `profiles.container_path_env` and `agent_private`'s
-    `_container_path` make. Anything neither `~`-relative nor absolute is
+    skip the agent, so both sides are expanded here first — the same
+    substitution `profiles.container_path_env` makes. (`agent_private`'s
+    `_container_path` and the shared-cache loop in `profiles` use a plain
+    `replace("~", home, 1)`, which also expands `~user`; the difference does
+    not matter for a mount path, and one shared helper for all four is a
+    follow-up, not this module's to make.) Anything neither `~`-relative nor absolute is
     left alone: it cannot match an absolute mount, and the caller's warning
     is the honest answer.
     """
@@ -204,10 +260,13 @@ def _private_entry_hiding(mount: AgentSharedMount, rel: PurePosixPath) -> str | 
     return None
 
 
-def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> tuple[Path | None, str]:
+def _skills_host_dir(
+    shared_dir: Path, agent: AgentConfig, mounts: Sequence[AgentSharedMount]
+) -> tuple[Path | None, str]:
     """The host-side copy of `agent.skills_dir`, or `(None, reason)`.
 
-    Walks the agent's `shared` mounts and picks the one whose `path` prefixes
+    Walks `mounts` — every enabled agent's, not just this one's, because they
+    are all devices on the same container — and picks the one whose `path` prefixes
     `skills_dir` most deeply, both normalised by `_container_abs` first. The
     deepest match wins because the narrowest mount shadows the broad ones
     in-container: with ``~`` and ``~/.claude`` both mounted and
@@ -224,7 +283,7 @@ def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> tuple[Path | None,
     spelling = agent.skills_dir or ""
     skills = _container_abs(spelling)
     best: tuple[int, AgentSharedMount, PurePosixPath] | None = None
-    for mount in agent.shared:
+    for mount in mounts:
         if mount.type != "dir":
             continue
         base = _container_abs(mount.path)
@@ -246,11 +305,9 @@ def _skills_host_dir(shared_dir: Path, agent: AgentConfig) -> tuple[Path | None,
             f"shared mount {mount.path} — a per-container directory is mounted over "
             "it, so no agent would ever see the skills"
         )
-    candidate = (
-        shared_dir / mount.subpath
-        if not rel.parts
-        else shared_dir / mount.subpath / Path(*rel.parts)
-    )
+    # `Path(*())` is `Path(".")` and `p / "."` is `p`, so a `skills_dir`
+    # equal to the mount root needs no branch of its own.
+    candidate = shared_dir / mount.subpath / Path(*rel.parts)
     # Defense in depth: a `..` (or an absolute path) in a mount's `subpath`
     # reaches this join without passing through `AgentConfig.skills_dir`
     # validation. A candidate escaping `<shared_dir>` would be `mkdir`d and
