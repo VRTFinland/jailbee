@@ -326,8 +326,19 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
     """
     state = load_view_state(engine, frontend)
     if state.columns is not None:
+        # Canonicalized *before* the filter: a stored set predating the
+        # `claude_group` -> `group` rename holds a name `all_column_names` no
+        # longer knows, and per this function's own contract the first save
+        # after that drops it for good — so a user who had the column on would
+        # silently and permanently lose it. The config-block half of the same
+        # rename is handled in the loaders (`sanitize_column_blocks`); this is
+        # the half that lives in the front-end's saved state instead.
+        from jailbee.config.models_columns import canonical_ls_field
+
         known = frozenset(all_column_names())
-        filtered = tuple(n for n in state.columns if n in known)
+        filtered = tuple(
+            dict.fromkeys(c for n in state.columns if (c := canonical_ls_field(n)) in known)
+        )
         return replace(state, columns=filtered or default_columns())
     gcfg = _global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))

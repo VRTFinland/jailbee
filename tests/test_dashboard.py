@@ -1928,6 +1928,47 @@ def test_seed_view_state_filters_a_stale_column_name(mocker):
     assert state.columns == ("name",)
 
 
+def test_seed_view_state_renames_a_stored_alias_rather_than_dropping_it(mocker):
+    """`claude_group` was renamed `group` in this release. A user who had the
+    column on has the old name in `view_prefs`, which `all_column_names` no
+    longer knows — and per `seed_view_state`'s own contract the next save of
+    any kind drops an unknown name for good. So the rename has to happen
+    before the filter, or the column is lost permanently rather than carried
+    over."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "claude_group")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name", "group")
+
+
+def test_seed_view_state_does_not_duplicate_a_column_both_spellings_name(mocker):
+    """A stored set holding the old and the new name collapses to one column:
+    the rename makes them the same column, and a duplicate would inflate the
+    front-ends' last-column count exactly as a phantom name does."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("group", "name", "claude_group")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("group", "name")
+
+
 def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(mocker):
     """The empty-after-filtering case: if nothing in the stored set is a real
     column any more, the built-in default set is used instead of an empty
