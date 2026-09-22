@@ -33,10 +33,12 @@ before editing `## Unreleased`.
   `GROUP`, the `jailbee new` flag is `--credential-group`, and the container
   label is `user.jailbee.credential_group`. Every account command takes an
   optional `-a/--agent` (the `account group` subcommands take none, since a
-  group name is shared); omitting it acts on every enabled pooled agent, and
-  a typed account reference that matches more than one agent is an error
-  naming the `-a` values to pass (Claude is the only pooled agent so far, so
-  that case cannot arise yet, and on a TTY a picker is offered instead). The
+  group name is shared); omitting it acts on every enabled pooled agent,
+  while naming one explicitly reaches that agent's pool even in a repo that
+  keeps it disabled — the pool is host-wide. A typed account reference that
+  matches more than one agent is an error naming the `-a` values to pass
+  (Claude is the only pooled agent so far, so that case cannot arise yet, and
+  on a TTY a picker is offered instead). The
   old spellings all keep working and are removed in 2.0.0. The three a user
   types warn once per invocation: `jailbee claude …`, `--claude-group`, and a
   `claude_credentials:` block in `global.yaml` — which any write jailbee makes
