@@ -321,8 +321,9 @@ def _advise_setup(*, offer: bool = False) -> None:
 
     Same contract as `_advise_upgrade`: stderr, and wrapped broadly because a
     courtesy must never take down the command the user actually ran.
-    `hint_pending` is what makes this fire at most once — the probes it runs
-    are `stat`s, so this costs nothing on the commands it decorates.
+    `hint_pending` is what makes this fire at most once, which is also what
+    keeps its cost off the commands it decorates: the probes are `stat`s plus,
+    for the skills step, one `global.yaml` read.
 
     With `offer`, and only on a terminal, the hint becomes a question. The
     commands that survey the fleet (`jailbee ls`, `jailbee dashboard`) can
@@ -641,7 +642,7 @@ def config_show(
     # relying on `cfg.model_dump()`'s dict[str, AgentConfig] field type: that
     # would serialise every entry — including `agents.claude`, which is a
     # ClaudeAgentConfig — through the base AgentConfig shape and silently
-    # drop the Claude-only fields (plugins_enabled, install_jailbee_skills, …).
+    # drop the Claude-only fields (plugins_enabled, seed_onboarding, …).
     data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
@@ -1000,13 +1001,15 @@ def setup(
         typer.Option("--status", help="Report each step's state and exit, installing nothing"),
     ] = False,
 ) -> None:
-    """Set up this machine: shell completions, the refresh timer, Claude skills.
+    """Set up this machine: shell completions, the refresh timer, agent skills.
 
     The machine-level counterpart to `jailbee init`, which sets up a repo.
     These are the steps a `uv tool install jailbee` cannot perform for you:
     completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user
     timer (egress pool refresh and `jailbee net loose` TTL expiry), and
-    jailbee's Claude Code skills in `~/.claude/skills`.
+    jailbee's agent skills for the agents found on this host (opt-in — set
+    `install_host_skills: true` in `~/.config/jailbee/global.yaml`; the
+    containers' skills are installed without any host action).
 
     Interactive by default and idempotent, so re-run it after upgrading
     jailbee. `--yes` installs everything without asking, which is what

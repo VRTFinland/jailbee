@@ -1379,14 +1379,15 @@ def new_container(
 
     ensure_agents(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
-    # Sync jailbee's own skills into the shared ~/.claude/skills so the
-    # in-container Claude understands jailbee and can help with .jailbee/config.yaml
-    # edits. Host-side file copy; no-op unless claude.enabled and
-    # install_jailbee_skills. Non-fatal — never block container creation.
-    from jailbee.claude_skills import sync_jailbee_skills
+    # Sync jailbee's own skills into each enabled agent's shared skills
+    # directory (e.g. ~/.claude/skills) so the in-container agents understand
+    # jailbee and can help with .jailbee/config.yaml edits. Host-side file
+    # copy; no-op for every agent that is disabled or has
+    # install_jailbee_skills off. Non-fatal — never block container creation.
+    from jailbee.agent_skills import sync_agent_skills
 
     try:
-        sync_jailbee_skills(cfg)
+        sync_agent_skills(cfg)
     except Exception as e:  # non-fatal
         warn(f"jailbee-skills sync failed (continuing): {e}")
 

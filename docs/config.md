@@ -81,10 +81,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Six top-level keys are read from `~/.config/jailbee/global.yaml` into
+Eight top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
-`claude_credentials`, `scratch` and `config_edit`. `ls`'s column block is
+`claude_credentials`, `scratch`, `config_edit`, `update_check` and
+`install_host_skills`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -1208,6 +1209,8 @@ to share" rule, and a worked example live in
 | `shared` | list of `{subpath, path, type, seed}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The four skill-capable presets set it; leave unset for an agent with no skills mechanism. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. The pre-1.0 `claude.install_gie_skills` name was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 
 An agent name that matches one of the six shipped presets is deep-merged
 over that preset (preset → global.yaml → repo, same append/reset rules as
@@ -1234,7 +1237,8 @@ agents:
 Everything below applies identically under either spelling, and `claude`
 also carries the generic `agents` fields from the table above
 (`install`, `update`, `install_check`, `install_network`, `shared`,
-`egress_allow`, `env`) — not repeated here since they mean the same thing
+`egress_allow`, `env`, `skills_dir`, `install_jailbee_skills`) — not
+repeated here since they mean the same thing
 for every agent. See [Generic agent support](agents.md#9-claude) for the
 short version of this same note.
 
@@ -1253,7 +1257,6 @@ out.
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; the first `jailbee tmux <c>` lands in that window (later attaches keep the window you detached from). `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the in-container Claude understands jailbee. Host-side file copy only — no network. Has no effect when `claude.enabled: false`. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `claude.seed_onboarding` | bool | `true` | When `true` (requires `claude.enabled: true`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded (`hasCompletedOnboarding`) and accept the trust dialog for the repo's in-container path, but only when this repo's credential group (see [`claude_credentials`](#claude_credentials)) already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this every new container — and every scratch directory, which has no repo config to inherit state from — asks for a `/login` the shared credential has already answered. With no shared login there is nothing to adopt and the wizard runs as before, which is what walks the user through the login that does have to happen. A config home Claude Code has already written is never touched. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` generates the PR title and body by invoking Claude inside the container, showing a spinner while it runs. Falls back to commit-subject title + placeholder body on any Claude failure with a warning. Pass `--no-ai` to opt out per-invocation without changing config. Has no effect when `claude.enabled: false`. |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (and `claude.enabled` is `true`), `jailbee pr` asks the in-container Claude to propose a convention-following PR head branch name when opening a **new** PR. Has no effect when `claude.enabled: false`. |
@@ -2547,6 +2550,27 @@ from a checkout, so no upgrade command would give you what you want. The
 same release is mentioned at most once a day, and `jailbee dismiss update`
 silences it until a release newer still appears. `jailbee doctor` reports it
 either way — including the dismissal — under `update check`.
+
+### `install_host_skills`
+
+Whether `jailbee setup` installs the bundled jailbee skills for the agents
+running on **this host** (not the containers). Host-level only, like
+`update_check`: which agents run on your machine is your call, not a
+repo's.
+
+```yaml
+install_host_skills: false      # false (default) | true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `install_host_skills` | `false` | `true` makes the `skills` step of `jailbee setup` detect every skill-capable agent on the host (`claude`, `codex`, `gemini`, `opencode` — found via `shutil.which`) and copy the bundled skills into each one's own skills directory (`~/.claude/skills`, `~/.codex/skills`, …). `jailbee doctor` then verifies them. A host with none of these agents owes nothing, and `false` reports the step as opted out rather than missing. |
+
+The containers' skills are independent of this key and always installed
+for every enabled skill-capable agent — see
+[the bundled skills](agents.md#10-the-bundled-jailbee-skills). The step
+used to install Claude's host-side skills unconditionally; it is now
+opt-in, so an upgraded host that wants them must set this key.
 
 ## `--config / -c` override
 

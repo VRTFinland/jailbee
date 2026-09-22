@@ -140,6 +140,21 @@ def test_load_global_config_empty_file_returns_defaults(tmp_path):
     assert cfg.docker_registry_mirror.port == 3128
 
 
+def test_install_host_skills_defaults_off():
+    """Opt-in: the host's own agent installs are the user's call, and the
+    containers' skills need no host action at all."""
+    assert GlobalConfig().install_host_skills is False
+
+
+def test_install_host_skills_loads_from_yaml(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text(yaml.safe_dump({"install_host_skills": True}))
+
+    cfg, _ = load_global_config(path)
+
+    assert cfg.install_host_skills is True
+
+
 def test_docker_registry_mirror_defaults_to_port_3128():
     gcfg = GlobalConfig()
     assert gcfg.docker_registry_mirror.port == 3128

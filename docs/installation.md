@@ -135,7 +135,7 @@ installs them — interactively, one question per step:
 | --- | --- | --- |
 | `completions` | Completion scripts for **both** `jailbee` and `jb`, for your shell | No TAB completion of commands, container names or branches |
 | `timer` | The `jailbee-net-refresh` **user systemd timer** | Strict-mode allowlists go stale as the IPs behind GitHub et al. change, and `jailbee net loose --for 2h` never reverts |
-| `skills` | JailBee's [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) in `~/.claude/skills` | Claude Code on your host does not know how to drive `jailbee` |
+| `skills` | JailBee's agent skills in each skill-capable agent's own directory (`~/.claude/skills`, `~/.codex/skills`, …) for the agents found on your host. **Opt-in** — set `install_host_skills: true` in `~/.config/jailbee/global.yaml` first | Agents you run on the host itself don't know how to drive `jailbee` (the *containers*' skills are installed without this step) |
 
 Every step is idempotent, so re-run `jailbee setup` after upgrading JailBee.
 `--yes` installs everything without asking, `--only <step>` picks one, and

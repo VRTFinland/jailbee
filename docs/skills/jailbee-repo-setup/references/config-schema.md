@@ -33,8 +33,8 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
-| `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `install_jailbee_skills`, `seed_onboarding`, `ai_pr_description`, `ai_pr_branch`, `ai_pr_model`, `pr_prompt`, `ai_pr_timeout`) | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
+| `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env, skills_dir, install_jailbee_skills}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
+| `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `seed_onboarding`, `ai_pr_description`, `ai_pr_branch`, `ai_pr_model`, `pr_prompt`, `ai_pr_timeout`) | `enabled: false`, rest see below | global (`pr_prompt` belongs in the repo) |
 | `github` | `{enabled, api_tokens}` | `enabled: false` (opt-in) | global |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
@@ -826,6 +826,8 @@ agents:
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. `private` (dir only) names subpaths inside the mount that stay per container. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow--strict-mode-allowlist). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new` / `jailbee apply` copy the three bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into the shared copy of it. The four skill-capable presets set it (`claude` `~/.claude/skills`, `codex` `~/.codex/skills`, `gemini` `~/.gemini/skills`, `opencode` `~/.config/opencode/skills`); `aider` and `grok` have none. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. |
 
 `jailbee config validate` additionally rejects: an agent name outside
 `[a-z0-9-]+`; `enabled: true` with an empty `command`; `autostart: true`
@@ -873,7 +875,10 @@ combined) is a `ConfigError` naming both spellings — pick one, and prefer
 `agents.claude`. Everything below applies identically under either
 spelling, and `claude` also carries every generic field from the `agents`
 table above (`install`, `update`, `install_check`, `install_network`,
-`shared`, `egress_allow`, `env`), not repeated here.
+`shared`, `egress_allow`, `env`, `skills_dir`), not repeated here.
+`install_jailbee_skills` is repeated below, because this file is the
+in-container agent's only schema reference and that key is what puts it
+there.
 
 Claude Code CLI integration. Defaults to disabled — opt-in via
 `~/.config/jailbee/global.yaml`.
@@ -885,7 +890,7 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 | `claude.autostart` | bool | `false` | When `true` (and `enabled`), `run_autostart` launches the `claude` CLI as an autostart step. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the CLI is current. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy JailBee's bundled Claude skills (`jailbee-usage`, `jailbee-repo-setup`) into `<shared_dir>/claude/skills/` so the **in-container Claude understands JailBee** and can help edit `.jailbee/config.yaml`. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
+| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy the three bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`) into this agent's own shared skills directory so the **in-container agent understands JailBee** and can help edit `.jailbee/config.yaml`. A generic `agents.<name>` field, not Claude-only: every enabled skill-capable agent (`claude`, `codex`, `gemini`, `opencode`) gets the same treatment, each into its own `skills_dir` (claude's target stays `<shared_dir>/claude/skills/`; see the `skills_dir` row in the `agents` table above). Set it `false` to opt one agent out. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `claude.seed_onboarding` | bool | `true` | When `true` (requires `enabled`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded and accept the trust dialog for the repo's in-container path — but only when the repo's credential group already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this a new container asks for a `/login` the shared credential has already answered. With no shared login the wizard runs as before, and a config home Claude Code has already written is never touched. |
 | `claude.ai_pr_description` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` generates a new PR's title and body with the container's Claude CLI (opt out per-invocation with `jailbee pr --no-ai`). |
 | `claude.ai_pr_branch` | bool | `true` | When `true` (requires `enabled`), `jailbee pr` asks Claude to propose a convention-following PR head branch name (confirmed interactively; `--as` / `--no-ai` override). |
