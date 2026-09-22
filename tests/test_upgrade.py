@@ -614,12 +614,33 @@ def test_upgrade_note_for_multi_agent_skill_sync_advises_apply() -> None:
     enabled skill-capable agent's shared directory, not only claude's."""
     from jailbee.upgrade import UPGRADE_NOTES
 
-    notes = [n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "skill-capable" in n.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 6, 0) and "skill-capable" in n.reason]
     assert len(notes) == 1
     note = notes[0]
     assert note.actions == frozenset({"apply"})
     assert "not just `claude`" in note.reason
     assert all(agent in note.reason for agent in ("codex", "gemini", "opencode"))
+
+
+def test_the_skill_sync_note_survives_the_reason_cap() -> None:
+    """Existence in the tuple is not a user surface. `format_advice` shows
+    `MAX_REASONS` reasons per action and collapses the rest into "... and N
+    more", so a note added behind three others at the same version would
+    never be read. Render the real manifest for the upgrade this note is
+    written for — 1.5.0 to 1.6.0 — and require the reason itself."""
+    from jailbee.upgrade import Watermark, format_advice, pending
+
+    owed = pending(
+        "1.6.0",
+        {
+            "base_build": Watermark((1, 5, 0), observed=True),
+            "apply": Watermark((1, 5, 0), observed=True),
+        },
+    )
+    lines = format_advice(owed)
+
+    assert any("skill-capable" in line for line in lines)
+    assert not any("and 1 more" in line for line in lines)
 
 
 def test_the_rendered_hint_names_only_the_apply_action() -> None:

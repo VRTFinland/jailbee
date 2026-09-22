@@ -407,11 +407,3 @@ def test_opencode_update_fails_loudly_when_the_download_fails(tmp_path):
 
     assert calls == 1
     assert result.returncode != 0
-
-
-def test_opencode_install_fails_loudly_when_the_download_fails(tmp_path):
-    """Same on the install line, which has its own pipe."""
-    result, home, _calls = _run_opencode_step("install", tmp_path, installer_body="", curl_exit=6)
-
-    assert result.returncode != 0
-    assert not (home / ".local/bin/opencode").exists()

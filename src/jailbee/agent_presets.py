@@ -36,7 +36,10 @@ _OPENCODE_INSTALLER = "curl -fsSL https://opencode.ai/v2/install | bash -s -- --
 # failed download would look like a successful install step. It cannot serve an
 # *update*, where the previous release is still on disk and passes the test — so
 # both lines also run under `set -o pipefail`, which is what makes curl's own
-# exit status the pipeline's.
+# exit status the pipeline's. Only the update line's `pipefail` is testable:
+# on the install line the pipe runs only when no binary exists, and then the
+# `-x` test below fails anyway (`ln -sfn` makes a dangling symlink happily).
+# It is there for symmetry — one spelling for both lines.
 _OPENCODE_LINK = (
     'mkdir -p "$HOME/.local/bin"; '
     'ln -sfn "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"; '

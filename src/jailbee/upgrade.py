@@ -209,7 +209,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         ),
     ),
     UpgradeNote(
-        version=(1, 5, 0),
+        version=(1, 6, 0),
         actions=frozenset({"apply"}),
         reason=(
             "`jailbee apply`/`jailbee new` sync the bundled skills into every "
