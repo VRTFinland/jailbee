@@ -8,6 +8,38 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **Every agent in a container knows JailBee, not just Claude.** JailBee's
+  own `jailbee-usage`, `jailbee-repo-setup` and `jailbee-pr-review` skills
+  used to be copied into Claude Code's shared skills directory alone, so a
+  container running codex, gemini or opencode got none of them. Each agent
+  now declares the directory it reads user-level skills from
+  (`agents.<name>.skills_dir`, set by the `claude`, `codex`, `gemini` and
+  `opencode` presets), and `jailbee new` / `jailbee apply` copy the skills
+  into every enabled agent's own shared copy of it. `install_jailbee_skills`
+  is a generic per-agent key now rather than a Claude-only one — the
+  existing `agents.claude.install_jailbee_skills` spelling is unchanged, and
+  so is Claude's destination. An agent whose `skills_dir` no mount covers is
+  warned about and skipped, never fatal. Run `jailbee apply` once per repo
+  to reach existing containers.
+
+### Changed
+
+- **The host's own agent skills are now opt-in.** `jailbee setup`'s skills
+  step used to copy JailBee's bundled skills into `~/.claude/skills` on
+  every run. It installs nothing now unless `install_host_skills: true` is
+  set in `~/.config/jailbee/global.yaml` — and once it is, it serves every
+  skill-capable agent it finds on the host (`claude`, `codex`, `gemini`,
+  `opencode`), each in that agent's own directory. **Containers are
+  unaffected**: their skills ride the shared mounts and need no host action
+  at all, which is why the host half is the user's call. A host that had
+  the skills installed before this release keeps the files; they simply
+  stop being refreshed until the flag is set, and `jailbee setup --status`
+  says so. `jailbee doctor`'s `claude skills (host)` check is renamed
+  `agent skills (host)` and no longer depends on the Claude integration
+  being enabled for the repo you happen to be standing in.
+
 ## 1.5.0 - 2026-09-21
 
 ### Added
@@ -26,20 +58,6 @@ before editing `## Unreleased`.
 - `jb submodule pr` now consumes matching PR descriptions from the container's
   review outbox, and `jb review apply` can publish comments staged for a
   submodule repository.
-
-- **Every agent in a container knows JailBee, not just Claude.** JailBee's
-  own `jailbee-usage`, `jailbee-repo-setup` and `jailbee-pr-review` skills
-  used to be copied into Claude Code's shared skills directory alone, so a
-  container running codex, gemini or opencode got none of them. Each agent
-  now declares the directory it reads user-level skills from
-  (`agents.<name>.skills_dir`, set by the `claude`, `codex`, `gemini` and
-  `opencode` presets), and `jailbee new` / `jailbee apply` copy the skills
-  into every enabled agent's own shared copy of it. `install_jailbee_skills`
-  is a generic per-agent key now rather than a Claude-only one — the
-  existing `agents.claude.install_jailbee_skills` spelling is unchanged, and
-  so is Claude's destination. An agent whose `skills_dir` no mount covers is
-  warned about and skipped, never fatal. Run `jailbee apply` once per repo
-  to reach existing containers.
 
 - **Autostart runs in stages, and can hand the rest to the background.** An
   `on_create` / `on_start` trigger may now be a list of **stages** instead of
@@ -114,20 +132,6 @@ before editing `## Unreleased`.
   ended with.
 
 ### Changed
-
-- **The host's own agent skills are now opt-in.** `jailbee setup`'s skills
-  step used to copy JailBee's bundled skills into `~/.claude/skills` on
-  every run. It installs nothing now unless `install_host_skills: true` is
-  set in `~/.config/jailbee/global.yaml` — and once it is, it serves every
-  skill-capable agent it finds on the host (`claude`, `codex`, `gemini`,
-  `opencode`), each in that agent's own directory. **Containers are
-  unaffected**: their skills ride the shared mounts and need no host action
-  at all, which is why the host half is the user's call. A host that had
-  the skills installed before this release keeps the files; they simply
-  stop being refreshed until the flag is set, and `jailbee setup --status`
-  says so. `jailbee doctor`'s `claude skills (host)` check is renamed
-  `agent skills (host)` and no longer depends on the Claude integration
-  being enabled for the repo you happen to be standing in.
 
 - **A scratch directory's `container_prefix` is now unique to its path.**
   A directory with no `.jailbee/config.yaml` derived its prefix from the
