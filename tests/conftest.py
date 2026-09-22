@@ -613,3 +613,31 @@ def db_session(db_engine: Engine) -> Iterator[Session]:
 def frozen_now() -> datetime:
     """A stable timestamp for TTL math in tests."""
     return datetime(2026, 5, 19, 17, 25, 0, tzinfo=UTC)
+
+
+class NamedAdapter:
+    """A named account adapter stub.
+
+    Shared by `test_cli_account.py` and `test_accounts_selection.py`: the
+    selection rules read `.name`, and the holder line reads the two path
+    methods. Lives here rather than in either file because the selection
+    policy moved to `accounts/selection.py` while the CLI-level tests that
+    exercise the same adapters stayed behind.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def config_home(self, cfg: Config) -> Path:
+        return Path(f"/cfg/{self.name}")
+
+    def holder_override(self, cfg: Config) -> Path | None:
+        return None
+
+
+def patch_list_slots(mocker: Any, by_agent: dict[str, list[Any]]) -> Any:
+    """Patch `engine.list_slots` to answer per adapter name."""
+    return mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
+    )

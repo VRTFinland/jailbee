@@ -11,6 +11,7 @@ from jailbee.accounts.adapters.claude import CLAUDE
 from jailbee.accounts.models import PoolChange, PoolError, Slot
 from jailbee.cli import app
 from jailbee.global_config import GlobalConfig
+from tests.conftest import NamedAdapter, patch_list_slots
 from tests.conftest import claude_overview_of as _overview
 from tests.conftest import claude_row as _row
 from tests.conftest import flat_output as _flat
@@ -178,7 +179,7 @@ def test_ls_combines_agents_and_agent_narrows_to_one(repo, mocker):
         return _overview(_row("c@corp.com", group="c"))
 
     mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
-    base.register(_NamedAdapter("fakea"))
+    base.register(NamedAdapter("fakea"))
     try:
         combined = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
         filtered = runner.invoke(app, ["account", "ls", "-a", "claude"], env={"COLUMNS": "200"})
@@ -793,313 +794,6 @@ def test_ls_filters_to_the_ungrouped_holders(repo, mocker):
     assert "old@corp.com" in result.output
 
 
-class _NamedAdapter:
-    """A named adapter stub: the selection and listing helpers read `.name`,
-    and the holder line reads the two path methods."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def config_home(self, cfg) -> Path:
-        return Path(f"/cfg/{self.name}")
-
-    def holder_override(self, cfg) -> Path | None:
-        return None
-
-
-def _list_slots(mocker, by_agent: dict[str, list[Slot]]):
-    """Patch `engine.list_slots` to answer per adapter name."""
-    return mocker.patch(
-        "jailbee.accounts.engine.list_slots",
-        side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
-    )
-
-
-def test_matching_choices_offers_every_parked_slot_of_every_adapter(repo, mocker):
-    """No reference means every parked login of every selected adapter is on
-    offer, and each choice carries the adapter that holds it."""
-    from jailbee.cli import _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [
-                Slot("a@x.com", Path("/s/a.json"), live=False),
-                Slot("live-a@x.com", Path("/h/a.json"), live=True),
-            ],
-            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-
-    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), None, removable=False)
-
-    # The live login is not a candidate: `switch` would refuse it.
-    assert [(a.name, s.name) for a, s in choices] == [("fakea", "a@x.com"), ("fakeb", "b@x.com")]
-
-
-def test_matching_choices_resolves_a_ref_in_one_adapter(repo, mocker):
-    """A reference that matches one adapter selects it, by `resolve_ref`'s own
-    exact-name-then-unique-email rule."""
-    from jailbee.cli import _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("a@x.com", Path("/s/a.json"), live=False)],
-            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-
-    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "a@x.com", removable=False)
-
-    assert [(a.name, s.name) for a, s in choices] == [("fakea", "a@x.com")]
-
-
-def test_matching_choices_keeps_a_ref_that_matches_two_adapters(repo, mocker):
-    """One email parked under two agents is two successful matches, not a
-    failure: the caller decides between them."""
-    from jailbee.cli import _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
-            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-
-    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
-
-    assert [(a.name, s.name) for a, s in choices] == [
-        ("fakea", "me@x.com"),
-        ("fakeb", "me@x.com"),
-    ]
-
-
-def test_matching_choices_does_not_suppress_an_ambiguity_inside_one_adapter(repo, mocker):
-    """Two grants of one email in one adapter are not solved by `-a`, so
-    `resolve_ref`'s full-slot-name error is kept even when another adapter
-    matched: silently picking the other agent could act on the wrong login."""
-    from jailbee.cli import _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [
-                Slot("me@x.com#aaaa", Path("/s/a1.json"), live=False),
-                Slot("me@x.com#bbbb", Path("/s/a2.json"), live=False),
-            ],
-            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-
-    with pytest.raises(PoolError, match="matches several accounts"):
-        _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
-
-
-def test_matching_choices_raises_when_a_ref_matches_nothing(repo, mocker):
-    """A typed reference with no match is an error, not an empty picker: only
-    the caller knows whether the reference was typed or picked."""
-    from jailbee.cli import _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    _list_slots(mocker, {"fakea": [Slot("a@x.com", Path("/s/a.json"), live=False)]})
-
-    with pytest.raises(PoolError, match="no stored account matches"):
-        _matching_choices([fakea], repo, GlobalConfig(), "nope@x.com", removable=False)
-
-
-def test_account_adapters_without_an_agent_returns_every_pooled_one(repo):
-    """No `-a` is normal: the command spans every enabled agent, `claude`
-    first."""
-    from jailbee.accounts.adapters import base
-    from jailbee.cli import _account_adapters
-    from tests.conftest import with_agent
-
-    cfg = with_agent(repo, "claude", enabled=True, command="claude")
-    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
-    base.register(_NamedAdapter("fakea"))
-    try:
-        assert [a.name for a in _account_adapters(cfg, None)] == ["claude", "fakea"]
-    finally:
-        base.ADAPTERS.pop("fakea", None)
-
-
-def test_account_adapters_with_an_agent_returns_only_that_one(repo):
-    """`-a` narrows before any store is read, so a reference is resolved
-    against one adapter's slots."""
-    from jailbee.accounts.adapters import base
-    from jailbee.cli import _account_adapters
-    from tests.conftest import with_agent
-
-    cfg = with_agent(repo, "claude", enabled=True, command="claude")
-    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
-    base.register(_NamedAdapter("fakea"))
-    try:
-        assert [a.name for a in _account_adapters(cfg, "fakea")] == ["fakea"]
-    finally:
-        base.ADAPTERS.pop("fakea", None)
-
-
-def test_account_adapters_refuses_an_agent_with_no_adapter(repo):
-    """A name jailbee has no adapter for is a typo or a build without that
-    agent's module; the refusal says so instead of silently acting on every
-    agent, and names what may be passed."""
-    from jailbee.cli import _account_adapters
-
-    with pytest.raises(PoolError, match="agent `nope` has no account pool"):
-        _account_adapters(repo, "nope")
-
-
-def test_account_adapters_accepts_an_agent_this_repo_does_not_enable(repo):
-    """The pool is host-wide: the parked store and the group holders live under
-    `XDG_DATA_HOME`, not in the repo, so `-a claude` in a repo that happens to
-    keep Claude off still names a real pool. Gating this on `enabled` broke
-    every `jailbee claude ...` alias for exactly those repos — all four of them
-    worked before the generic rewrite."""
-    from jailbee.accounts.adapters import base
-    from jailbee.cli import _account_adapters
-    from tests.conftest import with_agent
-
-    disabled = with_agent(repo, "fakea", enabled=False, command="fakea")
-    base.register(_NamedAdapter("fakea"))
-    try:
-        assert [a.name for a in _account_adapters(disabled, "fakea")] == ["fakea"]
-    finally:
-        base.ADAPTERS.pop("fakea", None)
-
-
-def test_account_adapters_without_an_agent_still_honours_enabled(repo):
-    """The other half: omitting `-a` means "every *enabled* pooled agent", the
-    repo-scoped reading, so a disabled agent must not be acted on implicitly."""
-    from jailbee.accounts.adapters import base
-    from jailbee.cli import _account_adapters
-    from tests.conftest import with_agent
-
-    disabled = with_agent(repo, "fakea", enabled=False, command="fakea")
-    base.register(_NamedAdapter("fakea"))
-    try:
-        assert "fakea" not in [a.name for a in _account_adapters(disabled, None)]
-    finally:
-        base.ADAPTERS.pop("fakea", None)
-
-
-def test_a_ref_across_two_adapters_opens_the_picker_on_a_tty(repo, mocker):
-    from jailbee.cli import _choose_account_choice, _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
-            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "me@x.com"))
-
-    choice = _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
-
-    assert choice is not None
-    assert (choice[0].name, choice[1].name) == ("fakeb", "me@x.com")
-    assert pick.call_args.args[0] == choices
-    assert pick.call_args.args[1] == "Switch:"
-
-
-def test_a_ref_across_two_adapters_off_a_tty_names_the_agent_options(repo, mocker):
-    """A script cannot answer a picker, so the failure names the `-a` values
-    it should have passed."""
-    from jailbee.cli import _choose_account_choice, _matching_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("me@x.com", Path("/s/a.json"), live=False)],
-            "fakeb": [Slot("me@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-    choices = _matching_choices([fakea, fakeb], repo, GlobalConfig(), "me@x.com", removable=False)
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
-    pick = mocker.patch("jailbee.tui.pick_account")
-
-    with pytest.raises(PoolError) as e:
-        _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
-
-    assert "-a fakea" in str(e.value)
-    assert "-a fakeb" in str(e.value)
-    pick.assert_not_called()
-
-
-def test_live_choices_selects_the_one_adapter_with_a_login(repo, mocker):
-    """`park`'s candidates: an adapter with no live credential contributes
-    nothing, and a lone login needs no prompt."""
-    from jailbee.cli import _choose_account_choice, _live_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("live-a@x.com", Path("/h/a.json"), live=True)],
-            "fakeb": [Slot("b@x.com", Path("/s/b.json"), live=False)],
-        },
-    )
-
-    choices = _live_choices([fakea, fakeb], repo, GlobalConfig())
-
-    assert [(a.name, s.name) for a, s in choices] == [("fakea", "live-a@x.com")]
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
-    pick = mocker.patch("jailbee.tui.pick_account")
-    choice = _choose_account_choice(choices, ref=None, nothing="nothing", message="Park:")
-    assert choice is not None
-    assert choice[0].name == "fakea"
-    pick.assert_not_called()
-
-
-def test_live_choices_picks_when_several_adapters_have_one(repo, mocker):
-    from jailbee.cli import _choose_account_choice, _live_choices
-    from jailbee.global_config import GlobalConfig
-
-    fakea = _NamedAdapter("fakea")
-    fakeb = _NamedAdapter("fakeb")
-    _list_slots(
-        mocker,
-        {
-            "fakea": [Slot("a@x.com", Path("/h/a.json"), live=True)],
-            "fakeb": [Slot("b@x.com", Path("/h/b.json"), live=True)],
-        },
-    )
-    choices = _live_choices([fakea, fakeb], repo, GlobalConfig())
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "b@x.com"))
-
-    choice = _choose_account_choice(choices, ref=None, nothing="nothing", message="Park:")
-
-    assert choice is not None
-    assert (choice[0].name, choice[1].name) == ("fakeb", "b@x.com")
-    assert [s.name for _, s in pick.call_args.args[0]] == ["a@x.com", "b@x.com"]
-
-
 def test_park_with_several_live_adapters_picks_one(repo, mocker):
     """Several agents can be live in one holder, so `park` asks which pool to
     empty; the chosen adapter is the one the engine mutation runs against."""
@@ -1110,9 +804,9 @@ def test_park_with_several_live_adapters_picks_one(repo, mocker):
     cfg = with_agent(repo, "claude", enabled=True, command="claude")
     cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    fakea = _NamedAdapter("fakea")
+    fakea = NamedAdapter("fakea")
     base.register(fakea)
-    _list_slots(
+    patch_list_slots(
         mocker,
         {
             "claude": [Slot("c@x.com", Path("/h/c.json"), live=True)],
@@ -1132,3 +826,45 @@ def test_park_with_several_live_adapters_picks_one(repo, mocker):
 
     assert result.exit_code == 0, result.output
     assert park.call_args.args[0] is fakea
+
+
+def test_choose_account_choice_wires_this_process_terminal_in(repo, mocker):
+    """The seam the selection move created: `selection.choose` takes the TTY
+    test and the picker as arguments, so the CLI wrapper is the only thing
+    that can get them wrong — and nothing in `test_accounts_selection.py`
+    would notice if it passed the wrong pair."""
+    from jailbee.cli import _choose_account_choice
+
+    fakea = NamedAdapter("fakea")
+    fakeb = NamedAdapter("fakeb")
+    choices = [
+        (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
+        (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
+    ]
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "me@x.com"))
+
+    choice = _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+
+    assert choice is not None
+    assert (choice[0].name, choice[1].name) == ("fakeb", "me@x.com")
+    assert pick.call_args.args == (choices, "Switch:")
+
+
+def test_choose_account_choice_refuses_off_a_tty(repo, mocker):
+    """The other half of the wiring: `_is_tty` really is what gates the
+    picker, not a constant."""
+    from jailbee.cli import _choose_account_choice
+
+    fakea = NamedAdapter("fakea")
+    fakeb = NamedAdapter("fakeb")
+    choices = [
+        (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
+        (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
+    ]
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+
+    with pytest.raises(PoolError, match="-a fakea"):
+        _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+    pick.assert_not_called()

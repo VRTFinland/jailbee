@@ -3149,7 +3149,8 @@ if TYPE_CHECKING:
 
     from jailbee.accounts import overview as accounts_overview
     from jailbee.accounts.adapters.base import AccountAdapter
-    from jailbee.accounts.models import PoolChange, Slot
+    from jailbee.accounts.models import PoolChange
+    from jailbee.accounts.selection import AccountChoice
     from jailbee.apps import AppSpec
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
@@ -11429,212 +11430,31 @@ def _holder_view(cfg: "Config", group: str | None) -> "Config":
     return cfg.model_copy(update={"credential_group": name})
 
 
-def _adapter_authoritative(
-    adapter: "AccountAdapter",
-    cfg: "Config",
-    gcfg: "GlobalConfig",
-    incus: "IncusType | None" = None,
-) -> set[str]:
-    """Members whose recorded account can be trusted for this repo's holder.
-
-    One place, so `ls`, `use`, `park` and `rm` cannot disagree about which
-    repos are authoritative. A repo that shares no group is its own only
-    member and is trivially authoritative for itself — there is no group
-    to be ambiguous about, and no `incus list` is worth paying for it.
-
-    The adapter is a parameter because authority is asked of *that agent's*
-    members: a repo's config home names one agent's account, and reading
-    another agent's member list would make the wrong repos authoritative.
-
-    `incus` is a parameter for the same reason as everywhere else in this
-    module: the answer costs one `incus list`, and a caller looping over
-    adapters would otherwise pay for one per agent. Callers with a client in
-    hand pass it; the default keeps the single-adapter call sites short.
-    """
-    from jailbee.accounts import engine, groups
-    from jailbee.incus import Incus
-
-    group = engine.repo_group(cfg)
-    if group is None:
-        return {cfg.container_prefix}
-    found, _ = engine.members(adapter, cfg, gcfg)
-    return groups.authoritative_prefixes(
-        gcfg, incus or Incus(), group, [m.container_prefix for m in found]
-    )
-
-
-AccountChoice = tuple["AccountAdapter", "Slot"]
-"""One stored login and the agent whose pool holds it."""
-
-
-def _account_adapters(cfg: "Config", agent: str | None) -> list["AccountAdapter"]:
-    """The adapters a pool command acts on: `-a`'s one, or every pooled one.
-
-    An explicit `-a` is **not** filtered on `agents.<name>.enabled`. The pool is
-    host-wide — the parked store and the group holders live under
-    `XDG_DATA_HOME`, not in the repo — so naming an agent this repo happens not
-    to enable is a meaningful request, and refusing it broke every
-    `jailbee claude ...` alias for exactly the repos most likely to run one
-    (Claude off here, logins parked on the host). Omitting `-a` still means
-    "every enabled pooled agent", which is the repo-scoped reading.
-
-    A name with no adapter is still refused by name — a typo, or a build
-    without that agent's module — so a script learns what it may pass.
-    """
-    from jailbee.accounts.adapters import base
-    from jailbee.accounts.models import PoolError
-
-    if agent is None:
-        return base.pooled_adapters(cfg)
-    try:
-        return [base.get_adapter(agent)]
-    except KeyError:
-        known = ", ".join(sorted(base.ADAPTERS)) or "none"
-        raise PoolError(
-            f"agent `{agent}` has no account pool: jailbee has no adapter for it. Known: {known}."
-        ) from None
-
-
-def _matching_choices(
-    adapters: Sequence["AccountAdapter"],
-    cfg: "Config",
-    gcfg: "GlobalConfig",
-    ref: str | None,
-    *,
-    removable: bool,
-) -> list[AccountChoice]:
-    """Every login `ref` names, across `adapters`; every parked one when None.
-
-    Per adapter the rule is `engine.resolve_ref`'s: an exact slot name wins,
-    then a bare email that matches exactly one account. An ambiguity *inside*
-    one adapter is not filtered out — `-a` cannot solve two grants of one
-    email, so `resolve_ref`'s full-slot-name error propagates. Across adapters
-    every adapter that resolved is kept, and the caller applies the TTY rule
-    to the list.
-
-    `removable` resolves through `engine.resolve_removable`, which lets `rm`
-    reach the parked half of a name the live slot also carries.
-
-    A typed `ref` matching nothing anywhere raises rather than returning an
-    empty list: only the caller knows whether the reference was typed or
-    picked, and only a typed one has an error worth reporting.
-    """
-    from jailbee.accounts import engine
-    from jailbee.accounts.models import AccountNotFoundError, PoolError
-    from jailbee.incus import Incus
-
-    choices: list[AccountChoice] = []
-    known: list[str] = []
-    not_found: list[AccountNotFoundError] = []
-    # One client for the whole loop: `_adapter_authoritative` costs an
-    # `incus list` per adapter otherwise.
-    incus = Incus()
-    for adapter in adapters:
-        slots = engine.list_slots(
-            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg, incus)
-        )
-        known.extend(f"{s.name} ({adapter.name})" for s in slots)
-        if ref is None:
-            choices.extend((adapter, s) for s in slots if not s.live)
-            continue
-        try:
-            slot = (
-                engine.resolve_removable(ref, slots)
-                if removable
-                else engine.resolve_ref(ref, slots)
-            )
-        except AccountNotFoundError as e:
-            # Only "this agent's store has no such login" is ordinary enough to
-            # try the next agent. `AmbiguousAccountError` — candidates inside this
-            # one adapter that it cannot choose between — propagates, because
-            # no `-a` solves it and swallowing it would act on the wrong login.
-            not_found.append(e)
-            continue
-        choices.append((adapter, slot))
-    if ref is not None and not choices:
-        if len(adapters) == 1:
-            raise not_found[0]
-        raise PoolError(
-            f"no stored account matches `{ref}`."
-            + (f" Known: {', '.join(known)}" if known else " No agent has a stored login.")
-        )
-    return choices
-
-
-def _live_choices(
-    adapters: Sequence["AccountAdapter"], cfg: "Config", gcfg: "GlobalConfig"
-) -> list[AccountChoice]:
-    """The live login of every adapter that has one, in adapter order.
-
-    `park`'s candidates: each adapter keeps its own credential file in the
-    same holder, so several can be live at once and one must be chosen.
-    """
-    from jailbee.accounts import engine
-    from jailbee.incus import Incus
-
-    choices: list[AccountChoice] = []
-    incus = Incus()
-    for adapter in adapters:
-        slots = engine.list_slots(
-            adapter, cfg, gcfg, authoritative=_adapter_authoritative(adapter, cfg, gcfg, incus)
-        )
-        choices.extend((adapter, s) for s in slots if s.live)
-    return choices
-
-
-def _several_choices_error(choices: Sequence[AccountChoice], ref: str | None) -> str:
-    """The non-TTY refusal: name the candidates, and `-a` when it can help.
-
-    Two grants of one email inside one adapter are not solved by `-a`, so there
-    the candidates' full slot names are the only directions. Two adapters are,
-    so those name the `-a` values a script should pass.
-    """
-    agents = list(dict.fromkeys(adapter.name for adapter, _ in choices))
-    if len(agents) > 1:
-        listed = ", ".join(f"{slot.name} ({adapter.name})" for adapter, slot in choices)
-        directions = " or ".join(f"`-a {name}`" for name in agents)
-        subject = f"`{ref}` matches logins" if ref is not None else "the candidates span logins"
-        return f"{subject} of more than one agent: {listed}. Pass {directions}."
-    listed = ", ".join(slot.name for _, slot in choices)
-    return f"specify <email|slot> explicitly (or run in a TTY): {listed}"
-
-
 def _choose_account_choice(
-    choices: Sequence[AccountChoice],
+    choices: "Sequence[AccountChoice]",
     *,
     ref: str | None,
     nothing: str,
     message: str,
-) -> AccountChoice | None:
-    """The one choice to act on; None means the user cancelled the picker.
+) -> "AccountChoice | None":
+    """`selection.choose`, with this process's terminal wired in.
 
-    One candidate needs no prompt. Several are offered on a TTY and refused off
-    one, naming both the candidates and the `-a` values that would pick between
-    them — the TTY rule every picker here follows, with the picker itself kept
-    pure: it renders and returns, and never checks a TTY.
-
-    `nothing` is the caller's error for an empty list: only it knows whether it
-    was choosing a login to switch to or one to delete.
-
-    A cancelled picker returns None *before* any engine mutation runs: the
-    choices come from a read-only listing, and the caller aborts on None.
+    The one thing the CLI owns in that rule: whether there is a TTY to prompt
+    on, and what a prompt looks like. The rule itself — one candidate needs no
+    prompt, several are refused off a TTY naming the `-a` values — lives in
+    `accounts.selection`.
     """
-    from jailbee.accounts.models import PoolError
-
-    if not choices:
-        raise PoolError(nothing)
-    if len(choices) == 1:
-        return choices[0]
-    if not _is_tty():
-        raise PoolError(_several_choices_error(choices, ref))
+    from jailbee.accounts import selection
     from jailbee.tui import pick_account
 
-    picked = pick_account(choices, message)
-    if picked is None:
-        return None
-    # A value the picker was not offered cannot be acted on; `None` is the
-    # safe reading, and the same one a cancelled prompt gets.
-    return {(adapter.name, slot.name): (adapter, slot) for adapter, slot in choices}.get(picked)
+    return selection.choose(
+        choices,
+        ref=ref,
+        nothing=nothing,
+        message=message,
+        picker=pick_account,
+        is_interactive=_is_tty,
+    )
 
 
 def _account_group_cell(row: "accounts_overview.Row") -> str:
@@ -11996,11 +11816,12 @@ def account_ls_cmd(
     `jailbee account group ls` narrows the same rows to the credential groups
     themselves, which is what `create`, `rm` and `set` act on.
     """
+    from jailbee.accounts import selection
     from jailbee.accounts.models import PoolError
 
     cfg, gcfg = _account_ctx(config)
     try:
-        adapters = _account_adapters(cfg, agent)
+        adapters = selection.adapters_for(cfg, agent)
         _account_ls(adapters, cfg, gcfg, fmt=fmt, fields=fields, group=group)
     except (PoolError, OSError) as e:
         error(str(e))
@@ -12063,7 +11884,7 @@ def _pool_use(
     the switch acts on the view, while the choice was made against the repo's
     own config.
     """
-    from jailbee.accounts import engine
+    from jailbee.accounts import engine, selection
     from jailbee.incus import Incus
 
     if ref is not None and len(adapters) == 1:
@@ -12076,7 +11897,7 @@ def _pool_use(
         else:
             park = "`jailbee account park`"
         choice = _choose_account_choice(
-            _matching_choices(adapters, cfg, gcfg, ref, removable=False),
+            selection.matching_choices(adapters, cfg, gcfg, ref, removable=False),
             ref=ref,
             nothing=(
                 f"no stored login to switch to. {park} stores the one "
@@ -12094,7 +11915,7 @@ def _pool_use(
         view,
         gcfg,
         target,
-        authoritative=_adapter_authoritative(adapter, view, gcfg),
+        authoritative=selection.authoritative_for(adapter, view, gcfg),
         incus=Incus(),
     )
     success(f"Switched to {change.activated}")
@@ -12149,12 +11970,13 @@ def account_use_cmd(
     running session picks the new credential up on its next turn when the agent
     supports it — no restart.
     """
+    from jailbee.accounts import selection
     from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _account_ctx(config)
     try:
-        adapters = _account_adapters(cfg, agent)
+        adapters = selection.adapters_for(cfg, agent)
         _pool_use(adapters, cfg, gcfg, ref, group=group)
     except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
@@ -12203,7 +12025,7 @@ def _pool_park(
     The `-g` holder view is applied first, because which login is live is a
     property of the holder being emptied.
     """
-    from jailbee.accounts import engine
+    from jailbee.accounts import engine, selection
     from jailbee.accounts.models import PoolError
     from jailbee.incus import Incus
 
@@ -12213,7 +12035,7 @@ def _pool_park(
     if len(adapters) == 1:
         adapter = adapters[0]
     else:
-        choices = _live_choices(adapters, view, gcfg)
+        choices = selection.live_choices(adapters, view, gcfg)
         if choices:
             chosen = _choose_account_choice(
                 choices,
@@ -12232,7 +12054,7 @@ def _pool_park(
         adapter,
         view,
         gcfg,
-        authoritative=_adapter_authoritative(adapter, view, gcfg),
+        authoritative=selection.authoritative_for(adapter, view, gcfg),
         incus=Incus(),
     )
     if change.parked_as is None:
@@ -12280,12 +12102,13 @@ def account_park_cmd(
     next login in a container of this holder lands straight in the holder. With
     several agents live at once, `-a` (or the picker) names which to park.
     """
+    from jailbee.accounts import selection
     from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
 
     cfg, gcfg = _account_ctx(config)
     try:
-        adapters = _account_adapters(cfg, agent)
+        adapters = selection.adapters_for(cfg, agent)
         _pool_park(adapters, cfg, gcfg, group=group)
     except (PoolError, ClaudeLockTimeoutError, OSError) as e:
         error(str(e))
@@ -12324,11 +12147,11 @@ def _pool_rm(
     also carries: such a name is ambiguous for a switch but not for a deletion,
     and `rm` is the command that clears that state.
     """
-    from jailbee.accounts import engine
+    from jailbee.accounts import engine, selection
     from jailbee.accounts.models import PoolError
 
     choice = _choose_account_choice(
-        _matching_choices(adapters, cfg, gcfg, ref, removable=True),
+        selection.matching_choices(adapters, cfg, gcfg, ref, removable=True),
         ref=ref,
         nothing=(
             "no stored login to delete. `jailbee account ls` lists what is stored, "
@@ -12383,11 +12206,12 @@ def account_rm_cmd(
     contacts the agent's vendor, so a deleted login can only come back through a
     fresh login in a container.
     """
+    from jailbee.accounts import selection
     from jailbee.accounts.models import PoolError
 
     cfg, gcfg = _account_ctx(config)
     try:
-        adapters = _account_adapters(cfg, agent)
+        adapters = selection.adapters_for(cfg, agent)
         _pool_rm(adapters, cfg, gcfg, ref, yes=yes)
     except (PoolError, OSError) as e:
         error(str(e))
@@ -12806,7 +12630,7 @@ def account_group_rm_cmd(
     One group name is one directory per enabled agent, so every adapter's
     directory is parked and removed, and a failure names the adapter.
     """
-    from jailbee.accounts import engine, groups
+    from jailbee.accounts import engine, groups, selection
     from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
     from jailbee.claude_locks import ClaudeLockTimeoutError
@@ -12914,7 +12738,7 @@ def account_group_rm_cmd(
     for adapter, _holder in live:
         try:
             change = engine.park(
-                adapter, view, gcfg, authoritative=_adapter_authoritative(adapter, view, gcfg)
+                adapter, view, gcfg, authoritative=selection.authoritative_for(adapter, view, gcfg)
             )
         except (PoolError, ClaudeLockTimeoutError, OSError) as e:
             # No rollback: a credential already parked stays parked, and is
