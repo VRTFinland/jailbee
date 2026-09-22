@@ -1850,9 +1850,7 @@ def test_doctor_lists_other_group_members_but_not_self_or_outsiders(tmp_path, ma
     from jailbee.db.models import RegisteredRepo
     from jailbee.doctor import _credential_group_members
 
-    creds = tmp_path / "creds" / "work"
-    creds.mkdir(parents=True)
-    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = make_cfg(tmp_path, credential_group="work")
     gcfg = GlobalConfig.model_validate(
         {"credentials": {"group": "work", "repos": {"solo-repo": None}}}
     )

@@ -495,13 +495,15 @@ its own credential in the group; the mechanism below is Claude's, and is what
 the feature rests on today.
 
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
-on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`
-computes the `(key, value)` pair, and `profiles.base_profile_yaml` is what
-renders it into the profile. The container path is `~/.claude-creds`,
-bind-mounted from the group's host directory as the `claude-creds` disk
-device. The facts below were measured against **Claude Code 2.1.247** by
-observing its behavior — none of them are documented by
-Anthropic:
+on a member repo's `<prefix>-base` profile. `ClaudeAdapter.wiring` in
+`accounts/adapters/claude.py` returns it, together with the `claude-creds`
+disk device that bind-mounts the group's host directory at the container
+path `~/.claude-creds`; `profiles.base_profile_yaml` renders every pooled
+adapter's `Wiring` into the profile. The variable is the adapter's to name,
+not the profile renderer's — a second pooled agent declares its own wiring
+rather than adding a branch to `profiles.py`. The facts below were measured
+against **Claude Code 2.1.247** by observing its behavior — none of them are
+documented by Anthropic:
 
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves **both** `.credentials.json`
   and the rotation lock `.oauth_refresh.lock`, independently of
@@ -516,10 +518,10 @@ Anthropic:
   removed for the config file.
 - An **empty** `CLAUDE_SECURESTORAGE_CONFIG_DIR` is not equivalent to an
   unset one — Claude Code falls back to `~/.claude` for it. jailbee treats
-  this as a hard rule: `claude_securestorage_dir_env` returns `None`
-  rather than an empty string, and `profiles.base_profile_yaml` drops the
-  key outright if a `container.env` override would otherwise render it
-  empty.
+  this as a hard rule: `ClaudeAdapter.wiring` omits the key from its
+  `Wiring.env` rather than returning an empty value, and
+  `profiles.base_profile_yaml` drops the key outright if a `container.env`
+  override would otherwise render it empty.
 - Account identity comes from the credential, not from seeding: a member
   repo with a fresh `~/.claude` populates its own `oauthAccount` in
   `.claude.json` the first time Claude Code runs, without jailbee writing
