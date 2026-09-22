@@ -368,8 +368,13 @@ class _RecordingAdapter:
         self._log.append(f"clear:{self.name}")
 
 
-def _two_fake_adapters(monkeypatch, tmp_path):
-    """Register two recording adapters and a Config that pools both."""
+def _two_fake_adapters(monkeypatch, tmp_path, *, second_enabled: bool = True):
+    """Register two recording adapters and a Config that pools both.
+
+    `second_enabled=False` gives the "wired, then disabled" shape: `fakeb` has
+    an adapter and may already be wired into a container instance-locally, but
+    is no longer an enabled agent.
+    """
     from jailbee.accounts.adapters import base
     from tests.conftest import make_cfg
 
@@ -382,10 +387,67 @@ def _two_fake_adapters(monkeypatch, tmp_path):
         shared_dir=tmp_path / "shared",
         agents={
             "fakea": {"enabled": True, "command": "fakea"},
-            "fakeb": {"enabled": True, "command": "fakeb"},
+            "fakeb": {"enabled": second_enabled, "command": "fakeb"},
         },
     )
     return cfg, log
+
+
+def test_clear_container_group_also_tears_down_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """Disabling an agent does not unmount what it already wired into a
+    container: an instance-level device outranks the profile, so re-rendering
+    `<prefix>-binds` cannot reach it either. Filtering the teardown on `enabled`
+    would leave the container mounting a holder `unset` just reported clearing.
+    """
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.clear_container_group(cfg, incus, "myrepo-x")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["clear:fakea", "clear:fakeb"]
+
+
+def test_set_container_group_to_no_group_also_tears_down_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """`use none` is the other removal direction, and has the same duty."""
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", None)
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["set:fakea:None", "set:fakeb:None"]
+
+
+def test_set_container_group_to_a_named_group_skips_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """The write direction keeps the `enabled` filter — the point of disabling
+    an agent is that nothing new gets wired for it."""
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", "personal")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == [f"set:fakea:{engine.group_dir('fakea', 'personal')}"]
 
 
 def test_set_container_group_invokes_every_adapter_before_the_label(

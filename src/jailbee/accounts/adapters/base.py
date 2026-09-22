@@ -394,6 +394,31 @@ def pooled_adapters(cfg: Config) -> list[AccountAdapter]:
     return found
 
 
+def wired_adapters(cfg: Config) -> list[AccountAdapter]:
+    """Every agent that has an adapter, *including disabled ones*, `claude` first.
+
+    The teardown-side counterpart to `pooled_adapters`. Writing wiring is for
+    enabled agents only, but removing it must not be: an agent can be wired
+    into a container instance-locally and *then* disabled, and disabling it
+    does not unmount anything — an instance-level device outranks the profile,
+    so re-rendering `<prefix>-binds` cannot reach it either. Filtering the
+    removal on `enabled` would leave that container mounting a holder it was
+    just told it no longer uses, with `jailbee account group unset` reporting
+    success. So every removal path iterates this list and every write path
+    iterates `pooled_adapters`.
+
+    An adapter's removal is required to be idempotent for exactly this reason:
+    it runs against containers that never carried its wiring.
+    """
+    found: list[AccountAdapter] = []
+    for name in sorted(cfg.agents, key=lambda n: (n != "claude", n)):
+        try:
+            found.append(get_adapter(name))
+        except KeyError:
+            continue
+    return found
+
+
 def prepare_config_homes(cfg: Config) -> None:
     """Run every pooled adapter's config-home preparation.
 

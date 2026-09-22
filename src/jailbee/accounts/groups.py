@@ -204,15 +204,17 @@ def set_container_group(
     """
     from jailbee.accounts.adapters import base
 
-    adapters = base.pooled_adapters(cfg)
     if group is None:
-        for adapter in adapters:
+        # `wired_adapters`, not `pooled_adapters`: "no group" is a removal, and
+        # an agent disabled after it was wired must still have its instance-level
+        # device taken away. See `base.wired_adapters`.
+        for adapter in base.wired_adapters(cfg):
             adapter.set_container_group(cfg, incus, container, None)
         _write_group_label(incus, container, NO_GROUP)
         return
 
     name = validate_group_name(group)
-    for adapter in adapters:
+    for adapter in base.pooled_adapters(cfg):
         adapter.set_container_group(cfg, incus, container, ensure_group_dir(adapter.name, name))
     _write_group_label(incus, container, name)
 
@@ -265,8 +267,9 @@ def redundant_overrides(cfg: Config, incus: Incus) -> list[str]:
 def clear_container_group(cfg: Config, incus: Incus, container: str) -> None:
     """Drop the override so the container inherits the repo's group again.
 
-    Every pooled adapter is asked to remove its own instance-local wiring
-    first; the shared label goes last. That window — a label still naming a
+    Every adapter the repo has — `base.wired_adapters`, so a *disabled* agent's
+    leftover wiring is torn down too — is asked to remove its own instance-local
+    wiring first; the shared label goes last. That window — a label still naming a
     holder whose device is already gone — is the conservative one: a reader
     acting mid-teardown resolves to the old group and reads nothing, rather
     than inheriting the repo's group while the old holder's wiring is still in
@@ -275,7 +278,7 @@ def clear_container_group(cfg: Config, incus: Incus, container: str) -> None:
     """
     from jailbee.accounts.adapters import base
 
-    for adapter in base.pooled_adapters(cfg):
+    for adapter in base.wired_adapters(cfg):
         adapter.clear_container_group(cfg, incus, container)
     incus.config_unset(container, GROUP_LABEL)
     incus.config_unset(container, LEGACY_GROUP_LABEL)
