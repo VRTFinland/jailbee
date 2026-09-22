@@ -498,9 +498,11 @@ the feature rests on today.
 on a member repo's `<prefix>-base` profile. `ClaudeAdapter.wiring` in
 `accounts/adapters/claude.py` returns it, together with the `claude-creds`
 disk device that bind-mounts the group's host directory at the container
-path `~/.claude-creds`; `profiles.base_profile_yaml` renders every pooled
-adapter's `Wiring` into the profile. The variable is the adapter's to name,
-not the profile renderer's — a second pooled agent declares its own wiring
+path `~/.claude-creds`. The two halves land in different profiles:
+`profiles.base_profile_yaml` renders every pooled adapter's `Wiring.env`
+into `<prefix>-base`, and `profiles.binds_profile_yaml` its
+`Wiring.devices` into `<prefix>-binds`. Both are the adapter's to name, not
+the profile renderer's — a second pooled agent declares its own wiring
 rather than adding a branch to `profiles.py`. The facts below were measured
 against **Claude Code 2.1.247** by observing its behavior — none of them are
 documented by Anthropic:

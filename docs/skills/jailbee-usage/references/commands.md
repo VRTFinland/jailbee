@@ -349,7 +349,7 @@ that path.
 |---|---|
 | `--all` | Containers from every jailbee-managed repo (adds a REPO column). Default: cwd repo only. |
 | `-o` / `--format <fmt>` | `table` (default) or `json`. |
-| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, repo, mode, base, state, created, job, network, ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, ahead_count, conflict, local_diff, local_count, git_status, pr`. Wins outright over the `ls:` config block, and applies to every `--format`. |
+| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, repo, mode, base, state, created, job, network, ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, ahead_count, conflict, local_diff, local_count, git_status, pr, group, cpu, doing`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
 **AHEAD ±** / **↑** (commits ahead of base, 3-dot/"PR view"), **MERGE** (see

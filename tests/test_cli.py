@@ -8829,6 +8829,44 @@ def test_new_cmd_hidden_claude_group_alias_still_folds(tmp_path, mocker):
     assert new_container.call_args.args[2].credential_group == "personal"
 
 
+def test_new_cmd_claude_group_alias_warns_once(tmp_path, mocker):
+    """A deprecated flag a human types has to say so, exactly once — the same
+    contract `jailbee claude ...` keeps. Without this the flag would simply
+    vanish in the next major release with no notice ever given."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import LEGACY_REMOVAL_VERSION, app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--claude-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "`--claude-group` is deprecated" in result.stderr
+    assert LEGACY_REMOVAL_VERSION in result.stderr
+    assert result.stderr.count("`--claude-group` is deprecated") == 1
+
+
+def test_new_cmd_canonical_credential_group_does_not_warn(tmp_path, mocker):
+    """The other half: the canonical flag must stay silent."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--credential-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "deprecated" not in result.stderr
+
+
 def test_new_cmd_resolves_none_to_no_group(tmp_path, mocker):
     from typer.testing import CliRunner
 

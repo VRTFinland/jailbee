@@ -1962,7 +1962,8 @@ Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `ip`, `memory_limit`, `mem`, `wt`, `ahead_diff`,
 `ahead_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
-`group`. `claude` and `claude_group` are accepted aliases for `group`.
+`group`, `cpu`, `doing`. `claude` and `claude_group` are accepted aliases for
+`group`.
 
 Three things are problems: an unknown name (reported with the allowed set
 listed), `fields: []` (a table with no columns at all — write `fields: null`
@@ -2255,8 +2256,12 @@ in `agents.md` for the mechanism.
 
 > **Compatibility.** The old `claude_credentials:` spelling of this key is
 > still read, with a deprecation warning; setting both keys is an error.
-> `jailbee claude ...` remains as a hidden alias for `jailbee account ...`,
-> warning once per invocation. Both are removed in 2.0.0.
+> Any write jailbee makes to `global.yaml` — `jailbee account group
+> set`/`unset`, or saving from `jailbee config edit --global` — renames the
+> key to `credentials:` in place, in the same write, even when the change
+> itself was to an unrelated key. `jailbee claude ...` remains as a hidden
+> alias for `jailbee account ...`, warning once per invocation. Both are
+> removed in 2.0.0.
 
 Joining a group requires `jailbee apply`: it creates the group directory
 (mode `0700`) and **moves** this repo's `.credentials.json` into it.

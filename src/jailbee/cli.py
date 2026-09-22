@@ -1880,6 +1880,21 @@ def new_cmd(
         )
         raise typer.Exit(2)
 
+    if claude_group is not None:
+        # The flag's own deprecation notice. `--claude-group` is typed by a
+        # human (or by a script a human maintains), so it warns like
+        # `jailbee claude ...` and unlike the label and column aliases, which
+        # are read out of state nobody is being asked to retype.
+        # Aliased: `new_cmd` already binds a local `hint` of its own further down.
+        from jailbee.tui import hint as emit_hint
+
+        emit_hint(
+            [
+                "`--claude-group` is deprecated — use `--credential-group` instead. "
+                f"It keeps working until {LEGACY_REMOVAL_VERSION}, where it is removed."
+            ]
+        )
+
     group_flag = credential_group if credential_group is not None else claude_group
     resolved_credential_group: str | None = None
     if group_flag is not None:
@@ -11445,25 +11460,28 @@ AccountChoice = tuple["AccountAdapter", "Slot"]
 def _account_adapters(cfg: "Config", agent: str | None) -> list["AccountAdapter"]:
     """The adapters a pool command acts on: `-a`'s one, or every pooled one.
 
-    `-a` is validated here rather than left to fail later inside the engine: an
-    agent this config does not enable has no pool a user can mean, and a name
-    with no adapter is a typo or a build without that agent's module. Both are
-    refused by name, so a script learns what it may pass.
+    An explicit `-a` is **not** filtered on `agents.<name>.enabled`. The pool is
+    host-wide — the parked store and the group holders live under
+    `XDG_DATA_HOME`, not in the repo — so naming an agent this repo happens not
+    to enable is a meaningful request, and refusing it broke every
+    `jailbee claude ...` alias for exactly the repos most likely to run one
+    (Claude off here, logins parked on the host). Omitting `-a` still means
+    "every enabled pooled agent", which is the repo-scoped reading.
+
+    A name with no adapter is still refused by name — a typo, or a build
+    without that agent's module — so a script learns what it may pass.
     """
     from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
 
     if agent is None:
         return base.pooled_adapters(cfg)
-    configured = cfg.agents.get(agent)
-    if configured is None or not configured.enabled:
-        known = ", ".join(sorted(cfg.agents)) or "none"
-        raise PoolError(f"no enabled agent `{agent}` in this config. Known: {known}.")
     try:
         return [base.get_adapter(agent)]
     except KeyError:
+        known = ", ".join(sorted(base.ADAPTERS)) or "none"
         raise PoolError(
-            f"agent `{agent}` has no account pool: jailbee has no adapter for it."
+            f"agent `{agent}` has no account pool: jailbee has no adapter for it. Known: {known}."
         ) from None
 
 
@@ -11810,6 +11828,24 @@ def _report_side_effects(
         )
 
 
+def _no_pooled_agent_note(cfg: "Config") -> None:
+    """Explain an empty listing that says nothing about the host.
+
+    With no `-a` and no enabled pooled agent there is no adapter to build an
+    overview from, so the table is empty for a reason that has nothing to do
+    with what the host holds. Claiming "no login on this host yet" there is
+    simply false whenever another repo keeps a group login. `-a` is offered
+    because an explicit agent is not filtered on `enabled` — see
+    `_account_adapters`.
+    """
+    info(
+        "This repo enables no pooled agent, so this view is empty regardless of "
+        "what the host holds. Enable one with `agents.<name>.enabled: true` in "
+        "`.jailbee/config.yaml`, or pass `-a <agent>` to list that agent's "
+        "host-wide pool from here."
+    )
+
+
 def _account_ls(
     adapters: Sequence["AccountAdapter"],
     cfg: "Config",
@@ -11898,7 +11934,9 @@ def _account_ls(
             "any group, which is why they are listed here too."
         )
     _account_listing_warnings(containers_known, unreachable)
-    if not any(r.state in ("live", "parked") for r in rows):
+    if not adapters:
+        _no_pooled_agent_note(cfg)
+    elif not any(r.state in ("live", "parked") for r in rows):
         info(
             "No login on this host yet: run an agent in a container and /login, "
             "then `jailbee account park` stores it for the pool."
@@ -12672,12 +12710,20 @@ def account_group_ls_cmd(
         empty_message=(
             "No credential groups on this host. `jailbee account group create <name>` "
             "makes one; without any, every repo keeps its own login."
+            if adapters
+            # With no adapter there was nothing to build an overview from, so
+            # the emptiness is this repo's, not the host's — see
+            # `_no_pooled_agent_note`, printed below.
+            else "Nothing to list."
         ),
     )
     if fmt != "table":
         return
     _account_holder_line(adapters, cfg)
     _account_listing_warnings(containers_known, unreachable)
+    if not adapters:
+        _no_pooled_agent_note(cfg)
+        return
     info("Every login on this host, parked ones included: `jailbee account ls`.")
 
 

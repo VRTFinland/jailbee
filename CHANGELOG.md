@@ -36,11 +36,15 @@ before editing `## Unreleased`.
   group name is shared); omitting it acts on every enabled pooled agent, and
   a typed account reference that matches more than one agent is an error
   naming the `-a` values to pass (Claude is the only pooled agent so far, so
-  that case cannot arise yet). The old spellings keep working as hidden
-  aliases that warn once per invocation — `jailbee claude …`,
-  `claude_credentials:`, `--claude-group`, the `user.jailbee.claude_group`
-  label, and the `claude` / `claude_group` column names — and are removed in
-  2.0.0. See
+  that case cannot arise yet, and on a TTY a picker is offered instead). The
+  old spellings all keep working and are removed in 2.0.0. Two of them warn
+  once per invocation: `jailbee claude …`, a hidden alias for `jailbee
+  account …`, and a `claude_credentials:` block in `global.yaml` — which any
+  write jailbee makes to that file (`jailbee account group set`/`unset`,
+  a `jailbee config edit --global` save) also renames to `credentials:` in
+  place. The other three are accepted silently: `--claude-group`, the
+  `user.jailbee.claude_group` container label (read, never written) and the
+  `claude` / `claude_group` column names. See
   [docs/config.md](https://jailbee.gisgro.io/docs/config/#credentials) and
   [docs/commands.md](https://jailbee.gisgro.io/docs/commands/).
 
