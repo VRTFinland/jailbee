@@ -709,3 +709,30 @@ def test_copy_never_shows_a_half_written_skill(tmp_path: Path, monkeypatch) -> N
     assert (target / "SKILL.md").read_text() == "usage skill\n"
     # Nothing staged is left behind for an agent to scan.
     assert sorted(p.name for p in dest.iterdir()) == ["jailbee-repo-setup", "jailbee-usage"]
+
+
+# These two run against the *real* bundled skills rather than the synthetic
+# tree above, which is what keeps `_skills_root`'s packaged/dev fallback and
+# the replacement semantics honest against what actually ships.
+
+
+def test_install_host_skills_replaces_a_stale_copy(tmp_path: Path) -> None:
+    """Files removed upstream must disappear, as `make install-skill` did."""
+    stale = tmp_path / "skills" / "jailbee-usage" / "GONE.md"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("removed upstream")
+
+    agent_skills.install_host_skills([tmp_path / "skills"])
+
+    assert not stale.exists()
+    assert (stale.parent / "SKILL.md").is_file()
+
+
+def test_install_host_skills_leaves_unrelated_skills_alone(tmp_path: Path) -> None:
+    mine = tmp_path / "skills" / "my-own-skill" / "SKILL.md"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("mine")
+
+    agent_skills.install_host_skills([tmp_path / "skills"])
+
+    assert mine.read_text() == "mine"

@@ -106,6 +106,12 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # Where Codex reads user-level skills (`CODEX_HOME/skills`). Inside the
         # `~/.codex` mount above, so jailbee's bundled skills land there once
         # and serve every container of the repo.
+        #
+        # Checked against codex-cli 0.155.1: the bundled skill installer
+        # writes into `$CODEX_HOME/skills`, and `CODEX_HOME` defaults to
+        # `~/.codex` (the same default the mount above relies on). A wrong
+        # path here fails *silently* — the copy succeeds, nothing reads it —
+        # so re-check it against the agent when bumping the preset.
         "skills_dir": "~/.codex/skills",
         # Runtime hosts, all three needed by an ordinary signed-in session:
         # `api.openai.com` is the API-key path (`/v1/responses`, `/auth`),
@@ -128,7 +134,13 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         "install": "npm i -g @google/gemini-cli",
         "update": "npm i -g @google/gemini-cli@latest",
         "shared": [{"subpath": "gemini", "path": "~/.gemini"}],
-        # Where gemini-cli reads user-level skills (`~/.gemini/skills`).
+        # Where gemini-cli reads user-level skills (`~/.gemini/skills`), inside
+        # the `~/.gemini` mount above.
+        #
+        # Taken from the upstream docs, not verified against a running
+        # gemini-cli. A wrong path here fails *silently* — the copy succeeds,
+        # nothing reads it — so confirm it on a host that has the agent
+        # before relying on it.
         "skills_dir": "~/.gemini/skills",
         "egress_allow": [
             "generativelanguage.googleapis.com:443",
@@ -188,10 +200,17 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
             {"subpath": "opencode-config", "path": "~/.config/opencode"},
             {"subpath": "opencode-data", "path": "~/.local/share/opencode"},
         ],
-        # Where opencode reads user-level skills (`~/.config/opencode/skills`).
-        # It also scans Claude-compatible `~/.claude/skills`, but its own
-        # directory is the canonical one — relying on claude's mount would
-        # break the moment claude is not enabled.
+        # Where opencode reads user-level skills (`~/.config/opencode/skills`),
+        # inside the `opencode-config` mount above. It also scans
+        # Claude-compatible `~/.claude/skills`, but its own directory is the
+        # canonical one — relying on claude's mount would break the moment
+        # claude is not enabled.
+        #
+        # Taken from the upstream docs, not verified against a running
+        # opencode (2.0.9's bundle assembles the path at runtime, so it
+        # cannot be read off the binary). A wrong path here fails *silently*
+        # — the copy succeeds, nothing reads it — so confirm it against the
+        # agent before relying on it.
         "skills_dir": "~/.config/opencode/skills",
         # opencode's *own* hosts only. It is a multi-provider client, so which
         # inference host it needs depends entirely on the provider the user
@@ -234,7 +253,8 @@ def claude_preset() -> dict[str, object]:
             {"subpath": "claude-install", "path": "~/.local/share/claude"},
         ],
         # Where Claude Code reads user-level skills; inside the `~/.claude`
-        # mount above.
+        # mount above. Checked against Claude Code 2.1.278, and the path this
+        # preset has always written to.
         "skills_dir": "~/.claude/skills",
         "egress_allow": list(CLAUDE_API_HOSTS),
     }

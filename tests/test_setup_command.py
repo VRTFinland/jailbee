@@ -273,32 +273,6 @@ def test_run_setup_survives_a_schema_invalid_global_yaml(
     assert out.count(f"ignoring {path}") == 1
 
 
-def test_install_host_skills_replaces_a_stale_copy(home: Path) -> None:
-    """Files removed upstream must disappear, as `make install-skill` did."""
-    from jailbee.agent_skills import install_host_skills
-
-    stale = home / ".claude" / "skills" / "jailbee-usage" / "GONE.md"
-    stale.parent.mkdir(parents=True)
-    stale.write_text("removed upstream")
-
-    install_host_skills([home / ".claude" / "skills"])
-
-    assert not stale.exists()
-    assert (stale.parent / "SKILL.md").is_file()
-
-
-def test_install_host_skills_leaves_unrelated_skills_alone(home: Path) -> None:
-    from jailbee.agent_skills import install_host_skills
-
-    mine = home / ".claude" / "skills" / "my-own-skill" / "SKILL.md"
-    mine.parent.mkdir(parents=True)
-    mine.write_text("mine")
-
-    install_host_skills([home / ".claude" / "skills"])
-
-    assert mine.read_text() == "mine"
-
-
 # --------------------------------------------------------------------------
 # refresh timer
 # --------------------------------------------------------------------------
