@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jailbee import agent_skills
+from jailbee.config import CONTAINER_USERNAME
 from tests.conftest import make_config
 
 
@@ -394,3 +395,148 @@ def test_install_host_skills_warns_and_continues_past_a_bad_target(
     assert str(bad) in out
     assert (good / "jailbee-usage" / "SKILL.md").is_file()
     assert len(written) == 2  # only the good target's two skills
+
+
+def test_sync_matches_a_mount_spelled_absolutely(tmp_path: Path, monkeypatch) -> None:
+    """`shared[].path` and `skills_dir` both accept `~`-relative *and*
+    absolute spellings, and a config may mix them. `/home/dev/.mine` covers
+    `~/.mine/skills`; matching the raw strings would skip the agent."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [{"subpath": "my-agent", "path": f"/home/{CONTAINER_USERNAME}/.mine"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_sync_matches_an_absolute_skills_dir(tmp_path: Path, monkeypatch) -> None:
+    """The mirror image: a `~`-relative mount covering an absolute `skills_dir`."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": f"/home/{CONTAINER_USERNAME}/.mine/skills",
+                "shared": [{"subpath": "my-agent", "path": "~/.mine"}],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_sync_prefers_the_deepest_mount_across_spellings(tmp_path: Path, monkeypatch) -> None:
+    """Depth is compared on the normalised paths, so a `~` mount and an
+    absolute one still order correctly against each other."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [
+                    {"subpath": "my-agent", "path": f"/home/{CONTAINER_USERNAME}/.mine"},
+                    {"subpath": "home", "path": "~"},
+                ],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+    assert not (shared / "home" / ".mine" / "skills").exists()
+
+
+def test_sync_skips_a_skills_dir_hidden_by_a_private_subpath(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """`private` subpaths are mounted over with a per-container directory
+    (`agent_private.attach`), so a copy underneath one is invisible to every
+    agent. Warn and skip instead of writing bytes nobody can read."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "claude": {"enabled": True},
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/state/skills",
+                "shared": [
+                    {"subpath": "my-agent", "path": "~/.mine", "private": ["state"]},
+                ],
+            },
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    out = capsys.readouterr().out
+    assert "mine" in out
+    assert "~/.mine/state/skills" in out
+    assert "private" in out
+    assert not (shared / "my-agent" / "state" / "skills").exists()
+    # The other agent is still served.
+    assert (shared / "claude" / "skills" / "jailbee-usage").is_dir()
+
+
+def test_sync_allows_a_private_subpath_beside_the_skills_dir(tmp_path: Path, monkeypatch) -> None:
+    """Only a `private` entry that *contains* `skills_dir` hides it; a sibling
+    carve-out (codex's socket directories, say) is none of its business."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={
+            "mine": {
+                "enabled": True,
+                "command": "mine",
+                "skills_dir": "~/.mine/skills",
+                "shared": [
+                    {"subpath": "my-agent", "path": "~/.mine", "private": ["run"]},
+                ],
+            }
+        },
+    )
+    agent_skills.sync_agent_skills(cfg)
+    assert (shared / "my-agent" / "skills" / "jailbee-usage" / "SKILL.md").is_file()
+
+
+def test_sync_warns_and_continues_past_an_unwritable_destination(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """One agent's destination failing must not cost every later agent its
+    skills — the same guarantee `install_host_skills` gives the host side."""
+    monkeypatch.setattr(agent_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
+    shared = tmp_path / "shared"
+    blocked = shared / "claude" / "skills"
+    blocked.parent.mkdir(parents=True)
+    blocked.write_text("a file where a directory is needed\n")
+    cfg = make_config(
+        tmp_path / "repo",
+        shared_dir=shared,
+        agents={"claude": {"enabled": True}, "codex": {"enabled": True}},
+    )
+    agent_skills.sync_agent_skills(cfg)
+    # The console wraps a long tmp_path across lines; join them before matching.
+    out = capsys.readouterr().out.replace("\n", "")
+    assert str(blocked) in out
+    assert (shared / "codex" / "skills" / "jailbee-usage" / "SKILL.md").is_file()

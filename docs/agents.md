@@ -565,9 +565,14 @@ Two per-agent fields govern it (both in the
 [§4 table](#4-writing-your-own-agent)): `skills_dir` names the
 container-side directory (the presets set it for the four agents above;
 set it yourself on a from-scratch agent whose mount layout differs), and
-`install_jailbee_skills: false` opts one agent out. A `skills_dir` that no
+`install_jailbee_skills: false` opts one agent out. Both spellings a mount
+path accepts work on either side — `~/.mine/skills` is covered by a mount
+on `/home/dev/.mine` and the other way round. A `skills_dir` that no
 `shared` mount covers is a config mistake: `jailbee new` warns and skips
-that agent rather than failing.
+that agent rather than failing. So is one that falls inside a
+[`private`](#a-shared-directory-must-not-carry-a-socket) carve-out — the
+per-container directory mounted over it would hide the copy from every
+agent, so that too is warned and skipped.
 
 The agents' own compatibility is what makes this one table: all four read
 the same `SKILL.md` frontmatter format, and opencode additionally scans
