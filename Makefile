@@ -6,19 +6,20 @@
 SHELL := /bin/bash
 
 # Install/reinstall the `jailbee` CLI globally from the current checkout WITH
-# the optional Qt GUI extra (PySide6), then run the post-install steps:
-# shell completions for `jailbee` and `jb`, the egress-refresh user timer,
-# and the bundled agent skills when host-level `install_host_skills` is on
-# (off by default). `jailbee setup` is idempotent and `--yes` keeps it
-# non-interactive (it never edits a shell rc in that mode), so re-running
-# this target is safe. Requires libGL on the host; `jailbee gui` and
-# `jailbee dashboard --gui` work after this.
+# the optional Qt GUI extra (PySide6) and the optional SSH extra (asyncssh),
+# then run the post-install steps: shell completions for `jailbee` and `jb`,
+# the egress-refresh user timer, and the bundled agent skills when host-level
+# `install_host_skills` is on (off by default). `jailbee setup` is idempotent
+# and `--yes` keeps it non-interactive (it never edits a shell rc in that
+# mode), so re-running this target is safe. Requires libGL on the host;
+# `jailbee gui` and `jailbee dashboard --gui` work after this, and `jailbee
+# remote ssh enable`/`serve` no longer need a separate `uv tool install`.
 install:
-	uv tool install '.[gui]' --force --reinstall
+	uv tool install '.[gui,ssh]' --force --reinstall
 	jailbee setup --yes
 
 # Alias for `make install` — kept for back-compat and discoverability now that
-# `make install` includes the optional Qt GUI extra by default.
+# `make install` includes the optional Qt GUI and SSH extras by default.
 install-gui: install
 
 # Just the bundled agent skills, for when only they changed and host-level
