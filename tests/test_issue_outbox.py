@@ -835,7 +835,9 @@ def execution(tmp_path, mocker):
     incus = mocker.Mock()
     incus.list_containers.return_value = [{"name": "test-box", "created_at": "2026-09-18"}]
     mocker.patch.object(
-        issue_outbox, "read_issue_outbox", side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(dict(files))
+        issue_outbox,
+        "read_issue_outbox",
+        side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(dict(files)),
     )
 
     def append(incus, container, directory, lines, *, uid):
@@ -847,10 +849,13 @@ def execution(tmp_path, mocker):
             files.pop(name, None)
 
     log = mocker.patch.object(issue_outbox, "append_applied_log", side_effect=append, create=True)
-    remove = mocker.patch.object(issue_outbox, "delete_outbox_files", side_effect=delete, create=True)
+    remove = mocker.patch.object(
+        issue_outbox, "delete_outbox_files", side_effect=delete, create=True
+    )
     mutations = {
         name: mocker.patch.object(
-            issue_github, name,
+            issue_github,
+            name,
             return_value=issue_github.MutationReceipt(7, "https://github.com/acme/app/issues/7"),
         )
         for name in ("create_issue", "edit_issue", "replace_labels", "add_comment", "set_state")
@@ -858,11 +863,18 @@ def execution(tmp_path, mocker):
 
     def batch(manifests, extras=None):
         files.update(extras or {})
-        files.update({name: json.dumps({"version": 1, "actions": actions}) for name, actions in manifests.items()})
+        files.update(
+            {
+                name: json.dumps({"version": 1, "actions": actions})
+                for name, actions in manifests.items()
+            }
+        )
         prepared = []
         for name in manifests:
             manifest = parse_manifest(name, files[name], files)
-            digest = proposal_digest(name, files[name], {body: files[body] for body in manifest.body_files})
+            digest = proposal_digest(
+                name, files[name], {body: files[body] for body in manifest.body_files}
+            )
             journal = store.load(journal_key(identity, name))
             receipts = {r.index: r for r in journal.actions} if journal else {}
             resolved = []
@@ -875,21 +887,56 @@ def execution(tmp_path, mocker):
                     issue = issue_outbox.ResolvedIssue(None, action.target.ref)
                 slug = "acme/app" if action.repo == "." else "acme/parser"
                 repo = issue_outbox.RepoTarget(action.repo, tmp_path / action.repo, slug)
-                labels = action.labels if isinstance(action, CreateAction) else ("Feature",) if isinstance(action, LabelsAction) else None
+                labels = (
+                    action.labels
+                    if isinstance(action, CreateAction)
+                    else ("Feature",)
+                    if isinstance(action, LabelsAction)
+                    else None
+                )
                 receipt = receipts.get(index)
-                status = "pending" if receipt is None else "applied" if receipt.state == "applied" else "uncertain"
-                resolved.append(issue_outbox.ResolvedAction(index, action, repo, issue, status, labels))
-            prepared.append(issue_outbox.PreparedManifest(manifest, digest, journal, tuple(resolved)))
-        return issue_outbox.PreparedBatch("test-box", tmp_path, identity, "alice", issue_outbox.OutboxSnapshot(dict(files)), tuple(prepared), {})
+                status = (
+                    "pending"
+                    if receipt is None
+                    else "applied"
+                    if receipt.state == "applied"
+                    else "uncertain"
+                )
+                resolved.append(
+                    issue_outbox.ResolvedAction(index, action, repo, issue, status, labels)
+                )
+            prepared.append(
+                issue_outbox.PreparedManifest(manifest, digest, journal, tuple(resolved))
+            )
+        return issue_outbox.PreparedBatch(
+            "test-box",
+            tmp_path,
+            identity,
+            "alice",
+            issue_outbox.OutboxSnapshot(dict(files)),
+            tuple(prepared),
+            {},
+        )
 
-    return {"batch": batch, "files": files, "store": store, "identity": identity, "incus": incus,
-            "log": log, "remove": remove, "mutations": mutations, "events": events}
+    return {
+        "batch": batch,
+        "files": files,
+        "store": store,
+        "identity": identity,
+        "incus": incus,
+        "log": log,
+        "remove": remove,
+        "mutations": mutations,
+        "events": events,
+    }
 
 
 def _apply(execution, batch):
     from jailbee import issue_outbox
 
-    return issue_outbox.apply_batch(batch, incus=execution["incus"], uid=1000, journal_store=execution["store"])
+    return issue_outbox.apply_batch(
+        batch, incus=execution["incus"], uid=1000, journal_store=execution["store"]
+    )
 
 
 def _seed_execution(execution, batch, *, index=0, state="applied", issue=901, repo=None):
@@ -902,7 +949,9 @@ def _seed_execution(execution, batch, *, index=0, state="applied", issue=901, re
     repo = repo or prepared.actions[index].repo.slug
     store.mark_prepared(key, index, repo=repo)
     if state == "applied":
-        store.mark_applied(key, index, repo=repo, url=f"https://github.com/{repo}/issues/{issue or 7}", issue=issue)
+        store.mark_applied(
+            key, index, repo=repo, url=f"https://github.com/{repo}/issues/{issue or 7}", issue=issue
+        )
     elif state == "uncertain":
         store.mark_uncertain(key, index, repo=repo, detail="unknown")
     return key
@@ -912,56 +961,104 @@ def test_apply_executes_manifests_and_refs_in_displayed_order(execution):
     from jailbee.issue_github import MutationReceipt
 
     calls = []
-    batch = execution["batch"]({
-        "z.json": [_create(ref="cache-cleanup"), {"type": "comment", "repo": ".", "issue_ref": "cache-cleanup", "body": "Next"}],
-        "a.json": [_labels(repo="lib", issue=27)],
-    })
+    batch = execution["batch"](
+        {
+            "z.json": [
+                _create(ref="cache-cleanup"),
+                {"type": "comment", "repo": ".", "issue_ref": "cache-cleanup", "body": "Next"},
+            ],
+            "a.json": [_labels(repo="lib", issue=27)],
+        }
+    )
+
     def create(root, repo, **kwargs):
         assert root == batch.host_repo_root
         calls.append(("create", repo, "cache-cleanup"))
         return MutationReceipt(901, "https://github.com/acme/app/issues/901")
+
     def comment(root, repo, number, **kwargs):
         assert root == batch.host_repo_root
         calls.append(("comment", repo, number))
         return MutationReceipt(number, f"https://github.com/{repo}/issues/{number}#issuecomment-5")
+
     def labels(root, repo, number, **kwargs):
         assert root == batch.host_repo_root
         assert kwargs == {"labels": ("Feature",)}
         calls.append(("labels", repo, number))
         return MutationReceipt(number, f"https://github.com/{repo}/issues/{number}")
+
     execution["mutations"]["create_issue"].side_effect = create
     execution["mutations"]["add_comment"].side_effect = comment
     execution["mutations"]["replace_labels"].side_effect = labels
 
     report = _apply(execution, batch)
 
-    assert calls == [("create", "acme/app", "cache-cleanup"), ("comment", "acme/app", 901), ("labels", "acme/parser", 27)]
+    assert calls == [
+        ("create", "acme/app", "cache-cleanup"),
+        ("comment", "acme/app", 901),
+        ("labels", "acme/parser", 27),
+    ]
     assert report.failure is None
     assert report.cleaned == ("z.json", "a.json")
-    assert [(name, receipt.index) for name, receipt in report.applied] == [("z.json", 0), ("z.json", 1), ("a.json", 0)]
+    assert [(name, receipt.index) for name, receipt in report.applied] == [
+        ("z.json", 0),
+        ("z.json", 1),
+        ("a.json", 0),
+    ]
 
 
-@pytest.mark.parametrize("action, payload", [
-    (_edit(title="Next", expected={"title": "Old"}), {"title": "Next"}),
-    (_edit(body="", expected={"body": "Old"}), {"body": ""}),
-    (_edit(title="Next", body="", expected={"title": "Old", "body": "Old"}), {"title": "Next", "body": ""}),
-    (_labels(), {"labels": ["Feature"]}),
-    (_state(), {"state": "closed", "state_reason": "completed"}),
-    ({**_state(), "reason": "not_planned"}, {"state": "closed", "state_reason": "not_planned"}),
-    ({"type": "state", "repo": ".", "issue": 7, "state": "open", "expected": {"state": "closed"}}, {"state": "open", "state_reason": "reopened"}),
-])
+@pytest.mark.parametrize(
+    "action, payload",
+    [
+        (_edit(title="Next", expected={"title": "Old"}), {"title": "Next"}),
+        (_edit(body="", expected={"body": "Old"}), {"body": ""}),
+        (
+            _edit(title="Next", body="", expected={"title": "Old", "body": "Old"}),
+            {"title": "Next", "body": ""},
+        ),
+        (_labels(), {"labels": ["Feature"]}),
+        (_state(), {"state": "closed", "state_reason": "completed"}),
+        ({**_state(), "reason": "not_planned"}, {"state": "closed", "state_reason": "not_planned"}),
+        (
+            {
+                "type": "state",
+                "repo": ".",
+                "issue": 7,
+                "state": "open",
+                "expected": {"state": "closed"},
+            },
+            {"state": "open", "state_reason": "reopened"},
+        ),
+    ],
+)
 def test_apply_dispatches_exact_single_patch(execution, mocker, action, payload):
     from jailbee import issue_github
 
     for name in ("edit_issue", "replace_labels", "set_state"):
         mocker.stop(execution["mutations"][name])
-    run = mocker.patch.object(issue_github.subprocess, "run", return_value=mocker.Mock(returncode=0, stdout=json.dumps({"number": 7, "html_url": "https://github.com/acme/app/issues/7"}), stderr=""))
+    run = mocker.patch.object(
+        issue_github.subprocess,
+        "run",
+        return_value=mocker.Mock(
+            returncode=0,
+            stdout=json.dumps({"number": 7, "html_url": "https://github.com/acme/app/issues/7"}),
+            stderr="",
+        ),
+    )
     batch = execution["batch"]({"a.json": [action]})
 
     assert _apply(execution, batch).failure is None
 
     assert run.call_count == 1
-    assert run.call_args.args[0] == ["gh", "api", "repos/acme/app/issues/7", "--method", "PATCH", "--input", "-"]
+    assert run.call_args.args[0] == [
+        "gh",
+        "api",
+        "repos/acme/app/issues/7",
+        "--method",
+        "PATCH",
+        "--input",
+        "-",
+    ]
     assert json.loads(run.call_args.kwargs["input"]) == payload
     assert run.call_args.kwargs["cwd"] == batch.host_repo_root
 
@@ -988,12 +1085,21 @@ def test_apply_stops_first_failure_and_preserves_only_known_progress(execution, 
 
 
 def test_apply_restores_applied_create_ref_even_from_old_prepared_batch(execution):
-    batch = execution["batch"]({"a.json": [_create(), {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"}]})
+    batch = execution["batch"](
+        {
+            "a.json": [
+                _create(),
+                {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"},
+            ]
+        }
+    )
     _seed_execution(execution, batch, repo="ACME/APP")
     report = _apply(execution, batch)
     assert report.failure is None
     execution["mutations"]["create_issue"].assert_not_called()
-    execution["mutations"]["add_comment"].assert_called_once_with(batch.host_repo_root, "acme/app", 901, body="Next")
+    execution["mutations"]["add_comment"].assert_called_once_with(
+        batch.host_repo_root, "acme/app", 901, body="Next"
+    )
     assert report.skipped[0][1].issue == 901
 
 
@@ -1012,6 +1118,7 @@ def test_apply_durable_preparation_and_receipt_are_inside_one_exclusive_lock(exe
 
     batch = execution["batch"]({"a.json": [_comment(), _comment()]})
     seen = []
+
     def mutate(*args, **kwargs):
         paths = [p for p in execution["store"].root.rglob("*.json") if "archive" not in p.parts]
         records = json.loads(paths[0].read_text())["actions"]
@@ -1019,6 +1126,7 @@ def test_apply_durable_preparation_and_receipt_are_inside_one_exclusive_lock(exe
         (lock,) = execution["store"].root.rglob("*.lock")
         assert not _other_process_can_lock(lock)
         return execution["mutations"]["add_comment"].return_value
+
     execution["mutations"]["add_comment"].side_effect = mutate
     assert _apply(execution, batch).failure is None
     assert seen == [["prepared"], ["applied", "prepared"]]
@@ -1051,12 +1159,16 @@ def test_apply_receipt_failure_reports_uncertainty_and_blocks_next_process(execu
 
 
 @pytest.mark.parametrize("uncertain,method", [(False, "clear_prepared"), (True, "mark_uncertain")])
-def test_apply_failure_to_record_remote_failure_still_blocks_replay(execution, mocker, uncertain, method):
+def test_apply_failure_to_record_remote_failure_still_blocks_replay(
+    execution, mocker, uncertain, method
+):
     from jailbee.issue_github import IssueGithubMutationError
     from jailbee.outbox_io import JournalError
 
     batch = execution["batch"]({"a.json": [_comment()]})
-    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError("rejected", uncertain=uncertain)
+    execution["mutations"]["add_comment"].side_effect = IssueGithubMutationError(
+        "rejected", uncertain=uncertain
+    )
     mocker.patch.object(execution["store"], method, side_effect=JournalError("disk failed"))
     assert _apply(execution, batch).failure.uncertain
     assert _apply(execution, batch).failure.uncertain
@@ -1072,10 +1184,12 @@ def test_apply_replaces_an_empty_old_digest_only_inside_lock(execution, mocker):
     store = execution["store"]
     store.create(key, "0" * 64, 1)
     archive = store.archive
+
     def checked_archive(key):
         (lock,) = store.root.rglob("*.lock")
         assert not _other_process_can_lock(lock)
         return archive(key)
+
     mocker.patch.object(store, "archive", side_effect=checked_archive)
     assert _apply(execution, batch).failure is None
     assert len(list(store.root.glob("*/archive/*.json"))) == 2
@@ -1089,9 +1203,13 @@ def test_apply_rechecks_every_proposal_before_any_remote_mutation(execution, cha
     store = execution["store"]
     second = replace(batch, manifests=(batch.manifests[1],))
     if change in ("digest", "repo"):
-        _seed_execution(execution, second, state="prepared", repo="wrong/repo" if change == "repo" else None)
+        _seed_execution(
+            execution, second, state="prepared", repo="wrong/repo" if change == "repo" else None
+        )
         if change == "digest":
-            batch = replace(batch, manifests=(batch.manifests[0], replace(batch.manifests[1], digest="0" * 64)))
+            batch = replace(
+                batch, manifests=(batch.manifests[0], replace(batch.manifests[1], digest="0" * 64))
+            )
     elif change == "count":
         store.create(journal_key(batch.identity, "b.json"), batch.manifests[1].digest, 2)
     elif change == "identity":
@@ -1116,10 +1234,16 @@ def _reconcile(execution, batch, resolution, **changes):
     from jailbee.outbox_io import journal_key
 
     prepared = batch.manifests[0]
-    arguments = {"key": journal_key(batch.identity, prepared.manifest.name), "index": 0,
-                 "resolution": resolution, "repo": prepared.actions[0].repo,
-                 "manifest": prepared.manifest, "digest": prepared.digest,
-                 "journal_store": execution["store"], **changes}
+    arguments = {
+        "key": journal_key(batch.identity, prepared.manifest.name),
+        "index": 0,
+        "resolution": resolution,
+        "repo": prepared.actions[0].repo,
+        "manifest": prepared.manifest,
+        "digest": prepared.digest,
+        "journal_store": execution["store"],
+        **changes,
+    }
     issue_outbox.reconcile_action(**arguments)
 
 
@@ -1128,26 +1252,37 @@ def test_reconcile_create_accepts_matching_number_and_case_insensitive_repo(exec
 
     batch = execution["batch"]({"a.json": [_create()]})
     key = _seed_execution(execution, batch, state="prepared", repo="ACME/APP")
-    _reconcile(execution, batch, issue_outbox.AppliedResolution("https://github.com/Acme/App/issues/123", issue=123))
+    _reconcile(
+        execution,
+        batch,
+        issue_outbox.AppliedResolution("https://github.com/Acme/App/issues/123", issue=123),
+    )
     receipt = execution["store"].load(key).actions[0]
-    assert (receipt.state, receipt.issue, receipt.url) == ("applied", 123, "https://github.com/Acme/App/issues/123")
+    assert (receipt.state, receipt.issue, receipt.url) == (
+        "applied",
+        123,
+        "https://github.com/Acme/App/issues/123",
+    )
 
 
-@pytest.mark.parametrize("action, issue, url", [
-    (_create(), None, "https://github.com/acme/app/issues/123"),
-    (_create(), 124, "https://github.com/acme/app/issues/123"),
-    (_create(), True, "https://github.com/acme/app/issues/1"),
-    (_comment(), 7, "https://github.com/acme/app/issues/7"),
-    (_comment(), None, "https://github.com/acme/app/issues/8"),
-    (_comment(), None, "https://github.com/acme/other/issues/7"),
-    (_comment(), None, "https://github.com.evil/acme/app/issues/7"),
-    (_comment(), None, "http://github.com/acme/app/issues/7"),
-    (_comment(), None, "https://user@github.com/acme/app/issues/7"),
-    (_comment(), None, "https://github.com/acme/app/pull/7"),
-    (_comment(), None, "https://github.com/acme/app/issues/7?secret=x"),
-    (_comment(), None, "https://github.com/acme/app/issues/0"),
-    (_comment(), None, "https://github.com/acme/app/issues/7\n"),
-])
+@pytest.mark.parametrize(
+    "action, issue, url",
+    [
+        (_create(), None, "https://github.com/acme/app/issues/123"),
+        (_create(), 124, "https://github.com/acme/app/issues/123"),
+        (_create(), True, "https://github.com/acme/app/issues/1"),
+        (_comment(), 7, "https://github.com/acme/app/issues/7"),
+        (_comment(), None, "https://github.com/acme/app/issues/8"),
+        (_comment(), None, "https://github.com/acme/other/issues/7"),
+        (_comment(), None, "https://github.com.evil/acme/app/issues/7"),
+        (_comment(), None, "http://github.com/acme/app/issues/7"),
+        (_comment(), None, "https://user@github.com/acme/app/issues/7"),
+        (_comment(), None, "https://github.com/acme/app/pull/7"),
+        (_comment(), None, "https://github.com/acme/app/issues/7?secret=x"),
+        (_comment(), None, "https://github.com/acme/app/issues/0"),
+        (_comment(), None, "https://github.com/acme/app/issues/7\n"),
+    ],
+)
 def test_reconcile_rejects_invalid_receipts_without_changing_journal(execution, action, issue, url):
     from jailbee import issue_outbox
     from jailbee.outbox_io import JournalError
@@ -1160,7 +1295,9 @@ def test_reconcile_rejects_invalid_receipts_without_changing_journal(execution, 
     assert execution["store"].load(key) == before
 
 
-@pytest.mark.parametrize("change", ["digest", "identity", "name", "count", "repo", "index", "pending", "applied"])
+@pytest.mark.parametrize(
+    "change", ["digest", "identity", "name", "count", "repo", "index", "pending", "applied"]
+)
 def test_reconcile_rejects_stale_or_non_uncertain_targets(execution, change):
     from jailbee import issue_outbox
     from jailbee.outbox_io import ContainerIdentity, JournalError, journal_key
@@ -1199,10 +1336,24 @@ def test_reconcile_retry_deletes_only_selected_unknown_action(execution):
 def test_reconcile_comment_url_and_restored_ref(execution):
     from jailbee import issue_outbox
 
-    batch = execution["batch"]({"a.json": [_create(), {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"}]})
+    batch = execution["batch"](
+        {
+            "a.json": [
+                _create(),
+                {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Next"},
+            ]
+        }
+    )
     key = _seed_execution(execution, batch)
     execution["store"].mark_prepared(key, 1, repo="acme/app")
-    _reconcile(execution, batch, issue_outbox.AppliedResolution("https://github.com/acme/app/issues/901#issuecomment-45", issue=None), index=1)
+    _reconcile(
+        execution,
+        batch,
+        issue_outbox.AppliedResolution(
+            "https://github.com/acme/app/issues/901#issuecomment-45", issue=None
+        ),
+        index=1,
+    )
     receipt = execution["store"].load(key).actions[1]
     assert receipt.state == "applied" and receipt.issue is None
 
@@ -1211,14 +1362,23 @@ def test_cleanup_logs_receipts_then_deletes_only_unshared_bodies_then_archives(e
     from jailbee.outbox_io import journal_key
 
     action = {"type": "comment", "repo": ".", "issue": 7, "body_file": "shared.md"}
-    batch = execution["batch"]({"a.json": [action, {**action, "body_file": "private.md"}], "b.json": [action]}, extras={"shared.md": "Shared secret body", "private.md": "Private secret body", "unrelated.md": "Keep"})
+    batch = execution["batch"](
+        {"a.json": [action, {**action, "body_file": "private.md"}], "b.json": [action]},
+        extras={
+            "shared.md": "Shared secret body",
+            "private.md": "Private secret body",
+            "unrelated.md": "Keep",
+        },
+    )
     batch = replace(batch, manifests=(batch.manifests[0],))
     store = execution["store"]
     archive = store.archive
+
     def checked_archive(key):
         assert "a.json" not in execution["files"]
         execution["events"].append(("archive", key.manifest_name))
         return archive(key)
+
     mocker.patch.object(store, "archive", side_effect=checked_archive)
 
     report = _apply(execution, batch)
@@ -1253,7 +1413,9 @@ def test_cleanup_failure_keeps_journal_and_rerun_skips_github(execution, boundar
     report = _apply(execution, batch)
     assert report.failure.index is None
     assert not report.failure.uncertain
-    assert execution["store"].load(journal_key(batch.identity, "a.json")).actions[0].state == "applied"
+    assert (
+        execution["store"].load(journal_key(batch.identity, "a.json")).actions[0].state == "applied"
+    )
     operation.side_effect = original
     assert _apply(execution, batch).failure is None
     assert execution["mutations"]["add_comment"].call_count == 1
@@ -1262,16 +1424,21 @@ def test_cleanup_failure_keeps_journal_and_rerun_skips_github(execution, boundar
 def test_cleanup_preserves_shared_files_added_since_approval(execution):
     action = {"type": "comment", "repo": ".", "issue": 7, "body_file": "shared.md"}
     batch = execution["batch"]({"a.json": [action]}, extras={"shared.md": "Shared"})
+
     def mutate(*args, **kwargs):
         execution["files"]["later.json"] = json.dumps({"version": 1, "actions": [action]})
         return execution["mutations"]["add_comment"].return_value
+
     execution["mutations"]["add_comment"].side_effect = mutate
     assert _apply(execution, batch).failure is None
     assert "shared.md" in execution["files"]
 
 
 def test_cleanup_invalid_pending_manifest_conservatively_keeps_body_files(execution):
-    batch = execution["batch"]({"a.json": [{"type": "comment", "repo": ".", "issue": 7, "body_file": "body.md"}]}, extras={"body.md": "Body", "broken.json": "{"})
+    batch = execution["batch"](
+        {"a.json": [{"type": "comment", "repo": ".", "issue": 7, "body_file": "body.md"}]},
+        extras={"body.md": "Body", "broken.json": "{"},
+    )
     assert _apply(execution, batch).failure is None
     assert "body.md" in execution["files"]
 
@@ -1283,17 +1450,41 @@ def test_completed_manifest_filename_can_be_reused_with_new_digest(execution):
     assert _apply(execution, second).failure is None
     assert execution["mutations"]["add_comment"].call_count == 2
     archives = list(execution["store"].root.glob("*/archive/*.json"))
-    assert {json.loads(path.read_text())["digest"] for path in archives} == {first.manifests[0].digest, second.manifests[0].digest}
+    assert {json.loads(path.read_text())["digest"] for path in archives} == {
+        first.manifests[0].digest,
+        second.manifests[0].digest,
+    }
 
 
 def _drop(execution, batch, **kwargs):
     from jailbee import issue_outbox
 
-    return issue_outbox.drop_manifest(execution["incus"], batch.container, batch.outbox, "a.json", uid=1000, journal_store=execution["store"], identity=batch.identity, **kwargs)
+    return issue_outbox.drop_manifest(
+        execution["incus"],
+        batch.container,
+        batch.outbox,
+        "a.json",
+        uid=1000,
+        journal_store=execution["store"],
+        identity=batch.identity,
+        **kwargs,
+    )
 
 
-@pytest.mark.parametrize("state, archive, allowed", [(None, False, True), ("applied", False, False), ("prepared", False, False), ("uncertain", True, False), ("prepared", True, False), ("applied", True, True)])
-def test_drop_refuses_progress_by_default_and_never_discards_uncertainty(execution, state, archive, allowed):
+@pytest.mark.parametrize(
+    "state, archive, allowed",
+    [
+        (None, False, True),
+        ("applied", False, False),
+        ("prepared", False, False),
+        ("uncertain", True, False),
+        ("prepared", True, False),
+        ("applied", True, True),
+    ],
+)
+def test_drop_refuses_progress_by_default_and_never_discards_uncertainty(
+    execution, state, archive, allowed
+):
     from jailbee.outbox_io import JournalError, journal_key
 
     action = {"type": "comment", "repo": ".", "issue": 7, "body_file": "body.md"}
@@ -1327,7 +1518,9 @@ def test_drop_refuses_changed_proposal_and_preserves_shared_bodies(execution):
     from jailbee.outbox_io import JournalError
 
     action = {"type": "comment", "repo": ".", "issue": 7, "body_file": "shared.md"}
-    batch = execution["batch"]({"a.json": [action], "b.json": [action]}, extras={"shared.md": "Shared"})
+    batch = execution["batch"](
+        {"a.json": [action], "b.json": [action]}, extras={"shared.md": "Shared"}
+    )
     execution["files"]["a.json"] += "\n"
     with pytest.raises(JournalError):
         _drop(execution, batch)

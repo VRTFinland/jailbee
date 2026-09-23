@@ -571,8 +571,20 @@ def test_delete_outbox_files_passes_validated_names_after_option_separator(mocke
     from jailbee import outbox_io
 
     incus = mocker.Mock()
-    outbox_io.delete_outbox_files(incus, "box", "/outbox ' odd", ["a.json", "-body.md", "$(id).md"], uid=None)
-    assert incus.exec.call_args.args == ("box", ["rm", "-f", "--", "/outbox ' odd/a.json", "/outbox ' odd/-body.md", "/outbox ' odd/$(id).md"])
+    outbox_io.delete_outbox_files(
+        incus, "box", "/outbox ' odd", ["a.json", "-body.md", "$(id).md"], uid=None
+    )
+    assert incus.exec.call_args.args == (
+        "box",
+        [
+            "rm",
+            "-f",
+            "--",
+            "/outbox ' odd/a.json",
+            "/outbox ' odd/-body.md",
+            "/outbox ' odd/$(id).md",
+        ],
+    )
     assert incus.exec.call_args.kwargs["uid"] is None
 
 

@@ -853,7 +853,9 @@ def _cleanup_manifest(
         with journal_store.lock(key):
             journal_store.archive(key)
     except JournalError as exc:
-        return f"{name}: applied, logged, and deleted, but its journal could not be archived ({exc})"
+        return (
+            f"{name}: applied, logged, and deleted, but its journal could not be archived ({exc})"
+        )
     return None
 
 
@@ -881,7 +883,9 @@ def apply_batch(
     skipped: list[tuple[str, JournalAction]] = []
     cleaned: list[str] = []
 
-    def failed(manifest: str | None, index: int | None, uncertain: bool, detail: str) -> ApplyReport:
+    def failed(
+        manifest: str | None, index: int | None, uncertain: bool, detail: str
+    ) -> ApplyReport:
         return ApplyReport(
             tuple(applied),
             tuple(skipped),
@@ -1002,7 +1006,12 @@ def apply_batch(
                 created_issue_numbers[resolved.action.ref] = receipt.issue
 
         failure_detail = _cleanup_manifest(
-            incus, batch.container, prepared, uid=uid, journal_store=journal_store, identity=batch.identity
+            incus,
+            batch.container,
+            prepared,
+            uid=uid,
+            journal_store=journal_store,
+            identity=batch.identity,
         )
         if failure_detail is not None:
             return failed(name, None, False, failure_detail)
