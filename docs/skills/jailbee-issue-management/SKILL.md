@@ -40,11 +40,14 @@ at numbers, titles, or label spelling:
 
 - `gh issue view <n> --json number,title,body,labels,state,stateReason` — an
   existing issue's current fields. **Read this before every `edit`,
-  `comment`, `labels`, or `state` action** and copy the exact current
-  title/body/labels/state into the manifest's `expected` block — the host
-  refuses to apply an action whose `expected` no longer matches what is
-  actually on GitHub, so a stale or guessed value gets the whole action
-  rejected rather than silently overwriting someone else's change.
+  `labels`, or `state` action** and copy the exact current
+  title/body/labels/state into that action's `expected` block — the host
+  refuses to *apply the whole batch you selected* (every manifest in that
+  `jb issue apply` run, not just this one action) if any `expected` no
+  longer matches what is actually on GitHub, so a stale or guessed value
+  aborts the run rather than silently overwriting someone else's change. A
+  `comment` action has no `expected` block and no staleness check, but read
+  the issue first anyway so your comment text is accurate.
 - `gh issue list --json number,title,labels,state [--label ...] [--state ...]`
   — for finding or triaging a set of issues.
 - `gh label list --json name` — the repository's exact label spelling and
@@ -56,13 +59,15 @@ at numbers, titles, or label spelling:
 Every action names a `repo` field: `"."` for the superproject, or a
 submodule's path relative to the superproject root (e.g. `"packages/lib"`),
 exactly as it appears in the repository layout — **never** `owner/repo`.
-The host resolves the actual GitHub repository from git remotes it already
-trusts (`.jailbee/config.yaml` and each submodule's own `origin`); a
-manifest can only target `.` or a path the host recognizes as a declared
-submodule, never an arbitrary GitHub repository. If you are unsure whether a
-path is a submodule the host will accept, check `git submodule status` from
-the superproject root — a path that isn't listed there is not a valid
-`repo` value.
+The host resolves the actual GitHub repository itself, from git remotes it
+already trusts: the superproject's own remote for `.`, and for a submodule,
+the path declared in `.gitmodules` together with that submodule's own
+`origin` remote (or, if it isn't checked out on the host, the URL
+`.gitmodules` declares for it). A manifest can only target `.` or a path
+the host recognizes there, never an arbitrary GitHub repository. If you are
+unsure whether a path is a submodule the host will accept, check `git
+submodule status` from the superproject root — a path that isn't listed
+there is not a valid `repo` value.
 
 ## Writing a manifest
 

@@ -131,9 +131,12 @@ Closes or reopens an issue.
 
 Within a single manifest, two actions may not both touch the same field of
 the same issue (identified by `issue` number, or by the same `issue_ref`) —
-e.g. two `edit` actions both changing `#42`'s title is refused as a
-conflict, naming the earlier action. Split them across manifests, or fold
-the change into a single action, instead.
+e.g. two `edit` actions both changing `#42`'s title is refused when the
+manifest is parsed. The refusal names only the *later* action's own index
+(`"<manifest> action <n>: target already changes field 'title'"`) — it does
+not say which earlier action first touched that field, so if a manifest has
+several actions on the same target, check all of them. Split the conflicting
+actions across manifests, or fold the change into a single action, instead.
 
 ## Caps (refusal, not truncation)
 
@@ -279,9 +282,9 @@ repo's `create`.
 Notes on this example:
 
 - `repo: "packages/lib"` must be a submodule path the host already knows
-  about (declared in `.jailbee/config.yaml` and present in `git submodule
-  status`) — an arbitrary path, or an attempt to write `owner/repo`
-  directly, is refused.
+  about (declared in `.gitmodules` and visible in `git submodule status`)
+  — an arbitrary path, or an attempt to write `owner/repo` directly, is
+  refused.
 - `lib-parse-crash` is scoped to its own `create` action's `repo`
   (`packages/lib`); the earlier `state`/`comment` pair on `#203` uses `repo:
   "."` and plain `issue` numbers, because that issue already exists in the
