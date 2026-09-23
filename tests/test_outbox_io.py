@@ -548,3 +548,39 @@ def test_archive_refuses_uncertainty(tmp_path):
         store.archive(key)
 
     assert _journal_path(tmp_path).exists()
+
+
+def test_append_applied_log_passes_content_as_base64_argument(mocker):
+    from jailbee import outbox_io
+
+    incus = mocker.Mock()
+    lines = ['{"ref":"$(touch /tmp/injected)`id`", "url":"https://github.com/a/b/issues/1"}']
+    outbox_io.append_applied_log(incus, "box", "/outbox ' odd", lines, uid=42)
+    args = incus.exec.call_args.args
+    command = args[1]
+    assert args[0] == "box"
+    assert command[:2] == ["bash", "-c"]
+    assert "/outbox ' odd" not in command[2]
+    assert "touch /tmp/injected" not in command[2]
+    assert command[-2] == "/outbox ' odd"
+    assert base64.b64decode(command[-1]).decode() == lines[0] + "\n"
+    assert incus.exec.call_args.kwargs["uid"] == 42
+
+
+def test_delete_outbox_files_passes_validated_names_after_option_separator(mocker):
+    from jailbee import outbox_io
+
+    incus = mocker.Mock()
+    outbox_io.delete_outbox_files(incus, "box", "/outbox ' odd", ["a.json", "-body.md", "$(id).md"], uid=None)
+    assert incus.exec.call_args.args == ("box", ["rm", "-f", "--", "/outbox ' odd/a.json", "/outbox ' odd/-body.md", "/outbox ' odd/$(id).md"])
+    assert incus.exec.call_args.kwargs["uid"] is None
+
+
+@pytest.mark.parametrize("name", ["", ".", "..", "../secret", "/secret", "dir/file", "bad\x00name"])
+def test_delete_outbox_files_rejects_paths_before_any_deletion(mocker, name):
+    from jailbee import outbox_io
+
+    incus = mocker.Mock()
+    with pytest.raises(ValueError):
+        outbox_io.delete_outbox_files(incus, "box", "/outbox", ["ok.json", name], uid=None)
+    incus.exec.assert_not_called()

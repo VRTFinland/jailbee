@@ -11,7 +11,7 @@ import os
 import re
 import tarfile
 import tempfile
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -144,7 +144,20 @@ def _exact_fields(value: dict[str, object], expected: set[str], context: str) ->
         raise JournalError(f"invalid journal {context} schema")
 
 
-def _safe_detail(detail: str) -> str:
+def safe_mutation_detail(detail: str) -> str:
+    """Map a mutation error message to one of a known-safe, fixed set.
+
+    ``IssueGithubMutationError`` messages are, in the real adapter, always one
+    of a small closed set of fixed literals (see ``issue_github.py``) that
+    never embed ``gh``'s stderr, a payload, or anything else that could carry
+    a secret. This function is the one place that trust boundary is
+    enforced: an unrecognized message — which can only happen if a caller
+    passes something else, e.g. a raw exception string in a test — is mapped
+    to a generic default rather than stored or shown verbatim. Used both by
+    `JournalStore.mark_uncertain` (the persisted detail) and by
+    `issue_outbox` (the in-memory `ApplyFailure.detail`), so both surfaces
+    share one definition of "safe".
+    """
     return detail if detail in _SAFE_UNCERTAIN_DETAILS else _DEFAULT_UNCERTAIN_DETAIL
 
 
@@ -511,7 +524,7 @@ class JournalStore:
                     index=index,
                     state="uncertain",
                     repo=repo,
-                    detail=_safe_detail(detail),
+                    detail=safe_mutation_detail(detail),
                 ),
                 index,
             )
@@ -682,3 +695,50 @@ def read_text_outbox(
     if skipped:
         warn_fn(f"{container}: skipped {skipped} hostile outbox member(s)")
     return files
+
+
+def _validate_outbox_name(name: str) -> None:
+    """Refuse anything but a plain, contained file name at the outbox root."""
+    if not name or name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
+        raise ValueError(f"invalid outbox file name: {name!r}")
+
+
+def append_applied_log(
+    incus: Incus, container: str, directory: str, lines: Sequence[str], *, uid: int | None
+) -> None:
+    """Append `lines` to `directory`/applied.log inside the container.
+
+    Every line is untrusted-ish content (it is jailbee's own construction, but
+    built from journal fields that ultimately trace back to a container-
+    supplied manifest), so it is never interpolated into a shell string:
+    the joined text is sent base64-encoded as one argv value, and the
+    ``bash -c`` script that decodes it never mentions `directory` or the
+    payload itself, only the positional parameters `$1`/`$2`.
+    """
+    if not lines:
+        return
+    payload = base64.b64encode(("\n".join(lines) + "\n").encode("utf-8")).decode("ascii")
+    incus.exec(
+        container,
+        ["bash", "-c", 'base64 -d <<<"$2" >> "$1/applied.log"', "bash", directory, payload],
+        uid=uid,
+    )
+
+
+def delete_outbox_files(
+    incus: Incus, container: str, directory: str, names: Sequence[str], *, uid: int | None
+) -> None:
+    """Delete `names` from `directory` inside the container.
+
+    Every name is validated *before* anything is deleted: no empty name, no
+    ``.``/``..``, no path separator, no NUL — a plain file at the outbox
+    root, never a traversal or an absolute path. Names are then passed as
+    plain argv elements after an ``--`` option terminator (never a shell
+    string), so a name that happens to start with ``-`` cannot be mistaken
+    for an `rm` flag.
+    """
+    for name in names:
+        _validate_outbox_name(name)
+    if not names:
+        return
+    incus.exec(container, ["rm", "-f", "--", *(f"{directory}/{name}" for name in names)], uid=uid)
