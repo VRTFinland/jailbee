@@ -90,7 +90,9 @@ def test_bundled_skills_include_issue_management() -> None:
 
 
 def test_issue_management_skill_routes_writes_through_host() -> None:
-    text = (Path(claude_skills._skills_root()) / "jailbee-issue-management" / "SKILL.md").read_text()
+    text = (
+        Path(claude_skills._skills_root()) / "jailbee-issue-management" / "SKILL.md"
+    ).read_text()
     assert "gh issue create" in text
     assert "Never" in text
     assert "~/.jailbee/issue-outbox" in text

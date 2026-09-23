@@ -642,9 +642,7 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
 def test_upgrade_note_for_the_issue_management_skill_advises_apply() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
-    notes = [
-        n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "issue-management" in n.reason
-    ]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "issue-management" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
 
