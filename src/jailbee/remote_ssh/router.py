@@ -54,10 +54,22 @@ class _CommandTree:
     each warn-then-delegate through a distinct wrapper function rather than
     reusing the public callback) is simply absent from this map and stays
     unknown to every router lookup below.
+
+    `public_groups` maps a public *group* path (e.g. "git", "net egress") to
+    whether invoking it bare — no subcommand, no `--help` — would only print
+    help, i.e. whether its Click `invoke_without_command` is false. Every
+    group in this codebase leaves that at Click's default (false), but the
+    check stays generic instead of assuming so.
+
+    `top_level_names` is every name mounted directly on the root command,
+    public or hidden, used only to tell "genuinely unknown command" apart
+    from "known but hidden or otherwise disallowed" (see `unknown_command`).
     """
 
     public_leaves: frozenset[str]
     aliases: dict[str, str]
+    public_groups: dict[str, bool]
+    top_level_names: frozenset[str]
 
 
 def _leaf_identity(command: object) -> int:
@@ -92,12 +104,17 @@ def _command_tree() -> _CommandTree:
     public_leaves: set[str] = set()
     public_by_identity: dict[int, str] = {}
     hidden_leaves: list[tuple[str, int]] = []
+    public_groups: dict[str, bool] = {}
 
     def walk(
         command: TyperCommand | TyperGroup, prefix: tuple[str, ...], hidden_ancestor: bool
     ) -> None:
         is_hidden = hidden_ancestor or getattr(command, "hidden", False)
         if isinstance(command, TyperGroup):
+            if prefix and not is_hidden:
+                public_groups[" ".join(prefix)] = not getattr(
+                    command, "invoke_without_command", False
+                )
             for name, child in command.commands.items():
                 walk(cast(TyperCommand | TyperGroup, child), (*prefix, name), is_hidden)
             return
@@ -110,14 +127,21 @@ def _command_tree() -> _CommandTree:
             public_leaves.add(path)
             public_by_identity[_leaf_identity(command)] = path
 
-    walk(cast(TyperCommand | TyperGroup, get_command(app)), (), False)
+    root = cast(TyperCommand | TyperGroup, get_command(app))
+    walk(root, (), False)
 
     aliases = {
         path: public_by_identity[identity]
         for path, identity in hidden_leaves
         if identity in public_by_identity and public_by_identity[identity] != path
     }
-    return _CommandTree(public_leaves=frozenset(public_leaves), aliases=aliases)
+    top_level_names = frozenset(cast(TyperGroup, root).commands)
+    return _CommandTree(
+        public_leaves=frozenset(public_leaves),
+        aliases=aliases,
+        public_groups=public_groups,
+        top_level_names=top_level_names,
+    )
 
 
 def known_command_paths() -> frozenset[str]:
@@ -144,11 +168,79 @@ def command_path(argv: Sequence[str]) -> str:
     return tree.aliases.get(longest, longest)
 
 
+def _help_only_path(argv: Sequence[str]) -> str | None:
+    """The public group path (or "" for top-level) a pure help invocation names.
+
+    `None` for anything else, including a bare group path whose group would
+    actually run an action (`invoke_without_command`) rather than just print
+    help — only that group's path *plus* `--help`/`-h` counts then, since
+    Click's own `--help` handling always short-circuits before a callback
+    runs. Options ahead of the command path are still rejected exactly like
+    `command_path`: an unrecognized prefix here simply fails to match a known
+    group path and this returns `None`, falling through to the same
+    "unknown Jailbee command" `command_path` already raises for those.
+    """
+    words = tuple(argv)
+    if not words:
+        return None
+    if words in (("--help",), ("-h",)):
+        return ""
+    trailing_help = words[-1] in ("--help", "-h")
+    group_words = words[:-1] if trailing_help else words
+    if not group_words:
+        return None
+    path = " ".join(group_words)
+    bare_is_help = _command_tree().public_groups.get(path)
+    if bare_is_help is None:
+        return None
+    return path if (trailing_help or bare_is_help) else None
+
+
+def unknown_command(argv: Sequence[str], policy: RemoteCommandPolicy) -> bool:
+    """True when argv's first token names no command anywhere in the tree.
+
+    Used to hand a request straight through to `python -m jailbee` instead of
+    rejecting it here, so Typer prints its own "No such command" error (with
+    suggestions) — see `console.run` and `route`. A leading option other than
+    the `--help`/`-h` `_help_only_path` already handles is left to the
+    existing rejection path, and so is a genuinely hidden command with no
+    public alias: this only catches a name that matches nothing at all, at
+    any visibility. Always false in `disabled` mode, where every command is
+    rejected the same way regardless of what it names.
+    """
+    if policy.mode == "disabled" or not argv:
+        return False
+    token = argv[0]
+    if token.startswith("-"):
+        return False
+    return token not in _command_tree().top_level_names
+
+
 def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
-    """Return the public command path when the remote policy permits it."""
-    path = command_path(argv)
+    """Return the public command path when the remote policy permits it.
+
+    A pure help invocation (see `_help_only_path`) is checked directly rather
+    than through `command_path`, since it never resolves to a leaf: `full`
+    permits it outright; `allowlist` permits it only when some allowed leaf
+    lies under that group, or — for the bare top-level `--help`/`-h` — only
+    when the allowlist is non-empty at all.
+    """
     if policy.mode == "disabled":
         raise RouteError("remote Jailbee commands are disabled")
+    help_path = _help_only_path(argv)
+    if help_path is not None:
+        if policy.mode == "allowlist":
+            allowed = (
+                bool(policy.allow)
+                if help_path == ""
+                else any(
+                    leaf == help_path or leaf.startswith(help_path + " ") for leaf in policy.allow
+                )
+            )
+            if not allowed:
+                raise RouteError(f"Jailbee command is not allowed: {help_path or '--help'}")
+        return help_path
+    path = command_path(argv)
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
     return path
@@ -221,7 +313,11 @@ def route(
 
     prefix = argv[1]
     command_argv = argv[2:]
-    policy_allows(command_argv, config.commands)
+    # A genuinely unknown command name is handed straight through so
+    # `python -m jailbee` reports it, rather than this router inventing its
+    # own "unknown Jailbee command" — see `unknown_command`.
+    if not unknown_command(command_argv, config.commands):
+        policy_allows(command_argv, config.commands)
     root = resolve_repo(prefix, engine=engine)
     return Route("command", command_argv, prefix, root, False)
 

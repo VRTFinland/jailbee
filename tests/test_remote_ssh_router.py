@@ -19,6 +19,7 @@ from jailbee.remote_ssh.router import (
     policy_allows,
     resolve_repo,
     route,
+    unknown_command,
 )
 
 
@@ -242,6 +243,68 @@ def test_allowlist_rejects_an_alias_whose_canonical_leaf_is_not_allowed() -> Non
     policy = RemoteCommandPolicy(mode="allowlist", allow=["git pull"])
     with pytest.raises(RouteError, match="Jailbee command is not allowed: git merge"):
         policy_allows(("merge",), policy)
+
+
+# --- B: group help is permitted (Problem B) ---
+
+
+def test_group_help_bare_and_flagged_are_allowed_in_full_mode() -> None:
+    full = RemoteCommandPolicy(mode="full")
+    assert policy_allows(("git",), full) == "git"
+    assert policy_allows(("git", "--help"), full) == "git"
+    assert policy_allows(("git", "-h"), full) == "git"
+    assert policy_allows(("--help",), full) == ""
+    assert policy_allows(("-h",), full) == ""
+
+
+def test_group_help_is_rejected_when_commands_are_disabled() -> None:
+    with pytest.raises(RouteError, match="disabled"):
+        policy_allows(("git",), RemoteCommandPolicy())
+    with pytest.raises(RouteError, match="disabled"):
+        policy_allows(("--help",), RemoteCommandPolicy())
+
+
+def test_group_help_allowed_in_allowlist_when_a_leaf_lies_under_it() -> None:
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["git pull"])
+    assert policy_allows(("git",), policy) == "git"
+    assert policy_allows(("git", "--help"), policy) == "git"
+    assert policy_allows(("--help",), policy) == ""
+
+
+def test_group_help_rejected_in_allowlist_when_no_leaf_lies_under_it() -> None:
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    with pytest.raises(RouteError, match="Jailbee command is not allowed: git"):
+        policy_allows(("git",), policy)
+
+
+def test_group_help_still_rejects_options_before_the_group_path() -> None:
+    with pytest.raises(RouteError, match="unknown Jailbee command"):
+        policy_allows(("--verbose", "git"), RemoteCommandPolicy(mode="full"))
+
+
+# --- C: unknown commands are handed to `python -m jailbee` (Problem C) ---
+
+
+def test_unknown_command_is_true_for_a_name_that_matches_nothing() -> None:
+    assert unknown_command(("nosuchcmd",), RemoteCommandPolicy(mode="full")) is True
+
+
+def test_unknown_command_is_false_for_a_hidden_internal_name() -> None:
+    assert unknown_command(("_remote-console",), RemoteCommandPolicy(mode="full")) is False
+
+
+def test_unknown_command_is_false_for_a_leading_option() -> None:
+    assert unknown_command(("--verbose", "ls"), RemoteCommandPolicy(mode="full")) is False
+
+
+def test_unknown_command_is_false_when_commands_are_disabled() -> None:
+    assert unknown_command(("nosuchcmd",), RemoteCommandPolicy()) is False
+
+
+def test_one_shot_exec_lets_an_unknown_command_through(engine, repo) -> None:
+    cfg = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
+    result = route("--repo project nosuchcmd --flag", cfg, engine=engine)
+    assert result.argv == ("nosuchcmd", "--flag")
 
 
 def test_help_lists_only_configured_entrypoints() -> None:
