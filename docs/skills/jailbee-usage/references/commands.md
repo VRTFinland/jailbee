@@ -68,7 +68,7 @@ installation nor `jailbee setup` enables the service.
 | `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
 | `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
 | `jb remote ssh serve` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. |
-| `jb remote ssh key add PATH` | Read one plain OpenSSH public key, reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
+| `jb remote ssh key add [PATH\|-]` | Read one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt (no argument, terminal) / piped stdin (no argument, no terminal) — reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
 | `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
 | `jb remote ssh key rm SHA256:FINGERPRINT` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
 

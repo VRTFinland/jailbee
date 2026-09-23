@@ -5,7 +5,7 @@
 | `jailbee init` | First-time setup: create Incus profiles, ACLs, shared directories |
 | `jailbee apply [-y] [--no-restart]` | Re-apply current config (profiles, ACL, /etc/hosts, dockerd proxy); prompt to restart containers if profiles changed, and dockerd if the proxy config changed |
 | `jb remote ssh enable` / `disable` / `restart` / `status` / `serve` | Manage the optional per-user SSH service. `enable` installs, enables and starts it; `disable` stops and disables it without deleting keys; `restart` applies listener changes; `status` inspects service/config/key state; `serve` runs it in the foreground for diagnostics. |
-| `jb remote ssh key add PATH` / `ls` / `rm SHA256:FINGERPRINT` | Add one plain OpenSSH public key, list every key, or remove one by its full SHA256 fingerprint. All authorized keys have the same access. |
+| `jb remote ssh key add [PATH\|-]` / `ls` / `rm SHA256:FINGERPRINT` | Add one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt when no argument and no piped input is given — list every key, or remove one by its full SHA256 fingerprint. All authorized keys have the same access. |
 | `jailbee new <name> [<base>] [opts]` | Create container, clone repo, run autostart. `<name>` names the environment (used as the branch inside the container, slugified into the container name). `<base>` sets the container's base branch: it is branched off when `<name>` is new, and used purely as the comparison anchor when `<name>` already exists (that branch is cloned as-is for review, after a confirmation). Without `<base>` the base is the repo's default branch. `--current`, `--pr <N>`, `--mount`, `--background`, `--tmux`, `--shell`, `--attach shell|tmux|none`, `--no-clone`, `--no-autostart`, `--yes`, `--name <container>`, `--net strict|loose`, `--memory <size>`, `--cpu <n>`, `--credential-group <g>`, `--from-base <image>` (create from an image other than the golden one), `--wait`/`--no-wait` (override a `detach: true` autostart stage for this run — see below). See `jailbee new --help` for what each does |
 | `jailbee ls [--all] [-o json] [--fields …]` | List managed containers + their git status (own repo by default; `--all` for every repo). `LOCAL ±`/`L↑` — the diff vs the host's *currently checked-out* branch, as opposed to `AHEAD ±`'s pinned base — are off by default; opt in with `--fields` or the `ls:` config block (table output only; `-o json` always keeps its built-in field set unless `--fields` is passed). See [Configuration](config.md#ls--dashboard--remembered-columns) |
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
@@ -92,12 +92,17 @@ jb remote ssh status
 jb remote ssh serve
 
 jb remote ssh key add PATH
+jb remote ssh key add -
+jb remote ssh key add
 jb remote ssh key ls
 jb remote ssh key rm SHA256:FINGERPRINT
 ```
 
-`key add` reads exactly one plain OpenSSH public key from `PATH`, rejects
-options, certificates and duplicates, preserves its comment, and prints
+`key add` reads exactly one plain OpenSSH public key — from `PATH`, from
+stdin with `-` (e.g. `cat k.pub | jb remote ssh key add -`), or, with no
+argument, pasted at a prompt on a terminal (one line, no Ctrl-D needed) or
+read from piped stdin when there is no terminal. It rejects options,
+certificates and duplicates, preserves the key's comment, and prints
 `<fingerprint>  <algorithm>  <comment>`. `key ls` uses the same one-line
 format. `key rm` requires the complete fingerprint printed by `add` or `ls`.
 New connections reload the key file, so adding or removing a client key needs

@@ -683,10 +683,14 @@ The optional SSH service exposes JailBee rather than a host shell. It needs the
 `jailbee[ssh]` extra, an authorized public key, and explicit enablement:
 
 ```bash
-jb remote ssh key add ~/.ssh/id_ed25519.pub
+jb remote ssh key add
 jb remote ssh enable
 jb remote ssh status
 ```
+
+`key add` with no argument prompts and reads one pasted public-key line; a
+file path (`jb remote ssh key add ~/.ssh/id_ed25519.pub`) and piped stdin
+(`cat ~/.ssh/id_ed25519.pub | jb remote ssh key add -`) also work.
 
 Administration is `jb remote ssh enable|disable|restart|status|serve`; key
 management is `jb remote ssh key add|ls|rm`. `rm` takes the full SHA256

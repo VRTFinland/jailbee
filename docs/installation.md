@@ -188,10 +188,15 @@ enable the user service:
 
 ```bash
 uv tool install 'jailbee[ssh]'
-jb remote ssh key add ~/.ssh/id_ed25519.pub
+jb remote ssh key add
 jb remote ssh enable
 jb remote ssh status
 ```
+
+With no argument, `key add` prompts and reads one pasted public-key line (for
+example the contents of `~/.ssh/id_ed25519.pub`). A file path also works —
+`jb remote ssh key add ~/.ssh/id_ed25519.pub` — and so does piping one in:
+`cat ~/.ssh/id_ed25519.pub | jb remote ssh key add -`.
 
 `key add` prints the full SHA256 fingerprint, algorithm and comment. Use `jb
 remote ssh key ls` to copy that fingerprint later and `jb remote ssh key rm
