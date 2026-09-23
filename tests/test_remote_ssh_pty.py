@@ -244,6 +244,38 @@ def test_fork_child_executes_literal_argv_cwd_and_only_trusted_env(spec, boundar
     assert runner.os.environ["TERM"] == "old"
 
 
+def test_child_env_is_built_before_fork_not_in_the_child(spec, boundary, monkeypatch):
+    """Regression for final-review finding M1.
+
+    `pty.fork()` runs in a multi-threaded process (other sessions' waitpid
+    threads, the default executor). If the child then runs Python code
+    (`os.environ.copy()`, dict assignment) before `execve`, it can deadlock
+    on a lock another thread held at fork time. The child must do nothing
+    but chdir + execve + _exit; env must already exist by the time fork() is
+    called.
+    """
+    prepared = False
+
+    class RecordingEnviron(dict):
+        def copy(self):
+            nonlocal prepared
+            prepared = True
+            return dict(self)
+
+    monkeypatch.setattr(runner.os, "environ", RecordingEnviron({"PATH": "/bin"}))
+
+    def fork():
+        assert prepared, "env must be built before pty.fork(), not in the forked child"
+        return (4321, 90)
+
+    boundary.fork.side_effect = fork
+
+    asyncio.run(run_child(SSHProcess("xterm"), spec))
+
+    boundary.fork.assert_called_once_with()
+    runner.os.waitpid.assert_called_once_with(4321, 0)
+
+
 def test_redirect_failure_hangs_up_reaps_and_closes_every_fd(spec, boundary):
     process = SSHProcess("xterm")
     process.redirect.side_effect = RuntimeError("redirect failed")

@@ -342,12 +342,18 @@ def _waitpid(pid: int) -> int:
 async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     term = validated_term(process.term_type)
     size = _window_size(process.term_size)
+    # Build the child's env before forking: pty.fork() runs in a process that
+    # other sessions keep multi-threaded (asyncio.to_thread waiters, the
+    # default executor), and any Python code the child ran between fork and
+    # execve — even os.environ.copy() — could deadlock on a lock another
+    # thread held at fork time. The child must do nothing but
+    # chdir + execve + _exit.
+    env = os.environ.copy()
+    env["TERM"] = term
     pid, master = pty.fork()
     if pid == 0:
         try:
             os.chdir(spec.cwd)
-            env = os.environ.copy()
-            env["TERM"] = term
             os.execvpe(spec.argv[0], spec.argv, env)
         finally:
             # Never unwind into the inherited server loop in a forked child.
