@@ -639,6 +639,45 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
     assert not any(reason in line for line in base_build_block)
 
 
+def test_upgrade_note_for_the_issue_management_skill_advises_apply() -> None:
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [
+        n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "issue-management" in n.reason
+    ]
+    assert len(notes) == 1
+    assert notes[0].actions == frozenset({"apply"})
+
+
+def test_the_150_apply_notes_all_render_at_the_default_reason_cap() -> None:
+    """1.5.0 carries exactly three `apply` reasons (path env vars, codex egress,
+    the issue-management skill) — precisely `MAX_REASONS`. Render through
+    `pending`/`format_advice` at the *default* cap (no `max_reasons` override)
+    to prove the new reason isn't the one collapsed into "... and N more": a
+    note that exists but never renders is invisible to users."""
+    from jailbee.upgrade import UPGRADE_NOTES, Watermark, format_advice, pending
+
+    notes_150_apply = [
+        n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and n.actions == frozenset({"apply"})
+    ]
+    assert len(notes_150_apply) == 3
+
+    owed = pending(
+        "1.5.0",
+        {
+            "base_build": Watermark((1, 4, 0), observed=True),
+            "apply": Watermark((1, 4, 0), observed=True),
+        },
+    )
+    lines = format_advice(owed)
+    assert not any("more" in line for line in lines)
+    reason = (
+        "the `jailbee-issue-management` skill is new and `jailbee apply` syncs it "
+        "into the shared skills mount"
+    )
+    assert any(reason in line for line in lines)
+
+
 def test_the_apparmor_note_advises_base_build_only() -> None:
     """Chrome dies in every container built before the golden image gained
     the apparmor package, and only a rebuilt image fixes it — the profiles

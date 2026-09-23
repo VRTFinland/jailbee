@@ -572,10 +572,15 @@ class GithubConfig(BaseModel):
         default_factory=dict,
         description=(
             "Map from `container_prefix` to a fine-grained GitHub PAT, one entry per GitHub "
-            "resource owner (org or personal account). Each value is a secret — masked in "
-            "`repr(cfg)` / config dumps — and having any entry here requires "
-            "`~/.config/jailbee/global.yaml` to be mode 0600; `load_config_from_text` "
-            "hard-fails otherwise."
+            "resource owner (org or personal account). This token is injected into "
+            "containers and must grant only Contents: Read, Issues: Read, Pull requests: "
+            "Read, and Metadata: Read — every GitHub write (issue create/edit/comment/"
+            "label/close/reopen, PR review/comment/description) goes through the host-side "
+            "outbox commands (`jailbee issue apply`, `jailbee review apply`) instead, "
+            "authenticated by the host's own `gh`, never this token. Each value is a "
+            "secret — masked in `repr(cfg)` / config dumps — and having any entry here "
+            "requires `~/.config/jailbee/global.yaml` to be mode 0600; "
+            "`load_config_from_text` hard-fails otherwise."
         ),
     )
 

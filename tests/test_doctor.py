@@ -749,6 +749,33 @@ def test_check_github_fine_grained_token_ok(tmp_path, monkeypatch):
     assert names["github token non-empty"].ok is True
     assert names["github token shape"].ok is True
     assert names["github token shape"].detail == "fine-grained PAT"
+    permissions = names["github token permissions"]
+    assert permissions.ok is True
+    assert "read-only" in permissions.detail
+    assert "cannot verify" in permissions.detail
+    assert "github_pat_xxx" not in permissions.detail
+
+
+def test_check_github_permissions_info_shown_for_any_nonempty_token(tmp_path, monkeypatch):
+    from jailbee.doctor import _check_github
+    from tests.conftest import make_cfg
+
+    _set_global_yaml_perms(monkeypatch, tmp_path, 0o600)
+    cfg = make_cfg(
+        tmp_path,
+        container_prefix="sampleapp",
+        github={
+            "enabled": True,
+            "api_tokens": {"sampleapp": "ghp_classic_token_value"},
+        },
+    )
+    results = _check_github(cfg)
+    names = {r.name: r for r in results}
+    permissions = names["github token permissions"]
+    assert permissions.ok is True
+    assert "read-only" in permissions.detail
+    assert "cannot verify" in permissions.detail
+    assert "ghp_classic_token_value" not in permissions.detail
 
 
 def test_check_github_classic_pat_warns(tmp_path, monkeypatch):

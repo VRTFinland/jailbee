@@ -1700,9 +1700,11 @@ def _check_github(cfg: Config) -> list[CheckResult]:
 
     Empty list when github.enabled=false. One info-level CheckResult
     when enabled but this repo's container_prefix has no token entry
-    (legitimate "this repo doesn't use gh" state). Three checks when a
-    token is in scope: global.yaml perms, non-empty value, PAT shape
-    heuristic.
+    (legitimate "this repo doesn't use gh" state). Four checks when a
+    non-empty token is in scope: global.yaml perms, non-empty value, PAT
+    shape heuristic, and an informational reminder that the token should be
+    read-only — jailbee never probes GitHub to verify effective fine-grained
+    PAT permissions, so this is guidance, not verification.
 
     The token contents are never written into any returned
     CheckResult.detail string.
@@ -1811,5 +1813,19 @@ def _check_github(cfg: Config) -> list[CheckResult]:
                 ),
             )
         )
+
+    results.append(
+        CheckResult(
+            name="github token permissions",
+            ok=True,
+            detail=(
+                "this token should be scoped read-only (Contents, Issues, "
+                "Pull requests, Metadata: Read) — jailbee cannot verify "
+                "effective fine-grained PAT permissions, so a token that also "
+                "grants write access silently bypasses the host-side outbox "
+                "review gate that `jb issue apply` / `jb review apply` provide"
+            ),
+        )
+    )
 
     return results

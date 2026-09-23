@@ -2130,9 +2130,17 @@ must be mode `0600`. `jailbee config validate` / `load_config` fail loudly
 otherwise; run `chmod 600 ~/.config/jailbee/global.yaml` after editing.
 
 **Token shape:** prefer fine-grained PATs (`github_pat_*`) scoped to
-"Only select repositories" with Contents:Read, Issues:RW, Pull
-requests:RW, Metadata:Read. Classic PATs (`ghp_*`) get a doctor
-warning because they cannot be scoped per-repo.
+"Only select repositories" with **Contents: Read, Issues: Read,
+Pull requests: Read, Metadata: Read — read-only.** Classic PATs (`ghp_*`) get
+a doctor warning because they cannot be scoped per-repo. Every GitHub write
+(issue create/edit/comment/label/close/reopen; PR review/comment/description)
+goes through the host's own `gh`, applying a manifest an in-container agent
+staged into `~/.jailbee/issue-outbox` or `~/.jailbee/pr-outbox` — see
+[`jailbee issue`](git-bridge.md#github-cli-gh-inside-containers) and the
+`jailbee-issue-management` / `jailbee-pr-review` skills. This token
+authenticates the container's own `gh`, which never writes; jailbee cannot
+verify a fine-grained PAT's *effective* permissions, so a token scoped wider
+than this silently bypasses that review gate.
 
 Field defaults:
 

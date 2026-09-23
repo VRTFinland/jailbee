@@ -51,7 +51,23 @@ for signatures for as long as the container runs, even though it can never
 take the key. The shared state layer, which is *shared*: `<shared_dir>/claude`
 holds Claude's own credentials and the shared `~/.ssh` holds whatever you put
 there, and damage to either is not contained to one container. In `loose`
-mode, the network — including a push to `origin`.
+mode, the network — including a push to `origin`. With `github.enabled`, the
+container's own `GH_TOKEN` — see the limitation below.
+
+**GitHub token scope is a documentation contract, not an enforced one.**
+The recommended fine-grained PAT (`github.api_tokens`, injected as
+`GH_TOKEN`) is read-only by design — Contents, Issues, Pull requests, and
+Metadata all set to Read — so that every GitHub write an in-container agent
+proposes must go through the host-side outbox (`jailbee issue apply` /
+`jailbee review apply`), reviewed and applied with the host's *own*,
+independently authenticated `gh`. **jailbee cannot verify a fine-grained
+PAT's effective permissions** — `jailbee doctor` reminds you of the intended
+scope but never probes GitHub to check it. A PAT you (or an org policy)
+scope wider than read-only lets an agent (or anything running as it) write
+to GitHub directly with the container's own `gh`, bypassing the outbox
+review gate entirely — the same trust boundary the read-only recommendation
+in [`config.md`](config.md#github) and [`git-bridge.md`](git-bridge.md#github-cli-gh-inside-containers)
+exists to hold.
 
 **Out of reach.** Your host's filesystem and dotfiles. Other repos'
 containers and their shared dirs. `optional_mounts` you haven't attached with

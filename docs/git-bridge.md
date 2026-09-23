@@ -886,7 +886,8 @@ duplicate PR for it.
 
 The `gh` binary is baked into every container's golden image. To make
 it authenticate (for AI agents like Claude that call `gh pr view`,
-`gh issue create`, etc.), opt in via `~/.config/jailbee/global.yaml`:
+`gh issue view`, etc. — **read-only** calls; see below), opt in via
+`~/.config/jailbee/global.yaml`:
 
 ```yaml
 github:
@@ -912,19 +913,31 @@ a user working across multiple orgs maintains one entry per owner.
    agents will touch from this container.
 3. Repository access: **Only select repositories** → pick your work
    repos for that owner.
-4. Repository permissions:
+4. Repository permissions — **read-only, all four**:
    - Contents: Read
-   - Issues: Read and write
-   - Pull requests: Read and write
+   - Issues: Read
+   - Pull requests: Read
    - Metadata: Read
 5. Copy the token (`github_pat_...`), paste into `api_tokens`.
 
 After editing, run `chmod 600 ~/.config/jailbee/global.yaml`. `jailbee doctor`
 warns if perms are loose, if the token is empty, or if it's a classic
-PAT (`ghp_*`) — those can't be scoped to specific repos.
+PAT (`ghp_*`) — those can't be scoped to specific repos, and reports this
+token's expected read-only scope as an informational reminder (it cannot
+verify a fine-grained PAT's *effective* permissions).
 
-PR merge, PR close, and existing-issue editing are *intentionally*
-left out of the recommended scope: keep agent write access narrow.
+**Two identities, on purpose.** This token authenticates only the
+*container's* `gh` — used to read issues, PRs, labels, and diffs. It never
+writes to GitHub, because there is no write scope to grant it: every issue
+or PR mutation an in-container agent wants to make is instead written as a
+JSON manifest into a fixed outbox (`~/.jailbee/issue-outbox` or
+`~/.jailbee/pr-outbox`), and a human reviews and publishes it from the
+*host*, with `jailbee issue apply` / `jailbee review apply` — those run the
+host's own, independently authenticated `gh`, not this container token. A
+token scoped wider than read-only would let an agent (or anything running as
+it) write to GitHub directly, bypassing that review step entirely — see the
+`jailbee-issue-management` and `jailbee-pr-review` skills for the workflow
+this token's read-only scope is built around.
 
 The `github` block must live in `~/.config/jailbee/global.yaml`, never a
 repo's `.jailbee/config.yaml` — `jailbee` rejects it at the repo layer so tokens

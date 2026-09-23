@@ -199,6 +199,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "nothing to re-apply unless you enable that agent"
         ),
     ),
+    UpgradeNote(
+        version=(1, 5, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the `jailbee-issue-management` skill is new and `jailbee apply` syncs it "
+            "into the shared skills mount"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

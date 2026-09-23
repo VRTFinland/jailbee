@@ -85,6 +85,38 @@ def test_pr_review_skill_forbids_writing_from_the_container() -> None:
     assert "~/.jailbee/pr-outbox" in text
 
 
+def test_bundled_skills_include_issue_management() -> None:
+    assert "jailbee-issue-management" in claude_skills.bundled_skill_names()
+
+
+def test_issue_management_skill_routes_writes_through_host() -> None:
+    text = (Path(claude_skills._skills_root()) / "jailbee-issue-management" / "SKILL.md").read_text()
+    assert "gh issue create" in text
+    assert "Never" in text
+    assert "~/.jailbee/issue-outbox" in text
+    assert "jb issue apply" in text
+
+
+def _github_permission_recipes() -> list[tuple[Path, str]]:
+    """Every doc/skill file that spells out a GitHub PAT permission recipe."""
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        root / "docs" / "config.md",
+        root / "docs" / "git-bridge.md",
+        root / "docs" / "skills" / "jailbee-repo-setup" / "references" / "config-schema.md",
+    ]
+    return [(path, path.read_text()) for path in paths]
+
+
+def test_github_permission_recipes_are_read_only() -> None:
+    for path, text in _github_permission_recipes():
+        assert "Issues: Read" in text, path
+        assert "Pull requests: Read" in text, path
+        assert "Read and write" not in text, path
+        assert "Issues:RW" not in text, path
+        assert "Pull requests:RW" not in text, path
+
+
 def test_sync_leaves_unrelated_skills_untouched(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(claude_skills, "_skills_root", lambda: _fake_skills_root(tmp_path))
     shared = tmp_path / "shared"

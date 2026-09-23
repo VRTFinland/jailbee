@@ -733,6 +733,16 @@ GitHub CLI (`gh`) integration inside containers.
 
 Even with a token, GitHub network calls from inside a container still need **loose** mode (the strict allowlist deliberately omits `github.com`). See the strict gate in the jailbee-usage skill.
 
+**This token must be scoped read-only:** Contents: Read, Issues: Read,
+Pull requests: Read, Metadata: Read — no write permission at all. The container's
+`gh` only ever reads; every issue or PR write an in-container agent proposes
+is staged as a manifest (`~/.jailbee/issue-outbox`, `~/.jailbee/pr-outbox`)
+for a human to apply from the host with `jailbee issue apply` / `jailbee
+review apply`, using the host's own `gh`. jailbee cannot verify a
+fine-grained PAT's effective permissions, so a token scoped wider than
+read-only silently bypasses that review step. See the
+`jailbee-issue-management` and `jailbee-pr-review` skills.
+
 ## `terminal`
 
 Terminal-emulator integrations. Currently only kitty.
