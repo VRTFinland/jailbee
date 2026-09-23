@@ -2294,6 +2294,11 @@ are fixed until `jb remote ssh restart`. Entry-point and command policy are
 loaded for each new SSH session; an already-running dashboard or console keeps
 the policy it started with.
 
+`jb remote ssh serve` accepts command-line flags that override any of the
+above for that one foreground run, for trying out a different policy without
+editing this file — see [`serve`](commands.md#remote-ssh-service). Persistent
+settings still belong here; the systemd service never passes those flags.
+
 ### `credentials`
 
 Lets several repos on this host share one login per agent. Host-level

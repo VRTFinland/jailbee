@@ -118,6 +118,28 @@ diagnostics. On startup it prints the listening address, the host key's
 SHA256 fingerprint and a matching connect example. `disable` preserves global
 configuration, client keys and the server host key.
 
+`serve` also accepts one-off overrides of `remote.ssh` for experimentation,
+without touching `global.yaml`:
+
+```bash
+jb remote ssh serve [--listen ADDR] [--port N] \
+                     [--dashboard/--no-dashboard] [--shell/--no-shell] [--exec/--no-exec] \
+                     [--commands disabled|allowlist|full] [--allow CMD]...
+```
+
+Every flag defaults to unset, in which case `global.yaml` decides as usual;
+only a flag actually given overrides its field, for this run alone. The
+merged result is validated by the same rules as `global.yaml` (for example
+`--shell` still requires an enabled `commands.mode`), so an invalid
+combination is reported the same way a broken config file is. `--allow` is
+repeatable, and given at least once, REPLACES the configured
+`commands.allow` list rather than appending to it. The systemd service's
+`ExecStart` never passes any of these flags. For example:
+
+```bash
+jb remote ssh serve --port 18022 --shell --commands allowlist --allow ls --allow new
+```
+
 The SSH username is always `jailbee`. With the default listener port, the
 accepted client forms are:
 

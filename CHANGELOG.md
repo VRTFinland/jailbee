@@ -58,7 +58,10 @@ before editing `## Unreleased`.
   command execution require an exact-leaf allowlist or the explicit
   high-trust `full` policy. Password login, host shells, file transfer,
   forwarding are not exposed, and client environment requests (`SendEnv`)
-  are accepted but ignored — never passed to the child.
+  are accepted but ignored — never passed to the child. `jb remote ssh
+  serve` also takes one-off `--listen`/`--port`/`--dashboard`/`--shell`/
+  `--exec`/`--commands`/`--allow` overrides for trying a policy without
+  editing `global.yaml`; the systemd service never passes them.
 
 ### Changed
 

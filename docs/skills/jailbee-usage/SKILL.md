@@ -697,6 +697,13 @@ management is `jb remote ssh key add|ls|rm`. `rm` takes the full SHA256
 fingerprint printed by `add` or `ls`. Key edits apply to new connections
 without a restart. `disable` preserves keys and config; `restart` is needed
 after changing `listen` or `port`; `serve` is the foreground diagnostic path.
+`serve` also takes one-off `--listen`/`--port`/`--dashboard`(`/--no-dashboard`)
+/`--shell`(`/--no-shell`)/`--exec`(`/--no-exec`)/`--commands`/`--allow`
+overrides of `remote.ssh`, for trying a policy without editing `global.yaml`
+(never written there, and the systemd unit never passes them); `--allow`,
+given at least once, replaces the configured `commands.allow` list rather
+than appending to it, e.g. `jb remote ssh serve --port 18022 --shell
+--commands allowlist --allow ls --allow new`.
 
 Client forms at the default loopback endpoint:
 
