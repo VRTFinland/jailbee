@@ -479,6 +479,7 @@ def _action_lines(
     issue: ResolvedIssue,
     receipt: JournalAction | None,
     labels: tuple[str, ...] | None,
+    container: str,
 ) -> list[str]:
     kind = (
         "create"
@@ -499,6 +500,11 @@ def _action_lines(
         lines.append(f"  receipt: {receipt.url}")
     if receipt and receipt.detail:
         lines.append(f"  detail: {receipt.detail}")
+    if status == "uncertain":
+        lines.append(
+            f"  resolve: jailbee issue resolve {container} {name} {index} "
+            "--applied --url <url> [--issue <n>] | --retry"
+        )
     if not isinstance(action, CreateAction) and issue.ref is not None:
         lines.append(f"  depends on create ref {issue.ref}")
     if isinstance(action, CreateAction):
@@ -556,12 +562,13 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
                     resolved.issue,
                     receipts.get(resolved.index),
                     resolved.labels,
+                    batch.container,
                 )
             )
     return lines
 
 
-def show_lines(manifest: IssueManifest, journal: IssueJournal | None) -> list[str]:
+def show_lines(manifest: IssueManifest, journal: IssueJournal | None, container: str) -> list[str]:
     """Show proposal text and host progress without needing GitHub reads."""
     lines = [f"Manifest: {manifest.name}"]
     receipts = {r.index: r for r in journal.actions} if journal else {}
@@ -581,7 +588,7 @@ def show_lines(manifest: IssueManifest, journal: IssueJournal | None) -> list[st
             issue = ResolvedIssue(action.target.number)
         else:
             issue = refs[action.target.ref]
-        lines.extend(_action_lines(manifest.name, index, action, issue, receipt, None))
+        lines.extend(_action_lines(manifest.name, index, action, issue, receipt, None, container))
     return lines
 
 

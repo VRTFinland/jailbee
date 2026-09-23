@@ -647,11 +647,16 @@ def test_plan_and_show_render_receipts_and_uncertainty(preflight, state, display
     before = {p: p.read_bytes() for p in preflight["store"].root.rglob("*") if p.is_file()}
     batch = preflight["prepare"]({"a.json": actions})
     prepared = batch.manifests[0]
-    for lines in (plan_lines(batch), show_lines(prepared.manifest, prepared.journal)):
+    for lines in (
+        plan_lines(batch),
+        show_lines(prepared.manifest, prepared.journal, batch.container),
+    ):
         assert any(display in line for line in lines)
         assert "    Full [body]" in lines
         if state == "applied":
             assert any("https://github.com/acme/app/issues/42" in line for line in lines)
+        if display == "uncertain":
+            assert any("jailbee issue resolve test-box a.json 0" in line for line in lines), lines
     assert {p: p.read_bytes() for p in preflight["store"].root.rglob("*") if p.is_file()} == before
 
 

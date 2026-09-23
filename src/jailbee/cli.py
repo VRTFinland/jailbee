@@ -11340,7 +11340,7 @@ def issue_show_cmd(
             failed = True
             continue
         console.print()
-        for line in issue_outbox.show_lines(parsed, journal):
+        for line in issue_outbox.show_lines(parsed, journal, short):
             console.print(line, markup=False, highlight=False, soft_wrap=True)
     if failed:
         raise typer.Exit(1)
@@ -11463,6 +11463,11 @@ def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -
     else:
         attempted.add((failure.manifest, failure.index))
         error_plain(f"{failure.manifest} action {failure.index}: {label} — {failure.detail}")
+        if failure.uncertain:
+            info_plain(
+                f"  resolve: jailbee issue resolve {batch.container} {failure.manifest} "
+                f"{failure.index} --applied --url <url> [--issue <n>] | --retry"
+            )
 
     for prepared in batch.manifests:
         for resolved in prepared.actions:
@@ -11713,7 +11718,7 @@ def issue_resolve_cmd(
         raise typer.Exit(1) from e
 
     console.print()
-    for line in issue_outbox.show_lines(parsed, journal):
+    for line in issue_outbox.show_lines(parsed, journal, short):
         console.print(line, markup=False, highlight=False, soft_wrap=True)
 
     resolution: issue_outbox.Resolution

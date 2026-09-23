@@ -404,6 +404,62 @@ def test_apply_partial_failure_prints_applied_failed_and_pending(mocker, tmp_pat
     assert "001.json action 2: pending" in result.output
 
 
+def test_apply_uncertain_failure_points_at_resolve_command(mocker, tmp_path):
+    from jailbee.issue_outbox import (
+        ApplyFailure,
+        ApplyReport,
+        PreparedManifest,
+        RepoTarget,
+        ResolvedAction,
+        ResolvedIssue,
+    )
+
+    manifest = IssueManifest(
+        name="001.json",
+        version=1,
+        actions=(_comment_action(), _comment_action()),
+        body_files=frozenset(),
+    )
+    repo = RepoTarget(".", tmp_path, "acme/widgets")
+    actions = (
+        ResolvedAction(0, manifest.actions[0], repo, ResolvedIssue(42), "pending"),
+        ResolvedAction(1, manifest.actions[1], repo, ResolvedIssue(42), "pending"),
+    )
+    prepared = PreparedManifest(manifest, digest=_DIGEST, journal=None, actions=actions)
+    batch = PreparedBatch(
+        container="acme-feat-foo",
+        host_repo_root=tmp_path,
+        identity=_IDENTITY,
+        login="octocat",
+        outbox=OutboxSnapshot(files={"001.json": _manifest_text()}),
+        manifests=(prepared,),
+        initial_issues={},
+    )
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch("jailbee.issue_outbox.prepare_batch", return_value=batch)
+    mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
+    mocker.patch("jailbee.issue_outbox.revalidate_batch")
+    mocker.patch(
+        "jailbee.issue_outbox.apply_batch",
+        return_value=ApplyReport(
+            applied=(),
+            skipped=(),
+            cleaned=(),
+            failure=ApplyFailure(
+                manifest="001.json",
+                index=1,
+                uncertain=True,
+                detail="GitHub mutation outcome is uncertain",
+            ),
+        ),
+    )
+
+    result = runner.invoke(app, ["issue", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 1
+    assert "jailbee issue resolve acme-feat-foo 001.json 1" in result.output
+
+
 # ---- ls ---------------------------------------------------------------------
 
 
