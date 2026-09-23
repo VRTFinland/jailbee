@@ -384,9 +384,9 @@ is not True` counts as at risk — unknown is not safe), unapplied PR
 actions still sitting in the container's outbox (see [PR review
 outbox](#pr-review-outbox) — the outbox lives in the container's own
 filesystem, so a destroy takes any unpublished review with it), or unapplied
-issue actions sitting in its issue outbox (see [Issue
-management](../../../git-bridge.md#issue-management) — listed right after
-the PR reason). Nothing here fires for work already pulled to the host
+issue actions sitting in its issue outbox (see [Issue management
+outbox](#issue-management-outbox) — listed right after the PR reason).
+Nothing here fires for work already pulled to the host
 (`jailbee git pull`), pushed to a remote (`jailbee git push`, `jailbee pr`,
 a plain push from inside), or already published (`jailbee review
 apply`/`jailbee issue apply`). Three outcomes:

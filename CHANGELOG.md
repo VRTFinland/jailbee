@@ -86,10 +86,7 @@ before editing `## Unreleased`.
   Pending manifests are also visible everywhere the PR outbox's `✉N` marker
   already showed: a new ISSUES column in `jailbee ls`, an "Apply N issue
   action(s)" entry in both dashboards, and a reason line in the pre-destroy
-  risk warning. `jb issue apply`/`ls` pre-filter container selection on that
-  same probe count — a container the probe reports as empty is skipped
-  without opening its outbox — mirroring how the PR review path already
-  pre-filters on `pending_pr_actions`.
+  risk warning.
 
   The GitHub PAT recipe for containers (`docs/config.md`, `docs/git-bridge.md`,
   the `jailbee-repo-setup` skill) is corrected to read-only across
