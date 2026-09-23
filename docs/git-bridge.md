@@ -979,11 +979,15 @@ submodule's path relative to the superproject root (e.g. `"packages/lib"`),
 manifest, at the top level), one issue manifest may freely mix `.` and any
 number of declared submodules, action by action. The host alone resolves
 each path to an actual GitHub repository, from git remotes it already
-trusts — the superproject's own remote for `.`, and for a submodule, the
-path declared in `.gitmodules` together with that submodule's own `origin`
-(or, when the host has never cloned it, the URL `.gitmodules` declares for
-it). A `repo` value the host doesn't recognize as `.` or a declared
-submodule is refused outright, naming the paths it does recognize.
+trusts — the superproject's own configured upstream remote for `.`, and for
+a submodule, the path declared in `.gitmodules` together with that
+submodule's own upstream remote when it is checked out on the host —
+detected by a five-step fallback (the sole remote, then `origin`, then
+`remote.pushDefault`, then the current branch's tracked remote, then a
+uniquely-identifiable `refs/remotes/<r>/HEAD`), or, when the host has never
+cloned it, the URL `.gitmodules` declares for it. A `repo` value the host
+doesn't recognize as `.` or a declared submodule is refused outright, naming
+the paths it does recognize.
 
 ### `jailbee issue ls / show / apply / drop / resolve`
 

@@ -1320,12 +1320,17 @@ def test_reconcile_rejects_stale_or_non_uncertain_targets(execution, change):
     elif change == "name":
         kwargs["manifest"] = replace(batch.manifests[0].manifest, name="other.json")
     elif change == "count":
-        kwargs["manifest"] = replace(batch.manifests[0].manifest, actions=())
+        # A different non-zero count: index 0 must stay in bounds so this
+        # exercises the action-count mismatch check, not the bounds guard.
+        kwargs["manifest"] = replace(
+            batch.manifests[0].manifest, actions=batch.manifests[0].manifest.actions[:1]
+        )
     elif change == "repo":
         kwargs["repo"] = replace(batch.manifests[0].actions[0].repo, slug="wrong/repo")
     elif change in ("index", "pending"):
         kwargs["index"] = 99 if change == "index" else 1
-    with pytest.raises(JournalError):
+    match = "action count" if change == "count" else None
+    with pytest.raises(JournalError, match=match):
         _reconcile(execution, batch, issue_outbox.RetryResolution(), **kwargs)
     assert execution["store"].load(key) == before
 

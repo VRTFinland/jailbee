@@ -282,9 +282,9 @@ repo's `create`.
 Notes on this example:
 
 - `repo: "packages/lib"` must be a submodule path the host already knows
-  about (declared in `.gitmodules` and visible in `git submodule status`)
-  — an arbitrary path, or an attempt to write `owner/repo` directly, is
-  refused.
+  about (declared in `.gitmodules` and visible in `git submodule status
+  --recursive`) — an arbitrary path, or an attempt to write `owner/repo`
+  directly, is refused.
 - `lib-parse-crash` is scoped to its own `create` action's `repo`
   (`packages/lib`); the earlier `state`/`comment` pair on `#203` uses `repo:
   "."` and plain `issue` numbers, because that issue already exists in the

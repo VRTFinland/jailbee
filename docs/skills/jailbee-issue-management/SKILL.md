@@ -60,14 +60,17 @@ Every action names a `repo` field: `"."` for the superproject, or a
 submodule's path relative to the superproject root (e.g. `"packages/lib"`),
 exactly as it appears in the repository layout — **never** `owner/repo`.
 The host resolves the actual GitHub repository itself, from git remotes it
-already trusts: the superproject's own remote for `.`, and for a submodule,
-the path declared in `.gitmodules` together with that submodule's own
-`origin` remote (or, if it isn't checked out on the host, the URL
-`.gitmodules` declares for it). A manifest can only target `.` or a path
-the host recognizes there, never an arbitrary GitHub repository. If you are
-unsure whether a path is a submodule the host will accept, check `git
-submodule status` from the superproject root — a path that isn't listed
-there is not a valid `repo` value.
+already trusts: the superproject's own configured upstream remote for `.`,
+and for a submodule, the path declared in `.gitmodules` together with that
+submodule's own upstream remote when it is checked out on the host — detected
+by a five-step fallback (the sole remote, then `origin`, then
+`remote.pushDefault`, then the current branch's tracked remote, then a
+uniquely-identifiable `refs/remotes/<r>/HEAD`), or, if it isn't checked out
+on the host, the URL `.gitmodules` declares for it. A manifest can only
+target `.` or a path the host recognizes there, never an arbitrary GitHub
+repository. If you are unsure whether a path is a submodule the host will
+accept, check `git submodule status --recursive` from the superproject
+root — a path that isn't listed there is not a valid `repo` value.
 
 ## Writing a manifest
 

@@ -478,16 +478,20 @@ def test_ls_renders_one_row_per_manifest_as_json(mocker, tmp_path):
 
 
 def test_ls_never_touches_github(mocker, tmp_path):
-    """`ls` must render from the outbox/journal alone -- no `gh` adapter call."""
+    """`ls` must render from the outbox/journal alone -- no `gh` adapter call.
+
+    Patches `_run_api`, the module's sole subprocess boundary, so this holds
+    for every present and future adapter function, not just `get_issue`.
+    """
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    get_issue = mocker.patch("jailbee.issue_github.get_issue")
+    run_api = mocker.patch("jailbee.issue_github._run_api")
 
     result = runner.invoke(app, ["issue", "ls"])
 
     assert result.exit_code == 0, result.output
-    get_issue.assert_not_called()
+    run_api.assert_not_called()
 
 
 def test_ls_notes_a_stopped_container_instead_of_reading_it(mocker, tmp_path):
@@ -549,15 +553,17 @@ def test_show_prints_the_manifest_body(mocker, tmp_path):
 
 
 def test_show_never_touches_github(mocker, tmp_path):
+    """Patches `_run_api`, the module's sole subprocess boundary -- see `ls`'s
+    equivalent test for why."""
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
     mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
-    get_issue = mocker.patch("jailbee.issue_github.get_issue")
+    run_api = mocker.patch("jailbee.issue_github._run_api")
 
     result = runner.invoke(app, ["issue", "show", "feat-foo"])
 
     assert result.exit_code == 0, result.output
-    get_issue.assert_not_called()
+    run_api.assert_not_called()
 
 
 def test_show_can_select_one_manifest(mocker, tmp_path):
@@ -605,6 +611,20 @@ def test_drop_removes_never_started_files_by_default(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     drop.assert_called_once()
     assert drop.call_args.kwargs["archive_journal"] is False
+
+
+def test_drop_never_touches_github(mocker, tmp_path):
+    """Patches `_run_api`, the module's sole subprocess boundary -- see `ls`'s
+    equivalent test for why."""
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
+    mocker.patch("jailbee.issue_outbox.drop_manifest", return_value=("001.json",))
+    run_api = mocker.patch("jailbee.issue_github._run_api")
+
+    result = runner.invoke(app, ["issue", "drop", "feat-foo", "-y"])
+
+    assert result.exit_code == 0, result.output
+    run_api.assert_not_called()
 
 
 def test_drop_refuses_recorded_progress_without_archive_journal(mocker, tmp_path):
@@ -715,6 +735,7 @@ def test_resolve_requires_exactly_one_of_applied_or_retry(mocker, tmp_path):
 
 def test_resolve_rejects_both_applied_and_retry(mocker, tmp_path):
     _setup_resolve(mocker, tmp_path)
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
     result = runner.invoke(
         app,
@@ -722,6 +743,7 @@ def test_resolve_rejects_both_applied_and_retry(mocker, tmp_path):
     )
 
     assert result.exit_code == 2
+    reconcile.assert_not_called()
 
 
 def test_resolve_validates_create_only_issue_option(mocker, tmp_path):

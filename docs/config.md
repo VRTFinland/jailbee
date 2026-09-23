@@ -2136,7 +2136,7 @@ a doctor warning because they cannot be scoped per-repo. Every GitHub write
 (issue create/edit/comment/label/close/reopen; PR review/comment/description)
 goes through the host's own `gh`, applying a manifest an in-container agent
 staged into `~/.jailbee/issue-outbox` or `~/.jailbee/pr-outbox` — see
-[`jailbee issue`](git-bridge.md#github-cli-gh-inside-containers) and the
+[`jailbee issue`](git-bridge.md#issue-management) and the
 `jailbee-issue-management` / `jailbee-pr-review` skills. This token
 authenticates the container's own `gh`, which never writes; jailbee cannot
 verify a fine-grained PAT's *effective* permissions, so a token scoped wider
