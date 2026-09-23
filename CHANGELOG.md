@@ -17,7 +17,8 @@ before editing `## Unreleased`.
   commands. It defaults to dashboard-only on `127.0.0.1:8022`; console and
   command execution require an exact-leaf allowlist or the explicit
   high-trust `full` policy. Password login, host shells, file transfer,
-  forwarding and client environment requests are not exposed.
+  forwarding are not exposed, and client environment requests (`SendEnv`)
+  are accepted but ignored — never passed to the child.
 
 - `jb submodule pr` now consumes matching PR descriptions from the container's
   review outbox, and `jb review apply` can publish comments staged for a

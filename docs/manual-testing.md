@@ -320,17 +320,30 @@ nc -v 127.0.0.1 18022
 ```
 
 Expect `-R` to fail, and the `-L` client's attempted channel to be rejected;
-stop the waiting `-L` client with Ctrl-C. Finally, force a client environment
-request:
+stop the waiting `-L` client with Ctrl-C. Finally, confirm a client
+environment request no longer blocks the session — this is what stock
+OpenSSH clients send by default (Ubuntu/Debian/Fedora/macOS all `SendEnv
+LANG LC_*` out of the box), so this is the step that must work unmodified:
 
 ```bash
 JAILBEE_SMOKE=blocked ssh -o SendEnv=JAILBEE_SMOKE \
   "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" ls
+  --repo "$JB_SSH_PREFIX" ls &
+child_ssh=$!
+pid=$(pgrep -f "python3? -m jailbee --repo $JB_SSH_PREFIX ls" | head -1)
+if [ -n "$pid" ]; then
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -q '^JAILBEE_SMOKE=' \
+    && echo "FAIL: JAILBEE_SMOKE leaked into the child" \
+    || echo "OK: JAILBEE_SMOKE is absent from the child"
+fi
+wait "$child_ssh"
+echo "exit: $?"
 ```
 
-Expect `SSH environment requests are not supported`, status 2, and no child
-command. Check the journal for bounded rejected-session audit rows.
+Expect the repo's normal `jb ls` output, exit status 0 (the same as the
+plain one-shot command run earlier), `OK: JAILBEE_SMOKE is absent from the
+child`, and no `SSH environment requests are not supported` message. Check
+the journal for the session's allowed audit row.
 
 After the smoke run, destroy the disposable container if it was created,
 remove the client key, and disable the service. The host key deliberately

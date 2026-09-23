@@ -67,7 +67,9 @@ The SSH protocol surface is also fail-closed:
   keyboard-interactive, host-based and GSS authentication are disabled;
 - SFTP, SCP, agent forwarding, X11 forwarding, TCP and Unix-socket forwarding,
   and remote listeners are disabled;
-- client environment requests, including `SendEnv`, are rejected;
+- client environment requests, including `SendEnv`, are accepted by the
+  protocol but ignored: the client's environment never reaches the child
+  process, which is built from the service's own environment;
 - the interactive `shell` entry point is a restricted JailBee console, not a
   POSIX shell, and implements no pipes, redirection, expansion or executable
   lookup; and

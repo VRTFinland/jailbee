@@ -150,8 +150,12 @@ async def handle_process(process: asyncssh.SSHServerProcess[bytes]) -> None:
     try:
         if process.subsystem is not None:
             raise RouteError("SSH subsystems are not supported")
-        if process.env or process.channel.get_environment_bytes():
-            raise RouteError("SSH environment requests are not supported")
+        # Client environment requests (e.g. OpenSSH's default `SendEnv LANG
+        # LC_* ...`) are accepted by the protocol but never consulted: the
+        # child's environment is built from this service's own os.environ in
+        # pty.py, never from process.env or the channel's raw environment
+        # bytes. Rejecting the session over an env request broke every stock
+        # OpenSSH client (see the SSH server final review, finding C1).
         kind, prefix, path = _request_fields(process.command)
         global_config, _ = load_global_config(default_global_config_path())
         config = global_config.remote.ssh

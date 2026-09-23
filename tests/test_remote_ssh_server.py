@@ -400,21 +400,40 @@ def test_disabled_entrypoint_cannot_spawn(command, settings, message, child, moc
     child.assert_not_awaited()
 
 
+@pytest.mark.parametrize("subsystem", ["sftp", ""])
+def test_subsystems_are_rejected_before_dispatch(subsystem, child):
+    _, channel = session("dashboard", term="xterm", subsystem=subsystem)
+    assert b"subsystem" in output(channel, 1).lower()
+    channel.exit.assert_called_once_with(2)
+    child.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
-    ("kwargs", "message"),
+    "kwargs",
     [
-        ({"subsystem": "sftp"}, b"subsystem"),
-        ({"subsystem": ""}, b"subsystem"),
-        ({"env": {"LD_PRELOAD": "client-secret"}}, b"environment"),
-        ({"env": {"TERM": "xterm"}}, b"environment"),
-        ({"env": {"LANG": ""}}, b"environment"),
-        ({"raw_env": {b"INVALID": b"\xff"}}, b"environment"),
+        {"env": {"LD_PRELOAD": "client-secret"}},
+        {"env": {"TERM": "xterm"}},
+        {"env": {"LANG": ""}},
+        {"raw_env": {b"INVALID": b"\xff"}},
     ],
 )
-def test_subsystems_and_environment_are_rejected_before_dispatch(kwargs, message, child):
-    _, channel = session("dashboard", term="xterm", **kwargs)
-    assert message in output(channel, 1).lower()
-    channel.exit.assert_called_once_with(2)
+def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, configured, repo):
+    # Regression for finding C1: stock OpenSSH clients send `SendEnv` values
+    # (typically LANG/LC_*) on every connection. Rejecting the session over
+    # them broke the service for every default client; the session must
+    # dispatch normally instead, with the client's environment never reaching
+    # the child (pty.py/run_child build the child's env from os.environ only).
+    process, channel = session("--repo project ls", **kwargs)
+    channel.exit.assert_called_once_with(7)
+    child.assert_awaited_once()
+    spec = child.await_args.args[1]
+    assert spec.argv == (sys.executable, "-m", "jailbee", "ls")
+
+
+def test_client_environment_requests_do_not_block_commandless_help(child):
+    _, channel = session(None, env={"LANG": "C.UTF-8"})
+    assert output(channel) == b"Available remote commands:\n  dashboard\n"
+    channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
 
 
