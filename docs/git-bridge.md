@@ -1010,6 +1010,11 @@ under the table rather than shown as empty. `jailbee issue show` prints a
 manifest's full proposed text and journal state verbatim — no truncation,
 no markup — for actually reading a body before deciding.
 
+Pending manifests are also visible without running `issue ls`:
+`jailbee ls`'s ISSUES column (right after PR) shows `✉N`, both dashboards add
+an "Apply N issue action(s)" entry, and `jailbee destroy`'s guard names
+unapplied issue actions the same way it names an unpushed commit.
+
 ### One combined preview and approval
 
 `jailbee issue apply` builds a single plan covering **every selected

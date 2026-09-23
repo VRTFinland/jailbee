@@ -103,7 +103,9 @@ root — a path that isn't listed there is not a valid `repo` value.
 
 Tell the user, verbatim: run `jb issue apply <container>` on the host —
 **nothing has been published yet.** Everything you wrote is a proposal
-sitting in the container's filesystem until then.
+sitting in the container's filesystem until then. The host also sees the
+pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
+this container.
 
 ## What not to assume
 

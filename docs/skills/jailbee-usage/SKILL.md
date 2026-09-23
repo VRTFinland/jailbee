@@ -1150,9 +1150,12 @@ command that publishes them later.
 `jailbee ls`'s PR column shows `✉N` for N manifests waiting (even before any
 PR exists, since a container can hold a description ahead of `jailbee pr`
 opening one) — same marker on the dashboard cards, which also gain an
-"Apply N PR action(s)" entry. `jailbee destroy` warns about unapplied PR
-actions the same way it warns about an unpushed commit, since destroying the
-container takes the outbox with it.
+"Apply N PR action(s)" entry. The ISSUES column right after PR shows the same
+`✉N` for the container's issue outbox (see **jailbee-issue-management**),
+with its own "Apply N issue action(s)" dashboard entry. `jailbee destroy`
+warns about unapplied PR actions the same way it warns about an unpushed
+commit, since destroying the container takes the outbox with it — and about
+unapplied issue actions the same way.
 
 See the **jailbee-pr-review** skill for the manifest format and how the
 in-container agent is expected to use it — this section only covers

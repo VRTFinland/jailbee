@@ -380,16 +380,20 @@ that matters to you.
 **The destroy guard.** Before the confirmation above, JailBee assesses what the
 destroy would discard: a dirty working tree, a changed submodule, commits
 that exist on neither the host nor a remote-tracking ref (`remote_contained
-is not True` counts as at risk — unknown is not safe), or unapplied PR
+is not True` counts as at risk — unknown is not safe), unapplied PR
 actions still sitting in the container's outbox (see [PR review
 outbox](#pr-review-outbox) — the outbox lives in the container's own
-filesystem, so a destroy takes any unpublished review with it). Nothing here
-fires for work already pulled to the host (`jailbee git pull`), pushed to a
-remote (`jailbee git push`, `jailbee pr`, a plain push from inside), or
-already published (`jailbee review apply`). Three outcomes:
+filesystem, so a destroy takes any unpublished review with it), or unapplied
+issue actions sitting in its issue outbox (see [Issue
+management](../../../git-bridge.md#issue-management) — listed right after
+the PR reason). Nothing here fires for work already pulled to the host
+(`jailbee git pull`), pushed to a remote (`jailbee git push`, `jailbee pr`,
+a plain push from inside), or already published (`jailbee review
+apply`/`jailbee issue apply`). Three outcomes:
 
 - **Something at risk** → a one-line summary per container (e.g. `feat-foo:
-  working tree +3 -1 · 2 unapplied PR actions · 2 commits not on the host`)
+  working tree +3 -1 · 2 unapplied PR actions · 2 unapplied issue actions ·
+  2 commits not on the host`)
   and a second confirmation, `Destroying loses this. Continue?`, defaulting
   to **No**. A submodule is named by which of its signals is set —
   `submodule sub/bar (added)`, `(removed)`, `(committed +40 -2)`,
@@ -1045,10 +1049,14 @@ it. Omit `MANIFEST` to drop everything pending in the container.
   `jailbee pr`). Both dashboards show the same marker on their cards and add
   an "Apply N PR action(s)" (`review apply`) entry, shown for any running
   container with something pending regardless of network mode.
+- `jailbee ls`'s ISSUES column, right after PR, shows the same `✉N` for the
+  container's issue outbox; both dashboards add an "Apply N issue
+  action(s)" (`issue apply`) entry alongside the PR one.
 - `jailbee destroy`'s guard treats unapplied PR actions as something the
   destroy would discard, alongside a dirty tree and commits not on the
   host/a remote — see the destroy guard under [Create &
-  lifecycle](#create--lifecycle).
+  lifecycle](#create--lifecycle). Unapplied issue actions get the same
+  treatment, right after the PR reason.
 
 ## Issue management outbox
 
