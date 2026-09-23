@@ -175,9 +175,12 @@ class PreparedBatch:
     initial_issues: Mapping[tuple[str, int], IssueSnapshot]
 
 
+ISSUE_OUTBOX_SUBPATH = ".jailbee/issue-outbox"
+
+
 def _outbox_directory() -> str:
     """Absolute issue outbox path inside a container."""
-    return f"/home/{CONTAINER_USERNAME}/.jailbee/issue-outbox"
+    return f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}"
 
 
 def read_issue_outbox(incus: Incus, container: str, *, uid: int | None) -> OutboxSnapshot:

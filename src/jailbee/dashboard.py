@@ -642,6 +642,12 @@ def _pending_pr_actions(git: GitStatus | None) -> int:
     return (git.pending_pr_actions or 0) if git else 0
 
 
+def _pending_issue_actions(git: GitStatus | None) -> int:
+    """Manifests waiting in the container's issue outbox. Mirrors
+    `_pending_pr_actions` for the separate issue outbox."""
+    return (git.pending_issue_actions or 0) if git else 0
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -683,7 +689,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     can genuinely accumulate manifests, so excluding it here would hide the
     one route to acting on them. Also not gated by ``pr_number is not None``:
     a container can hold a description for a PR ``jailbee pr`` has not opened
-    yet.
+    yet. Directly after it, "Apply N issue action(s)" (``issue apply``)
+    appears under the identical rule for the container's separate issue
+    outbox (``ctx.git_status.pending_issue_actions``) — same fixed in-container
+    path, same no-mode-check probe, same mount-mode reachability.
 
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
@@ -711,6 +720,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     pending = _pending_pr_actions(ctx.git_status)
     if ctx.state == "Running" and pending:
         prefix.append((f"Apply {pending} PR action(s) (review apply)", "review apply"))
+    pending_issues = _pending_issue_actions(ctx.git_status)
+    if ctx.state == "Running" and pending_issues:
+        prefix.append((f"Apply {pending_issues} issue action(s) (issue apply)", "issue apply"))
     if ctx.state == "Running":
         actions = [
             ("Attach tmux", "tmux"),

@@ -1434,7 +1434,7 @@ def list_cmd(
                 "full_name, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, ip, memory_limit, mem, cpu, doing, wt, ahead_diff, "
                 "ahead_count, conflict, local_diff, local_count, git_status, "
-                "group, pr."
+                "group, pr, issues."
             ),
         ),
     ] = None,

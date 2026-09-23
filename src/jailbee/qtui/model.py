@@ -157,6 +157,11 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         # Same "ahead" style as the ↑N commit count: like ahead commits, this
         # is something the container has that the PR/host does not yet.
         segs.append((f"✉{m.group(1)}", "ahead"))
+    issues = card_field(cc, "issues")
+    if issues:
+        # `lifecycle`'s ISSUES cell is always exactly "✉N" (no prefix like the
+        # PR column's "#1234↓"), so the value can be embedded directly.
+        segs.append((f"issues {issues}", "ahead"))
     return segs
 
 

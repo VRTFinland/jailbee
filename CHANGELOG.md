@@ -83,6 +83,10 @@ before editing `## Unreleased`.
   gives the same treatment to settled progress a human wants to abandon
   instead. See [Issue
   management](https://jailbee.gisgro.io/docs/git-bridge/#issue-management).
+  Pending manifests are also visible everywhere the PR outbox's `✉N` marker
+  already showed: a new ISSUES column in `jailbee ls`, an "Apply N issue
+  action(s)" entry in both dashboards, and a reason line in the pre-destroy
+  risk warning.
 
   The GitHub PAT recipe for containers (`docs/config.md`, `docs/git-bridge.md`,
   the `jailbee-repo-setup` skill) is corrected to read-only across

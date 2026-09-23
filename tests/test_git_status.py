@@ -158,6 +158,7 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
         "OUTBOX_DIR": "/home/dev/.jailbee/pr-outbox",
+        "ISSUE_OUTBOX_DIR": "/home/dev/.jailbee/issue-outbox",
         "GIT_OPTIONAL_LOCKS": "0",
     }
     assert kwargs.get("timeout") == 5
@@ -799,3 +800,45 @@ def test_non_numeric_pending_count_is_unknown(mocker):
     status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
 
     assert status.pending_pr_actions is None
+
+
+def test_probe_parses_the_pending_issue_action_count(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3", "5")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_pr_actions == 3
+    assert status.pending_issue_actions == 5
+
+
+def test_probe_passes_the_issue_outbox_dir_in_the_environment(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "0", "0")
+
+    probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    env = incus.exec.call_args.kwargs["env"]
+    # $HOME is not dependable under `incus exec --user`, so the path is passed in.
+    assert env["ISSUE_OUTBOX_DIR"].endswith("/.jailbee/issue-outbox")
+
+
+def test_thirteen_field_payload_still_parses_with_an_unknown_issue_count(mocker):
+    """Regression pin: the tiered parser must keep 13-field output working."""
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_pr_actions == 3
+    assert status.pending_issue_actions is None
+    assert status.head_sha == "abc1234"  # everything else unchanged
+
+
+def test_non_numeric_pending_issue_count_is_unknown(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3", "?")
+
+    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
+
+    assert status.pending_issue_actions is None

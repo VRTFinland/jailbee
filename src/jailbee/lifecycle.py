@@ -2395,6 +2395,19 @@ def ls_field_specs(
             "pending_actions": pending,
         }
 
+    def _pending_issue_actions(c: ContainerInfo) -> int:
+        return (c.git_status.pending_issue_actions or 0) if c.git_status else 0
+
+    def _issues_cell(c: ContainerInfo) -> str:
+        # "✉N" = N manifests waiting in the container's issue outbox. Mirrors
+        # `_pr_cell`'s marker; unlike PR there is no issue number to prefix.
+        pending = _pending_issue_actions(c)
+        return f"✉{pending}" if pending else ""
+
+    def _issues_json(c: ContainerInfo) -> dict[str, object] | None:
+        pending = _pending_issue_actions(c)
+        return {"pending_actions": pending} if pending else None
+
     return [
         table_format.FieldSpec(
             name="name",
@@ -2608,6 +2621,13 @@ def ls_field_specs(
             show_if=lambda rows: any(
                 c.pr_number is not None or _pending_pr_actions(c) for c in rows
             ),
+        ),
+        table_format.FieldSpec(
+            name="issues",
+            header="ISSUES",
+            cell=_issues_cell,
+            json=_issues_json,
+            show_if=lambda rows: any(_pending_issue_actions(c) for c in rows),
         ),
         table_format.FieldSpec(
             name="group",

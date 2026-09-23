@@ -187,6 +187,44 @@ def test_pending_pr_actions_make_an_otherwise_clean_container_read_as_dirty():
     assert is_git_clean(cc) is False
 
 
+def test_git_segments_show_the_pending_issue_actions_marker():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="✉2")
+    assert ("issues ✉2", "ahead") in git_segments(cc)
+
+
+def test_git_segments_place_the_issues_marker_after_the_pr_one():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        pr="✉1",
+        issues="✉2",
+    )
+    segs = git_segments(cc)
+    assert segs.index(("✉1", "ahead")) < segs.index(("issues ✉2", "ahead"))
+
+
+def test_git_segments_omit_the_issues_marker_without_pending_actions():
+    from jailbee.qtui.model import git_segments
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="")
+    assert git_segments(cc) == []
+
+
+def test_pending_issue_actions_make_an_otherwise_clean_container_read_as_dirty():
+    """Mirrors `test_pending_pr_actions_make_an_otherwise_clean_container_read_as_dirty`
+    for the issue outbox's marker."""
+    from jailbee.qtui.model import is_git_clean
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="✉1")
+    assert is_git_clean(cc) is False
+
+
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 

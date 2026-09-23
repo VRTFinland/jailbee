@@ -6754,6 +6754,149 @@ def test_pr_field_show_if_widens_for_pending_actions_without_a_pr_number():
     assert field.show_if([nothing]) is False
 
 
+def _issues_field():
+    from datetime import UTC, datetime
+
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    return next(f for f in ls_field_specs(now=now) if f.name == "issues")
+
+
+def test_issues_field_cell_empty_when_no_pending():
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _issues_field()
+    c = ContainerInfo(name="r-x", state="Running", network=None, ip=None, memory_limit=None)
+    assert field.cell(c) == ""
+    assert field.json(c) is None
+
+
+def test_issues_field_cell_marks_pending_outbox_actions():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _issues_field()
+    c = ContainerInfo(
+        name="r-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_issue_actions=2,
+        ),
+    )
+    assert field.cell(c) == "✉2"
+    assert field.json(c) == {"pending_actions": 2}
+
+
+def test_issues_field_cell_no_marker_when_pending_is_none_or_zero():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _issues_field()
+    none_pending = ContainerInfo(
+        name="r-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_issue_actions=None,
+        ),
+    )
+    zero_pending = ContainerInfo(
+        name="r-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_issue_actions=0,
+        ),
+    )
+    assert field.cell(none_pending) == ""
+    assert field.json(none_pending) is None
+    assert field.cell(zero_pending) == ""
+    assert field.json(zero_pending) is None
+
+
+def test_issues_field_show_if_hidden_when_all_zero_or_none():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    field = _issues_field()
+    nothing = ContainerInfo(name="r-a", state="Running", network=None, ip=None, memory_limit=None)
+    zero = ContainerInfo(
+        name="r-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_issue_actions=0
+        ),
+    )
+    pending = ContainerInfo(
+        name="r-c",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_issue_actions=1
+        ),
+    )
+    assert field.show_if is not None
+    assert field.show_if([nothing, zero]) is False
+    assert field.show_if([nothing, pending]) is True
+
+
+def test_git_status_json_does_not_include_pending_issue_actions():
+    """`_git_status_json` never carried `pending_pr_actions` either — the
+    outbox counts ride the dedicated `pr`/`issues` fields, not the folded
+    GIT STATUS JSON blob."""
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "git_status")
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    ci = ContainerInfo(
+        name="r-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=2,
+            pending_issue_actions=3,
+        ),
+    )
+    payload = spec.json(ci)
+    assert payload is not None
+    assert "pending_pr_actions" not in payload
+    assert "pending_issue_actions" not in payload
+
+
 def test_mode_field_shows_only_when_a_mount_container_exists():
     """MODE is a constant column on a clone-only host, and constants are
     width without information. It comes back the moment the two modes

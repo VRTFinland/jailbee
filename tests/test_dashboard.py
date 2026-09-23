@@ -902,6 +902,38 @@ def test_menu_offers_apply_pr_actions_only_when_something_is_pending():
     )
 
 
+def test_menu_offers_apply_issue_actions_only_when_something_is_pending():
+    """Mirrors `test_menu_offers_apply_pr_actions_only_when_something_is_pending`
+    for the issue outbox — a container can accumulate issue manifests
+    regardless of whether it has ever opened a PR."""
+    pending = dashboard.menu_actions(_ctx(git_status=_dirty(pending_issue_actions=2)))
+    labels = [label for label, _ in pending]
+    assert any("Apply" in label and "issue action" in label for label in labels)
+    verb_by_label = dict(pending)
+    apply_label = next(label for label in labels if "Apply" in label and "issue action" in label)
+    assert verb_by_label[apply_label] == "issue apply"
+
+    assert not any(
+        "Apply" in label and "issue action" in label
+        for label, _ in dashboard.menu_actions(_ctx(git_status=_dirty(pending_issue_actions=0)))
+    )
+    assert not any(
+        "Apply" in label and "issue action" in label
+        for label, _ in dashboard.menu_actions(_ctx(git_status=_dirty(pending_issue_actions=None)))
+    )
+    assert not any(
+        "Apply" in label and "issue action" in label for label, _ in dashboard.menu_actions(_ctx())
+    )
+
+
+def test_menu_offers_apply_issue_actions_directly_after_pr_actions():
+    actions = dashboard.menu_actions(
+        _ctx(git_status=_dirty(pending_pr_actions=1, pending_issue_actions=1))
+    )
+    verbs = [v for _, v in actions]
+    assert verbs.index("issue apply") == verbs.index("review apply") + 1
+
+
 def test_menu_offers_apply_pr_actions_on_a_running_mount_mode_container():
     """The outbox lives at a fixed in-container path regardless of how the
     repo got there — `pr_outbox.py` and the probe behind `pending_pr_actions`
@@ -3280,7 +3312,9 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
-    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode", "group"})
+    assert dashboard.dynamic_column_names() == frozenset(
+        {"job", "ttl", "pr", "issues", "mode", "group"}
+    )
 
 
 def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():

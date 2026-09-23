@@ -1967,8 +1967,8 @@ Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `ip`, `memory_limit`, `mem`, `wt`, `ahead_diff`,
 `ahead_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
-`group`, `cpu`, `doing`. `claude` and `claude_group` are accepted aliases for
-`group`.
+`issues`, `group`, `cpu`, `doing`. `claude` and `claude_group` are accepted
+aliases for `group`.
 
 Three things are problems: an unknown name (reported with the allowed set
 listed), `fields: []` (a table with no columns at all — write `fields: null`

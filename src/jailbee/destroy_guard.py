@@ -170,6 +170,13 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     if pending:
         reasons.append(f"{pending} unapplied PR action{'s' if pending != 1 else ''}")
 
+    # Same rationale, for the container's issue outbox (`issue_outbox`).
+    pending_issues = status.pending_issue_actions
+    if pending_issues:
+        reasons.append(
+            f"{pending_issues} unapplied issue action{'s' if pending_issues != 1 else ''}"
+        )
+
     # Commits are only at risk when they exist nowhere else: not on the
     # host (any earlier `jailbee git pull` put them there) and not behind a
     # remote-tracking ref (`jailbee git push`, or a plain push from inside).

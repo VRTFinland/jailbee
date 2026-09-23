@@ -201,6 +201,12 @@ def test_review_apply_runs_in_a_terminal_because_it_prompts():
     assert a.launch_mode("review apply") == "terminal"
 
 
+def test_issue_apply_runs_in_a_terminal_because_it_prompts():
+    """`jailbee issue apply` confirms interactively too, exactly like
+    `review apply`."""
+    assert a.launch_mode("issue apply") == "terminal"
+
+
 def test_build_action_sets_the_launch_mode():
     ac = a.build_action("git diff", "alpha-x", _t("/repo/.jailbee/config.yaml"))
     assert ac.launch == "output"
