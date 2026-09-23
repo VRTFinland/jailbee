@@ -11466,7 +11466,7 @@ def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -
         if failure.uncertain:
             info_plain(
                 f"  resolve: jailbee issue resolve {batch.container} {failure.manifest} "
-                f"{failure.index} --applied --url <url> [--issue <n>] | --retry"
+                f"{failure.index} (--applied --url <url> [--issue <n>] | --retry)"
             )
 
     for prepared in batch.manifests:

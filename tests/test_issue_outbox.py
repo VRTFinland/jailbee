@@ -656,7 +656,11 @@ def test_plan_and_show_render_receipts_and_uncertainty(preflight, state, display
         if state == "applied":
             assert any("https://github.com/acme/app/issues/42" in line for line in lines)
         if display == "uncertain":
-            assert any("jailbee issue resolve test-box a.json 0" in line for line in lines), lines
+            assert any(
+                "jailbee issue resolve test-box a.json 0 "
+                "(--applied --url <url> [--issue <n>] | --retry)" in line
+                for line in lines
+            ), lines
     assert {p: p.read_bytes() for p in preflight["store"].root.rglob("*") if p.is_file()} == before
 
 

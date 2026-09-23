@@ -454,10 +454,13 @@ def test_apply_uncertain_failure_points_at_resolve_command(mocker, tmp_path):
         ),
     )
 
-    result = runner.invoke(app, ["issue", "apply", "feat-foo", "-y"])
+    result = runner.invoke(app, ["issue", "apply", "feat-foo", "-y"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 1
-    assert "jailbee issue resolve acme-feat-foo 001.json 1" in result.output
+    assert (
+        "jailbee issue resolve acme-feat-foo 001.json 1 "
+        "(--applied --url <url> [--issue <n>] | --retry)"
+    ) in result.output
 
 
 # ---- ls ---------------------------------------------------------------------

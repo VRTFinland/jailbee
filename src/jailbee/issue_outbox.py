@@ -503,7 +503,7 @@ def _action_lines(
     if status == "uncertain":
         lines.append(
             f"  resolve: jailbee issue resolve {container} {name} {index} "
-            "--applied --url <url> [--issue <n>] | --retry"
+            "(--applied --url <url> [--issue <n>] | --retry)"
         )
     if not isinstance(action, CreateAction) and issue.ref is not None:
         lines.append(f"  depends on create ref {issue.ref}")
