@@ -102,7 +102,7 @@ def claude_row(
 
     Real `Row`s rather than mocks: the display properties (`state`, `account`,
     `org_hint`) are the module's own, and a stub of them would test nothing.
-    Shared by the `claude ls` and `claude group ls` tests, which render the
+    Shared by the `account ls` and `account group ls` tests, which render the
     same rows through the same field specs and must not drift apart.
     """
     from jailbee.accounts import overview
@@ -287,6 +287,23 @@ def _isolate_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
         yield home
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_xdg_data_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Point ``XDG_DATA_HOME`` at a tmp dir for the whole test session.
+
+    Sibling of ``_isolate_home`` / ``_isolate_global_config`` /
+    ``_isolate_state_dir``: without it, an account-store test on a developer
+    machine that exports ``XDG_DATA_HOME`` can write into the real credential
+    store (``engine.store_dir`` resolves under it). Session-scoped for the
+    same reason as ``_isolate_home`` — a function-scoped fixture can leave
+    module-import-time path caches pointing elsewhere.
+    """
+    data_home = tmp_path_factory.mktemp("xdg-data")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("XDG_DATA_HOME", str(data_home))
+        yield data_home
+
+
 @pytest.fixture
 def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give this one test an empty ``HOME`` of its own.
@@ -435,14 +452,19 @@ def _reset_deprecation_notices():
     into the next.
     """
     from jailbee import notices
-    from jailbee.config.loader import _warn_legacy_chrome_block
+    from jailbee.config.loader import (
+        _warn_legacy_chrome_block,
+        _warn_legacy_credentials_block,
+    )
     from jailbee.paths import _warn_legacy_config_dir
 
     _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
     _warn_legacy_chrome_block.cache_clear()
+    _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
 
@@ -591,3 +613,31 @@ def db_session(db_engine: Engine) -> Iterator[Session]:
 def frozen_now() -> datetime:
     """A stable timestamp for TTL math in tests."""
     return datetime(2026, 5, 19, 17, 25, 0, tzinfo=UTC)
+
+
+class NamedAdapter:
+    """A named account adapter stub.
+
+    Shared by `test_cli_account.py` and `test_accounts_selection.py`: the
+    selection rules read `.name`, and the holder line reads the two path
+    methods. Lives here rather than in either file because the selection
+    policy moved to `accounts/selection.py` while the CLI-level tests that
+    exercise the same adapters stayed behind.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def config_home(self, cfg: Config) -> Path:
+        return Path(f"/cfg/{self.name}")
+
+    def holder_override(self, cfg: Config) -> Path | None:
+        return None
+
+
+def patch_list_slots(mocker: Any, by_agent: dict[str, list[Any]]) -> Any:
+    """Patch `engine.list_slots` to answer per adapter name."""
+    return mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
+    )

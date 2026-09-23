@@ -609,6 +609,40 @@ def test_upgrade_note_for_the_pr_review_skill_advises_apply() -> None:
     assert notes[0].actions == frozenset({"apply"})
 
 
+def test_upgrade_note_for_multi_agent_skill_sync_advises_apply() -> None:
+    """`jailbee apply`/`jailbee new` now sync the bundled skills into every
+    enabled skill-capable agent's shared directory, not only claude's."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 6, 0) and "skill-capable" in n.reason]
+    assert len(notes) == 1
+    note = notes[0]
+    assert note.actions == frozenset({"apply"})
+    assert "not just `claude`" in note.reason
+    assert all(agent in note.reason for agent in ("codex", "gemini", "opencode"))
+
+
+def test_the_skill_sync_note_survives_the_reason_cap() -> None:
+    """Existence in the tuple is not a user surface. `format_advice` shows
+    `MAX_REASONS` reasons per action and collapses the rest into "... and N
+    more", so a note added behind three others at the same version would
+    never be read. Render the real manifest for the upgrade this note is
+    written for — 1.5.0 to 1.6.0 — and require the reason itself."""
+    from jailbee.upgrade import Watermark, format_advice, pending
+
+    owed = pending(
+        "1.6.0",
+        {
+            "base_build": Watermark((1, 5, 0), observed=True),
+            "apply": Watermark((1, 5, 0), observed=True),
+        },
+    )
+    lines = format_advice(owed)
+
+    assert any("skill-capable" in line for line in lines)
+    assert not any("and 1 more" in line for line in lines)
+
+
 def test_the_rendered_hint_names_only_the_apply_action() -> None:
     """One entry, one reason: a note declaring two actions prints each
     action against the other's reasons. Render the real manifest through
@@ -642,36 +676,36 @@ def test_the_rendered_hint_names_only_the_apply_action() -> None:
 def test_upgrade_note_for_the_issue_management_skill_advises_apply() -> None:
     from jailbee.upgrade import UPGRADE_NOTES
 
-    notes = [n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and "issue-management" in n.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 6, 0) and "issue-management" in n.reason]
     assert len(notes) == 1
     assert notes[0].actions == frozenset({"apply"})
 
 
-def test_the_150_apply_notes_all_render_at_the_default_reason_cap() -> None:
-    """1.5.0 carries exactly three `apply` reasons (path env vars, codex egress,
-    the issue-management skill) — precisely `MAX_REASONS`. Render through
+def test_the_160_apply_notes_all_render_at_the_default_reason_cap() -> None:
+    """1.6.0 carries two `apply` reasons (the multi-agent skill sync, the
+    issue-management skill) against a `MAX_REASONS` of three. Render through
     `pending`/`format_advice` at the *default* cap (no `max_reasons` override)
-    to prove the new reason isn't the one collapsed into "... and N more": a
-    note that exists but never renders is invisible to users."""
+    to prove the new reason isn't collapsed into "... and N more": a note that
+    exists but never renders is invisible to users."""
     from jailbee.upgrade import UPGRADE_NOTES, Watermark, format_advice, pending
 
-    notes_150_apply = [
-        n for n in UPGRADE_NOTES if n.version == (1, 5, 0) and n.actions == frozenset({"apply"})
+    notes_160_apply = [
+        n for n in UPGRADE_NOTES if n.version == (1, 6, 0) and n.actions == frozenset({"apply"})
     ]
-    assert len(notes_150_apply) == 3
+    assert len(notes_160_apply) == 2
 
     owed = pending(
-        "1.5.0",
+        "1.6.0",
         {
-            "base_build": Watermark((1, 4, 0), observed=True),
-            "apply": Watermark((1, 4, 0), observed=True),
+            "base_build": Watermark((1, 5, 0), observed=True),
+            "apply": Watermark((1, 5, 0), observed=True),
         },
     )
     lines = format_advice(owed)
     assert not any("more" in line for line in lines)
     reason = (
-        "the `jailbee-issue-management` skill is new and `jailbee apply` syncs it "
-        "into the shared skills mount"
+        "the `jailbee-issue-management` skill is new and `jailbee apply` "
+        "installs it alongside the other bundled skills"
     )
     assert any(reason in line for line in lines)
 

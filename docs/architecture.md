@@ -103,16 +103,21 @@ container (`jailbee-registry-mirror`) caches image pulls across all repos.
 ## Agent credential pool
 
 Each supported coding agent gets one account pool: a host-wide store of
-parked logins, a live login per holder (usually one per repo, or a shared
-credential group — see [`claude_credentials`](config.md#claude_credentials)),
-and a move-only switch discipline, so a refresh-token lineage never ends up
-in two files at once. `src/jailbee/accounts/` holds this as a generic engine
+parked logins, **one live login per agent per holder** (usually one holder per
+repo, or one shared credential group — see
+[`credentials`](config.md#credentials)), and a move-only switch discipline, so
+a refresh-token lineage never ends up in two files at once. A group is a single
+shared *name*; each agent resolves it to its own holder directory, so several
+agents can be pooled in the same group without sharing a credential.
+`src/jailbee/accounts/` holds this as a generic engine
 plus one adapter per agent. `accounts/engine.py` is the store —
 park/switch/remove, slot naming, member resolution — and knows nothing about
 which agent it serves; `accounts/models.py` carries the agent-agnostic types
 (`Identity`, `Slot`, `Member`, `LiveAccount`); `accounts/groups.py` resolves a
 container's credential group; `accounts/overview.py` renders every login on
-the host, across holders. Everything agent-specific — the credential
+the host, across holders; `accounts/selection.py` decides which login, and
+whose, a command acts on when a reference or a menu spans several agents'
+pools. Everything agent-specific — the credential
 filename, how an account is named, session detection, what has to be
 recorded beside a credential the engine just moved — lives behind the
 `AccountAdapter` protocol in `accounts/adapters/base.py`;

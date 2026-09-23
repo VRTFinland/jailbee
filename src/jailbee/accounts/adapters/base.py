@@ -96,8 +96,21 @@ class AccountAdapter(Protocol):
     def holder_override(self, cfg: Config) -> Path | None:
         """The credential directory this repo shares, or None for its own.
 
-        Phase 1 reads `Config.claude_credentials_dir`; phase 2 replaces every
-        implementation with the agent-agnostic `Config.credential_group`.
+        Derived from the agent-agnostic `Config.credential_group`: a group name
+        is one value shared by every pooled agent, and each adapter turns it
+        into its own holder directory. `ClaudeAdapter` uses
+        `engine.group_dir`, which is why the on-disk Claude tree is unchanged.
+
+        **An implementation must return exactly
+        `engine.group_dir(self.name, cfg.credential_group)`** (or None). This
+        is an invariant, not a convention: `groups.set_container_group` mounts
+        `engine.group_dir(adapter.name, name)` and `accounts.overview` reads
+        the same path, and neither asks the adapter. An adapter that derives
+        its holder some other way would have `group use` mount one directory
+        while `park`/`switch`/`ls` operate on another — the container then
+        reads an empty holder and the user is silently logged out, with
+        nothing raising anywhere. Layout below that directory is the adapter's
+        own business; the directory itself is not.
         """
         ...
 
@@ -299,13 +312,53 @@ class AccountAdapter(Protocol):
 
         The seam for whatever an agent needs seeded into a fresh config home —
         an onboarding flag, a trust record — so the user is not sent through a
-        first-run wizard for an account they are already logged into.
+        first-run wizard for an account they are already logged into. Claude's
+        implementation is the credential reconciliation: it makes its holder
+        hold the repo's login, once, before Incus mounts it.
 
-        **Nothing calls this yet**: Claude's seed still lives in
-        `init_command`, and the Claude implementation is a no-op. It is
-        declared here so the seam is the adapter's when that moves. An
-        implementation must never overwrite a config home the agent has
+        Called by `prepare_config_homes` after the repo's shared mounts exist.
+        An implementation must never overwrite a config home the agent has
         already written to.
+        """
+        ...
+
+    def profile_has_group(self, cfg: Config) -> bool:
+        """Whether this repo's rendered profile mounts this agent's credential.
+
+        Derived from `cfg` alone and never read back from Incus, so it cannot
+        disagree with what the next `jailbee apply` writes. `groups.py` asks
+        this to decide whether a container override must *shadow* a profile
+        device or *add* one of its own (`incus.config_device_override` fails
+        when there is nothing to override).
+        """
+        ...
+
+    def set_container_group(
+        self,
+        cfg: Config,
+        incus: Incus,
+        container: str,
+        group_dir: Path | None,
+    ) -> None:
+        """Point `container`'s instance-local wiring at `group_dir`'s credential.
+
+        `group_dir` is the directory `groups.py` computed and created for this
+        adapter's group, or None for an explicit "no group" override. None is
+        not the same as an empty value: the device that mounted the shared
+        credential has to go, and the agent must be pointed back at its own
+        config home rather than merely left unset.
+
+        Every write here is instance-level, so it outranks the profile and a
+        later `jailbee apply` may re-render freely without disturbing it.
+        """
+        ...
+
+    def clear_container_group(self, cfg: Config, incus: Incus, container: str) -> None:
+        """Drop `container`'s instance-local wiring so it inherits the profile.
+
+        The counterpart of `set_container_group`: remove what that method may
+        have written and unset what it may have set. `groups.py` unsets the
+        shared label itself once every pooled adapter has been asked.
         """
         ...
 
@@ -350,3 +403,52 @@ def pooled_adapters(cfg: Config) -> list[AccountAdapter]:
         except KeyError:
             continue
     return found
+
+
+def wired_adapters(cfg: Config) -> list[AccountAdapter]:
+    """Every agent that has an adapter, *including disabled ones*, `claude` first.
+
+    The teardown-side counterpart to `pooled_adapters`. Writing wiring is for
+    enabled agents only, but removing it must not be: an agent can be wired
+    into a container instance-locally and *then* disabled, and disabling it
+    does not unmount anything — an instance-level device outranks the profile,
+    so re-rendering `<prefix>-binds` cannot reach it either. Filtering the
+    removal on `enabled` would leave that container mounting a holder it was
+    just told it no longer uses, with `jailbee account group unset` reporting
+    success. So every removal path iterates this list and every write path
+    iterates `pooled_adapters`.
+
+    An adapter's removal is required to be idempotent for exactly this reason:
+    it runs against containers that never carried its wiring.
+    """
+    found: list[AccountAdapter] = []
+    for name in sorted(cfg.agents, key=lambda n: (n != "claude", n)):
+        try:
+            found.append(get_adapter(name))
+        except KeyError:
+            continue
+    return found
+
+
+def prepare_config_homes(cfg: Config) -> None:
+    """Run every pooled adapter's config-home preparation.
+
+    The single caller of `AccountAdapter.prepare_config_home`, shared by
+    `init`/`apply` (`init_command._ensure_integration_shared_dirs`) and the
+    repo-group change path (`cli._reapply_binds_profile`), so the adapter-owned
+    seed cannot drift between them.
+
+    `home.mkdir` first: an implementation may write a file into a fresh config
+    home, and for a group-less repo that home is also the credential holder
+    Incus is about to mount.
+
+    An implementation may raise — `ClaudeAdapter.prepare_config_home` raises
+    `ConfigError` when the holder and the repo each hold a different login, a
+    conflict only the user can resolve. The raise aborts the loop, so a later
+    adapter's home is not prepared until that one is settled. Deliberate: the
+    alternative is reporting a half-done `jailbee apply` as a success.
+    """
+    for adapter in pooled_adapters(cfg):
+        home = adapter.config_home(cfg)
+        home.mkdir(parents=True, exist_ok=True)
+        adapter.prepare_config_home(cfg, home)

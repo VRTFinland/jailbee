@@ -8,7 +8,7 @@ valid and produces a fully-defaulted Config.
   * repo_root             — directory containing `.jailbee/`
   * default_branch        — `refs/remotes/<upstream_remote>/HEAD`
   * upstream_remote       — auto-detected via `git.detect_upstream_remote`
-  * claude_credentials_dir — derived from host-level `claude_credentials` block
+  * credential_group      — derived from host-level `credentials` block
 
 `container_prefix` is a real YAML key (documented, hand-edited) whose
 *fallback* is computed: `repo_root.name` when left empty.
@@ -23,6 +23,7 @@ from jailbee.config.common import (
     _split_host_keys,
     deep_merge,
     merge_apps_raw,
+    normalize_credentials_key,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.loader import (
@@ -84,7 +85,7 @@ from jailbee.config.models_net import (
     LOOSE_TTL_PRESETS,
     NET_DESCRIPTIONS,
     OFFLINE_REMOVED_MSG,
-    ClaudeCredentials,
+    Credentials,
     LooseAutoRevert,
     format_loose_after,
     parse_loose_ttl,
@@ -139,12 +140,12 @@ __all__ = [
     "BrowsersConfig",
     "ChromeConfig",
     "ClaudeAgentConfig",
-    "ClaudeCredentials",
     "ColumnConfig",
     "Config",
     "ConfigError",
     "ConfigNotFoundError",
     "ConfirmConfig",
+    "Credentials",
     "DockerRegistryMirrorRepoConfig",
     "GithubConfig",
     "Golden",
@@ -181,6 +182,7 @@ __all__ = [
     "load_repo_config",
     "load_repo_config_unsanitized",
     "merge_apps_raw",
+    "normalize_credentials_key",
     "parse_loose_ttl",
     "resolve_agents_raw",
     "resolve_browsers_raw",

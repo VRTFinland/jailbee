@@ -363,3 +363,54 @@ def test_seeded_groups_carry_forward_into_the_next_base_refresh(qtbot, mocker):
     worker.request_stop()
     thread.quit()
     assert thread.wait(3000)
+
+
+def test_worker_samples_activity_before_emitting(qtbot, mocker):
+    """The UI must never see a snapshot whose CPU columns have not been
+    filled — a frame with dashes, corrected a tick later, is the flicker the
+    pre-gather exists to avoid."""
+    groups = [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]
+    mocker.patch("jailbee.qtui.refresh.gather_live", return_value=groups)
+    order: list[str] = []
+    mocker.patch(
+        "jailbee.qtui.refresh.sample_activity", side_effect=lambda g, s: order.append("sample")
+    )
+    worker = RefreshWorker(
+        incus=mocker.Mock(),
+        cwd_root=Path("/repo"),
+        interval=5.0,
+        git_interval=10.0,
+        git_enabled=False,
+    )
+    worker.groupsReady.connect(lambda _g: order.append("emit"))
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run_loop)
+
+    with qtbot.waitSignal(worker.groupsReady, timeout=3000):
+        thread.start()
+
+    assert order[:2] == ["sample", "emit"]
+
+    worker.request_stop()
+    thread.quit()
+    assert thread.wait(3000)
+
+
+def test_sample_activity_uses_the_workers_own_sampler(mocker):
+    """One sampler per worker, for its lifetime: a fresh one per call would
+    never have a previous reading and every number would be None."""
+    sample = mocker.patch("jailbee.qtui.refresh.sample_activity")
+    worker = RefreshWorker(
+        incus=mocker.Mock(),
+        cwd_root=Path("/repo"),
+        interval=5.0,
+        git_interval=10.0,
+        git_enabled=False,
+    )
+
+    worker.sample_activity([])
+    worker.sample_activity([])
+
+    first, second = sample.call_args_list
+    assert first.args[1] is second.args[1]

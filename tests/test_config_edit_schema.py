@@ -168,7 +168,7 @@ def test_computed_fields_are_the_four_that_have_no_yaml_key():
             ("Config", "repo_root"),
             ("Config", "default_branch"),
             ("Config", "upstream_remote"),
-            ("Config", "claude_credentials_dir"),
+            ("Config", "credential_group"),
         }
     )
 
@@ -209,7 +209,7 @@ def test_build_specs_omits_computed_fields():
         "repo_root",
         "default_branch",
         "upstream_remote",
-        "claude_credentials_dir",
+        "credential_group",
     ):
         assert (computed,) not in paths
     assert ("container_prefix",) in paths
@@ -232,7 +232,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """92 leaves under Config, 16 under GlobalConfig, as measured.
+    """92 leaves under Config, 24 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -256,15 +256,18 @@ def test_build_specs_covers_every_config_leaf():
     (repo-configurable PATH additions) then added one: 91 + 1 = 92 — and that
     increment is the whole `config edit` story for it, since nothing was added
     to `schema.py` or the curated `BASIC_FIELDS` list.
-    `GlobalConfig`'s 16 includes the `config_edit.write_policy` added in
-    Task 1, and the `update_check` bool: a plain scalar field on
-    `GlobalConfig`, so `jailbee config edit` offers the PyPI update check's
-    off switch without anything being added to `schema.py` for it.
+    `GlobalConfig`'s 24 includes the `config_edit.write_policy` added in
+    Task 1, the `update_check` bool, and the `install_host_skills` bool:
+    plain scalar fields on `GlobalConfig`, so `jailbee config edit` offers
+    them without anything being added to `schema.py` for them. The other
+    7 come from `remote.ssh`, a `RemoteSSHConfig` recursed into `listen`,
+    `port`, `dashboard`, `shell`, `exec`, and its nested `commands` policy's
+    `mode` and `allow`.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 92
-    assert len(build_specs(GlobalConfig)) == 16
+    assert len(build_specs(GlobalConfig)) == 24
 
 
 def test_a_default_factory_field_reports_its_real_default():
@@ -332,7 +335,11 @@ def test_global_specs_keeps_the_config_overlay_keys():
     paths = {s.path for s in global_specs()}
     assert ("gpg", "enabled") in paths
     assert ("host_mounts",) in paths
-    assert ("claude_credentials", "group") in paths, "host-level, from GlobalConfig"
+    assert ("credentials", "group") in paths, "host-level, from GlobalConfig"
+    assert ("credentials", "repos") in paths, "the per-repo overrides are editable too"
+    # The editor exposes the generic key only: a legacy `claude_credentials`
+    # row would offer the user a key the loader folds away on the next load.
+    assert not any(path and path[0] == "claude_credentials" for path in paths)
 
 
 def test_loose_auto_revert_appears_once_on_the_config_side():
@@ -354,11 +361,23 @@ def test_global_only_keys_is_the_documented_ban_list():
     The loader is the source of truth; this only holds `GLOBAL_ONLY_KEYS`
     to the list as documented, so a silent edit to the constant is caught.
     It does not derive the list from the loader, so it cannot notice the
-    loader growing a fourth ban.
+    loader growing a sixth ban.
+
+    Both spellings of the credential block and both names of the computed
+    field are pinned: the loader bans the legacy spellings too, and a set
+    naming only the current keys would no longer mirror it.
     """
     from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
 
-    assert GLOBAL_ONLY_KEYS == frozenset({"github", "claude_credentials", "claude_credentials_dir"})
+    assert GLOBAL_ONLY_KEYS == frozenset(
+        {
+            "github",
+            "credentials",
+            "claude_credentials",
+            "credential_group",
+            "claude_credentials_dir",
+        }
+    )
 
 
 def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
@@ -511,6 +530,18 @@ def test_config_edit_is_editable_in_the_global_tree_only():
     repo_paths = {s.path for s in repo_specs()}
     assert ("config_edit", "write_policy") in global_paths
     assert ("config_edit", "write_policy") not in repo_paths
+
+
+def test_remote_is_editable_in_the_global_tree_only():
+    """Remote access is a host policy, so the repo editor must not expose it."""
+    from jailbee.config_edit.schema import global_specs, repo_specs
+
+    global_paths = {s.path for s in global_specs()}
+    repo_paths = {s.path for s in repo_specs()}
+
+    assert ("remote", "ssh", "listen") in global_paths
+    assert ("remote", "ssh", "commands", "mode") in global_paths
+    assert not any(path[:1] == ("remote",) for path in repo_paths)
 
 
 def test_rebase_prefixes_every_path_and_clears_the_advanced_filter():

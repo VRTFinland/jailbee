@@ -85,8 +85,13 @@ def _container(
     memory="4GB",
     created_at=None,
     user_config=None,
+    pid=None,
+    cpu_usage=None,
+    cpu_limit=None,
 ):
     config = {"limits.memory": memory}
+    if cpu_limit is not None:
+        config["limits.cpu"] = cpu_limit
     if user_config:
         config.update(user_config)
     raw = {
@@ -99,6 +104,10 @@ def _container(
         },
         "config": config,
     }
+    if pid is not None:
+        raw["state"]["pid"] = pid
+    if cpu_usage is not None:
+        raw["state"]["cpu"] = {"usage": cpu_usage}
     if created_at is not None:
         raw["created_at"] = created_at
     return raw
@@ -5351,7 +5360,7 @@ def test_new_container_syncs_gie_skills(make_cfg, tmp_path, mocker):
     incus = MagicMock()
     incus.exists.return_value = False
     _patch_new_container_deps(mocker)
-    sync = mocker.patch("jailbee.claude_skills.sync_jailbee_skills")
+    sync = mocker.patch("jailbee.agent_skills.sync_agent_skills")
 
     new_container(cfg, incus, _new_opts())
 
@@ -7744,7 +7753,53 @@ def test_destroy_container_skips_invalidation_without_an_override(make_cfg, tmp_
     invalidate.assert_not_called()
 
 
-def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker):
+def test_destroy_container_detects_an_override_under_the_canonical_label(
+    make_cfg, tmp_path, mocker
+):
+    """The canonical label is what every writer sets now; destroy must see it."""
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from jailbee.lifecycle import destroy_container
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-feat",
+            "status": "Stopped",
+            "profiles": [],
+            "config": {"user.jailbee.credential_group": "personal"},
+            "devices": {},
+        }
+    ]
+    invalidate = mocker.patch("jailbee.accounts.adapters.claude.invalidate_identity")
+
+    destroy_container(cfg, incus, "myrepo-feat", force=True)
+
+    invalidate.assert_called_once_with(CLAUDE.config_home(cfg))
+
+
+def test_list_containers_reads_the_credential_group_label(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    payload = [
+        {
+            "name": "myrepo-a",
+            "status": "Running",
+            "profiles": ["myrepo-base"],
+            "config": {"user.jailbee.credential_group": "personal"},
+            "state": None,
+        }
+    ]
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = payload
+    rows = list_containers(cfg, incus)
+    assert rows[0].credential_group == "personal"
+
+
+def test_list_containers_reads_the_legacy_group_label(make_cfg, tmp_path, mocker):
+    """A container labelled before the rename keeps its override."""
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -7760,10 +7815,10 @@ def test_list_containers_reads_the_claude_group_label(make_cfg, tmp_path, mocker
     incus = mocker.MagicMock()
     incus.list_containers.return_value = payload
     rows = list_containers(cfg, incus)
-    assert rows[0].claude_group == "personal"
+    assert rows[0].credential_group == "personal"
 
 
-def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
+def test_list_containers_credential_group_is_none_without_the_label(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
@@ -7778,14 +7833,14 @@ def test_list_containers_claude_group_is_none_without_the_label(make_cfg, tmp_pa
         }
     ]
     rows = list_containers(cfg, incus)
-    assert rows[0].claude_group is None
+    assert rows[0].credential_group is None
 
 
 def test_ls_hides_the_group_column_when_nothing_deviates():
     from jailbee.lifecycle import ContainerInfo, ls_field_specs
 
     specs = {f.name: f for f in ls_field_specs(now=datetime.now(UTC))}
-    field = specs["claude_group"]
+    field = specs["group"]
     plain = [ContainerInfo(name="a", state="Running", network=None, ip=None, memory_limit=None)]
     assert field.show_if is not None
     assert field.show_if(plain) is False
@@ -7796,7 +7851,7 @@ def test_ls_hides_the_group_column_when_nothing_deviates():
             network=None,
             ip=None,
             memory_limit=None,
-            claude_group="personal",
+            credential_group="personal",
         )
     ]
     assert field.show_if(deviating) is True
@@ -7828,7 +7883,7 @@ def test_new_container_applies_the_group_before_start(tmp_path, mocker):
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group="personal",
+            credential_group="personal",
         ),
     )
 
@@ -7841,12 +7896,8 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
     """`--claude-group X` on a repo already in X must not create an override:
     it outranks the profile, so the next `jailbee claude group set` would
     leave this one container behind on X."""
-    from jailbee.accounts import groups
-    from jailbee.accounts.adapters.claude import CLAUDE
 
-    cfg = _cfg_for_new(tmp_path).model_copy(
-        update={"claude_credentials_dir": groups.group_dir(CLAUDE.name, "personal")}
-    )
+    cfg = _cfg_for_new(tmp_path).model_copy(update={"credential_group": "personal"})
     incus = MagicMock()
     incus.exists.return_value = False
     # A real profile document, not a bare MagicMock: `new_container` reaches
@@ -7870,7 +7921,7 @@ def test_new_container_skips_an_override_repeating_the_repos_group(tmp_path, moc
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group="personal",
+            credential_group="personal",
         ),
     )
 
@@ -7882,7 +7933,7 @@ def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker
     and the label would otherwise survive the repo joining a group later."""
     from jailbee.accounts import groups
 
-    cfg = _cfg_for_new(tmp_path)  # no `claude_credentials_dir`
+    cfg = _cfg_for_new(tmp_path)  # no `credential_group`
     incus = MagicMock()
     incus.exists.return_value = False
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
@@ -7900,7 +7951,7 @@ def test_new_container_skips_an_opt_out_on_a_repo_with_no_group(tmp_path, mocker
             from_base="gisgro-base",
             clone=True,
             autostart=False,
-            claude_group=groups.NO_GROUP,
+            credential_group=groups.NO_GROUP,
         ),
     )
 
@@ -7930,6 +7981,240 @@ def test_new_container_without_the_flag_touches_no_group(tmp_path, mocker):
     )
 
     set_group.assert_not_called()
+
+
+# ---- CPU activity inputs ----
+
+
+def test_list_containers_reads_the_cpu_inputs_from_the_payload(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-a", pid=4242, cpu_usage=7_000_000_000, cpu_limit="4")
+    ]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid == 4242
+    assert info.cpu_usage_ns == 7_000_000_000
+    assert info.cpu_limit == "4"
+    # Derived fields stay empty until a sampler fills them.
+    assert info.cpu_percent is None
+    assert info.activity == ()
+
+
+def test_list_containers_tolerates_a_payload_without_cpu_keys(make_cfg, tmp_path):
+    """Not every Incus build or instance state carries them, and a missing
+    key must leave a None rather than raise."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-a")]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid is None
+    assert info.cpu_usage_ns is None
+    assert info.cpu_limit is None
+
+
+def test_list_containers_ignores_a_zero_or_non_integer_pid(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    raw = _container(name="myrepo-a")
+    raw["state"]["pid"] = 0  # Incus reports 0 for an instance that is not running
+    incus.list_containers.return_value = [raw]
+
+    (info,) = list_containers(cfg, incus)
+
+    assert info.init_pid is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("4", 4),
+        ("0-3", 4),
+        ("0,2,4", 3),
+        ("2-3,8", 3),
+        (None, None),
+        ("", None),
+        ("0", None),
+        ("banana", None),
+        ("3-1", None),
+    ],
+)
+def test_parse_cpu_limit_counts_every_incus_spelling(raw, expected):
+    """Incus accepts a count ("4"), a pinned range ("0-3") and a pinned set
+    ("0,2,4"). Rendering a set as if it were a count would be a lie."""
+    from jailbee.lifecycle import _parse_cpu_limit
+
+    assert _parse_cpu_limit(raw) == expected
+
+
+def test_annotate_activity_writes_the_sampler_result_back(mocker):
+    """The adapter's whole job: build one SampleInput per container, then
+    write what comes back onto the matching rows."""
+    from jailbee.lifecycle import ContainerInfo, annotate_activity
+    from jailbee.procstat import ContainerActivity, ProcessActivity
+
+    a = ContainerInfo(
+        name="myrepo-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        init_pid=500,
+        cpu_usage_ns=1_000,
+    )
+    b = ContainerInfo(
+        name="myrepo-b",
+        state="Stopped",
+        network=None,
+        ip=None,
+        memory_limit=None,
+    )
+    busy = ProcessActivity(comm="claude", percent=98.0, count=1)
+    sampler = mocker.Mock()
+    sampler.sample.return_value = {
+        "myrepo-a": ContainerActivity(cpu_percent=182.0, processes=(busy,)),
+        "myrepo-b": ContainerActivity(cpu_percent=None, processes=()),
+    }
+
+    annotate_activity([a, b], sampler)
+
+    sent = sampler.sample.call_args.args[0]
+    assert [(s.name, s.init_pid, s.cpu_usage_ns) for s in sent] == [
+        ("myrepo-a", 500, 1_000),
+        ("myrepo-b", None, None),
+    ]
+    assert (a.cpu_percent, a.activity) == (182.0, (busy,))
+    assert (b.cpu_percent, b.activity) == (None, ())
+
+
+def test_annotate_activity_clears_a_row_the_sampler_did_not_answer_for(mocker):
+    """A container that vanished between the gather and the sample must not
+    keep rendering the previous tick's percentage."""
+    from jailbee.lifecycle import ContainerInfo, annotate_activity
+    from jailbee.procstat import ProcessActivity
+
+    c = ContainerInfo(
+        name="myrepo-a",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        cpu_percent=99.0,
+        activity=(ProcessActivity("claude", 99.0, 1),),
+    )
+    sampler = mocker.Mock()
+    sampler.sample.return_value = {}
+
+    annotate_activity([c], sampler)
+
+    assert c.cpu_percent is None
+    assert c.activity == ()
+
+
+# ---- CPU / DOING columns ----
+
+
+def _cpu_spec(name):
+    from jailbee.lifecycle import ls_field_specs
+
+    return next(f for f in ls_field_specs(now=datetime.now(UTC)) if f.name == name)
+
+
+def _running(**kw):
+    from jailbee.lifecycle import ContainerInfo
+
+    base = {
+        "name": "myrepo-a",
+        "state": "Running",
+        "network": None,
+        "ip": None,
+        "memory_limit": None,
+    }
+    return ContainerInfo(**{**base, **kw})
+
+
+def test_cpu_cell_is_top_style_with_the_cap_trailing():
+    cell = _cpu_spec("cpu").cell(_running(cpu_percent=182.4, cpu_limit="4"))
+
+    assert "182%" in cell
+    assert "·4" in cell  # the cap, so a container pinned at its ceiling is visible
+
+
+def test_cpu_cell_omits_the_cap_when_limits_cpu_says_nothing():
+    assert _cpu_spec("cpu").cell(_running(cpu_percent=7.0)) == "7%"
+
+
+def test_cpu_cell_is_a_dash_without_a_sample():
+    assert "—" in _cpu_spec("cpu").cell(_running(state="Stopped"))
+
+
+def test_doing_cell_lists_the_busiest_names_with_counts():
+    from jailbee.procstat import ProcessActivity
+
+    cell = _cpu_spec("doing").cell(
+        _running(
+            activity=(
+                ProcessActivity("claude", 98.0, 1),
+                ProcessActivity("pytest", 61.0, 8),
+            )
+        )
+    )
+
+    assert cell == "claude, pytest x8"
+
+
+def test_doing_cell_folds_the_tail_into_a_count():
+    """The column is a glance, not a process list: past DOING_MAX_NAMES
+    names it says how many more there are."""
+    from jailbee.procstat import ProcessActivity
+
+    cell = _cpu_spec("doing").cell(
+        _running(activity=tuple(ProcessActivity(n, 50.0, 1) for n in ("a", "b", "c", "d")))
+    )
+
+    assert cell.startswith("a, b")
+    assert "+2" in cell
+
+
+def test_doing_cell_is_a_dash_when_nothing_is_working():
+    assert "—" in _cpu_spec("doing").cell(_running())
+
+
+def test_cpu_and_doing_are_dashboard_only_columns():
+    """Like `mem`: a live rate is the reason to keep a view open, and
+    meaningless as a single sample in a one-shot listing."""
+    from jailbee.table_format import shows_by_default_in_dashboard
+
+    for name in ("cpu", "doing"):
+        spec = _cpu_spec(name)
+        assert spec.default_table is False
+        assert spec.default_json is False
+        assert shows_by_default_in_dashboard(spec) is True
+
+
+def test_cpu_json_carries_the_parsed_cap():
+    assert _cpu_spec("cpu").json(_running(cpu_percent=50.0, cpu_limit="0-3")) == {
+        "percent": 50.0,
+        "limit": 4,
+    }
+
+
+def test_doing_json_is_a_list_of_objects():
+    from jailbee.procstat import ProcessActivity
+
+    assert _cpu_spec("doing").json(_running(activity=(ProcessActivity("claude", 98.5, 2),))) == [
+        {"comm": "claude", "percent": 98.5, "count": 2}
+    ]
 
 
 # ---- private agent subpaths ----

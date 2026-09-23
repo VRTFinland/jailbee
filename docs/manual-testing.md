@@ -29,6 +29,359 @@ exit
 jailbee destroy feat-smoke --force
 ```
 
+## Optional SSH service loopback smoke test
+
+This recipe exercises the real SSH listener, PTY relay and systemd user unit.
+It deliberately uses only `127.0.0.1` / `localhost`; do not open a firewall
+port or change the listener to a non-loopback address for this test. Run it
+from an initialized repo which appears in the registered-repository dashboard.
+
+### Prepare the service and two client keys
+
+Install the optional dependency, create disposable client keys, and configure
+the host-global policy. Replace `sampleapp` below with this repo's exact
+registered `container_prefix`, not its filesystem path.
+
+```bash
+uv tool install 'jailbee[ssh]'
+ssh-keygen -q -t ed25519 -N '' -C jailbee-valid \
+  -f /tmp/jailbee-ssh-valid
+ssh-keygen -q -t ed25519 -N '' -C jailbee-invalid \
+  -f /tmp/jailbee-ssh-invalid
+
+jb remote ssh key add /tmp/jailbee-ssh-valid.pub
+jb remote ssh key ls
+jb config edit --global
+```
+
+Use this block in `~/.config/jailbee/global.yaml` for the smoke run:
+
+```yaml
+remote:
+  ssh:
+    listen: 127.0.0.1
+    port: 8022
+    dashboard: true
+    shell: true
+    exec: true
+    commands:
+      mode: allowlist
+      allow:
+        - exec
+        - ls
+        - new
+        - shell
+        - tmux
+        - version
+```
+
+Then start and inspect the service:
+
+```bash
+jb config validate
+jb remote ssh enable
+jb remote ssh status
+systemctl --user status jailbee-ssh.service
+journalctl --user -u jailbee-ssh.service -n 30
+```
+
+Expect `installed`, `enabled`, and `active` to be `yes`, listener
+`127.0.0.1:8022`, entry points `dashboard, shell, exec`, and one authorized
+key. The journal must not print a complete remote argv, key material, or
+terminal input.
+
+The remaining snippets use Bash arrays to keep the client options identical:
+
+```bash
+rm -f /tmp/jailbee-ssh-known-hosts
+JB_SSH_PREFIX=sampleapp
+JB_SSH_CONTAINER=feat-ssh-smoke
+JB_SSH_COMMON=(
+  -o IdentitiesOnly=yes
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts
+  -i /tmp/jailbee-ssh-valid
+  -p 8022
+)
+```
+
+### Authentication, host identity and commandless help
+
+Make the first valid connection:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Expect the normal first-contact host-key prompt. Answer `yes`; the connection
+then prints `Available remote commands:` with `dashboard`, `shell [--repo
+PREFIX]`, and `--repo PREFIX COMMAND [ARGS...]`, and exits zero. It must not
+choose a repo or open a UI. Lines must render cleanly (no staircase effect) in
+all three of these forms — plain `ssh` and `-t` both negotiate a PTY (OpenSSH
+requests one automatically for a commandless, interactive login), so both use
+CRLF; `-T` forces no PTY and keeps plain LF, which still renders fine since
+the client's own line discipline handles it:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost
+ssh -T "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Compare the shown host fingerprint when desired:
+
+```bash
+ssh-keygen -y -f ~/.local/share/jailbee/ssh/host_key \
+  | ssh-keygen -lf - -E sha256
+```
+
+A key which was not added must fail public-key authentication:
+
+```bash
+ssh -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-invalid -p 8022 jailbee@localhost
+```
+
+Expect `Permission denied (publickey)` and a nonzero status. Password and
+keyboard-interactive fallbacks must not be offered.
+
+### Dashboard, console and one-shot routing
+
+First prove the PTY requirement:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+```
+
+Both must fail with `This entry point requires a PTY; retry with ssh -t.` and
+status 2. With `-t`, the existing interfaces should render normally:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+```
+
+In the dashboard, verify only registered repos appear. Press `n` on this repo,
+enter a branch and base, and confirm that the normal `jailbee new` questions
+are interactive; decline once before accepting.
+
+For the console, first connect with a bare `shell` (no `--repo`): with more
+than one repo registered, an arrow-key menu appears; move with the arrow keys
+and press Enter to pick `$JB_SSH_PREFIX`. Reconnect and press Esc, then
+separately Ctrl-C, then separately Ctrl-D at that same menu — each must close
+the SSH session cleanly (status 0) rather than hang. Then, inside a console,
+run `help` (it must list the console's own commands plus the JailBee command
+paths this session's policy allows), `repos`, `use` with no argument (reopens
+the arrow-key menu; Esc/Ctrl-D here returns to the prompt instead of exiting),
+`use $JB_SSH_PREFIX`, tab-completion on a multi-word command (e.g. `git
+p<Tab>` should offer `pull`/`push` when allowed), `ls`, and `dashboard`;
+exiting the dashboard must return to `jb[$JB_SSH_PREFIX]>`, and `exit` must
+close the SSH session.
+
+Run a one-shot command without a PTY:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls
+```
+
+Expect the repo's normal `jb ls` output and exit status. A path in place of
+the prefix, an unknown prefix, an omitted `--repo`, or `dashboard extra` must
+be rejected before JailBee starts.
+
+If the dashboard step did not create a disposable container, run the same
+creation path directly. Choose an existing branch/base combination which
+causes JailBee's normal confirmation, decline it once, then repeat and accept:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" new feat/ssh-smoke
+```
+
+### Container terminals, resize, Ctrl-C and disconnect cleanup
+
+The word `shell` after `--repo` is the ordinary JailBee container-shell leaf,
+not the reserved remote console entry point:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+```
+
+Inside the container run `stty size`, resize the local terminal, and run it
+again. Expect the rows/columns to follow the client window. Exit back to the
+client, then exercise tmux in the same PTY:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" tmux "$JB_SSH_CONTAINER"
+```
+
+Expect the real tmux session; detach normally and confirm the SSH command
+returns. Next start a long foreground command and press Ctrl-C:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" exec "$JB_SSH_CONTAINER" -- sleep 300
+```
+
+Expect Ctrl-C to reach the foreground process group, the remote command to
+end, and `jb remote ssh status` to remain active.
+
+For abrupt-disconnect cleanup, enter a container shell, create a recognizable
+process, then type OpenSSH's `~.` escape at the start of a line:
+
+```bash
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+# inside the container:
+echo $$ >/tmp/jailbee-ssh-smoke.pid
+exec sleep 300
+# client: press Enter, then type ~.
+```
+
+Back on the host, the process must be gone rather than orphaned:
+
+```bash
+jb exec "$JB_SSH_CONTAINER" -- sh -lc \
+  '! kill -0 "$(cat /tmp/jailbee-ssh-smoke.pid)" 2>/dev/null'
+```
+
+Open a dashboard in one terminal and a console in another. Both must remain
+usable concurrently; closing one must not disturb the other.
+
+### Live key and policy reload
+
+Keep an authenticated console open. In another host terminal, copy its full
+fingerprint from `ls` and remove it:
+
+```bash
+jb remote ssh key ls
+jb remote ssh key rm SHA256:REPLACE_WITH_FULL_FINGERPRINT
+ssh -o BatchMode=yes "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+The existing console must continue to work, while the new connection fails
+public-key authentication. Re-authorize the same public key; a new connection
+must work immediately, without restarting the unit:
+
+```bash
+jb remote ssh key add /tmp/jailbee-ssh-valid.pub
+```
+
+For policy reload, open a console while the allowlist above is active. Edit
+the global block so `allow` contains only `version`, then validate it. `ls` in
+the already-open console must still use its startup policy. A new one-shot
+session must reject `ls` and accept `version`:
+
+```bash
+jb config edit --global
+jb config validate
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" version
+```
+
+Restore the original allowlist for the remaining checks. No service restart is
+needed for policy. Now restart the unit explicitly:
+
+```bash
+jb remote ssh restart
+jb remote ssh status
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Expect active sessions to close, the unit to return active, the reconnect to
+succeed, and no new host-key prompt because restart preserved the host key.
+
+### Rejected SSH features
+
+SFTP and both modern and legacy SCP must fail rather than expose files:
+
+```bash
+sftp -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 jailbee@localhost
+scp -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 /etc/hosts jailbee@localhost:ignored
+scp -O -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/tmp/jailbee-ssh-known-hosts \
+  -i /tmp/jailbee-ssh-valid -P 8022 /etc/hosts jailbee@localhost:ignored
+```
+
+Expect subsystem/route rejection and no transferred file. Agent and X11
+forwarding requests are also refused. Run these with `-vv` (and a live local
+agent / graphical session respectively) and inspect the client debug output:
+
+```bash
+ssh -vv -A -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+ssh -vv -X -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
+```
+
+The dashboard may still run, but the SSH client's debug output must report the
+forwarding request as rejected. Do not infer that `SSH_AUTH_SOCK` or `DISPLAY`
+must be absent from the child: it inherits the systemd user service's existing
+environment. If either value was already present there, it is inherited service
+environment, not an SSH-forwarded environment created by `-A` or `-X`; the
+observable contract is that the client request establishes no forwarded agent
+socket or X11 display.
+
+Remote forwarding is refused at setup. Local forwarding can bind locally, so
+open it in one terminal and trigger a channel from another:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -R 18023:localhost:22 \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost
+
+ssh -N -L 18022:localhost:22 \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost
+# another terminal while the -L client is open:
+nc -v 127.0.0.1 18022
+```
+
+Expect `-R` to fail, and the `-L` client's attempted channel to be rejected;
+stop the waiting `-L` client with Ctrl-C. Finally, confirm a client
+environment request no longer blocks the session — this is what stock
+OpenSSH clients send by default (Ubuntu/Debian/Fedora/macOS all `SendEnv
+LANG LC_*` out of the box), so this is the step that must work unmodified:
+
+```bash
+JAILBEE_SMOKE=blocked ssh -o SendEnv=JAILBEE_SMOKE \
+  "${JB_SSH_COMMON[@]}" jailbee@localhost \
+  --repo "$JB_SSH_PREFIX" ls &
+child_ssh=$!
+pid=$(pgrep -f "python3? -m jailbee --repo $JB_SSH_PREFIX ls" | head -1)
+if [ -n "$pid" ]; then
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -q '^JAILBEE_SMOKE=' \
+    && echo "FAIL: JAILBEE_SMOKE leaked into the child" \
+    || echo "OK: JAILBEE_SMOKE is absent from the child"
+fi
+wait "$child_ssh"
+echo "exit: $?"
+```
+
+Expect the repo's normal `jb ls` output, exit status 0 (the same as the
+plain one-shot command run earlier), `OK: JAILBEE_SMOKE is absent from the
+child`, and no `SSH environment requests are not supported` message. Check
+the journal for the session's allowed audit row.
+
+After the smoke run, destroy the disposable container if it was created,
+remove the client key, and disable the service. The host key deliberately
+remains so a later re-enable retains the known-host identity:
+
+```bash
+jb destroy "$JB_SSH_CONTAINER" --force
+jb remote ssh key ls
+jb remote ssh key rm SHA256:REPLACE_WITH_FULL_FINGERPRINT
+jb remote ssh disable
+rm -f /tmp/jailbee-ssh-valid /tmp/jailbee-ssh-valid.pub \
+  /tmp/jailbee-ssh-invalid /tmp/jailbee-ssh-invalid.pub \
+  /tmp/jailbee-ssh-known-hosts
+```
+
 ## `jailbee git fetch / checkout` smoke test
 
 `jailbee git fetch` fetches into `refs/jailbee/<short>/<branch>`, then points
@@ -2724,10 +3077,10 @@ jailbee destroy --all --force
 # Remove the claude.auto_update block from .jailbee/config.yaml afterwards.
 ```
 
-## Shared Claude credential groups (`claude_credentials`) smoke test
+## Shared credential groups (`credentials`) smoke test
 
 Several repos on one host can share one Claude Code login by pointing
-`claude_credentials` in `~/.config/jailbee/global.yaml` at the same group
+`credentials` in `~/.config/jailbee/global.yaml` at the same group
 name — see `.local/superpowers/specs/2026-08-27-claude-shared-credentials-design.md`
 for the design. The mechanism rests entirely on **undocumented observations
 of Claude Code 2.1.247**: that `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves the
@@ -2748,21 +3101,21 @@ Two repos, `SampleApp` and `SampleApp2` (any second checkout with its own
 `~/.config/jailbee/global.yaml`:
 
 ```yaml
-claude_credentials:
+credentials:
   group: worktest
 ```
 
 1. **`jailbee new` before `jailbee apply` does not log the container out.**
    This is Finding 2 of the 2026-08-27 review: the `jailbee new` repair for
    `CLAUDE_SECURESTORAGE_CONFIG_DIR` used to fire unconditionally once the key
-   was absent, which — in a repo that had `claude_credentials` added but never
+   was absent, which — in a repo that had `credentials` added but never
    `apply`ed — wrote the env key to `<prefix>-base` while `<prefix>-binds`
    still had no `claude-creds` device, so Claude Code resolved an unmounted
    directory and reported "Not logged in" in every container of the repo. The
    fix makes the repair wait for the device.
 
    Starting from a repo that has **never** run `jailbee apply` since
-   `claude_credentials` was set (a fresh `jailbee init` followed by editing
+   `credentials` was set (a fresh `jailbee init` followed by editing
    `global.yaml`, or reuse a repo that predates this feature and add the key
    now):
 
@@ -2825,7 +3178,7 @@ claude_credentials:
    # before joining: SampleApp2 has its own login, group dir is empty
    ls <shared_dir(SampleApp2)>/claude/.credentials.json    # exists
    ls <xdg_data_home>/jailbee/claude-credentials/worktest/ # empty or absent
-   # add claude_credentials to global.yaml for SampleApp2, then:
+   # add credentials to global.yaml for SampleApp2, then:
    jailbee apply
    ls <shared_dir(SampleApp2)>/claude/.credentials.json    # gone
    ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json
@@ -2835,7 +3188,7 @@ claude_credentials:
    exit
    ```
 
-   Leave, by removing the repo from `claude_credentials` (or setting it to
+   Leave, by removing the repo from `credentials` (or setting it to
    `null` under `repos:`) and re-running `jailbee apply`:
 
    ```bash
@@ -2909,7 +3262,7 @@ claude_credentials:
    ```
 
    Expected: a warning naming both paths, a hint printing the runnable
-   `claude_credentials.repos` block, then a three-row picker.
+   `credentials.repos` block, then a three-row picker.
 
    * **cancel** (or Ctrl-C) → exit 1 with the original refusal text; both
      files still present and byte-identical. Verify with `md5sum` on both
@@ -2931,7 +3284,7 @@ claude_credentials:
    ```
 
 Afterwards, clean up: `jailbee destroy` the containers created above, remove
-`claude_credentials` from `global.yaml` if it was added only for this test,
+`credentials` from `global.yaml` if it was added only for this test,
 `jailbee apply` in each affected repo, and (if step 3's group directory was a
 throwaway) delete `<xdg_data_home>/jailbee/claude-credentials/worktest*/` by
 hand — jailbee never deletes a group directory automatically.
@@ -4072,22 +4425,25 @@ the new namespace were stripped. Still host-only: a *custom* profile, like
 the Figma one in `docs/config.md`, loaded on the host and in the image, must
 make that app start with its sandbox on.
 
-## `jailbee claude` account pool smoke test
+## `jailbee account` pool smoke test
 
-Needs two Claude accounts. Everything below runs on the host.
+The command surface is generic, but Claude is the only pooled agent in
+phase 2, so this recipe is Claude-backed. Needs two Claude accounts.
+Everything below runs on the host.
 
-1. `jailbee claude ls` — the row for this repo's holder is `live` and bold,
+1. `jailbee account ls` — the row for this repo's holder is `live` and bold,
    names the account in use, and its `GROUP` and `USED BY` cells match the
    repo's group and the repos/containers reading it. Every other credential
    group on the host is a row too; `STATE` is `empty` for one holding no
-   login.
-2. `jailbee claude park` — that row becomes `empty`, a new `parked` row
+   login. `jailbee account ls -a claude` narrows to the same rows, and `-a`
+   naming an agent with no account pool is refused by name.
+2. `jailbee account park` — that row becomes `empty`, a new `parked` row
    appears, and `ls <holder>/.credentials.json` is gone.
 3. In a container of that holder, run `claude` and `/login` as the **second**
-   account. Back on the host, `jailbee claude ls` shows the holder `live`
+   account. Back on the host, `jailbee account ls` shows the holder `live`
    again with the new account, the first still `parked`.
 4. **The hot-reload gate.** Leave an interactive `claude` running in a
-   container. On the host, `jailbee claude use <first account>`. Ask the
+   container. On the host, `jailbee account use <first account>`. Ask the
    session a question **without restarting it**: it must answer. Then check
    `/status` — a lagging account name there is expected and harmless; a
    login prompt is not, and would mean the mtime hot-reload (spec §5.1) does
@@ -4099,41 +4455,41 @@ Needs two Claude accounts. Everything below runs on the host.
    group both running Claude, switch on the host. Neither container may end
    up on the old account, and no `.oauth_refresh.lock` may be left behind
    (`ls -a <holder>`).
-7. `jailbee claude rm <parked account>` — confirms, then the row is gone.
-8. **The group-visibility gate** (what `claude ls` was rebuilt for). Move one
+7. `jailbee account rm <parked account>` — confirms, then the row is gone.
+8. **The group-visibility gate** (what `account ls` was rebuilt for). Move one
    container into a group no repo resolves to:
-   `jailbee claude group use <fresh-group> <container>`, then on the host
-   `jailbee claude ls`. That group must be a row of its own, `USED BY` must
+   `jailbee account group use <fresh-group> <container>`, then on the host
+   `jailbee account ls`. That group must be a row of its own, `USED BY` must
    name **that container** (not a count, since no repo resolves to the
    group), and the row must be `empty` until a `/login` in the container or a
-   `jailbee claude use -g <fresh-group>` fills it. `jailbee claude ls -g
+   `jailbee account use -g <fresh-group>` fills it. `jailbee account ls -g
    <fresh-group>` must narrow to that row plus the parked store, and
-   `jailbee claude group` must point at `jailbee claude ls` rather than
+   `jailbee account group` must point at `jailbee account ls` rather than
    printing a list of group names.
 9. **The degradation gate.** With the Incus daemon stopped
-   (`sudo systemctl stop incus`), `jailbee claude ls` must still print the
+   (`sudo systemctl stop incus`), `jailbee account ls` must still print the
    table, with `containers ?` in `USED BY` and a warning — not an error.
 10. **The redundant-override gate.** With the repo in group `Y` and one
-    container overridden to `X` (`jailbee claude group use X <container>`),
-    run `jailbee claude group set X`. The command must report dropping that
+    container overridden to `X` (`jailbee account group use X <container>`),
+    run `jailbee account group set X`. The command must report dropping that
     container's override, and afterwards `incus config show <container>`
-    must carry **neither** `user.jailbee.claude_group` nor a local
+    must carry **neither** `user.jailbee.credential_group` nor a local
     `claude-creds` device — the container inherits the profile's. Prove the
-    point by then running `jailbee claude group set Z`: the container must
-    follow to `Z` rather than staying on `X`. `jailbee claude group use Y
+    point by then running `jailbee account group set Z`: the container must
+    follow to `Z` rather than staying on `X`. `jailbee account group use Y
     <container>` (naming the repo's own group) must likewise clear the
-    override instead of writing one, and `jailbee new --claude-group Y` must
-    create a container with no label at all.
-11. **The group lifecycle gate.** `jailbee claude group ls` must list every
+    override instead of writing one, and `jailbee new --credential-group Y`
+    must create a container with no label at all.
+11. **The group lifecycle gate.** `jailbee account group ls` must list every
     group on the host and no parked login;
-    `jailbee claude group create tmpgrp` must
-    make a 0700 directory that `jailbee claude ls` shows as `empty` /
-    `unused`, and `jailbee claude group rm tmpgrp` must remove it. Then check
+    `jailbee account group create tmpgrp` must
+    make a 0700 directory that `jailbee account ls` shows as `empty` /
+    `unused`, and `jailbee account group rm tmpgrp` must remove it. Then check
     each refusal against real state: `rm` on the repo's own group (names the
     repo), on the host default (names `global.yaml`), and on a group one
     container was moved into (names the container). Finally activate a login
     into a spare group and `rm` it: the login must come back as a `parked`
-    row in `jailbee claude ls`, and `jailbee claude use` must be able to
+    row in `jailbee account ls`, and `jailbee account use` must be able to
     activate it again — parking, not deletion, is the promise.
 
 ## Cache pool smoke test (`pool.py`, `pooled_caches`)

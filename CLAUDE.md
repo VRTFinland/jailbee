@@ -31,16 +31,27 @@ isolated per-branch development environments using Incus system containers. See
   All other modules use `Incus` wrapper methods so they're unit-testable.
 - **`config.py` is read-only after load.** No module mutates the loaded
   `Config` object. Tests construct their own with `make_cfg(tmp_path)` from
-  `tests/conftest.py`. Note: `Config` carries three computed attributes
-  (`repo_root`, `default_branch`, `container_prefix`) set during
-  `load_config()` — these are intentionally not YAML keys.
+  `tests/conftest.py`. Note: `Config` carries computed attributes
+  (`repo_root`, `upstream_remote`, `default_branch`, `credential_group`) set
+  during `load_config()` — these are intentionally not YAML keys.
+  `credential_group` is the host-level, agent-agnostic group *name* from the
+  `credentials` block; the one function that turns it into a per-adapter holder
+  directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
+  `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
+  derivation is never defined in `Config`, the CLI or the overview.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
 - **Shelling out to non-incus binaries is intentional** and stays one module
   per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
   `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
-  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`).
+  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`),
+  `remote_ssh/service.py` (`systemctl`, to install/enable/disable/restart/
+  inspect the SSH user unit). `remote_ssh/console.py` and `remote_ssh/pty.py`
+  are a second, narrower exception to "subprocess only in `incus.py`": they
+  start Jailbee itself, not `incus` — `console.py` via `subprocess.run` on a
+  re-exec (`python -m jailbee ...`), `pty.py` via `pty.fork()`/`os.execvpe`
+  for the PTY case and `asyncio.create_subprocess_exec` for the non-PTY case.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
   `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
@@ -56,7 +67,10 @@ isolated per-branch development environments using Incus system containers. See
   `Wiring` and the `ADAPTERS` registry); `accounts/models.py` carries the
   agent-agnostic types (`Identity`, `Slot`, `Member`, `LiveAccount`);
   `accounts/groups.py` resolves a container's credential group;
-  `accounts/overview.py` renders every login on the host, across holders.
+  `accounts/overview.py` renders every login on the host, across holders;
+  `accounts/selection.py` decides *which* login, and whose, a command acts
+  on when several agents are pooled — the TTY test and the picker are
+  injected, so it never imports the terminal and `cli.py` stays thin.
   `accounts/adapters/claude.py` is the only adapter so far, holding
   everything Claude-specific. A second agent's pool is a new adapter module,
   not a change to `engine.py`. Not to be confused with the container pool,

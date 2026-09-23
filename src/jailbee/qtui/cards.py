@@ -168,15 +168,24 @@ class _Card(QFrame):
             self._outer.addWidget(lbl)
         ip = card_field(self._content, "ip")
         mem = card_field(self._content, "mem")
-        if ip or mem:
+        cpu = card_field(self._content, "cpu")
+        if ip or mem or cpu:
             res = QHBoxLayout()
             res.addWidget(QLabel(ip or "—"))
-            if mem:
-                m = QLabel(f"▪ {mem}")
-                m.setStyleSheet(f"color:{_DIM};")
-                res.addWidget(m)
+            for text in (mem, cpu):
+                if text:
+                    chip = QLabel(f"▪ {text}")
+                    chip.setStyleSheet(f"color:{_DIM};")
+                    res.addWidget(chip)
             res.addStretch(1)
             self._outer.addLayout(res)
+        doing = card_field(self._content, "doing")
+        if doing:
+            # Its own line: the program names are the widest thing on a card
+            # and would push the resource row out of shape.
+            busy = QLabel(doing)
+            busy.setStyleSheet(f"color:{_DIM};")
+            self._outer.addWidget(busy)
         segs = git_segments(self._content)
         if segs:
             git = QHBoxLayout()

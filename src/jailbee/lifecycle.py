@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,6 +33,7 @@ from jailbee.git import (
 # the container-side probe — duplicating the parser is how the two would drift.
 from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
 from jailbee.incus import Incus, IncusError
+from jailbee.procstat import ActivitySampler, SampleInput
 from jailbee.profiles import (
     _device_name_from_path,
     is_under_repo,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
+    from jailbee.procstat import ProcessActivity
 
 
 @dataclass
@@ -62,12 +64,23 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
-    # The container's Claude credential group, from
-    # `user.jailbee.claude_group`. None means it inherits the repo's group;
-    # `accounts.groups.NO_GROUP` means it deliberately shares none.
-    claude_group: str | None = None
+    # The container's credential group, from
+    # `user.jailbee.credential_group` (or its legacy spelling). None means it
+    # inherits the repo's group; `accounts.groups.NO_GROUP` means it
+    # deliberately shares none.
+    credential_group: str | None = None
     created_at: datetime | None = None
     memory_usage: int | None = None
+    # Raw inputs for the CPU/DOING columns, from the same `incus list`
+    # payload as `memory_usage`. `init_pid` is the container's pid 1 on the
+    # host, which is how `procstat` finds the container's cgroup.
+    init_pid: int | None = None
+    cpu_usage_ns: int | None = None
+    cpu_limit: str | None = None  # raw `limits.cpu`; see `_parse_cpu_limit`
+    # Derived from two readings, written in place by `annotate_activity` the
+    # way `git_status` is written by the git tier — never by `list_containers`.
+    cpu_percent: float | None = None
+    activity: tuple[ProcessActivity, ...] = ()
     git_status: GitStatus | None = None
     job_phase: str | None = None
     job_pid: int | None = None
@@ -88,9 +101,45 @@ class ContainerInfo:
 # datetime.fromisoformat can't parse: "...123456789Z" -> "...123456Z".
 _SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
 
+# How many program names the DOING column spells out before folding the
+# rest into "+N". A glance, not a process list.
+DOING_MAX_NAMES = 2
+
 # Sentinel used to sort containers with no known creation time first (they are
 # either mid-creation background rows or legacy containers) under "newest first".
 _NEWEST_FIRST = datetime.max.replace(tzinfo=UTC)
+
+
+def _parse_cpu_limit(raw: str | None) -> int | None:
+    """How many CPUs a ``limits.cpu`` value grants, or None if it says nothing.
+
+    Incus accepts three spellings: a count (``"4"``), a pinned range
+    (``"0-3"``) and a pinned set (``"0,2,4"``). They are not
+    interchangeable — rendering a set's first number as a count would
+    misreport the container's width — so anything unrecognised returns None
+    and the column simply shows no cap.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.isdigit():
+        return int(text) or None
+    total = 0
+    for part in text.split(","):
+        item = part.strip()
+        low, sep, high = item.partition("-")
+        if sep:
+            if not (low.isdigit() and high.isdigit()):
+                return None
+            span = int(high) - int(low) + 1
+            if span <= 0:
+                return None
+            total += span
+        elif item.isdigit():
+            total += 1
+        else:
+            return None
+    return total or None
 
 
 def _parse_incus_timestamp(raw: object) -> datetime | None:
@@ -162,6 +211,8 @@ def list_containers(
     per-instance state is not fetched; callers that only need names (shell
     completion) use it.
     """
+    from jailbee.accounts import groups
+
     own_names = profile_names(cfg)
     own_net_to_mode = {v: k for k, v in own_names.net_by_mode.items()}
 
@@ -217,6 +268,14 @@ def list_containers(
         mem_usage_raw = (state_data.get("memory") or {}).get("usage")
         memory_usage = mem_usage_raw if isinstance(mem_usage_raw, int) else None
 
+        pid_raw = state_data.get("pid")
+        init_pid = pid_raw if isinstance(pid_raw, int) and pid_raw > 0 else None
+
+        cpu_usage_raw = (state_data.get("cpu") or {}).get("usage")
+        cpu_usage_ns = cpu_usage_raw if isinstance(cpu_usage_raw, int) else None
+
+        cpu_limit = config.get("limits.cpu")
+
         mode_value = config.get("user.jailbee.mode") or "clone"
 
         base_branch_raw = config.get("user.jailbee.base_branch")
@@ -238,7 +297,9 @@ def list_containers(
                 pr_number = None
         pr_author = config.get("user.jailbee.pr_author") == "1"
 
-        claude_group_raw = config.get("user.jailbee.claude_group")
+        credential_group_raw = config.get(groups.GROUP_LABEL) or config.get(
+            groups.LEGACY_GROUP_LABEL
+        )
 
         loose_until_raw = config.get("user.jailbee.loose_until")
         loose_until: datetime | None = None
@@ -264,9 +325,12 @@ def list_containers(
                 repo_dir=repo_dir,
                 pr_number=pr_number,
                 pr_author=pr_author,
-                claude_group=claude_group_raw or None,
+                credential_group=credential_group_raw or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
                 memory_usage=memory_usage,
+                init_pid=init_pid,
+                cpu_usage_ns=cpu_usage_ns,
+                cpu_limit=cpu_limit,
             )
         )
 
@@ -337,6 +401,25 @@ def list_containers(
     # background rows, legacy containers) sort ahead of dated ones.
     out.sort(key=lambda c: c.created_at or _NEWEST_FIRST, reverse=True)
     return out
+
+
+def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySampler) -> None:
+    """Fill ``cpu_percent`` and ``activity`` from one sampler reading.
+
+    The counterpart to ``dashboard.carry_forward_git_status``: a derived
+    value the gather cannot produce on its own, written in place after it.
+    Rows the sampler did not answer for are cleared rather than left holding
+    the previous tick's numbers.
+
+    The first call on a fresh sampler leaves everything None — it primes it —
+    so a caller that renders immediately calls this twice,
+    ``procstat.PRIME_INTERVAL_SECONDS`` apart.
+    """
+    results = sampler.sample([SampleInput(c.name, c.init_pid, c.cpu_usage_ns) for c in containers])
+    for c in containers:
+        result = results.get(c.name)
+        c.cpu_percent = result.cpu_percent if result else None
+        c.activity = result.processes if result else ()
 
 
 def container_repo_dir(cfg: Config, incus: Incus, name: str) -> str:
@@ -560,11 +643,11 @@ class NewContainerOptions:
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
     autofetch_done: bool = False
     # Credential group this container joins for its lifetime
-    # (`jailbee new --claude-group`). None means it inherits the repo's
-    # group. Applied before `incus start` so Claude finds the right
+    # (`jailbee new --credential-group`). None means it inherits the repo's
+    # group. Applied before `incus start` so the agent finds the right
     # credential on its first run. MUST be mirrored in
     # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
-    claude_group: str | None = None
+    credential_group: str | None = None
     # `jailbee new --wait` / `--no-wait`: force every autostart stage into the
     # foreground, or defer everything after the first stage to the detached
     # supervisor, whatever `detach:` says. None leaves the decision to the
@@ -1150,16 +1233,16 @@ def new_container(
         )
 
     # Before `start`: the credential mount and its env key must be in place
-    # when autostart first runs `claude`, or the container's first session
+    # when autostart first runs the agent, or the container's first session
     # authenticates against the repo's group and only picks up the override
     # after a restart.
-    if opts.claude_group is not None:
+    if opts.credential_group is not None:
         from jailbee.accounts import groups
 
-        wanted = None if opts.claude_group == groups.NO_GROUP else opts.claude_group
+        wanted = None if opts.credential_group == groups.NO_GROUP else opts.credential_group
         # An override naming the group this repo already resolves to is not a
         # preference but leftover state: it outranks the profile, so the next
-        # `jailbee claude group set` would leave this one container behind on
+        # `jailbee account group set` would leave this one container behind on
         # the old group. See `accounts.groups.override_is_redundant`.
         if not groups.override_is_redundant(cfg, wanted):
             groups.set_container_group(cfg, incus, name, wanted)
@@ -1301,14 +1384,15 @@ def new_container(
 
     ensure_agents(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
-    # Sync jailbee's own skills into the shared ~/.claude/skills so the
-    # in-container Claude understands jailbee and can help with .jailbee/config.yaml
-    # edits. Host-side file copy; no-op unless claude.enabled and
-    # install_jailbee_skills. Non-fatal — never block container creation.
-    from jailbee.claude_skills import sync_jailbee_skills
+    # Sync jailbee's own skills into each enabled agent's shared skills
+    # directory (e.g. ~/.claude/skills) so the in-container agents understand
+    # jailbee and can help with .jailbee/config.yaml edits. Host-side file
+    # copy; no-op for every agent that is disabled or has
+    # install_jailbee_skills off. Non-fatal — never block container creation.
+    from jailbee.agent_skills import sync_agent_skills
 
     try:
-        sync_jailbee_skills(cfg)
+        sync_agent_skills(cfg)
     except Exception as e:  # non-fatal
         warn(f"jailbee-skills sync failed (continuing): {e}")
 
@@ -1748,7 +1832,7 @@ def destroy_container(
     from jailbee.accounts import groups
 
     state = "Stopped"
-    had_claude_override = False
+    had_group_override = False
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
@@ -1759,8 +1843,11 @@ def destroy_container(
             # validity (spec §7.2), so this reads the raw config directly
             # rather than through `accounts.groups.container_override` (which
             # also validates and would need a second `incus.config_get`
-            # round trip for data already in hand).
-            had_claude_override = bool((raw.get("config") or {}).get(groups.GROUP_LABEL))
+            # round trip for data already in hand). Both spellings count.
+            labels = raw.get("config") or {}
+            had_group_override = bool(
+                labels.get(groups.GROUP_LABEL) or labels.get(groups.LEGACY_GROUP_LABEL)
+            )
             break
 
     if state == "Running":
@@ -1829,10 +1916,10 @@ def destroy_container(
     # The container had a temporary credential-group override, so the
     # repo's shared config home may still record `oauthAccount` for a login
     # this container was actually using instead. Gated on the override so a
-    # repo that never touches `jailbee claude group` pays nothing extra.
-    # Spec §7.2: "One rule, two call sites — `jb claude group use`/`reset`
+    # repo that never touches `jailbee account group` pays nothing extra.
+    # Spec §7.2: "One rule, two call sites — `jb account group use`/`reset`
     # and the destroy path."
-    if had_claude_override:
+    if had_group_override:
         from jailbee.accounts.adapters.claude import CLAUDE, invalidate_identity
 
         invalidate_identity(CLAUDE.config_home(cfg))
@@ -2266,6 +2353,24 @@ def ls_field_specs(
         used = _format_bytes(c.memory_usage)
         return f"{used} / {c.memory_limit}" if c.memory_limit else used
 
+    def _cpu_cell(c: ContainerInfo) -> str:
+        if c.cpu_percent is None:
+            return "[dim]—[/dim]"
+        cores = _parse_cpu_limit(c.cpu_limit)
+        shown = f"{c.cpu_percent:.0f}%"
+        return shown if cores is None else f"{shown}[dim]·{cores}[/dim]"
+
+    def _doing_cell(c: ContainerInfo) -> str:
+        if not c.activity:
+            return "[dim]—[/dim]"
+        names = [
+            p.comm if p.count == 1 else f"{p.comm} x{p.count}" for p in c.activity[:DOING_MAX_NAMES]
+        ]
+        hidden = len(c.activity) - len(names)
+        if hidden > 0:
+            names.append(f"[dim]+{hidden}[/dim]")
+        return ", ".join(names)
+
     def _pending_pr_actions(c: ContainerInfo) -> int:
         return (c.git_status.pending_pr_actions or 0) if c.git_status else 0
 
@@ -2411,6 +2516,31 @@ def ls_field_specs(
             default_json=False,
         ),
         table_format.FieldSpec(
+            name="cpu",
+            header="CPU",
+            cell=_cpu_cell,
+            json=lambda c: {"percent": c.cpu_percent, "limit": _parse_cpu_limit(c.cpu_limit)},
+            justify="right",
+            # A rate, not a reading: it exists only where two samples exist,
+            # which is a live view. `--fields cpu` reaches it from `ls`, and
+            # `ls` then takes the second sample itself rather than printing a
+            # column that could never hold a value.
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="doing",
+            header="DOING",
+            cell=_doing_cell,
+            json=lambda c: [
+                {"comm": p.comm, "percent": p.percent, "count": p.count} for p in c.activity
+            ],
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
             name="wt",
             header="WT",
             cell=_git_cell("wt"),
@@ -2480,13 +2610,13 @@ def ls_field_specs(
             ),
         ),
         table_format.FieldSpec(
-            name="claude_group",
-            header="CLAUDE",
-            cell=lambda c: c.claude_group or "",
-            json=lambda c: c.claude_group,
+            name="group",
+            header="GROUP",
+            cell=lambda c: c.credential_group or "",
+            json=lambda c: c.credential_group,
             # Only worth a column when a container actually deviates: on
             # every other host every row would carry the same value, or
             # none at all.
-            show_if=lambda rows: any(c.claude_group for c in rows),
+            show_if=lambda rows: any(c.credential_group for c in rows),
         ),
     ]

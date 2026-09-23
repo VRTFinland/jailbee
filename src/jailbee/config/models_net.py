@@ -1,16 +1,13 @@
 """Network-facing config models: net-mode descriptions, loose-auto-revert
-policy, JetBrains/GitHub egress host lists, and shared Claude credentials.
+policy, JetBrains/GitHub egress host lists, and shared credential groups.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import timedelta
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-from jailbee.paths import xdg_data_home
 
 # Descriptions baked into the generated Incus net-profiles (visible via
 # `incus profile show <prefix>-net-{strict,loose}`). The modes themselves
@@ -164,10 +161,10 @@ class LooseAutoRevert(BaseModel):
 LOOSE_TTL_PRESETS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "2h", "4h", "8h")
 
 
-# A credential-group name becomes one directory name under
-# `<xdg_data_home>/jailbee/claude-credentials/`. Restricting it to a single
-# lowercase path segment is what stops `../` from escaping that root — the
-# directory holds a live Claude credential.
+# A credential-group name becomes one directory name under the agent's own
+# `<xdg_data_home>/jailbee/<agent>-credentials/` root. Restricting it to a
+# single lowercase path segment is what stops `../` from escaping that root —
+# the directory holds a live credential.
 _CREDENTIAL_GROUP_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -179,8 +176,8 @@ def _validated_group(value: str | None) -> str | None:
     return value
 
 
-class ClaudeCredentials(BaseModel):
-    """Which repos on this host share one Claude credential directory.
+class Credentials(BaseModel):
+    """Which repos on this host share one credential group.
 
     Host-level only (`_HOST_LEVEL_KEYS`), read from
     `~/.config/jailbee/global.yaml`. A group name is a property of *this*
@@ -192,9 +189,11 @@ class ClaudeCredentials(BaseModel):
     block, or no resolved group, means the repo keeps its own credential inside
     its config home — today's behaviour.
 
-    Only the *credential* is shared. Each repo keeps its own `~/.claude`, so
-    project history, MCP config and sessions never cross repos. Claude Code
-    resolves `.credentials.json` and `.oauth_refresh.lock` from
+    The name is agent-agnostic: an adapter turns the resolved group into its own
+    holder directory (see `ClaudeAdapter.holder_override`). Only the *credential*
+    is shared. Each repo keeps its own `~/.claude`, so project history, MCP
+    config and sessions never cross repos. Claude Code resolves
+    `.credentials.json` and `.oauth_refresh.lock` from
     `CLAUDE_SECURESTORAGE_CONFIG_DIR`, independently of `CLAUDE_CONFIG_DIR`,
     which is what makes the split possible at all.
     """
@@ -228,17 +227,14 @@ class ClaudeCredentials(BaseModel):
             _validated_group(group)
         return value
 
-    def dir_for(self, container_prefix: str) -> Path | None:
-        """The credential directory for one repo, or None when it shares none.
+    def group_for(self, container_prefix: str) -> str | None:
+        """The credential group one repo resolves to, or None when it shares none.
 
         A `repos` entry wins over `group` *including when it is `null`* —
         opting one repo out is the only way to keep it on its own credential
         while the rest of the host shares one.
         """
-        group = self.repos[container_prefix] if container_prefix in self.repos else self.group
-        if not group:
-            return None
-        return xdg_data_home() / "jailbee" / "claude-credentials" / group
+        return self.repos[container_prefix] if container_prefix in self.repos else self.group
 
 
 def parse_loose_ttl(raw: str) -> timedelta | None:

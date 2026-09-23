@@ -303,7 +303,7 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     raw = yaml_mod.safe_load(text)
     _check_retired_keys(raw)  # must not raise
 
-    # Host-level keys (`claude_credentials`, `ls`, `dashboard`, ...) never
+    # Host-level keys (`credentials`, `ls`, `dashboard`, ...) never
     # reach the Config layer: `load_config` splits them off before merging,
     # and `Config` forbids extras. Split them here the same way, or a live
     # host-level block in the template fails validation that never runs in
@@ -318,6 +318,25 @@ def test_global_template_round_trips_through_load_config(tmp_path, monkeypatch, 
     assert cfg.ssh.enabled is True
     assert cfg.jetbrains.ide == "idea"
     assert cfg.chrome.dark_mode is False
+
+
+def test_global_template_round_trip_preserves_default_remote_ssh_policy(tmp_path, monkeypatch):
+    """The generated file must retain host-global SSH defaults through its real loader."""
+    from jailbee.global_config import load_global_config
+
+    target = tmp_path / "global.yaml"
+    target.write_text(render_global_template())
+
+    global_config, warnings = load_global_config(target)
+
+    assert warnings == []
+    assert global_config.remote.ssh.listen == "127.0.0.1"
+    assert global_config.remote.ssh.port == 8022
+    assert global_config.remote.ssh.dashboard is True
+    assert global_config.remote.ssh.shell is False
+    assert global_config.remote.ssh.exec is False
+    assert global_config.remote.ssh.commands.mode == "disabled"
+    assert global_config.remote.ssh.commands.allow == []
 
 
 # `test_global_template_documents_all_new_blocks` checked that specific
@@ -383,7 +402,7 @@ def test_global_template_github_roundtrips_through_schema():
     GithubConfig.model_validate(parsed["github"])
 
 
-# --- claude_credentials block in the generated global template --------------
+# --- credentials block in the generated global template ---------------------
 
 
 def test_global_template_ships_a_default_credential_group():
@@ -393,17 +412,18 @@ def test_global_template_ships_a_default_credential_group():
     overwrite an existing file without --force, so no host that predates the
     key is opted in behind the user's back. That matters because joining a
     group MOVES a repo's credential and refuses when two repos each hold one
-    (`init_command._ensure_claude_credentials_dir`) — a migration this
+    (`ClaudeAdapter.prepare_config_home`) — a migration this
     template-only default deliberately avoids.
     """
     parsed = yaml.safe_load(render_global_template())
-    assert parsed["claude_credentials"]["group"] == "default"
+    assert parsed["credentials"]["group"] == "default"
+    assert "claude_credentials" not in parsed
 
 
 def test_global_template_credential_group_round_trips_through_global_config(tmp_path, monkeypatch):
     """The rendered block must survive the real loader, not just yaml.safe_load.
 
-    `claude_credentials` is host-level, so it reaches `GlobalConfig` through
+    `credentials` is host-level, so it reaches `GlobalConfig` through
     `_split_host_keys` and never through the Config layer.
     """
     from jailbee.global_config import load_global_config
@@ -415,14 +435,10 @@ def test_global_template_credential_group_round_trips_through_global_config(tmp_
     gcfg, warnings = load_global_config(target)
 
     assert warnings == []
-    assert gcfg.claude_credentials.group == "default"
-    assert gcfg.claude_credentials.dir_for("sampleapp") == (
-        tmp_path / "data" / "jailbee" / "claude-credentials" / "default"
-    )
-    # Every repo resolves to the same directory — that is the sharing.
-    assert gcfg.claude_credentials.dir_for("other-repo") == gcfg.claude_credentials.dir_for(
-        "sampleapp"
-    )
+    assert gcfg.credentials.group == "default"
+    assert gcfg.credentials.group_for("sampleapp") == "default"
+    # Every repo resolves to the same group — that is the sharing.
+    assert gcfg.credentials.group_for("other-repo") == gcfg.credentials.group_for("sampleapp")
 
 
 def test_repo_template_does_not_contain_claude_credentials(tmp_path):
@@ -604,19 +620,22 @@ def test_generated_global_names_the_generating_command_in_its_header():
 # for this key.
 
 
-def test_generated_global_documents_the_host_level_claude_credentials_block():
-    """`claude_credentials` is host-level (modeled on `GlobalConfig`, not
+def test_generated_global_documents_the_host_level_credentials_block():
+    """`credentials` is host-level (modeled on `GlobalConfig`, not
     `Config`), so it's outside what `test_generated_global_documents_every_key_it_writes`
-    checks. Pin its description separately so the second `render_documented`
-    pass in `render_global_template` doesn't silently regress to an
-    undocumented raw value."""
+    checks. Pin its description separately so the `render_documented`
+    pass doesn't silently regress to an undocumented raw value.
+
+    Exercised through `render_global_template()` so the generated file's own
+    seed is what is checked: a seed that named the wrong key would drop the
+    schema comment (and, until the loader's legacy fold, still load).
+    """
     from jailbee.global_config import GlobalConfig
 
     text = render_global_template()
-    parsed = yaml.safe_load(text)
-    assert parsed["claude_credentials"]["group"] == "default"
 
-    info = GlobalConfig.model_fields["claude_credentials"]
+    assert "claude_credentials" not in text
+    info = GlobalConfig.model_fields["credentials"]
     assert info.description
     first_line = " ".join(info.description.strip().splitlines()[0].split())
     assert first_line in _flattened_comment_text(text)

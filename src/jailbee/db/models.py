@@ -240,7 +240,7 @@ class HostSetupState(SQLModel, table=True):
     """Host-level record of `jailbee setup` — one row, `id=1`.
 
     Unlike `RepoUpgradeState` this is not per repo: shell completions, the
-    refresh timer and `~/.claude/skills` belong to the user's machine, not to
+    refresh timer and the host's agent skills belong to the user's machine, not to
     any one checkout. Both timestamps are nullable and both are one-way:
     `setup_at` is set the first time `jailbee setup` runs anything, and
     `hint_shown_at` the one time the first-run hint is printed. Either one

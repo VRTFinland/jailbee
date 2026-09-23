@@ -11,7 +11,7 @@ import pytest
 
 from jailbee.config import HostPort
 from jailbee.config_edit import layers
-from jailbee.config_edit.schema import FieldKind, FieldSpec, repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -192,6 +192,39 @@ def test_resolving_a_legacy_chrome_block_does_not_rewrite_the_stored_raw(tmp_pat
     assert layers.raw_for(got, "global") == {"chrome": {"enabled": True}}
 
 
+def test_a_legacy_credentials_block_still_resolves_its_origin(tmp_path, capsys):
+    """A host still spelling `claude_credentials:` must see its real group in
+    the editor, under the `credentials.*` rows the editor exposes.
+
+    `normalize_credentials_key` folds the legacy key on a copy of the global
+    layer, so the origin marker does not lie and say "default" for a value the
+    user has set. The fold is silent: `resolve()` runs on every reload while
+    the full-screen `Application` is live, so a deprecation notice printed here
+    would corrupt the display.
+    """
+    _write(tmp_path / "global.yaml", "claude_credentials:\n  group: work\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    origins = layers.resolve(global_specs(), got)
+
+    assert origins[("credentials", "group")] == layers.Origin("global", "work")
+    assert capsys.readouterr().err == ""
+
+
+def test_resolving_a_legacy_credentials_block_does_not_rewrite_the_stored_raw(tmp_path):
+    """The fold is only for origin lookup. `raw_for` — the write path's base
+    mapping, which `credential_key_migration` reads — must still show the
+    file's real content, or an unrelated save would rewrite the block as a
+    side effect of displaying it.
+    """
+    _write(tmp_path / "global.yaml", "claude_credentials:\n  group: work\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    layers.resolve(global_specs(), got)
+
+    assert layers.raw_for(got, "global") == {"claude_credentials": {"group": "work"}}
+
+
 def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
     """`browsers.chrome.url: null` in the repo layer is the twin of the
     global test.
@@ -357,6 +390,26 @@ def test_validate_checks_a_staged_global_layer_without_writing_it(opened):
 
     assert error is not None
     assert got.global_path.read_text() == "defaults:\n  cpu: 2\n", "nothing was written"
+
+
+def test_validate_migrates_a_legacy_credentials_block(opened):
+    """A staged `credentials.*` change over a legacy global file must validate.
+
+    Without the same migration `save.build_plan` applies, the staged mapping
+    would carry both `claude_credentials` and `credentials`, and the loader
+    refuses that pair outright — so every global save on a not-yet-migrated
+    host would fail before it could migrate the file.
+    """
+    got = opened("claude_credentials:\n  group: work\n")
+
+    error = layers.validate(
+        got, "global", [YamlChange(("credentials", "repos", "myrepo"), "personal")]
+    )
+
+    assert error is None
+    assert got.global_path.read_text() == "claude_credentials:\n  group: work\n", (
+        "validation must not write the migration"
+    )
 
 
 def test_validate_catches_a_cross_field_rule_not_just_the_schema(opened):
@@ -605,3 +658,24 @@ def test_resolve_answers_for_every_spec(tmp_path):
     for specs in (repo_specs(), global_specs()):
         origins = layers.resolve(specs, got)
         assert set(origins) == {s.path for s in specs}
+
+
+def test_a_repo_layer_refusal_names_the_key_the_user_wrote(tmp_path):
+    """`credentials:` is host-level, so both spellings are banned in a repo's
+    own file. The refusal has to name `claude_credentials` — the key actually
+    in the file — not the one a migration would have renamed it to."""
+    from jailbee.config_edit.layers import LayerSet, validate
+
+    repo = tmp_path / "repo"
+    (repo / ".jailbee").mkdir(parents=True)
+    layer_set = LayerSet(
+        global_path=tmp_path / "global.yaml",
+        global_raw={},
+        repo_path=repo / ".jailbee" / "config.yaml",
+        repo_raw={"container_prefix": "demo", "claude_credentials": {"group": "work"}},
+    )
+
+    message = validate(layer_set, "repo", [])
+
+    assert message is not None
+    assert "claude_credentials" in message

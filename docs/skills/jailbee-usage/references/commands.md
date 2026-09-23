@@ -20,6 +20,7 @@ Common conventions:
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`)](#setup--host)
+- [Remote SSH (`remote ssh`)](#remote-ssh)
 - [Config (`config show|validate|init|edit`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
@@ -31,7 +32,7 @@ Common conventions:
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
-- [Claude accounts (`claude ls|use|park|rm`)](#claude-accounts)
+- [Accounts (`account ls|use|park|rm`, `account group …`)](#accounts)
 - [GUI (`ide`, `chrome`, `firefox`, `browser`, `apps ls`, `apps run`, `exec --detach`)](#gui)
 - [Cache pools (`pool`, `chrome-pool`)](#cache-pools)
 - [Mounts (`mount`, `unmount`)](#mounts)
@@ -44,16 +45,69 @@ speculatively.
 
 | Command | What it does |
 |---|---|
-| `jailbee setup [--yes] [--status] [--only completions\|timer\|skills] [--shell bash\|zsh\|fish]` | Per-*machine* post-install steps, the counterpart to the per-repo `jailbee init`: completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user timer, and jailbee's Claude skills in `~/.claude/skills`. Interactive by default (one question per step, defaulting to yes for a missing step and no for an installed one); `--yes` asks nothing and never edits a shell rc; `--status` reports each step's state and installs nothing (the only view showing all three, since `jailbee doctor` omits the timer). `--status` and `--yes` contradict each other and are rejected together. Idempotent — re-run after upgrading jailbee. Needs no repo config, so it works from any directory. On a terminal, `jailbee ls` and `jailbee dashboard` offer to run this when steps are missing, once; `jailbee new` / `jailbee shell` only print the same notice. Does **not** touch host prerequisites (Incus, firewall, UID delegation): `jailbee doctor` reports those. |
+| `jailbee setup [--yes] [--status] [--only completions\|timer\|skills] [--shell bash\|zsh\|fish]` | Per-*machine* post-install steps, the counterpart to the per-repo `jailbee init`: completion scripts for `jailbee` and `jb`, the `jailbee-net-refresh` user timer, and — when `install_host_skills: true` is set in `~/.config/jailbee/global.yaml` (host-level, default `false`) — the bundled jailbee skills for every skill-capable agent found on the host (`claude`, `codex`, `gemini`, `opencode`), each into its own skills directory (`~/.claude/skills`, `~/.codex/skills`, …). Interactive by default (one question per step, defaulting to yes for a missing step and no for an installed one); `--yes` asks nothing and never edits a shell rc; `--status` reports each step's state and installs nothing (the only view showing all three, since `jailbee doctor` omits the timer). `--status` and `--yes` contradict each other and are rejected together. Idempotent — re-run after upgrading jailbee. Needs no repo config, so it works from any directory. On a terminal, `jailbee ls` and `jailbee dashboard` offer to run this when steps are missing, once; `jailbee new` / `jailbee shell` only print the same notice. Does **not** touch host prerequisites (Incus, firewall, UID delegation): `jailbee doctor` reports those. |
 | `jailbee init` | First-time setup: create per-repo Incus profiles, egress ACL, the `jailbee-loose` bridge, shared dirs; install the `jailbee-net-refresh` user timer. Errors if profiles already exist. |
 | `jailbee apply [-y] [--no-restart]` | Re-push current config (profiles, ACL, `/etc/hosts`, dockerd proxy) to running containers. Replaces the old `jailbee init --reapply` / `jailbee net refresh`. Idempotent; prompts to restart containers if profiles changed (`-y` to skip prompt, `--no-restart` to never restart). |
 | `jailbee base build` | Build the golden image from `install.d/` snippets. 10–15 min, one-time (re-run after changing `golden.*` or snippets). |
 | `jailbee base prune [--all] [--days N] [--yes-to-all]` | Remove superseded dated golden-image archives (`<alias>-YYYY-MM-DD`). Lists all candidates up front and confirms once — a single batch confirmation, not per-archive — printing the total count + size before prompting. The live base image is always kept; archives currently in use by a container are skipped (batch continues, exit 0). `--all` prunes archives for every registered repo, not just the current one. `--days N` limits removal to archives older than N days (omitted: every dated archive is a candidate). `--yes-to-all` skips the confirmation prompt entirely. |
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base image and dated archive with its size, a per-repo subtotal, a prunable figure (archives only, i.e. what `jailbee base prune` would reclaim), and a grand total across images shown. `--all` includes every registered repo, not just the current one. |
-| `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, `uid delegation` (the `/etc/subuid` + `/etc/subgid` lines `raw.idmap` needs — without them containers are created but stay `STOPPED`), `network <bridge> reachability` (probes each bridge's DHCP lease, DNS and egress from a running container, to tell a host firewall's three missing openings apart; silent when no container runs on that bridge), keyring limits, registry mirror, registry cache integrity (every digest-keyed cache entry hashed against its digest — minutes on a large cache, with live progress; Ctrl+C skips just that row, which then shows SKIPPED and does not fail doctor), GitHub token perms, agent setup, port forwards, the `jailbee setup` steps (`shell completions`, `claude skills (host)`), `qt dashboard (optional)` (whether PySide6 is present for `jailbee gui` — reported, never a failure, since `jailbee setup` cannot install an extra into the environment it is running from), and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
+| `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, `uid delegation` (the `/etc/subuid` + `/etc/subgid` lines `raw.idmap` needs — without them containers are created but stay `STOPPED`), `network <bridge> reachability` (probes each bridge's DHCP lease, DNS and egress from a running container, to tell a host firewall's three missing openings apart; silent when no container runs on that bridge), keyring limits, registry mirror, registry cache integrity (every digest-keyed cache entry hashed against its digest — minutes on a large cache, with live progress; Ctrl+C skips just that row, which then shows SKIPPED and does not fail doctor), GitHub token perms, agent setup, port forwards, the `jailbee setup` steps (`shell completions`, `agent skills (host)`), `qt dashboard (optional)` (whether PySide6 is present for `jailbee gui` — reported, never a failure, since `jailbee setup` cannot install an extra into the environment it is running from), and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
 | `jailbee registry up [--recreate]\|down\|status\|verify [--purge]` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. `verify` checks cached blobs/manifests against their digests and removes corrupt ones on confirmation (`--purge`: without asking) — the fix when a pull fails with `unexpected commit digest`. Host-only: the container has no `jailbee`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
 | `jailbee version` / `jailbee --version` | Print the version. |
+
+## Remote SSH
+
+The optional SSH service runs as a systemd user unit and exposes JailBee, not
+a host shell. Install the `jailbee[ssh]` extra separately; neither package
+installation nor `jailbee setup` enables the service.
+
+| Command | What it does |
+|---|---|
+| `jb remote ssh enable` | Check for the optional dependency and installed `jailbee` executable, create/preserve the private Ed25519 host key and authorized-key file, install the user unit, and enable/start it. An empty authorized-key file admits nobody. |
+| `jb remote ssh disable` | Stop and disable the unit. Leaves global config, client keys and host key intact. |
+| `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
+| `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
+| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--shell\|--no-shell] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]...` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. |
+| `jb remote ssh key add [PATH\|-]` | Read one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt (no argument, terminal) / piped stdin (no argument, no terminal) — reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
+| `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
+| `jb remote ssh key rm SHA256:FINGERPRINT` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
+
+The fixed username is `jailbee`. At the default loopback listener, client
+grammar is exactly:
+
+```text
+ssh -t -p 8022 jailbee@localhost dashboard
+ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+```
+
+A commandless login prints help listing only configured entry points and exits
+zero. `dashboard` and the restricted console require a PTY. One-shot commands
+do not require one at the SSH layer, though a selected JailBee command may.
+Every one-shot request starts with `--repo PREFIX`; it is an exact registered
+repository prefix, never a path, and its registered root becomes cwd. Text
+this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
+was negotiated, LF otherwise; JailBee child command output is unaffected.
+
+The console either takes `--repo PREFIX`, or shows an arrow-key menu of live
+registered repos (skipped, starting directly, when exactly one is
+registered); Esc, Ctrl-C and Ctrl-D all cancel the menu, exiting the console
+cleanly at startup. Local commands are `repos`, `use [PREFIX]` (bare `use`
+reopens the menu), `dashboard`, `help`, and `exit`/EOF; `help` also lists the
+JailBee command paths this session's policy allows. Other input is parsed as
+a JailBee argv, checked against the same command policy as one-shot
+execution, run, and returned to the prompt; tab completion covers local
+commands, allowed JailBee command paths word by word, and repo prefixes after
+`use`. There are no pipes, redirections, shell operators, glob/variable/command
+expansion, aliases or executable lookup.
+
+Policy lives only in host-global `remote.ssh`. Defaults are
+`127.0.0.1:8022`, dashboard on, console/exec off and command mode disabled.
+An allowlist names exact public leaves (`git pull`, not `git`); `full` includes
+all current and future public leaves but never hidden internal commands. All
+authorized keys share the same policy and every registered repo. Treat `full`
+and the dashboard as host-capable access, not a read-only view.
 
 ## Config
 
@@ -166,7 +220,7 @@ use `jailbee git retarget`.
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
-| `--claude-group <name>\|none` | Put this container in a Claude credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee claude group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `claude group set`. See `jailbee claude group` below. |
+| `--credential-group <name>\|none` | Put this container in a credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee account group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `account group set`. See `jailbee account group` below. Hidden legacy alias: `--claude-group`. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
 | `--no-autostart` | Skip the repo's autostart steps — fastest, least-risk way to get a container. Also skips reading the target branch's autostart config (see below): nothing runs, so there is nothing to diff or confirm. Enabled agents are still installed (that is infrastructure, not a user step), so `jailbee tmux` on such a container finds a session holding an `install-<agent>` window — but not the agent's own launch window. |
 | `--yes` / `-y` | Skip the "branch already exists" confirmation above, and accept a target branch's autostart config that widens network access or attaches a host mount (see below) without asking. Required when there is no TTY. |
@@ -350,7 +404,7 @@ that path.
 |---|---|
 | `--all` | Containers from every jailbee-managed repo (adds a REPO column). Default: cwd repo only. |
 | `-o` / `--format <fmt>` | `table` (default) or `json`. |
-| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, repo, mode, base, state, created, job, network, ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, ahead_count, conflict, local_diff, local_count, git_status, pr`. Wins outright over the `ls:` config block, and applies to every `--format`. |
+| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, repo, mode, base, state, created, job, network, ttl, loose_until, ip, memory_limit, mem, wt, ahead_diff, ahead_count, conflict, local_diff, local_count, git_status, pr, group, cpu, doing`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
 **AHEAD ±** / **↑** (commits ahead of base, 3-dot/"PR view"), **MERGE** (see
@@ -362,13 +416,22 @@ autostart status|cancel` below to inspect or clear one. **TTL** appears
 only while a container is in loose mode. Stopped/mount-mode containers show
 `—` in the four git columns.
 
+**CPU** and **DOING** say what a container is working on right now. CPU is
+the share of a core it is burning, `top`-style — `182%·4` is 1.8 cores of
+the 4 it is allowed — and DOING names the programs burning it
+(`claude, pytest x8`, where `x8` counts processes of that name). Only
+programs above 5% of a core are listed, so an idle container reads `—`
+rather than a list of daemons. Both are read from the host's own `/proc`,
+so they cost no command inside the container.
+
 The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
-columns. **IP** and **MEM** are *not* in it — reach either from `ls` with
-`--fields ip,mem`. The dashboards' own default column set differs in
-exactly one of those two: they add **MEM**, since the view refreshes and a
-live number earns its width there; **IP** is off by default in both —
+columns. **IP**, **MEM**, **CPU** and **DOING** are *not* in it — reach any
+of them from `ls` with `--fields ip,mem,cpu,doing`. The dashboards' own
+default set adds **MEM**, **CPU** and **DOING**, since the view refreshes
+and a live number earns its width there; **IP** is off by default in both —
 enable it in the dashboard settings (see below) if you want it there
-instead. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
+instead. CPU and DOING are *rates*, measured between two readings, so `ls`
+takes a second reading (about 0.2 s) when you ask for either by name. **MODE** is dynamic like JOB, TTL and PR: it appears only once a
 mount-mode container exists, since on a clone-only host every row would
 read `clone`.
 
@@ -1216,11 +1279,11 @@ change. Container-scope add/rm are the opposite: they materialise
 immediately (against the container's current network mode, per the table
 above), with no separate apply step needed.
 
-## Claude accounts
+## Accounts
 
-### `jailbee claude ls [-o json] [--fields group,account,org,state,used_by,repos,containers] [-g/--group <name>]`
+### `jailbee account ls [-o json] [--fields agent,group,account,org,state,used_by,repos,containers] [-a/--agent <agent>] [-g/--group <name>]`
 
-**Every Claude login on this host, and which holder each one is live in.** One
+**Every stored login on this host, and which holder each one is live in.** One
 row per login file:
 
 - a **credential group** with the account it currently holds — every group on
@@ -1230,14 +1293,18 @@ row per login file:
 - every **parked** login in the host-wide store (`GROUP` reads `-`), each
   activatable into any holder.
 
+`AGENT` names the agent whose pool holds the login. `-a/--agent` narrows the
+table to one agent (default: every enabled pooled agent); a name with no
+account pool is refused by name.
+
 `STATE` is `live`, `parked`, or `empty` — a credential group whose directory
 exists but holds no login, which is what a freshly created group looks like
-until a `/login` or a `claude use` fills it. An `empty` row has no account, so
-`ACCOUNT` reads `(no login)` and `-o json`'s `account` is `null`.
+until a `/login` or an `account use` fills it. An `empty` row has no account,
+so `ACCOUNT` reads `(no login)` and `-o json`'s `account` is `null`.
 
 `USED BY` says who reads a holder: the repos resolving to it, then its
 containers. **Container names are printed only when no repo resolves to the
-holder** — the temporary-override case (`jailbee claude group use`), where a
+holder** — the temporary-override case (`jailbee account group use`), where a
 container is the only thing keeping that group in use and naming it is what
 makes the group discoverable at all. Where repos are named, a count is enough:
 a switch moves the repos. An unreachable Incus daemon degrades the column to
@@ -1249,10 +1316,10 @@ table names it explicitly — the repo's prefix, its credential group (or "no
 credential group") and the holder directory.
 
 `-g/--group <name>` narrows the table to one credential group, keeping the
-parked rows (they are what a `claude use -g` would activate into it). `-g none`
-narrows to the holders that share no group — the same word `group set`,
-`group use` and `new --claude-group` use for that. `-g` here does **not** point
-the command at another holder the way it does on `use`, `park` and `rm` —
+parked rows (they are what an `account use -g` would activate into it). `-g
+none` narrows to the holders that share no group — the same word `group set`,
+`group use` and `new --credential-group` use for that. `-g` here does **not**
+point the command at another holder the way it does on `use`, `park` and `rm` —
 reading is host-wide now, so there is nothing to point at. Naming a group
 nothing on the host uses says so instead of failing.
 
@@ -1262,24 +1329,28 @@ it in every row; `ORG` is hidden entirely when no account has an organization.
 A `~<disambiguator>` stays in `ACCOUNT` — it is what tells two grants of one
 account apart. **`-o json`'s `account` field carries the full slot name**
 (`<email>[#<org8>][~<disambiguator>]`), the reference to feed back to
-`claude use`/`claude rm`, and its `group`, `repos` and `containers` fields carry
-the holder as data rather than as the rendered `USED BY` sentence. Two holders
-can be logged into the same account, so in JSON it is `group` plus `account`
-that identifies a row, not `account` alone.
+`account use`/`account rm`, and its `group`, `repos` and `containers` fields
+carry the holder as data rather than as the rendered `USED BY` sentence. Two
+holders can be logged into the same account, so in JSON it is `group` plus
+`account` that identifies a row, not `account` alone.
 
-### `jailbee claude use [<email|slot>] [-g/--group <name>]`
+### `jailbee account use [<email|slot>] [-a/--agent <agent>] [-g/--group <name>]`
 
 Park the live login and activate a stored one. Holder-wide — every repo sharing
 the credential group moves with it. Pass the bare email unless two stored
 accounts share it, in which case the error names the full slot names
-(`<email>#<org8>`) to choose between. A Claude session that is already running
-adopts the new credential on its next turn; only the account name in `/status`
-can lag until it restarts.
+(`<email>#<org8>`) to choose between. A session that is already running adopts
+the new credential on its next turn; only the account name in `/status` can lag
+until it restarts.
+
+`-a/--agent` picks the agent's pool when several are enabled and the reference
+is ambiguous; off a TTY that ambiguity is an error naming the `-a` values to
+pass.
 
 `-g/--group <name>` acts on that group's holder instead of the repo's own —
 the only way to fill a group that no repo permanently uses (one only a
-container override, see `jailbee claude group use` below, ever puts to use).
-Note this is a *different* `-g` from `claude ls`'s, which only filters a
+container override, see `jailbee account group use` below, ever puts to use).
+Note this is a *different* `-g` from `account ls`'s, which only filters a
 host-wide table.
 
 **Omit the account entirely to pick from an arrow-key menu** of the stored
@@ -1289,14 +1360,17 @@ holder whose only login is the live one reports that there is nothing to switch
 to rather than opening an empty menu. Without a TTY the menu is impossible, so
 the error names the candidate references for a script to pass explicitly.
 
-### `jailbee claude park [-g/--group <name>]`
+### `jailbee account park [-a/--agent <agent>] [-g/--group <name>]`
 
-Store the live login and leave the holder empty, so the next `claude` in a
+Store the live login and leave the holder empty, so the next agent run in a
 container of this holder prompts `/login`. This is how a second account enters
 the pool — there is no `add`, because only a browser login creates a credential.
+Several agents can be live in one holder at once, so `-a` (or a picker on a
+TTY) names which one to park; off a TTY with several live, the error names the
+candidates.
 
 `-g/--group <name>` parks that group's live login instead of the repo's own,
-the same escape hatch `claude use` offers above.
+the same escape hatch `account use` offers above.
 
 **How the parked file gets its name, with and without `-g`.** JailBee names it
 after the account, read from `oauthAccount` in a member repo's `~/.claude` —
@@ -1304,51 +1378,52 @@ and with `-g <group>` **this repo is not a member of that holder**: its own
 `~/.claude` describes the login of the group it really uses, so it is neither
 read nor written by a `-g` command (which is why `-g` cannot disturb the name
 or the login of the group this repo does use). What names the file instead is
-the note JailBee keeps beside a login it activated itself, so a
-`claude use -g X` followed by a `claude park -g X` keeps the account name.
+the note JailBee keeps beside a login it activated itself, so an
+`account use -g X` followed by an `account park -g X` keeps the account name.
 
 A login that arrived by `/login` in a container of a group no repo resolves to
 has neither source, and is parked as `unknown-<timestamp>`. The login is
 intact — only the record of which account it holds is missing. To give it its
-real name: activate it (`jailbee claude use`), let one container run `claude`
+real name: activate it (`jailbee account use`), let one container run the agent
 once so a config home records the account, then park it again.
 
-### `jailbee claude rm [<email|slot>] [--yes]`
+### `jailbee account rm [<email|slot>] [-a/--agent <agent>] [--yes]`
 
 Delete a stored login permanently; refuses the live one. Omit the account to
-pick from the same menu `claude use` offers. JailBee never contacts Anthropic,
-so this cannot be undone except by logging in again.
+pick from the same menu `account use` offers. JailBee never contacts the
+vendor, so this cannot be undone except by logging in again.
 
-### `jailbee claude group`
+### `jailbee account group`
 
-A command group, not a command: bare `jailbee claude group` prints its help.
+A command group, not a command: bare `jailbee account group` prints its help.
 The three views it used to print live where each belongs — which holder this
-repo reads is `jailbee claude ls`, per-container labels are `jailbee ls`'s
-`CLAUDE` column, and an override that only *repeats* this repo's group is
+repo reads is `jailbee account ls`, per-container labels are `jailbee ls`'s
+`GROUP` column, and an override that only *repeats* this repo's group is
 reported by `jailbee doctor` (nothing clears those but the commands below,
-and until then they would outrank the next `claude group set`).
+and until then they would outrank the next `account group set`).
 
-### `jailbee claude group ls [-o json] [--fields …]`
+### `jailbee account group ls [-o json] [--fields …]`
 
 The credential groups on this host and what each one holds: the same rows and
-the same columns as `jailbee claude ls`, narrowed to rows that *are* a group.
+the same columns as `jailbee account ls`, narrowed to rows that *are* a group.
 A parked login belongs to no group and an ungrouped holder is one repo's own,
-so neither appears here — that wider question is `claude ls`, which this
+so neither appears here — that wider question is `account ls`, which this
 command names under its table.
 
 Use it before `create`, `rm` or `set`: those act on groups, and this is the
 list of what there is to act on. An `empty` / `unused` row is a group nothing
 holds and nothing reads, which is exactly what `rm` will let you remove.
 
-### `jailbee claude group create <name>`
+### `jailbee account group create <name>`
 
 Create an empty credential group. Nothing has to exist first — `set`, `use`
-and `claude use -g` all create the directory on demand — so this is for the
+and `account use -g` all create the directory on demand — so this is for the
 case where the group should exist before any of them runs. Idempotent: an
-existing group is reported, not an error. The group shows up in `jailbee
-claude ls` as `empty` / `unused` until something is assigned to it.
+existing group is reported, not an error. One group name is one `0700`
+directory per enabled agent; the group shows up in `jailbee account ls` as
+`empty` / `unused` until something is assigned to it.
 
-### `jailbee claude group rm <name> [--yes]`
+### `jailbee account group rm <name> [--yes]`
 
 Remove a credential group nothing uses. There is no `--force`: it refuses
 while
@@ -1356,7 +1431,7 @@ while
 - **a repo resolves to it** — naming those repos. The next `jailbee apply`
   would recreate the directory, and until it ran their containers would
   mount an empty one;
-- **it is the host's default** (`claude_credentials.group`) — checked
+- **it is the host's default** (`credentials.group`) — checked
   separately, because a host with no registered repo still resolves every
   repo to it;
 - **a container has been moved into it** — naming those containers. Read from
@@ -1367,12 +1442,12 @@ while
 
 A login the group still holds is **parked**, never deleted: `--yes` (or a
 confirmation on a TTY) moves it into the host-wide store, where `jailbee
-claude ls` lists it as `parked` and `claude use` can activate it into any
-other group. `jailbee claude rm` remains the only command that destroys a
+account ls` lists it as `parked` and `account use` can activate it into any
+other group. `jailbee account rm` remains the only command that destroys a
 credential. The directory itself is removed with `rmdir`, never recursively —
 anything else left in it is named instead of deleted.
 
-### `jailbee claude group set <name>|none [--force]` / `jailbee claude group unset [--force]`
+### `jailbee account group set <name>|none [--force]` / `jailbee account group unset [--force]`
 
 Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
 (`none` keeps this repo on its own login instead of sharing); `unset`
@@ -1383,12 +1458,12 @@ group the repo now uses) is dropped, so that container really does follow the
 repo again instead of being pinned to a value that would outrank the next
 change. The overrides are cleared after the binds profile is re-rendered:
 the container's own device is what mounts its credential until the profile
-carries the same one. Refuses while Claude is running in any of the repo's containers
-unless `--force` is passed, because a live session can overwrite the
-target group's login on its next token refresh. Restart Claude in the
+carries the same one. Refuses while an agent is running in any of the repo's
+containers unless `--force` is passed, because a live session can overwrite the
+target group's login on its next token refresh. Restart the agent in the
 containers afterwards to pick up the new login.
 
-### `jailbee claude group use <name>|none [<container>] [--force]` / `jailbee claude group reset [<container>] [--force]`
+### `jailbee account group use <name>|none [<container>] [--force]` / `jailbee account group reset [<container>] [--force]`
 
 Temporary, single-container. `use` moves one container into another
 credential group (or, with `none`, out of grouping entirely) for as long
@@ -1396,15 +1471,21 @@ as that container exists — it never touches `global.yaml` and never
 affects any other container. `reset` drops the override so the container
 inherits the repo's group again; destroying the container also drops it.
 Omit `<container>` to pick from this repo's containers. Same `--force`
-gate and same "restart Claude to pick up the new login" caveat as
+gate and same "restart the agent to pick up the new login" caveat as
 `set`/`unset`.
 
 **Naming the repo's own group is a `reset`.** `use` then clears the override
 rather than writing one that repeats the repo — such a label outranks the
-profile and would keep the container behind at the next `claude group set`.
+profile and would keep the container behind at the next `account group set`.
 Both commands also leave the repo's recorded account alone when the
 container's *effective* group did not change: invalidating it there would
-throw away a name nothing can supply again until a container runs Claude.
+throw away a name nothing can supply again until a container runs the agent.
+
+**Compatibility.** The pre-rename `jailbee claude …` spellings — `ls`, `use`,
+`park`, `rm` and the `group` subcommands — remain as hidden aliases that warn
+once per invocation, and are removed in 2.0.0. `jailbee claude ls` implies
+`-a claude`. The `--claude-group` flag and the `user.jailbee.claude_group`
+container label are the same kind of alias: read, never written.
 
 ## GUI
 

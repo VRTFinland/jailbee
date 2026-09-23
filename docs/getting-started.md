@@ -2,7 +2,8 @@
 
 This assumes `jailbee` is installed and `jailbee setup` has been run — see
 [Installation](installation.md), whose last step is that command (shell
-completions, the egress-refresh timer, the Claude skills).
+completions, the egress-refresh timer, and — if you opt in — agent skills for
+the agents on your host).
 
 ## Concepts
 
@@ -192,9 +193,11 @@ What turning it on gets you:
   added to the egress allowlist automatically; `plugins_enabled` adds the
   GitHub + npm hosts the plugin marketplace and skills reach. You don't
   list them by hand.
-- **Claude knows JailBee.** JailBee's own `jailbee-usage` and
-  `jailbee-repo-setup` skills are copied into the shared skills directory,
-  so the in-container Claude can drive `jailbee` commands for you.
+- **The agents know JailBee.** JailBee's own `jailbee-usage`,
+  `jailbee-repo-setup` and `jailbee-pr-review` skills are copied into the
+  shared skills directory of every enabled agent that has one (claude, codex,
+  gemini, opencode), so the in-container agents can drive `jailbee` commands
+  for you.
 - **AI-written PRs.** `jailbee pr <name>` asks the in-container Claude for
   the title, body, and branch name (`--no-ai` opts out per call). It runs on
   Sonnet by default (`claude.ai_pr_model`), and follows your project's own

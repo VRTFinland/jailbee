@@ -213,3 +213,75 @@ def test_fixed_choice_options_complete_their_values():
         complete = _underlying_completer(_param(cmd_path, param_name))
         assert complete is not None, f"{cmd_path}:{param_name} has no completer"
         assert complete("") == expected, f"{cmd_path}:{param_name}"
+
+
+# ---- the account pool's own completers ------------------------------------
+#
+# The container-name guard above keys on the parameter's *shape*. These are
+# shape-agnostic: every account login, every agent name and every credential
+# group must resolve to the one generic completer, however the option or
+# argument that carries it is spelled. The legacy `jailbee claude ...` wrappers
+# are checked too — they must reuse the generic completers, not keep a
+# Claude-only copy of their own.
+
+
+def test_agent_options_complete_agent_names():
+    from jailbee.completion import complete_account_agent
+
+    for cmd_path in [
+        "jailbee account ls",
+        "jailbee account use",
+        "jailbee account park",
+        "jailbee account rm",
+    ]:
+        assert _underlying_completer(_param(cmd_path, "agent")) is complete_account_agent, cmd_path
+
+
+def test_account_refs_complete_stored_logins():
+    from jailbee.completion import complete_account
+
+    for cmd_path in [
+        "jailbee account use",
+        "jailbee account rm",
+        "jailbee claude use",
+        "jailbee claude rm",
+    ]:
+        assert _underlying_completer(_param(cmd_path, "ref")) is complete_account, cmd_path
+
+
+def test_credential_group_parameters_complete_groups():
+    from jailbee.completion import complete_credential_group
+
+    cases = [
+        ("jailbee new", "credential_group"),
+        ("jailbee new", "claude_group"),
+        ("jailbee account ls", "group"),
+        ("jailbee account use", "group"),
+        ("jailbee account park", "group"),
+        ("jailbee account group rm", "group"),
+        ("jailbee account group set", "group"),
+        ("jailbee account group use", "group"),
+        ("jailbee claude ls", "group"),
+        ("jailbee claude use", "group"),
+        ("jailbee claude park", "group"),
+        ("jailbee claude group rm", "group"),
+        ("jailbee claude group set", "group"),
+        ("jailbee claude group use", "group"),
+    ]
+    for cmd_path, param_name in cases:
+        assert _underlying_completer(_param(cmd_path, param_name)) is complete_credential_group, (
+            f"{cmd_path}:{param_name}"
+        )
+
+
+def test_no_claude_only_completer_remains():
+    """The rename is the proof there is one implementation, not two.
+
+    A legacy-only copy left behind would silently drift from the generic one
+    the canonical commands use; `cli.py` importing either name is what these
+    wiring assertions above would then no longer catch.
+    """
+    import jailbee.completion as completion
+
+    assert not hasattr(completion, "complete_claude_account")
+    assert not hasattr(completion, "complete_claude_group")

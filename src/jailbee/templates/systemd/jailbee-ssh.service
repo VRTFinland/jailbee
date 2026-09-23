@@ -1,0 +1,14 @@
+[Unit]
+Description=Jailbee SSH server
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={jailbee_bin} remote ssh serve
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+KillMode=process
+
+[Install]
+WantedBy=default.target

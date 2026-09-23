@@ -104,6 +104,17 @@ that is running — and only you know whether uv, pipx or a virtualenv put it
 there. `jailbee doctor` reports whether it is present, and `jailbee gui`
 prints the command when it is not. Adding it later is the same command again.
 
+The authenticated SSH service is a separate optional extra and is never
+enabled by `jailbee setup`:
+
+```bash
+uv tool install 'jailbee[ssh]'      # or: pipx install 'jailbee[ssh]'
+```
+
+Extras can be combined as `jailbee[gui,ssh]`. Installing the dependency does
+not install or start a listener; [Optional SSH service](#optional-ssh-service)
+below is a second, explicit opt-in.
+
 Install `git+https://github.com/VRTFinland/jailbee` in place of the release
 when you want the unreleased tip.
 
@@ -135,7 +146,7 @@ installs them — interactively, one question per step:
 | --- | --- | --- |
 | `completions` | Completion scripts for **both** `jailbee` and `jb`, for your shell | No TAB completion of commands, container names or branches |
 | `timer` | The `jailbee-net-refresh` **user systemd timer** | Strict-mode allowlists go stale as the IPs behind GitHub et al. change, and `jailbee net loose --for 2h` never reverts |
-| `skills` | JailBee's [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) in `~/.claude/skills` | Claude Code on your host does not know how to drive `jailbee` |
+| `skills` | JailBee's agent skills in each skill-capable agent's own directory (`~/.claude/skills`, `~/.codex/skills`, …) for the agents found on your host. **Opt-in** — set `install_host_skills: true` in `~/.config/jailbee/global.yaml` first | Agents you run on the host itself don't know how to drive `jailbee` (the *containers*' skills are installed without this step) |
 
 Every step is idempotent, so re-run `jailbee setup` after upgrading JailBee.
 `--yes` installs everything without asking, `--only <step>` picks one, and
@@ -164,6 +175,78 @@ Everything else — creating the golden image and your first container — is
 per repo. Continue in [Getting started](getting-started.md). The first thing
 it has you run, `jailbee doctor`, flags any remaining host issues, i.e. the
 conditional sections below.
+
+## Optional SSH service
+
+The SSH server is opt-in host tooling for reaching JailBee itself. It is not a
+host shell, and the default `127.0.0.1:8022` listener is reachable only from
+this machine. Read [Remote SSH](security.md#remote-ssh) before changing the
+listen address or granting a key.
+
+Install the extra as shown above, add one client public key, then explicitly
+enable the user service:
+
+```bash
+uv tool install 'jailbee[ssh]'
+jb remote ssh key add
+jb remote ssh enable
+jb remote ssh status
+```
+
+With no argument, `key add` prompts and reads one pasted public-key line (for
+example the contents of `~/.ssh/id_ed25519.pub`). A file path also works —
+`jb remote ssh key add ~/.ssh/id_ed25519.pub` — and so does piping one in:
+`cat ~/.ssh/id_ed25519.pub | jb remote ssh key add -`.
+
+`key add` prints the full SHA256 fingerprint, algorithm and comment. Use `jb
+remote ssh key ls` to copy that fingerprint later and `jb remote ssh key rm
+SHA256:...` to revoke it. Keys are read for every new connection, so key
+changes need no restart. An established connection remains authenticated;
+close it when revoking access.
+
+Client authorization is stored in
+`~/.config/jailbee/ssh/authorized_keys`; the persistent server identity is
+`~/.local/share/jailbee/ssh/host_key`. Their directories are mode 0700 and
+the files mode 0600. Enabling or serving creates missing files but never
+replaces an existing host key. `key add` accepts one plain OpenSSH public-key
+line; key options and certificates are not supported.
+
+`enable` creates private key directories, preserves any existing Ed25519 host
+key, installs `~/.config/systemd/user/jailbee-ssh.service`, and runs
+`systemctl --user enable --now jailbee-ssh.service`. The default configuration
+enables only the dashboard. Configure console or one-shot access under
+[`remote.ssh`](config.md#remotessh) in `~/.config/jailbee/global.yaml`.
+
+Inspect the service and its bounded audit log with:
+
+```bash
+jb remote ssh status
+systemctl --user status jailbee-ssh.service
+journalctl --user -u jailbee-ssh.service
+journalctl --user -u jailbee-ssh.service -f
+```
+
+The unit otherwise follows the login session. To keep it running while this
+user is logged out, enable systemd linger explicitly (requires root):
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+After changing `listen` or `port`, run `jb remote ssh restart`; a running
+listener cannot move itself. Entry-point and command-policy edits apply to a
+new SSH session without a restart. If access fails, keep the listener on
+loopback, run `jb remote ssh status`, validate `global.yaml`, and inspect the
+journal. `jb remote ssh serve` starts the same listener in the foreground for
+diagnostics, so first stop the unit or choose an unused port; on startup it
+prints the listening address, the host key's SHA256 fingerprint and a connect
+example. Running beside the service on another port also accepts one-off
+overrides for experimentation, without touching `global.yaml`, e.g.
+`jb remote ssh serve --port 18022 --shell --commands allowlist --allow ls
+--allow new` — see [`remote.ssh`](config.md#remotessh) for what each flag
+overrides and its validation rules. `jb remote ssh disable` stops and
+disables the unit but deliberately preserves configuration, authorized keys
+and the host key for recovery or later re-enablement.
 
 ---
 

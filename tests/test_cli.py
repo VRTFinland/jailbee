@@ -711,6 +711,15 @@ def test_chrome_pool_ls_alias_keeps_its_help_text():
     assert "Allowed: pool, slot, container, warmth_mtime" in result.stdout
 
 
+def test_claude_command_tree_is_hidden_from_help():
+    """The legacy `jailbee claude ...` tree is kept as a deprecated alias, so it
+    must not appear in the top-level list of commands."""
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "claude" not in result.output
+
+
 def test_ls_without_dot_jailbee_config_synthesizes_by_default(tmp_path, monkeypatch, mocker):
     """Superseded expectation: this used to assert `ls` exits 1 in a
     config-less directory. Scratch-config synthesis (`scratch.enabled`
@@ -923,6 +932,117 @@ def test_ls_fields_flag_reaches_a_column_the_config_hides(mocker, tmp_path):
 
     assert result.exit_code == 0, result.stdout
     assert "NETWORK" in result.stdout
+
+
+def _one_container_with_group(mocker, group="personal"):
+    incus_mock = mocker.patch("jailbee.incus.Incus")
+    incus_mock.return_value.list_containers.return_value = [
+        {
+            "name": "myrepo-feat-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+            "state": None,
+            "config": {"user.jailbee.credential_group": group},
+        }
+    ]
+    incus_mock.return_value.config_get.return_value = None
+    return incus_mock
+
+
+def test_ls_renders_the_canonical_group_field_name(mocker, tmp_path):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "ls:\n  fields: [name, group]\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container_with_group(mocker)
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert "GROUP" in result.stdout
+
+
+def test_ls_normalizes_a_configured_claude_field_alias(mocker, tmp_path):
+    """A `ls.fields` block still spelling the Claude-era short alias resolves."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "ls:\n  fields: [name, claude]\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container_with_group(mocker)
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert "GROUP" in result.stdout
+
+
+def test_ls_normalizes_the_shipped_claude_group_alias_in_hide(mocker, tmp_path):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "ls:\n  hide: [claude_group]\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container_with_group(mocker)
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert "GROUP" not in result.stdout
+    assert "NAME" in result.stdout
+
+
+def test_ls_fields_flag_normalizes_a_legacy_group_alias(mocker, tmp_path):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "{}\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container_with_group(mocker)
+
+    result = CliRunner().invoke(
+        app, ["ls", "--fields", "name,claude_group"], env={"COLUMNS": "200"}
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "GROUP" in result.stdout
+
+
+def test_ls_normalizes_a_global_ls_field_alias(mocker, tmp_path, monkeypatch):
+    """The global block is a second config layer; it normalizes the same way."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _write_global_columns(tmp_path, monkeypatch, "ls:\n  fields: [name, claude]\n")
+    repo = _setup_repo_with_columns(tmp_path, "{}\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container_with_group(mocker)
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert "GROUP" in result.stdout
 
 
 def _write_global_columns(tmp_path, monkeypatch, yaml_body: str):
@@ -8676,6 +8796,134 @@ def test_new_cmd_threads_yes_into_opts(tmp_path, mocker):
     assert new_container.call_args.args[2].assume_yes is True
 
 
+def test_new_cmd_threads_the_credential_group_into_opts(tmp_path, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--credential-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert new_container.call_args.args[2].credential_group == "personal"
+
+
+def test_new_cmd_hidden_claude_group_alias_still_folds(tmp_path, mocker):
+    """The old spelling keeps working, as an alias for the canonical flag."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--claude-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert new_container.call_args.args[2].credential_group == "personal"
+
+
+def test_new_cmd_claude_group_alias_warns_once(tmp_path, mocker):
+    """A deprecated flag a human types has to say so, exactly once — the same
+    contract `jailbee claude ...` keeps. Without this the flag would simply
+    vanish in the next major release with no notice ever given."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import LEGACY_REMOVAL_VERSION, app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--claude-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "`--claude-group` is deprecated" in result.stderr
+    assert LEGACY_REMOVAL_VERSION in result.stderr
+    assert result.stderr.count("`--claude-group` is deprecated") == 1
+
+
+def test_new_cmd_canonical_credential_group_does_not_warn(tmp_path, mocker):
+    """The other half: the canonical flag must stay silent."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--credential-group", "personal"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "deprecated" not in result.stderr
+
+
+def test_new_cmd_resolves_none_to_no_group(tmp_path, mocker):
+    from typer.testing import CliRunner
+
+    from jailbee.accounts import groups
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        ["new", "feat/x", "--no-clone", "--no-autostart", "--credential-group", "none"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert new_container.call_args.args[2].credential_group == groups.NO_GROUP
+
+
+def test_new_cmd_rejects_both_group_spellings(tmp_path, mocker):
+    """Two names for one value is a typo, not a merge."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    _repo, new_container = _setup_new_cmd_env(tmp_path, mocker)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "new",
+            "feat/x",
+            "--no-clone",
+            "--no-autostart",
+            "--credential-group",
+            "personal",
+            "--claude-group",
+            "work",
+        ],
+    )
+
+    assert result.exit_code == 2
+    combined = result.stdout + (result.stderr or "")
+    assert "only one" in combined
+    new_container.assert_not_called()
+
+
+def test_new_help_shows_the_canonical_group_flag_and_hides_the_alias():
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["new", "--help"])
+
+    assert result.exit_code == 0
+    assert "--credential-group" in result.stdout
+    assert "--claude-group" not in result.stdout
+
+
 def test_new_cmd_without_yes_leaves_assume_yes_false(tmp_path, mocker):
     from typer.testing import CliRunner
 
@@ -9780,3 +10028,71 @@ def test_cli_push_rejects_ff_flags_alongside_force_and_plain(mocker):
         result = CliRunner().invoke(app, ["git", "push", "feat-x", other, "--no-ff"])
         assert result.exit_code == 2, f"{other}: {result.output}"
         assert "only applies to --merge" in result.output
+
+
+def test_ls_samples_activity_when_the_cpu_column_is_requested(mocker, tmp_path):
+    """`--fields cpu` must print a number. A rate needs two readings, so
+    `ls` takes the second itself rather than rendering the dash a single
+    reading leaves behind."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    # Patched at the definition site, which is what `cli.py`'s lazy import
+    # resolves to at call time.
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+    mocker.patch("jailbee.procstat.PRIME_INTERVAL_SECONDS", 0)
+
+    result = CliRunner().invoke(app, ["ls", "--fields", "name,cpu"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    assert annotate.call_count == 2  # prime, then rate
+    assert annotate.call_args_list[0].args[1] is annotate.call_args_list[1].args[1]
+
+
+def test_ls_does_not_sample_activity_by_default(mocker, tmp_path):
+    """Nobody who did not ask for the column pays the 0.2 s."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    annotate.assert_not_called()
+
+
+def test_ls_does_not_sample_for_a_configured_field_list_in_json_mode(mocker, tmp_path):
+    """`ls: {fields: ...}` is a table preference and `emit` ignores it for
+    `--format json`. Sampling there would pay for a column that is never
+    printed."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    repo = _setup_repo_with_columns(tmp_path, "ls:\n  fields: [name, cpu]\n")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    _one_container(mocker)
+    annotate = mocker.patch("jailbee.lifecycle.annotate_activity")
+
+    result = CliRunner().invoke(app, ["ls", "--format", "json"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.stdout
+    annotate.assert_not_called()

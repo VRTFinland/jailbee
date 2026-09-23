@@ -14,7 +14,15 @@ import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from jailbee.config_writer import DELETE, YamlChange, patch_file, patch_yaml, render_documented
+from jailbee.config_edit.layers import apply_changes
+from jailbee.config_writer import (
+    DELETE,
+    YamlChange,
+    credential_key_migration,
+    patch_file,
+    patch_yaml,
+    render_documented,
+)
 
 ORIGINAL = """\
 # Top-of-file banner that must survive.
@@ -68,6 +76,36 @@ def test_delete_of_an_absent_key_is_a_no_op():
 def test_missing_intermediate_maps_are_created():
     out = patch_yaml("", [YamlChange(("claude_credentials", "repos", "myrepo"), "work")])
     assert yaml.safe_load(out)["claude_credentials"]["repos"]["myrepo"] == "work"
+
+
+def test_credential_key_migration_copies_deletes_then_edits():
+    raw = {"claude_credentials": {"group": "work", "repos": {"side": "old"}}}
+    changes = credential_key_migration(raw, [YamlChange(("credentials", "repos", "side"), "new")])
+    migrated = apply_changes(raw, changes)
+    assert migrated == {"credentials": {"group": "work", "repos": {"side": "new"}}}
+
+
+def test_credential_key_migration_leaves_the_stored_raw_alone():
+    """The copied block is deep-copied, so the caller's own edits land in the
+    migrated mapping and not in the mapping it was derived from.
+
+    `layer_set.global_raw` is the editor's live view and the write path's base
+    mapping; a caller change descending into a by-reference copy would mutate
+    it as a side effect of merely building a plan.
+    """
+    raw = {"claude_credentials": {"group": "work", "repos": {"side": "old"}}}
+    changes = credential_key_migration(raw, [YamlChange(("credentials", "repos", "side"), "new")])
+
+    apply_changes(raw, changes)
+
+    assert raw == {"claude_credentials": {"group": "work", "repos": {"side": "old"}}}
+
+
+def test_credential_key_migration_is_a_no_op_without_the_legacy_key():
+    raw = {"credentials": {"group": "work"}}
+    changes = [YamlChange(("credentials", "repos", "side"), "new")]
+
+    assert credential_key_migration(raw, changes) == changes
 
 
 def test_patch_file_writes_the_change(tmp_path: Path):
@@ -345,6 +383,33 @@ def test_render_global_yaml_round_trips_through_the_loader(tmp_path):
     reparsed = yaml.safe_load(render_global_yaml(raw))
     assert reparsed == raw
     validate_global_raw(reparsed, tmp_path / "global.yaml")
+
+
+def test_render_global_yaml_round_trips_a_remote_ssh_block(tmp_path):
+    """The host half keeps the complete nested SSH policy when regenerated."""
+    import yaml
+
+    from jailbee.config_writer import render_global_yaml
+    from jailbee.global_config import validate_global_raw
+
+    raw = {
+        "remote": {
+            "ssh": {
+                "listen": "::1",
+                "port": 22022,
+                "dashboard": True,
+                "shell": True,
+                "exec": True,
+                "commands": {"mode": "allowlist", "allow": ["ls", "git pull"]},
+            }
+        }
+    }
+
+    reparsed = yaml.safe_load(render_global_yaml(raw))
+
+    assert reparsed == raw
+    config = validate_global_raw(reparsed, tmp_path / "global.yaml")
+    assert config.remote.ssh.commands.allow == ["ls", "git pull"]
 
 
 def test_write_text_atomic_creates_at_0600_and_preserves_an_existing_mode(tmp_path):

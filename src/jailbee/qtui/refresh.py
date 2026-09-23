@@ -14,7 +14,13 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from jailbee.dashboard import _refresh_due, carry_forward_git_status, gather_live
+from jailbee.dashboard import (
+    _refresh_due,
+    carry_forward_git_status,
+    gather_live,
+    sample_activity,
+)
+from jailbee.procstat import ActivitySampler
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -49,6 +55,10 @@ class RefreshWorker(QObject):
         self._paused = False
         self._prev_groups: list[RepoGroup] = []
         self._seeded_at: float | None = None
+        # One sampler for the worker's lifetime: a rate is the difference
+        # between two readings, and a per-call sampler would never have the
+        # first one.
+        self._sampler = ActivitySampler()
 
     def gather_once(self, do_git: bool) -> list[RepoGroup]:
         """Gather one snapshot (blocking). Wraps ``gather_live``, so each
@@ -87,6 +97,17 @@ class RefreshWorker(QObject):
         """
         self._prev_groups = groups
         self._seeded_at = at
+
+    def sample_activity(self, groups: list[RepoGroup]) -> None:
+        """Fill ``groups``' CPU/DOING fields from one reading.
+
+        Public because ``app.run`` primes the sampler with two calls before
+        the window appears. Like :meth:`seed`, those calls must happen
+        before the thread starts — and this must never be connected to a
+        signal: ``run_loop`` has no event loop, so a direct connection would
+        execute it on the wrong thread.
+        """
+        sample_activity(groups, self._sampler)
 
     def set_paused(self, paused: bool) -> None:
         """Pause/resume periodic gathers. A paused worker still honors
@@ -134,6 +155,7 @@ class RefreshWorker(QObject):
                         # last git-tier snapshot so the columns don't flicker
                         # blank until the next git-tier refresh lands.
                         carry_forward_git_status(groups, self._prev_groups)
+                    self.sample_activity(groups)
                     self.groupsReady.emit(groups)
                     self._prev_groups = groups
                 # Bookkeeping runs on both success and failure so a failing

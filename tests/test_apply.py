@@ -201,7 +201,7 @@ def test_run_apply_syncs_gie_skills_when_claude_enabled(
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
-    sync = mocker.patch("jailbee.claude_skills.sync_jailbee_skills")
+    sync = mocker.patch("jailbee.agent_skills.sync_agent_skills")
 
     run_apply(cfg, incus, gcfg, confirm_fn=lambda _msg: False)
 

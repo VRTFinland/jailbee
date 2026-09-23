@@ -22,6 +22,7 @@ from jailbee.config.common import (
     _split_host_keys,
     deep_merge,
     merge_apps_raw,
+    normalize_credentials_key,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.models_agents import AutostartStage
@@ -37,7 +38,7 @@ from jailbee.config.models_host import (
     POOL_PRESETS,
     slugify_prefix,
 )
-from jailbee.config.models_net import ClaudeCredentials
+from jailbee.config.models_net import Credentials
 from jailbee.config.retired import (
     _check_agents_spelling,
     _check_pull_migration,
@@ -57,28 +58,28 @@ if TYPE_CHECKING:
     from jailbee.global_config import ScratchConfig
 
 
-def _claude_credentials_from_host_raw(
+def _credentials_from_host_raw(
     host_raw: dict[str, object],
     origin: Path,
-) -> ClaudeCredentials:
-    """Validate the host layer's `claude_credentials` block.
+) -> Credentials:
+    """Validate the host layer's `credentials` block.
 
     A second validation site for the same model class — `GlobalConfig` also
     carries it, so `jailbee config validate` and `doctor` see it through
     `load_global_config`. Only the error wrapper differs; the shape cannot
-    drift because both validate `ClaudeCredentials`.
+    drift because both validate `Credentials`.
 
     Resolution happens here rather than in `_build_config_from_dict` because
     it needs `container_prefix`, which that function derives, and because
     `_build_config_from_dict` has callers that never see the host layer.
     """
-    block = host_raw.get("claude_credentials")
+    block = host_raw.get("credentials")
     if block is None:
-        return ClaudeCredentials()
+        return Credentials()
     try:
-        return ClaudeCredentials.model_validate(block)
+        return Credentials.model_validate(block)
     except ValidationError as e:
-        raise ConfigError(f"Invalid `claude_credentials` in {origin}:\n{e}") from e
+        raise ConfigError(f"Invalid `credentials` in {origin}:\n{e}") from e
 
 
 def _validate_pooled_caches(cfg: Config) -> None:
@@ -211,7 +212,7 @@ def _warn_legacy_chrome_block(source: str) -> None:
     by construction instead of re-arming that bug, and keyed on `source` —
     like `paths._warn_legacy_config_dir` — because the notice names the file
     to edit. Naming it matters for the same reason it does there: a
-    host-wide command (`jailbee claude ls`, the dashboards) loads every
+    host-wide command (`jailbee account ls`, the dashboards) loads every
     registered repo's config, so an unnamed notice sent the user looking in
     the wrong file. Two files carrying a `chrome:` block therefore get a
     line each: they are two edits, not one.
@@ -253,6 +254,34 @@ def _warn_legacy_chrome_layers(layers: Sequence[tuple[str, dict[str, object]]]) 
     for label, raw in layers:
         if isinstance(raw.get("chrome"), dict):
             _warn_legacy_chrome_block(label)
+
+
+@functools.cache
+def _warn_legacy_credentials_block(source: str) -> None:
+    """Print the legacy `claude_credentials:` notice once per process, per source.
+
+    The sibling of `_warn_legacy_chrome_block`, for the same reasons: a command
+    loads the config many times, so the notice is `functools.cache`-guarded and
+    keyed on the file it names. Routed through `notices.emit`, which makes it
+    dismissible (`jb dismiss legacy-credentials-block`) and adds the footer
+    saying so; `source` is the notice's scope, so two files spelling the old
+    key stay two independent decisions.
+
+    `tests/conftest.py` clears the cache between tests.
+    """
+    from jailbee.notices import Notice, emit
+
+    emit(
+        Notice(
+            key="legacy-credentials-block",
+            scope=source,
+            lines=(
+                f"`claude_credentials` in {source} is deprecated and renamed to "
+                f"`credentials` — see docs/config.md. It keeps working until "
+                f"{LEGACY_REMOVAL_VERSION}, where it is removed.",
+            ),
+        )
+    )
 
 
 def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
@@ -299,7 +328,7 @@ def _build_config_from_dict(
 
     Used by load_config to build the final Config from a (possibly merged)
     raw dict. Computed fields (repo_root, default_branch, upstream_remote,
-    claude_credentials_dir, shared_dir, golden.alias) are set after Pydantic
+    credential_group, shared_dir, golden.alias) are set after Pydantic
     validation. container_prefix is conditionally derived: when left empty,
     it defaults to repo_root.name. Cross-field invariants (prefix regex,
     reserved env keys, shared_caches uniqueness, autostart step-name
@@ -500,13 +529,14 @@ def load_config_from_layers(
     path: Path,
     *,
     origin: str,
+    global_origin: str | None = None,
     emit_hint: bool = True,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
     Every rule `_load_config_from_repo_raw` applies also applies here — the
     retired-key check, the pull and agents migration checks, the `github`
-    and `claude_credentials` placement bans, the deep merge, the 0600
+    and credential-group placement bans, the deep merge, the 0600
     token-permission check — because this *is* that function's body. The
     only difference is that `global_raw` is supplied rather than read, so
     the config editor can validate a staged global layer before anything
@@ -515,17 +545,17 @@ def load_config_from_layers(
     `global_raw` is the whole `global.yaml` mapping, host-level keys
     included; the split is done here, exactly as the on-disk path does it.
 
-    `emit_hint` gates the legacy `chrome:` notice, which is emitted here —
-    the last point at which each key's source file is still known. The
-    default `True` is right for every real load: the CLI path
-    (`_load_config_from_repo_raw`) never overrides it, and the notice is
+    `emit_hint` gates the legacy `chrome:` and `claude_credentials:` notices,
+    which are emitted here — the last point at which each key's source file is
+    still known. The default `True` is right for every real load: the CLI path
+    (`_load_config_from_repo_raw`) never overrides it, and each notice is
     capped at one line per source file per process by
-    `_warn_legacy_chrome_block`, so a command that loads the config several
-    times (`jailbee new` loads it three times) still prints it once.
-    `config_edit.layers.validate` passes `False`: it calls this function
-    synchronously from the editor's save handler, while the full-screen
-    `Application` is live, and `hint()` writes straight to a Rich stderr
-    `Console` that bypasses prompt_toolkit — the same terminal-corruption
+    `_warn_legacy_chrome_block` / `_warn_legacy_credentials_block`, so a command
+    that loads the config several times (`jailbee new` loads it three times)
+    still prints it once. `config_edit.layers.validate` passes `False`: it
+    calls this function synchronously from the editor's save handler, while the
+    full-screen `Application` is live, and `hint()` writes straight to a Rich
+    stderr `Console` that bypasses prompt_toolkit — the same terminal-corruption
     hazard `config_edit.layers.resolve` already guards against on reload.
     """
     # Local import for the same cycle as in `_load_config_from_repo_raw`:
@@ -534,13 +564,18 @@ def load_config_from_layers(
     # the path is wanted here — the file itself is never read.
     from jailbee.global_config import default_global_config_path
 
+    # `global_raw` need not have come from the default path — the config editor
+    # validates a staged copy of `layer_set.global_path` — so the caller may
+    # name where it really came from, and every message about it says so.
+    global_from = global_origin or str(default_global_config_path())
     _check_retired_keys(global_raw)
+    global_raw, folded = normalize_credentials_key(global_raw, global_from)
+    if emit_hint and folded:
+        _warn_legacy_credentials_block(global_from)
     host_raw, global_for_merge = _split_host_keys(global_raw)
     _check_retired_keys(repo_raw)
     if emit_hint:
-        _warn_legacy_chrome_layers(
-            [(str(default_global_config_path()), global_for_merge), (origin, repo_raw)]
-        )
+        _warn_legacy_chrome_layers([(global_from, global_for_merge), (origin, repo_raw)])
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 
@@ -555,9 +590,15 @@ def load_config_from_layers(
 
     # Host-only, for the same reason as `github`: a repo config is typically
     # committed, and a credential-group name applies to whoever holds the
-    # checkout. `claude_credentials_dir` is banned alongside it because it is a
-    # declared Config field, so YAML could set it and be overwritten silently.
-    for banned in ("claude_credentials", "claude_credentials_dir"):
+    # checkout. Both spellings of the block, and both the new and legacy names
+    # of the computed `Config` field, are banned: the field is declared, so
+    # YAML could set it and be overwritten silently.
+    for banned in (
+        "credentials",
+        "claude_credentials",
+        "credential_group",
+        "claude_credentials_dir",
+    ):
         if banned in repo_raw:
             raise ConfigError(
                 f"`{banned}` is not allowed in repo .jailbee/config.yaml — "
@@ -576,8 +617,8 @@ def load_config_from_layers(
         merged["apps"] = merge_apps_raw(global_apps, repo_apps)
     cfg = _build_config_from_dict(merged, path, origin=origin)
 
-    creds = _claude_credentials_from_host_raw(host_raw, default_global_config_path())
-    object.__setattr__(cfg, "claude_credentials_dir", creds.dir_for(cfg.container_prefix))
+    creds = _credentials_from_host_raw(host_raw, default_global_config_path())
+    object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix))
 
     _validate_pooled_caches(cfg)
 
@@ -619,10 +660,11 @@ def _sanitize_columns(cfg: Config) -> Config:
     if _columns_already_sanitized([(cfg.ls, _COLUMN_DEFAULT), (cfg.dashboard, _COLUMN_DEFAULT)]):
         return cfg
 
+    # Applied unconditionally — see the twin in `global_config.load_global_config`
+    # for why: an alias rewrite fixes a block without warning about it.
     fixed, warnings = sanitize_column_blocks([("ls", cfg.ls), ("dashboard", cfg.dashboard)])
-    if warnings:
-        object.__setattr__(cfg, "ls", fixed["ls"])
-        object.__setattr__(cfg, "dashboard", fixed["dashboard"])
+    object.__setattr__(cfg, "ls", fixed["ls"])
+    object.__setattr__(cfg, "dashboard", fixed["dashboard"])
     cfg._column_warnings = warnings
     return cfg
 

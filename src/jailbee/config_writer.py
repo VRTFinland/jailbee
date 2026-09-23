@@ -25,6 +25,7 @@ import tempfile
 import textwrap
 from collections.abc import Sequence
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -49,7 +50,7 @@ DELETE: Final = _Delete()
 """Sentinel `YamlChange.value` meaning "remove this key".
 
 A sentinel and not `None`, because `None` is a legitimate value: an
-explicit YAML `null` under `claude_credentials.repos.<prefix>` is how a
+explicit YAML `null` under `credentials.repos.<prefix>` is how a
 repo opts out of every credential group.
 """
 
@@ -71,6 +72,38 @@ class YamlChange:
 
     path: KeyPath
     value: object
+
+
+def credential_key_migration(
+    raw: dict[str, object], changes: Sequence[YamlChange]
+) -> list[YamlChange]:
+    """The changes that rename a legacy `claude_credentials:` block in one write.
+
+    Every writer emits `credentials` now, but a host that predates the rename
+    still has the old key on disk. Rather than rewrite it on load, each write
+    carries the migration: copy the whole legacy block to `credentials`, delete
+    `claude_credentials`, then apply the caller's own changes so the caller
+    wins over the copied values. Doing it in one `patch_file` means the old
+    spelling never survives a write that touches the file at all — a save that
+    only changes an unrelated key still migrates, and a save that changes the
+    group migrates and applies.
+
+    The copied block is deep-copied: `apply_changes` and `patch_yaml` store a
+    change's value by reference, and the caller's own changes descend into the
+    new `credentials` tree. Without the copy those edits would mutate the
+    caller's `raw` mapping — the editor's live `LayerSet.global_raw`, which must
+    stay byte-faithful for patching and backups.
+
+    A mapping without the legacy key is returned unchanged (as a fresh list),
+    so the helper is safe to call unconditionally on either layer.
+    """
+    if "claude_credentials" not in raw:
+        return list(changes)
+    return [
+        YamlChange(("credentials",), deepcopy(raw["claude_credentials"])),
+        YamlChange(("claude_credentials",), DELETE),
+        *changes,
+    ]
 
 
 def _yaml() -> YAML:
@@ -361,7 +394,7 @@ def render_global_yaml(raw: dict[str, object], *, header: str = DOCUMENTED_HEADE
     appending the host block after that would produce *two* YAML documents in
     one stream — a file no loader accepts. A host-only `global.yaml` is an
     ordinary hand-written state: someone who ever only set
-    `claude_credentials:` or `docker_registry_mirror:` has one.
+    `credentials:` or `docker_registry_mirror:` has one.
     """
     # Local imports: `jailbee.config` imports `ConfigError` from
     # `global_config`, so pulling either in at module top would close a cycle

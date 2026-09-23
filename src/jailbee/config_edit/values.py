@@ -180,7 +180,7 @@ def parse_map(spec: FieldSpec, text: str) -> tuple[dict[str, object] | None, str
     """`(mapping, error)` for a `STR_MAP`/`BOOL_MAP`, one `key = value` per line.
 
     `null` is spelled out rather than inferred from an empty right-hand side:
-    `claude_credentials.repos` uses an explicit YAML null to opt one repo out
+    `credentials.repos` uses an explicit YAML null to opt one repo out
     of every credential group, and the empty string is a different, legitimate
     value. Guessing between them would silently change what a config means.
     """

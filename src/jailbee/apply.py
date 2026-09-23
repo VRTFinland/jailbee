@@ -248,12 +248,13 @@ def run_apply(
             "before trusting it to use its own slot."
         )
 
-    # Refresh jailbee's bundled skills in the shared ~/.claude/skills so existing
-    # containers pick up a newer jailbee without recreation. Non-fatal.
-    from jailbee.claude_skills import sync_jailbee_skills
+    # Refresh jailbee's bundled skills in each enabled agent's shared skills
+    # directory so existing containers pick up a newer jailbee without
+    # recreation. Non-fatal.
+    from jailbee.agent_skills import sync_agent_skills
 
     try:
-        sync_jailbee_skills(cfg)
+        sync_agent_skills(cfg)
     except Exception as e:  # non-fatal
         warn(f"jailbee-skills sync failed (continuing): {e}")
 

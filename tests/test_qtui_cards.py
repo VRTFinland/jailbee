@@ -572,3 +572,51 @@ def test_compact_card_has_no_job_badge_without_a_job(qtbot):
     qtbot.addWidget(card)
     texts = [w.text() for w in card.findChildren(QLabel)]
     assert "failed" not in texts and "cloning" not in texts
+
+
+def test_compact_card_shows_cpu_and_doing(qtbot):
+    """The compact style names its fields by hand, so a new column reaches
+    it only if it is added — unlike the grid style and the table, which both
+    render straight from `visible_fields`."""
+    from jailbee.qtui.cards import _Card
+    from jailbee.qtui.model import CardContent, CardField
+
+    cc = CardContent(
+        name="feat",
+        state="Running",
+        fields=[
+            CardField("ip", "IP", "10.0.0.5"),
+            CardField("mem", "MEM", "2.0 GB / 4GB"),
+            CardField("cpu", "CPU", "182%·4"),
+            CardField("doing", "DOING", "claude, pytest x8"),
+        ],
+    )
+    card = _Card("p-feat", cc, style="compact", selected=False)
+    qtbot.addWidget(card)
+
+    texts = " | ".join(_label_texts(card))
+    assert "182%·4" in texts
+    assert "claude, pytest x8" in texts
+
+
+def test_compact_card_omits_an_idle_containers_activity(qtbot):
+    """A dash is a placeholder and `card_field` already drops those — the
+    card must not grow an empty row per idle container."""
+    from jailbee.qtui.cards import _Card
+    from jailbee.qtui.model import CardContent, CardField
+
+    cc = CardContent(
+        name="feat",
+        state="Running",
+        fields=[
+            CardField("network", "NETWORK", "strict"),
+            CardField("cpu", "CPU", "—"),
+            CardField("doing", "DOING", "—"),
+        ],
+    )
+    card = _Card("p-feat", cc, style="compact", selected=False)
+    qtbot.addWidget(card)
+
+    texts = " | ".join(_label_texts(card))
+    assert "strict" in texts  # the card still renders
+    assert "—" not in texts
