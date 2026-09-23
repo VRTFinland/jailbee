@@ -87,7 +87,9 @@ def _prepared_batch(tmp_path: Path, *, login: str = "octocat", manifest_name: st
     )
     repo = RepoTarget(".", tmp_path, "acme/widgets")
     resolved = ResolvedAction(0, manifest.actions[0], repo, ResolvedIssue(42), "pending")
-    prepared_manifest = PreparedManifest(manifest, digest=_DIGEST, journal=None, actions=(resolved,))
+    prepared_manifest = PreparedManifest(
+        manifest, digest=_DIGEST, journal=None, actions=(resolved,)
+    )
     return PreparedBatch(
         container="acme-feat-foo",
         host_repo_root=tmp_path,
@@ -453,7 +455,9 @@ def test_ls_marks_a_manifest_with_an_uncertain_receipt(mocker, tmp_path):
         digest=_DIGEST,
         action_count=1,
         actions=(
-            JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="uncertain outcome"),
+            JournalAction(
+                index=0, state="uncertain", repo="acme/widgets", detail="uncertain outcome"
+            ),
         ),
     )
     mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=journal)
@@ -470,11 +474,10 @@ def test_ls_marks_a_manifest_with_an_uncertain_receipt(mocker, tmp_path):
 
 def test_show_prints_the_manifest_body(mocker, tmp_path):
     long_body = "x" * 400
-    _setup(
-        mocker,
-        tmp_path,
-        files={"001.json": _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": long_body}])},
+    text = _manifest_text(
+        actions=[{"type": "comment", "repo": ".", "issue": 42, "body": long_body}]
     )
+    _setup(mocker, tmp_path, files={"001.json": text})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
     mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
 
@@ -662,9 +665,7 @@ def test_resolve_rejects_both_applied_and_retry(mocker, tmp_path):
 
 def test_resolve_validates_create_only_issue_option(mocker, tmp_path):
     """--issue is only meaningful for a create action."""
-    text = _manifest_text(
-        actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "hello"}]
-    )
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "hello"}])
     _setup_resolve(mocker, tmp_path, manifest_text=text)
 
     result = runner.invoke(
@@ -692,7 +693,14 @@ def test_resolve_create_action_requires_issue(mocker, tmp_path):
         {
             "version": 1,
             "actions": [
-                {"type": "create", "repo": ".", "ref": "r1", "title": "t", "body": "b", "labels": []}
+                {
+                    "type": "create",
+                    "repo": ".",
+                    "ref": "r1",
+                    "title": "t",
+                    "body": "b",
+                    "labels": [],
+                }
             ],
         }
     )
@@ -771,9 +779,7 @@ def test_resolve_retry_forgets_the_uncertain_action(mocker, tmp_path):
     )
     reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
-    result = runner.invoke(
-        app, ["issue", "resolve", "feat-foo", "001.json", "0", "--retry", "-y"]
-    )
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "0", "--retry", "-y"])
 
     assert result.exit_code == 0, result.output
     reconcile.assert_called_once()
@@ -783,9 +789,7 @@ def test_resolve_retry_forgets_the_uncertain_action(mocker, tmp_path):
 
 
 def test_resolve_requires_a_prompt_or_yes_off_tty(mocker, tmp_path):
-    text = _manifest_text(
-        actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "x"}]
-    )
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "x"}])
     _setup_resolve(
         mocker,
         tmp_path,
@@ -818,9 +822,7 @@ def test_resolve_requires_a_prompt_or_yes_off_tty(mocker, tmp_path):
 def test_resolve_reports_a_journal_error_and_exits_1(mocker, tmp_path):
     from jailbee.outbox_io import JournalError
 
-    text = _manifest_text(
-        actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "x"}]
-    )
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "x"}])
     _setup_resolve(
         mocker,
         tmp_path,

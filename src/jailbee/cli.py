@@ -11152,7 +11152,12 @@ def issue_ls_cmd(
         except OutboxReadError as e:
             rows.append(
                 _IssueRow(
-                    container=short, manifest="—", actions="?", repos="?", state="error", error=str(e)
+                    container=short,
+                    manifest="—",
+                    actions="?",
+                    repos="?",
+                    state="error",
+                    error=str(e),
                 )
             )
             continue
@@ -11163,15 +11168,18 @@ def issue_ls_cmd(
         except JournalError as e:
             rows.append(
                 _IssueRow(
-                    container=short, manifest="—", actions="?", repos="?", state="error", error=str(e)
+                    container=short,
+                    manifest="—",
+                    actions="?",
+                    repos="?",
+                    state="error",
+                    error=str(e),
                 )
             )
             continue
         for manifest_name in outbox.manifest_names:
             try:
-                manifest = parse_manifest(
-                    manifest_name, outbox.files[manifest_name], outbox.files
-                )
+                manifest = parse_manifest(manifest_name, outbox.files[manifest_name], outbox.files)
             except IssueManifestError as e:
                 rows.append(
                     _IssueRow(
@@ -11351,9 +11359,7 @@ def issue_apply_cmd(
     ] = None,
     manifest: Annotated[
         str | None,
-        typer.Option(
-            "--manifest", help="One manifest file name. Default: every pending manifest."
-        ),
+        typer.Option("--manifest", help="One manifest file name. Default: every pending manifest."),
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
@@ -11547,7 +11553,9 @@ def issue_drop_cmd(
             except IssueManifestError:
                 continue
             journal = journals[manifest_name]
-            recorded = {receipt.index for receipt in journal.actions} if journal is not None else set()
+            recorded = (
+                {receipt.index for receipt in journal.actions} if journal is not None else set()
+            )
             for index in range(len(parsed.actions)):
                 if index not in recorded:
                     info_plain(f"{manifest_name} action {index}: pending")
@@ -11684,9 +11692,7 @@ def issue_resolve_cmd(
     except JournalError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
-    body_files = {
-        body: outbox.files[body] for body in parsed.body_files if body in outbox.files
-    }
+    body_files = {body: outbox.files[body] for body in parsed.body_files if body in outbox.files}
     digest = proposal_digest(manifest, text, body_files)
     key = journal_key(identity, manifest)
     journal_store = JournalStore()
