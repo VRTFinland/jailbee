@@ -40,7 +40,13 @@ isolated per-branch development environments using Incus system containers. See
 - **Shelling out to non-incus binaries is intentional** and stays one module
   per concern: `git.py` (`git`), `pr.py` (`git`, `gh`), `doctor.py` (`docker`,
   `systemctl`), `init_command.py` (`systemctl`), `maintenance.py`
-  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`).
+  (`du`), `pool.py` (`rsync`), `macos.py` (`sh`), `cswap.py` (`cswap`),
+  `remote_ssh/service.py` (`systemctl`, to install/enable/disable/restart/
+  inspect the SSH user unit). `remote_ssh/console.py` and `remote_ssh/pty.py`
+  are a second, narrower exception to "subprocess only in `incus.py`": they
+  start Jailbee itself, not `incus` — `console.py` via `subprocess.run` on a
+  re-exec (`python -m jailbee ...`), `pty.py` via `pty.fork()`/`os.execvpe`
+  for the PTY case and `asyncio.create_subprocess_exec` for the non-PTY case.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
   `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
