@@ -11507,10 +11507,14 @@ def issue_ls_cmd(
     if name is None:
         infos = list_containers(cfg, incus, with_git_status=True)
     else:
+        # A single named container has no candidates to pre-filter between —
+        # the outbox read below is the authoritative answer either way, so
+        # probing every running container of the repo for its git status
+        # just to throw away every row but one buys nothing. `ci.git_status`
+        # is `None` here, which the `pending == 0` check below already
+        # treats as "read it" — same as an unresolved probe would.
         incus, resolved = _resolve_existing(cfg, name)
-        infos = [
-            ci for ci in list_containers(cfg, incus, with_git_status=True) if ci.name == resolved
-        ]
+        infos = [ci for ci in list_containers(cfg, incus) if ci.name == resolved]
 
     journal_store = JournalStore()
     rows: list[_IssueRow] = []

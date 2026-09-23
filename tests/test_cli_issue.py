@@ -559,6 +559,23 @@ def test_ls_skips_reading_a_container_whose_probe_says_zero(mocker, tmp_path):
     read.assert_not_called()
 
 
+def test_ls_with_a_name_does_not_probe_git_status(mocker, tmp_path):
+    """A single named container has nothing to pre-filter between -- the
+    outbox read is the authoritative answer either way, so probing every
+    running container of the repo for its git status just to keep one row
+    buys nothing."""
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    list_containers = mocker.patch(
+        "jailbee.lifecycle.list_containers", return_value=[_running_ci()]
+    )
+    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
+
+    result = runner.invoke(app, ["issue", "ls", "acme-feat-foo", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert list_containers.call_args.kwargs.get("with_git_status") is not True
+
+
 def test_ls_notes_a_stopped_container_instead_of_reading_it(mocker, tmp_path):
     _setup(mocker, tmp_path)
     mocker.patch(
