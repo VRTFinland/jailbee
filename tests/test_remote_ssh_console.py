@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -297,6 +298,42 @@ def test_keyboard_interrupt_returns_to_the_prompt(console_env: ConsoleEnv) -> No
 
     assert console.run("project") == 0
     assert console_env.prompt.prompt.call_count == 2
+
+
+def test_ctrl_c_while_a_command_runs_does_not_interrupt_the_console(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """Regression for final-review finding I1.
+
+    A cooked-mode Ctrl-C delivers SIGINT to the whole foreground process
+    group, including this console process, not just the child it started.
+    On the old code (no signal disposition change around the wait), that
+    SIGINT raises KeyboardInterrupt here while `subprocess.run` is blocked
+    in `Popen.wait()`; `subprocess.run`'s own bare `except:` then kills the
+    child before re-raising, defeating the child's own Ctrl-C handling. The
+    console must ignore SIGINT while a command runs, like an interactive
+    shell, and restore its previous disposition afterwards.
+    """
+    previous = signal.getsignal(signal.SIGINT)
+
+    def fake_run(argv, cwd, check):
+        # A real terminal delivers SIGINT to every process in the
+        # foreground group at once; simulate that mid-wait.
+        assert signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+        os.kill(os.getpid(), signal.SIGINT)
+        return CompletedProcess(argv, 0)
+
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run", side_effect=fake_run)
+    console_env.lines(["ls", "exit"])
+
+    assert console.run("project") == 0
+
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "ls"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+    assert signal.getsignal(signal.SIGINT) is previous
 
 
 def test_history_is_private_and_completion_is_restricted(

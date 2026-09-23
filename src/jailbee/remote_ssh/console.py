@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -120,6 +121,26 @@ def _returncode(completed: subprocess.CompletedProcess[bytes]) -> int:
     return completed.returncode if isinstance(completed.returncode, int) else 0
 
 
+def _run_foreground(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    """Run one Jailbee child in the foreground, letting it handle its own Ctrl-C.
+
+    A cooked-mode SIGINT reaches every process in the terminal's foreground
+    process group at once, including this console — not just the child it
+    starts. An interactive shell ignores SIGINT while its foreground job
+    runs so the job's own interrupt handling decides what happens; without
+    that, `subprocess.run`'s internal `Popen.wait()` catches the resulting
+    KeyboardInterrupt, waits briefly, and its bare `except` kills the child
+    before re-raising — defeating the child's own Ctrl-C handling (final
+    review finding I1). The child itself is unaffected: it still receives
+    the same SIGINT directly from the terminal, under its own disposition.
+    """
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        return subprocess.run(argv, cwd=cwd, check=False)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def run(initial_repo: str | None = None) -> int:
     """Run a policy-restricted interactive Jailbee command console."""
     global_config, _ = load_global_config(default_global_config_path())
@@ -194,15 +215,10 @@ def run(initial_repo: str | None = None) -> int:
             if not ssh_config.dashboard:
                 _error("remote dashboard is disabled")
                 continue
-            try:
-                completed = subprocess.run(
-                    [sys.executable, "-m", "jailbee", "dashboard", "--registered-only"],
-                    cwd=current.root,
-                    check=False,
-                )
-            except KeyboardInterrupt:
-                print()
-                continue
+            completed = _run_foreground(
+                [sys.executable, "-m", "jailbee", "dashboard", "--registered-only"],
+                current.root,
+            )
             last_status = _returncode(completed)
             continue
 
@@ -212,13 +228,5 @@ def run(initial_repo: str | None = None) -> int:
             _error(str(error))
             continue
 
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-m", "jailbee", *argv],
-                cwd=current.root,
-                check=False,
-            )
-        except KeyboardInterrupt:
-            print()
-            continue
+        completed = _run_foreground([sys.executable, "-m", "jailbee", *argv], current.root)
         last_status = _returncode(completed)
