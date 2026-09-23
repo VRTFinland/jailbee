@@ -424,7 +424,7 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
     # them broke the service for every default client; the session must
     # dispatch normally instead, with the client's environment never reaching
     # the child (pty.py/run_child build the child's env from os.environ only).
-    process, channel = session("--repo project ls", **kwargs)
+    _, channel = session("--repo project ls", **kwargs)
     channel.exit.assert_called_once_with(7)
     child.assert_awaited_once()
     spec = child.await_args.args[1]
