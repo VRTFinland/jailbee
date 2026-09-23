@@ -721,8 +721,13 @@ one is registered); Esc/Ctrl-C/Ctrl-D cancel it. The console's local commands
 are `repos`, `use [PREFIX]` (bare `use` reopens the menu), `dashboard`, `help`,
 and `exit`; `help` also lists the JailBee commands the session's policy
 allows. Every other line is a JailBee argv checked against
-`remote.ssh.commands`, tab-completed word by word. It has no shell operators,
-expansion or executable lookup.
+`remote.ssh.commands`, tab-completed word by word. A hidden alias (`merge`,
+`pull`, `push`, ...) is checked against the public command it aliases, so
+allowing `git merge` also allows `merge`. A public group's own help (`git`,
+`git --help`) is allowed on its own whenever some command under it is
+allowed, and so is the bare top-level `--help`. A name matching no command at
+all is run anyway, so `jailbee` reports its own "No such command" error. It
+has no shell operators, expansion or executable lookup.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered

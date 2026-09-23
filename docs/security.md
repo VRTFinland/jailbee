@@ -57,9 +57,16 @@ environment; there is no special remote GUI transport.
 `commands.mode: full` is a high-trust setting. It grants every current public
 JailBee command and automatically grants public commands added by future
 versions, including host-affecting service, configuration and lifecycle
-commands. Hidden internal commands are never included, but that exclusion does
-not make `full` a safe default. Prefer an exact-leaf allowlist such as `ls` or
-`git pull`; allowing `git pull` does not grant sibling `git` commands.
+commands. It also grants every hidden *alias* of a public command (`merge`,
+`pull`, `push`, and a few others — see [`remote.ssh`](config.md#remotessh)),
+since those are policy-checked against the public command they alias, not
+their own hidden spelling. Hidden internal commands with no public twin
+(`_remote-console`, the deprecated `jailbee claude ...`/`chrome-pool ...`
+groups, and the rest) are never included, but that exclusion does not make
+`full` a safe default. Prefer an exact-leaf allowlist such as `ls` or `git
+pull`; allowing `git pull` does not grant sibling `git` commands, though it
+does grant `git --help` (a public group's own help is always permitted once
+some command under it is).
 
 The SSH protocol surface is also fail-closed:
 

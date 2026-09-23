@@ -165,8 +165,15 @@ exactly one — unless started with `shell --repo PREFIX`. It offers `repos`,
 Ctrl-C and Ctrl-D all cancel the menu (exiting the console at startup,
 returning to the prompt from `use`). Every other line is an allowed JailBee
 command, tab-completed word by word (e.g. `git p<Tab>` offers `pull`/`push`).
-The console performs no shell expansion, pipes, redirection or executable
-lookup.
+A hidden alias (`merge`, `pull`, `push`, ...) is policy-checked against the
+public command it aliases, so `allow: [git merge]` also permits typing
+`merge`. A public group's own help — `git`, or `git --help`/`-h` — is
+permitted on its own whenever some command under it is allowed (or in `full`
+mode); the bare top-level `--help`/`-h` works the same way. A name that
+matches no JailBee command at all, hidden or public, is not rejected by the
+console itself: it is run anyway, so `jailbee` reports its own "No such
+command" error, with suggestions, exactly like it would locally. The console
+performs no shell expansion, pipes, redirection or executable lookup.
 
 Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
 repository prefix, never a filesystem path; the registered root becomes the
