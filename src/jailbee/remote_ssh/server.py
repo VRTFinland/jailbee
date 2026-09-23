@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import re
 import shlex
 import signal
 import sys
@@ -100,6 +101,24 @@ class JailbeeSSHServer(asyncssh.SSHServer):
         return False
 
 
+_LONE_LF_RE = re.compile(r"(?<!\r)\n")
+
+
+def _server_text(text: str, *, pty: bool) -> bytes:
+    """Encode text this server writes itself, translating LF to CRLF over a PTY.
+
+    A PTY session has no intervening kernel pty applying ONLCR for us (unlike
+    child process output relayed through `pty.py`, which runs behind a real
+    pty and needs no such translation): the client terminal is left raw, so a
+    bare "\\n" produces no carriage return and lines stack up diagonally
+    (e.g. a commandless `ssh -t ...` login's help text). A non-PTY session
+    (`ssh -T ...`, or a one-shot command) keeps output byte-exact.
+    """
+    if pty:
+        text = _LONE_LF_RE.sub("\r\n", text)
+    return text.encode("utf-8")
+
+
 def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
     """Identify audit fields even for denied routes, without retaining arguments."""
     try:
@@ -141,6 +160,10 @@ async def handle_process(
     outcome: int | str | None = None
     original_exit = process.exit
     original_signal = process.exit_with_signal
+    # Known as soon as the channel opens (a pty request precedes any exec/shell
+    # request in the SSH protocol), so this is safe to read anywhere below,
+    # including the exception handlers around routing/config failures.
+    pty = process.term_type is not None
 
     def exit_status(status: int) -> None:
         nonlocal outcome
@@ -192,7 +215,7 @@ async def handle_process(
             raise PTYError("This entry point requires a PTY; retry with ssh -t.")
         decision = "allowed"
         if selected.kind == "help":
-            process.stdout.write(help_text(config).encode("utf-8"))
+            process.stdout.write(_server_text(help_text(config), pty=pty))
             process.exit(0)
             return
         argv = (sys.executable, "-m", "jailbee", *selected.argv)
@@ -216,7 +239,7 @@ async def handle_process(
         await run_child(process, spec)
     except (ConfigError, RouteError, PTYError) as exc:
         reason = type(exc).__name__
-        process.stderr.write((str(exc) + "\n").encode("utf-8"))
+        process.stderr.write(_server_text(str(exc) + "\n", pty=pty))
         process.exit(2)
     except ConnectionError as exc:
         reason = type(exc).__name__
@@ -226,7 +249,7 @@ async def handle_process(
     except Exception as exc:
         # Exceptions from child setup may include argv or other private data.
         reason = type(exc).__name__
-        process.stderr.write(b"Remote Jailbee session failed.\n")
+        process.stderr.write(_server_text("Remote Jailbee session failed.\n", pty=pty))
         process.exit(1)
     finally:
         # Restore the two public callback methods overridden for this channel.

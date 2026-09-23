@@ -287,6 +287,27 @@ def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child)
     child.assert_not_awaited()
 
 
+def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
+    """Regression: a raw client terminal has no kernel pty to expand ONLCR.
+
+    `ssh -t ...` (or a plain `ssh ...` login, which OpenSSH auto-requests a
+    PTY for) left every line of the server's own help text with no carriage
+    return, stacking output diagonally. Only server-written text needs this;
+    child process output goes through a real pty in `pty.py` and already
+    gets CRLF for free.
+    """
+    _, channel = session(None, term="xterm")
+    assert output(channel) == b"Available remote commands:\r\n  dashboard\r\n"
+    channel.exit.assert_called_once_with(0)
+
+
+def test_commandless_help_stays_bare_lf_without_a_pty(child):
+    """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
+    _, channel = session(None)
+    assert output(channel) == b"Available remote commands:\n  dashboard\n"
+    assert b"\r\n" not in output(channel)
+
+
 def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
     path = default_global_config_path()
     path.parent.mkdir(parents=True)
@@ -415,6 +436,20 @@ def test_missing_registered_repo_is_not_recreated(child, configured, repo):
     assert b"directory is missing" in output(channel, 1)
     channel.exit.assert_called_once_with(2)
     child.assert_not_awaited()
+
+
+def test_route_rejection_uses_crlf_when_a_pty_was_negotiated(child, configured):
+    """Same CRLF fix, exercised on a rejection message rather than help text."""
+    _, channel = session("shell --repo missing", term="xterm")
+    assert output(channel, 1) == b"unknown registered repo: missing\r\n"
+    channel.exit.assert_called_once_with(2)
+
+
+def test_route_rejection_stays_bare_lf_without_a_pty(child, configured, repo):
+    _, channel = session("--repo project no-such-command")
+    err = output(channel, 1)
+    assert err == b"unknown Jailbee command\n"
+    assert b"\r\n" not in err
 
 
 @pytest.mark.parametrize(
