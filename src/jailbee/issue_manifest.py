@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -484,27 +484,3 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
     return IssueManifest(
         name=name, version=1, actions=tuple(actions), body_files=frozenset(body_files)
     )
-
-
-def parse_manifests(names: Sequence[str], files: Mapping[str, str]) -> tuple[IssueManifest, ...]:
-    """Parse selected manifests in order and enforce queue and offer caps."""
-    if len(names) > MAX_MANIFESTS:
-        raise IssueManifestError(f"issue outbox contains more than {MAX_MANIFESTS} manifests")
-    manifests: list[IssueManifest] = []
-    action_count = 0
-    for name in names:
-        if name not in files:
-            raise IssueManifestError(f"{name}: manifest file is missing from the outbox")
-        manifest = parse_manifest(name, files[name], files)
-        action_count += len(manifest.actions)
-        if action_count > MAX_OFFER_ACTIONS:
-            raise IssueManifestError(
-                f"selected manifests contain more than {MAX_OFFER_ACTIONS} actions"
-            )
-        manifests.append(manifest)
-    return tuple(manifests)
-
-
-def referenced_body_files(manifest: IssueManifest) -> frozenset[str]:
-    """Return body files used by a parsed manifest for hashing and cleanup."""
-    return manifest.body_files

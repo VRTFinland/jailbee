@@ -13,8 +13,6 @@ from jailbee.issue_manifest import (
     LabelsAction,
     StateAction,
     parse_manifest,
-    parse_manifests,
-    referenced_body_files,
 )
 
 
@@ -167,7 +165,6 @@ def test_parse_mixed_manifest_into_immutable_actions() -> None:
         reason=None,
         expected_state="closed",
     )
-    assert referenced_body_files(manifest) == frozenset({"001-cache.md"})
     assert manifest.body_files == frozenset({"001-cache.md"})
     with pytest.raises(dataclasses.FrozenInstanceError):
         manifest.name = "changed.json"  # type: ignore[misc]
@@ -415,21 +412,6 @@ def test_rejects_more_than_fifty_actions() -> None:
         parse_manifest("001-work.json", _manifest(*[_comment() for _ in range(51)]), {})
 
 
-def test_rejects_more_than_twenty_manifests() -> None:
-    files = {f"{i:03}-work.json": _manifest(_comment()) for i in range(21)}
-
-    with pytest.raises(IssueManifestError, match="20"):
-        parse_manifests(tuple(files), files)
-
-
-def test_rejects_more_than_one_hundred_selected_actions() -> None:
-    names = tuple(f"{i:03}-work.json" for i in range(3))
-    files = {name: _manifest(*[_comment() for _ in range(34)]) for name in names}
-
-    with pytest.raises(IssueManifestError, match="100"):
-        parse_manifests(names, files)
-
-
 @pytest.mark.parametrize(
     ("action", "match"),
     [
@@ -658,14 +640,3 @@ def test_allows_multiple_comments_and_disjoint_edits_to_one_target() -> None:
     )
 
     assert len(manifest.actions) == 4
-
-
-def test_parse_manifests_preserves_selected_order() -> None:
-    files = {
-        "001-a.json": _manifest(_comment(issue=1)),
-        "002-b.json": _manifest(_comment(issue=2)),
-    }
-
-    manifests = parse_manifests(("002-b.json", "001-a.json"), files)
-
-    assert tuple(manifest.name for manifest in manifests) == ("002-b.json", "001-a.json")
