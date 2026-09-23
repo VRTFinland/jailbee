@@ -341,7 +341,17 @@ def serve(config: RemoteSSHConfig) -> None:
     log.setLevel(logging.INFO)
     log.propagate = False
     try:
-        asyncio.run(serve_async(config))
+        try:
+            asyncio.run(serve_async(config))
+        except KeyboardInterrupt:
+            # No custom SIGINT handler is installed (only SIGTERM, above), so
+            # asyncio.run's default cancellation-on-interrupt path runs the
+            # listener/connection cleanup already registered there, then
+            # re-raises this once foreground Ctrl-C. Convert it to a clean
+            # exit instead of the interpreter's default KeyboardInterrupt
+            # traceback and non-conventional exit code.
+            log.info("Jailbee SSH server stopped (Ctrl-C)")
+            raise SystemExit(130) from None
     finally:
         log.removeHandler(audit_handler)
         audit_handler.close()

@@ -386,6 +386,21 @@ def test_remote_ssh_serve_translates_missing_asyncssh_dependency(
     assert "Traceback" not in error_output
 
 
+def test_remote_ssh_serve_ctrl_c_exit_propagates_cleanly_through_the_cli(
+    mocker: MockerFixture,
+) -> None:
+    """`server.serve` converts Ctrl-C to SystemExit(130); the thin CLI must not mask it."""
+    global_config = mocker.Mock()
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    mocker.patch("jailbee.remote_ssh.server.serve", side_effect=SystemExit(130))
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve"])
+
+    assert result.exit_code == 130
+    assert "Traceback" not in flat_output(result.stderr)
+
+
 def test_remote_console_is_hidden_but_delegates(mocker: MockerFixture) -> None:
     run = mocker.patch("jailbee.remote_ssh.console.run", return_value=7)
 

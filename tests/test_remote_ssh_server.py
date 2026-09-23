@@ -954,6 +954,18 @@ def test_clean_shutdown_logs_stopped_message(listener, caplog):
     assert "Jailbee SSH server stopped" in caplog.text
 
 
+def test_ctrl_c_exits_130_closes_listener_and_logs_stopped_without_traceback(listener, capsys):
+    value, _ = listener
+    value.wait_closed.side_effect = KeyboardInterrupt()
+    with pytest.raises(SystemExit) as excinfo:
+        server.serve(RemoteSSHConfig())
+    assert excinfo.value.code == 130
+    value.close.assert_called_once_with()
+    err = capsys.readouterr().err
+    assert "stopped" in err.lower()
+    assert "Traceback" not in err
+
+
 @pytest.mark.parametrize("outcome", ["closed", "startup_error", "wait_error", "cancelled"])
 @pytest.mark.parametrize("prior_level,propagate", [(logging.NOTSET, True), (logging.ERROR, False)])
 def test_sync_serve_removes_only_its_audit_handler_and_restores_logger(
