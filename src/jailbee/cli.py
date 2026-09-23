@@ -168,7 +168,7 @@ def remote_ssh_key_add_cmd(
     else:
         try:
             public_text = Path(source).read_text()
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             error_plain(str(exc))
             raise typer.Exit(1) from exc
 

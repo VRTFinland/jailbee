@@ -178,6 +178,21 @@ def test_remote_ssh_key_add_rejects_a_directory_source(
     assert not add.called
 
 
+def test_remote_ssh_key_add_rejects_an_undecodable_source(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    source = tmp_path / "binary.pub"
+    source.write_bytes(b"\xff\xfe\x00not-utf8")
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "add", str(source)])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.strip() != ""
+    assert not add.called
+
+
 def test_remote_ssh_key_add_dash_reads_stdin(mocker: MockerFixture) -> None:
     added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
