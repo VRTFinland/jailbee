@@ -534,8 +534,26 @@ def test_remote_console_is_hidden_but_delegates(mocker: MockerFixture) -> None:
     result = CliRunner().invoke(app, ["_remote-console", "--repo", "project"])
 
     assert result.exit_code == 7
-    run.assert_called_once_with("project")
+    run.assert_called_once_with("project", None)
     assert "_remote-console" not in CliRunner().invoke(app, ["--help"]).stdout
+
+
+def test_remote_console_forwards_the_policy_json_flag(mocker: MockerFixture) -> None:
+    run = mocker.patch("jailbee.remote_ssh.console.run", return_value=0)
+
+    result = CliRunner().invoke(
+        app, ["_remote-console", "--repo", "project", "--policy-json", '{"shell": true}']
+    )
+
+    assert result.exit_code == 0
+    run.assert_called_once_with("project", '{"shell": true}')
+
+
+def test_remote_console_policy_json_flag_stays_hidden() -> None:
+    """The internal flag must never show up even in the hidden command's own --help."""
+    result = CliRunner().invoke(app, ["_remote-console", "--help"])
+
+    assert "--policy-json" not in flat_output(result.stdout)
 
 
 def test_setup_help_still_names_only_the_original_steps() -> None:

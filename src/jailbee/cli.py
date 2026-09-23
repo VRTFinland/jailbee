@@ -302,11 +302,20 @@ def remote_console_cmd(
         str | None,
         typer.Option("--repo", help="Initial registered repository prefix."),
     ] = None,
+    policy_json: Annotated[
+        str | None,
+        typer.Option(
+            "--policy-json",
+            hidden=True,
+            help="Internal: the session's effective remote SSH policy, set only by "
+            "`jb remote ssh serve` when it spawns this console.",
+        ),
+    ] = None,
 ) -> None:
     """Run the restricted interactive console for an SSH child."""
     from jailbee.remote_ssh.console import run
 
-    raise typer.Exit(run(repo))
+    raise typer.Exit(run(repo, policy_json))
 
 
 ConfigOption = Annotated[

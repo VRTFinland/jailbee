@@ -329,16 +329,56 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
     fallback = tmp_path / "state"
     mocker.patch.object(server, "state_dir", return_value=fallback)
     process, channel = session(command, term="xterm" if requires_pty else None)
+    expected_argv = (sys.executable, "-m", "jailbee", *arguments)
+    if arguments[0] == "_remote-console":
+        # `configured`'s own ssh policy, serialized: see
+        # test_console_receives_the_session_effective_policy for the
+        # dedicated regression test on this argument's *content*.
+        policy = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+        expected_argv = (*expected_argv, "--policy-json", policy.model_dump_json())
     child.assert_awaited_once_with(
         process,
         ChildSpec(
-            argv=(sys.executable, "-m", "jailbee", *arguments),
+            argv=expected_argv,
             cwd=repo if has_repo else fallback,
             requires_pty=requires_pty,
         ),
     )
     configured.assert_called_once_with(default_global_config_path())
     channel.exit.assert_called_once_with(7)
+
+
+def test_console_receives_the_session_effective_policy_including_overrides(child, mocker):
+    """Regression for the bug where the console reloaded `global.yaml` itself.
+
+    The console child must be handed the session's EFFECTIVE policy — after
+    `jb remote ssh serve` overrides are merged onto `global.yaml` — not the
+    raw `global.yaml` policy. Here `global.yaml` alone would keep
+    `commands.mode: disabled`; only the override, carried into the spawned
+    console's `--policy-json`, allows commands at all. If `handle_process`
+    stopped passing `config` (the merged one) and passed the raw reload
+    instead, this would observe `commands.mode == "disabled"` and fail.
+    """
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    raw = RemoteSSHConfig(
+        dashboard=True, shell=False, commands=RemoteCommandPolicy(mode="disabled")
+    )
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
+    )
+    overrides = ServeOverrides(shell=True, commands_mode="full")
+
+    session("shell", term="xterm", overrides=overrides)
+
+    argv = child.await_args.args[1].argv
+    assert argv[:4] == (sys.executable, "-m", "jailbee", "_remote-console")
+    assert argv[4] == "--policy-json"
+    sent = RemoteSSHConfig.model_validate_json(argv[5])
+    assert sent.shell is True
+    assert sent.commands.mode == "full"
 
 
 def test_optional_pty_remains_available_to_one_shot_child(child, configured, repo):

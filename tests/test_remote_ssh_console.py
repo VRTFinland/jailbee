@@ -271,6 +271,87 @@ def test_console_reuses_policy_loaded_once(console_env: ConsoleEnv, mocker, caps
     assert "not allowed: git pull" in capsys.readouterr().err
 
 
+def test_policy_json_wins_over_a_stricter_global_yaml(console_env: ConsoleEnv, mocker) -> None:
+    """Regression: the console used to reload `global.yaml` itself and ignore
+
+    the server's effective (post-override) policy entirely. `global.yaml`
+    here says `commands.mode: disabled`; only the passed `--policy-json`
+    (mode `full`) allows anything to run. `load_global_config` is also
+    asserted un-called: a policy_json console must never reload
+    `global.yaml` at all, matching "frozen at console startup".
+    """
+    load = mocker.patch(
+        "jailbee.remote_ssh.console.load_global_config",
+        return_value=(
+            GlobalConfig(
+                remote=RemoteConfig(
+                    ssh=RemoteSSHConfig(
+                        shell=True,
+                        dashboard=True,
+                        commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
+                    )
+                )
+            ),
+            [],
+        ),
+    )
+    policy = RemoteSSHConfig(
+        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+    ).model_dump_json()
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["ls", "exit"])
+
+    assert console.run("project", policy) == 0
+
+    load.assert_not_called()
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "ls"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_policy_json_dashboard_check_also_uses_the_passed_policy(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    """Same bug, on the console's own `dashboard` gate."""
+    mocker.patch(
+        "jailbee.remote_ssh.console.load_global_config",
+        return_value=(
+            GlobalConfig(
+                remote=RemoteConfig(
+                    ssh=RemoteSSHConfig(
+                        dashboard=True,
+                        shell=True,
+                        commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
+                    )
+                )
+            ),
+            [],
+        ),
+    )
+    policy = RemoteSSHConfig(
+        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+    ).model_dump_json()
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    console_env.lines(["dashboard", "exit"])
+
+    assert console.run("project", policy) == 0
+
+    assert "dashboard is disabled" in capsys.readouterr().err
+    run.assert_not_called()
+
+
+def test_invalid_policy_json_fails_cleanly(console_env: ConsoleEnv, capsys) -> None:
+    """Never trust the server's payload as-is: revalidate, and fail loudly."""
+    assert console.run("project", '{"commands": {"mode": "not-a-mode"}}') == 1
+    assert "invalid remote SSH policy" in capsys.readouterr().err
+    console_env.prompt.prompt.assert_not_called()
+
+
 def test_malformed_quotes_report_an_error_and_return_to_prompt(
     console_env: ConsoleEnv, mocker, capsys
 ) -> None:

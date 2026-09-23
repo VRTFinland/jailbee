@@ -195,8 +195,18 @@ async def handle_process(
             process.stdout.write(help_text(config).encode("utf-8"))
             process.exit(0)
             return
+        argv = (sys.executable, "-m", "jailbee", *selected.argv)
+        if selected.kind == "console":
+            # The console child re-validates this itself (never trusting it
+            # as-is) via `RemoteSSHConfig.model_validate_json` — see
+            # `console._load_policy`. Passing the already-merged `config`
+            # (global.yaml + any `jb remote ssh serve` overrides) here is
+            # what fixes the console silently reloading global.yaml on its
+            # own and ignoring every override flag (e.g. `--commands full`,
+            # `--shell`), including its own `dashboard` check.
+            argv = (*argv, "--policy-json", config.model_dump_json())
         spec = ChildSpec(
-            argv=(sys.executable, "-m", "jailbee", *selected.argv),
+            argv=argv,
             cwd=selected.repo_root or state_dir(),
             requires_pty=selected.requires_pty,
         )
