@@ -160,8 +160,101 @@ def test_remote_ssh_key_add_rejects_a_missing_source(mocker: MockerFixture) -> N
 
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "add", "/gone/key.pub"])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
+    assert "/gone/key.pub" in result.stderr
+    assert "Traceback" not in result.stderr
     assert not add.called
+
+
+def test_remote_ssh_key_add_rejects_a_directory_source(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "add", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert not add.called
+
+
+def test_remote_ssh_key_add_dash_reads_stdin(mocker: MockerFixture) -> None:
+    added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
+
+    result = CliRunner().invoke(
+        app, ["remote", "ssh", "key", "add", "-"], input="ssh-ed25519 AAAA laptop\n"
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == "SHA256:abc  ssh-ed25519  laptop\n"
+    add.assert_called_once_with("ssh-ed25519 AAAA laptop\n")
+
+
+def test_remote_ssh_key_add_no_argument_reads_piped_stdin(mocker: MockerFixture) -> None:
+    added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+
+    result = CliRunner().invoke(
+        app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == "SHA256:abc  ssh-ed25519  laptop\n"
+    add.assert_called_once_with("ssh-ed25519 AAAA laptop\n")
+
+
+def test_remote_ssh_key_add_no_argument_prompts_on_a_tty(mocker: MockerFixture) -> None:
+    added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+
+    result = CliRunner().invoke(
+        app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == "SHA256:abc  ssh-ed25519  laptop\n"
+    assert "Paste the public key" in result.stderr
+    add.assert_called_once_with("ssh-ed25519 AAAA laptop\n")
+
+
+def test_remote_ssh_key_add_no_argument_empty_paste_is_an_error(mocker: MockerFixture) -> None:
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="\n")
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert not add.called
+
+
+def test_remote_ssh_key_add_no_argument_empty_pipe_is_an_error(mocker: MockerFixture) -> None:
+    add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="")
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert not add.called
+
+
+def test_remote_ssh_key_add_stdin_invalid_key_reports_the_parser_error(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "jailbee.remote_ssh.keys.add_authorized_key",
+        side_effect=SSHKeyError("expected a plain OpenSSH public key"),
+    )
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "add", "-"], input="not a key\n")
+
+    assert result.exit_code == 1
+    assert "expected a plain OpenSSH public key" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_remote_ssh_key_list_emits_one_stable_line_per_key(mocker: MockerFixture) -> None:

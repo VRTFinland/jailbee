@@ -133,21 +133,47 @@ def _remote_ssh_key_line(key: Any) -> str:
 @ssh_key_app.command("add")
 def remote_ssh_key_add_cmd(
     source: Annotated[
-        Path,
+        str | None,
         typer.Argument(
-            help="OpenSSH public-key file to authorize.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
+            metavar="[PATH|-]",
+            help=(
+                "OpenSSH public-key file to authorize. Use '-' to read the key "
+                "from stdin, or omit SOURCE entirely to paste it at a prompt "
+                "(or pipe it in, when stdin is not a terminal)."
+            ),
         ),
-    ],
+    ] = None,
 ) -> None:
-    """Authorize one public key read from SOURCE."""
+    """Authorize one public key.
+
+    SOURCE is a path to a public-key file, '-' to read the key text from
+    stdin, or omitted: an omitted SOURCE prompts for one pasted line on a
+    terminal, and reads piped stdin otherwise.
+    """
     from jailbee.remote_ssh import keys
 
+    if source is None or source == "-":
+        if source is None and _is_tty():
+            # A single OpenSSH public key is always one line, so one
+            # `readline()` is enough — no Ctrl-D needed. `typer.prompt`
+            # is not used here: it retries forever on an empty answer,
+            # which would just spin until stdin hits EOF.
+            typer.echo("Paste the public key: ", nl=False, err=True)
+            public_text = sys.stdin.readline()
+        else:
+            public_text = sys.stdin.read()
+        if not public_text.strip():
+            error_plain("no public key was given")
+            raise typer.Exit(1)
+    else:
+        try:
+            public_text = Path(source).read_text()
+        except OSError as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
+
     try:
-        key = keys.add_authorized_key(source.read_text())
+        key = keys.add_authorized_key(public_text)
     except (keys.SSHDependencyError, keys.SSHKeyError, OSError, UnicodeError) as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
