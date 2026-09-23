@@ -535,6 +535,20 @@ def _disable_cli_color(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pin_console_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rich hard-breaks a ``tmp_path`` that overruns the console width.
+
+    ``Console.__init__`` reads ``COLUMNS`` once into ``_width`` and ``tui``'s
+    consoles are module-level, so setting the variable alone resizes nothing.
+    """
+    from jailbee import tui
+
+    monkeypatch.setenv("COLUMNS", "200")
+    for console in (tui.console, tui.err_console, tui.hint_console):
+        monkeypatch.setattr(console, "_width", None)
+
+
+@pytest.fixture(autouse=True)
 def _mock_runtime_mounts(request, mocker):
     """Auto-mock runtime_mounts.attach/detach in all tests except its own.
 
