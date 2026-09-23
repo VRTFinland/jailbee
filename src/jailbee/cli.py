@@ -3089,7 +3089,10 @@ if TYPE_CHECKING:
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
+    from jailbee.issue_manifest import IssueManifest
+    from jailbee.issue_outbox import ApplyReport, OutboxSnapshot, PreparedBatch
     from jailbee.lifecycle import ContainerInfo, NewContainerOptions, ResolvedContainer
+    from jailbee.outbox_io import IssueJournal
     from jailbee.pool import Pool
     from jailbee.pr_outbox import Manifest, Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
@@ -10919,6 +10922,827 @@ def review_drop_cmd(
             files={k: v for k, v in remaining.files.items() if k not in deleted}
         )
         success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
+
+
+# ---- Issue outbox commands ----
+#
+# `jailbee issue` publishes GitHub issue actions a container staged into its
+# outbox. As with `review`, everything here is argument parsing, container
+# resolution, printing and prompting: reading, validating, planning, applying
+# and reconciling manifests is `issue_outbox`'s (and `outbox_io`'s) job.
+
+issue_app = typer.Typer(
+    name="issue",
+    help="Apply GitHub issue actions a container wrote into its outbox.",
+    no_args_is_help=True,
+)
+app.add_typer(issue_app)
+
+
+class _IssueRow(NamedTuple):
+    """One pending manifest, as `jailbee issue ls` lists it."""
+
+    container: str
+    manifest: str
+    actions: str
+    repos: str
+    state: str
+    error: str | None = None
+
+
+def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
+    """The container to act on; ``None`` when nothing anywhere is pending.
+
+    Mirrors `_resolve_review_container`, but candidacy comes from reading
+    each running container's own issue outbox directly — never the
+    git-status probe's PR-action count, which stays uncoupled from issue
+    management by design (see the Task 8 brief). Zero candidates is
+    success ("nothing pending"); one auto-selects; several prompt on a TTY
+    and exit 2, naming short names, off one. A stopped container's outbox
+    cannot be read at all, so it is silently not a candidate here (`issue
+    ls` is where a stopped container is instead named as unreadable).
+    """
+    from jailbee import issue_outbox
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import _stdin_is_interactive, list_containers
+    from jailbee.outbox_io import OutboxReadError
+    from jailbee.tui import pick_container
+
+    if name is not None:
+        return _resolve_existing(cfg, name)
+
+    incus = Incus()
+    pending = []
+    for ci in list_containers(cfg, incus):
+        if ci.state != "Running":
+            continue
+        try:
+            outbox = issue_outbox.read_issue_outbox(incus, ci.name, uid=cfg.container_user.uid)
+        except OutboxReadError:
+            continue
+        if outbox.manifest_names:
+            pending.append(ci)
+
+    if not pending:
+        return incus, None
+    if len(pending) == 1:
+        return incus, pending[0].name
+    if not _stdin_is_interactive():
+        names = ", ".join(ci.display_name for ci in pending)
+        error_plain(
+            f"several containers may have issue actions waiting; name one "
+            f"explicitly (or run in a TTY): {names}"
+        )
+        raise typer.Exit(2)
+    picked = pick_container(pending)
+    if picked is None:
+        raise typer.Exit(1)
+    return incus, picked
+
+
+def _read_issue_outbox_or_exit(
+    cfg: "Config", incus: "IncusType", container: str, short: str
+) -> "OutboxSnapshot":
+    """Read ``container``'s issue outbox, or exit 2 saying what to do about it."""
+    from jailbee import issue_outbox
+    from jailbee.outbox_io import OutboxReadError
+
+    try:
+        return issue_outbox.read_issue_outbox(incus, container, uid=cfg.container_user.uid)
+    except OutboxReadError as e:
+        error_plain(str(e))
+        if "not running" in str(e).lower():
+            error_plain(f"Start it first: jailbee start {short}")
+        raise typer.Exit(2) from e
+
+
+def _select_issue_manifests_or_exit(
+    outbox: "OutboxSnapshot", manifest: str | None, short: str
+) -> list[str]:
+    """Every pending manifest, or just the named one; exits 2 on a bad name."""
+    names = list(outbox.manifest_names)
+    if manifest is None:
+        return names
+    if manifest not in names:
+        error_plain(f"{short} has no pending manifest named {manifest}")
+        if names:
+            error_plain(f"Pending there: {', '.join(names)}")
+        raise typer.Exit(2)
+    return [manifest]
+
+
+_ISSUE_ACTION_KIND_ORDER = ("create", "edit", "comment", "labels", "state")
+
+
+def _issue_action_kind(action: object) -> str:
+    from jailbee.issue_manifest import CommentAction, CreateAction, EditAction, LabelsAction
+
+    if isinstance(action, CreateAction):
+        return "create"
+    if isinstance(action, EditAction):
+        return "edit"
+    if isinstance(action, CommentAction):
+        return "comment"
+    if isinstance(action, LabelsAction):
+        return "labels"
+    return "state"
+
+
+def _issue_action_summary(manifest: "IssueManifest") -> str:
+    """Action counts by kind, e.g. ``create:1 comment:2`` — no GitHub read."""
+    counts: dict[str, int] = {}
+    for action in manifest.actions:
+        kind = _issue_action_kind(action)
+        counts[kind] = counts.get(kind, 0) + 1
+    return " ".join(f"{k}:{counts[k]}" for k in _ISSUE_ACTION_KIND_ORDER if k in counts)
+
+
+def _issue_repo_summary(manifest: "IssueManifest") -> str:
+    """Every repo path the manifest's actions name, sorted and de-duplicated."""
+    return ", ".join(sorted({action.repo for action in manifest.actions}))
+
+
+def _issue_manifest_state(journal: "IssueJournal | None") -> str:
+    """One manifest's overall state, from its journal alone.
+
+    ``pending``: nothing has been attempted yet (or ever recorded).
+    ``uncertain``: at least one action's GitHub outcome is unknown and needs
+    `jailbee issue resolve`. ``in progress``: some actions landed, the rest
+    are still pending, and none is uncertain.
+    """
+    if journal is None or not journal.actions:
+        return "pending"
+    if any(action.state == "uncertain" for action in journal.actions):
+        return "uncertain"
+    return "in progress"
+
+
+@issue_app.command("ls")
+def issue_ls_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help=(
+                "Container to list issue actions for, named in full or by its "
+                "short name. Omitting it does NOT open a picker: every "
+                "container of this repo is listed."
+            ),
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-o",
+            help="Output format: table (default) or json.",
+            autocompletion=completion.complete_choices("table", "json"),
+        ),
+    ] = "table",
+    fields: Annotated[
+        str | None,
+        typer.Option(
+            "--fields",
+            help="Comma-separated fields: container, manifest, actions, repos, state, error.",
+        ),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """List the issue actions waiting in each running container's outbox.
+
+    One row per manifest, read from the container's own outbox and host
+    journal — never a GitHub read. A stopped container's outbox cannot be
+    read at all, so it is named in a note under the table rather than
+    listed as having nothing.
+    """
+    from rich.markup import escape
+
+    from jailbee import issue_outbox
+    from jailbee.incus import Incus
+    from jailbee.issue_manifest import IssueManifestError, parse_manifest
+    from jailbee.lifecycle import list_containers, short_name
+    from jailbee.outbox_io import (
+        JournalError,
+        JournalStore,
+        OutboxReadError,
+        container_identity,
+        journal_key,
+    )
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    if name is None:
+        infos = list_containers(cfg, incus)
+    else:
+        incus, resolved = _resolve_existing(cfg, name)
+        infos = [ci for ci in list_containers(cfg, incus) if ci.name == resolved]
+
+    journal_store = JournalStore()
+    rows: list[_IssueRow] = []
+    skipped: list[str] = []
+
+    for ci in infos:
+        short = short_name(cfg, ci.name)
+        if ci.state != "Running":
+            skipped.append(short)
+            continue
+        try:
+            outbox = issue_outbox.read_issue_outbox(incus, ci.name, uid=cfg.container_user.uid)
+        except OutboxReadError as e:
+            rows.append(
+                _IssueRow(
+                    container=short, manifest="—", actions="?", repos="?", state="error", error=str(e)
+                )
+            )
+            continue
+        if not outbox.manifest_names:
+            continue
+        try:
+            identity = container_identity(incus, ci.name)
+        except JournalError as e:
+            rows.append(
+                _IssueRow(
+                    container=short, manifest="—", actions="?", repos="?", state="error", error=str(e)
+                )
+            )
+            continue
+        for manifest_name in outbox.manifest_names:
+            try:
+                manifest = parse_manifest(
+                    manifest_name, outbox.files[manifest_name], outbox.files
+                )
+            except IssueManifestError as e:
+                rows.append(
+                    _IssueRow(
+                        container=short,
+                        manifest=manifest_name,
+                        actions="?",
+                        repos="?",
+                        state="error",
+                        error=str(e),
+                    )
+                )
+                continue
+            try:
+                journal = journal_store.load(journal_key(identity, manifest_name))
+            except JournalError as e:
+                rows.append(
+                    _IssueRow(
+                        container=short,
+                        manifest=manifest_name,
+                        actions="?",
+                        repos="?",
+                        state="error",
+                        error=str(e),
+                    )
+                )
+                continue
+            rows.append(
+                _IssueRow(
+                    container=short,
+                    manifest=manifest_name,
+                    actions=_issue_action_summary(manifest),
+                    repos=_issue_repo_summary(manifest),
+                    state=_issue_manifest_state(journal),
+                )
+            )
+
+    if fmt == "table":
+        # The table's own cell is too narrow for a refusal message, so it is
+        # printed in full above it. JSON keeps it in the `error` field instead.
+        for row in rows:
+            if row.error is not None:
+                warn_plain(row.error)
+
+    all_fields: list[table_format.FieldSpec[_IssueRow]] = [
+        table_format.FieldSpec(
+            name="container",
+            header="CONTAINER",
+            cell=lambda r: escape(r.container),
+            json=lambda r: r.container,
+        ),
+        table_format.FieldSpec(
+            name="manifest",
+            header="MANIFEST",
+            # Container-written file name: never passed through Rich's markup
+            # parser (see table_format's own convention in `port ls`).
+            cell=lambda r: escape(r.manifest),
+            json=lambda r: r.manifest,
+        ),
+        table_format.FieldSpec(
+            name="actions",
+            header="ACTIONS",
+            cell=lambda r: escape(r.actions),
+            json=lambda r: r.actions,
+        ),
+        table_format.FieldSpec(
+            name="repos",
+            header="REPOS",
+            cell=lambda r: escape(r.repos),
+            json=lambda r: r.repos,
+        ),
+        table_format.FieldSpec(
+            name="state",
+            header="STATE",
+            cell=lambda r: r.state,
+            json=lambda r: r.state,
+        ),
+        table_format.FieldSpec(
+            name="error",
+            header="ERROR",
+            cell=lambda r: escape(r.error or ""),
+            json=lambda r: r.error,
+            default_table=False,
+        ),
+    ]
+
+    table_format.emit(
+        rows,
+        all_fields,
+        fmt=fmt,
+        fields=fields,
+        console=console,
+        title="Pending issue actions" if fmt == "table" else None,
+        empty_message="No pending issue actions.",
+    )
+    if fmt == "table" and skipped:
+        info(
+            f"Not checked, because a stopped container's outbox cannot be read: "
+            f"{', '.join(sorted(skipped))}"
+        )
+
+
+@issue_app.command("show")
+def issue_show_cmd(
+    name: Annotated[
+        str,
+        typer.Argument(
+            help="Container whose issue outbox to read.",
+            autocompletion=completion.complete_container,
+        ),
+    ],
+    manifest: Annotated[
+        str | None,
+        typer.Argument(help="One manifest file name. Default: every pending manifest."),
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Print every pending manifest's validated intent and host journal state.
+
+    Never reads GitHub: what is shown is exactly what the container proposed
+    and what jailbee itself has durably recorded about it so far.
+    """
+    from jailbee import issue_outbox
+    from jailbee.issue_manifest import IssueManifestError, parse_manifest
+    from jailbee.lifecycle import short_name
+    from jailbee.outbox_io import JournalError, JournalStore, container_identity, journal_key
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_existing(cfg, name)
+    short = short_name(cfg, container)
+    outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    names = _select_issue_manifests_or_exit(outbox, manifest, short)
+    if not names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    try:
+        identity = container_identity(incus, container)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    journal_store = JournalStore()
+
+    failed = False
+    for manifest_name in names:
+        try:
+            parsed = parse_manifest(manifest_name, outbox.files[manifest_name], outbox.files)
+        except IssueManifestError as e:
+            error_plain(str(e))
+            failed = True
+            continue
+        try:
+            journal = journal_store.load(journal_key(identity, manifest_name))
+        except JournalError as e:
+            error_plain(str(e))
+            failed = True
+            continue
+        console.print()
+        for line in issue_outbox.show_lines(parsed, journal):
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
+    if failed:
+        raise typer.Exit(1)
+
+
+@issue_app.command("apply")
+def issue_apply_cmd(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help=(
+                "Container whose staged issue actions to apply. Omit it and "
+                "jailbee picks from the running containers that report "
+                "pending issue actions, asking only when more than one does."
+            ),
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    manifest: Annotated[
+        str | None,
+        typer.Option(
+            "--manifest", help="One manifest file name. Default: every pending manifest."
+        ),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Show what a container wants to change on GitHub, then apply it.
+
+    Order is fixed: a read-only preflight prepares the plan; the full plan
+    and host identity are printed; one confirmation is asked; a second,
+    narrower read re-checks only what could have gone stale; only then does
+    anything mutate GitHub. `--dry-run` stops right after the plan is
+    printed — no confirmation, no stale recheck, no journal write, no
+    mutation. `--yes` skips only the confirmation: the stale recheck always
+    runs.
+    """
+    from jailbee import issue_outbox
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.outbox_io import JournalStore
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
+    short = short_name(cfg, container)
+    outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    names = _select_issue_manifests_or_exit(outbox, manifest, short)
+    if not names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    journal_store = JournalStore()
+    try:
+        batch = issue_outbox.prepare_batch(
+            cfg, incus, container, names, uid=cfg.container_user.uid, journal_store=journal_store
+        )
+    except issue_outbox.IssueGateError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    for line in issue_outbox.plan_lines(batch):
+        console.print(line, markup=False, highlight=False, soft_wrap=True)
+
+    if dry_run:
+        return
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error_plain(
+                "Refusing to change GitHub issues without a confirmation. "
+                "Re-run with -y, or from a terminal."
+            )
+            raise typer.Exit(2)
+        if not typer.confirm("Proceed?"):
+            info("Nothing applied.")
+            return
+
+    try:
+        issue_outbox.revalidate_batch(batch)
+    except issue_outbox.IssueStaleError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    report = issue_outbox.apply_batch(
+        batch, incus=incus, uid=cfg.container_user.uid, journal_store=journal_store
+    )
+    _report_issue_apply_outcome(batch, report)
+    if report.failure is not None:
+        raise typer.Exit(1)
+
+
+def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -> None:
+    """Print what landed, what failed, and what is still pending.
+
+    Always shown, success or not: `applied` (dispatched this run) and
+    `skipped` (already applied by an earlier run) both count as applied.
+    On a partial or uncertain failure, the action that stopped the run is
+    named, and every action in the batch that was never attempted is listed
+    as still pending.
+    """
+    attempted: set[tuple[str, int]] = set()
+    for manifest_name, receipt in (*report.applied, *report.skipped):
+        attempted.add((manifest_name, receipt.index))
+        detail = f" ({receipt.url})" if receipt.url else ""
+        success_plain(f"{manifest_name} action {receipt.index}: applied{detail}")
+
+    failure = report.failure
+    if failure is None:
+        for manifest_name in report.cleaned:
+            success_plain(f"{manifest_name}: fully applied and removed from the outbox")
+        return
+
+    label = "uncertain" if failure.uncertain else "failed"
+    if failure.manifest is None:
+        error_plain(f"apply stopped: {failure.detail}")
+    elif failure.index is None:
+        error_plain(f"{failure.manifest}: {label} — {failure.detail}")
+    else:
+        attempted.add((failure.manifest, failure.index))
+        error_plain(f"{failure.manifest} action {failure.index}: {label} — {failure.detail}")
+
+    for prepared in batch.manifests:
+        for resolved in prepared.actions:
+            key = (prepared.manifest.name, resolved.index)
+            if key not in attempted:
+                info_plain(f"{prepared.manifest.name} action {resolved.index}: pending")
+
+
+@issue_app.command("drop")
+def issue_drop_cmd(
+    name: Annotated[
+        str,
+        typer.Argument(
+            help="Container whose issue outbox to drop from.",
+            autocompletion=completion.complete_container,
+        ),
+    ],
+    manifest: Annotated[
+        str | None,
+        typer.Argument(help="One manifest file name. Default: every pending manifest."),
+    ] = None,
+    archive_journal: Annotated[
+        bool,
+        typer.Option(
+            "--archive-journal",
+            help=(
+                "Archive settled progress (applied actions, untouched pending "
+                "ones) instead of refusing to drop a manifest that has any."
+            ),
+        ),
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Delete pending issue actions, unapplied — nothing is changed on GitHub.
+
+    By default this refuses a manifest with any recorded journal progress at
+    all, even settled progress, so nothing already changed on GitHub is
+    silently forgotten. `--archive-journal` still refuses uncertain
+    progress, but shows applied receipts and untouched pending actions and
+    then keeps a record of the settled ones before removing the manifest.
+    """
+    from jailbee import issue_outbox
+    from jailbee.issue_manifest import IssueManifestError, parse_manifest
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.outbox_io import JournalError, JournalStore, container_identity, journal_key
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_existing(cfg, name)
+    short = short_name(cfg, container)
+    uid = cfg.container_user.uid
+    outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    names = _select_issue_manifests_or_exit(outbox, manifest, short)
+    if not names:
+        info(f"Nothing pending in {short}.")
+        return
+
+    try:
+        identity = container_identity(incus, container)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    journal_store = JournalStore()
+
+    if archive_journal:
+        try:
+            journals = {
+                manifest_name: journal_store.load(journal_key(identity, manifest_name))
+                for manifest_name in names
+            }
+        except JournalError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+        for manifest_name, journal in journals.items():
+            if journal is not None and any(a.state == "uncertain" for a in journal.actions):
+                error_plain(
+                    f"{manifest_name}: cannot archive a journal containing uncertain progress"
+                )
+                raise typer.Exit(1)
+        for manifest_name in names:
+            journal = journals[manifest_name]
+            if journal is None:
+                continue
+            for receipt in sorted(journal.actions, key=lambda a: a.index):
+                detail = f" ({receipt.url})" if receipt.url else ""
+                success_plain(f"{manifest_name} action {receipt.index}: applied{detail}")
+        for manifest_name in names:
+            try:
+                parsed = parse_manifest(manifest_name, outbox.files[manifest_name], outbox.files)
+            except IssueManifestError:
+                continue
+            journal = journals[manifest_name]
+            recorded = {receipt.index for receipt in journal.actions} if journal is not None else set()
+            for index in range(len(parsed.actions)):
+                if index not in recorded:
+                    info_plain(f"{manifest_name} action {index}: pending")
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error_plain(
+                "Refusing to delete pending issue actions without a confirmation. "
+                "Re-run with -y, or from a terminal."
+            )
+            raise typer.Exit(2)
+        info(f"About to discard, unpublished, from {short}: {', '.join(names)}")
+        if not typer.confirm("Delete them?"):
+            info("Nothing deleted.")
+            return
+
+    remaining = outbox
+    for manifest_name in names:
+        try:
+            deleted = issue_outbox.drop_manifest(
+                incus,
+                container,
+                remaining,
+                manifest_name,
+                uid=uid,
+                journal_store=journal_store,
+                identity=identity,
+                archive_journal=archive_journal,
+            )
+        except JournalError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+        # Shrink the snapshot as we go, so a body file shared by two of the
+        # manifests being dropped doesn't look referenced by each of them in
+        # turn and outlive them both.
+        remaining = issue_outbox.OutboxSnapshot(
+            files={k: v for k, v in remaining.files.items() if k not in deleted}
+        )
+        success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
+
+
+@issue_app.command("resolve")
+def issue_resolve_cmd(
+    name: Annotated[
+        str,
+        typer.Argument(
+            help="Container whose issue outbox holds the manifest.",
+            autocompletion=completion.complete_container,
+        ),
+    ],
+    manifest: Annotated[str, typer.Argument(help="Manifest file name.")],
+    action: Annotated[
+        int, typer.Argument(help="Zero-based index of the uncertain action within the manifest.")
+    ],
+    applied: Annotated[
+        bool,
+        typer.Option("--applied", help="Confirm the mutation actually landed on GitHub."),
+    ] = False,
+    url: Annotated[
+        str | None,
+        typer.Option("--url", help="The GitHub issue URL the mutation produced."),
+    ] = None,
+    issue: Annotated[
+        int | None,
+        typer.Option("--issue", help="The created issue's number (create actions only)."),
+    ] = None,
+    retry: Annotated[
+        bool, typer.Option("--retry", help="Forget the uncertain outcome and retry it.")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Resolve one action whose GitHub outcome an earlier run left uncertain.
+
+    Exactly one of `--applied` (with `--url`, and `--issue` for a create) or
+    `--retry` is required. `--retry` forgets the uncertain record so the
+    action is attempted again; `--applied` durably records the human's own
+    confirmation of what actually happened on GitHub.
+    """
+    from jailbee import issue_outbox
+    from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
+    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.outbox_io import (
+        JournalError,
+        JournalStore,
+        container_identity,
+        journal_key,
+        proposal_digest,
+    )
+    from jailbee.tui import console
+
+    if applied == retry:
+        error_plain("Exactly one of --applied or --retry is required.")
+        raise typer.Exit(2)
+    if retry:
+        if url is not None or issue is not None:
+            error_plain("--retry accepts neither --url nor --issue.")
+            raise typer.Exit(2)
+    elif url is None:
+        error_plain("--applied requires --url.")
+        raise typer.Exit(2)
+
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_existing(cfg, name)
+    short = short_name(cfg, container)
+    outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    text = outbox.files.get(manifest)
+    if text is None:
+        error_plain(f"{short} has no pending manifest named {manifest}")
+        if outbox.manifest_names:
+            error_plain(f"Pending there: {', '.join(outbox.manifest_names)}")
+        raise typer.Exit(2)
+    try:
+        parsed = parse_manifest(manifest, text, outbox.files)
+    except IssueManifestError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    if not 0 <= action < len(parsed.actions):
+        error_plain(f"{manifest} has no action {action}")
+        raise typer.Exit(2)
+    resolved_action = parsed.actions[action]
+
+    if applied:
+        if isinstance(resolved_action, CreateAction):
+            if issue is None:
+                error_plain("A create action's resolution requires --issue.")
+                raise typer.Exit(2)
+        elif issue is not None:
+            error_plain("--issue is only valid for a create action.")
+            raise typer.Exit(2)
+
+    try:
+        identity = container_identity(incus, container)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    body_files = {
+        body: outbox.files[body] for body in parsed.body_files if body in outbox.files
+    }
+    digest = proposal_digest(manifest, text, body_files)
+    key = journal_key(identity, manifest)
+    journal_store = JournalStore()
+    try:
+        journal = journal_store.load(key)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    console.print()
+    for line in issue_outbox.show_lines(parsed, journal):
+        console.print(line, markup=False, highlight=False, soft_wrap=True)
+
+    resolution: issue_outbox.Resolution
+    if retry:
+        resolution = issue_outbox.RetryResolution()
+    else:
+        assert url is not None, "validated above: --applied requires --url"
+        resolution = issue_outbox.AppliedResolution(url=url, issue=issue)
+
+    if not yes:
+        if not _stdin_is_interactive():
+            error_plain(
+                "Refusing to resolve without a confirmation. Re-run with -y, or from a terminal."
+            )
+            raise typer.Exit(2)
+        verb = "Retry" if retry else "Mark applied"
+        if not typer.confirm(f"{verb} {manifest} action {action}?"):
+            info("Nothing changed.")
+            return
+
+    try:
+        targets = issue_outbox.resolve_repo_targets(cfg)
+    except ValueError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    repo = targets.get(resolved_action.repo)
+    if repo is None:
+        error_plain(f"{manifest} action {action}: forbidden repo path {resolved_action.repo!r}")
+        raise typer.Exit(1)
+
+    try:
+        issue_outbox.reconcile_action(
+            key=key,
+            index=action,
+            resolution=resolution,
+            repo=repo,
+            manifest=parsed,
+            digest=digest,
+            journal_store=journal_store,
+        )
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+
+    success_plain(f"{manifest} action {action}: {'retried' if retry else 'marked applied'}")
 
 
 apps_app = typer.Typer(
