@@ -867,17 +867,19 @@ def apply_batch(
     Two passes. The first re-verifies every manifest — the container's
     identity, each manifest's exact text (by recomputed digest), and its
     journal's recorded progress — *before* a single GitHub mutation is
-    dispatched, so a change discovered in the last manifest still aborts
-    the first one's untouched. The second pass then walks each manifest's
-    actions in display order, skipping ones already `applied` (restoring
-    a create's issue number into `created_issue_numbers` for any later
-    `issue_ref`), and for a pending action: durably marks it `prepared`,
-    dispatches its exact mutation, and durably marks the outcome — all
-    under one lock per action, so a concurrent reconciliation or drop can
-    never observe a half-finished one. The run stops at the first action
-    it cannot durably resolve one way or the other; nothing later is ever
-    attempted. A manifest that becomes fully applied is logged, deleted,
-    and archived before the next manifest starts.
+    dispatched, so a change discovered in the last manifest still aborts the
+    first one's untouched. A freshly-discovered `uncertain` record aborts
+    the whole batch, and so does an already-`applied` record whose recorded
+    repo no longer matches the freshly resolved one. The second pass then
+    walks each manifest's actions in display order, skipping ones already
+    `applied` (restoring a create's issue number into `created_issue_numbers`
+    for any later `issue_ref`), and for a pending action: durably marks it
+    `prepared`, dispatches its exact mutation, and durably marks the
+    outcome — all under one lock per action, so a concurrent reconciliation
+    or drop can never observe a half-finished one. The run stops at the
+    first action it cannot durably resolve one way or the other; nothing
+    later is ever attempted. A manifest that becomes fully applied is
+    logged, deleted, and archived before the next manifest starts.
     """
     applied: list[tuple[str, JournalAction]] = []
     skipped: list[tuple[str, JournalAction]] = []
@@ -942,6 +944,14 @@ def apply_batch(
                     f"{name} action {resolved.index}: a previous run's outcome is uncertain "
                     f"({current.detail or 'unknown'}) and must be reconciled before this batch "
                     "can proceed",
+                )
+            if current is not None and current.repo.casefold() != resolved.repo.identity:
+                return failed(
+                    name,
+                    resolved.index,
+                    False,
+                    f"{name} action {resolved.index}: its recorded repo no longer matches "
+                    "the resolved repo; re-approve this batch",
                 )
         journals[name] = journal
 
@@ -1171,8 +1181,10 @@ def drop_manifest(
     barrier for whatever was already applied.
 
     Deletes the manifest itself unconditionally, but only the body files no
-    *other* manifest in `outbox` still references — a shared Markdown file
-    is kept. Returns the outbox-relative names actually deleted.
+    *other* manifest in a freshly re-read outbox still references — not
+    `outbox` itself, which may predate a manifest written after the caller's
+    own read. A shared Markdown file is kept either way. Returns the
+    outbox-relative names actually deleted.
     """
     fresh = read_issue_outbox(incus, container, uid=uid)
     if fresh.files.get(manifest_name) != outbox.files.get(manifest_name):
@@ -1198,11 +1210,11 @@ def drop_manifest(
         )
 
     try:
-        parsed = parse_manifest(manifest_name, text, outbox.files)
+        parsed = parse_manifest(manifest_name, text, fresh.files)
         body_files: frozenset[str] = parsed.body_files
     except IssueManifestError:
         body_files = frozenset()
-    referenced = _referenced_elsewhere(outbox, manifest_name)
+    referenced = _referenced_elsewhere(fresh, manifest_name)
     names = [manifest_name]
     if referenced is not None:
         names.extend(sorted(f for f in body_files if f not in referenced))

@@ -1202,14 +1202,16 @@ def test_apply_rechecks_every_proposal_before_any_remote_mutation(execution, cha
     batch = execution["batch"]({"a.json": [_comment()], "b.json": [_comment()]})
     store = execution["store"]
     second = replace(batch, manifests=(batch.manifests[1],))
-    if change in ("digest", "repo"):
-        _seed_execution(
-            execution, second, state="prepared", repo="wrong/repo" if change == "repo" else None
+    if change == "digest":
+        batch = replace(
+            batch, manifests=(batch.manifests[0], replace(batch.manifests[1], digest="0" * 64))
         )
-        if change == "digest":
-            batch = replace(
-                batch, manifests=(batch.manifests[0], replace(batch.manifests[1], digest="0" * 64))
-            )
+    elif change == "repo":
+        # A previous run recorded b.json's only action as *applied* under a
+        # different repo than the one this batch now resolves it to (e.g. the
+        # repo's remote URL moved between preparing and applying). apply_batch
+        # must not silently trust a stale applied receipt for the wrong repo.
+        _seed_execution(execution, second, repo="wrong/repo")
     elif change == "count":
         store.create(journal_key(batch.identity, "b.json"), batch.manifests[1].digest, 2)
     elif change == "identity":
@@ -1526,4 +1528,17 @@ def test_drop_refuses_changed_proposal_and_preserves_shared_bodies(execution):
         _drop(execution, batch)
     execution["files"]["a.json"] = batch.outbox.files["a.json"]
     assert _drop(execution, batch) == ("a.json",)
+    assert "shared.md" in execution["files"]
+
+
+def test_drop_preserves_shared_bodies_referenced_by_a_manifest_added_since_the_read(execution):
+    action = {"type": "comment", "repo": ".", "issue": 7, "body_file": "shared.md"}
+    batch = execution["batch"]({"a.json": [action]}, extras={"shared.md": "Shared"})
+    # "b.json" is written into the live container outbox *after* `batch.outbox` was
+    # snapshotted, so only a fresh read (not the caller's stale `outbox` argument)
+    # can see that it still references "shared.md".
+    execution["files"]["b.json"] = json.dumps({"version": 1, "actions": [action]})
+
+    assert _drop(execution, batch) == ("a.json",)
+
     assert "shared.md" in execution["files"]
