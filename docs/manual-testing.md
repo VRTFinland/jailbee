@@ -1423,6 +1423,7 @@ jailbee issue apply feat-issuesmoke -y
 #         "002-batch.json: fully applied and removed from the outbox"
 gh issue list --repo <owner>/<repo> --search "smoke-test issue in:title" --json number,title
 # expect: two open issues, "First smoke-test issue" and "Second smoke-test issue"
+# note the number of "First smoke-test issue" -> <bug-a-number>
 gh issue view <bug-a-number> --repo <owner>/<repo> --json comments -q '.comments[].body'
 # expect: "Following up on the first one — resolved via issue_ref, not a number."
 jailbee shell feat-issuesmoke
@@ -1478,7 +1479,9 @@ exit
 jailbee issue apply feat-issuesmoke -y
 # expect: "Repository: <submodule-path> (<sub-owner>/<sub-repo>)" in the plan —
 #         never the superproject's own slug
-gh issue list --repo <sub-owner>/<sub-repo> --search "Submodule smoke-test issue in:title"
+gh issue list --repo <sub-owner>/<sub-repo> --search "Submodule smoke-test issue in:title" --json number
+# note the number -> <sub-bug-number> (reused by scenario 6 below)
+gh issue view <sub-bug-number> --repo <sub-owner>/<sub-repo> --json comments -q '.comments[].body'
 # expect: one open issue, with the comment attached
 gh issue list --repo <owner>/<repo> --search "Submodule smoke-test issue in:title"
 # expect: empty — nothing landed in the superproject repo
@@ -1518,15 +1521,15 @@ jailbee shell feat-issuesmoke && rm ~/.jailbee/issue-outbox/005-stale.json && ex
 
 ### 6. An injected failure stops later actions; retrying skips already-applied receipts
 
-Force a real, definite GitHub-side rejection on the *second* action of a
-batch by locking the target issue's conversation first (`gh api ... /lock`
-makes a subsequent comment attempt return a 4xx, which the host maps to a
-**definite** failure, not `uncertain`):
+Force a real, definite GitHub-side rejection that no collaborator
+permission can route around: **archive the submodule repository** from
+scenario 4. An archived repository stays fully readable — so the preflight
+read still passes — but rejects every write with a 403 regardless of who
+is asking, unlike locking an issue (which only blocks *non-collaborators*
+and would not fail for the repo's own owner or a collaborator token):
 
 ```bash
-gh issue create --repo <owner>/<repo> --title "Lock target for the smoke test" --body "x"
-# note the number -> <L>
-gh api -X PUT repos/<owner>/<repo>/issues/<L>/lock -f lock_reason=off-topic
+gh api -X PATCH repos/<sub-owner>/<sub-repo> -f archived=true
 
 jailbee shell feat-issuesmoke
 cat > ~/.jailbee/issue-outbox/006-stops.json <<'JSON'
@@ -1535,8 +1538,8 @@ cat > ~/.jailbee/issue-outbox/006-stops.json <<'JSON'
   "actions": [
     {"type": "create", "repo": ".", "ref": "lands-fine", "title": "Lands before the failure",
      "body": "This one should succeed and be journaled applied.", "labels": []},
-    {"type": "comment", "repo": ".", "issue": <L>,
-     "body": "This comment should fail — the issue is locked."},
+    {"type": "comment", "repo": "<submodule-path>", "issue": <sub-bug-number>,
+     "body": "This comment should fail — the submodule repo is archived."},
     {"type": "comment", "repo": ".", "issue_ref": "lands-fine",
      "body": "This should never be attempted — the batch stopped one step earlier."}
   ]
@@ -1551,18 +1554,19 @@ jailbee issue apply feat-issuesmoke -y
 # exit 1
 gh issue list --repo <owner>/<repo> --search "Lands before the failure in:title"
 # expect: the issue exists — action 0 really landed
-gh issue view <L> --repo <owner>/<repo> --json comments -q '.comments | length'
-# expect: 0 — action 1's comment never posted
+gh issue view <sub-bug-number> --repo <sub-owner>/<sub-repo> --json comments -q '.comments | length'
+# expect: 1 (just scenario 4's comment) — action 1's new comment never posted
 
-# Unlock, then retry the SAME manifest.
-gh api -X DELETE repos/<owner>/<repo>/issues/<L>/lock
+# Un-archive, then retry the SAME manifest.
+gh api -X PATCH repos/<sub-owner>/<sub-repo> -f archived=false
 jailbee issue apply feat-issuesmoke -y
 # expect: "006-stops.json action 0: applied (...)" — SKIPPED, no new issue created
 gh issue list --repo <owner>/<repo> --search "Lands before the failure in:title" --json number
 # expect: still exactly ONE issue — the retry did not create a duplicate
 # expect: action 1 now applied for real, action 2 applied too, manifest cleaned up
-gh issue view <L> --repo <owner>/<repo> --json comments -q '.comments[].body'
-# expect: "This comment should fail — the issue is locked."
+gh issue view <sub-bug-number> --repo <sub-owner>/<sub-repo> --json comments -q '.comments[].body'
+# expect: two comments now — scenario 4's, and "This comment should fail —
+#         the submodule repo is archived."
 ```
 
 ### 7. An `uncertain` result blocks the manifest until it is resolved
@@ -1585,10 +1589,14 @@ cat > ~/.jailbee/issue-outbox/007-uncertain.json <<'JSON'
 JSON
 exit
 
-# On the HOST: break api.github.com reachability, run, then restore it.
+# On the HOST: break api.github.com reachability, run, then restore it. A
+# firewall DROP (hangs until gh's own timeout) and a bogus /etc/hosts entry
+# (fails fast on connection refused) exercise the two different messages
+# below, both safe, both `uncertain` — never `failed` or `applied`:
 jailbee issue apply feat-issuesmoke -y
-# expect (with the block in place): the plan, then
+# expect (with the block in place): the plan, then one of
 #   "007-uncertain.json action 0: uncertain — GitHub mutation transport failed after dispatch"
+#   "007-uncertain.json action 0: uncertain — GitHub mutation outcome is uncertain"
 # restore connectivity
 jailbee issue ls feat-issuesmoke
 # expect: 007-uncertain.json STATE=uncertain
@@ -1639,9 +1647,9 @@ gh issue view <N> --repo <owner>/<repo> --json comments -q '.comments[].body'
 ```bash
 jailbee destroy feat-issuesmoke --force
 # Cleanup (does not touch GitHub — close the smoke issues by hand):
-#   gh issue close <N> <L> --repo <owner>/<repo>
-#   gh issue close <bug-a-number> <bug-b-number> --repo <owner>/<repo>
+#   gh issue close <N> <bug-a-number> <bug-b-number> --repo <owner>/<repo>
 #   gh issue close <sub-bug-number> --repo <sub-owner>/<sub-repo>
+#   gh api -X PATCH repos/<sub-owner>/<sub-repo> -f archived=false   # in case step 6 was interrupted
 ```
 
 ## `pr: null` outbox description + post-update offer smoke test
