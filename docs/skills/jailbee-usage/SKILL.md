@@ -718,9 +718,12 @@ restricted JailBee console need `-t`. Every one-shot command requires an exact
 registered `PREFIX`; `--repo` never accepts a path. Started without `--repo`,
 the console shows an arrow-key menu of registered repos (skipped when exactly
 one is registered); Esc/Ctrl-C/Ctrl-D cancel it. The console's local commands
-are `repos`, `use [PREFIX]` (bare `use` reopens the menu), `dashboard`, `help`,
-and `exit`; `help` also lists the JailBee commands the session's policy
-allows. Every other line is a JailBee argv checked against
+are `repos`, `use [PREFIX]` (bare `use` reopens the menu), `dashboard` (shown
+only when enabled), `help`, and `exit`, rendered by `help` as a Rich panel
+styled like `jb --help`. In `full` mode `help` then runs the real `python -m
+jailbee --help`; in `allowlist` mode it renders a second panel listing each
+allowed command with its own short help instead; in `disabled` mode it prints
+a one-line note. Every other line is a JailBee argv checked against
 `remote.ssh.commands`, tab-completed word by word. A hidden alias (`merge`,
 `pull`, `push`, ...) is checked against the public command it aliases, so
 allowing `git merge` also allows `merge`. A public group's own help (`git`,

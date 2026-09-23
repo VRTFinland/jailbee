@@ -64,12 +64,18 @@ class _CommandTree:
     `top_level_names` is every name mounted directly on the root command,
     public or hidden, used only to tell "genuinely unknown command" apart
     from "known but hidden or otherwise disallowed" (see `unknown_command`).
+
+    `public_short_help` maps each public leaf path to its Click short help
+    text (`Command.get_short_help_str()`), read by the console's `help` in
+    `allowlist` mode to list each allowed command with the same one-line
+    description Typer itself would show for it.
     """
 
     public_leaves: frozenset[str]
     aliases: dict[str, str]
     public_groups: dict[str, bool]
     top_level_names: frozenset[str]
+    public_short_help: dict[str, str]
 
 
 def _leaf_identity(command: object) -> int:
@@ -103,6 +109,7 @@ def _command_tree() -> _CommandTree:
 
     public_leaves: set[str] = set()
     public_by_identity: dict[int, str] = {}
+    public_short_help: dict[str, str] = {}
     hidden_leaves: list[tuple[str, int]] = []
     public_groups: dict[str, bool] = {}
 
@@ -126,6 +133,7 @@ def _command_tree() -> _CommandTree:
         else:
             public_leaves.add(path)
             public_by_identity[_leaf_identity(command)] = path
+            public_short_help[path] = command.get_short_help_str()
 
     root = cast(TyperCommand | TyperGroup, get_command(app))
     walk(root, (), False)
@@ -141,12 +149,18 @@ def _command_tree() -> _CommandTree:
         aliases=aliases,
         public_groups=public_groups,
         top_level_names=top_level_names,
+        public_short_help=public_short_help,
     )
 
 
 def known_command_paths() -> frozenset[str]:
     """Return the public leaf paths in Jailbee's Click command tree."""
     return _command_tree().public_leaves
+
+
+def known_command_short_help() -> dict[str, str]:
+    """Return each public command path's Click short help text."""
+    return _command_tree().public_short_help
 
 
 def command_path(argv: Sequence[str]) -> str:
