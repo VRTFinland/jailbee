@@ -11070,9 +11070,11 @@ def _issue_manifest_state(journal: "IssueJournal | None") -> str:
     `jailbee issue resolve`. ``in progress``: some actions landed, the rest
     are still pending, and none is uncertain.
     """
+    from jailbee.outbox_io import journal_has_uncertainty
+
     if journal is None or not journal.actions:
         return "pending"
-    if any(action.state == "uncertain" for action in journal.actions):
+    if journal_has_uncertainty(journal):
         return "uncertain"
     return "in progress"
 
