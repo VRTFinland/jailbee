@@ -85,14 +85,21 @@ A commandless login prints help listing only configured entry points and exits
 zero. `dashboard` and the restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
 Every one-shot request starts with `--repo PREFIX`; it is an exact registered
-repository prefix, never a path, and its registered root becomes cwd.
+repository prefix, never a path, and its registered root becomes cwd. Text
+this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
+was negotiated, LF otherwise; JailBee child command output is unaffected.
 
-The console either takes `--repo PREFIX` or prompts from live registered repos.
-Local commands are `repos`, `use PREFIX`, `dashboard`, `help`, and `exit`/EOF.
-Other input is parsed as a JailBee argv, checked against the same command
-policy as one-shot execution, run, and returned to the prompt. There are no
-pipes, redirections, shell operators, glob/variable/command expansion, aliases
-or executable lookup.
+The console either takes `--repo PREFIX`, or shows an arrow-key menu of live
+registered repos (skipped, starting directly, when exactly one is
+registered); Esc, Ctrl-C and Ctrl-D all cancel the menu, exiting the console
+cleanly at startup. Local commands are `repos`, `use [PREFIX]` (bare `use`
+reopens the menu), `dashboard`, `help`, and `exit`/EOF; `help` also lists the
+JailBee command paths this session's policy allows. Other input is parsed as
+a JailBee argv, checked against the same command policy as one-shot
+execution, run, and returned to the prompt; tab completion covers local
+commands, allowed JailBee command paths word by word, and repo prefixes after
+`use`. There are no pipes, redirections, shell operators, glob/variable/command
+expansion, aliases or executable lookup.
 
 Policy lives only in host-global `remote.ssh`. Defaults are
 `127.0.0.1:8022`, dashboard on, console/exec off and command mode disabled.

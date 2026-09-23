@@ -115,7 +115,19 @@ ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
 Expect the normal first-contact host-key prompt. Answer `yes`; the connection
 then prints `Available remote commands:` with `dashboard`, `shell [--repo
 PREFIX]`, and `--repo PREFIX COMMAND [ARGS...]`, and exits zero. It must not
-choose a repo or open a UI. Compare the shown host fingerprint when desired:
+choose a repo or open a UI. Lines must render cleanly (no staircase effect) in
+all three of these forms — plain `ssh` and `-t` both negotiate a PTY (OpenSSH
+requests one automatically for a commandless, interactive login), so both use
+CRLF; `-T` forces no PTY and keeps plain LF, which still renders fine since
+the client's own line discipline handles it:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost
+ssh -T "${JB_SSH_COMMON[@]}" jailbee@localhost
+```
+
+Compare the shown host fingerprint when desired:
 
 ```bash
 ssh-keygen -y -f ~/.local/share/jailbee/ssh/host_key \
@@ -152,9 +164,20 @@ ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
 
 In the dashboard, verify only registered repos appear. Press `n` on this repo,
 enter a branch and base, and confirm that the normal `jailbee new` questions
-are interactive; decline once before accepting. In the console, run `help`,
-`repos`, `use $JB_SSH_PREFIX`, `ls`, and `dashboard`; exiting the dashboard
-must return to `jb[$JB_SSH_PREFIX]>`, and `exit` must close the SSH session.
+are interactive; decline once before accepting.
+
+For the console, first connect with a bare `shell` (no `--repo`): with more
+than one repo registered, an arrow-key menu appears; move with the arrow keys
+and press Enter to pick `$JB_SSH_PREFIX`. Reconnect and press Esc, then
+separately Ctrl-C, then separately Ctrl-D at that same menu — each must close
+the SSH session cleanly (status 0) rather than hang. Then, inside a console,
+run `help` (it must list the console's own commands plus the JailBee command
+paths this session's policy allows), `repos`, `use` with no argument (reopens
+the arrow-key menu; Esc/Ctrl-D here returns to the prompt instead of exiting),
+`use $JB_SSH_PREFIX`, tab-completion on a multi-word command (e.g. `git
+p<Tab>` should offer `pull`/`push` when allowed), `ls`, and `dashboard`;
+exiting the dashboard must return to `jb[$JB_SSH_PREFIX]>`, and `exit` must
+close the SSH session.
 
 Run a one-shot command without a PTY:
 

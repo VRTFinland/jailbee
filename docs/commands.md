@@ -152,9 +152,21 @@ ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
 A commandless `ssh -p 8022 jailbee@localhost` prints help containing only the
 configured entry points and exits successfully. `dashboard` and the remote
 console require `-t`; one-shot commands do not inherently require a PTY, though
-an interactive JailBee command may. The console offers `repos`, `use PREFIX`,
-`dashboard`, `help`, and `exit`; every other line is an allowed JailBee command.
-It performs no shell expansion, pipes, redirection or executable lookup.
+an interactive JailBee command may. Server-written text (this help, and any
+rejection) uses CRLF line endings whenever the client negotiated a PTY (which
+OpenSSH does even for a commandless, `-t`-less login) and plain LF otherwise;
+child JailBee command output is unaffected either way.
+
+The console starts by asking which registered repository to use — an
+arrow-key menu when more than one is registered, or straight in if there is
+exactly one — unless started with `shell --repo PREFIX`. It offers `repos`,
+`use [PREFIX]` (bare `use` reopens the menu), `dashboard`, `help`, and `exit`;
+`help` also lists the Jailbee commands this session's policy allows. Esc,
+Ctrl-C and Ctrl-D all cancel the menu (exiting the console at startup,
+returning to the prompt from `use`). Every other line is an allowed JailBee
+command, tab-completed word by word (e.g. `git p<Tab>` offers `pull`/`push`).
+The console performs no shell expansion, pipes, redirection or executable
+lookup.
 
 Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
 repository prefix, never a filesystem path; the registered root becomes the

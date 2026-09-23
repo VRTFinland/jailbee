@@ -715,10 +715,14 @@ ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
 
 A commandless login prints the enabled forms and exits. Dashboard and the
 restricted JailBee console need `-t`. Every one-shot command requires an exact
-registered `PREFIX`; `--repo` never accepts a path. The console's local
-commands are `repos`, `use PREFIX`, `dashboard`, `help`, and `exit`; every other
-line is a JailBee argv checked against `remote.ssh.commands`. It has no shell
-operators, expansion or executable lookup.
+registered `PREFIX`; `--repo` never accepts a path. Started without `--repo`,
+the console shows an arrow-key menu of registered repos (skipped when exactly
+one is registered); Esc/Ctrl-C/Ctrl-D cancel it. The console's local commands
+are `repos`, `use [PREFIX]` (bare `use` reopens the menu), `dashboard`, `help`,
+and `exit`; `help` also lists the JailBee commands the session's policy
+allows. Every other line is a JailBee argv checked against
+`remote.ssh.commands`, tab-completed word by word. It has no shell operators,
+expansion or executable lookup.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered
