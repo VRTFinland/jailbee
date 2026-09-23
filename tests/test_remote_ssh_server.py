@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import signal
 import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -615,23 +616,112 @@ def listener(mocker):
 def test_listener_exposes_only_binary_session_capabilities(listener):
     value, listen = listener
     asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123)))
-    listen.assert_awaited_once_with(
-        "127.0.0.2",
-        8123,
-        server_factory=server.JailbeeSSHServer,
-        process_factory=server.handle_process,
-        server_host_keys=[str(ssh_paths().host_key)],
-        encoding=None,
-        agent_forwarding=False,
-        x11_forwarding=False,
-        sftp_factory=None,
-        allow_scp=False,
-        gss_auth=False,
-        gss_kex=False,
-        gss_host=None,
-    )
+    listen.assert_awaited_once()
+    args, kwargs = listen.call_args
+    assert args == ("127.0.0.2", 8123)
+    # `server_factory` is a per-run closure (it shares a live-connection
+    # registry with the SIGTERM handler), not the class directly.
+    assert isinstance(kwargs.pop("server_factory")(), server.JailbeeSSHServer)
+    assert kwargs == {
+        "process_factory": server.handle_process,
+        "server_host_keys": [str(ssh_paths().host_key)],
+        "encoding": None,
+        "agent_forwarding": False,
+        "x11_forwarding": False,
+        "sftp_factory": None,
+        "allow_scp": False,
+        "gss_auth": False,
+        "gss_kex": False,
+        "gss_host": None,
+    }
     value.wait_closed.assert_awaited_once_with()
     value.close.assert_called_once_with()
+
+
+def test_sigterm_closes_listener_and_hangs_up_every_live_connection(listener, monkeypatch):
+    """Regression for final-review finding I2.
+
+    `KillMode=process` in the unit means systemd sends SIGTERM to only this
+    process on stop/restart, not the whole cgroup, so `--background` workers
+    survive. This process must itself react to that SIGTERM by closing the
+    listener and every live connection, driving each session's existing
+    pty.py HUP/grace/kill cleanup through the normal disconnect path.
+    """
+    value, listen = listener
+
+    async def scenario():
+        entered, finished = asyncio.Event(), asyncio.Event()
+
+        async def waiting():
+            entered.set()
+            await finished.wait()
+
+        value.wait_closed.side_effect = waiting
+
+        loop = asyncio.get_running_loop()
+        captured: dict[int, tuple] = {}
+        monkeypatch.setattr(
+            loop, "add_signal_handler", lambda sig, cb, *a: captured.__setitem__(sig, (cb, a))
+        )
+        monkeypatch.setattr(loop, "remove_signal_handler", lambda sig: captured.pop(sig, None))
+
+        task = asyncio.create_task(server.serve_async(RemoteSSHConfig()))
+        await entered.wait()
+
+        assert signal.SIGTERM in captured
+        factory = listen.call_args.kwargs["server_factory"]
+        instance = factory()
+        conn = Mock(spec=asyncssh.SSHServerConnection)
+        instance.connection_made(conn)
+
+        callback, args = captured[signal.SIGTERM]
+        callback(*args)
+
+        value.close.assert_called_once_with()
+        conn.close.assert_called_once_with()
+
+        finished.set()
+        await task
+
+    asyncio.run(scenario())
+
+
+def test_disconnected_connection_is_not_closed_twice_on_sigterm(listener, monkeypatch):
+    value, listen = listener
+
+    async def scenario():
+        entered, finished = asyncio.Event(), asyncio.Event()
+
+        async def waiting():
+            entered.set()
+            await finished.wait()
+
+        value.wait_closed.side_effect = waiting
+
+        loop = asyncio.get_running_loop()
+        captured: dict[int, tuple] = {}
+        monkeypatch.setattr(
+            loop, "add_signal_handler", lambda sig, cb, *a: captured.__setitem__(sig, (cb, a))
+        )
+        monkeypatch.setattr(loop, "remove_signal_handler", lambda sig: captured.pop(sig, None))
+
+        task = asyncio.create_task(server.serve_async(RemoteSSHConfig()))
+        await entered.wait()
+
+        factory = listen.call_args.kwargs["server_factory"]
+        instance = factory()
+        conn = Mock(spec=asyncssh.SSHServerConnection)
+        instance.connection_made(conn)
+        instance.connection_lost(None)
+
+        callback, args = captured[signal.SIGTERM]
+        callback(*args)
+        conn.close.assert_not_called()
+
+        finished.set()
+        await task
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("failure", [OSError("listener failed"), asyncio.CancelledError()])

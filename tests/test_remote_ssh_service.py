@@ -48,6 +48,11 @@ def test_enable_writes_and_starts_user_service(
     unit = ssh_home / ".config" / "systemd" / "user" / SSH_SERVICE
     assert "ExecStart=/usr/local/bin/jailbee remote ssh serve" in unit.read_text()
     assert "UMask=0077" in unit.read_text()
+    # `--background` workers launched over SSH sit in the same cgroup as this
+    # unit but under their own detached process group; only `KillMode=process`
+    # keeps `jb remote ssh restart`/`disable` (and an ordinary `systemctl
+    # --user stop`) from killing them too (final review finding I2).
+    assert "KillMode=process" in unit.read_text()
     ensure.assert_called_once_with()
     assert [call.args[0] for call in run.call_args_list] == [
         ["systemctl", "--user", "daemon-reload"],

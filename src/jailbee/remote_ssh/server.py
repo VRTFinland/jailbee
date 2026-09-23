@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+import signal
 import sys
 from typing import TYPE_CHECKING
 
@@ -26,12 +27,22 @@ log = logging.getLogger(__name__)
 class JailbeeSSHServer(asyncssh.SSHServer):
     """Keep authentication state local to one connection and refuse forwarding."""
 
+    def __init__(self, live: set[asyncssh.SSHServerConnection] | None = None) -> None:
+        # `live`, when given, is a shared registry `serve_async` uses to hang
+        # up every connection on SIGTERM. It is `None` for tests and any other
+        # caller that constructs a server directly.
+        self._live = live
+
     def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
         self._conn = conn
         self._keys: list[AuthorizedKey] = []
+        if self._live is not None:
+            self._live.add(conn)
         log.info("SSH connected source=%r", conn.get_extra_info("peername"))
 
     def connection_lost(self, exc: Exception | None) -> None:
+        if self._live is not None:
+            self._live.discard(self._conn)
         # Transport exception messages can contain client-supplied text.
         log.info(
             "SSH disconnected source=%r fingerprint=%s reason=%s",
@@ -198,6 +209,19 @@ async def handle_process(process: asyncssh.SSHServerProcess[bytes]) -> None:
         audit(reason)
 
 
+def _shut_down(listener: asyncssh.SSHAcceptor, live: set[asyncssh.SSHServerConnection]) -> None:
+    """Stop accepting connections and hang up every live one; the SIGTERM handler.
+
+    Each connection's own session tasks observe the resulting disconnect
+    through `process.wait_closed()` and run their existing HUP/grace/kill
+    cleanup in pty.py; this function only initiates that, it does not wait
+    for it.
+    """
+    listener.close()
+    for conn in list(live):
+        conn.close()
+
+
 async def serve_async(config: RemoteSSHConfig) -> None:
     """Serve until listener shutdown, propagating bind and configuration errors."""
     # AsyncSSH logs complete commands at INFO and packet/input data at DEBUG.
@@ -205,11 +229,16 @@ async def serve_async(config: RemoteSSHConfig) -> None:
     library_log = logging.getLogger("asyncssh")
     previous_level = library_log.level
     library_log.setLevel(max(previous_level, logging.WARNING))
+    live: set[asyncssh.SSHServerConnection] = set()
+
+    def server_factory() -> JailbeeSSHServer:
+        return JailbeeSSHServer(live)
+
     try:
         listener = await asyncssh.listen(
             config.listen,
             config.port,
-            server_factory=JailbeeSSHServer,
+            server_factory=server_factory,
             process_factory=handle_process,
             server_host_keys=[str(ssh_paths().host_key)],
             encoding=None,
@@ -221,9 +250,16 @@ async def serve_async(config: RemoteSSHConfig) -> None:
             gss_kex=False,
             gss_host=None,
         )
+        loop = asyncio.get_running_loop()
+        # `KillMode=process` in the unit leaves this SIGTERM handling to us,
+        # so that `--background` workers (a different process group in the
+        # same cgroup) survive `jb remote ssh restart`/`disable` and ordinary
+        # `systemctl --user stop`.
+        loop.add_signal_handler(signal.SIGTERM, _shut_down, listener, live)
         try:
             await listener.wait_closed()
         finally:
+            loop.remove_signal_handler(signal.SIGTERM)
             listener.close()
     finally:
         library_log.setLevel(previous_level)

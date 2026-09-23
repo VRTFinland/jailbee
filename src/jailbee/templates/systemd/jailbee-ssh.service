@@ -8,6 +8,7 @@ ExecStart={jailbee_bin} remote ssh serve
 Restart=on-failure
 RestartSec=2s
 UMask=0077
+KillMode=process
 
 [Install]
 WantedBy=default.target
