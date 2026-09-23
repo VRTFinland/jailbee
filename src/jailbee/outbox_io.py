@@ -161,6 +161,21 @@ def safe_mutation_detail(detail: str) -> str:
     return detail if detail in _SAFE_UNCERTAIN_DETAILS else _DEFAULT_UNCERTAIN_DETAIL
 
 
+def journal_has_uncertainty(journal: IssueJournal) -> bool:
+    """Whether a recovered journal (one already returned by `.load()`) has any
+    action whose GitHub outcome is unknown.
+
+    Callers that read a journal through `.load()` never see a raw
+    ``"prepared"`` state — `.load()` already recovers those to
+    ``"uncertain"`` — so checking for ``"uncertain"`` alone is exhaustive
+    here. `JournalStore.archive` is the one place that instead reads a
+    journal's *raw* state directly (via `_required_raw`, bypassing that
+    recovery) and so keeps its own, broader check for both ``"prepared"``
+    and ``"uncertain"``.
+    """
+    return any(action.state == "uncertain" for action in journal.actions)
+
+
 class JournalStore:
     """Crash-safe host storage for issue mutation progress."""
 

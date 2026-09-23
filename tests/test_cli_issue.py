@@ -160,7 +160,10 @@ def test_apply_reports_nothing_pending_with_zero_candidates(mocker, tmp_path):
 
 
 def test_apply_ignores_a_stopped_container_when_choosing(mocker, tmp_path):
-    _setup(mocker, tmp_path)
+    # A stopped container's outbox has a pending manifest too -- if the
+    # `Running` guard in `_resolve_issue_container` were removed, it would
+    # become the single auto-selected candidate instead of being excluded.
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-old", state="Stopped")],
@@ -354,13 +357,14 @@ def test_apply_partial_failure_prints_applied_failed_and_pending(mocker, tmp_pat
     manifest = IssueManifest(
         name="001.json",
         version=1,
-        actions=(_comment_action(), _comment_action()),
+        actions=(_comment_action(), _comment_action(), _comment_action()),
         body_files=frozenset(),
     )
     repo = RepoTarget(".", tmp_path, "acme/widgets")
     actions = (
         ResolvedAction(0, manifest.actions[0], repo, ResolvedIssue(42), "pending"),
         ResolvedAction(1, manifest.actions[1], repo, ResolvedIssue(42), "pending"),
+        ResolvedAction(2, manifest.actions[2], repo, ResolvedIssue(42), "pending"),
     )
     prepared = PreparedManifest(manifest, digest=_DIGEST, journal=None, actions=actions)
     batch = PreparedBatch(
@@ -395,8 +399,9 @@ def test_apply_partial_failure_prints_applied_failed_and_pending(mocker, tmp_pat
     assert "applied" in result.output.lower()
     assert "https://x/1" in result.output
     assert "GitHub mutation was rejected" in result.output
-    # action 1 is the one that failed and is described in the failure text;
-    # nothing else was left over to attempt, so no bogus "pending" line for it.
+    # action 2 was never attempted (the run stopped at action 1's failure)
+    # and must be reported as still pending.
+    assert "001.json action 2: pending" in result.output
 
 
 # ---- ls ---------------------------------------------------------------------

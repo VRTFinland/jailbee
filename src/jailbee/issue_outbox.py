@@ -48,6 +48,7 @@ from jailbee.outbox_io import (
     append_applied_log,
     container_identity,
     delete_outbox_files,
+    journal_has_uncertainty,
     journal_key,
     proposal_digest,
     read_text_outbox,
@@ -1197,7 +1198,7 @@ def drop_manifest(
 
     key = journal_key(identity, manifest_name)
     journal = journal_store.load(key)
-    has_uncertainty = journal is not None and any(a.state == "uncertain" for a in journal.actions)
+    has_uncertainty = journal is not None and journal_has_uncertainty(journal)
     if archive_journal:
         if has_uncertainty:
             raise JournalError(

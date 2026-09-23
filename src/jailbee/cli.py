@@ -11506,7 +11506,13 @@ def issue_drop_cmd(
     from jailbee import issue_outbox
     from jailbee.issue_manifest import IssueManifestError, parse_manifest
     from jailbee.lifecycle import _stdin_is_interactive, short_name
-    from jailbee.outbox_io import JournalError, JournalStore, container_identity, journal_key
+    from jailbee.outbox_io import (
+        JournalError,
+        JournalStore,
+        container_identity,
+        journal_has_uncertainty,
+        journal_key,
+    )
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_existing(cfg, name)
@@ -11535,9 +11541,11 @@ def issue_drop_cmd(
             error_plain(str(e))
             raise typer.Exit(1) from e
         for manifest_name, journal in journals.items():
-            if journal is not None and any(a.state == "uncertain" for a in journal.actions):
+            if journal is not None and journal_has_uncertainty(journal):
                 error_plain(
-                    f"{manifest_name}: cannot archive a journal containing uncertain progress"
+                    f"{manifest_name}: one of the selected manifests has uncertain "
+                    "progress; refusing to archive or drop any of them until it is "
+                    "resolved (see jailbee issue resolve)"
                 )
                 raise typer.Exit(1)
         for manifest_name in names:
