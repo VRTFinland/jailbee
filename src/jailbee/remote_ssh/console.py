@@ -29,6 +29,7 @@ from jailbee.remote_ssh.router import (
     known_command_paths,
     policy_allows,
     resolve_repo,
+    unknown_command,
 )
 
 if TYPE_CHECKING:
@@ -114,7 +115,16 @@ def _print_help(policy: RemoteCommandPolicy) -> None:
 
 
 def _error(message: str) -> None:
-    print(message, file=sys.stderr)
+    """Report a console-side rejection, styled like Jailbee's own CLI errors.
+
+    Children of this console already run in the session's real PTY (see
+    `pty.py`), so a colored `error_plain` here (bold red, "✗" marker) reaches
+    the client exactly like any other Jailbee error — instead of a console
+    rejection looking unstyled next to everything else on screen.
+    """
+    from jailbee.tui import error_plain
+
+    error_plain(message)
 
 
 def _history() -> FileHistory:
@@ -375,11 +385,18 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             last_status = _returncode(completed)
             continue
 
-        try:
-            policy_allows(argv, ssh_config.commands)
-        except RouteError as error:
-            _error(str(error))
-            continue
+        if not unknown_command(argv, ssh_config.commands):
+            try:
+                policy_allows(argv, ssh_config.commands)
+            except RouteError as error:
+                _error(str(error))
+                continue
+        # A genuinely unknown command name (Problem C) is run as-is: Typer
+        # itself reports "No such command", with suggestions, in its own
+        # style — better than this console inventing its own message for a
+        # name it never had an opinion about. A leading option, or a hidden
+        # internal command with no public alias, is left to `policy_allows`
+        # above and stays rejected here as before.
 
         completed = _run_foreground([sys.executable, "-m", "jailbee", *argv], current.root)
         last_status = _returncode(completed)

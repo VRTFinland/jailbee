@@ -100,7 +100,8 @@ a JailBee argv, checked against the same command policy as one-shot
 execution, run, and returned to the prompt; tab completion covers local
 commands, allowed JailBee command paths word by word, and repo prefixes after
 `use`. There are no pipes, redirections, shell operators, glob/variable/command
-expansion, aliases or executable lookup.
+expansion, aliases or executable lookup — the shell kind of alias, not to be
+confused with the JailBee command aliases below.
 
 Policy lives only in host-global `remote.ssh`. Defaults are
 `127.0.0.1:8022`, dashboard on, console/exec off and command mode disabled.
@@ -108,6 +109,32 @@ An allowlist names exact public leaves (`git pull`, not `git`); `full` includes
 all current and future public leaves but never hidden internal commands. All
 authorized keys share the same policy and every registered repo. Treat `full`
 and the dashboard as host-capable access, not a read-only view.
+
+A hidden top-level spelling that is a byte-identical alias of a public leaf
+(`merge` → `git merge`, `pull` → `git pull`, `push` → `git push`, `fetch` →
+`git fetch`, `checkout` → `git checkout`, `retarget` → `git retarget`, `diff`
+→ `git diff`, `git pr` → `pr`, `egress ...` → `net egress ...`) is
+policy-checked against its canonical public leaf: allowing `git merge` also
+allows `merge`, and `full` allows every one of these. A hidden command with no
+such public twin — `_remote-console`, the internal `_*-worker` commands, and
+the deprecated `submodule checkout`/`jailbee claude ...`/`jailbee chrome-pool
+...` wrappers, which warn and delegate through their own function rather than
+reusing the public one — stays unknown to both the console and one-shot exec
+regardless of mode, and is never a valid `commands.allow` entry.
+
+A public *group*'s own help — the bare group path, or that path plus
+`--help`/`-h` — is permitted on its own: `full` allows it outright, and
+`allowlist` allows it whenever some allowed leaf lies under that group (`git`
+is allowed if `git pull` is; `net` is not, on the same allowlist). The bare
+top-level `--help`/`-h` works the same way, allowed whenever any command is
+reachable at all. This never applies to a group that would run an action
+instead of printing help when invoked bare — only that group's `--help` form
+counts then — though no group in this codebase currently does that.
+
+A command name matching nothing at all, at any visibility, is not rejected by
+the console or one-shot exec themselves (outside `disabled` mode): it is run
+through to `jailbee`, which reports its own "No such command" error with
+suggestions, in its own style, instead of a generic router message.
 
 ## Config
 

@@ -2283,6 +2283,28 @@ and does not grant every `git ...` command. Options cannot precede the command
 path. Hidden internal commands, including `_remote-console`, are never valid
 allowlist entries and are never included by `full`.
 
+A handful of hidden top-level spellings (`merge`, `fetch`, `checkout`, `pull`,
+`push`, `retarget`, `diff`, `git pr`, and the `egress` short alias for `net
+egress`) are aliases of a public command: running one is policy-checked
+against its canonical public leaf, not against its own hidden name. `allow:
+[git merge]` therefore also permits `merge`; `full` permits every alias whose
+target is public. You still allowlist the canonical leaf (`git merge`), never
+the alias itself — an alias is not a valid `commands.allow` entry, and neither
+is a hidden command with no public twin (`_remote-console`, `submodule
+checkout`, the deprecated `jailbee claude ...`/`chrome-pool ...` groups, and
+the internal `_*-worker` commands all fall in that second category, even
+though the deprecated groups otherwise read like aliases).
+
+A public *group*'s own help is also permitted on its own — `git` or `git
+--help` — even though `git` alone is not a leaf: `full` allows it outright,
+and `allowlist` allows it whenever at least one allowed leaf lies under that
+group (`allow: [git pull]` permits `git --help`, not `net --help`). The bare
+top-level `--help`/`-h` is allowed the same way whenever any command at all is
+reachable. A command name that matches nothing anywhere in the CLI — a typo,
+not a hidden or disallowed command — is not rejected by this router at all:
+it is handed to `jailbee` itself, which reports its own "No such command"
+error, with suggestions, in any mode except `disabled`.
+
 `full` includes **all current and future public commands** after an upgrade.
 It never includes hidden internal commands, but it does include public
 host-affecting commands such as service administration, config editing and

@@ -562,6 +562,83 @@ def test_ctrl_c_while_a_command_runs_does_not_interrupt_the_console(
     assert signal.getsignal(signal.SIGINT) is previous
 
 
+def test_alias_command_runs_via_its_literal_argv_in_full_mode(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """`merge` is a hidden alias for `git merge`; full mode permits it (Problem A)."""
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["merge --into main", "exit"])
+
+    console.run("project")
+
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "merge", "--into", "main"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_bare_group_help_runs_instead_of_being_rejected(console_env: ConsoleEnv, mocker) -> None:
+    """A bare public group path is a pure help invocation (Problem B)."""
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["git", "exit"])
+
+    console.run("project")
+
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "git"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_unknown_command_is_delegated_to_jailbee_for_its_own_error(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """Problem C: a genuinely unknown name gets Jailbee's own error, not ours."""
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 2),
+    )
+    console_env.lines(["nosuchcmd --flag", "exit"])
+
+    assert console.run("project") == 2
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "nosuchcmd", "--flag"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_hidden_internal_command_is_still_rejected_by_the_console(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """A first token naming a hidden internal command is not delegated."""
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    console_env.lines(["_remote-console", "exit"])
+
+    console.run("project")
+
+    run.assert_not_called()
+
+
+def test_console_errors_use_jailbees_own_error_style(console_env: ConsoleEnv, capsys) -> None:
+    """Problem D: console-side rejections look like Jailbee's own errors."""
+    console_env.lines(["_remote-console", "exit"])
+
+    console.run("project")
+
+    err = capsys.readouterr().err
+    assert "✗" in err  # the '✗' marker `jailbee.tui.error_plain` uses
+    assert "unknown Jailbee command" in err
+
+
 def test_history_is_private_and_completion_is_nested(
     console_env: ConsoleEnv, mocker, tmp_path: Path
 ) -> None:

@@ -446,10 +446,30 @@ def test_route_rejection_uses_crlf_when_a_pty_was_negotiated(child, configured):
 
 
 def test_route_rejection_stays_bare_lf_without_a_pty(child, configured, repo):
-    _, channel = session("--repo project no-such-command")
+    """A hidden internal command (no public alias twin) is still rejected."""
+    _, channel = session("--repo project _remote-console")
     err = output(channel, 1)
     assert err == b"unknown Jailbee command\n"
     assert b"\r\n" not in err
+
+
+def test_unknown_command_is_delegated_to_the_child_for_its_own_error(child, configured, repo):
+    """Problem C: a name matching nothing at all — public, hidden, or
+
+    otherwise — is handed to the child as-is instead of being rejected by
+    this router, so `python -m jailbee` reports its own "No such command"
+    error (with suggestions) in its own style.
+    """
+    _, channel = session("--repo project no-such-command")
+    child.assert_awaited_once()
+    assert child.await_args.args[1].argv == (
+        sys.executable,
+        "-m",
+        "jailbee",
+        "no-such-command",
+    )
+    assert output(channel, 1) == b""
+    channel.exit.assert_called_once_with(7)
 
 
 @pytest.mark.parametrize(
