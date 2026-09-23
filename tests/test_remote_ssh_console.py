@@ -296,7 +296,10 @@ def test_repos_lists_registered_prefixes_and_roots(console_env: ConsoleEnv, caps
     assert f"project\t{console_env.repo_root}" in output
 
 
-def test_help_lists_only_console_local_commands(console_env: ConsoleEnv, capsys) -> None:
+def test_help_lists_console_commands_and_full_mode_jailbee_commands(
+    console_env: ConsoleEnv, capsys
+) -> None:
+    """`console_env`'s policy is `commands.mode: full` with paths {git pull, ls}."""
     console_env.lines(["help", "exit"])
 
     console.run("project")
@@ -304,6 +307,46 @@ def test_help_lists_only_console_local_commands(console_env: ConsoleEnv, capsys)
     output = capsys.readouterr().out
     for command in ["repos", "use [PREFIX]", "dashboard", "help", "exit"]:
         assert command in output
+    assert "Allowed Jailbee commands (all public commands):" in output
+    assert "ls" in output
+    assert "git: pull" in output
+    assert "--help" in output
+
+
+def test_help_lists_only_the_allowed_commands_in_allowlist_mode(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(
+                shell=True,
+                commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
+            )
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    console_env.lines(["help", "exit"])
+
+    console.run("project")
+
+    output = capsys.readouterr().out
+    assert "Allowed Jailbee commands:" in output
+    assert "  ls" in output
+    assert "git" not in output
+
+
+def test_help_says_commands_are_disabled_in_disabled_mode(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig(dashboard=True)))
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    console_env.lines(["help", "exit"])
+
+    console.run("project")
+
+    output = capsys.readouterr().out
+    assert "Jailbee commands are disabled." in output
+    assert "Allowed Jailbee commands" not in output
 
 
 def test_dashboard_runs_registered_only_and_returns_to_prompt(
@@ -519,7 +562,7 @@ def test_ctrl_c_while_a_command_runs_does_not_interrupt_the_console(
     assert signal.getsignal(signal.SIGINT) is previous
 
 
-def test_history_is_private_and_completion_is_restricted(
+def test_history_is_private_and_completion_is_nested(
     console_env: ConsoleEnv, mocker, tmp_path: Path
 ) -> None:
     console_env.lines(["exit"])
@@ -532,18 +575,54 @@ def test_history_is_private_and_completion_is_restricted(
     assert history.stat().st_mode & 0o777 == 0o600
     kwargs = session_type.call_args.kwargs
     assert Path(kwargs["history"].filename) == history
-    assert set(kwargs["completer"].words) == {
+    completer = kwargs["completer"]
+    assert isinstance(completer, console.NestedCompleter)
+    assert set(completer.options) == {
         "dashboard",
         "exit",
-        "git pull",
+        "git",
         "help",
         "ls",
-        "other",
-        "project",
         "repos",
         "use",
     }
-    assert os.fspath(console_env.repo_root) not in kwargs["completer"].words
+    assert completer.options["git"] is not None
+    assert set(completer.options["use"].options) == {"other", "project"}
+
+
+def _completions(completer, text: str) -> set[str]:
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+
+    return {c.text for c in completer.get_completions(Document(text, len(text)), CompleteEvent())}
+
+
+def test_completer_offers_the_second_word_of_a_multi_word_command() -> None:
+    completer = console._completer(
+        frozenset({"git pull", "git push", "ls"}),
+        [console.RepoChoice("proj", Path("/tmp/proj"))],
+    )
+
+    assert _completions(completer, "git p") == {"pull", "push"}
+
+
+def test_completer_omits_a_command_not_in_the_active_policy() -> None:
+    completer = console._completer(
+        frozenset({"ls"}),  # allowlist mode: "git pull" is not allowed
+        [],
+    )
+
+    assert _completions(completer, "") == {"ls", *console._LOCAL_COMMANDS}
+    assert _completions(completer, "git ") == set()
+
+
+def test_completer_completes_registered_repo_prefixes_after_use() -> None:
+    completer = console._completer(
+        frozenset(),
+        [console.RepoChoice("alpha", Path("/tmp/a")), console.RepoChoice("beta", Path("/tmp/b"))],
+    )
+
+    assert _completions(completer, "use ") == {"alpha", "beta"}
 
 
 # --- _select_repo(): drive the real Application via a pipe, no mocking ---

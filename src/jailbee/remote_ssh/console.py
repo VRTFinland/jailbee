@@ -10,10 +10,10 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import NestedCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
@@ -30,6 +30,9 @@ from jailbee.remote_ssh.router import (
     policy_allows,
     resolve_repo,
 )
+
+if TYPE_CHECKING:
+    from jailbee.config.models_remote import RemoteCommandPolicy
 
 _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
 
@@ -73,13 +76,41 @@ def _print_repos(repos: Sequence[RepoChoice]) -> None:
         print(f"{repo.prefix}\t{repo.root}")
 
 
-def _print_help() -> None:
+def _print_command_paths(paths: Sequence[str]) -> None:
+    """Print command paths compactly: bare leaves in columns, others by group."""
+    top_level: list[str] = []
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        words = path.split()
+        if len(words) == 1:
+            top_level.append(words[0])
+        else:
+            groups.setdefault(words[0], []).append(" ".join(words[1:]))
+    if top_level:
+        print("  " + "  ".join(sorted(top_level)))
+    for group in sorted(groups):
+        print(f"  {group}: " + "  ".join(sorted(groups[group])))
+
+
+def _print_help(policy: RemoteCommandPolicy) -> None:
     print("Console commands:")
     print("  repos         list registered repositories")
     print("  use [PREFIX]  switch repository (menu when PREFIX is omitted)")
     print("  dashboard     open the registered-repository dashboard")
     print("  help          show this help")
     print("  exit          leave the console")
+    print()
+    if policy.mode == "disabled":
+        print("Jailbee commands are disabled.")
+        return
+    if policy.mode == "allowlist":
+        print("Allowed Jailbee commands:")
+        _print_command_paths(sorted(policy.allow))
+    else:
+        print("Allowed Jailbee commands (all public commands):")
+        _print_command_paths(sorted(known_command_paths()))
+    print()
+    print("Run `<command> --help` for details on any of them.")
 
 
 def _error(message: str) -> None:
@@ -95,11 +126,52 @@ def _history() -> FileHistory:
     return FileHistory(str(path))
 
 
-def _session(repos: Sequence[RepoChoice]) -> PromptSession[str]:
-    words = sorted({*_LOCAL_COMMANDS, *(repo.prefix for repo in repos), *known_command_paths()})
+def _allowed_paths(policy: RemoteCommandPolicy) -> frozenset[str]:
+    """Command paths this session may complete, per its own command policy."""
+    if policy.mode == "full":
+        return known_command_paths()
+    if policy.mode == "allowlist":
+        return frozenset(policy.allow)
+    return frozenset()
+
+
+def _command_tree(paths: Sequence[str]) -> dict[str, Any]:
+    """Build a `NestedCompleter.from_nested_dict` tree from public command paths.
+
+    Every intermediate word is a Typer group (never itself a leaf — the walk
+    in `known_command_paths` only records commands, not groups), so a word
+    is unambiguously either a dict (more words follow) or `None` (a leaf).
+    """
+    tree: dict[str, Any] = {}
+    for path in paths:
+        node = tree
+        words = path.split()
+        for word in words[:-1]:
+            child = node.setdefault(word, {})
+            assert isinstance(child, dict), f"{word!r} is both a leaf and a group"
+            node = child
+        node[words[-1]] = None
+    return tree
+
+
+def _completer(paths: frozenset[str], repos: Sequence[RepoChoice]) -> NestedCompleter:
+    """Nested completer over local commands, allowed Jailbee paths, and repos.
+
+    A flat `WordCompleter` only ever completes the first word, so `git p`
+    offered nothing past `git`. Each multi-word Jailbee command path now
+    completes word by word, and `use ` completes registered repo prefixes.
+    """
+    tree = _command_tree(sorted(paths))
+    for command in _LOCAL_COMMANDS:
+        tree.setdefault(command, None)
+    tree["use"] = {repo.prefix: None for repo in repos}
+    return NestedCompleter.from_nested_dict(tree)
+
+
+def _session(repos: Sequence[RepoChoice], policy: RemoteCommandPolicy) -> PromptSession[str]:
     return PromptSession(
         history=_history(),
-        completer=WordCompleter(words, ignore_case=True),
+        completer=_completer(_allowed_paths(policy), repos),
     )
 
 
@@ -127,11 +199,12 @@ def _select_repo(repos: Sequence[RepoChoice], **kwargs: Any) -> RepoChoice | Non
     sentinel distinct from both.
     """
     import questionary
-    from prompt_toolkit.key_binding import KeyBindings
 
     choices = [
         questionary.Choice(title=f"{repo.prefix}\t{repo.root}", value=repo) for repo in repos
     ]
+    from prompt_toolkit.key_binding import KeyBindings
+
     question = questionary.select("Select repository:", choices=choices, **kwargs)
     # questionary.select always builds a concrete `KeyBindings()` for this;
     # the attribute's declared type is the more abstract `KeyBindingsBase`.
@@ -216,7 +289,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
         _error("No registered repositories are available.")
         return 1
 
-    session = _session(repos)
+    session = _session(repos, ssh_config.commands)
     if initial_repo is None:
         if len(repos) == 1:
             current = repos[0]
@@ -262,7 +335,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             if len(argv) != 1:
                 _error("usage: help")
                 continue
-            _print_help()
+            _print_help(ssh_config.commands)
             continue
         if command == "repos":
             if len(argv) != 1:
