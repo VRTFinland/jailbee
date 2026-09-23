@@ -326,6 +326,8 @@ def test_remote_ssh_key_domain_error_is_concise(tmp_path: Path, mocker: MockerFi
 def test_remote_ssh_serve_loads_config_verifies_keys_and_starts_server(
     mocker: MockerFixture,
 ) -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
     global_config = mocker.Mock()
     load = mocker.patch("jailbee.cli._load_global", return_value=global_config)
     ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
@@ -336,7 +338,132 @@ def test_remote_ssh_serve_loads_config_verifies_keys_and_starts_server(
     assert result.exit_code == 0, result.stdout
     load.assert_called_once_with()
     ensure.assert_called_once_with()
-    serve.assert_called_once_with(global_config.remote.ssh)
+    serve.assert_called_once_with(global_config.remote.ssh, ServeOverrides())
+
+
+def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "remote",
+            "ssh",
+            "serve",
+            "--listen",
+            "0.0.0.0",
+            "--port",
+            "18022",
+            "--shell",
+            "--commands",
+            "allowlist",
+            "--allow",
+            "ls",
+            "--allow",
+            "new",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    expected_overrides = ServeOverrides(
+        listen="0.0.0.0",
+        port=18022,
+        shell=True,
+        commands_mode="allowlist",
+        allow=["ls", "new"],
+    )
+    serve.assert_called_once_with(mocker.ANY, expected_overrides)
+    effective = serve.call_args.args[0]
+    assert isinstance(effective, RemoteSSHConfig)
+    assert effective.listen == "0.0.0.0"
+    assert effective.port == 18022
+    assert effective.shell is True
+    assert effective.commands.mode == "allowlist"
+    assert effective.commands.allow == ["ls", "new"]
+    # `dashboard` was not overridden and the base config left it enabled, so
+    # `--shell` alone does not fail the "at least one entry point" rule and
+    # a plain `--allow` replaces, rather than appends to, the empty base list.
+    assert effective.dashboard is True
+
+
+def test_remote_ssh_serve_allow_replaces_rather_than_appends(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+
+    base = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git pull"])
+    )
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=base))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--allow", "ls"])
+
+    assert result.exit_code == 0, result.stdout
+    effective = serve.call_args.args[0]
+    assert effective.commands.allow == ["ls"]
+
+
+def test_remote_ssh_serve_invalid_override_combination_is_a_clean_error(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--shell"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.strip() != ""
+    assert not ensure.called
+    assert not serve.called
+
+
+def test_remote_ssh_serve_unknown_allow_leaf_is_a_clean_error(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(
+        app,
+        ["remote", "ssh", "serve", "--exec", "--commands", "allowlist", "--allow", "git explode"],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.stderr
+    assert "unknown remote Jailbee command path(s): git explode" in result.stderr
+    assert not ensure.called
+    assert not serve.called
+
+
+def test_remote_ssh_serve_invalid_commands_choice_is_a_clean_cli_error() -> None:
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--commands", "bogus"])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.stderr
 
 
 def test_remote_ssh_serve_reports_global_config_error_concisely(

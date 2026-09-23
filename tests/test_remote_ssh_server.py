@@ -226,11 +226,11 @@ def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem
     return process, channel
 
 
-def session(command=None, **kwargs):
+def session(command=None, overrides=None, **kwargs):
     async def run():
         process, channel = actual_process(command, **kwargs)
         original_exit, original_signal = process.exit, process.exit_with_signal
-        await server.handle_process(process)
+        await server.handle_process(process, overrides)
         assert process.exit == original_exit
         assert process.exit_with_signal == original_signal
         return process, channel
@@ -397,6 +397,79 @@ def test_disabled_entrypoint_cannot_spawn(command, settings, message, child, moc
     )
     _, channel = session(command, term="xterm")
     assert message in output(channel, 1)
+    channel.exit.assert_called_once_with(2)
+    child.assert_not_awaited()
+
+
+def test_overrides_are_reapplied_after_a_per_session_global_config_reload(child, mocker):
+    """`jb remote ssh serve` overrides must survive a `global.yaml` edit mid-run.
+
+    Each session reloads `global.yaml` fresh (see `handle_process`); an
+    override given on the command line must keep winning on every one of
+    those reloads, not just the first. Session two's raw reloaded config
+    alone disables `dashboard` — only the override, reapplied, keeps the
+    route working.
+    """
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    overrides = ServeOverrides(dashboard=True)
+    first_raw = RemoteSSHConfig(
+        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    second_raw = RemoteSSHConfig(
+        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    load = mocker.patch.object(
+        server,
+        "load_global_config",
+        side_effect=[
+            (GlobalConfig(remote=RemoteConfig(ssh=first_raw)), []),
+            (GlobalConfig(remote=RemoteConfig(ssh=second_raw)), []),
+        ],
+    )
+
+    _, first_channel = session("dashboard", term="xterm", overrides=overrides)
+    _, second_channel = session("dashboard", term="xterm", overrides=overrides)
+
+    assert load.call_count == 2
+    first_channel.exit.assert_called_once_with(7)
+    second_channel.exit.assert_called_once_with(7)
+    assert child.await_count == 2
+
+
+def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):
+    """The `overrides=None` default must not change today's reload behaviour."""
+    first_raw = RemoteSSHConfig(
+        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    second_raw = RemoteSSHConfig(
+        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        side_effect=[
+            (GlobalConfig(remote=RemoteConfig(ssh=first_raw)), []),
+            (GlobalConfig(remote=RemoteConfig(ssh=second_raw)), []),
+        ],
+    )
+
+    _, first_channel = session("dashboard", term="xterm")
+    _, second_channel = session("dashboard", term="xterm")
+
+    first_channel.exit.assert_called_once_with(7)
+    assert b"remote dashboard is disabled" in output(second_channel, 1)
+    second_channel.exit.assert_called_once_with(2)
+    child.assert_awaited_once()
+
+
+def test_invalid_override_combination_rejects_the_session_like_a_broken_config(child):
+    """An override that fails validation is handled like a broken `global.yaml`."""
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    _, channel = session("dashboard", overrides=ServeOverrides(shell=True))
+
+    assert b"commands" in output(channel, 1).lower()
     channel.exit.assert_called_once_with(2)
     child.assert_not_awaited()
 
@@ -888,6 +961,37 @@ def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count
     assert f"host key fingerprint: {expected_fingerprint}" in text
     assert "2 authorized client keys" in text
     assert "connect example: ssh -t -p 19999 jailbee@198.51.100.7 dashboard" in text
+    assert "overrides (not from global.yaml)" not in text
+
+
+def test_startup_prints_the_overrides_line_only_when_overrides_are_given(
+    listener, caplog, tmp_path, monkeypatch
+):
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    paths = ssh_paths()
+    paths.config_dir.mkdir(parents=True)
+    paths.data_dir.mkdir(parents=True)
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    paths.host_key.write_bytes(host_key.export_private_key("openssh"))
+    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    overrides = ServeOverrides(shell=True, commands_mode="allowlist", allow=["ls", "new"])
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config, overrides))
+    text = caplog.text
+    assert "overrides (not from global.yaml): shell=on, commands=allowlist [ls, new]" in text
+
+
+def test_listener_uses_a_closure_process_factory_when_overrides_are_given(listener):
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    overrides = ServeOverrides(dashboard=False)
+    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    asyncio.run(server.serve_async(config, overrides))
+    _, listen = listener
+    factory = listen.call_args.kwargs["process_factory"]
+    assert factory is not server.handle_process
 
 
 def test_startup_brackets_ipv6_listen_address_and_uses_localhost_in_example(

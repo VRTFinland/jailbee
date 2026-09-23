@@ -214,11 +214,71 @@ def remote_ssh_key_remove_cmd(
 
 
 @ssh_remote_app.command("serve")
-def remote_ssh_serve_cmd() -> None:
-    """Run the SSH server in the foreground."""
-    from jailbee.remote_ssh import keys
+def remote_ssh_serve_cmd(
+    listen: Annotated[
+        str | None,
+        typer.Option("--listen", help="Override remote.ssh.listen for this run only."),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option("--port", help="Override remote.ssh.port for this run only."),
+    ] = None,
+    dashboard: Annotated[
+        bool | None,
+        typer.Option(
+            "--dashboard/--no-dashboard",
+            help="Override remote.ssh.dashboard for this run only.",
+        ),
+    ] = None,
+    shell: Annotated[
+        bool | None,
+        typer.Option("--shell/--no-shell", help="Override remote.ssh.shell for this run only."),
+    ] = None,
+    exec_: Annotated[
+        bool | None,
+        typer.Option("--exec/--no-exec", help="Override remote.ssh.exec for this run only."),
+    ] = None,
+    commands: Annotated[
+        Literal["disabled", "allowlist", "full"] | None,
+        typer.Option("--commands", help="Override remote.ssh.commands.mode for this run only."),
+    ] = None,
+    allow: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow",
+            help=(
+                "Replace remote.ssh.commands.allow for this run only. Repeatable; "
+                "given at least once, REPLACES the configured list rather than "
+                "appending to it."
+            ),
+        ),
+    ] = None,
+) -> None:
+    """Run the SSH server in the foreground, with optional one-off overrides.
 
+    Every override flag defaults to unset, in which case `remote.ssh` in
+    `global.yaml` decides as usual. A given flag always wins for this run
+    only — nothing is ever written back to `global.yaml`, and the systemd
+    service never passes any of these flags.
+    """
+    from jailbee.remote_ssh import keys
+    from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides
+
+    overrides = ServeOverrides(
+        listen=listen,
+        port=port,
+        dashboard=dashboard,
+        shell=shell,
+        exec=exec_,
+        commands_mode=commands,
+        allow=allow,
+    )
     global_config = _load_global()
+    try:
+        effective = apply_ssh_overrides(global_config.remote.ssh, overrides)
+    except ConfigError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
     try:
         keys.ensure_key_files()
         try:
@@ -230,7 +290,7 @@ def remote_ssh_serve_cmd() -> None:
                 "The SSH server requires the optional 'ssh' extra. "
                 "Install it with: uv tool install 'jailbee[ssh]'"
             ) from exc
-        server.serve(global_config.remote.ssh)
+        server.serve(effective, overrides)
     except (keys.SSHDependencyError, keys.SSHKeyError, OSError) as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc

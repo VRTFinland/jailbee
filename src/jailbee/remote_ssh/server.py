@@ -8,7 +8,8 @@ import logging
 import shlex
 import signal
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 import asyncssh
 
@@ -16,6 +17,7 @@ from jailbee.config import ConfigError
 from jailbee.db import state_dir
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.keys import AuthorizedKey, SSHKeyError, read_authorized_keys, ssh_paths
+from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides, describe_overrides
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
 from jailbee.remote_ssh.router import RouteError, command_path, help_text, route
 
@@ -120,8 +122,19 @@ def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
     return "unknown", None, None
 
 
-async def handle_process(process: asyncssh.SSHServerProcess[bytes]) -> None:
-    """Reload channel policy, dispatch one route, and audit its final outcome."""
+async def handle_process(
+    process: asyncssh.SSHServerProcess[bytes], overrides: ServeOverrides | None = None
+) -> None:
+    """Reload channel policy, dispatch one route, and audit its final outcome.
+
+    `overrides` (from `jb remote ssh serve`'s command-line flags) is
+    reapplied on top of every fresh `load_global_config` reload below, so a
+    given flag always wins even after a `global.yaml` edit lands mid-run.
+    `None` (the default, used by the systemd service and every plain
+    `serve()` call) skips this entirely — identical to before overrides
+    existed. A rejected merge raises `ConfigError`, handled the same as a
+    broken `global.yaml` already is, just below.
+    """
     kind, prefix, path = "unknown", None, None
     decision = "rejected"
     reason = "completed"
@@ -171,6 +184,8 @@ async def handle_process(process: asyncssh.SSHServerProcess[bytes]) -> None:
         kind, prefix, path = _request_fields(process.command)
         global_config, _ = load_global_config(default_global_config_path())
         config = global_config.remote.ssh
+        if overrides is not None:
+            config = apply_ssh_overrides(config, overrides)
         selected = route(process.command, config)
         kind, prefix = selected.kind, selected.repo_prefix
         if selected.requires_pty and process.term_type is None:
@@ -244,11 +259,17 @@ def _connect_example(host: str, port: int, config: RemoteSSHConfig) -> str:
     return f"ssh -p {port} jailbee@{display_host}"
 
 
-def _startup_summary(config: RemoteSSHConfig, listener: asyncssh.SSHAcceptor) -> str:
+def _startup_summary(
+    config: RemoteSSHConfig,
+    listener: asyncssh.SSHAcceptor,
+    overrides: ServeOverrides | None = None,
+) -> str:
     """Describe the running listener for the audit log, without secrets.
 
     The port comes from the listener itself (not `config.port`) so a
     configured port of 0 is reported as the port the kernel actually chose.
+    `overrides`, when given and non-empty, adds one extra line naming the
+    command-line flags that are not (only) coming from `global.yaml`.
     """
     port = listener.get_port()
     try:
@@ -262,15 +283,17 @@ def _startup_summary(config: RemoteSSHConfig, listener: asyncssh.SSHAcceptor) ->
             keys_line += " -- add one with: jb remote ssh key add"
     except (OSError, SSHKeyError) as exc:
         keys_line = f"authorized keys could not be read ({type(exc).__name__})"
-    return "\n".join(
-        [
-            f"Jailbee SSH server listening on {_bind_display(config.listen, port)}",
-            f"  entry points: {_enabled_entry_points(config)} (commands: {config.commands.mode})",
-            f"  host key fingerprint: {fingerprint}",
-            f"  {keys_line}",
-            f"  connect example: {_connect_example(config.listen, port, config)}",
-        ]
-    )
+    lines = [
+        f"Jailbee SSH server listening on {_bind_display(config.listen, port)}",
+        f"  entry points: {_enabled_entry_points(config)} (commands: {config.commands.mode})",
+        f"  host key fingerprint: {fingerprint}",
+        f"  {keys_line}",
+        f"  connect example: {_connect_example(config.listen, port, config)}",
+    ]
+    overrides_line = describe_overrides(overrides) if overrides is not None else None
+    if overrides_line is not None:
+        lines.append(f"  {overrides_line}")
+    return "\n".join(lines)
 
 
 def _shut_down(listener: asyncssh.SSHAcceptor, live: set[asyncssh.SSHServerConnection]) -> None:
@@ -286,8 +309,15 @@ def _shut_down(listener: asyncssh.SSHAcceptor, live: set[asyncssh.SSHServerConne
         conn.close()
 
 
-async def serve_async(config: RemoteSSHConfig) -> None:
-    """Serve until listener shutdown, propagating bind and configuration errors."""
+async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None = None) -> None:
+    """Serve until listener shutdown, propagating bind and configuration errors.
+
+    `overrides` is bind-time only for `config.listen`/`config.port` (the
+    caller already merged those into `config` before this runs — a bound
+    listener cannot move itself). For every other field it is carried into
+    `handle_process` so it is reapplied on each session's own
+    `load_global_config` reload; see `handle_process`.
+    """
     # AsyncSSH logs complete commands at INFO and packet/input data at DEBUG.
     # This dedicated service supplies its own bounded audit fields instead.
     library_log = logging.getLogger("asyncssh")
@@ -298,12 +328,24 @@ async def serve_async(config: RemoteSSHConfig) -> None:
     def server_factory() -> JailbeeSSHServer:
         return JailbeeSSHServer(live)
 
+    process_factory: Callable[[asyncssh.SSHServerProcess[bytes]], Coroutine[Any, Any, None]]
+    if overrides is None or overrides.is_empty():
+        process_factory = handle_process
+    else:
+
+        def _process_factory(
+            process: asyncssh.SSHServerProcess[bytes],
+        ) -> Coroutine[Any, Any, None]:
+            return handle_process(process, overrides)
+
+        process_factory = _process_factory
+
     try:
         listener = await asyncssh.listen(
             config.listen,
             config.port,
             server_factory=server_factory,
-            process_factory=handle_process,
+            process_factory=process_factory,
             server_host_keys=[str(ssh_paths().host_key)],
             encoding=None,
             agent_forwarding=False,
@@ -314,7 +356,7 @@ async def serve_async(config: RemoteSSHConfig) -> None:
             gss_kex=False,
             gss_host=None,
         )
-        log.info(_startup_summary(config, listener))
+        log.info(_startup_summary(config, listener, overrides))
         loop = asyncio.get_running_loop()
         # `KillMode=process` in the unit leaves this SIGTERM handling to us,
         # so that `--background` workers (a different process group in the
@@ -331,8 +373,12 @@ async def serve_async(config: RemoteSSHConfig) -> None:
         library_log.setLevel(previous_level)
 
 
-def serve(config: RemoteSSHConfig) -> None:
-    """Synchronous entry point for the CLI and user service."""
+def serve(config: RemoteSSHConfig, overrides: ServeOverrides | None = None) -> None:
+    """Synchronous entry point for the CLI and user service.
+
+    The unit's `ExecStart` never passes `overrides`; only `jb remote ssh
+    serve`'s own CLI flags build one.
+    """
     audit_handler = logging.StreamHandler()
     audit_handler.setLevel(logging.INFO)
     previous_level = log.level
@@ -342,7 +388,7 @@ def serve(config: RemoteSSHConfig) -> None:
     log.propagate = False
     try:
         try:
-            asyncio.run(serve_async(config))
+            asyncio.run(serve_async(config, overrides))
         except KeyboardInterrupt:
             # No custom SIGINT handler is installed (only SIGTERM, above), so
             # asyncio.run's default cancellation-on-interrupt path runs the
