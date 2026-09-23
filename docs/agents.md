@@ -199,6 +199,8 @@ append/reset semantics.
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>` inside the container. `type: dir` (default) or `type: file`; `seed` (file only) is written once if the target doesn't already exist; `private` (dir only) names subpaths inside the mount that stay per container — see §5. |
 | `egress_allow` | list[string] | `[]` | Hosts added to the strict-mode allowlist when this agent is enabled. Same `host[:port]`/CIDR grammar as top-level [`egress_allow`](config.md#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step *and* the autostart launch step. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the [bundled skills](#10-the-bundled-jailbee-skills) into the shared copy of it. Leave unset for an agent with no skills mechanism. |
+| `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. |
 
 A full custom entry:
 
@@ -386,7 +388,7 @@ path in sections 2–4 above is what makes shipping them acceptable.
 | `codex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| CODEX_NON_INTERACTIVE=1 sh` — **not npm** | `~/.codex` (dir — config, auth, sessions, logs, **and the binary**), with `app-server-control/` and `app-server-daemon/` private per container | `api.openai.com:443` (API-key path); `auth.openai.com:443` (device-code sign-in + token refresh); `chatgpt.com:443` (the ChatGPT-plan backend a signed-in CLI talks to, `/backend-api/codex/...`). `install_network: loose` for the installer's own hosts (`chatgpt.com`, `releases.openai.com`, with an `api.github.com` / `github.com` release fallback) | Install verified end-to-end in a container with no Node.js: the binary lands in `~/.local/bin/codex` as a symlink into `~/.codex/packages/standalone/current`. Sign-in hosts are undocumented upstream and were read off a live strict-mode container instead: with `api.openai.com` alone, `codex login` hangs on "Requesting a one-time code..." and ends in `failed to request device code` against `auth.openai.com/api/accounts/deviceauth/usercode`. Telemetry (`ab.chatgpt.com`) is left out on purpose. |
 | `gemini` | `npm i -g @google/gemini-cli` | `~/.gemini` (dir) | `generativelanguage.googleapis.com:443` (API-key path), `cloudcode-pa.googleapis.com:443` (OAuth / Code Assist path), `oauth2.googleapis.com:443`, `accounts.google.com:443` | Install + config dir verified; **no authoritative complete host list exists** — upstream issue #4552 is open with no list, and Google's own Code Assist network doc names only `cloudcode-pa.googleapis.com`. |
 | `aider` | `uv tool install --with pip aider-chat@latest` | `~/.aider.conf.yml` (**file** type) and nothing else | provider-dependent | Install + config filename + HOME surface verified. |
-| `opencode` | `npm i -g opencode-ai@latest` | `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | provider-dependent | Verified. |
+| `opencode` | `curl -fsSL https://opencode.ai/v2/install \| bash -s -- --no-modify-path` — **not npm** — followed by a `~/.local/bin/opencode` symlink | `~/.opencode` (dir — **the binary**), `~/.config/opencode` (dir), `~/.local/share/opencode` (dir, holds `auth.json`) | `opencode.ai:443` (the built-in "zen" gateway at `/zen/v1/...`, and the version pointer a self-update reads); `models.dev:443` (the model catalogue fetched at startup). **Provider hosts are yours to add** — opencode is a multi-provider client, so which inference host it needs follows the provider you configure, not opencode itself. `install_network: loose` for the installer's own hosts (`opencode.ai`, `registry.npmjs.org`) | Install verified end-to-end against the live installer (v2.0.9): it runs non-interactively, drops a 198MB static binary in `~/.opencode/bin`, and the preset's `~/.local/bin/opencode` link resolves to it; the `~/.local/bin` link, the already-installed short-circuit and the failed-download check are covered by unit tests. Not exercised against a real account — the runtime host list is best-effort like the rest of this table. |
 | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` — **not npm** | `~/.grok` (dir — `config.toml`, `auth.json`) | `api.x.ai:443` (API-key path); `x.ai:443` (installer); `auth.x.ai:443` (OIDC device-code + refresh); `cli-chat-proxy.grok.com:443` (SuperGrok inference and hosted web_search). `install_network: loose` because the installer's redirect target is undocumented. This list is runtime hosts only — it does not open arbitrary HTTPS for `web_fetch`. | Install + config dir verified against vendor docs. SuperGrok hosts checked against a live device-auth session in a strict-mode container: without the chat proxy, inference retries `https://cli-chat-proxy.grok.com/v1/responses` until it fails. API key env var is `XAI_API_KEY` per vendor docs; a third-party guide claims `GROK_CODE_XAI_API_KEY` — the vendor spelling wins, and that discrepancy is exactly why presets are templates. |
 
 Source of truth for the exact values: `src/jailbee/agent_presets.py`.
@@ -407,11 +409,11 @@ jailbee exec <container> -- tmux capture-pane -p -t autostart:install-gemini
 
 | Preset | Needs | Which is present when |
 | --- | --- | --- |
-| `gemini`, `opencode` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
+| `gemini` | `npm` | [`golden.stacks.node`](config.md#stacks-goldenstacks) is on |
 | `aider` | `uv` | your own `install.d/` snippet installs it — jailbee's golden image does not ship `uv` |
-| `claude`, `codex`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
+| `claude`, `codex`, `opencode`, `grok` | nothing | always — each installs a static binary through the vendor's own installer |
 
-For the npm pair, add the stack and rebuild the base image:
+For `gemini`, add the stack and rebuild the base image:
 
 ```yaml
 golden:
@@ -423,20 +425,20 @@ golden:
 jailbee base build
 ```
 
-`codex` used to be in the npm row and no longer is. If you added the node
-stack solely to get `codex` working, you can drop it again; and if a
-container already has an `npm i -g @openai/codex` install, remove it
-(`npm uninstall -g @openai/codex`), because `/etc/profile.d` puts
+`codex` and `opencode` used to be in the npm row and no longer are. If you
+added the node stack solely to get one of them working, you can drop it again;
+and if a container already has the npm install, remove it (`npm uninstall -g
+@openai/codex`, `npm uninstall -g opencode-ai`), because `/etc/profile.d` puts
 `~/.npm-global/bin` ahead of `~/.local/bin` and the old copy would shadow the
 new one.
 
-### Pinning codex's install back to strict
+### Pinning an install step back to strict
 
-The codex install step asks for `install_network: loose` because all four of
-the installer's hosts are CDN-fronted and rotate their IPs, which is the case
-the strict ACL's resolve-at-apply-time pooling handles worst on a first run.
-To keep the step strict instead, name the hosts yourself and accept that the
-first attempt may need a retry while the pool fills:
+`codex`, `opencode` and `grok` ask for `install_network: loose` because their
+installers' hosts are CDN-fronted and rotate their IPs, which is the case the
+strict ACL's resolve-at-apply-time pooling handles worst on a first run. To
+keep a step strict instead, name the hosts yourself and accept that the first
+attempt may need a retry while the pool fills:
 
 ```yaml
 agents:
@@ -445,6 +447,11 @@ agents:
     egress_allow:
       - chatgpt.com:443
       - releases.openai.com:443
+  opencode:
+    install_network: strict
+    egress_allow:
+      - opencode.ai:443
+      - registry.npmjs.org:443
 ```
 
 Those entries join the container's runtime allowlist too — `egress_allow`
@@ -461,12 +468,11 @@ spellings; pick one, and prefer `agents.claude`.
 Claude carries every generic field from the table in
 [Writing your own agent](#4-writing-your-own-agent) — `enabled`,
 `autostart`, `command`, `install`/`update`, `auto_update`, `install_network`,
-`shared`, `egress_allow`, `env` — plus Claude-only fields for its deeper
-integration (AI-generated PR descriptions, plugin marketplace egress, the
-bundled jailbee skills):
+`shared`, `egress_allow`, `env`, `skills_dir`, `install_jailbee_skills` —
+plus Claude-only fields for its deeper integration (AI-generated PR
+descriptions, plugin marketplace egress, onboarding seeding):
 
 - `plugins_enabled`
-- `install_jailbee_skills`
 - `ai_pr_description`
 - `ai_pr_branch`
 - `pr_prompt`
@@ -478,22 +484,28 @@ Full field-by-field descriptions for these live in the
 section stays the authoritative reference for the Claude-only fields; this
 page covers the generic `agents:` mechanism they sit on top of.
 
-### Shared credential groups (`claude_credentials`)
+### Shared credential groups (`credentials`)
 
-Several repos on one host can share a single Claude Code login instead of
+Several repos on one host can share a single login per agent instead of
 each holding its own. Configuration is host-level only — see
-[`claude_credentials` in the Configuration reference](config.md#claude_credentials)
+[`credentials` in the Configuration reference](config.md#credentials)
 for the `global.yaml` block, the join/leave flow, and `jailbee doctor`'s
-report. This section documents the mechanism the feature rests on.
+report. One group name is shared by every enabled agent, but each agent keeps
+its own credential in the group; the mechanism below is Claude's, and is what
+the feature rests on today.
 
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` is the environment variable jailbee sets
-on a member repo's `<prefix>-base` profile: `profiles.claude_securestorage_dir_env`
-computes the `(key, value)` pair, and `profiles.base_profile_yaml` is what
-renders it into the profile. The container path is `~/.claude-creds`,
-bind-mounted from the group's host directory as the `claude-creds` disk
-device. The facts below were measured against **Claude Code 2.1.247** by
-observing its behavior — none of them are documented by
-Anthropic:
+on a member repo's `<prefix>-base` profile. `ClaudeAdapter.wiring` in
+`accounts/adapters/claude.py` returns it, together with the `claude-creds`
+disk device that bind-mounts the group's host directory at the container
+path `~/.claude-creds`. The two halves land in different profiles:
+`profiles.base_profile_yaml` renders every pooled adapter's `Wiring.env`
+into `<prefix>-base`, and `profiles.binds_profile_yaml` its
+`Wiring.devices` into `<prefix>-binds`. Both are the adapter's to name, not
+the profile renderer's — a second pooled agent declares its own wiring
+rather than adding a branch to `profiles.py`. The facts below were measured
+against **Claude Code 2.1.247** by observing its behavior — none of them are
+documented by Anthropic:
 
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves **both** `.credentials.json`
   and the rotation lock `.oauth_refresh.lock`, independently of
@@ -508,10 +520,10 @@ Anthropic:
   removed for the config file.
 - An **empty** `CLAUDE_SECURESTORAGE_CONFIG_DIR` is not equivalent to an
   unset one — Claude Code falls back to `~/.claude` for it. jailbee treats
-  this as a hard rule: `claude_securestorage_dir_env` returns `None`
-  rather than an empty string, and `profiles.base_profile_yaml` drops the
-  key outright if a `container.env` override would otherwise render it
-  empty.
+  this as a hard rule: `ClaudeAdapter.wiring` omits the key from its
+  `Wiring.env` rather than returning an empty value, and
+  `profiles.base_profile_yaml` drops the key outright if a `container.env`
+  override would otherwise render it empty.
 - Account identity comes from the credential, not from seeding: a member
   repo with a fresh `~/.claude` populates its own `oauthAccount` in
   `.claude.json` the first time Claude Code runs, without jailbee writing
@@ -532,3 +544,49 @@ Anthropic:
 - Only the credential is shared. Each repo keeps its own `~/.claude`, so
   project history, MCP config, sessions and onboarding state never cross
   repos.
+
+## 10. The bundled jailbee skills
+
+jailbee ships three skills — `jailbee-usage` (day-to-day commands),
+`jailbee-repo-setup` (first-time repo configuration), `jailbee-pr-review`
+(publishing an in-container agent's staged review comments) — and installs
+them for every enabled agent that has a skills mechanism, not just Claude:
+
+| Agent | Skills directory (in-container) | Shared subpath it lands under |
+|---|---|---|
+| `claude` | `~/.claude/skills` | `claude` |
+| `codex` | `~/.codex/skills` | `codex` |
+| `gemini` | `~/.gemini/skills` | `gemini` |
+| `opencode` | `~/.config/opencode/skills` | `opencode-config` |
+| `aider`, `grok` | — (no skills mechanism) | — |
+
+The copy happens on the *host* side, into `<shared_dir>/<subpath>/skills/`:
+each agent's config home is already a shared bind mount, and `raw.idmap` is
+1:1, so one host-side copy is visible in every container of the repo — no
+`incus exec`, no per-container work. `jailbee new` and `jailbee apply` both
+run it, so a jailbee upgrade reaches existing containers on the next
+`apply`.
+
+Two per-agent fields govern it (both in the
+[§4 table](#4-writing-your-own-agent)): `skills_dir` names the
+container-side directory (the presets set it for the four agents above;
+set it yourself on a from-scratch agent whose mount layout differs), and
+`install_jailbee_skills: false` opts one agent out. Both spellings a mount
+path accepts work on either side — `~/.mine/skills` is covered by a mount
+on `/home/dev/.mine` and the other way round. A `skills_dir` that no
+`shared` mount covers is a config mistake: `jailbee new` warns and skips
+that agent rather than failing. So is one that falls inside a
+[`private`](#a-shared-directory-must-not-carry-a-socket) carve-out — the
+per-container directory mounted over it would hide the copy from every
+agent, so that too is warned and skipped.
+
+The agents' own compatibility is what makes this one table: all four read
+the same `SKILL.md` frontmatter format, and opencode additionally scans
+Claude-compatible `~/.claude/skills` — jailbee still writes each agent's
+own directory, so the skills survive an agent being disabled or removed.
+
+For the *host's* own agents (not the containers), the same skills are
+opt-in: see [`install_host_skills`](config.md#install_host_skills) in the
+global config. The pre-1.0 key `claude.install_gie_skills` was retired in
+1.1.0: a config still using it fails to load with an error naming
+`install_jailbee_skills`.

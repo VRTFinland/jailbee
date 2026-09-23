@@ -140,6 +140,21 @@ def test_load_global_config_empty_file_returns_defaults(tmp_path):
     assert cfg.docker_registry_mirror.port == 3128
 
 
+def test_install_host_skills_defaults_off():
+    """Opt-in: the host's own agent installs are the user's call, and the
+    containers' skills need no host action at all."""
+    assert GlobalConfig().install_host_skills is False
+
+
+def test_install_host_skills_loads_from_yaml(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text(yaml.safe_dump({"install_host_skills": True}))
+
+    cfg, _ = load_global_config(path)
+
+    assert cfg.install_host_skills is True
+
+
 def test_docker_registry_mirror_defaults_to_port_3128():
     gcfg = GlobalConfig()
     assert gcfg.docker_registry_mirror.port == 3128
@@ -278,7 +293,23 @@ def test_mirror_enabled_rejects_other_strings(tmp_path):
         load_global_config(path)
 
 
-def test_global_config_parses_claude_credentials(tmp_path):
+def test_global_config_parses_credentials(tmp_path):
+    from jailbee import notices
+    from jailbee.global_config import load_global_config
+
+    path = tmp_path / "global.yaml"
+    path.write_text("credentials:\n  group: work\n  repos:\n    side: personal\n    solo: null\n")
+
+    gcfg, warnings = load_global_config(path)
+
+    assert warnings == []
+    assert gcfg.credentials.group == "work"
+    assert gcfg.credentials.repos == {"side": "personal", "solo": None}
+    assert notices.active() == ()
+
+
+def test_global_config_parses_legacy_claude_credentials(tmp_path):
+    from jailbee import notices
     from jailbee.global_config import load_global_config
 
     path = tmp_path / "global.yaml"
@@ -289,20 +320,46 @@ def test_global_config_parses_claude_credentials(tmp_path):
     gcfg, warnings = load_global_config(path)
 
     assert warnings == []
-    assert gcfg.claude_credentials.group == "work"
-    assert gcfg.claude_credentials.repos == {"side": "personal", "solo": None}
+    assert gcfg.credentials.group == "work"
+    assert gcfg.credentials.repos == {"side": "personal", "solo": None}
+    active = notices.active()
+    assert len(active) == 1
+    assert active[0].key == "legacy-credentials-block"
+    assert any("credentials" in line for line in active[0].lines)
 
 
-def test_claude_credentials_is_a_host_level_key():
+def test_validate_global_raw_stays_silent_with_emit_hint_false(tmp_path):
+    """The editor's save handler calls this synchronously while the full-screen
+    `Application` is live, so `emit_hint=False` must suppress the legacy
+    `claude_credentials:` notice even though the fold still happens.
+
+    Pins the editor-silence guarantee the `emit_hint` parameter exists for; the
+    chrome twin lives in `tests/test_config_browsers.py`.
+    """
+    from jailbee import notices
+    from jailbee.global_config import validate_global_raw
+
+    gcfg = validate_global_raw(
+        {"claude_credentials": {"group": "work"}},
+        tmp_path / "global.yaml",
+        emit_hint=False,
+    )
+
+    assert gcfg.credentials.group == "work"
+    assert notices.active() == ()
+
+
+def test_credentials_is_a_host_level_key():
     """It must never reach the Config layer's `deep_merge`: `Config` has
     `extra='forbid'` and no such field, so an unsplit key would make every
     load fail for anyone who sets it."""
     from jailbee.config import _HOST_LEVEL_KEYS, _split_host_keys
 
+    assert "credentials" in _HOST_LEVEL_KEYS
     assert "claude_credentials" in _HOST_LEVEL_KEYS
-    host, config_level = _split_host_keys({"claude_credentials": {"group": "work"}, "gpg": {}})
-    assert "claude_credentials" in host
-    assert "claude_credentials" not in config_level
+    host, config_level = _split_host_keys({"credentials": {"group": "work"}, "gpg": {}})
+    assert "credentials" in host
+    assert "credentials" not in config_level
 
 
 def test_scratch_block_reaches_global_config(tmp_path) -> None:

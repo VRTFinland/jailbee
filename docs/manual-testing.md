@@ -2748,10 +2748,10 @@ jailbee destroy --all --force
 # Remove the claude.auto_update block from .jailbee/config.yaml afterwards.
 ```
 
-## Shared Claude credential groups (`claude_credentials`) smoke test
+## Shared credential groups (`credentials`) smoke test
 
 Several repos on one host can share one Claude Code login by pointing
-`claude_credentials` in `~/.config/jailbee/global.yaml` at the same group
+`credentials` in `~/.config/jailbee/global.yaml` at the same group
 name — see `.local/superpowers/specs/2026-08-27-claude-shared-credentials-design.md`
 for the design. The mechanism rests entirely on **undocumented observations
 of Claude Code 2.1.247**: that `CLAUDE_SECURESTORAGE_CONFIG_DIR` resolves the
@@ -2772,21 +2772,21 @@ Two repos, `SampleApp` and `SampleApp2` (any second checkout with its own
 `~/.config/jailbee/global.yaml`:
 
 ```yaml
-claude_credentials:
+credentials:
   group: worktest
 ```
 
 1. **`jailbee new` before `jailbee apply` does not log the container out.**
    This is Finding 2 of the 2026-08-27 review: the `jailbee new` repair for
    `CLAUDE_SECURESTORAGE_CONFIG_DIR` used to fire unconditionally once the key
-   was absent, which — in a repo that had `claude_credentials` added but never
+   was absent, which — in a repo that had `credentials` added but never
    `apply`ed — wrote the env key to `<prefix>-base` while `<prefix>-binds`
    still had no `claude-creds` device, so Claude Code resolved an unmounted
    directory and reported "Not logged in" in every container of the repo. The
    fix makes the repair wait for the device.
 
    Starting from a repo that has **never** run `jailbee apply` since
-   `claude_credentials` was set (a fresh `jailbee init` followed by editing
+   `credentials` was set (a fresh `jailbee init` followed by editing
    `global.yaml`, or reuse a repo that predates this feature and add the key
    now):
 
@@ -2849,7 +2849,7 @@ claude_credentials:
    # before joining: SampleApp2 has its own login, group dir is empty
    ls <shared_dir(SampleApp2)>/claude/.credentials.json    # exists
    ls <xdg_data_home>/jailbee/claude-credentials/worktest/ # empty or absent
-   # add claude_credentials to global.yaml for SampleApp2, then:
+   # add credentials to global.yaml for SampleApp2, then:
    jailbee apply
    ls <shared_dir(SampleApp2)>/claude/.credentials.json    # gone
    ls <xdg_data_home>/jailbee/claude-credentials/worktest/.credentials.json
@@ -2859,7 +2859,7 @@ claude_credentials:
    exit
    ```
 
-   Leave, by removing the repo from `claude_credentials` (or setting it to
+   Leave, by removing the repo from `credentials` (or setting it to
    `null` under `repos:`) and re-running `jailbee apply`:
 
    ```bash
@@ -2933,7 +2933,7 @@ claude_credentials:
    ```
 
    Expected: a warning naming both paths, a hint printing the runnable
-   `claude_credentials.repos` block, then a three-row picker.
+   `credentials.repos` block, then a three-row picker.
 
    * **cancel** (or Ctrl-C) → exit 1 with the original refusal text; both
      files still present and byte-identical. Verify with `md5sum` on both
@@ -2955,7 +2955,7 @@ claude_credentials:
    ```
 
 Afterwards, clean up: `jailbee destroy` the containers created above, remove
-`claude_credentials` from `global.yaml` if it was added only for this test,
+`credentials` from `global.yaml` if it was added only for this test,
 `jailbee apply` in each affected repo, and (if step 3's group directory was a
 throwaway) delete `<xdg_data_home>/jailbee/claude-credentials/worktest*/` by
 hand — jailbee never deletes a group directory automatically.
@@ -4096,22 +4096,25 @@ the new namespace were stripped. Still host-only: a *custom* profile, like
 the Figma one in `docs/config.md`, loaded on the host and in the image, must
 make that app start with its sandbox on.
 
-## `jailbee claude` account pool smoke test
+## `jailbee account` pool smoke test
 
-Needs two Claude accounts. Everything below runs on the host.
+The command surface is generic, but Claude is the only pooled agent in
+phase 2, so this recipe is Claude-backed. Needs two Claude accounts.
+Everything below runs on the host.
 
-1. `jailbee claude ls` — the row for this repo's holder is `live` and bold,
+1. `jailbee account ls` — the row for this repo's holder is `live` and bold,
    names the account in use, and its `GROUP` and `USED BY` cells match the
    repo's group and the repos/containers reading it. Every other credential
    group on the host is a row too; `STATE` is `empty` for one holding no
-   login.
-2. `jailbee claude park` — that row becomes `empty`, a new `parked` row
+   login. `jailbee account ls -a claude` narrows to the same rows, and `-a`
+   naming an agent with no account pool is refused by name.
+2. `jailbee account park` — that row becomes `empty`, a new `parked` row
    appears, and `ls <holder>/.credentials.json` is gone.
 3. In a container of that holder, run `claude` and `/login` as the **second**
-   account. Back on the host, `jailbee claude ls` shows the holder `live`
+   account. Back on the host, `jailbee account ls` shows the holder `live`
    again with the new account, the first still `parked`.
 4. **The hot-reload gate.** Leave an interactive `claude` running in a
-   container. On the host, `jailbee claude use <first account>`. Ask the
+   container. On the host, `jailbee account use <first account>`. Ask the
    session a question **without restarting it**: it must answer. Then check
    `/status` — a lagging account name there is expected and harmless; a
    login prompt is not, and would mean the mtime hot-reload (spec §5.1) does
@@ -4123,41 +4126,41 @@ Needs two Claude accounts. Everything below runs on the host.
    group both running Claude, switch on the host. Neither container may end
    up on the old account, and no `.oauth_refresh.lock` may be left behind
    (`ls -a <holder>`).
-7. `jailbee claude rm <parked account>` — confirms, then the row is gone.
-8. **The group-visibility gate** (what `claude ls` was rebuilt for). Move one
+7. `jailbee account rm <parked account>` — confirms, then the row is gone.
+8. **The group-visibility gate** (what `account ls` was rebuilt for). Move one
    container into a group no repo resolves to:
-   `jailbee claude group use <fresh-group> <container>`, then on the host
-   `jailbee claude ls`. That group must be a row of its own, `USED BY` must
+   `jailbee account group use <fresh-group> <container>`, then on the host
+   `jailbee account ls`. That group must be a row of its own, `USED BY` must
    name **that container** (not a count, since no repo resolves to the
    group), and the row must be `empty` until a `/login` in the container or a
-   `jailbee claude use -g <fresh-group>` fills it. `jailbee claude ls -g
+   `jailbee account use -g <fresh-group>` fills it. `jailbee account ls -g
    <fresh-group>` must narrow to that row plus the parked store, and
-   `jailbee claude group` must point at `jailbee claude ls` rather than
+   `jailbee account group` must point at `jailbee account ls` rather than
    printing a list of group names.
 9. **The degradation gate.** With the Incus daemon stopped
-   (`sudo systemctl stop incus`), `jailbee claude ls` must still print the
+   (`sudo systemctl stop incus`), `jailbee account ls` must still print the
    table, with `containers ?` in `USED BY` and a warning — not an error.
 10. **The redundant-override gate.** With the repo in group `Y` and one
-    container overridden to `X` (`jailbee claude group use X <container>`),
-    run `jailbee claude group set X`. The command must report dropping that
+    container overridden to `X` (`jailbee account group use X <container>`),
+    run `jailbee account group set X`. The command must report dropping that
     container's override, and afterwards `incus config show <container>`
-    must carry **neither** `user.jailbee.claude_group` nor a local
+    must carry **neither** `user.jailbee.credential_group` nor a local
     `claude-creds` device — the container inherits the profile's. Prove the
-    point by then running `jailbee claude group set Z`: the container must
-    follow to `Z` rather than staying on `X`. `jailbee claude group use Y
+    point by then running `jailbee account group set Z`: the container must
+    follow to `Z` rather than staying on `X`. `jailbee account group use Y
     <container>` (naming the repo's own group) must likewise clear the
-    override instead of writing one, and `jailbee new --claude-group Y` must
-    create a container with no label at all.
-11. **The group lifecycle gate.** `jailbee claude group ls` must list every
+    override instead of writing one, and `jailbee new --credential-group Y`
+    must create a container with no label at all.
+11. **The group lifecycle gate.** `jailbee account group ls` must list every
     group on the host and no parked login;
-    `jailbee claude group create tmpgrp` must
-    make a 0700 directory that `jailbee claude ls` shows as `empty` /
-    `unused`, and `jailbee claude group rm tmpgrp` must remove it. Then check
+    `jailbee account group create tmpgrp` must
+    make a 0700 directory that `jailbee account ls` shows as `empty` /
+    `unused`, and `jailbee account group rm tmpgrp` must remove it. Then check
     each refusal against real state: `rm` on the repo's own group (names the
     repo), on the host default (names `global.yaml`), and on a group one
     container was moved into (names the container). Finally activate a login
     into a spare group and `rm` it: the login must come back as a `parked`
-    row in `jailbee claude ls`, and `jailbee claude use` must be able to
+    row in `jailbee account ls`, and `jailbee account use` must be able to
     activate it again — parking, not deletion, is the promise.
 
 ## Cache pool smoke test (`pool.py`, `pooled_caches`)

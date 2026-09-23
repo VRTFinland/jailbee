@@ -58,12 +58,12 @@ def _write_repo(root: Path, *, shared: Path) -> None:
 
 
 def _cfg(tmp_path: Path, *, group: str | None = None):
-    extra = {"claude_credentials_dir": groups.group_dir("claude", group)} if group else {}
+    extra = {"credential_group": group} if group else {}
     return make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", **extra)
 
 
 def _gcfg(**creds) -> GlobalConfig:
-    return GlobalConfig.model_validate({"claude_credentials": creds} if creds else {})
+    return GlobalConfig.model_validate({"credentials": creds} if creds else {})
 
 
 def _login_in(holder: Path, token: str, *, account: dict | None = None) -> None:
@@ -113,7 +113,7 @@ def test_a_group_row_names_the_login_from_the_holder_note(tmp_path: Path, mocker
     assert row is not None
     assert row.state == "live"
     # `display_name` drops the org: the ORG column carries that half, and
-    # repeating it in both is what `cli._claude_fields` already avoids.
+    # repeating it in both is what `cli._account_fields` already avoids.
     assert row.account == "work@corp.com"
     assert row.org_hint == "ccccdddd"
 

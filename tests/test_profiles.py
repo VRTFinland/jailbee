@@ -288,7 +288,7 @@ def test_base_profile_sets_securestorage_dir_for_a_group_repo(make_cfg, tmp_path
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
     assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
@@ -308,7 +308,7 @@ def test_base_profile_omits_securestorage_dir_when_claude_is_disabled(make_cfg, 
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": False},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
     assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
@@ -317,20 +317,29 @@ def test_base_profile_omits_securestorage_dir_when_claude_is_disabled(make_cfg, 
 def test_securestorage_env_never_returns_an_empty_value(make_cfg, tmp_path):
     """An empty value is NOT the same as an unset variable: Claude Code falls
     back to `~/.claude` for it, silently pointing credential lookup back at the
-    config home. A `container.env` entry set to "" must therefore drop the key
-    rather than write it."""
+    config home. The adapter must therefore omit the key entirely."""
     from jailbee.accounts.adapters.claude import CLAUDE
 
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
         container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
     )
     assert CLAUDE.wiring(cfg, tmp_path / "creds" / "work").env == {}
-    # The helper returning None is not enough on its own: base_profile_yaml
-    # also runs an unconditional `container.env` passthrough loop that could
-    # re-write the same key to "". Assert on the actual rendered profile.
+
+
+def test_an_empty_user_override_does_not_render_securestorage_dir(make_cfg, tmp_path):
+    """The rendered-profile half, asserted explicitly: the pooled-adapter loop
+    omits the key, then the unconditional `container.env` passthrough can
+    re-write it as "", so `base_profile_yaml` drops it. Omitting it from the
+    helper alone would not be enough."""
+    cfg = make_cfg(
+        tmp_path,
+        claude={"enabled": True},
+        credential_group="work",
+        container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": ""}},
+    )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
     assert "environment.CLAUDE_SECURESTORAGE_CONFIG_DIR" not in parsed["config"]
 
@@ -341,7 +350,7 @@ def test_base_profile_container_env_overrides_securestorage_dir(make_cfg, tmp_pa
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
         container={"env": {"CLAUDE_SECURESTORAGE_CONFIG_DIR": "/custom/creds"}},
     )
     parsed = yaml.safe_load(base_profile_yaml(cfg))
@@ -349,16 +358,18 @@ def test_base_profile_container_env_overrides_securestorage_dir(make_cfg, tmp_pa
 
 
 def test_binds_profile_mounts_the_group_credential_dir(make_cfg, tmp_path):
+    from jailbee.accounts import engine
+
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     parsed = yaml.safe_load(binds_profile_yaml(cfg))
     device = parsed["devices"]["claude-creds"]
     assert device == {
         "type": "disk",
-        "source": str(tmp_path / "creds" / "work"),
+        "source": str(engine.group_dir("claude", "work")),
         "path": "/home/dev/.claude-creds",
     }
 
@@ -373,7 +384,7 @@ def test_group_repo_adds_exactly_one_device(make_cfg, tmp_path):
     """Pin the blast radius: joining a group adds `claude-creds` and changes
     nothing else about the Claude mounts."""
     base = make_cfg(tmp_path, claude={"enabled": True})
-    grouped = base.model_copy(update={"claude_credentials_dir": tmp_path / "creds" / "work"})
+    grouped = base.model_copy(update={"credential_group": "work"})
 
     before = set(yaml.safe_load(binds_profile_yaml(base))["devices"])
     after = set(yaml.safe_load(binds_profile_yaml(grouped))["devices"])
@@ -1028,3 +1039,101 @@ def test_opting_out_restores_the_shared_gradle_mount(tmp_path):
     ).model_copy(update={"shared_dir": tmp_path / "shared"})
     profile = yaml.safe_load(binds_profile_yaml(cfg))
     assert "shared-gradle" in profile["devices"]
+
+
+class _SecondPoolAdapter:
+    """A second pooled agent, wiring an env var and a device of its own.
+
+    Deliberately *unlike* Claude in both names: a `profiles.py` that had kept
+    any Claude knowledge in the rendering loops would produce Claude's key and
+    Claude's device here, or nothing at all.
+    """
+
+    name = "fakeagent"
+    credential_file = "cred.json"
+    refresh_token_key = "refresh"
+    live_switch = True
+
+    def config_home(self, cfg):
+        return cfg.shared_dir / self.name
+
+    def holder_override(self, cfg):
+        from jailbee.accounts import engine
+
+        if not cfg.credential_group:
+            return None
+        return engine.group_dir(self.name, cfg.credential_group)
+
+    def wiring(self, cfg, group_dir):
+        from jailbee.accounts.adapters import base
+
+        if group_dir is None:
+            return base.Wiring()
+        return base.Wiring(
+            devices={
+                "fake-creds": {
+                    "type": "disk",
+                    "source": str(group_dir),
+                    "path": "/home/dev/.fake-creds",
+                }
+            },
+            env={"FAKE_CRED_DIR": "/home/dev/.fake-creds"},
+        )
+
+
+@pytest.fixture
+def second_pool_adapter():
+    from jailbee.accounts.adapters import base
+
+    base.register(_SecondPoolAdapter())
+    try:
+        yield
+    finally:
+        base.ADAPTERS.pop("fakeagent", None)
+
+
+def test_base_profile_renders_a_second_agents_env(make_cfg, tmp_path, second_pool_adapter):
+    """The point of the `Wiring` protocol: a second pooled agent's env reaches
+    `<prefix>-base` without a branch in `profiles.py`. Claude-hardcoded
+    rendering would pass every other test in this file."""
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=True, command="fakeagent")
+
+    parsed = yaml.safe_load(base_profile_yaml(cfg))
+
+    assert parsed["config"]["environment.FAKE_CRED_DIR"] == "/home/dev/.fake-creds"
+    # Claude's is still there: the loop renders every pooled agent, not one.
+    assert parsed["config"]["environment.CLAUDE_SECURESTORAGE_CONFIG_DIR"] == (
+        "/home/dev/.claude-creds"
+    )
+
+
+def test_binds_profile_renders_a_second_agents_device(make_cfg, tmp_path, second_pool_adapter):
+    """The device half of the same promise, pointed at that agent's own holder
+    directory rather than Claude's."""
+    from jailbee.accounts import engine
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=True, command="fakeagent")
+
+    parsed = yaml.safe_load(binds_profile_yaml(cfg))
+
+    assert parsed["devices"]["fake-creds"]["source"] == str(engine.group_dir("fakeagent", "work"))
+    assert "claude-creds" in parsed["devices"]
+
+
+def test_a_disabled_second_agent_renders_nothing(make_cfg, tmp_path, second_pool_adapter):
+    """The write direction keeps the `enabled` filter."""
+    from tests.conftest import with_agent
+
+    cfg = make_cfg(tmp_path, claude={"enabled": True}, credential_group="work")
+    cfg = with_agent(cfg, "fakeagent", enabled=False, command="fakeagent")
+
+    base_parsed = yaml.safe_load(base_profile_yaml(cfg))
+    binds_parsed = yaml.safe_load(binds_profile_yaml(cfg))
+
+    assert "environment.FAKE_CRED_DIR" not in base_parsed["config"]
+    assert "fake-creds" not in binds_parsed["devices"]

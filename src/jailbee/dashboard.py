@@ -55,11 +55,13 @@ from jailbee.global_config import (
 )
 from jailbee.lifecycle import (
     ContainerInfo,
+    annotate_activity,
     format_duration_short,
     list_containers,
     ls_field_specs,
 )
 from jailbee.paths import repo_config_path
+from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -324,8 +326,19 @@ def seed_view_state(engine: Engine, frontend: str) -> ViewState:
     """
     state = load_view_state(engine, frontend)
     if state.columns is not None:
+        # Canonicalized *before* the filter: a stored set predating the
+        # `claude_group` -> `group` rename holds a name `all_column_names` no
+        # longer knows, and per this function's own contract the first save
+        # after that drops it for good — so a user who had the column on would
+        # silently and permanently lose it. The config-block half of the same
+        # rename is handled in the loaders (`sanitize_column_blocks`); this is
+        # the half that lives in the front-end's saved state instead.
+        from jailbee.config.models_columns import canonical_ls_field
+
         known = frozenset(all_column_names())
-        filtered = tuple(n for n in state.columns if n in known)
+        filtered = tuple(
+            dict.fromkeys(c for n in state.columns if (c := canonical_ls_field(n)) in known)
+        )
         return replace(state, columns=filtered or default_columns())
     gcfg = _global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
@@ -453,6 +466,18 @@ def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[Repo
         for c in g.containers:
             if c.git_status is None and c.name in prev_status:
                 c.git_status = prev_status[c.name]
+
+
+def sample_activity(groups: list[RepoGroup], sampler: ActivitySampler) -> None:
+    """Fill every container's CPU/DOING fields from one sampler reading.
+
+    One reading per screen, not one per repo group: the sampler stamps the
+    elapsed time itself, so splitting a frame across several calls would
+    measure several different windows.
+
+    Shared with the Qt worker, which owns its own sampler.
+    """
+    annotate_activity([c for g in groups for c in g.containers], sampler)
 
 
 @dataclass(frozen=True)
@@ -1743,9 +1768,20 @@ def run(
     # alternate screen only to hand it straight back is a worse way to say
     # "the incus daemon is unreachable" than saying so on the user's own
     # terminal.
+    # One sampler for the whole session: a rate needs the previous reading,
+    # and a fresh sampler has none. The pre-gather below primes it, and the
+    # worker thread is the only other user — it starts after this returns,
+    # so the two never touch it at once.
+    sampler = ActivitySampler()
+
     try:
         with console.status("⏳ Surveying containers…"):
             seeded = gather_live(incus, cwd_root, with_git=False)
+            # Twice: the first call primes the sampler, the second turns it
+            # into a rate. Only the /proc read repeats — never the gather.
+            sample_activity(seeded, sampler)
+            time.sleep(PRIME_INTERVAL_SECONDS)
+            sample_activity(seeded, sampler)
     except Exception as exc:
         error(f"dashboard refresh failed: {exc}")
         return 1
@@ -1795,6 +1831,7 @@ def run(
                     # last git-tier snapshot so the columns don't flicker
                     # blank until the next git-tier refresh lands.
                     carry_forward_git_status(groups, prev_groups)
+                sample_activity(groups, sampler)
                 ts = time.monotonic()
                 with lock:
                     shared_groups = groups

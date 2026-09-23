@@ -22,6 +22,7 @@ import yaml
 from jailbee.config_edit.layers import LayerName, apply_changes, lookup, raw_for
 from jailbee.config_writer import (
     DELETE,
+    credential_key_migration,
     patch_yaml,
     render_documented,
     render_global_yaml,
@@ -219,6 +220,12 @@ def build_plan(
     path = layer_set.repo_path if layer == "repo" else layer_set.global_path
     old_text = path.read_text(encoding="utf-8") if path.exists() else ""
     raw = raw_for(layer_set, layer)
+    # A save that touches a legacy `claude_credentials:` block migrates it in
+    # the same write (copy to `credentials`, delete the old key) before the
+    # staged `credentials.*` changes land. Without it the rendered file would
+    # carry both spellings and no longer load. `layers.validate` applies the
+    # same migration to the staged mapping it checks.
+    changes = credential_key_migration(raw, changes)
     secrets = secret_values(raw, specs, changes)
     if policy == "patch":
         new_text = patch_yaml(old_text, changes)

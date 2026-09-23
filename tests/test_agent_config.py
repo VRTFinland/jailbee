@@ -115,6 +115,48 @@ def test_generic_agent_rejects_claude_only_fields():
         AgentConfig.model_validate({"enabled": True, "ai_pr_timeout": 900})
 
 
+def test_generic_agent_accepts_install_jailbee_skills():
+    """The flag is agent-generic: opting codex out is the same YAML key as
+    opting claude out."""
+    cfg = AgentConfig.model_validate({"install_jailbee_skills": False})
+    assert cfg.install_jailbee_skills is False
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "../escape", "~/.mine/../evil/skills", "./skills", "~/.mine/./skills"]
+)
+def test_skills_dir_rejects_empty_and_traversal_segments(bad):
+    """A repo-committed `skills_dir` must not step outside the agent's own
+    mount: a `..` segment reaches `_skills_host_dir`'s textual join and lets
+    the copy write (and `rmtree`) outside `<shared_dir>`."""
+    with pytest.raises(ValidationError, match="skills_dir"):
+        AgentConfig.model_validate({"enabled": True, "command": "mine", "skills_dir": bad})
+
+
+def test_skills_dir_accepts_absolute_and_tilde_paths_with_dotfiles():
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "~/.config/my.agent/skills"}
+    )
+    assert cfg.skills_dir == "~/.config/my.agent/skills"
+    cfg = AgentConfig.model_validate(
+        {"enabled": True, "command": "mine", "skills_dir": "/opt/skills"}
+    )
+    assert cfg.skills_dir == "/opt/skills"
+
+
+def test_presets_declare_skills_dir_only_for_skill_capable_agents():
+    from jailbee.agent_presets import AGENT_PRESETS, claude_preset
+
+    presets = {**AGENT_PRESETS, "claude": claude_preset()}
+    with_dir = {name for name, preset in presets.items() if preset.get("skills_dir")}
+    assert with_dir == {"claude", "codex", "gemini", "opencode"}
+    # Each must land inside a mount the preset itself declares.
+    assert presets["claude"]["skills_dir"] == "~/.claude/skills"
+    assert presets["codex"]["skills_dir"] == "~/.codex/skills"
+    assert presets["gemini"]["skills_dir"] == "~/.gemini/skills"
+    assert presets["opencode"]["skills_dir"] == "~/.config/opencode/skills"
+
+
 def test_install_check_defaults_from_command():
     cfg = AgentConfig.model_validate({"enabled": True, "command": "codex --yolo"})
     assert cfg.effective_install_check() == "command -v codex"
@@ -239,3 +281,129 @@ def test_codex_preset_keeps_the_app_server_dirs_per_container():
     shared = AGENT_PRESETS["codex"]["shared"]
     assert isinstance(shared, list)
     assert shared[0]["private"] == ["app-server-control", "app-server-daemon"]
+
+
+def _run_opencode_step(which, tmp_path, *, installer_body, curl_exit=0):
+    """Run the opencode preset's install/update line in a real bash.
+
+    That line is the only thing standing between "the vendor installer ran" and
+    "`command -v opencode` works", and none of its logic is Python — so it is
+    exercised as shell. No network: `curl` is a stub on PATH that prints
+    `installer_body`, which the preset then pipes into `bash -s --`.
+    `curl_exit` stands in for a download that fails (DNS, 404, a dead CDN).
+
+    Returns the completed process, the fake HOME, and how many times the stub
+    curl was called.
+    """
+    import os
+    import subprocess
+
+    from jailbee.agent_presets import AGENT_PRESETS
+
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    stub_bin = tmp_path / "stub-bin"
+    stub_bin.mkdir()
+    installer = tmp_path / "installer.sh"
+    installer.write_text(installer_body)
+    curl_log = tmp_path / "curl.log"
+    curl = stub_bin / "curl"
+    curl.write_text(
+        f'#!/bin/sh\necho called >> "{curl_log}"\ncat "{installer}"\nexit {curl_exit}\n'
+    )
+    curl.chmod(0o755)
+
+    command = AGENT_PRESETS["opencode"][which]
+    assert isinstance(command, str)
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={"HOME": str(home), "PATH": f"{stub_bin}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = curl_log.read_text().count("called") if curl_log.exists() else 0
+    return result, home, calls
+
+
+# Stands in for https://opencode.ai/v2/install: all this test cares about is
+# that it drops an executable at the hardcoded INSTALL_DIR the real one uses.
+_FAKE_OPENCODE_INSTALLER = (
+    'mkdir -p "$HOME/.opencode/bin"\n'
+    'printf "#!/bin/sh\\n" > "$HOME/.opencode/bin/opencode"\n'
+    'chmod 755 "$HOME/.opencode/bin/opencode"\n'
+)
+
+
+def _seed_shared_binary(tmp_path):
+    binary = tmp_path / "home/.opencode/bin/opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    return binary
+
+
+def test_opencode_install_links_the_binary_onto_path(tmp_path):
+    """The installer hardcodes ~/.opencode/bin, which is on no PATH jailbee
+    sets — without the link `command -v opencode` fails, so every `jailbee new`
+    reinstalls and the autostart window dies with `opencode: not found`."""
+    result, home, calls = _run_opencode_step(
+        "install", tmp_path, installer_body=_FAKE_OPENCODE_INSTALLER
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 1
+    link = home / ".local/bin/opencode"
+    assert link.is_symlink()
+    assert link.resolve() == home / ".opencode/bin/opencode"
+
+
+def test_opencode_install_skips_the_download_when_the_shared_store_has_it(tmp_path):
+    """~/.opencode is shared across a repo's containers, so a second branch
+    must relink rather than re-fetch the 88MB tarball. The stub installer here
+    fails outright: reaching it at all is the bug."""
+    _seed_shared_binary(tmp_path)
+
+    result, home, calls = _run_opencode_step("install", tmp_path, installer_body="exit 1\n")
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 0
+    assert (home / ".local/bin/opencode").is_symlink()
+
+
+def test_opencode_update_always_reruns_the_installer(tmp_path):
+    """Unlike install, update has no already-present short-circuit — rerunning
+    the installer is the whole of how opencode upgrades."""
+    _seed_shared_binary(tmp_path)
+
+    result, home, calls = _run_opencode_step(
+        "update", tmp_path, installer_body=_FAKE_OPENCODE_INSTALLER
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls == 1
+    assert (home / ".local/bin/opencode").is_symlink()
+
+
+def test_opencode_install_fails_loudly_when_the_installer_produces_nothing(tmp_path):
+    """`curl … | bash` exits 0 when curl fails — bash just reads an empty
+    script. Without the trailing `-x` test a failed download would be reported
+    as a successful install step and only surface later as `opencode: not
+    found` in the autostart window."""
+    result, home, _calls = _run_opencode_step("install", tmp_path, installer_body="")
+
+    assert result.returncode != 0
+    assert not (home / ".local/bin/opencode").exists()
+
+
+def test_opencode_update_fails_loudly_when_the_download_fails(tmp_path):
+    """The `-x` test cannot catch a failed *update*: the previous release is
+    still in the shared store, so the link is remade and the step would report
+    success while the new version was never fetched. `set -o pipefail` is what
+    makes curl's own exit status the pipeline's."""
+    _seed_shared_binary(tmp_path)
+
+    result, _home, calls = _run_opencode_step("update", tmp_path, installer_body="", curl_exit=6)
+
+    assert calls == 1
+    assert result.returncode != 0

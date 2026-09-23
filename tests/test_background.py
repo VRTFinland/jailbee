@@ -514,6 +514,7 @@ def test_op_to_job_round_trip_preserves_every_field():
         # to equal the value would sail through the loop below.
         approved_autostart_ref="refs/heads/feature",
         autofetch_done=True,
+        credential_group="personal",
     )
 
     job = op_to_job(opts, container_name="p-feature", log_path="/tmp/l.log")
@@ -553,7 +554,7 @@ def test_job_to_opts_tolerates_a_job_file_without_assume_yes():
     assert restored.autofetch_done is False
 
 
-def test_claude_group_survives_the_job_round_trip():
+def test_credential_group_survives_the_job_round_trip():
     from jailbee.background import job_to_opts, op_to_job
     from jailbee.lifecycle import NewContainerOptions
 
@@ -565,14 +566,65 @@ def test_claude_group_survives_the_job_round_trip():
         cpu=2,
         from_base="base",
         clone=True,
-        claude_group="personal",
+        credential_group="personal",
     )
     job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    assert job["opts"]["credential_group"] == "personal"
+    assert "claude_group" not in job["opts"]
     back, _, _ = job_to_opts(job)
-    assert back.claude_group == "personal"
+    assert back.credential_group == "personal"
 
 
-def test_claude_group_defaults_to_none_for_an_older_job_file():
+def test_legacy_claude_group_key_loads_into_credential_group():
+    """An in-flight background `jailbee new` written before the rename must
+    still load its group."""
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    job = op_to_job(
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="4GiB",
+            cpu=2,
+            from_base="base",
+            clone=True,
+        ),
+        container_name="myrepo-feat-x",
+        log_path="/tmp/l",
+    )
+    del job["opts"]["credential_group"]
+    job["opts"]["claude_group"] = "legacy"
+    back, _, _ = job_to_opts(job)
+    assert back.credential_group == "legacy"
+
+
+def test_a_job_carrying_both_group_keys_follows_the_new_one():
+    """A malformed file with both spellings resolves to the canonical value."""
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    job = op_to_job(
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="4GiB",
+            cpu=2,
+            from_base="base",
+            clone=True,
+        ),
+        container_name="myrepo-feat-x",
+        log_path="/tmp/l",
+    )
+    job["opts"]["credential_group"] = "new"
+    job["opts"]["claude_group"] = "old"
+    back, _, _ = job_to_opts(job)
+    assert back.credential_group == "new"
+
+
+def test_credential_group_defaults_to_none_for_an_older_job_file():
     """An in-flight background `jailbee new` must survive an upgrade."""
     from jailbee.background import job_to_opts, op_to_job
     from jailbee.lifecycle import NewContainerOptions
@@ -590,6 +642,6 @@ def test_claude_group_defaults_to_none_for_an_older_job_file():
         container_name="myrepo-feat-x",
         log_path="/tmp/l",
     )
-    del job["opts"]["claude_group"]
+    del job["opts"]["credential_group"]
     back, _, _ = job_to_opts(job)
-    assert back.claude_group is None
+    assert back.credential_group is None

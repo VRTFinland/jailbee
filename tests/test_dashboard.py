@@ -1928,6 +1928,47 @@ def test_seed_view_state_filters_a_stale_column_name(mocker):
     assert state.columns == ("name",)
 
 
+def test_seed_view_state_renames_a_stored_alias_rather_than_dropping_it(mocker):
+    """`claude_group` was renamed `group` in this release. A user who had the
+    column on has the old name in `view_prefs`, which `all_column_names` no
+    longer knows — and per `seed_view_state`'s own contract the next save of
+    any kind drops an unknown name for good. So the rename has to happen
+    before the filter, or the column is lost permanently rather than carried
+    over."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "claude_group")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("name", "group")
+
+
+def test_seed_view_state_does_not_duplicate_a_column_both_spellings_name(mocker):
+    """A stored set holding the old and the new name collapses to one column:
+    the rename makes them the same column, and a duplicate would inflate the
+    front-ends' last-column count exactly as a phantom name does."""
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("group", "name", "claude_group")))
+    mocker.patch.object(dashboard, "load_global_config", return_value=(GlobalConfig(), []))
+
+    state = dashboard.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == ("group", "name")
+
+
 def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(mocker):
     """The empty-after-filtering case: if nothing in the stored set is a real
     column any more, the built-in default set is used instead of an empty
@@ -3239,9 +3280,7 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
-    assert dashboard.dynamic_column_names() == frozenset(
-        {"job", "ttl", "pr", "mode", "claude_group"}
-    )
+    assert dashboard.dynamic_column_names() == frozenset({"job", "ttl", "pr", "mode", "group"})
 
 
 def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
@@ -3672,3 +3711,63 @@ def test_config_edit_reject_note_refuses_the_repo_layer_of_a_synthesized_config(
     assert "scratch.config" in note
     assert "config init" in note
     assert config_edit_reject_note_for_prefix([group], "demo", global_layer=True) is None
+
+
+def test_run_samples_activity_twice_before_taking_the_screen(mocker):
+    """A rate needs two readings. One sample here would dash the CPU column
+    on the first frame and fill it a tick later — the very symptom the
+    pre-gather exists to prevent."""
+    setcbreak = _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+    # Patch the module's own constant rather than `time.sleep`: patching
+    # `dashboard.time.sleep` reaches the real `time` module and slows every
+    # other test in the process.
+    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
+    calls: list[int] = []
+    mocker.patch.object(
+        dashboard, "sample_activity", side_effect=lambda g, s: calls.append(setcbreak.call_count)
+    )
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert calls[:2] == [0, 0]  # both before the screen was taken
+
+
+def test_worker_samples_activity_on_every_gather(mocker):
+    """The columns are live: each refresh re-reads /proc, or the numbers
+    freeze at whatever the pre-gather saw."""
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[])
+    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
+    sampled = mocker.patch.object(dashboard, "sample_activity")
+
+    def _blocking_select(*args, **kwargs):
+        # `run()` floors `interval` at 0.5s, so a shorter wait here would
+        # end the session before the worker's first tick was even due.
+        time.sleep(0.7)
+        return ([True], [], [])
+
+    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=0.5, no_git=True) == 0
+    assert sampled.call_count > 2  # two priming samples, plus the worker's
+
+
+def test_sample_activity_flattens_every_group(mocker):
+    """One reading covers the whole screen — not one per repo group."""
+    annotate = mocker.patch.object(dashboard, "annotate_activity")
+    # `_ci(name, repo, ...)` — two positional arguments, see its definition
+    # near the top of this test module.
+    a = _ci("p-a", "p")
+    b = _ci("q-b", "q")
+    groups = [
+        dashboard.RepoGroup("p", "/p", Path("/p/.jailbee/config.yaml"), [a]),
+        dashboard.RepoGroup("q", "/q", Path("/q/.jailbee/config.yaml"), [b]),
+    ]
+    sampler = mocker.Mock()
+
+    dashboard.sample_activity(groups, sampler)
+
+    annotate.assert_called_once_with([a, b], sampler)

@@ -202,3 +202,24 @@ def test_config_init_does_not_offer_the_editor_without_a_terminal(tmp_path, mock
 
     confirm.assert_not_called()
     run.assert_not_called()
+
+
+def test_a_both_keys_global_file_is_rendered_not_traced_back(tmp_path, mocker, monkeypatch):
+    """`resolve()` folds the legacy credentials key and refuses a file carrying
+    both spellings. That happens inside `run_editor`, so without the CLI's wrap
+    the `ConfigError` reaches Typer as a raw traceback instead of the `✗ <msg>`
+    every other command renders.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cfg = _repo(tmp_path)
+    gpath = tmp_path / "xdg" / "jailbee" / "global.yaml"
+    gpath.parent.mkdir(parents=True)
+    gpath.write_text("credentials:\n  group: work\nclaude_credentials:\n  group: personal\n")
+    mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)
+
+    result = runner.invoke(app, ["config", "edit", "--config", str(cfg)])
+
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "Both `credentials` and deprecated `claude_credentials`" in combined
+    assert "Traceback" not in combined

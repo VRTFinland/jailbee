@@ -12,10 +12,10 @@ from jailbee.profiles import CLAUDE_CREDS_DEVICE, CLAUDE_CREDS_DIRNAME
 from tests.conftest import make_cfg
 
 
-def _cfg(tmp_path: Path, group_dir: Path | None = None):
+def _cfg(tmp_path: Path, group: str | None = None):
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared")
-    if group_dir is not None:
-        cfg = cfg.model_copy(update={"claude_credentials_dir": group_dir})
+    if group is not None:
+        cfg = cfg.model_copy(update={"credential_group": group})
     return cfg
 
 
@@ -36,13 +36,17 @@ def test_validate_rejects_the_reserved_word_none():
     assert "reserved" in str(e.value).lower()
 
 
-def test_repo_group_is_the_resolved_directory_name(tmp_path: Path):
-    cfg = _cfg(tmp_path, tmp_path / "creds" / "work")
-    assert groups.repo_group(cfg) == "work"
+def test_repo_group_is_the_resolved_group_name(tmp_path: Path):
+    from jailbee.accounts import engine
+
+    cfg = _cfg(tmp_path, "work")
+    assert engine.repo_group(cfg) == "work"
 
 
 def test_repo_group_is_none_when_the_repo_shares_nothing(tmp_path: Path):
-    assert groups.repo_group(_cfg(tmp_path)) is None
+    from jailbee.accounts import engine
+
+    assert engine.repo_group(_cfg(tmp_path)) is None
 
 
 def test_container_override_absent_label_means_inherit(mocker, tmp_path: Path):
@@ -70,24 +74,62 @@ def test_container_override_ignores_a_garbage_label(mocker):
     assert groups.container_override(incus, "myrepo-x") is None
 
 
+def test_container_override_warning_names_the_account_group_command(mocker):
+    """The repair direction must not point at the deprecated `claude` tree."""
+    warn = mocker.patch("jailbee.tui.warn")
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = "../../etc"
+    assert groups.container_override(incus, "myrepo-x") is None
+    assert "jailbee account group use" in warn.call_args.args[0]
+
+
+def test_new_group_label_wins_over_legacy_label(mocker):
+    """The canonical label outranks the pre-rename spelling when both exist."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda _name, key: {
+        groups.GROUP_LABEL: "new",
+        groups.LEGACY_GROUP_LABEL: "old",
+    }.get(key)
+    assert groups.container_override(incus, "app-x") == groups.Override("new")
+
+
+def test_legacy_group_label_is_still_read(mocker):
+    """A container labelled before the rename keeps its override."""
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda _name, key: (
+        "old" if key == groups.LEGACY_GROUP_LABEL else None
+    )
+    assert groups.container_override(incus, "app-x") == groups.Override("old")
+
+
+def test_label_group_prefers_the_new_label():
+    assert (
+        groups._label_group({groups.GROUP_LABEL: "new", groups.LEGACY_GROUP_LABEL: "old"}) == "new"
+    )
+
+
+def test_label_group_falls_back_to_the_legacy_label():
+    assert groups._label_group({groups.LEGACY_GROUP_LABEL: "old"}) == "old"
+
+
 def test_effective_group_prefers_the_container(mocker, tmp_path: Path):
     incus = mocker.MagicMock()
     incus.config_get.return_value = "personal"
-    cfg = _cfg(tmp_path, tmp_path / "creds" / "work")
+    cfg = _cfg(tmp_path, "work")
     assert groups.effective_group(cfg, incus, "myrepo-x") == "personal"
 
 
 def test_effective_group_falls_back_to_the_repo(mocker, tmp_path: Path):
     incus = mocker.MagicMock()
     incus.config_get.return_value = None
-    cfg = _cfg(tmp_path, tmp_path / "creds" / "work")
+    cfg = _cfg(tmp_path, "work")
     assert groups.effective_group(cfg, incus, "myrepo-x") == "work"
 
 
 def test_effective_group_container_can_opt_out_of_the_repos_group(mocker, tmp_path: Path):
     incus = mocker.MagicMock()
     incus.config_get.return_value = groups.NO_GROUP
-    cfg = _cfg(tmp_path, tmp_path / "creds" / "work")
+    cfg = _cfg(tmp_path, "work")
     assert groups.effective_group(cfg, incus, "myrepo-x") is None
 
 
@@ -128,8 +170,7 @@ def test_set_container_group_overrides_the_profile_device(monkeypatch, mocker, t
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> override path
     # The repo has a group, so the binds profile carries the device.
-    cfg = _cfg(tmp_path, groups.group_dir("claude", "work"))
-    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
+    cfg = _enabled_cfg(tmp_path, "work")
 
     groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -147,8 +188,7 @@ def test_set_container_group_adds_the_device_when_the_profile_has_none(
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> add path
-    cfg = _cfg(tmp_path)  # repo shares no group -> profiles.py renders no device
-    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=False)
+    cfg = _enabled_cfg(tmp_path)  # repo shares no group -> profiles.py renders no device
 
     groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -166,11 +206,8 @@ def test_set_container_group_always_sets_the_env_key(monkeypatch, mocker, tmp_pa
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> override path
-    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
-    groups.set_container_group(
-        _cfg(tmp_path, groups.group_dir("claude", "work")), incus, "myrepo-x", "personal"
-    )
+    groups.set_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x", "personal")
 
     env_calls = [c for c in incus.config_set.call_args_list if c.args[1] == _ENV_KEY]
     assert len(env_calls) == 1
@@ -181,14 +218,24 @@ def test_set_container_group_writes_the_label(monkeypatch, mocker, tmp_path: Pat
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
     incus.list_containers.return_value = []  # no local device yet -> override path
-    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
 
-    groups.set_container_group(
-        _cfg(tmp_path, groups.group_dir("claude", "work")), incus, "myrepo-x", "personal"
-    )
+    groups.set_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x", "personal")
 
     label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
     assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, "personal")]
+
+
+def test_set_container_group_drops_the_legacy_label(monkeypatch, mocker, tmp_path: Path):
+    """One write path, one spelling: the new label is set and the old one gone."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []  # no local device yet -> override path
+
+    groups.set_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x", "personal")
+
+    label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
+    assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, "personal")]
+    assert mocker.call("myrepo-x", groups.LEGACY_GROUP_LABEL) in incus.config_unset.call_args_list
 
 
 def test_set_container_group_updates_an_already_local_device(monkeypatch, mocker, tmp_path: Path):
@@ -206,8 +253,7 @@ def test_set_container_group_updates_an_already_local_device(monkeypatch, mocker
             "devices": {CLAUDE_CREDS_DEVICE: {"source": "/some/old/path"}},
         }
     ]
-    cfg = _cfg(tmp_path, groups.group_dir("claude", "work"))
-    mocker.patch("jailbee.accounts.groups._profile_has_creds_device", return_value=True)
+    cfg = _enabled_cfg(tmp_path, "work")
 
     groups.set_container_group(cfg, incus, "myrepo-x", "personal")
 
@@ -224,9 +270,7 @@ def test_set_container_group_to_no_group_removes_the_device(monkeypatch, mocker,
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
 
-    groups.set_container_group(
-        _cfg(tmp_path, groups.group_dir("claude", "work")), incus, "myrepo-x", None
-    )
+    groups.set_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x", None)
 
     incus.config_device_remove.assert_called_once_with(
         "myrepo-x", CLAUDE_CREDS_DEVICE, missing_ok=True
@@ -236,6 +280,7 @@ def test_set_container_group_to_no_group_removes_the_device(monkeypatch, mocker,
     assert env_calls[0].args[2].endswith("/.claude")
     label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
     assert label_calls[0].args[2] == groups.NO_GROUP
+    assert mocker.call("myrepo-x", groups.LEGACY_GROUP_LABEL) in incus.config_unset.call_args_list
 
 
 def test_set_container_group_rejects_a_reserved_name(mocker, tmp_path: Path):
@@ -245,18 +290,231 @@ def test_set_container_group_rejects_a_reserved_name(mocker, tmp_path: Path):
     incus.config_set.assert_not_called()
 
 
-def test_clear_container_group_removes_all_three(mocker):
+def test_clear_container_group_removes_all_three(monkeypatch, mocker, tmp_path: Path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     incus = mocker.MagicMock()
-    groups.clear_container_group(incus, "myrepo-x")
+    groups.clear_container_group(_enabled_cfg(tmp_path, "work"), incus, "myrepo-x")
     incus.config_device_remove.assert_called_once_with(
         "myrepo-x", CLAUDE_CREDS_DEVICE, missing_ok=True
     )
     unset = [c.args[1] for c in incus.config_unset.call_args_list]
-    assert unset == [_ENV_KEY, groups.GROUP_LABEL]
+    assert unset == [_ENV_KEY, groups.GROUP_LABEL, groups.LEGACY_GROUP_LABEL]
+
+
+class _RecordingAdapter:
+    """A minimal pooled adapter recording the per-container wiring `groups` asks for."""
+
+    credential_file = "cred.json"
+    refresh_token_key = "refresh"
+    live_switch = True
+
+    def __init__(self, name: str, log: list[str]) -> None:
+        self.name = name
+        self._log = log
+
+    def config_home(self, cfg):
+        return cfg.shared_dir / self.name
+
+    def holder_override(self, cfg):
+        return None
+
+    def grant_block(self, raw):
+        return None
+
+    def compose(self, target_raw, live_raw):
+        return target_raw
+
+    def locks(self, holder):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+    def account_at(self, holder, found, *, prefer, authoritative):
+        return None
+
+    def record_for(self, slot, raw):
+        return None
+
+    def on_park(self, cfg, holder, parked, account):
+        return None
+
+    def on_activate(self, holder, record, credential_raw):
+        return None
+
+    def on_switch(self, found, unreachable, record, authoritative):
+        return [], list(unreachable)
+
+    def sessions(self, found):
+        return []
+
+    def blockers(self, cfg, incus, containers):
+        return []
+
+    def wiring(self, cfg, group_dir):
+        from jailbee.accounts.adapters import base
+
+        return base.Wiring()
+
+    def prepare_config_home(self, cfg, home):
+        return None
+
+    def profile_has_group(self, cfg):
+        return False
+
+    def set_container_group(self, cfg, incus, container, group_dir):
+        self._log.append(f"set:{self.name}:{group_dir}")
+
+    def clear_container_group(self, cfg, incus, container):
+        self._log.append(f"clear:{self.name}")
+
+
+def _two_fake_adapters(monkeypatch, tmp_path, *, second_enabled: bool = True):
+    """Register two recording adapters and a Config that pools both.
+
+    `second_enabled=False` gives the "wired, then disabled" shape: `fakeb` has
+    an adapter and may already be wired into a container instance-locally, but
+    is no longer an enabled agent.
+    """
+    from jailbee.accounts.adapters import base
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    log: list[str] = []
+    base.register(_RecordingAdapter("fakea", log))
+    base.register(_RecordingAdapter("fakeb", log))
+    cfg = make_cfg(
+        tmp_path / "myrepo",
+        shared_dir=tmp_path / "shared",
+        agents={
+            "fakea": {"enabled": True, "command": "fakea"},
+            "fakeb": {"enabled": second_enabled, "command": "fakeb"},
+        },
+    )
+    return cfg, log
+
+
+def test_clear_container_group_also_tears_down_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """Disabling an agent does not unmount what it already wired into a
+    container: an instance-level device outranks the profile, so re-rendering
+    `<prefix>-binds` cannot reach it either. Filtering the teardown on `enabled`
+    would leave the container mounting a holder `unset` just reported clearing.
+    """
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.clear_container_group(cfg, incus, "myrepo-x")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["clear:fakea", "clear:fakeb"]
+
+
+def test_set_container_group_to_no_group_also_tears_down_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """`use none` is the other removal direction, and has the same duty."""
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", None)
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["set:fakea:None", "set:fakeb:None"]
+
+
+def test_set_container_group_to_a_named_group_skips_a_disabled_agent(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """The write direction keeps the `enabled` filter — the point of disabling
+    an agent is that nothing new gets wired for it."""
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path, second_enabled=False)
+    incus = mocker.MagicMock()
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", "personal")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == [f"set:fakea:{engine.group_dir('fakea', 'personal')}"]
+
+
+def test_set_container_group_invokes_every_adapter_before_the_label(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """One group value, one label, but every pooled agent gets its own wiring."""
+    from jailbee.accounts import engine
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_set.side_effect = lambda c, k, v: (
+        log.append("label") if k == groups.GROUP_LABEL else None
+    )
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", "personal")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == [
+        f"set:fakea:{engine.group_dir('fakea', 'personal')}",
+        f"set:fakeb:{engine.group_dir('fakeb', 'personal')}",
+        "label",
+    ]
+
+
+def test_clear_container_group_invokes_every_adapter_then_unsets_the_label(
+    monkeypatch, mocker, tmp_path: Path
+):
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_unset.side_effect = lambda c, k: (
+        log.append("label") if k == groups.GROUP_LABEL else None
+    )
+    try:
+        groups.clear_container_group(cfg, incus, "myrepo-x")
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["clear:fakea", "clear:fakeb", "label"]
+
+
+def test_set_container_group_with_no_group_passes_none_to_every_adapter(
+    monkeypatch, mocker, tmp_path: Path
+):
+    """`use none` is an explicit override, not a clear: the adapters are told."""
+    from jailbee.accounts.adapters import base
+
+    cfg, log = _two_fake_adapters(monkeypatch, tmp_path)
+    incus = mocker.MagicMock()
+    try:
+        groups.set_container_group(cfg, incus, "myrepo-x", None)
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+        base.ADAPTERS.pop("fakeb", None)
+
+    assert log == ["set:fakea:None", "set:fakeb:None"]
+    label_calls = [c for c in incus.config_set.call_args_list if c.args[1] == groups.GROUP_LABEL]
+    assert label_calls == [mocker.call("myrepo-x", groups.GROUP_LABEL, groups.NO_GROUP)]
 
 
 def _gcfg(**creds):
-    return GlobalConfig.model_validate({"claude_credentials": creds} if creds else {})
+    return GlobalConfig.model_validate({"credentials": creds} if creds else {})
 
 
 def _raw(name: str, group: str | None = None) -> dict:
@@ -276,35 +534,31 @@ def test_authoritative_excludes_a_repo_spanning_two_groups(mocker, monkeypatch, 
     assert groups.authoritative_prefixes(gcfg, incus, "work", ["mixed", "clean"]) == {"clean"}
 
 
-def test_claude_running_true(mocker, tmp_path):
+def test_agent_running_true(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = "running\n"
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is True
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is True
 
 
-def test_claude_running_false(mocker, tmp_path):
+def test_agent_running_false(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = "idle\n"
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is False
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is False
 
 
-def test_claude_running_unknown_when_the_probe_fails(mocker, tmp_path):
+def test_agent_running_unknown_when_the_probe_fails(mocker):
     from jailbee.incus import IncusError
 
     incus = mocker.MagicMock()
     incus.exec.side_effect = IncusError("container is not running")
-    cfg = _cfg(tmp_path)
-    assert groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command) is None
+    assert groups.agent_running(incus, "myrepo-a", command="claude") is None
 
 
-def test_claude_running_probe_uses_pgrep_x_not_f(mocker, tmp_path):
+def test_agent_running_probe_uses_pgrep_x_not_f(mocker):
     """`pgrep -f` matches its own command line and would always say yes."""
     incus = mocker.MagicMock()
     incus.exec.return_value = "idle\n"
-    cfg = _cfg(tmp_path)
-    groups.agent_running(cfg, incus, "myrepo-a", command=cfg.claude.command)
+    groups.agent_running(incus, "myrepo-a", command="claude")
     script = incus.exec.call_args.args[1][-1]
     assert "pgrep -u" in script
     assert " -x " in script
@@ -372,9 +626,7 @@ def test_container_groups_names_the_repo_of_an_ungrouped_container(monkeypatch, 
 def test_container_groups_attributes_a_container_to_its_longest_prefix(monkeypatch, tmp_path):
     """`app-web-x` belongs to `app-web`, not to `app`, when both are registered."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    gcfg = GlobalConfig.model_validate(
-        {"claude_credentials": {"repos": {"app": "one", "app-web": "two"}}}
-    )
+    gcfg = GlobalConfig.model_validate({"credentials": {"repos": {"app": "one", "app-web": "two"}}})
     rows = [_raw("app-web-x")]
     assert groups.container_groups(gcfg, rows, ["app", "app-web"]) == [
         ("app-web-x", "app-web", "two")
@@ -440,7 +692,7 @@ def _enabled_cfg(tmp_path: Path, group: str | None = None):
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
     if group is None:
         return cfg
-    return cfg.model_copy(update={"claude_credentials_dir": groups.group_dir("claude", group)})
+    return cfg.model_copy(update={"credential_group": group})
 
 
 def test_an_override_naming_the_repos_own_group_is_redundant(tmp_path: Path):
@@ -472,7 +724,7 @@ def test_a_matching_override_is_not_redundant_with_claude_disabled(tmp_path: Pat
 
     cfg = make_cfg(
         tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": False}
-    ).model_copy(update={"claude_credentials_dir": groups.group_dir("claude", "work")})
+    ).model_copy(update={"credential_group": "work"})
 
     assert groups.override_is_redundant(cfg, "work") is False
 

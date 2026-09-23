@@ -30,6 +30,7 @@ from jailbee.dashboard import (
     seed_view_state,
 )
 from jailbee.db.view_prefs import FRONTEND_QT
+from jailbee.procstat import PRIME_INTERVAL_SECONDS
 from jailbee.qtui.actions import (
     ActionCommand,
     TerminalNotFoundError,
@@ -634,6 +635,12 @@ def run(
     # bar beats a window that never appears.
     try:
         seeded = worker.gather_once(False)
+        # Twice, `PRIME_INTERVAL_SECONDS` apart: the first reading primes the
+        # sampler, the second turns it into a rate. Only the /proc read
+        # repeats — the gather does not.
+        worker.sample_activity(seeded)
+        time.sleep(PRIME_INTERVAL_SECONDS)
+        worker.sample_activity(seeded)
     except Exception as exc:  # the worker keeps retrying; report and carry on
         controller.on_failed(str(exc))
     else:

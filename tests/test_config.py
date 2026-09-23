@@ -4047,56 +4047,35 @@ def test_a_repo_dashboard_block_reports_deprecated_and_not_seeded(make_cfg, tmp_
     assert any("not seeded" in i or "not imported" in i for i in issues)
 
 
-def test_claude_credentials_dir_for_uses_the_default_group():
-    from jailbee.config import ClaudeCredentials
-    from jailbee.paths import xdg_data_home
+def test_credentials_group_for_uses_default_and_repo_override():
+    from jailbee.config import Credentials
 
-    creds = ClaudeCredentials(group="work")
+    creds = Credentials(group="work", repos={"side": "personal", "solo": None})
 
-    assert creds.dir_for("anything") == xdg_data_home() / "jailbee" / "claude-credentials" / "work"
-
-
-def test_claude_credentials_dir_for_prefers_a_repo_entry():
-    from jailbee.config import ClaudeCredentials
-    from jailbee.paths import xdg_data_home
-
-    creds = ClaudeCredentials(group="work", repos={"side": "personal"})
-
-    root = xdg_data_home() / "jailbee" / "claude-credentials"
-    assert creds.dir_for("side") == root / "personal"
-    assert creds.dir_for("other") == root / "work"
+    assert creds.group_for("other") == "work"
+    assert creds.group_for("side") == "personal"
+    assert creds.group_for("solo") is None
 
 
-def test_claude_credentials_explicit_null_opts_a_repo_out():
-    """An explicit `null` must beat the default group, not fall through to it —
-    it is the only way to keep one repo on its own credential."""
-    from jailbee.config import ClaudeCredentials
+def test_credentials_absent_block_shares_nothing():
+    from jailbee.config import Credentials
 
-    creds = ClaudeCredentials(group="work", repos={"solo": None})
-
-    assert creds.dir_for("solo") is None
-    assert creds.dir_for("other") is not None
+    assert Credentials().group_for("anything") is None
 
 
-def test_claude_credentials_absent_block_shares_nothing():
-    from jailbee.config import ClaudeCredentials
-
-    assert ClaudeCredentials().dir_for("anything") is None
-
-
-def test_claude_credentials_rejects_a_group_name_that_is_not_one_path_segment():
+def test_credentials_rejects_a_group_name_that_is_not_one_path_segment():
     """The group name becomes a directory name under the credentials root, so
     a traversal must be refused at validation, not sanitised later."""
     import pytest
     from pydantic import ValidationError
 
-    from jailbee.config import ClaudeCredentials
+    from jailbee.config import Credentials
 
     for bad in ("../escape", "with/slash", "Upper", "-leading", ""):
         with pytest.raises(ValidationError):
-            ClaudeCredentials(group=bad)
+            Credentials(group=bad)
     with pytest.raises(ValidationError):
-        ClaudeCredentials(repos={"repo": "../escape"})
+        Credentials(repos={"repo": "../escape"})
 
 
 def test_gradle_cache_is_pooled_by_default_when_java_stack_on(tmp_path):

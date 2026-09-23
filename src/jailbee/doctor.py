@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from sqlmodel import Session, select
 
-from jailbee.config import Config
+from jailbee.config import Config, ConfigError, normalize_credentials_key
+from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
@@ -247,7 +249,7 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
 
     The one failure it can report is a half-finished join: the group directory
     holds no credential while this repo's config home still does, which means
-    `jailbee apply` has not run since `claude_credentials` was configured.
+    `jailbee apply` has not run since `credentials` was configured.
     Until it does, the container mounts an empty directory and Claude Code
     answers "Not logged in".
 
@@ -256,13 +258,12 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
     """
     from jailbee.accounts import engine
 
-    group_dir = cfg.claude_credentials_dir
-    if group_dir is None:
+    group = cfg.credential_group
+    if group is None:
         return []
+    group_dir = engine.group_dir("claude", group)
 
     assert cfg.shared_dir is not None  # set by load_config
-    group = engine.repo_group(cfg)
-    assert group is not None  # group_dir is not None, so neither is this
     repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
     if not (group_dir / ".credentials.json").exists() and repo_cred.exists():
         return [
@@ -285,28 +286,73 @@ def _check_claude_credentials(cfg: Config, gcfg: GlobalConfig) -> list[CheckResu
 def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckResult]:
     """Report a configured credential group whose name the CLI cannot address.
 
-    `jailbee claude group` spells "no credential group" as the word
+    `jailbee account group` spells "no credential group" as the word
     `none`, so a group literally named `none` cannot be set or selected
     from the command line. This is reported rather than validated in
-    `ClaudeCredentials`, because a host that already has one must keep
+    `Credentials`, because a host that already has one must keep
     loading — turning a working config into a hard load failure on upgrade
     would be worse than the ambiguity.
     """
     from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 
-    configured = {gcfg.claude_credentials.group, *gcfg.claude_credentials.repos.values()}
+    configured = {gcfg.credentials.group, *gcfg.credentials.repos.values()}
     offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
     if not offending:
         return []
     return [
         CheckResult(
-            "claude credential group name",
+            "credential group name",
             False,
-            f"`claude_credentials` names a group called {', '.join(offending)}, "
-            "which `jailbee claude group` cannot address — it uses that word "
+            f"`credentials` names a group called {', '.join(offending)}, "
+            "which `jailbee account group` cannot address — it uses that word "
             "for 'no credential group'. Rename the group in "
             "~/.config/jailbee/global.yaml and rename its directory under "
             "<XDG_DATA_HOME>/jailbee/claude-credentials/ to match.",
+        )
+    ]
+
+
+def _check_legacy_credentials_key() -> list[CheckResult]:
+    """Report a `global.yaml` still spelling the credential block the old way.
+
+    `claude_credentials:` is deprecated in favour of `credentials:`, and the
+    config loader folds the old spelling into the new one before
+    `GlobalConfig` is built — by the time any check here holds the config, the
+    evidence is gone. That fold is why this reads the raw YAML itself, and why
+    the dismissible notice the loader prints is not enough: a dismissal is
+    invisible to doctor.
+
+    Not-ok, like the other legacy checks: the key keeps working only until
+    `LEGACY_REMOVAL_VERSION`, and nothing else says so on every run.
+    """
+    from jailbee.global_config import default_global_config_path
+
+    path = default_global_config_path()
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except OSError:  # an absent or unreadable file is not a diagnosis
+        return []
+    except yaml.YAMLError:
+        # A malformed file already fails the config load before doctor runs;
+        # this check owns only the key spelling.
+        return []
+    if not isinstance(raw, dict):
+        return []
+    try:
+        _, folded = normalize_credentials_key(raw, str(path))
+    except ConfigError:
+        # Both spellings at once is a hard load error the user already sees.
+        return []
+    if not folded:
+        return []
+    return [
+        CheckResult(
+            "legacy credentials key",
+            False,
+            f"`{path}` sets `claude_credentials`, deprecated and renamed to "
+            f"`credentials` — rename the key. The old spelling keeps working "
+            f"until {LEGACY_REMOVAL_VERSION}, where it is removed. See "
+            f"docs/config.md.",
         )
     ]
 
@@ -335,12 +381,12 @@ def _credential_group_members(gcfg: GlobalConfig, group: str, *, exclude: str) -
 
 
 def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
-    """One failed check per staging file an interrupted `jailbee claude use`
+    """One failed check per staging file an interrupted `jailbee account use`
     left in the store.
 
     `accounts.engine.switch` renames its target to `<name>.json.activating` before
     anything else moves, so a hard kill in that window leaves a login in a file
-    `parked_slots()` does not list — invisible to `jailbee claude ls`, and
+    `parked_slots()` does not list — invisible to `jailbee account ls`, and
     invisible here too unless something goes looking for it.
 
     Reported, never repaired. Renaming it back is safe only if that grant is
@@ -352,7 +398,7 @@ def _orphaned_stage_checks(cfg: Config) -> list[CheckResult]:
 
     **The rename is only advised when the destination name is free.** It need
     not be: after the kill, a fresh `/login` as the same account followed by
-    `jailbee claude park` lands on exactly `<name>.json`, because nothing was
+    `jailbee account park` lands on exactly `<name>.json`, because nothing was
     occupying it. `mv` would then overwrite a newer, different grant without a
     word — one login destroyed by following this very message. When the name is
     taken, the two files are named and the choice is left to the reader, with
@@ -420,7 +466,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     slots is nevertheless holding a login.
 
     The other failure it reports is a holder with parked logins and no live
-    one, which is what a `jailbee claude park` leaves behind until someone logs
+    one, which is what a `jailbee account park` leaves behind until someone logs
     in or switches. Not a broken state, but one worth naming, because the
     symptom inside a container is "Not logged in" with no explanation.
     """
@@ -461,7 +507,7 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
                 "claude account pool",
                 False,
                 f"{count}, but {holder} holds no live login — run "
-                "`jailbee claude use <account>`, or `/login` in a container.",
+                "`jailbee account use <account>`, or `/login` in a container.",
             ),
             *orphans,
         ]
@@ -469,20 +515,23 @@ def _check_claude_pool(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> list[Ch
     return [CheckResult("claude account pool", True, f"live: {live} ({count})"), *orphans]
 
 
-def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckResult]:
+def _check_redundant_credential_overrides(cfg: Config, incus: Incus) -> list[CheckResult]:
     """Report containers whose group override only repeats the repo's group.
 
     Silent when there are none — the rule every optional check here follows.
     Reported as a failure when there are, because it is state that changes
     behaviour later rather than now: the override outranks the profile, so
-    the next `jailbee claude group set` would leave exactly these containers
+    the next `jailbee account group set` would leave exactly these containers
     behind on the group the repo just left.
 
-    `jailbee claude group use`/`set`/`unset` clear such an override as they
+    `jailbee account group use`/`set`/`unset` clear such an override as they
     go, so what this finds is either a leftover from before that rule existed
-    or one written by hand. Degrades to silence when the daemon cannot be
-    reached, as `_check_claude_pool` does: a discoverability nicety must not
-    turn an unreachable Incus into a failed check.
+    or one written by hand. The override label is read new-first with the
+    pre-rename spelling as fallback (see `accounts.groups`), so a container
+    labelled by an older jailbee is still diagnosed. Degrades to silence when
+    the daemon cannot be reached, as `_check_claude_pool` does: a
+    discoverability nicety must not turn an unreachable Incus into a failed
+    check.
     """
     from jailbee.accounts import groups
 
@@ -494,11 +543,11 @@ def _check_redundant_claude_overrides(cfg: Config, incus: Incus) -> list[CheckRe
         return []
     return [
         CheckResult(
-            "claude group overrides",
+            "credential group overrides",
             False,
             f"{', '.join(names)} carry a credential-group override that only "
             "repeats this repo's group, and it would outrank the next `jailbee "
-            "claude group set` — drop one with `jailbee claude group reset "
+            "account group set` — drop one with `jailbee account group reset "
             "<container>`.",
         )
     ]
@@ -595,12 +644,13 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     results.extend(_check_dismissed_notices())
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
+    results.extend(_check_legacy_credentials_key())
     results.extend(_check_claude_pool(cfg, incus, gcfg))
     if incus_available:
         # Behind the gate, unlike its neighbours: this one always reads
         # `incus list`, and a host with no `incus` binary must see no Incus
         # call at all rather than one that fails quietly.
-        results.extend(_check_redundant_claude_overrides(cfg, incus))
+        results.extend(_check_redundant_credential_overrides(cfg, incus))
 
     # 2c. Host git repo (soft requirement — only clone-mode commands need it).
     if not (cfg.repo_root / ".git").exists():
@@ -860,7 +910,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # 10b. Post-install steps `jailbee setup` owns. Plain file checks, so they
     # sit outside the `incus_available` gate — and a missing one is silent
     # otherwise: the first-run hint fires once and then never again.
-    results.extend(_check_user_setup(cfg))
+    results.extend(_check_user_setup(gcfg))
 
     # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
     # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
@@ -1469,12 +1519,17 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
     return results
 
 
-def _check_user_setup(cfg: Config) -> list[CheckResult]:
+def _check_user_setup(gcfg: GlobalConfig) -> list[CheckResult]:
     """Report the `jailbee setup` steps missing on this machine.
 
     The refresh timer is deliberately absent: `_check_egress_pool` already
     reports it, and it can say more (whether it is *running*, and whether its
     `ExecStart` still points at this `jailbee`) than a file check could.
+
+    `gcfg` is this run's already-loaded global config — the host skills step
+    answers from it rather than reading `global.yaml` a second time, so an
+    injected `GlobalConfig` (every caller in the tests, and any future one)
+    is what the check actually reports on.
     """
     from jailbee.setup_command import (
         QT_EXTRA_TITLE,
@@ -1505,17 +1560,18 @@ def _check_user_setup(cfg: Config) -> list[CheckResult]:
             )
         )
 
-    # Only the host's own Claude reads these, so with the integration off
-    # their absence is a preference, not a fault.
-    if cfg.claude.enabled:
-        status = skills_status()
-        results.append(
-            CheckResult(
-                name="claude skills (host)",
-                ok=status.installed,
-                detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
-            )
+    # Host-level policy, not repo-level: the check itself decides what "not
+    # set up" means — an opted-out host reports ok inside `skills_status`,
+    # so no repo config gates this (an opted-in host missing the skills is
+    # the fault; an opted-out one is a preference).
+    status = skills_status(opt_in=gcfg.install_host_skills)
+    results.append(
+        CheckResult(
+            name="agent skills (host)",
+            ok=status.installed,
+            detail=status.detail if status.installed else f"{status.detail} — run `jb setup`",
         )
+    )
 
     # `ok` regardless: the Qt dashboard is an extra nobody has to want, and
     # `jailbee setup` cannot install it anyway (it would have to reinstall

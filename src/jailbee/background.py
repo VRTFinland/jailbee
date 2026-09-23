@@ -364,7 +364,7 @@ def op_to_job(
             "assume_yes": opts.assume_yes,
             "approved_autostart_ref": opts.approved_autostart_ref,
             "autofetch_done": opts.autofetch_done,
-            "claude_group": opts.claude_group,
+            "credential_group": opts.credential_group,
             "autostart_override": opts.autostart_override,
         },
     }
@@ -402,8 +402,11 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # False for an older job file: its worker then does its own fetch, as
         # that jailbee version's foreground never did one.
         autofetch_done=o.get("autofetch_done", False),
-        # `.get`: a job file written by an older jailbee predates this key.
-        claude_group=o.get("claude_group"),
+        # `.get` with the old key as fallback: a job file written by an
+        # older jailbee predates this key, and an in-flight background
+        # `jailbee new` must survive an upgrade. The new key wins when a
+        # malformed file carries both.
+        credential_group=o.get("credential_group", o.get("claude_group")),
         # `--wait` / `--no-wait`. Dropped here (or in `op_to_job`) the
         # worker would re-plan with no override and silently lose every
         # stage the operator asked to defer.

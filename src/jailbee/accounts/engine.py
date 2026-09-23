@@ -58,6 +58,8 @@ from jailbee.accounts.models import (
     _SLOT_SUFFIX,
     DISAMBIGUATOR,
     LIVE_UNIDENTIFIED,
+    AccountNotFoundError,
+    AmbiguousAccountError,
     Identity,
     LiveAccount,
     Member,
@@ -96,20 +98,18 @@ def group_dir(agent: str, name: str) -> Path:
 
 
 def repo_group(cfg: Config) -> str | None:
-    """The credential group this repo resolves to, or None.
-
-    Phase 2 replaces this body with `cfg.credential_group`; until then the
-    group name is the last component of the Claude-era computed attribute.
-    """
-    return None if cfg.claude_credentials_dir is None else cfg.claude_credentials_dir.name
+    """The credential group this repo resolves to, or None."""
+    return cfg.credential_group
 
 
 def holder_dir(adapter: AccountAdapter, cfg: Config) -> Path:
     """The directory whose credential this repo's containers read.
 
-    `holder_override`, not `group_dir(adapter.name, repo_group(cfg))`: tests
-    point `claude_credentials_dir` at arbitrary temporary paths, and deriving
-    the directory from the group name would silently ignore them.
+    `holder_override`, not `group_dir(adapter.name, repo_group(cfg))`: an
+    adapter may derive its holder from the group name (`ClaudeAdapter` does),
+    but a test that wants an arbitrary directory patches `holder_override`
+    directly rather than pointing `credential_group` at one — the group is a
+    bare name, not a path.
     """
     return adapter.holder_override(cfg) or adapter.config_home(cfg)
 
@@ -164,12 +164,18 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
     An exact slot name wins; otherwise a bare email must match exactly one
     account. Nothing is guessed — an ambiguous or unknown reference is an
     error naming the candidates.
+
+    The two failures are distinct types, both `PoolError` subclasses:
+    `AmbiguousAccountError` when this pool has candidates it cannot choose between,
+    `AccountNotFoundError` when it has none. A caller resolving one reference across
+    several agents' pools must not treat the first as the second — see
+    `AccountNotFoundError`.
     """
     wanted = ref.strip()
     exact = [s for s in slots if s.name == wanted]
     if len(exact) > 1:
         where = ", ".join(str(s.path) for s in sorted(exact, key=lambda s: str(s.path)))
-        raise PoolError(
+        raise AmbiguousAccountError(
             f"`{wanted}` is carried by {len(exact)} files ({where}), which jailbee's "
             "slot naming is supposed to make impossible — something else has written "
             "to the store. They may be two different logins, so nothing here can say "
@@ -185,10 +191,12 @@ def resolve_ref(ref: str, slots: Sequence[Slot]) -> Slot:
         return by_email[0]
     if len(by_email) > 1:
         names = ", ".join(sorted(s.name for s in by_email))
-        raise PoolError(f"`{wanted}` matches several accounts: {names}. Pass the full slot name.")
+        raise AmbiguousAccountError(
+            f"`{wanted}` matches several accounts: {names}. Pass the full slot name."
+        )
 
     known = ", ".join(sorted(s.name for s in slots))
-    raise PoolError(
+    raise AccountNotFoundError(
         f"no stored account matches `{wanted}`."
         + (f" Known: {known}" if known else " The pool is empty.")
     )
@@ -226,8 +234,9 @@ def resolve_interactively(
     parked = [s for s in slots if not s.live]
     if not parked:
         raise PoolError(
-            f"no stored login to {purpose}. `jailbee {adapter.name} park` stores the one in "
-            "use, and the next `/login` in a container of this holder adds another."
+            f"no stored login to {purpose}. `jailbee account park -a {adapter.name}` "
+            "stores the one in use, and the next `/login` in a container of this "
+            "holder adds another."
         )
     if not is_interactive():
         names = ", ".join(sorted(s.name for s in parked))
@@ -236,7 +245,7 @@ def resolve_interactively(
 
 
 def resolve_removable(ref: str, slots: Sequence[Slot]) -> Slot:
-    """The slot `jailbee claude rm` should act on.
+    """The slot `jailbee account rm` should act on.
 
     `resolve_ref` refuses a name carried by two files, because it cannot know
     which one a *switch* meant. `rm` never deletes a live login, so when the
@@ -271,8 +280,8 @@ def registered_repos() -> list[tuple[str, Path]]:
 
 def _resolves_to(gcfg: GlobalConfig, prefix: str, group: str) -> bool:
     """Whether `prefix` resolves to `group` under this host's config."""
-    resolved = gcfg.claude_credentials.dir_for(prefix)
-    return resolved is not None and resolved.name == group
+    resolved = gcfg.credentials.group_for(prefix)
+    return resolved is not None and resolved == group
 
 
 def group_member_prefixes(gcfg: GlobalConfig, group: str) -> list[str]:
@@ -296,7 +305,7 @@ def members(
 
     **The calling repo is a member only when it resolves to this holder's
     group**, which is not a given: `cli._holder_view` hands us a `Config`
-    pointed at *another* group, so that `jailbee claude use -g` can fill a
+    pointed at *another* group, so that `jailbee account use -g` can fill a
     holder no repo lives in. The config home in that view is still the calling
     repo's own, and it describes the login of the group that repo really uses —
     so counting it here would read one group's account for another
@@ -309,7 +318,7 @@ def members(
     from jailbee.config import load_repo_config
 
     me = Member(cfg.container_prefix, adapter.config_home(cfg))
-    if cfg.claude_credentials_dir is None:
+    if cfg.credential_group is None:
         return [me], []
 
     group = repo_group(cfg)
@@ -330,7 +339,7 @@ def members(
             # `load_repo_config`, not `load_config(repo_config_path(...))`:
             # a registered scratch repo has no config file, and treating
             # "no file" as unreachable would report a perfectly readable
-            # member as unreachable in `jailbee claude ls`. The loader
+            # member as unreachable in `jailbee account ls`. The loader
             # synthesizes it instead, and still raises (into the `except`
             # below, as before) when the directory is gone or
             # `scratch.enabled` is false — the cases "unreachable" is for.
@@ -480,10 +489,11 @@ def _login_block(adapter: AccountAdapter, raw: str | None) -> dict[str, Any] | N
 
 
 def _same_grant(adapter: AccountAdapter, left: dict[str, Any], right: dict[str, Any]) -> bool:
-    """Whether two `claudeAiOauth` blocks are one refresh-token lineage.
+    """Whether two login blocks are one refresh-token lineage.
 
-    Equal blocks are trivially the same grant. A shared, non-empty
-    `refreshToken` is the stronger test and the reason this is not just `==`:
+    Equal blocks are trivially the same grant. A shared, non-empty refresh
+    token — `adapter.refresh_token_key`, whatever the agent calls it — is the
+    stronger test and the reason this is not just `==`:
     an access token rotates while the lineage behind it does not, so two blocks
     can differ field by field and still be one login in two files — the exact
     state this module exists to prevent.
@@ -567,15 +577,16 @@ def _disambiguated_slot(
                 "could not read both files to tell whether that is the same login as "
                 "the one being parked. Nothing was moved; the live credential is still "
                 "in place. Compare the two files, and remove the stored one with "
-                f"`jailbee {adapter.name} rm {_slot_name(other)}` if it is the stale copy."
+                f"`jailbee account rm -a {adapter.name} {_slot_name(other)}` if it is "
+                "the stale copy."
             )
         if _same_grant(adapter, live_grant, other_grant):
             raise PoolError(
                 f"the login being parked is already stored as `{_slot_name(other)}` "
                 f"({other}). Parking it again would leave one refresh-token lineage in "
                 "two files, and the first token rotation would kill one of them. "
-                f"Run `jailbee {adapter.name} rm {_slot_name(other)}` first if the stored copy "
-                "is not the one to keep."
+                f"Run `jailbee account rm -a {adapter.name} {_slot_name(other)}` first "
+                "if the stored copy is not the one to keep."
             )
     stamp = when.strftime("%Y%m%d-%H%M%S")
     candidate = store / f"{name}{DISAMBIGUATOR}{stamp}{_SLOT_SUFFIX}"
@@ -600,7 +611,7 @@ def _slots_for(
     every `resolve_ref` for it an error, wedging the holder, so the live one
     takes the `~live` form `Slot` documents. `live` rather than a timestamp
     because there is only ever one of them, and it reads as what it is in
-    `jailbee claude ls`.
+    `jailbee account ls`.
     """
     account = adapter.account_at(
         holder_dir(adapter, cfg), found, prefer=cfg.container_prefix, authoritative=authoritative
@@ -857,11 +868,11 @@ def switch(
 def live_account_refusal(adapter: AccountAdapter, name: str) -> str:
     """The one wording for "that slot is the live login, park it first".
 
-    `cli.claude_rm_cmd` refuses before it prompts, so the user is not asked to
+    `cli._pool_rm` refuses before it prompts, so the user is not asked to
     confirm a deletion that was never going to happen; `remove_slot` refuses
     again because it is callable without the CLI. Two sites, one sentence.
     """
-    return f"`{name}` is the live account — run `jailbee {adapter.name} park` first."
+    return f"`{name}` is the live account — run `jailbee account park -a {adapter.name}` first."
 
 
 def remove_slot(adapter: AccountAdapter, slot: Slot) -> None:

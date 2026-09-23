@@ -10,6 +10,46 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Every agent in a container knows JailBee, not just Claude.** JailBee's
+  own `jailbee-usage`, `jailbee-repo-setup` and `jailbee-pr-review` skills
+  used to be copied into Claude Code's shared skills directory alone, so a
+  container running codex, gemini or opencode got none of them. Each agent
+  now declares the directory it reads user-level skills from
+  (`agents.<name>.skills_dir`, set by the `claude`, `codex`, `gemini` and
+  `opencode` presets), and `jailbee new` / `jailbee apply` copy the skills
+  into every enabled agent's own shared copy of it. `install_jailbee_skills`
+  is a generic per-agent key now rather than a Claude-only one — the
+  existing `agents.claude.install_jailbee_skills` spelling is unchanged, and
+  so is Claude's destination. An agent whose `skills_dir` no mount covers is
+  warned about and skipped, never fatal. Run `jailbee apply` once per repo
+  to reach existing containers.
+
+- **Agent accounts are generic.** The stored-login pool is managed with
+  `jailbee account ls|use|park|rm` and `jailbee account group
+  ls|create|rm|set|unset|use|reset`, and configured with a host-level
+  `credentials:` block (`group` plus per-repo `repos:`) whose name is
+  agent-agnostic — each enabled agent keeps its own login in the group, and a
+  holder can have one live login per agent. The `jailbee ls` column is
+  `GROUP`, the `jailbee new` flag is `--credential-group`, and the container
+  label is `user.jailbee.credential_group`. Every account command takes an
+  optional `-a/--agent` (the `account group` subcommands take none, since a
+  group name is shared); omitting it acts on every enabled pooled agent,
+  while naming one explicitly reaches that agent's pool even in a repo that
+  keeps it disabled — the pool is host-wide. A typed account reference that
+  matches more than one agent is an error naming the `-a` values to pass
+  (Claude is the only pooled agent so far, so that case cannot arise yet, and
+  on a TTY a picker is offered instead). The
+  old spellings all keep working and are removed in 2.0.0. The three a user
+  types warn once per invocation: `jailbee claude …`, `--claude-group`, and a
+  `claude_credentials:` block in `global.yaml` — which any write jailbee makes
+  to that file (`jailbee account group set`/`unset`, a `jailbee config edit
+  --global` save) also renames to `credentials:` in place. The two read out of
+  state nobody retypes are accepted silently: the
+  `user.jailbee.claude_group` container label (read, never written) and the
+  `claude` / `claude_group` column names. See
+  [docs/config.md](https://jailbee.gisgro.io/docs/config/#credentials) and
+  [docs/commands.md](https://jailbee.gisgro.io/docs/commands/).
+
 - **Optional authenticated SSH access to JailBee.** Install `jailbee[ssh]`,
   authorize client public keys, and explicitly enable the per-user service with
   `jb remote ssh enable` to reach the registered-repository dashboard, a
@@ -19,6 +59,37 @@ before editing `## Unreleased`.
   high-trust `full` policy. Password login, host shells, file transfer,
   forwarding are not exposed, and client environment requests (`SendEnv`)
   are accepted but ignored — never passed to the child.
+
+### Changed
+
+- **The host's own agent skills are now opt-in.** `jailbee setup`'s skills
+  step used to copy JailBee's bundled skills into `~/.claude/skills` on
+  every run. It installs nothing now unless `install_host_skills: true` is
+  set in `~/.config/jailbee/global.yaml` — and once it is, it serves every
+  skill-capable agent it finds on the host (`claude`, `codex`, `gemini`,
+  `opencode`), each in that agent's own directory. **Containers are
+  unaffected**: their skills ride the shared mounts and need no host action
+  at all, which is why the host half is the user's call. A host that had
+  the skills installed before this release keeps the files; they simply
+  stop being refreshed until the flag is set, and `jailbee setup --status`
+  says so. `jailbee doctor`'s `claude skills (host)` check is renamed
+  `agent skills (host)` and no longer depends on the Claude integration
+  being enabled for the repo you happen to be standing in.
+
+## 1.5.0 - 2026-09-21
+
+### Added
+
+- **The dashboards show what a container is actually doing.** Two new
+  columns: `CPU`, the share of a core the container is burning right now
+  (`182%·4` — 1.8 cores of the 4 it is allowed), and `DOING`, the programs
+  burning it (`claude, pytest x8`). Only programs above 5% of a core are
+  listed, so an idle container reads `—` rather than a list of daemons.
+  Both are read from the host's own `/proc`, so they cost no command inside
+  the container and nothing at all for a container that is idle. They are
+  live rates rather than readings, so they appear in `jailbee dashboard`
+  and the Qt window by default and in `jailbee ls` only on request
+  (`--fields cpu,doing`, which costs one extra 0.2 s reading).
 
 - `jb submodule pr` now consumes matching PR descriptions from the container's
   review outbox, and `jb review apply` can publish comments staged for a
@@ -160,8 +231,8 @@ before editing `## Unreleased`.
   node stack solely to get `codex` working you can drop it again, and an
   existing `npm i -g @openai/codex` install should be removed — `/etc/profile.d`
   puts `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would
-  shadow the new one. `gemini` and `opencode` still install through npm and
-  still need `golden.stacks.node`; that requirement is now documented.
+  shadow the new one. `gemini` still installs through npm and still needs
+  `golden.stacks.node`; that requirement is now documented.
 
   The same preset shared one more thing than it should have. Codex keeps its
   app-server control socket and daemon pid files under `$CODEX_HOME`, which
@@ -179,6 +250,31 @@ before editing `## Unreleased`.
   `jailbee doctor` now reports any socket it finds in a shared agent mount
   that is not carved out — `gemini`, `opencode` and `grok` share a whole home
   directory too and ship unverified.
+- **`opencode` installed through npm, which most images do not have.** Same
+  silent no-op as `codex` above: the preset's `npm i -g opencode-ai@latest`
+  needs `golden.stacks.node`, and without it the install step died with
+  `npm: command not found` — a warning `jailbee new` walks past — and the
+  agent's autostart window then died with `opencode: not found`. The preset
+  now runs the vendor's own installer
+  (`curl -fsSL https://opencode.ai/v2/install | bash`), which drops a static
+  binary and needs no toolchain. That installer hardcodes `~/.opencode/bin`,
+  which is on no PATH jailbee sets, so the preset also links the binary into
+  `~/.local/bin` — without it `opencode` would install and still not be
+  found. `~/.opencode` joins the preset's shared mounts, so the 88MB download
+  (198MB on disk) happens once per repo rather than once per branch, and a second branch
+  relinks instead of re-downloading. The install step asks for `loose` while
+  it runs, because both of the installer's hosts (`opencode.ai`,
+  `registry.npmjs.org`) are CDN-fronted and rotate their IPs;
+  `docs/agents.md` has the recipe for pinning it back to strict. The preset's
+  `egress_allow` gains opencode's own two hosts — `opencode.ai:443` (the
+  built-in "zen" gateway and the self-update version pointer) and
+  `models.dev:443` (the model catalogue it fetches at startup); opencode is a
+  multi-provider client, so the inference host for whichever provider you
+  configure stays yours to add. If you added the node stack solely to get
+  `opencode` working you can drop it again, and an existing
+  `npm i -g opencode-ai` install should be removed — `/etc/profile.d` puts
+  `~/.npm-global/bin` ahead of `~/.local/bin`, so the old copy would shadow
+  the new one.
 - **Both dashboards opened on an empty table.** `jailbee dashboard` and the
   Qt window drew their frontend first and only then asked Incus what was
   there, so the first thing on screen was a blank view — and the snapshot

@@ -31,9 +31,14 @@ isolated per-branch development environments using Incus system containers. See
   All other modules use `Incus` wrapper methods so they're unit-testable.
 - **`config.py` is read-only after load.** No module mutates the loaded
   `Config` object. Tests construct their own with `make_cfg(tmp_path)` from
-  `tests/conftest.py`. Note: `Config` carries three computed attributes
-  (`repo_root`, `default_branch`, `container_prefix`) set during
-  `load_config()` — these are intentionally not YAML keys.
+  `tests/conftest.py`. Note: `Config` carries computed attributes
+  (`repo_root`, `upstream_remote`, `default_branch`, `credential_group`) set
+  during `load_config()` — these are intentionally not YAML keys.
+  `credential_group` is the host-level, agent-agnostic group *name* from the
+  `credentials` block; the one function that turns it into a per-adapter holder
+  directory lives in `accounts/engine.py` (`engine.group_dir`), reached by
+  `accounts/groups.py`, `ClaudeAdapter.holder_override` and the overview. The
+  derivation is never defined in `Config`, the CLI or the overview.
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
@@ -62,7 +67,10 @@ isolated per-branch development environments using Incus system containers. See
   `Wiring` and the `ADAPTERS` registry); `accounts/models.py` carries the
   agent-agnostic types (`Identity`, `Slot`, `Member`, `LiveAccount`);
   `accounts/groups.py` resolves a container's credential group;
-  `accounts/overview.py` renders every login on the host, across holders.
+  `accounts/overview.py` renders every login on the host, across holders;
+  `accounts/selection.py` decides *which* login, and whose, a command acts
+  on when several agents are pooled — the TTY test and the picker are
+  injected, so it never imports the terminal and `cli.py` stays thin.
   `accounts/adapters/claude.py` is the only adapter so far, holding
   everything Claude-specific. A second agent's pool is a new adapter module,
   not a change to `engine.py`. Not to be confused with the container pool,

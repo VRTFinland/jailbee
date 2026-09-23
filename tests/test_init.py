@@ -23,6 +23,26 @@ NFT_FLUSH_MISSING_STDERR = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_data_home(tmp_path, monkeypatch):
+    """Give every test its own credential-store root.
+
+    A group holder is now derived from `XDG_DATA_HOME`, so the session-wide
+    isolation fixture would otherwise share one `work` directory across every
+    test here — making the two-credential reconciliation see a leftover file
+    from an earlier test and prompt (or refuse) instead of exercising its own
+    setup.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+
+def _group_dir(group: str = "work") -> Path:
+    """The holder directory `credential_group=group` resolves to."""
+    from jailbee.accounts import engine
+
+    return engine.group_dir("claude", group)
+
+
 def test_init_creates_shared_dirs(tmp_path):
     """With claude and jetbrains disabled, neither claude nor jetbrains
     subdirs are created. Other shared subdirs are always created."""
@@ -1025,7 +1045,7 @@ def test_ensure_claude_credentials_env_sets_the_key_when_the_mount_is_in_place(t
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     incus = MagicMock()
     incus.profile_exists.return_value = True
@@ -1056,7 +1076,7 @@ def test_ensure_claude_credentials_env_skips_when_the_binds_profile_lacks_the_de
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     incus = MagicMock()
     incus.profile_exists.return_value = True
@@ -1086,7 +1106,7 @@ def test_ensure_claude_credentials_env_leaves_an_existing_value_alone(tmp_path):
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     incus = MagicMock()
     incus.profile_exists.return_value = True
@@ -1104,7 +1124,7 @@ def test_ensure_claude_credentials_env_skips_a_repo_without_a_base_profile(tmp_p
     cfg = make_cfg(
         tmp_path,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
     incus = MagicMock()
     incus.profile_exists.return_value = False
@@ -1174,18 +1194,22 @@ def _seeded_cfg(tmp_path, *, login: bool, **claude_fields):
     """A cfg whose Claude config home is empty and whose holder may hold a login.
 
     The holder is a credential *group* directory, so these exercise the same
-    path a scratch directory takes: `claude_credentials_dir` is resolved from
+    path a scratch directory takes: `credential_group` is resolved from
     `global.yaml` for a repo with no config file exactly as for one with.
     """
     shared = tmp_path / "shared"
     (shared / "claude").mkdir(parents=True)
-    holder = tmp_path / "creds" / "work"
+    holder = _group_dir()
     holder.mkdir(parents=True)
     if login:
         (holder / ".credentials.json").write_text('{"claudeAiOauth": {}}')
-    cfg = make_cfg(tmp_path, shared_dir=shared, agents={"claude": {"enabled": True}})
-    cfg = with_agent(cfg, "claude", **claude_fields) if claude_fields else cfg
-    return cfg.model_copy(update={"claude_credentials_dir": holder})
+    cfg = make_cfg(
+        tmp_path,
+        shared_dir=shared,
+        agents={"claude": {"enabled": True}},
+        credential_group="work",
+    )
+    return with_agent(cfg, "claude", **claude_fields) if claude_fields else cfg
 
 
 def _seeded_json(cfg):
@@ -1312,6 +1336,12 @@ def test_legacy_claude_json_survives_seeding(tmp_path):
 
 
 # ---- Shared Claude credentials directory ----
+#
+# The reconciliation that seeds the holder now lives on the adapter
+# (`ClaudeAdapter.prepare_config_home`), so its behavioural tests live beside
+# it in `test_accounts_claude.py`. What stays here is the integration: the
+# helper `init` and `apply` share must create every enabled adapter's holder
+# directory, or a rendered binds profile names a missing disk source.
 
 
 def _grouped_cfg(tmp_path):
@@ -1321,145 +1351,8 @@ def _grouped_cfg(tmp_path):
         tmp_path,
         shared_dir=shared,
         claude={"enabled": True},
-        claude_credentials_dir=tmp_path / "creds" / "work",
+        credential_group="work",
     )
-
-
-def test_credentials_dir_is_created_when_a_repo_joins_a_group(tmp_path):
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg = _grouped_cfg(tmp_path)
-
-    _ensure_claude_credentials_dir(cfg)
-
-    assert cfg.claude_credentials_dir.is_dir()
-    assert cfg.claude_credentials_dir.stat().st_mode & 0o777 == 0o700
-
-
-def test_joining_a_group_moves_the_repos_credential_in(tmp_path):
-    """Moved, never copied: two copies of one grant means two refreshers, and
-    the first rotation logs one side out."""
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg = _grouped_cfg(tmp_path)
-    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
-    repo_cred.write_text('{"token": "sentinel"}')
-
-    _ensure_claude_credentials_dir(cfg)
-
-    assert not repo_cred.exists()
-    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == (
-        '{"token": "sentinel"}'
-    )
-
-
-def _two_credentials(tmp_path):
-    """A repo joining a group where both sides already hold a login."""
-    cfg = _grouped_cfg(tmp_path)
-    cfg.claude_credentials_dir.mkdir(parents=True)
-    group_cred = cfg.claude_credentials_dir / ".credentials.json"
-    group_cred.write_text("group")
-    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
-    repo_cred.write_text("repo")
-    return cfg, group_cred, repo_cred
-
-
-def test_two_credentials_adopting_the_group_deletes_the_repos_copy(tmp_path):
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
-
-    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "group")
-
-    assert group_cred.read_text() == "group"
-    assert not repo_cred.exists()
-
-
-def test_two_credentials_promoting_this_repo_replaces_the_groups_copy(tmp_path):
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
-
-    _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: "repo")
-
-    assert group_cred.read_text() == "repo"
-    assert not repo_cred.exists()
-
-
-def test_two_credentials_cancelled_is_refused_and_changes_nothing(tmp_path):
-    import pytest
-
-    from jailbee.config import ConfigError
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
-
-    with pytest.raises(ConfigError, match="already holds a credential"):
-        _ensure_claude_credentials_dir(cfg, choose_fn=lambda *_a: None)
-
-    assert group_cred.read_text() == "group"
-    assert repo_cred.read_text() == "repo"
-
-
-def test_two_credentials_without_a_tty_is_refused_and_changes_nothing(tmp_path, mocker):
-    """The default chooser must not block a piped/CI `jailbee apply` on stdin."""
-    import pytest
-
-    from jailbee.config import ConfigError
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg, group_cred, repo_cred = _two_credentials(tmp_path)
-    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
-    select = mocker.patch("questionary.select")
-
-    with pytest.raises(ConfigError, match="already holds a credential"):
-        _ensure_claude_credentials_dir(cfg)
-
-    select.assert_not_called()
-    assert group_cred.read_text() == "group"
-    assert repo_cred.read_text() == "repo"
-
-
-def test_the_chooser_is_never_asked_when_only_one_side_holds_a_credential(tmp_path, mocker):
-    """The prompt exists for the ambiguous case only — a plain join stays silent."""
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg = _grouped_cfg(tmp_path)
-    repo_cred = cfg.shared_dir / "claude" / ".credentials.json"
-    repo_cred.write_text("repo")
-    choose_fn = mocker.MagicMock()
-
-    _ensure_claude_credentials_dir(cfg, choose_fn=choose_fn)
-
-    choose_fn.assert_not_called()
-    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "repo"
-
-
-def test_an_existing_group_credential_is_left_alone(tmp_path):
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    cfg = _grouped_cfg(tmp_path)
-    cfg.claude_credentials_dir.mkdir(parents=True)
-    (cfg.claude_credentials_dir / ".credentials.json").write_text("group")
-
-    _ensure_claude_credentials_dir(cfg)
-
-    assert (cfg.claude_credentials_dir / ".credentials.json").read_text() == "group"
-
-
-def test_nothing_happens_for_a_non_group_repo(tmp_path):
-    from jailbee.init_command import _ensure_claude_credentials_dir
-
-    shared = tmp_path / "shared"
-    (shared / "claude").mkdir(parents=True)
-    cfg = make_cfg(tmp_path, shared_dir=shared, claude={"enabled": True})
-    repo_cred = shared / "claude" / ".credentials.json"
-    repo_cred.write_text("repo")
-
-    _ensure_claude_credentials_dir(cfg)
-
-    assert repo_cred.read_text() == "repo"
-    assert not (tmp_path / "creds").exists()
 
 
 def test_integration_shared_dirs_creates_the_group_dir(tmp_path):
@@ -1472,4 +1365,4 @@ def test_integration_shared_dirs_creates_the_group_dir(tmp_path):
 
     _ensure_integration_shared_dirs(cfg)
 
-    assert cfg.claude_credentials_dir.is_dir()
+    assert _group_dir().is_dir()

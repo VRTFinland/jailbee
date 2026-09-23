@@ -70,10 +70,12 @@ CONTAINER_USERNAME = "dev"
 # is `loader.load_config_from_layers`. Do not "simplify" that call site back
 # into the plain `deep_merge`.
 #
-# `claude_credentials` is host-level because it must never reach the Config
-# layer: a group name in a committed `.jailbee/config.yaml` would apply to
-# every teammate. It is resolved to `Config.claude_credentials_dir` on the
-# load path (Task 2) instead of being merged.
+# `credentials` (and its legacy spelling `claude_credentials`) is host-level
+# because it must never reach the Config layer: a group name in a committed
+# `.jailbee/config.yaml` would apply to every teammate. `normalize_credentials_key`
+# folds the legacy spelling into `credentials` before `_split_host_keys` runs,
+# and it is resolved to `Config.credential_group` on the load path instead of
+# being merged.
 #
 # `scratch` is here for a load-breaking reason, not a tidiness one: this set
 # routes a key to `GlobalConfig` *instead of* the `deep_merge` layer. Left
@@ -85,11 +87,13 @@ _HOST_LEVEL_KEYS: frozenset[str] = frozenset(
         "docker_registry_mirror",
         "ls",
         "dashboard",
+        "credentials",
         "claude_credentials",
         "scratch",
         "config_edit",
         "update_check",
         "remote",
+        "install_host_skills",
     }
 )
 
@@ -112,6 +116,32 @@ def _split_host_keys(
     host = {k: v for k, v in raw.items() if k in _HOST_LEVEL_KEYS}
     config = {k: v for k, v in raw.items() if k not in _HOST_LEVEL_KEYS}
     return host, config
+
+
+def normalize_credentials_key(
+    raw: dict[str, object],
+    origin: str,
+) -> tuple[dict[str, object], bool]:
+    """Fold the legacy `claude_credentials` key into `credentials`.
+
+    Returns `(normalized, folded)`. A raw mapping carrying both spellings is
+    an error rather than a precedence question: guessing which block wins could
+    silently point a repo at the wrong login, so the user is asked to remove
+    one. `origin` names the file the mapping came from in that message.
+
+    A pure fold: the deprecation notice belongs to the caller, which knows
+    whether it is on a real load path or inside the editor's save handler.
+    """
+    if "credentials" in raw and "claude_credentials" in raw:
+        raise ConfigError(
+            f"Both `credentials` and deprecated `claude_credentials` are set in {origin}; "
+            "remove the old key instead of making jailbee choose."
+        )
+    if "claude_credentials" not in raw:
+        return raw, False
+    out = dict(raw)
+    out["credentials"] = out.pop("claude_credentials")
+    return out, True
 
 
 def _read_yaml_or_empty(path: Path) -> dict[str, object]:

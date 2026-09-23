@@ -1,4 +1,4 @@
-"""Tests for the `jailbee claude` command group."""
+"""Tests for the `jailbee account` command group."""
 
 import json
 from pathlib import Path
@@ -11,6 +11,7 @@ from jailbee.accounts.adapters.claude import CLAUDE
 from jailbee.accounts.models import PoolChange, PoolError, Slot
 from jailbee.cli import app
 from jailbee.global_config import GlobalConfig
+from tests.conftest import NamedAdapter, patch_list_slots
 from tests.conftest import claude_overview_of as _overview
 from tests.conftest import claude_row as _row
 from tests.conftest import flat_output as _flat
@@ -21,7 +22,7 @@ runner = CliRunner()
 @pytest.fixture
 def repo(tmp_path, mocker, make_cfg):
     """A loaded repo config with a tmp shared_dir, wired into the CLI."""
-    cfg = make_cfg(tmp_path / "app", shared_dir=tmp_path / "shared")
+    cfg = make_cfg(tmp_path / "app", shared_dir=tmp_path / "shared", claude={"enabled": True})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig())
     return cfg
@@ -32,7 +33,7 @@ def _built(mocker, overview) -> None:
 
 
 def test_ls_says_which_account_is_live_in_each_group(repo, mocker):
-    """The question `claude ls` could not answer before: one row per holder,
+    """The question `account ls` could not answer before: one row per holder,
     each naming the login it holds."""
     _built(
         mocker,
@@ -42,7 +43,7 @@ def test_ls_says_which_account_is_live_in_each_group(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "staff@corp.com" in result.output
@@ -55,7 +56,7 @@ def test_ls_names_the_containers_of_a_group_no_repo_resolves_to(repo, mocker):
     the containers are named rather than counted — nothing else points at it."""
     _built(mocker, _overview(_row("demo@corp.com", group="demo", containers=("app-y",))))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "app-y" in result.output
@@ -77,7 +78,7 @@ def test_ls_counts_the_containers_of_a_group_repos_resolve_to(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "app, other" in result.output
@@ -86,11 +87,11 @@ def test_ls_counts_the_containers_of_a_group_repos_resolve_to(repo, mocker):
 
 
 def test_ls_shows_a_group_that_holds_no_login(repo, mocker):
-    """`jailbee claude group` printed such a group's name and nothing said it
+    """`jailbee account group` printed such a group's name and nothing said it
     was empty; a `/login` is what it is waiting for."""
     _built(mocker, _overview(_row(None, group="fresh")))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "fresh" in result.output
@@ -101,7 +102,7 @@ def test_ls_shows_a_group_that_holds_no_login(repo, mocker):
 def test_ls_says_a_group_is_unused_when_nothing_reads_it(repo, mocker):
     _built(mocker, _overview(_row(None, group="fresh")))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert "unused" in result.output
 
@@ -114,7 +115,7 @@ def test_ls_names_an_ungrouped_holder_by_its_repo(repo, mocker):
         _overview(_row("me@corp.com", prefix="scratch", repos=("scratch",))),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "(no group)" in result.output
@@ -127,35 +128,71 @@ def test_ls_does_not_claim_the_whole_table_belongs_to_one_group(repo, mocker):
     account had "appeared in" a group they had never touched."""
     _built(mocker, _overview(_row("me@corp.com", group="gisgro", mine=True)))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
-    assert "Claude logins on this host" in flat
+    assert "Logins on this host" in flat
     assert "logins for group" not in flat
 
 
 def test_ls_says_which_holder_this_repo_uses(repo, mocker):
-    cfg = repo.model_copy(update={"claude_credentials_dir": Path("/data/creds/gisgro")})
+    from jailbee.paths import display_path
+
+    cfg = repo.model_copy(update={"credential_group": "gisgro"})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     _built(mocker, _overview(_row("me@corp.com", group="gisgro", mine=True)))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
     assert f"This repo ({cfg.container_prefix}) → group `gisgro`" in flat
-    assert "/data/creds/gisgro" in flat
+    assert display_path(engine.group_dir("claude", "gisgro")) in flat
 
 
 def test_ls_says_when_this_repo_shares_no_group(repo, mocker):
     _built(mocker, _overview(_row("me@corp.com", prefix=repo.container_prefix, mine=True)))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
     assert f"This repo ({repo.container_prefix}) → no credential group" in flat
+
+
+def test_ls_combines_agents_and_agent_narrows_to_one(repo, mocker):
+    """Unfiltered, the table spans every enabled agent; `-a` removes the other
+    agents' rows. The `AGENT` column is what tells them apart."""
+    from dataclasses import replace
+
+    from jailbee.accounts.adapters import base
+    from tests.conftest import with_agent
+
+    cfg = with_agent(repo, "claude", enabled=True, command="claude")
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+
+    def fake_build(adapter, cfg, gcfg, incus):
+        if adapter.name == "fakea":
+            return _overview(replace(_row("a@corp.com", group="a"), agent="fakea"))
+        return _overview(_row("c@corp.com", group="c"))
+
+    mocker.patch("jailbee.accounts.overview.build", side_effect=fake_build)
+    base.register(NamedAdapter("fakea"))
+    try:
+        combined = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
+        filtered = runner.invoke(app, ["account", "ls", "-a", "claude"], env={"COLUMNS": "200"})
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+    assert combined.exit_code == 0, combined.output
+    assert "c@corp.com" in combined.output
+    assert "a@corp.com" in combined.output
+    assert "fakea" in combined.output
+    assert filtered.exit_code == 0, filtered.output
+    assert "c@corp.com" in filtered.output
+    assert "a@corp.com" not in filtered.output
 
 
 def test_ls_does_not_print_the_organization_twice(repo, mocker):
@@ -164,7 +201,7 @@ def test_ls_does_not_print_the_organization_twice(repo, mocker):
     every row."""
     _built(mocker, _overview(_row("me@corp.com#a1b2c3d4", group="staff")))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert result.output.count("a1b2c3d4") == 1
@@ -174,7 +211,7 @@ def test_ls_does_not_print_the_organization_twice(repo, mocker):
 
 def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
     """Dropping the org must not drop the `~` half: it is the only thing
-    telling two grants of one account apart, and `claude use` needs it."""
+    telling two grants of one account apart, and `account use` needs it."""
     _built(
         mocker,
         _overview(
@@ -183,7 +220,7 @@ def test_ls_keeps_a_disambiguator_in_the_account_column(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "me@corp.com~live" in result.output
@@ -195,7 +232,7 @@ def test_ls_hides_the_org_column_when_no_account_has_one(repo, mocker):
     of "-" earns no width."""
     _built(mocker, _overview(_row("me@personal.com", group="staff")))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "ORG" not in result.output
@@ -210,7 +247,7 @@ def test_ls_reports_the_repos_it_could_not_read(repo, mocker):
         _overview(_row("me@corp.com", group="staff"), unreachable=("broken",)),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "broken" in result.output
@@ -224,7 +261,7 @@ def test_ls_says_so_when_the_container_column_could_not_be_filled(repo, mocker):
         _overview(_row("me@corp.com", group="staff", repos=("app",)), containers_known=False),
     )
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
@@ -244,7 +281,7 @@ def test_ls_filters_to_one_group_and_the_parked_store(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls", "-g", "demo"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls", "-g", "demo"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "demo@corp.com" in result.output
@@ -259,8 +296,8 @@ def test_ls_explains_the_parked_scope_only_when_filtered(repo, mocker):
     overview = _overview(_row("staff@corp.com", group="staff"), _row("old@corp.com", live=False))
     _built(mocker, overview)
 
-    plain = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
-    filtered = runner.invoke(app, ["claude", "ls", "-g", "staff"], env={"COLUMNS": "200"})
+    plain = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
+    filtered = runner.invoke(app, ["account", "ls", "-g", "staff"], env={"COLUMNS": "200"})
 
     assert "host-wide" not in _flat(plain.output)
     assert "host-wide" in _flat(filtered.output)
@@ -269,7 +306,7 @@ def test_ls_explains_the_parked_scope_only_when_filtered(repo, mocker):
 def test_ls_says_when_the_host_has_no_such_group(repo, mocker):
     _built(mocker, _overview(_row("staff@corp.com", group="staff")))
 
-    result = runner.invoke(app, ["claude", "ls", "-g", "nope"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls", "-g", "nope"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "nope" in result.output
@@ -280,7 +317,7 @@ def test_ls_rejects_a_group_name_outside_the_grammar(repo, mocker):
     refuses the same names everywhere rather than only where it writes."""
     _built(mocker, _overview(_row("staff@corp.com", group="staff")))
 
-    result = runner.invoke(app, ["claude", "ls", "-g", "../etc"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls", "-g", "../etc"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 2
 
@@ -290,7 +327,7 @@ def test_ls_advises_a_login_when_the_host_holds_none(repo, mocker):
     renders a table — and the advice has to be about getting a login in."""
     _built(mocker, _overview(_row(None, prefix=repo.container_prefix, mine=True)))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "/login" in result.output
@@ -312,11 +349,12 @@ def test_ls_json_carries_the_holder_of_every_row(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+    result = runner.invoke(app, ["account", "ls", "-o", "json"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == [
         {
+            "agent": "claude",
             "account": "me@corp.com#a1b2c3d4",
             "org": "a1b2c3d4",
             "state": "live",
@@ -335,11 +373,12 @@ def test_ls_json_stays_a_clean_payload(repo, mocker):
         _overview(_row("me@corp.com", group="staff"), unreachable=("broken",)),
     )
 
-    result = runner.invoke(app, ["claude", "ls", "-o", "json"])
+    result = runner.invoke(app, ["account", "ls", "-o", "json"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == [
         {
+            "agent": "claude",
             "account": "me@corp.com",
             "org": None,
             "state": "live",
@@ -357,7 +396,7 @@ def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
         "jailbee.accounts.overview.build", side_effect=OSError("permission denied: _parked")
     )
 
-    result = runner.invoke(app, ["claude", "ls"])
+    result = runner.invoke(app, ["account", "ls"])
 
     assert result.exit_code == 2
     assert "permission denied" in result.output
@@ -365,42 +404,90 @@ def test_ls_exits_2_when_the_store_cannot_be_read(repo, mocker):
 
 def test_use_without_an_account_picks_from_a_menu(repo, mocker):
     """The gap the pickers on `jb tmux`/`jb shell` set the expectation for: a
-    bare `claude use` must offer the stored logins, not fail on a missing
+    bare `account use` must offer the stored logins, not fail on a missing
     argument."""
     mocker.patch(
         "jailbee.accounts.engine.list_slots",
         return_value=[
             Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
-            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     switch = mocker.patch(
         "jailbee.accounts.engine.switch",
-        return_value=PoolChange("live@corp.com", "parked@corp.com", [], [], []),
+        return_value=PoolChange("live@corp.com", "two@corp.com", [], [], []),
     )
-    result = runner.invoke(app, ["claude", "use"])
+    result = runner.invoke(app, ["account", "use"])
     assert result.exit_code == 0, result.output
     # The live slot is not a candidate: `switch` would refuse it.
-    offered = [s.name for s in pick.call_args.args[0]]
-    assert offered == ["parked@corp.com"]
+    offered = [s.name for _, s in pick.call_args.args[0]]
+    assert offered == ["one@corp.com", "two@corp.com"]
     switch.assert_called_once()
-    assert switch.call_args.args[3] == "parked@corp.com"
+    assert switch.call_args.args[3] == "two@corp.com"
+
+
+def test_use_without_an_account_auto_selects_a_lone_candidate(repo, mocker):
+    """One stored login needs no prompt — a one-row picker is noise, and a
+    script with no TTY should still get the switch it asked for."""
+    mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        return_value=[
+            Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
+            Slot("only@corp.com", Path("/s/only.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+    switch = mocker.patch(
+        "jailbee.accounts.engine.switch",
+        return_value=PoolChange("live@corp.com", "only@corp.com", [], [], []),
+    )
+    result = runner.invoke(app, ["account", "use"])
+    assert result.exit_code == 0, result.output
+    pick.assert_not_called()
+    assert switch.call_args.args[3] == "only@corp.com"
 
 
 def test_use_without_an_account_aborts_when_the_menu_is_cancelled(repo, mocker):
     """ESC must not switch anything, and must not print a failure either."""
     mocker.patch(
         "jailbee.accounts.engine.list_slots",
-        return_value=[Slot("parked@corp.com", Path("/s/parked.json"), live=False)],
+        return_value=[
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
+        ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    mocker.patch("jailbee.tui.pick_claude_account", return_value=None)
+    mocker.patch("jailbee.tui.pick_account", return_value=None)
     switch = mocker.patch("jailbee.accounts.engine.switch")
-    result = runner.invoke(app, ["claude", "use"])
+    result = runner.invoke(app, ["account", "use"])
     assert result.exit_code != 0
     switch.assert_not_called()
+
+
+def test_cancelling_the_picker_leaves_the_store_untouched(repo, mocker):
+    """The selection path only reads: a cancel returns None before any engine
+    mutation runs, so nothing on disk can move."""
+    mocker.patch(
+        "jailbee.accounts.engine.list_slots",
+        return_value=[
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
+        ],
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_account", return_value=None)
+    switch = mocker.patch("jailbee.accounts.engine.switch")
+    park = mocker.patch("jailbee.accounts.engine.park")
+    remove = mocker.patch("jailbee.accounts.engine.remove_slot")
+    result = runner.invoke(app, ["account", "use"])
+    assert result.exit_code != 0
+    switch.assert_not_called()
+    park.assert_not_called()
+    remove.assert_not_called()
 
 
 def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, mocker):
@@ -409,14 +496,16 @@ def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, moc
         "jailbee.accounts.engine.list_slots",
         return_value=[
             Slot("live@corp.com", Path("/h/.credentials.json"), live=True),
-            Slot("parked@corp.com", Path("/s/parked.json"), live=False),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=False)
     switch = mocker.patch("jailbee.accounts.engine.switch")
-    result = runner.invoke(app, ["claude", "use"])
+    result = runner.invoke(app, ["account", "use"])
     assert result.exit_code == 2
-    assert "parked@corp.com" in result.output
+    assert "one@corp.com" in result.output
+    assert "two@corp.com" in result.output
     switch.assert_not_called()
 
 
@@ -428,7 +517,7 @@ def test_use_with_an_account_does_not_read_the_store(repo, mocker):
         "jailbee.accounts.engine.switch",
         return_value=PoolChange(None, "new@corp.com", [], [], []),
     )
-    result = runner.invoke(app, ["claude", "use", "new@corp.com"])
+    result = runner.invoke(app, ["account", "use", "new@corp.com"])
     assert result.exit_code == 0, result.output
     slots.assert_not_called()
 
@@ -436,34 +525,40 @@ def test_use_with_an_account_does_not_read_the_store(repo, mocker):
 def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
     """`rm` has the same signature as `use`, so it gets the same menu — and its
     own confirmation still stands in front of the deletion."""
-    parked = Slot("parked@corp.com", Path("/s/parked.json"), live=False)
+    parked = Slot("two@corp.com", Path("/s/two.json"), live=False)
     mocker.patch(
         "jailbee.accounts.engine.list_slots",
-        return_value=[Slot("live@corp.com", Path("/h/c.json"), live=True), parked],
+        return_value=[
+            Slot("live@corp.com", Path("/h/c.json"), live=True),
+            Slot("one@corp.com", Path("/s/one.json"), live=False),
+            parked,
+        ],
     )
     mocker.patch("jailbee.cli._is_tty", return_value=True)
-    pick = mocker.patch("jailbee.tui.pick_claude_account", return_value="parked@corp.com")
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
-    result = runner.invoke(app, ["claude", "rm"], input="y\n")
+    result = runner.invoke(app, ["account", "rm"], input="y\n")
     assert result.exit_code == 0, result.output
-    assert [s.name for s in pick.call_args.args[0]] == ["parked@corp.com"]
+    assert [s.name for _, s in pick.call_args.args[0]] == ["one@corp.com", "two@corp.com"]
     remove.assert_called_once()
+    assert remove.call_args.args[1] is parked
 
 
 def test_park_warns_when_the_slot_name_says_nothing_about_the_account(repo, mocker):
     """The design requires this warning and it was never implemented, which is
-    why an unidentified park was only ever noticed later from `claude ls`. It
+    why an unidentified park was only ever noticed later from `account ls`. It
     must say the login is intact and how to give it its real name."""
     mocker.patch(
         "jailbee.accounts.engine.park",
         return_value=PoolChange("unknown-20260828-161630", None, ["app"], [], []),
     )
-    result = runner.invoke(app, ["claude", "park"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "park"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     flat = _flat(result.output)
     assert "does not say which account it holds" in flat
     assert "The login itself is intact" in flat
-    assert "jailbee claude park` again" in flat
+    assert "jailbee account use" in flat
+    assert "jailbee account park" in flat
 
 
 def test_use_does_not_warn_for_an_identified_park(repo, mocker):
@@ -473,7 +568,7 @@ def test_use_does_not_warn_for_an_identified_park(repo, mocker):
         "jailbee.accounts.engine.switch",
         return_value=PoolChange("old@corp.com#aaaabbbb", "new@corp.com", ["app"], [], []),
     )
-    result = runner.invoke(app, ["claude", "use", "new@corp.com"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "use", "new@corp.com"], env={"COLUMNS": "200"})
     assert result.exit_code == 0, result.output
     assert "does not say which account" not in _flat(result.output)
 
@@ -489,7 +584,7 @@ def test_use_reports_both_sides_of_the_switch(repo, mocker):
             live_sessions=[],
         ),
     )
-    result = runner.invoke(app, ["claude", "use", "new@corp.com"])
+    result = runner.invoke(app, ["account", "use", "new@corp.com"])
     assert result.exit_code == 0, result.output
     assert "new@corp.com" in result.output
     assert "old@corp.com" in result.output
@@ -501,7 +596,7 @@ def test_use_warns_about_a_live_session_without_failing(repo, mocker):
         "jailbee.accounts.engine.switch",
         return_value=PoolChange("old@x.com", "new@x.com", ["app"], [], ["app"]),
     )
-    result = runner.invoke(app, ["claude", "use", "new@x.com"])
+    result = runner.invoke(app, ["account", "use", "new@x.com"])
     assert result.exit_code == 0, result.output
     assert "session" in result.output.lower()
 
@@ -511,7 +606,7 @@ def test_use_warns_about_a_member_it_could_not_refresh(repo, mocker):
         "jailbee.accounts.engine.switch",
         return_value=PoolChange("old@x.com", "new@x.com", ["app"], ["broken"], []),
     )
-    result = runner.invoke(app, ["claude", "use", "new@x.com"])
+    result = runner.invoke(app, ["account", "use", "new@x.com"])
     assert result.exit_code == 0, result.output
     assert "broken" in result.output
 
@@ -521,7 +616,7 @@ def test_use_exits_2_on_a_pool_error(repo, mocker):
         "jailbee.accounts.engine.switch",
         side_effect=PoolError("no stored account matches `nope`."),
     )
-    result = runner.invoke(app, ["claude", "use", "nope"])
+    result = runner.invoke(app, ["account", "use", "nope"])
     assert result.exit_code == 2
     assert "nope" in result.output
 
@@ -533,7 +628,7 @@ def test_use_exits_2_on_a_lock_timeout(repo, mocker):
         "jailbee.accounts.engine.switch",
         side_effect=ClaudeLockTimeoutError("/h/.oauth_refresh.lock is held"),
     )
-    result = runner.invoke(app, ["claude", "use", "x@y.com"])
+    result = runner.invoke(app, ["account", "use", "x@y.com"])
     assert result.exit_code == 2
     assert "oauth_refresh.lock" in result.output
 
@@ -543,7 +638,7 @@ def test_park_tells_the_user_how_a_new_login_gets_in(repo, mocker):
         "jailbee.accounts.engine.park",
         return_value=PoolChange("me@corp.com", None, ["app"], [], []),
     )
-    result = runner.invoke(app, ["claude", "park"])
+    result = runner.invoke(app, ["account", "park"])
     assert result.exit_code == 0, result.output
     assert "me@corp.com" in result.output
     assert "/login" in result.output
@@ -551,7 +646,7 @@ def test_park_tells_the_user_how_a_new_login_gets_in(repo, mocker):
 
 def test_park_of_an_empty_holder_is_not_an_error(repo, mocker):
     mocker.patch("jailbee.accounts.engine.park", return_value=PoolChange(None, None, [], [], []))
-    result = runner.invoke(app, ["claude", "park"])
+    result = runner.invoke(app, ["account", "park"])
     assert result.exit_code == 0, result.output
     assert "Nothing to park" in result.output
 
@@ -561,11 +656,11 @@ def test_rm_confirms_before_deleting(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    declined = runner.invoke(app, ["claude", "rm", "old@x.com"], input="n\n")
+    declined = runner.invoke(app, ["account", "rm", "old@x.com"], input="n\n")
     assert declined.exit_code == 1
     remove.assert_not_called()
 
-    accepted = runner.invoke(app, ["claude", "rm", "old@x.com"], input="y\n")
+    accepted = runner.invoke(app, ["account", "rm", "old@x.com"], input="y\n")
     assert accepted.exit_code == 0, accepted.output
     remove.assert_called_once_with(CLAUDE, slot)
 
@@ -575,7 +670,7 @@ def test_rm_warns_that_deletion_is_permanent(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    result = runner.invoke(app, ["claude", "rm", "old@x.com"], input="n\n")
+    result = runner.invoke(app, ["account", "rm", "old@x.com"], input="n\n")
 
     assert "/login" in result.output
 
@@ -585,7 +680,7 @@ def test_rm_yes_skips_the_prompt(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    result = runner.invoke(app, ["claude", "rm", "old@x.com", "--yes"])
+    result = runner.invoke(app, ["account", "rm", "old@x.com", "--yes"])
 
     assert result.exit_code == 0, result.output
     remove.assert_called_once_with(CLAUDE, slot)
@@ -596,7 +691,7 @@ def test_rm_refuses_the_live_account(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    result = runner.invoke(app, ["claude", "rm", "me@x.com", "--yes"])
+    result = runner.invoke(app, ["account", "rm", "me@x.com", "--yes"])
 
     assert result.exit_code == 2
     assert "park" in result.output
@@ -607,14 +702,14 @@ def test_use_exits_2_on_an_os_error(repo, mocker):
     """`_move_file` and `atomic_write` raise `OSError` mid-move: the one
     moment the user most needs a message rather than a stack trace."""
     mocker.patch("jailbee.accounts.engine.switch", side_effect=OSError("no space left on device"))
-    result = runner.invoke(app, ["claude", "use", "x@y.com"])
+    result = runner.invoke(app, ["account", "use", "x@y.com"])
     assert result.exit_code == 2
     assert "no space left" in result.output
 
 
 def test_park_exits_2_on_an_os_error(repo, mocker):
     mocker.patch("jailbee.accounts.engine.park", side_effect=OSError("read-only file system"))
-    result = runner.invoke(app, ["claude", "park"])
+    result = runner.invoke(app, ["account", "park"])
     assert result.exit_code == 2
     assert "read-only file system" in result.output
 
@@ -628,7 +723,7 @@ def test_park_warns_that_a_live_session_loses_its_login(repo, mocker):
         return_value=PoolChange("me@x.com", None, ["app"], [], ["app"]),
     )
 
-    result = runner.invoke(app, ["claude", "park"])
+    result = runner.invoke(app, ["account", "park"])
 
     assert result.exit_code == 0, result.output
     assert "no login" in result.output
@@ -645,7 +740,7 @@ def test_rm_deletes_the_parked_half_of_a_duplicated_name(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[parked, live])
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    result = runner.invoke(app, ["claude", "rm", "old@x.com", "--yes"])
+    result = runner.invoke(app, ["account", "rm", "old@x.com", "--yes"])
 
     assert result.exit_code == 0, result.output
     remove.assert_called_once_with(CLAUDE, parked)
@@ -657,7 +752,7 @@ def test_rm_speaks_the_shared_live_account_refusal(repo, mocker):
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     mocker.patch("jailbee.accounts.engine.remove_slot")
 
-    result = runner.invoke(app, ["claude", "rm", "me@x.com", "--yes"])
+    result = runner.invoke(app, ["account", "rm", "me@x.com", "--yes"])
 
     assert result.exit_code == 2
     # Equality with the shared wording, not a substring both happen to
@@ -671,7 +766,7 @@ def test_ls_reads_no_login_even_on_the_row_this_repo_uses(repo, mocker):
     a first smoke test rendered the literal `None` in the ACCOUNT column."""
     _built(mocker, _overview(_row(None, group="fresh", mine=True)))
 
-    result = runner.invoke(app, ["claude", "ls"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "(no login)" in result.output
@@ -691,9 +786,85 @@ def test_ls_filters_to_the_ungrouped_holders(repo, mocker):
         ),
     )
 
-    result = runner.invoke(app, ["claude", "ls", "-g", "none"], env={"COLUMNS": "200"})
+    result = runner.invoke(app, ["account", "ls", "-g", "none"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "me@corp.com" in result.output
     assert "staff@corp.com" not in result.output
     assert "old@corp.com" in result.output
+
+
+def test_park_with_several_live_adapters_picks_one(repo, mocker):
+    """Several agents can be live in one holder, so `park` asks which pool to
+    empty; the chosen adapter is the one the engine mutation runs against."""
+    from jailbee.accounts.adapters import base
+    from jailbee.accounts.models import PoolChange
+    from tests.conftest import with_agent
+
+    cfg = with_agent(repo, "claude", enabled=True, command="claude")
+    cfg = with_agent(cfg, "fakea", enabled=True, command="fakea")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    fakea = NamedAdapter("fakea")
+    base.register(fakea)
+    patch_list_slots(
+        mocker,
+        {
+            "claude": [Slot("c@x.com", Path("/h/c.json"), live=True)],
+            "fakea": [Slot("a@x.com", Path("/h/a.json"), live=True)],
+        },
+    )
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.tui.pick_account", return_value=("fakea", "a@x.com"))
+    park = mocker.patch(
+        "jailbee.accounts.engine.park",
+        return_value=PoolChange("a@x.com", None, [], [], []),
+    )
+    try:
+        result = runner.invoke(app, ["account", "park"])
+    finally:
+        base.ADAPTERS.pop("fakea", None)
+
+    assert result.exit_code == 0, result.output
+    assert park.call_args.args[0] is fakea
+
+
+def test_choose_account_choice_wires_this_process_terminal_in(repo, mocker):
+    """The seam the selection move created: `selection.choose` takes the TTY
+    test and the picker as arguments, so the CLI wrapper is the only thing
+    that can get them wrong — and nothing in `test_accounts_selection.py`
+    would notice if it passed the wrong pair."""
+    from jailbee.cli import _choose_account_choice
+
+    fakea = NamedAdapter("fakea")
+    fakeb = NamedAdapter("fakeb")
+    choices = [
+        (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
+        (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
+    ]
+    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "me@x.com"))
+
+    choice = _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+
+    assert choice is not None
+    assert (choice[0].name, choice[1].name) == ("fakeb", "me@x.com")
+    assert pick.call_args.args == (choices, "Switch:")
+
+
+def test_choose_account_choice_refuses_off_a_tty(repo, mocker):
+    """The other half of the wiring: `_is_tty` really is what gates the
+    picker, not a constant."""
+    from jailbee.cli import _choose_account_choice
+
+    fakea = NamedAdapter("fakea")
+    fakeb = NamedAdapter("fakeb")
+    choices = [
+        (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
+        (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
+    ]
+    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    pick = mocker.patch("jailbee.tui.pick_account")
+
+    with pytest.raises(PoolError, match="-a fakea"):
+        _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
+    pick.assert_not_called()
