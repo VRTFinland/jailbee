@@ -435,6 +435,20 @@ def test_read_outbox_wraps_incus_failure(mocker):
         ("/home/x/github.com/acme/widgets", None),
         ("https://www.github.com/acme/widgets", None),
         ("https://github.com@evil.com/acme/widgets", None),
+        # A `?` or `#` in the userinfo position ends the authority (or
+        # starts a fragment) before the regex reaches `github.com`, so the
+        # real host is `evil.com`, not `github.com`.
+        ("https://evil.com?x=@github.com/acme/widgets", None),
+        ("https://evil.com#@github.com/acme/widgets", None),
+        # A literal backslash in userinfo is treated as a path separator by
+        # WHATWG URL parsers, again leaving `evil.com` as the real host.
+        ("https://evil.com\\@github.com/acme/widgets", None),
+        # Empty userinfo (`+`, not `*`, required — matching the ssh:// arm).
+        ("https://@github.com/acme/widgets", None),
+        # Unicode homographs of "github.com" (dotless i / dotted capital I,
+        # both fold to ASCII "i" under IGNORECASE without re.ASCII).
+        ("https://g\u0131thub.com/acme/widgets", None),
+        ("https://g\u0130thub.com/acme/widgets", None),
     ],
 )
 def test_github_slug(url, slug):

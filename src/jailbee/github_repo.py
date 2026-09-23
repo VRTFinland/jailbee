@@ -5,12 +5,20 @@ from __future__ import annotations
 import posixpath
 import re
 
+# Non-ASCII separator/control characters that Unicode-aware `\s` matches but
+# ASCII-only `\s` does not (re.ASCII narrows `\s` to `[ \t\n\r\f\v]`, see
+# below). Re-excluded explicitly in the userinfo classes so that switching to
+# re.ASCII — needed to stop Unicode case-folding homographs of "github.com"
+# (e.g. U+0131 dotless i) — does not also widen what userinfo accepts.
+_NON_ASCII_SPACE = r"\x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+
 _GITHUB_REMOTE_RE = re.compile(
-    r"^(?P<prefix>https://(?:[^/@\s]*@)?github\.com/|git://github\.com/|"
-    r"ssh://(?:[^/@\s]+@)?github\.com/|"
-    r"(?:[^@/:\s]+@)?github\.com:)"
+    r"^(?P<prefix>https://(?:[^/@\s#?\\" + _NON_ASCII_SPACE + r"]+@)?github\.com/|"
+    r"git://github\.com/|"
+    r"ssh://(?:[^/@\s" + _NON_ASCII_SPACE + r"]+@)?github\.com/|"
+    r"(?:[^@/:\s" + _NON_ASCII_SPACE + r"]+@)?github\.com:)"
     r"(?P<owner>[^/?#\s]+)/(?P<repo>[^/?#\s]+)/?$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.ASCII,
 )
 
 
@@ -42,6 +50,10 @@ def resolve_submodule_url(parent_url: str, declared_url: str) -> str | None:
     Absolute supported GitHub URLs are returned unchanged. Relative URLs must
     use Git's explicit ``./`` or ``../`` form and must resolve to another
     two-component GitHub repository path.
+
+    The result reuses the parent remote's ``prefix``, which may carry
+    credentials (e.g. ``https://x-access-token:TOKEN@github.com/``) — a
+    future caller must not log or display the returned URL verbatim.
     """
     if _github_remote_parts(declared_url) is not None:
         return declared_url
