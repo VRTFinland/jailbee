@@ -41,7 +41,8 @@ def _manifest_text(**overrides) -> str:
     return json.dumps(payload)
 
 
-def _running_ci(name: str = "acme-feat-foo", *, state: str = "Running"):
+def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = None, state: str = "Running"):
+    from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ContainerInfo
 
     return ContainerInfo(
@@ -51,6 +52,13 @@ def _running_ci(name: str = "acme-feat-foo", *, state: str = "Running"):
         ip=None,
         memory_limit=None,
         repo="acme",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_issue_actions=pending,
+        ),
     )
 
 
@@ -222,6 +230,45 @@ def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path
     assert result.exit_code == 2
     pick.assert_not_called()
     assert "feat-a" in result.output and "feat-b" in result.output
+
+
+def test_apply_probe_zero_container_is_never_read(mocker, tmp_path):
+    """The probe's explicit 0 means "nothing here" -- the outbox is not even
+    opened, unlike an unknown (`None`) count."""
+    _setup(mocker, tmp_path)
+    read = mocker.patch(
+        "jailbee.issue_outbox.read_issue_outbox",
+        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
+    )
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=0)])
+
+    result = runner.invoke(app, ["issue", "apply"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing pending" in result.output.lower()
+    read.assert_not_called()
+
+
+def test_apply_probe_none_container_is_still_read(mocker, tmp_path):
+    """`None` means the probe could not say -- the outbox stays authoritative."""
+    _setup(mocker, tmp_path)
+    read = mocker.patch(
+        "jailbee.issue_outbox.read_issue_outbox",
+        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
+    )
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=None)])
+    prepare = mocker.patch(
+        "jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path)
+    )
+    mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
+
+    result = runner.invoke(app, ["issue", "apply", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    # Once to decide candidacy, once more in `_read_issue_outbox_or_exit` --
+    # unrelated to this pre-filter, and true before it too.
+    assert read.call_count == 2
+    assert prepare.call_args.args[2] == "acme-feat-foo"
 
 
 # ---- approval and ordering (apply) -----------------------------------------
@@ -495,6 +542,21 @@ def test_ls_never_touches_github(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     run_api.assert_not_called()
+
+
+def test_ls_skips_reading_a_container_whose_probe_says_zero(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    read = mocker.patch(
+        "jailbee.issue_outbox.read_issue_outbox",
+        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
+    )
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=0)])
+
+    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == []
+    read.assert_not_called()
 
 
 def test_ls_notes_a_stopped_container_instead_of_reading_it(mocker, tmp_path):

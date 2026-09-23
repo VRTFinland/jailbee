@@ -11317,14 +11317,17 @@ class _IssueRow(NamedTuple):
 def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
     """The container to act on; ``None`` when nothing anywhere is pending.
 
-    Mirrors `_resolve_review_container`, but candidacy comes from reading
-    each running container's own issue outbox directly — never the
-    git-status probe's PR-action count, which stays uncoupled from issue
-    management by design (see the Task 8 brief). Zero candidates is
-    success ("nothing pending"); one auto-selects; several prompt on a TTY
-    and exit 2, naming short names, off one. A stopped container's outbox
-    cannot be read at all, so it is silently not a candidate here (`issue
-    ls` is where a stopped container is instead named as unreadable).
+    Mirrors `_resolve_review_container`: the git-status probe's issue-action
+    count pre-filters the candidates before any outbox is opened, but the
+    outbox read stays authoritative. A container whose count is an explicit
+    0 is skipped without reading it; a nonzero count or an unknown ``None``
+    (a pre-upgrade container, a probe early-exit, an unparseable value)
+    still gets its outbox read, exactly as `issue ls` does. Zero candidates
+    is success ("nothing pending"); one auto-selects; several prompt on a
+    TTY and exit 2, naming short names, off one. A stopped container's
+    outbox cannot be read at all, so it is silently not a candidate here
+    (`issue ls` is where a stopped container is instead named as
+    unreadable).
     """
     from jailbee import issue_outbox
     from jailbee.incus import Incus
@@ -11337,9 +11340,12 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
 
     incus = Incus()
     pending = []
-    for ci in list_containers(cfg, incus):
+    for ci in list_containers(cfg, incus, with_git_status=True):
         if ci.state != "Running":
             continue
+        probed = ci.git_status.pending_issue_actions if ci.git_status is not None else None
+        if probed == 0:
+            continue  # the probe already answered "nothing here" — don't ask twice
         try:
             outbox = issue_outbox.read_issue_outbox(incus, ci.name, uid=cfg.container_user.uid)
         except OutboxReadError:
@@ -11499,10 +11505,12 @@ def issue_ls_cmd(
     cfg = _load_or_exit(config)
     incus = Incus()
     if name is None:
-        infos = list_containers(cfg, incus)
+        infos = list_containers(cfg, incus, with_git_status=True)
     else:
         incus, resolved = _resolve_existing(cfg, name)
-        infos = [ci for ci in list_containers(cfg, incus) if ci.name == resolved]
+        infos = [
+            ci for ci in list_containers(cfg, incus, with_git_status=True) if ci.name == resolved
+        ]
 
     journal_store = JournalStore()
     rows: list[_IssueRow] = []
@@ -11513,6 +11521,9 @@ def issue_ls_cmd(
         if ci.state != "Running":
             skipped.append(short)
             continue
+        pending = ci.git_status.pending_issue_actions if ci.git_status is not None else None
+        if pending == 0:
+            continue  # the probe already answered "nothing here" — don't ask twice
         try:
             outbox = issue_outbox.read_issue_outbox(incus, ci.name, uid=cfg.container_user.uid)
         except OutboxReadError as e:
