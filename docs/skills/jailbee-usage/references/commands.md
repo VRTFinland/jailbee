@@ -27,6 +27,7 @@ Common conventions:
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
 - [PR review outbox (`review apply|ls|show|drop`)](#pr-review-outbox)
+- [Issue management outbox (`issue ls|show|apply|drop|resolve`)](#issue-management-outbox)
 - [Branch placement (`branch`)](#branch-placement)
 - [Submodules (`submodule pr`)](#submodules)
 - [Network (`net strict|loose|refresh|status|unregister|install`, `net egress ls|add|rm|export`)](#network)
@@ -954,6 +955,89 @@ it. Omit `MANIFEST` to drop everything pending in the container.
   destroy would discard, alongside a dirty tree and commits not on the
   host/a remote — see the destroy guard under [Create &
   lifecycle](#create--lifecycle).
+
+## Issue management outbox
+
+A container's `gh` cannot write to GitHub either; an in-container agent
+stages issue creates, edits, comments, label changes and state changes as
+JSON manifests in `~/.jailbee/issue-outbox/` instead (the manifest schema is
+normative in the **jailbee-issue-management** skill, not here). Unlike the
+PR review outbox, there is no top-level `repo` on the manifest — every
+action names its own, so one manifest may freely mix the superproject
+(`repo: "."`) and any number of declared submodules. See [Issue
+management](../../../git-bridge.md#issue-management) in `git-bridge.md` for
+the full host-side workflow (stale-`expected` refusal, stop/resume,
+`uncertain` reconciliation, journal archival); this section is the flag
+reference.
+
+### `jailbee issue ls [NAME] [-o table|json] [--fields …]`
+
+One row per pending manifest across this repo's containers — CONTAINER,
+MANIFEST, ACTIONS (counts by kind, e.g. `create:1 comment:2`), REPOS, STATE
+(`pending`, `in progress`, `uncertain`, or `error`) — read from each
+container's own outbox and host journal, never a GitHub read. `NAME`
+narrows the listing to one container; omitting it does **not** open a
+picker (unlike most `jailbee` commands) — it lists every container of this
+repo at once. A stopped container's outbox cannot be read at all, so it is
+named in a note under the table instead of appearing empty. `--fields` is
+comma-separated from `container, manifest, actions, repos, state, error`
+(`error` hidden from the default table); `-o json` includes it always.
+
+### `jailbee issue show NAME [MANIFEST]`
+
+Print every pending manifest's validated proposal and host journal state,
+verbatim — no truncation, no markup interpretation, and never a GitHub
+read. Omit `MANIFEST` for every manifest pending in that container.
+
+### `jailbee issue apply [NAME] [--manifest NAME] [-y] [--dry-run]`
+
+Show one combined plan for every selected manifest and every repository it
+touches, ask once, then apply. Order is fixed: a read-only preflight builds
+the plan (refusing the whole batch if any mutating action's `expected`
+block already disagrees with a live `gh issue view`); the plan is printed;
+one confirmation is asked; a second, narrower re-check re-reads only what
+could have gone stale since the first read; only then does anything mutate
+GitHub. `--dry-run` stops right after the plan — no confirmation, no
+recheck, no journal write, no mutation. `-y`/`--yes` skips only the
+confirmation; the recheck always runs regardless. No `NAME` auto-picks the
+one running container in this repo with anything pending, and only asks
+among several — off a TTY with more than one candidate it errors, naming
+them. A run stops at the first action it cannot durably resolve one way or
+the other (nothing later in that manifest, or in any manifest after it in
+the batch, is attempted); re-running `apply` resumes, skipping actions the
+journal already shows applied and restoring a `create` action's issue
+number for any `issue_ref` still ahead of it. An action left `uncertain` by
+an earlier run blocks the whole manifest until `jailbee issue resolve`
+reconciles it.
+
+### `jailbee issue drop NAME [MANIFEST] [--archive-journal] [-y]`
+
+Delete pending issue actions **without publishing them** — no GitHub call,
+no `applied.log` line. Refuses by default the instant the manifest has any
+recorded journal progress at all, even fully settled progress, so a
+proposal that already changed GitHub is never silently forgotten.
+`--archive-journal` allows dropping it anyway — still refused outright
+while any action is `uncertain` (resolve that first) — after printing every
+applied receipt and every action still pending, then archives the journal
+once the container's outbox files are deleted. Omit `MANIFEST` to act on
+everything pending in the container. Confirms first unless `-y`; refuses
+off a TTY without it.
+
+### `jailbee issue resolve NAME MANIFEST ACTION (--applied --url URL [--issue N] | --retry) [-y]`
+
+Reconcile one action an earlier `apply` left `uncertain` (its GitHub
+outcome could not be determined for certain). Exactly one of:
+
+- `--applied --url <github-issue-url> [--issue <n>]` — durably records a
+  human's own confirmation, read off GitHub's UI, of what actually landed.
+  `--issue` is required (and must agree with the URL's number) for a
+  `create` action's resolution; forbidden for every other action kind.
+- `--retry` — forgets the uncertain record; the action becomes `pending`
+  again and is attempted on the next `apply`.
+
+Prints the manifest's current proposal and journal state first, then —
+absent `-y` — a confirmation naming the exact action. Refuses off a TTY
+without `-y`.
 
 ## Branch placement
 

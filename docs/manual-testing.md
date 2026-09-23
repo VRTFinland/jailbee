@@ -1346,6 +1346,304 @@ jailbee destroy feat-outboxsmoke --force
 git push origin --delete feat/outboxsmoke   # requires explicit user approval
 ```
 
+## `jailbee issue ls/show/apply/drop/resolve` smoke test
+
+> Host-only. Requires `gh auth login` on the host with write access to a
+> real, disposable test repository (Issues enabled) and a declared test
+> submodule with its own GitHub repository (also Issues-enabled, already
+> known to `.gitmodules`/`git submodule status`) — nothing about the outbox
+> parser or the gates has ever run against a real GitHub API. Manifests
+> below are the worked examples from the `jailbee-issue-management` skill's
+> `references/manifest-schema.md` — read that file first if the JSON shape
+> is unclear. Replace `<owner>/<repo>`, `<submodule-path>`/`<sub-owner>/<sub-repo>`,
+> and every `<N>` throughout.
+
+```bash
+# 0. A container, and one pre-existing superproject issue to edit/label/close.
+git checkout main
+jailbee new feat/issuesmoke
+gh issue create --repo <owner>/<repo> \
+  --title "Dashboard CPU column is wrong for frozen containers" \
+  --body "Placeholder for the smoke test."
+# note the number -> <N>
+```
+
+### 1. Decline leaves GitHub and the host journal unchanged
+
+```bash
+jailbee shell feat-issuesmoke
+mkdir -p ~/.jailbee/issue-outbox
+cat > ~/.jailbee/issue-outbox/001-decline.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "create", "repo": ".", "ref": "decline-me", "title": "Should never exist",
+     "body": "If you see this on GitHub, the decline path is broken.", "labels": []}
+  ]
+}
+JSON
+exit
+
+jailbee issue apply feat-issuesmoke
+# expect: the plan (one create action, [pending]), then "Proceed? [y/N]"
+# answer n:
+# expect: "Nothing applied." — exit 0
+gh issue list --repo <owner>/<repo> --search "Should never exist in:title"
+# expect: empty — nothing was created
+jailbee issue ls feat-issuesmoke
+# expect: 001-decline.json STATE=pending (unchanged — nothing was journaled)
+jailbee shell feat-issuesmoke
+ls ~/.jailbee/issue-outbox/     # 001-decline.json is still there — declining consumed nothing
+rm ~/.jailbee/issue-outbox/001-decline.json
+exit
+```
+
+### 2. One batch creates two issues and comments on one through `issue_ref`
+
+```bash
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/002-batch.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "create", "repo": ".", "ref": "bug-a", "title": "First smoke-test issue",
+     "body": "Created by the issue outbox smoke test.", "labels": []},
+    {"type": "create", "repo": ".", "ref": "bug-b", "title": "Second smoke-test issue",
+     "body": "Created by the issue outbox smoke test.", "labels": []},
+    {"type": "comment", "repo": ".", "issue_ref": "bug-a",
+     "body": "Following up on the first one — resolved via issue_ref, not a number."}
+  ]
+}
+JSON
+exit
+
+jailbee issue apply feat-issuesmoke -y
+# expect: two "create" lines then one "comment" line in the plan, then three
+#         "... action N: applied (https://github.com/...)" lines, then
+#         "002-batch.json: fully applied and removed from the outbox"
+gh issue list --repo <owner>/<repo> --search "smoke-test issue in:title" --json number,title
+# expect: two open issues, "First smoke-test issue" and "Second smoke-test issue"
+gh issue view <bug-a-number> --repo <owner>/<repo> --json comments -q '.comments[].body'
+# expect: "Following up on the first one — resolved via issue_ref, not a number."
+jailbee shell feat-issuesmoke
+cat ~/.jailbee/issue-outbox/applied.log   # 3 lines, one per action
+exit
+```
+
+### 3. `edit`/`labels`/`state` affect an existing superproject issue
+
+```bash
+gh issue view <N> --repo <owner>/<repo> --json title,body,labels,state
+# copy the exact title/labels/state into `expected` below
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/003-triage.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "edit", "repo": ".", "issue": <N>,
+     "title": "Dashboard CPU column shows 0% for frozen containers",
+     "expected": {"title": "Dashboard CPU column is wrong for frozen containers"}},
+    {"type": "labels", "repo": ".", "issue": <N>, "add": ["bug"], "remove": [],
+     "expected": {"labels": []}},
+    {"type": "state", "repo": ".", "issue": <N>, "state": "closed", "reason": "completed",
+     "expected": {"state": "open"}}
+  ]
+}
+JSON
+exit
+
+jailbee issue apply feat-issuesmoke -y
+gh issue view <N> --repo <owner>/<repo> --json title,labels,state
+# expect: the new title, labels ["bug"], state CLOSED
+```
+
+### 4. `create`/`comment` affect a submodule issue repository
+
+```bash
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/004-submodule.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "create", "repo": "<submodule-path>", "ref": "sub-bug",
+     "title": "Submodule smoke-test issue",
+     "body": "Created from the superproject container.", "labels": []},
+    {"type": "comment", "repo": "<submodule-path>", "issue_ref": "sub-bug",
+     "body": "repo names the submodule's own GitHub repo, not the superproject."}
+  ]
+}
+JSON
+exit
+
+jailbee issue apply feat-issuesmoke -y
+# expect: "Repository: <submodule-path> (<sub-owner>/<sub-repo>)" in the plan —
+#         never the superproject's own slug
+gh issue list --repo <sub-owner>/<sub-repo> --search "Submodule smoke-test issue in:title"
+# expect: one open issue, with the comment attached
+gh issue list --repo <owner>/<repo> --search "Submodule smoke-test issue in:title"
+# expect: empty — nothing landed in the superproject repo
+```
+
+### 5. Changing an `expected` title after the manifest was written causes zero writes
+
+```bash
+gh issue view <N> --repo <owner>/<repo> --json title
+# note the CURRENT title -> <old-title>
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/005-stale.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "edit", "repo": ".", "issue": <N>, "title": "A title nobody approved",
+     "expected": {"title": "<old-title>"}}
+  ]
+}
+JSON
+exit
+
+# Retitle the issue from OUTSIDE the manifest — what `expected.title` was
+# copied from is now stale.
+gh issue edit <N> --repo <owner>/<repo> --title "<old-title> (retitled by hand)"
+
+jailbee issue apply feat-issuesmoke
+# expect: refused BEFORE any confirmation —
+#   "005-stale.json action 0: expected.title differs from the current issue"
+#   — exit 1, no "Proceed?" prompt at all
+gh issue view <N> --repo <owner>/<repo> --json title
+# expect: "<old-title> (retitled by hand)" — the manifest's title was NEVER written
+jailbee issue ls feat-issuesmoke
+# expect: 005-stale.json STATE=pending — nothing was journaled either
+jailbee shell feat-issuesmoke && rm ~/.jailbee/issue-outbox/005-stale.json && exit
+```
+
+### 6. An injected failure stops later actions; retrying skips already-applied receipts
+
+Force a real, definite GitHub-side rejection on the *second* action of a
+batch by locking the target issue's conversation first (`gh api ... /lock`
+makes a subsequent comment attempt return a 4xx, which the host maps to a
+**definite** failure, not `uncertain`):
+
+```bash
+gh issue create --repo <owner>/<repo> --title "Lock target for the smoke test" --body "x"
+# note the number -> <L>
+gh api -X PUT repos/<owner>/<repo>/issues/<L>/lock -f lock_reason=off-topic
+
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/006-stops.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "create", "repo": ".", "ref": "lands-fine", "title": "Lands before the failure",
+     "body": "This one should succeed and be journaled applied.", "labels": []},
+    {"type": "comment", "repo": ".", "issue": <L>,
+     "body": "This comment should fail — the issue is locked."},
+    {"type": "comment", "repo": ".", "issue_ref": "lands-fine",
+     "body": "This should never be attempted — the batch stopped one step earlier."}
+  ]
+}
+JSON
+exit
+
+jailbee issue apply feat-issuesmoke -y
+# expect: "006-stops.json action 0: applied (...)" then
+#         "006-stops.json action 1: failed — GitHub mutation was rejected" then
+#         "006-stops.json action 2: pending"  — never attempted
+# exit 1
+gh issue list --repo <owner>/<repo> --search "Lands before the failure in:title"
+# expect: the issue exists — action 0 really landed
+gh issue view <L> --repo <owner>/<repo> --json comments -q '.comments | length'
+# expect: 0 — action 1's comment never posted
+
+# Unlock, then retry the SAME manifest.
+gh api -X DELETE repos/<owner>/<repo>/issues/<L>/lock
+jailbee issue apply feat-issuesmoke -y
+# expect: "006-stops.json action 0: applied (...)" — SKIPPED, no new issue created
+gh issue list --repo <owner>/<repo> --search "Lands before the failure in:title" --json number
+# expect: still exactly ONE issue — the retry did not create a duplicate
+# expect: action 1 now applied for real, action 2 applied too, manifest cleaned up
+gh issue view <L> --repo <owner>/<repo> --json comments -q '.comments[].body'
+# expect: "This comment should fail — the issue is locked."
+```
+
+### 7. An `uncertain` result blocks the manifest until it is resolved
+
+Force a transport-level failure — not an HTTP rejection — by cutting host
+network reachability to `api.github.com` for the duration of one mutation
+(a bogus `/etc/hosts` entry or a short-lived firewall rule, restored right
+after the command returns):
+
+```bash
+jailbee shell feat-issuesmoke
+cat > ~/.jailbee/issue-outbox/007-uncertain.json <<'JSON'
+{
+  "version": 1,
+  "actions": [
+    {"type": "create", "repo": ".", "ref": "uncertain-bug", "title": "Uncertain outcome smoke test",
+     "body": "Whether this landed on GitHub is exactly what this test is checking.", "labels": []}
+  ]
+}
+JSON
+exit
+
+# On the HOST: break api.github.com reachability, run, then restore it.
+jailbee issue apply feat-issuesmoke -y
+# expect (with the block in place): the plan, then
+#   "007-uncertain.json action 0: uncertain — GitHub mutation transport failed after dispatch"
+# restore connectivity
+jailbee issue ls feat-issuesmoke
+# expect: 007-uncertain.json STATE=uncertain
+jailbee issue apply feat-issuesmoke -y
+# expect: refused — "a previous run's outcome is uncertain ... must be
+#         reconciled before this batch can proceed" — exit 1, no silent retry
+
+# Check GitHub directly to see whether the create actually landed.
+gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:title" --json number,url
+
+# 7a. It did NOT land — forget it and let the next apply create it for real.
+jailbee issue resolve feat-issuesmoke 007-uncertain.json 0 --retry -y
+# expect: "007-uncertain.json action 0: retried"
+jailbee issue ls feat-issuesmoke   # STATE=pending again
+jailbee issue apply feat-issuesmoke -y   # now actually creates it
+gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:title"
+# expect: exactly one issue
+
+# 7b. To exercise the OTHER branch (it DID land despite the transport
+#     error): repeat the block-then-apply steps above with a fresh manifest
+#     (a new ref/title), confirm the issue exists on GitHub this time, then:
+jailbee issue resolve feat-issuesmoke <manifest> 0 --applied --issue <the-number-that-appeared> \
+  --url https://github.com/<owner>/<repo>/issues/<the-number-that-appeared> -y
+# expect: "<manifest> action 0: marked applied" — no duplicate issue created,
+#         and re-running `jailbee issue apply feat-issuesmoke` finds nothing
+#         left pending for that manifest.
+```
+
+### 8. A write-capable host login vs. the container's read-only PAT
+
+```bash
+# Host: your own, normally-scoped login.
+gh auth status
+jailbee issue apply feat-issuesmoke --dry-run
+# expect: "Host GitHub login: <your-login>" as the FIRST line of the plan —
+#         this is the identity that actually performs every mutation.
+
+# Container: confirm its gh cannot write even if asked to directly —
+# github.enabled + api_tokens must be configured (see
+# git-bridge.md#github-cli-gh-inside-containers) with a read-only PAT.
+incus exec <prefix>-feat-issuesmoke -- gh issue comment <N> --body "written directly, bypassing the outbox"
+# expect: an authorization error from GitHub (HTTP 403) — the token has no
+#         write scope, so this is refused at the API, not by jailbee
+gh issue view <N> --repo <owner>/<repo> --json comments -q '.comments[].body'
+# expect: the direct comment above is NOT present
+```
+
+```bash
+jailbee destroy feat-issuesmoke --force
+# Cleanup (does not touch GitHub — close the smoke issues by hand):
+#   gh issue close <N> <L> --repo <owner>/<repo>
+#   gh issue close <bug-a-number> <bug-b-number> --repo <owner>/<repo>
+#   gh issue close <sub-bug-number> --repo <sub-owner>/<sub-repo>
+```
+
 ## `pr: null` outbox description + post-update offer smoke test
 
 > Host-only. Requires `gh auth login` on the host, push access to origin, and

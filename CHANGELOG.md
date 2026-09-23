@@ -14,6 +14,37 @@ before editing `## Unreleased`.
   review outbox, and `jb review apply` can publish comments staged for a
   submodule repository.
 
+- **Host-gated GitHub issue management: containers stage issue actions, a
+  human applies them.** An in-container agent can now create, edit, comment
+  on, label, close, or reopen GitHub issues across the repo tree — the
+  superproject and any number of declared submodules, mixed freely within
+  one manifest — without ever writing to GitHub itself. Each action is
+  written to `~/.jailbee/issue-outbox/` as a JSON manifest (documented for
+  the container side in the new `jailbee-issue-management` skill), and the
+  new `jb issue ls|show|apply|drop|resolve` command group reviews and
+  publishes it from the host: `apply` builds one combined plan across every
+  selected manifest and every repository it touches, asks once, then
+  mutates GitHub. A stale `expected` block — the issue changed since the
+  container proposed the edit — refuses the whole batch, first while the
+  plan is built and again in a narrower recheck right before anything
+  mutates. A GitHub outcome that cannot be confirmed for certain is
+  journaled `uncertain` and blocks its manifest until `jb issue resolve
+  --applied|--retry` reconciles it; a fully applied manifest is logged,
+  deleted, and archived automatically, and `jb issue drop --archive-journal`
+  gives the same treatment to settled progress a human wants to abandon
+  instead. See [Issue
+  management](https://jailbee.gisgro.io/docs/git-bridge/#issue-management).
+
+  The GitHub PAT recipe for containers (`docs/config.md`, `docs/git-bridge.md`,
+  the `jailbee-repo-setup` skill) is corrected to read-only across
+  Contents/Issues/Pull requests/Metadata as part of the same safety
+  contract — it previously recommended Issues/Pull requests: Read and
+  write, which this feature's credential model requires it never be again:
+  the container's `gh` only ever reads, and every write goes through this
+  outbox (or the existing PR review one) instead. `jb doctor` now also
+  reports a fine-grained PAT's expected read-only scope as an informational
+  reminder, since it cannot verify a token's actual effective permissions.
+
 - **Autostart runs in stages, and can hand the rest to the background.** An
   `on_create` / `on_start` trigger may now be a list of **stages** instead of
   a flat list of steps. A stage holds **chains** that run in parallel, each
