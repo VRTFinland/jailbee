@@ -421,6 +421,20 @@ def test_read_outbox_wraps_incus_failure(mocker):
         ("ssh://git@github.com/acme/widgets.git", "acme/widgets"),
         ("https://gitlab.com/acme/widgets.git", None),
         ("", None),
+        # Credentialed remotes (common on CI-provisioned clones) must still
+        # resolve — see the "github_slug silently narrowed" review finding.
+        ("https://user@github.com/acme/widgets.git", "acme/widgets"),
+        (
+            "https://x-access-token:ghp_abc123@github.com/acme/widgets.git",
+            "acme/widgets",
+        ),
+        ("git://github.com/acme/widgets.git", "acme/widgets"),
+        # Hostile forms must stay refused even with the credentialed prefix
+        # allowed.
+        ("https://evil.com/?x=github.com/acme/widgets", None),
+        ("/home/x/github.com/acme/widgets", None),
+        ("https://www.github.com/acme/widgets", None),
+        ("https://github.com@evil.com/acme/widgets", None),
     ],
 )
 def test_github_slug(url, slug):

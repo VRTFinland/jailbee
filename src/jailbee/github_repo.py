@@ -6,7 +6,8 @@ import posixpath
 import re
 
 _GITHUB_REMOTE_RE = re.compile(
-    r"^(?P<prefix>https://github\.com/|ssh://(?:[^/@\s]+@)?github\.com/|"
+    r"^(?P<prefix>https://(?:[^/@\s]*@)?github\.com/|git://github\.com/|"
+    r"ssh://(?:[^/@\s]+@)?github\.com/|"
     r"(?:[^@/:\s]+@)?github\.com:)"
     r"(?P<owner>[^/?#\s]+)/(?P<repo>[^/?#\s]+)/?$",
     re.IGNORECASE,
