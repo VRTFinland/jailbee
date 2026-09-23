@@ -10,10 +10,12 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -30,6 +32,12 @@ from jailbee.remote_ssh.router import (
 )
 
 _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
+
+# Distinguishes an intentional cancel (Esc/Ctrl-D) from every real answer in
+# `_select_repo`, mirroring the `questionary.Choice(value=None)` trap noted
+# there: only this object, never `None` alone, means "no selection" once the
+# two extra key bindings are added, since Ctrl-C already answers `None`.
+_CANCELLED = object()
 
 
 @dataclass(frozen=True)
@@ -67,11 +75,11 @@ def _print_repos(repos: Sequence[RepoChoice]) -> None:
 
 def _print_help() -> None:
     print("Console commands:")
-    print("  repos       list registered repositories")
-    print("  use PREFIX  switch repository")
-    print("  dashboard   open the registered-repository dashboard")
-    print("  help        show this help")
-    print("  exit        leave the console")
+    print("  repos         list registered repositories")
+    print("  use [PREFIX]  switch repository (menu when PREFIX is omitted)")
+    print("  dashboard     open the registered-repository dashboard")
+    print("  help          show this help")
+    print("  exit          leave the console")
 
 
 def _error(message: str) -> None:
@@ -99,23 +107,41 @@ def _resolve_choice(prefix: str) -> RepoChoice:
     return RepoChoice(prefix, resolve_repo(prefix))
 
 
-def _pick_repo(session: PromptSession[str], repos: Sequence[RepoChoice]) -> RepoChoice | None:
-    _print_repos(repos)
-    while True:
-        try:
-            prefix = session.prompt("Select repository: ").strip()
-        except KeyboardInterrupt:
-            print()
-            continue
-        except EOFError:
-            print()
-            return None
-        if not prefix:
-            continue
-        try:
-            return _resolve_choice(prefix)
-        except RouteError as error:
-            _error(str(error))
+def _select_repo(repos: Sequence[RepoChoice], **kwargs: Any) -> RepoChoice | None:
+    """Arrow-key menu over registered repos; `None` on Esc/Ctrl-C/Ctrl-D.
+
+    `questionary.select` only cancels on Ctrl-C/Ctrl-Q out of the box; a bare
+    Esc or Ctrl-D is swallowed by its catch-all key binding and leaves the
+    menu hanging forever (verified empirically, not just by reading the
+    upstream source). Two extra *eager* key bindings, added onto the
+    already-built `Application` before `ask()` runs it, make Esc and Ctrl-D
+    cancel the same way Ctrl-C does — without forking `questionary.select`
+    itself. `**kwargs` (e.g. `input=`/`output=` in tests) are forwarded to
+    `questionary.select`.
+
+    TRAP (see `pr_flow.py`): a `questionary.Choice` with `value=None` would
+    answer with its *title* string instead of `None` on a real selection —
+    irrelevant here since every choice's value is a `RepoChoice`, never
+    `None`, but Ctrl-C already answers plain `None` on cancel. Esc/Ctrl-D
+    must not collide with a real answer either, hence the `_CANCELLED`
+    sentinel distinct from both.
+    """
+    import questionary
+    from prompt_toolkit.key_binding import KeyBindings
+
+    choices = [
+        questionary.Choice(title=f"{repo.prefix}\t{repo.root}", value=repo) for repo in repos
+    ]
+    question = questionary.select("Select repository:", choices=choices, **kwargs)
+    # questionary.select always builds a concrete `KeyBindings()` for this;
+    # the attribute's declared type is the more abstract `KeyBindingsBase`.
+    bindings = cast(KeyBindings, question.application.key_bindings)
+    for key in (Keys.ControlD, Keys.Escape):
+        bindings.add(key, eager=True)(lambda event: event.app.exit(result=_CANCELLED))
+    result = question.ask()
+    if result is None or result is _CANCELLED:
+        return None
+    return cast(RepoChoice, result)
 
 
 def _returncode(completed: subprocess.CompletedProcess[bytes]) -> int:
@@ -192,9 +218,14 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
 
     session = _session(repos)
     if initial_repo is None:
-        current = _pick_repo(session, repos)
-        if current is None:
-            return 0
+        if len(repos) == 1:
+            current = repos[0]
+            print(f"Only one registered repository; starting in {current.prefix} ({current.root}).")
+        else:
+            selected = _select_repo(repos)
+            if selected is None:
+                return 0
+            current = selected
     else:
         try:
             current = _resolve_choice(initial_repo)
@@ -240,8 +271,17 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             _print_repos(registered_repos())
             continue
         if command == "use":
+            if len(argv) == 1:
+                candidates = registered_repos()
+                if not candidates:
+                    _error("No registered repositories are available.")
+                    continue
+                selected = _select_repo(candidates)
+                if selected is not None:
+                    current = selected
+                continue
             if len(argv) != 2:
-                _error("usage: use PREFIX")
+                _error("usage: use [PREFIX]")
                 continue
             try:
                 current = _resolve_choice(argv[1])

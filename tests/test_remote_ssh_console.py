@@ -156,14 +156,116 @@ def test_use_switches_the_prompt_repo(console_env: ConsoleEnv, mocker) -> None:
     assert prompts == ["jb[project]> ", "jb[other]> ", "jb[other]> "]
 
 
-def test_console_without_initial_repo_prompts_for_a_registered_repo(
-    console_env: ConsoleEnv,
+def test_console_without_initial_repo_opens_the_arrow_key_menu(
+    console_env: ConsoleEnv, mocker
 ) -> None:
-    console_env.lines(["other", "exit"])
+    select = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("other", console_env.other_root),
+    )
+    console_env.lines(["exit"])
 
     assert console.run() == 0
+    assert select.call_args.args[0] == [
+        console.RepoChoice("other", console_env.other_root),
+        console.RepoChoice("project", console_env.repo_root),
+    ]
     prompts = [call.args[0] for call in console_env.prompt.prompt.call_args_list]
-    assert prompts == ["Select repository: ", "jb[other]> "]
+    assert prompts == ["jb[other]> "]
+
+
+def test_console_without_initial_repo_exits_cleanly_when_the_menu_is_cancelled(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """Esc/Ctrl-C/Ctrl-D in the start menu all answer `None` from `_select_repo`."""
+    mocker.patch("jailbee.remote_ssh.console._select_repo", return_value=None)
+
+    assert console.run() == 0
+    console_env.prompt.prompt.assert_not_called()
+
+
+def test_console_with_a_single_registered_repo_skips_the_menu(tmp_path: Path, mocker) -> None:
+    root = tmp_path / "solo"
+    root.mkdir()
+    solo = console.RepoChoice("solo", root)
+    mocker.patch("jailbee.remote_ssh.console.registered_repos", return_value=[solo])
+    prompt = mocker.Mock()
+    prompt.prompt.side_effect = ["exit"]
+    mocker.patch("jailbee.remote_ssh.console.PromptSession", return_value=prompt)
+    mocker.patch("jailbee.remote_ssh.console.state_dir", return_value=tmp_path)
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    mocker.patch("jailbee.remote_ssh.console.default_global_config_path", return_value=tmp_path)
+    select = mocker.patch("jailbee.remote_ssh.console._select_repo")
+
+    assert console.run() == 0
+    select.assert_not_called()
+    assert prompt.prompt.call_args_list[0].args[0] == "jb[solo]> "
+
+
+def test_use_with_no_argument_opens_the_arrow_key_menu(console_env: ConsoleEnv, mocker) -> None:
+    select = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("other", console_env.other_root),
+    )
+    console_env.lines(["use", "exit"])
+
+    console.run("project")
+
+    assert select.call_args.args[0] == [
+        console.RepoChoice("other", console_env.other_root),
+        console.RepoChoice("project", console_env.repo_root),
+    ]
+    prompts = [call.args[0] for call in console_env.prompt.prompt.call_args_list]
+    assert prompts == ["jb[project]> ", "jb[other]> "]
+
+
+def test_use_with_no_argument_stays_put_when_the_menu_is_cancelled(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    mocker.patch("jailbee.remote_ssh.console._select_repo", return_value=None)
+    console_env.lines(["use", "exit"])
+
+    assert console.run("project") == 0
+    prompts = [call.args[0] for call in console_env.prompt.prompt.call_args_list]
+    assert prompts == ["jb[project]> ", "jb[project]> "]
+
+
+def test_use_with_prefix_argument_does_not_open_a_menu(console_env: ConsoleEnv, mocker) -> None:
+    select = mocker.patch("jailbee.remote_ssh.console._select_repo")
+    console_env.lines(["use other", "exit"])
+
+    console.run("project")
+
+    select.assert_not_called()
+
+
+def test_use_with_no_argument_and_no_registered_repos_reports_an_error(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    # First call is `run()`'s own startup check (must still see the repos
+    # `console_env` registered, since `initial_repo` is given below); the
+    # second is the fresh lookup `use` with no argument makes for itself.
+    mocker.patch(
+        "jailbee.remote_ssh.console.registered_repos",
+        side_effect=[
+            [
+                console.RepoChoice("other", console_env.other_root),
+                console.RepoChoice("project", console_env.repo_root),
+            ],
+            [],
+        ],
+    )
+    select = mocker.patch("jailbee.remote_ssh.console._select_repo")
+    console_env.lines(["use", "exit"])
+
+    assert console.run("project") == 0
+    select.assert_not_called()
+    assert "No registered repositories" in capsys.readouterr().err
 
 
 def test_console_reports_when_no_registered_repos(console_env: ConsoleEnv, mocker, capsys) -> None:
@@ -200,7 +302,7 @@ def test_help_lists_only_console_local_commands(console_env: ConsoleEnv, capsys)
     console.run("project")
 
     output = capsys.readouterr().out
-    for command in ["repos", "use PREFIX", "dashboard", "help", "exit"]:
+    for command in ["repos", "use [PREFIX]", "dashboard", "help", "exit"]:
         assert command in output
 
 
@@ -442,3 +544,49 @@ def test_history_is_private_and_completion_is_restricted(
         "use",
     }
     assert os.fspath(console_env.repo_root) not in kwargs["completer"].words
+
+
+# --- _select_repo(): drive the real Application via a pipe, no mocking ---
+
+_SELECT_REPO_CHOICES = [
+    console.RepoChoice("alpha", Path("/tmp/alpha")),
+    console.RepoChoice("beta", Path("/tmp/beta")),
+]
+
+
+@pytest.fixture
+def _select_repo_io():
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    with create_pipe_input() as pipe_input:
+
+        def run(keys: str):
+            pipe_input.send_text(keys)
+            return console._select_repo(
+                _SELECT_REPO_CHOICES, input=pipe_input, output=DummyOutput()
+            )
+
+        yield run
+
+
+def test_select_repo_bare_enter_returns_the_first_repo(_select_repo_io) -> None:
+    assert _select_repo_io("\r") == _SELECT_REPO_CHOICES[0]
+
+
+def test_select_repo_arrow_down_then_enter_returns_the_second_repo(_select_repo_io) -> None:
+    assert _select_repo_io("\x1b[B\r") == _SELECT_REPO_CHOICES[1]
+
+
+def test_select_repo_ctrl_c_cancels(_select_repo_io) -> None:
+    assert _select_repo_io("\x03") is None
+
+
+def test_select_repo_ctrl_d_cancels(_select_repo_io) -> None:
+    """Regression: upstream `questionary.select` leaves Ctrl-D hanging forever."""
+    assert _select_repo_io("\x04") is None
+
+
+def test_select_repo_escape_cancels(_select_repo_io) -> None:
+    """Regression: upstream `questionary.select` leaves a bare Esc hanging forever."""
+    assert _select_repo_io("\x1b") is None
