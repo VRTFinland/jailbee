@@ -93,8 +93,12 @@ The console either takes `--repo PREFIX`, or shows an arrow-key menu of live
 registered repos (skipped, starting directly, when exactly one is
 registered); Esc, Ctrl-C and Ctrl-D all cancel the menu, exiting the console
 cleanly at startup. Local commands are `repos`, `use [PREFIX]` (bare `use`
-reopens the menu), `dashboard`, `help`, and `exit`/EOF; `help` also lists the
-JailBee command paths this session's policy allows. Other input is parsed as
+reopens the menu), `dashboard` (listed only when enabled), `help`, and
+`exit`/EOF, rendered by `help` as a Rich panel styled like `jb --help`. In
+`full` mode `help` then runs the real `python -m jailbee --help`; in
+`allowlist` mode it renders a second panel with each allowed command's own
+short help instead; in `disabled` mode it prints a one-line note. Other input
+is parsed as
 a JailBee argv, checked against the same command policy as one-shot
 execution, run, and returned to the prompt; tab completion covers local
 commands, allowed JailBee command paths word by word, and repo prefixes after

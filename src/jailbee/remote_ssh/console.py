@@ -12,11 +12,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import typer.rich_utils as typer_rich_utils
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import NestedCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
+from rich.console import Console as RichConsole
+from rich.panel import Panel
+from rich.table import Table
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -27,6 +31,7 @@ from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.router import (
     RouteError,
     known_command_paths,
+    known_command_short_help,
     policy_allows,
     resolve_repo,
     unknown_command,
@@ -77,41 +82,88 @@ def _print_repos(repos: Sequence[RepoChoice]) -> None:
         print(f"{repo.prefix}\t{repo.root}")
 
 
-def _print_command_paths(paths: Sequence[str]) -> None:
-    """Print command paths compactly: bare leaves in columns, others by group."""
-    top_level: list[str] = []
-    groups: dict[str, list[str]] = {}
-    for path in paths:
-        words = path.split()
-        if len(words) == 1:
-            top_level.append(words[0])
-        else:
-            groups.setdefault(words[0], []).append(" ".join(words[1:]))
-    if top_level:
-        print("  " + "  ".join(sorted(top_level)))
-    for group in sorted(groups):
-        print(f"  {group}: " + "  ".join(sorted(groups[group])))
+def _console_command_rows(*, dashboard_enabled: bool) -> list[tuple[str, str]]:
+    """The console's own local commands, in the order `help` lists them."""
+    rows = [
+        ("repos", "list registered repositories"),
+        ("use [PREFIX]", "switch repository (menu when PREFIX is omitted)"),
+    ]
+    if dashboard_enabled:
+        rows.append(("dashboard", "open the registered-repository dashboard"))
+    rows.append(("help", "show this help"))
+    rows.append(("exit", "leave the console"))
+    return rows
 
 
-def _print_help(policy: RemoteCommandPolicy) -> None:
-    print("Console commands:")
-    print("  repos         list registered repositories")
-    print("  use [PREFIX]  switch repository (menu when PREFIX is omitted)")
-    print("  dashboard     open the registered-repository dashboard")
-    print("  help          show this help")
-    print("  exit          leave the console")
-    print()
+def _render_command_panel(
+    rich_console: RichConsole, title: str, rows: Sequence[tuple[str, str]]
+) -> None:
+    """Render one command/description panel styled like Typer's own help panels.
+
+    Reuses `typer.rich_utils`'s own style constants (title alignment, panel
+    border, first-column color, help-text style) instead of hardcoding
+    equivalents, so this tracks Typer's look if it ever changes. `title` may
+    carry Rich markup (`Panel` parses a `str` title with `Text.from_markup`).
+    """
+    table = Table(show_header=False, box=None, pad_edge=False, padding=(0, 1))
+    table.add_column(style=typer_rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN, no_wrap=True)
+    table.add_column(style=typer_rich_utils.STYLE_OPTION_HELP)
+    for name, description in rows:
+        table.add_row(name, description)
+    rich_console.print(
+        Panel(
+            table,
+            title=title,
+            title_align=typer_rich_utils.ALIGN_COMMANDS_PANEL,
+            border_style=typer_rich_utils.STYLE_COMMANDS_PANEL_BORDER,
+        )
+    )
+
+
+def _print_help(policy: RemoteCommandPolicy, *, dashboard_enabled: bool, repo_root: Path) -> int:
+    """Render the console-local command panel, then this policy's Jailbee help.
+
+    `full` mode hands off entirely to the real `python -m jailbee --help`,
+    run through `_run_foreground` in the session's own PTY, so the user sees
+    Typer's own help output byte-for-byte instead of a hand-rolled
+    approximation of it. `allowlist` mode has no single Jailbee invocation
+    that prints only the allowed subset, so it renders a matching panel
+    itself from each allowed path's own Click short help
+    (`known_command_short_help`, resolved from the same cached command tree
+    `known_command_paths`/`policy_allows` already read). `disabled` mode has
+    nothing further to show.
+
+    A Rich `Console` built fresh here (rather than at import time) picks up
+    whatever `sys.stdout` currently is — the session's real PTY in
+    production, so panels render in color; a captured, non-TTY stream in
+    tests, so they render as plain text.
+
+    Returns the real `jb --help` child's exit status in `full` mode, for the
+    caller to fold into `last_status` exactly like every other command this
+    console runs; 0 in `allowlist`/`disabled` mode, where nothing is run.
+    """
+    rich_console = RichConsole(file=sys.stdout)
+    _render_command_panel(
+        rich_console,
+        "[bold]Console[/bold]",
+        _console_command_rows(dashboard_enabled=dashboard_enabled),
+    )
+
     if policy.mode == "disabled":
-        print("Jailbee commands are disabled.")
-        return
-    if policy.mode == "allowlist":
-        print("Allowed Jailbee commands:")
-        _print_command_paths(sorted(policy.allow))
+        rich_console.print("[dim]Jailbee commands are disabled by the remote.ssh policy.[/dim]")
+        return 0
+
+    status = 0
+    if policy.mode == "full":
+        completed = _run_foreground([sys.executable, "-m", "jailbee", "--help"], repo_root)
+        status = _returncode(completed)
     else:
-        print("Allowed Jailbee commands (all public commands):")
-        _print_command_paths(sorted(known_command_paths()))
-    print()
-    print("Run `<command> --help` for details on any of them.")
+        short_help = known_command_short_help()
+        rows = [(path, short_help.get(path, "")) for path in sorted(policy.allow)]
+        _render_command_panel(rich_console, "[bold]Allowed Jailbee commands[/bold]", rows)
+
+    rich_console.print("Run `<command> --help` for details on any of them.")
+    return status
 
 
 def _error(message: str) -> None:
@@ -345,7 +397,9 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             if len(argv) != 1:
                 _error("usage: help")
                 continue
-            _print_help(ssh_config.commands)
+            last_status = _print_help(
+                ssh_config.commands, dashboard_enabled=ssh_config.dashboard, repo_root=current.root
+            )
             continue
         if command == "repos":
             if len(argv) != 1:

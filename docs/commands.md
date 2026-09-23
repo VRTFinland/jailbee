@@ -160,11 +160,16 @@ child JailBee command output is unaffected either way.
 The console starts by asking which registered repository to use — an
 arrow-key menu when more than one is registered, or straight in if there is
 exactly one — unless started with `shell --repo PREFIX`. It offers `repos`,
-`use [PREFIX]` (bare `use` reopens the menu), `dashboard`, `help`, and `exit`;
-`help` also lists the Jailbee commands this session's policy allows. Esc,
-Ctrl-C and Ctrl-D all cancel the menu (exiting the console at startup,
-returning to the prompt from `use`). Every other line is an allowed JailBee
-command, tab-completed word by word (e.g. `git p<Tab>` offers `pull`/`push`).
+`use [PREFIX]` (bare `use` reopens the menu), `dashboard` (listed only when
+enabled), `help`, and `exit`, rendered as a Rich panel styled like `jb
+--help`'s own. In `full` mode, `help` then runs the real `python -m jailbee
+--help` in the current repo root, so the console shows exactly what a local
+`jb --help` would. In `allowlist` mode it instead renders a second panel,
+"Allowed Jailbee commands", listing each allowed path with its own one-line
+help. In `disabled` mode it prints a one-line note instead. Esc, Ctrl-C and
+Ctrl-D all cancel the menu (exiting the console at startup, returning to the
+prompt from `use`). Every other line is an allowed JailBee command,
+tab-completed word by word (e.g. `git p<Tab>` offers `pull`/`push`).
 A hidden alias (`merge`, `pull`, `push`, ...) is policy-checked against the
 public command it aliases, so `allow: [git merge]` also permits typing
 `merge`. A public group's own help — `git`, or `git --help`/`-h` — is

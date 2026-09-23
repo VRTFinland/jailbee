@@ -296,26 +296,43 @@ def test_repos_lists_registered_prefixes_and_roots(console_env: ConsoleEnv, caps
     assert f"project\t{console_env.repo_root}" in output
 
 
-def test_help_lists_console_commands_and_full_mode_jailbee_commands(
-    console_env: ConsoleEnv, capsys
+def test_help_renders_console_panel_and_runs_real_jailbee_help_in_full_mode(
+    console_env: ConsoleEnv, mocker, capsys
 ) -> None:
-    """`console_env`'s policy is `commands.mode: full` with paths {git pull, ls}."""
+    """`console_env`'s policy is `commands.mode: full`.
+
+    `full` mode delegates the Jailbee half of `help` entirely to a real
+    `python -m jailbee --help` child (run the same way every other console
+    command is: through `_run_foreground`, i.e. `subprocess.run` under the
+    hood) instead of rendering its own approximation of Typer's command
+    list.
+    """
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
     console_env.lines(["help", "exit"])
 
     console.run("project")
 
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "--help"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
     output = capsys.readouterr().out
+    assert "Console" in output
     for command in ["repos", "use [PREFIX]", "dashboard", "help", "exit"]:
         assert command in output
-    assert "Allowed Jailbee commands (all public commands):" in output
-    assert "ls" in output
-    assert "git: pull" in output
+    assert "Allowed Jailbee commands" not in output
     assert "--help" in output
 
 
 def test_help_lists_only_the_allowed_commands_in_allowlist_mode(
     console_env: ConsoleEnv, mocker, capsys
 ) -> None:
+    """`allow: [ls]` renders a second panel with `ls`'s own Click short help,
+    and never falls through to a real `jailbee --help` child."""
     config = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
@@ -325,13 +342,16 @@ def test_help_lists_only_the_allowed_commands_in_allowlist_mode(
         )
     )
     mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
     console_env.lines(["help", "exit"])
 
     console.run("project")
 
+    run.assert_not_called()
     output = capsys.readouterr().out
-    assert "Allowed Jailbee commands:" in output
-    assert "  ls" in output
+    assert "Allowed Jailbee commands" in output
+    assert "ls" in output
+    assert "List managed containers." in output  # `ls`'s real Click short help
     assert "git" not in output
 
 
@@ -340,13 +360,42 @@ def test_help_says_commands_are_disabled_in_disabled_mode(
 ) -> None:
     config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig(dashboard=True)))
     mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    console_env.lines(["help", "exit"])
+
+    console.run("project")
+
+    run.assert_not_called()
+    output = capsys.readouterr().out
+    assert "Jailbee commands are disabled by the remote.ssh policy." in output
+    assert "Allowed Jailbee commands" not in output
+
+
+def test_help_hides_the_dashboard_row_when_dashboard_is_disabled(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(
+                shell=True,
+                dashboard=False,
+                commands=RemoteCommandPolicy(mode="full"),
+            )
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
     console_env.lines(["help", "exit"])
 
     console.run("project")
 
     output = capsys.readouterr().out
-    assert "Jailbee commands are disabled." in output
-    assert "Allowed Jailbee commands" not in output
+    assert "dashboard" not in output
+    for command in ["repos", "use [PREFIX]", "help", "exit"]:
+        assert command in output
 
 
 def test_dashboard_runs_registered_only_and_returns_to_prompt(
