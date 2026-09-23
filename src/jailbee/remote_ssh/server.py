@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import shlex
 import signal
@@ -209,6 +210,69 @@ async def handle_process(process: asyncssh.SSHServerProcess[bytes]) -> None:
         audit(reason)
 
 
+def _bind_display(host: str, port: int) -> str:
+    """Format a listen address for display, bracketing IPv6 literals."""
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        return f"{host}:{port}"
+    return f"[{host}]:{port}" if literal.version == 6 else f"{host}:{port}"
+
+
+def _enabled_entry_points(config: RemoteSSHConfig) -> str:
+    points = [
+        name
+        for name, enabled in (
+            ("dashboard", config.dashboard),
+            ("shell", config.shell),
+            ("exec", config.exec),
+        )
+        if enabled
+    ]
+    return ", ".join(points) if points else "none"
+
+
+def _connect_example(host: str, port: int, config: RemoteSSHConfig) -> str:
+    try:
+        display_host = "localhost" if ipaddress.ip_address(host).is_loopback else host
+    except ValueError:
+        display_host = host
+    if config.dashboard:
+        return f"ssh -t -p {port} jailbee@{display_host} dashboard"
+    if config.shell:
+        return f"ssh -t -p {port} jailbee@{display_host} shell"
+    return f"ssh -p {port} jailbee@{display_host}"
+
+
+def _startup_summary(config: RemoteSSHConfig, listener: asyncssh.SSHAcceptor) -> str:
+    """Describe the running listener for the audit log, without secrets.
+
+    The port comes from the listener itself (not `config.port`) so a
+    configured port of 0 is reported as the port the kernel actually chose.
+    """
+    port = listener.get_port()
+    try:
+        fingerprint = asyncssh.read_private_key(str(ssh_paths().host_key)).get_fingerprint("sha256")
+    except (OSError, asyncssh.KeyImportError) as exc:
+        fingerprint = f"could not be read ({type(exc).__name__})"
+    try:
+        key_count = len(read_authorized_keys())
+        keys_line = f"{key_count} authorized client key{'' if key_count == 1 else 's'}"
+        if key_count == 0:
+            keys_line += " -- add one with: jb remote ssh key add"
+    except (OSError, SSHKeyError) as exc:
+        keys_line = f"authorized keys could not be read ({type(exc).__name__})"
+    return "\n".join(
+        [
+            f"Jailbee SSH server listening on {_bind_display(config.listen, port)}",
+            f"  entry points: {_enabled_entry_points(config)} (commands: {config.commands.mode})",
+            f"  host key fingerprint: {fingerprint}",
+            f"  {keys_line}",
+            f"  connect example: {_connect_example(config.listen, port, config)}",
+        ]
+    )
+
+
 def _shut_down(listener: asyncssh.SSHAcceptor, live: set[asyncssh.SSHServerConnection]) -> None:
     """Stop accepting connections and hang up every live one; the SIGTERM handler.
 
@@ -250,6 +314,7 @@ async def serve_async(config: RemoteSSHConfig) -> None:
             gss_kex=False,
             gss_host=None,
         )
+        log.info(_startup_summary(config, listener))
         loop = asyncio.get_running_loop()
         # `KillMode=process` in the unit leaves this SIGTERM handling to us,
         # so that `--background` workers (a different process group in the
@@ -261,6 +326,7 @@ async def serve_async(config: RemoteSSHConfig) -> None:
         finally:
             loop.remove_signal_handler(signal.SIGTERM)
             listener.close()
+        log.info("Jailbee SSH server stopped")
     finally:
         library_log.setLevel(previous_level)
 

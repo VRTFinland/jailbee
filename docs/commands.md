@@ -114,8 +114,9 @@ each detected problem. A deliberately absent, disabled or inactive service
 and an empty key list are reported without making status fail; invalid config
 or an unsafe, missing or uninspectable host key produces a nonzero exit.
 `serve` runs the same listener in the foreground and is intended for
-diagnostics. `disable` preserves global configuration, client keys and the
-server host key.
+diagnostics. On startup it prints the listening address, the host key's
+SHA256 fingerprint and a matching connect example. `disable` preserves global
+configuration, client keys and the server host key.
 
 The SSH username is always `jailbee`. With the default listener port, the
 accepted client forms are:

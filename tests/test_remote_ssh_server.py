@@ -606,7 +606,7 @@ def test_cancellation_restores_callbacks_and_does_not_log_terminal_input(
 
 @pytest.fixture
 def listener(mocker):
-    value = SimpleNamespace(wait_closed=AsyncMock(), close=Mock())
+    value = SimpleNamespace(wait_closed=AsyncMock(), close=Mock(), get_port=Mock(return_value=8022))
     listen = mocker.patch.object(
         server.asyncssh, "listen", new_callable=AsyncMock, return_value=value
     )
@@ -850,6 +850,108 @@ def test_sync_serve_establishes_audit_visibility_without_library_command_logs(
         finally:
             for installed in root.handlers:
                 installed.close()
+
+
+def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count(
+    listener, caplog, tmp_path, monkeypatch
+):
+    # XDG_DATA_HOME is overridden here (not just XDG_CONFIG_HOME, already
+    # test-isolated by an autouse fixture) because it is session-scoped in
+    # conftest.py; writing the real host key under it would leak across tests.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    value, _ = listener
+    value.get_port.return_value = 19999
+    paths = ssh_paths()
+    paths.config_dir.mkdir(parents=True)
+    paths.data_dir.mkdir(parents=True)
+    other = asyncssh.generate_private_key("ssh-ed25519")
+    other_public_line = other.export_public_key().decode("ascii").strip()
+    paths.authorized_keys.write_text(PUBLIC_KEY + " one\n" + other_public_line + " two\n")
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    paths.host_key.write_bytes(host_key.export_private_key("openssh"))
+    expected_fingerprint = host_key.get_fingerprint("sha256")
+    config = RemoteSSHConfig(
+        listen="198.51.100.7",
+        port=8123,
+        dashboard=True,
+        shell=True,
+        exec=True,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+    text = caplog.text
+    assert "198.51.100.7:19999" in text
+    assert "198.51.100.7:8123" not in text
+    assert "entry points: dashboard, shell, exec" in text
+    assert "commands: full" in text
+    assert f"host key fingerprint: {expected_fingerprint}" in text
+    assert "2 authorized client keys" in text
+    assert "connect example: ssh -t -p 19999 jailbee@198.51.100.7 dashboard" in text
+
+
+def test_startup_brackets_ipv6_listen_address_and_uses_localhost_in_example(
+    listener, caplog, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    value, _ = listener
+    value.get_port.return_value = 8022
+    paths = ssh_paths()
+    paths.config_dir.mkdir(parents=True)
+    paths.data_dir.mkdir(parents=True)
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    paths.host_key.write_bytes(host_key.export_private_key("openssh"))
+    config = RemoteSSHConfig(listen="::1", port=8022)
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+    text = caplog.text
+    assert "[::1]:8022" in text
+    assert "connect example: ssh -t -p 8022 jailbee@localhost dashboard" in text
+
+
+def test_startup_reports_zero_keys_with_add_hint(listener, caplog, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    paths = ssh_paths()
+    paths.data_dir.mkdir(parents=True)
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    paths.host_key.write_bytes(host_key.export_private_key("openssh"))
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+    text = caplog.text
+    assert "0 authorized client keys" in text
+    assert "jb remote ssh key add" in text
+
+
+def test_startup_survives_unreadable_authorized_keys(listener, caplog, mocker):
+    value, _ = listener
+    paths = ssh_paths()
+    paths.data_dir.mkdir(parents=True)
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    paths.host_key.write_bytes(host_key.export_private_key("openssh"))
+    mocker.patch.object(server, "read_authorized_keys", side_effect=PermissionError("denied"))
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+    text = caplog.text
+    assert "authorized keys could not be read" in text
+    assert "PermissionError" in text
+    value.wait_closed.assert_awaited_once()
+
+
+def test_startup_survives_unreadable_host_key(listener, caplog, mocker):
+    mocker.patch.object(
+        server.asyncssh, "read_private_key", side_effect=OSError("no such host key")
+    )
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+    text = caplog.text
+    assert "host key fingerprint: could not be read" in text
+    assert "OSError" in text
+
+
+def test_clean_shutdown_logs_stopped_message(listener, caplog):
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+    assert "Jailbee SSH server stopped" in caplog.text
 
 
 @pytest.mark.parametrize("outcome", ["closed", "startup_error", "wait_error", "cancelled"])

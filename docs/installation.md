@@ -238,9 +238,11 @@ listener cannot move itself. Entry-point and command-policy edits apply to a
 new SSH session without a restart. If access fails, keep the listener on
 loopback, run `jb remote ssh status`, validate `global.yaml`, and inspect the
 journal. `jb remote ssh serve` starts the same listener in the foreground for
-diagnostics, so first stop the unit or choose an unused port. `jb remote ssh
-disable` stops and disables the unit but deliberately preserves configuration,
-authorized keys and the host key for recovery or later re-enablement.
+diagnostics, so first stop the unit or choose an unused port; on startup it
+prints the listening address, the host key's SHA256 fingerprint and a connect
+example. `jb remote ssh disable` stops and disables the unit but deliberately
+preserves configuration, authorized keys and the host key for recovery or
+later re-enablement.
 
 ---
 
