@@ -33,39 +33,115 @@ class RouteError(ValueError):
     """A remote request does not match an enabled, permitted route."""
 
 
+@dataclass(frozen=True)
+class _CommandTree:
+    """One cached walk of Jailbee's Click command tree, indexed for routing.
+
+    `public_leaves` is exactly what `known_command_paths()` has always
+    returned, and stays public-leaf-only: it is still what allowlist config
+    validation (`overrides.py`, `global_config.py`) and console
+    completion/help read — an alias is deliberately never a valid allowlist
+    entry or a completion of its own.
+
+    `aliases` maps a hidden leaf's path (e.g. "merge", "git pr") to the
+    public leaf path it is byte-for-byte identical to, keyed on Click
+    callback identity (see `_leaf_identity`) rather than name or docstring —
+    the only signal that survives a `hidden=True` re-registration of the very
+    same function, and the only one an unrelated command that merely *looks*
+    like an alias can't spoof. A hidden command with no such public twin
+    (`_remote-console`, the `_*-worker` internals, and — despite reading like
+    aliases — `submodule checkout`, `claude ...`, `chrome-pool ...`, which
+    each warn-then-delegate through a distinct wrapper function rather than
+    reusing the public callback) is simply absent from this map and stays
+    unknown to every router lookup below.
+    """
+
+    public_leaves: frozenset[str]
+    aliases: dict[str, str]
+
+
+def _leaf_identity(command: object) -> int:
+    """Identity of a Click command's underlying Python callback.
+
+    Typer wraps every callback in a fresh closure each time it builds a Click
+    tree (to marshal parameters — see `typer.main.get_callback`), so
+    `command.callback` itself is never the same object across two
+    registrations of one function, even two builds of the same registration.
+    `get_callback` runs `functools.update_wrapper(wrapper, callback)`, which
+    sets `__wrapped__` to the original function — that reference IS stable,
+    and is what alias detection compares.
+    """
+    callback = getattr(command, "callback", None)
+    return id(getattr(callback, "__wrapped__", callback))
+
+
 @functools.cache
-def known_command_paths() -> frozenset[str]:
-    """Return the public leaf paths in Jailbee's Click command tree."""
+def _command_tree() -> _CommandTree:
+    """Walk the Click command tree exactly once per process.
+
+    A second, uncached walk here would rebuild the whole Typer/Click tree a
+    second time (see the project's test-suite-speed-traps note on
+    `typer.main.get_command` rebuilding the tree) — this is the single walk
+    every routing lookup below reads from, including `known_command_paths()`.
+    """
     from typer.core import TyperCommand, TyperGroup
     from typer.main import get_command
 
     from jailbee.cli import app
 
-    found: set[str] = set()
+    public_leaves: set[str] = set()
+    public_by_identity: dict[int, str] = {}
+    hidden_leaves: list[tuple[str, int]] = []
 
-    def walk(command: TyperCommand | TyperGroup, prefix: tuple[str, ...]) -> None:
-        if getattr(command, "hidden", False):
-            return
+    def walk(
+        command: TyperCommand | TyperGroup, prefix: tuple[str, ...], hidden_ancestor: bool
+    ) -> None:
+        is_hidden = hidden_ancestor or getattr(command, "hidden", False)
         if isinstance(command, TyperGroup):
             for name, child in command.commands.items():
-                walk(cast(TyperCommand | TyperGroup, child), (*prefix, name))
-        elif prefix:
-            found.add(" ".join(prefix))
+                walk(cast(TyperCommand | TyperGroup, child), (*prefix, name), is_hidden)
+            return
+        if not prefix:
+            return
+        path = " ".join(prefix)
+        if is_hidden:
+            hidden_leaves.append((path, _leaf_identity(command)))
+        else:
+            public_leaves.add(path)
+            public_by_identity[_leaf_identity(command)] = path
 
-    walk(cast(TyperCommand | TyperGroup, get_command(app)), ())
-    return frozenset(found)
+    walk(cast(TyperCommand | TyperGroup, get_command(app)), (), False)
+
+    aliases = {
+        path: public_by_identity[identity]
+        for path, identity in hidden_leaves
+        if identity in public_by_identity and public_by_identity[identity] != path
+    }
+    return _CommandTree(public_leaves=frozenset(public_leaves), aliases=aliases)
+
+
+def known_command_paths() -> frozenset[str]:
+    """Return the public leaf paths in Jailbee's Click command tree."""
+    return _command_tree().public_leaves
 
 
 def command_path(argv: Sequence[str]) -> str:
-    """Resolve an argument vector to its longest public command leaf."""
+    """Resolve an argument vector to its longest public or aliased command leaf.
+
+    A hidden alias (its Click callback is byte-identical to some public
+    leaf's — see `_CommandTree`) resolves to that public leaf's path, the
+    canonical path every policy decision is made against, even though `argv`
+    itself keeps whichever spelling the caller actually typed.
+    """
+    tree = _command_tree()
+    candidates = tree.public_leaves | tree.aliases.keys()
     matches = [
-        path
-        for path in known_command_paths()
-        if tuple(path.split()) == tuple(argv[: len(path.split())])
+        path for path in candidates if tuple(path.split()) == tuple(argv[: len(path.split())])
     ]
     if not matches:
         raise RouteError("unknown Jailbee command")
-    return max(matches, key=lambda path: len(path.split()))
+    longest = max(matches, key=lambda path: len(path.split()))
+    return tree.aliases.get(longest, longest)
 
 
 def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:

@@ -562,6 +562,25 @@ def test_ctrl_c_while_a_command_runs_does_not_interrupt_the_console(
     assert signal.getsignal(signal.SIGINT) is previous
 
 
+def test_alias_command_runs_via_its_literal_argv_in_full_mode(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    """`merge` is a hidden alias for `git merge`; full mode permits it (Problem A)."""
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["merge --into main", "exit"])
+
+    console.run("project")
+
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "merge", "--into", "main"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
 def test_history_is_private_and_completion_is_nested(
     console_env: ConsoleEnv, mocker, tmp_path: Path
 ) -> None:
