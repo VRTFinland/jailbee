@@ -237,7 +237,7 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
     mocker: MockerFixture,
 ) -> None:
     from jailbee.global_config import default_global_config_path
-    from jailbee.remote_ssh.service import status
+    from jailbee.remote_ssh.service import ProblemSeverity, status
 
     config = default_global_config_path()
     config.parent.mkdir(parents=True)
@@ -257,7 +257,8 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
     assert result.port == 8022
     assert result.entrypoints == ("dashboard",)
     assert result.authorized_keys == 0
-    problems = "\n".join(result.problems).lower()
+    by_message = {problem.message.lower(): problem.severity for problem in result.problems}
+    messages = "\n".join(by_message).lower()
     for expected in (
         "optional ssh dependency",
         "unit is not installed",
@@ -268,7 +269,26 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
         "no authorized client keys",
         "global config",
     ):
-        assert expected in problems
+        assert expected in messages
+
+    # A missing authorized-keys file reads as zero keys, same as an
+    # intentionally empty one (a valid configuration per docs/security.md),
+    # so it warns rather than failing status. A missing host key has no such
+    # safe reading and an invalid global config leaves the service
+    # unusable, so both are fatal.
+    warning, fatal = ProblemSeverity.WARNING, ProblemSeverity.FATAL
+    for substring, expected_severity in (
+        ("optional ssh dependency", warning),
+        ("unit is not installed", warning),
+        ("not enabled", warning),
+        ("not active", warning),
+        ("authorized keys file is missing", warning),
+        ("no authorized client keys", warning),
+        ("host key is missing", fatal),
+        ("global config", fatal),
+    ):
+        (severity,) = (v for k, v in by_message.items() if substring in k)
+        assert severity is expected_severity, substring
     assert not (ssh_home / ".local" / "share" / "jailbee" / "ssh").exists()
 
 
@@ -277,7 +297,7 @@ def test_status_reports_inactive_service_and_unsafe_key_modes(
     mocker: MockerFixture,
 ) -> None:
     from jailbee.remote_ssh.keys import ssh_paths
-    from jailbee.remote_ssh.service import SSH_SERVICE, status
+    from jailbee.remote_ssh.service import SSH_SERVICE, ProblemSeverity, status
 
     unit = ssh_home / ".config" / "systemd" / "user" / SSH_SERVICE
     unit.parent.mkdir(parents=True)
@@ -298,11 +318,17 @@ def test_status_reports_inactive_service_and_unsafe_key_modes(
     assert result.enabled is True
     assert result.active is False
     assert result.authorized_keys == 0
-    problems = "\n".join(result.problems).lower()
-    assert "not active" in problems
-    assert "authorized keys file mode is 0644; expected 0600" in problems
-    assert "host key mode is 0666; expected 0600" in problems
-    assert "no authorized client keys" in problems
+    by_message = {problem.message.lower(): problem.severity for problem in result.problems}
+    messages = "\n".join(by_message)
+    assert "not active" in messages
+    assert "authorized keys file mode is 0644; expected 0600" in messages
+    assert "host key mode is 0666; expected 0600" in messages
+    assert "no authorized client keys" in messages
+
+    # Regression for final-review finding M4: an unsafe authorized-keys mode
+    # must be exactly as fatal as an unsafe host-key mode.
+    assert by_message["authorized keys file mode is 0644; expected 0600."] is ProblemSeverity.FATAL
+    assert by_message["host key mode is 0666; expected 0600."] is ProblemSeverity.FATAL
 
 
 def test_status_never_imports_asyncssh_or_starts_the_service(

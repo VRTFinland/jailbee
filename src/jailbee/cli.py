@@ -105,6 +105,7 @@ def remote_ssh_restart_cmd() -> None:
 def remote_ssh_status_cmd() -> None:
     """Show service, configuration, and key status."""
     from jailbee.remote_ssh import service
+    from jailbee.setup_command import linger_tip
 
     status = service.status()
     typer.echo(f"installed: {'yes' if status.installed else 'no'}")
@@ -114,14 +115,13 @@ def remote_ssh_status_cmd() -> None:
     typer.echo(f"entry points: {', '.join(status.entrypoints) or 'none'}")
     typer.echo(f"authorized keys: {status.authorized_keys}")
     for problem in status.problems:
-        typer.echo(f"problem: {problem}")
+        typer.echo(f"problem: {problem.message}")
 
-    fatal_prefixes = (
-        "Global config is invalid:",
-        "Host key ",
-        "Could not inspect host key:",
-    )
-    if any(problem.startswith(fatal_prefixes) for problem in status.problems):
+    # A user timer/service only runs without a login session if linger is
+    # enabled; `enable`'s own systemd-unit install path shares this same tip.
+    linger_tip()
+
+    if any(problem.severity is service.ProblemSeverity.FATAL for problem in status.problems):
         raise typer.Exit(1)
 
 

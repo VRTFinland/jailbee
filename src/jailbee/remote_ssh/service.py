@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 from dataclasses import dataclass
+from enum import Enum
 from importlib.resources import files
 from pathlib import Path
 
@@ -26,6 +27,26 @@ from jailbee.systemd import systemd_user_dir, write_if_changed
 SSH_SERVICE = "jailbee-ssh.service"
 
 
+class ProblemSeverity(Enum):
+    """How urgently `status()` wants a problem acted on.
+
+    `FATAL` covers configuration errors and unsafe key-file permissions —
+    states an operator should treat as broken. `WARNING` covers everything
+    else `status()` reports (service lifecycle state, an empty key file),
+    which can be entirely normal (a freshly-enabled service, or a
+    deliberately empty `authorized_keys`; see docs/security.md).
+    """
+
+    WARNING = "warning"
+    FATAL = "fatal"
+
+
+@dataclass(frozen=True)
+class Problem:
+    severity: ProblemSeverity
+    message: str
+
+
 @dataclass(frozen=True)
 class ServiceStatus:
     unit_path: Path
@@ -36,7 +57,7 @@ class ServiceStatus:
     port: int
     entrypoints: tuple[str, ...]
     authorized_keys: int
-    problems: tuple[str, ...]
+    problems: tuple[Problem, ...]
 
 
 def _ssh_dependency_available() -> bool:
@@ -115,55 +136,70 @@ def _entrypoints(config: RemoteSSHConfig) -> tuple[str, ...]:
 
 def status() -> ServiceStatus:
     """Inspect the service, config, and key files without starting anything."""
-    problems: list[str] = []
+    problems: list[Problem] = []
+
+    def warn(message: str) -> None:
+        problems.append(Problem(ProblemSeverity.WARNING, message))
+
+    def fatal(message: str) -> None:
+        problems.append(Problem(ProblemSeverity.FATAL, message))
+
     unit_path = systemd_user_dir() / SSH_SERVICE
     installed = unit_path.is_file()
     if not _ssh_dependency_available():
-        problems.append("The optional SSH dependency is not installed.")
+        warn("The optional SSH dependency is not installed.")
     if not installed:
-        problems.append("The SSH service unit is not installed.")
+        warn("The SSH service unit is not installed.")
 
     enabled, enabled_problem = _systemctl_probe("is-enabled")
     active, active_problem = _systemctl_probe("is-active")
     if enabled_problem is not None:
-        problems.append(enabled_problem)
+        warn(enabled_problem)
     if active_problem is not None:
-        problems.append(active_problem)
+        warn(active_problem)
     if not enabled:
-        problems.append("The SSH service is not enabled.")
+        warn("The SSH service is not enabled.")
     if not active:
-        problems.append("The SSH service is not active.")
+        warn("The SSH service is not active.")
 
     try:
         global_config, _warnings = load_global_config(default_global_config_path())
         ssh_config = global_config.remote.ssh
     except (ConfigError, OSError) as exc:
-        problems.append(f"Global config is invalid: {exc}")
+        fatal(f"Global config is invalid: {exc}")
         ssh_config = RemoteSSHConfig()
 
     paths = ssh_paths()
-    for label, path in (
-        ("Authorized keys file", paths.authorized_keys),
-        ("Host key", paths.host_key),
+    # A missing authorized-keys file behaves exactly like an empty one (both
+    # read as zero keys), and the security design treats an empty file as a
+    # valid, if useless, configuration — so only its *unsafe* states are
+    # fatal. A missing host key has no such safe reading: the listener
+    # cannot start without one. Either file's permissions or unreadability
+    # being wrong is equally unsafe key-file handling, so those are fatal for
+    # both (previously the authorized-keys file's own unsafe mode was not,
+    # while the host key's was — final review finding M4).
+    for label, path, missing in (
+        ("Authorized keys file", paths.authorized_keys, warn),
+        ("Host key", paths.host_key, fatal),
     ):
         try:
             mode = stat.S_IMODE(path.stat().st_mode)
         except FileNotFoundError:
-            problems.append(f"{label} is missing.")
+            missing(f"{label} is missing.")
             continue
         except OSError as exc:
-            problems.append(f"Could not inspect {label.lower()}: {exc}")
+            fatal(f"Could not inspect {label.lower()}: {exc}")
             continue
         if mode != 0o600:
-            problems.append(f"{label} mode is {mode:04o}; expected 0600.")
+            fatal(f"{label} mode is {mode:04o}; expected 0600.")
 
     try:
         authorized_keys = len(read_authorized_keys(paths=paths))
     except (OSError, SSHKeyError) as exc:
-        problems.append(f"Could not read authorized keys: {exc}")
+        warn(f"Could not read authorized keys: {exc}")
         authorized_keys = 0
     if authorized_keys == 0:
-        problems.append("No authorized client keys are configured.")
+        warn("No authorized client keys are configured.")
 
     return ServiceStatus(
         unit_path=unit_path,

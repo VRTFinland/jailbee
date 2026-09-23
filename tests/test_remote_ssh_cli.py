@@ -6,6 +6,7 @@ import builtins
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -18,7 +19,7 @@ from jailbee.remote_ssh.keys import (
     SSHDependencyError,
     SSHKeyError,
 )
-from jailbee.remote_ssh.service import ServiceStatus
+from jailbee.remote_ssh.service import Problem, ProblemSeverity, ServiceStatus
 from tests.conftest import flat_output
 
 
@@ -60,7 +61,7 @@ def test_remote_ssh_lifecycle_domain_error_is_concise(mocker: MockerFixture) -> 
     assert "Traceback" not in result.stderr
 
 
-def _status(*, problems: tuple[str, ...] = ()) -> ServiceStatus:
+def _status(*, problems: tuple[Problem, ...] = ()) -> ServiceStatus:
     return ServiceStatus(
         unit_path=Path("/home/user/.config/systemd/user/jailbee-ssh.service"),
         installed=True,
@@ -72,6 +73,13 @@ def _status(*, problems: tuple[str, ...] = ()) -> ServiceStatus:
         authorized_keys=2,
         problems=problems,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_linger_probe(mocker: MockerFixture) -> MagicMock:
+    # `status` prints the same linger tip `enable`'s install path does; none
+    # of the tests below want a real `loginctl` subprocess or its output.
+    return mocker.patch("jailbee.setup_command.linger_tip")
 
 
 def test_remote_ssh_status_has_stable_complete_output(mocker: MockerFixture) -> None:
@@ -91,28 +99,47 @@ def test_remote_ssh_status_has_stable_complete_output(mocker: MockerFixture) -> 
     status.assert_called_once_with()
 
 
+def test_remote_ssh_status_prints_the_linger_tip(
+    mocker: MockerFixture, _no_real_linger_probe: MagicMock
+) -> None:
+    mocker.patch("jailbee.remote_ssh.service.status", return_value=_status())
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    _no_real_linger_probe.assert_called_once_with()
+
+
 @pytest.mark.parametrize(
     ("problem", "expected_exit"),
     [
-        ("The SSH service unit is not installed.", 0),
-        ("The SSH service is not enabled.", 0),
-        ("The SSH service is not active.", 0),
-        ("No authorized client keys are configured.", 0),
-        ("Global config is invalid: broken YAML", 1),
-        ("Host key is missing.", 1),
-        ("Host key mode is 0644; expected 0600.", 1),
-        ("Could not inspect host key: permission denied", 1),
+        (Problem(ProblemSeverity.WARNING, "The SSH service unit is not installed."), 0),
+        (Problem(ProblemSeverity.WARNING, "The SSH service is not enabled."), 0),
+        (Problem(ProblemSeverity.WARNING, "The SSH service is not active."), 0),
+        (Problem(ProblemSeverity.WARNING, "No authorized client keys are configured."), 0),
+        (Problem(ProblemSeverity.WARNING, "Authorized keys file is missing."), 0),
+        (Problem(ProblemSeverity.FATAL, "Global config is invalid: broken YAML"), 1),
+        (Problem(ProblemSeverity.FATAL, "Host key is missing."), 1),
+        (Problem(ProblemSeverity.FATAL, "Host key mode is 0644; expected 0600."), 1),
+        (Problem(ProblemSeverity.FATAL, "Could not inspect host key: permission denied"), 1),
+        # Final review finding M4: an unsafe authorized-keys mode must exit
+        # nonzero exactly like an unsafe host-key mode.
+        (Problem(ProblemSeverity.FATAL, "Authorized keys file mode is 0644; expected 0600."), 1),
+        (
+            Problem(ProblemSeverity.FATAL, "Could not inspect authorized keys file: denied"),
+            1,
+        ),
     ],
 )
-def test_remote_ssh_status_exit_reflects_only_unsafe_configuration(
-    problem: str, expected_exit: int, mocker: MockerFixture
+def test_remote_ssh_status_exit_reflects_only_the_problem_severity(
+    problem: Problem, expected_exit: int, mocker: MockerFixture
 ) -> None:
     mocker.patch("jailbee.remote_ssh.service.status", return_value=_status(problems=(problem,)))
 
     result = CliRunner().invoke(app, ["remote", "ssh", "status"])
 
     assert result.exit_code == expected_exit
-    assert f"problem: {problem}" in result.stdout
+    assert f"problem: {problem.message}" in result.stdout
 
 
 def test_remote_ssh_key_add_reads_and_delegates(tmp_path: Path, mocker: MockerFixture) -> None:
