@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 
 from rich import box
-from rich.console import Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -1209,6 +1209,55 @@ def _dashboard_column_widths(
     return tuple(widths)
 
 
+def _fit_dashboard_column_widths(widths: tuple[int, ...], available_width: int) -> tuple[int, ...]:
+    """Fit measured columns to Rich's current content width, retaining minima."""
+    if not widths:
+        return widths
+    # Each table column has one cell of horizontal padding on either side.
+    budget = max(len(widths), available_width - 2 * len(widths))
+    if sum(widths) <= budget:
+        return widths
+    scale = budget / sum(widths)
+    fitted = [max(1, int(width * scale)) for width in widths]
+    while sum(fitted) > budget:
+        largest = max(range(len(fitted)), key=fitted.__getitem__)
+        if fitted[largest] == 1:
+            break
+        fitted[largest] -= 1
+    while sum(fitted) < budget:
+        smallest_ratio = min(range(len(fitted)), key=lambda i: fitted[i] / widths[i])
+        fitted[smallest_ratio] += 1
+    return tuple(fitted)
+
+
+@dataclass(frozen=True)
+class _RepoSections:
+    groups: list[RepoGroup]
+    fields: list[FieldSpecCI]
+    widths: tuple[int, ...]
+    selected: Row | None
+    folded: frozenset[str]
+    empty: bool
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        widths = _fit_dashboard_column_widths(self.widths, options.max_width)
+        sections: list[RenderableType] = []
+        headers_shown = False
+        if self.empty:
+            sections.append("(no containers found)")
+        else:
+            for group in self.groups:
+                sections.append(repo_heading(group, self.selected, self.folded))
+                if group.prefix not in self.folded:
+                    sections.append(
+                        repo_table(
+                            group, self.fields, widths, self.selected, show_header=not headers_shown
+                        )
+                    )
+                    headers_shown = True
+        yield Group(*sections)
+
+
 def render(
     groups: list[RepoGroup],
     selected: Row | None,
@@ -1244,20 +1293,17 @@ def render(
     visible_groups = [g for g in groups if g.containers]
     visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
     widths = _dashboard_column_widths(fields, visible_rows)
-    sections: list[RenderableType] = []
-    headers_shown = False
-    if not all_containers:
-        sections.append("(no containers found)")
-    else:
-        for group in visible_groups:
-            sections.append(repo_heading(group, selected, folded))
-            if group.prefix not in folded:
-                sections.append(
-                    repo_table(group, fields, widths, selected, show_header=not headers_shown)
-                )
-                headers_shown = True
-
-    body: list[RenderableType] = [Group(*sections), ""]
+    body: list[RenderableType] = [
+        _RepoSections(
+            visible_groups,
+            fields,
+            widths,
+            selected,
+            folded,
+            empty=not all_containers,
+        ),
+        "",
+    ]
     if overlay is not None:
         if isinstance(overlay, MenuState):
             panel = _render_menu(overlay)

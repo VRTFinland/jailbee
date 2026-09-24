@@ -2189,9 +2189,30 @@ def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
         ),
         width=48,
     )
-    assert prefix in out
-    assert "Running" in out
-    wide = _render_text(
+    for rendered in (
+        out,
+        _render_text(
+            dashboard.render(
+                [group],
+                selected=None,
+                now=datetime(2026, 6, 8, tzinfo=UTC),
+                last_refresh_age=1.0,
+                interval=3.0,
+                git_enabled=True,
+                enabled=("state",),
+            ),
+            width=100,
+        ),
+    ):
+        heading_line = next(line for line in rendered.splitlines() if prefix in line)
+        data_line = next(line for line in rendered.splitlines() if "Running" in line)
+        assert len(prefix) > len("Running")
+        assert heading_line.index("▾") < data_line.index("Running")
+
+
+def test_render_empty_repo_data_shows_placeholder(tmp_path):
+    group = dashboard.RepoGroup("empty", str(tmp_path), None, [])
+    out = _render_text(
         dashboard.render(
             [group],
             selected=None,
@@ -2199,11 +2220,33 @@ def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
-            enabled=("state",),
-        ),
-        width=100,
+        )
     )
-    assert prefix in wide
+    assert "no containers found" in out
+
+
+def test_narrow_multi_column_render_stays_within_available_content_width(tmp_path):
+    group = dashboard.RepoGroup(
+        "long-repository-prefix",
+        str(tmp_path),
+        None,
+        [_ci("long-repository-prefix-one", "long-repository-prefix")],
+    )
+    rendered = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state", "network", "name"),
+        ),
+        width=32,
+    )
+    table_lines = [line for line in rendered.splitlines() if "Running" in line]
+    assert table_lines
+    assert max(len(line) for line in table_lines) <= 32
 
 
 def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
