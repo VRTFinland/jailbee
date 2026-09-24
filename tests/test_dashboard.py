@@ -30,6 +30,18 @@ def test_inline_editor_handles_editing_and_utf8():
     assert state.text == "é shel"
 
 
+def test_inline_editor_preserves_utf8_split_across_scripted_reads(mocker):
+    rendered = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"\xc3", b"\xa9", b"\x1b", b"q"])
+
+    assert any(
+        isinstance(call.kwargs.get("overlay"), dashboard.CommandState)
+        and call.kwargs["overlay"].text == "é"
+        for call in rendered.call_args_list
+    )
+
+
 def test_inline_editor_tab_cycles_candidates():
     state = dashboard.CommandState(text="me", suggestions=("merge", "menu"), index=0)
     state = dashboard.edit_command(state, b"\t")

@@ -1038,6 +1038,7 @@ class CommandState:
     text: str
     suggestions: tuple[str, ...] = ()
     index: int = -1
+    pending_utf8: bytes = b""
 
 
 def edit_command(state: CommandState, key: bytes) -> CommandState:
@@ -1051,9 +1052,15 @@ def edit_command(state: CommandState, key: bytes) -> CommandState:
         return replace(state, text=state.suggestions[index], index=index)
     if key in (b"\r", b"\n", b"\x1b", b"\x03", b""):
         return state
-    text = key.decode("utf-8", errors="ignore")
+    encoded = state.pending_utf8 + key
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if exc.reason == "unexpected end of data" and exc.end == len(encoded):
+            return replace(state, pending_utf8=encoded)
+        text = encoded.decode("utf-8", errors="replace")
     if text and text.isprintable():
-        return replace(state, text=state.text + text, index=-1)
+        return replace(state, text=state.text + text, index=-1, pending_utf8=b"")
     return state
 
 
