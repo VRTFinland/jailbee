@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal
 
 import yaml
 
-from jailbee.config_edit.layers import LayerName, apply_changes, lookup, raw_for
+from jailbee.config_edit.layers import LayerName, apply_changes, lookup, path_for, raw_for
 from jailbee.config_writer import (
     DELETE,
     credential_key_migration,
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 WritePolicy = Literal["patch", "regenerate"]
 
-_DEFAULT_POLICY: dict[LayerName, WritePolicy] = {"global": "regenerate", "repo": "patch"}
+_DEFAULT_POLICY: dict[LayerName, WritePolicy] = {"global": "regenerate", "repo": "patch", "local": "patch"}
 """The per-layer default `auto` resolves to (spec 2.4).
 
 The two files have genuinely different ownership: `global.yaml` is jailbee's,
@@ -79,6 +79,9 @@ def resolve_policy(
     the key deliberately — the key records a habit, the flag an intention about
     one file.
     """
+    if layer == "local":
+        # The local file mixes Config with credentials and must remain hand-written.
+        return "patch"
     if flag is not None:
         return flag
     if configured == "patch":
@@ -169,6 +172,7 @@ def render_layer(raw: dict[str, object], layer: LayerName) -> str:
 
     if layer == "global":
         return render_global_yaml(raw)
+    assert layer != "local", "local files are always saved with a minimal patch"
     return render_documented(raw, Config, header=_REPO_HEADER)
 
 
@@ -182,6 +186,7 @@ class SavePlan:
     new_text: str
     diff: str
     dropped_comments: tuple[str, ...]
+    layer: LayerName = "repo"
 
     @property
     def must_confirm(self) -> bool:
@@ -216,7 +221,7 @@ def build_plan(
     stream, say — is invisible to it, and this is the last place before
     `commit` where such a file can still be stopped.
     """
-    path = layer_set.repo_path if layer == "repo" else layer_set.global_path
+    path = path_for(layer_set, layer)
     old_text = path.read_text(encoding="utf-8") if path.exists() else ""
     raw = raw_for(layer_set, layer)
     # A save that touches a legacy `claude_credentials:` block migrates it in
@@ -245,6 +250,7 @@ def build_plan(
     dropped = _dropped_comments(old_text, new_text) if policy == "regenerate" else ()
     return SavePlan(
         path=path,
+        layer=layer,
         policy=policy,
         old_text=old_text,
         new_text=new_text,
@@ -333,4 +339,6 @@ def commit(plan: SavePlan) -> Path | None:
     commit, nothing here stops `commit` from being called on an unvalidated
     plan.
     """
+    if plan.layer == "local":
+        plan.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     return write_with_backup(plan.path, plan.old_text, plan.new_text)

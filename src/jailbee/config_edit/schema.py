@@ -561,6 +561,9 @@ not just the current ones: the loader still bans the legacy spellings, and a
 set that named only the new keys would silently stop mirroring it. Kept in
 step with the ban list in `config/loader.py` by
 `test_global_only_keys_is_the_documented_ban_list`.
+
+The host-local layer takes `github` and `credentials` instead; see
+`layers.disabled_reason` for its own refusals.
 """
 
 
@@ -583,3 +586,10 @@ def global_specs() -> tuple[FieldSpec, ...]:
     overlay = [s for s in build_specs(Config) if s.path[0] not in _HOST_LEVEL_KEYS]
     host = [s for s in build_specs(GlobalConfig) if s.path[0] in _HOST_LEVEL_KEYS]
     return tuple(overlay + host)
+
+
+def local_specs() -> tuple[FieldSpec, ...]:
+    """Editable leaves of a repo's host-local `repos/<prefix>.yaml` file."""
+    from jailbee.config.models_net import LocalCredentials
+
+    return (*build_specs(Config), *rebase(build_specs(LocalCredentials), ("credentials",)))

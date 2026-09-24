@@ -83,6 +83,8 @@ def _layers(repo_raw=None, global_raw=None):
         global_path=Path("global.yaml"),
         repo_raw=repo_raw if repo_raw is not None else {},
         global_raw=global_raw if global_raw is not None else {},
+        local_path=Path("local.yaml"),
+        local_raw={},
     )
 
 

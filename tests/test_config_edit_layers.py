@@ -11,7 +11,7 @@ import pytest
 
 from jailbee.config import HostPort
 from jailbee.config_edit import layers
-from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, local_specs, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -48,6 +48,40 @@ def test_repo_wins_over_global_wins_over_default(tmp_path):
     assert origins[("defaults", "cpu")] == layers.Origin("repo", 8)
     assert origins[("gpg", "enabled")] == layers.Origin("global", True)
     assert origins[("ssh", "enabled")].source == "default"
+
+
+def test_local_value_wins_and_local_layer_is_read(tmp_path):
+    local_path = _write(tmp_path / "local.yaml", "jetbrains:\n  ide: goland\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml", local_path)
+    origins = layers.resolve(repo_specs(), layers.LayerSet(
+        got.repo_path, got.global_path, {"jetbrains": {"ide": "pycharm"}},
+        {"jetbrains": {"ide": "idea"}}, got.local_path, got.local_raw,
+    ))
+    assert origins[("jetbrains", "ide")] == layers.Origin("local", "goland")
+
+
+def test_local_layer_disabled_paths_and_inherited_lists(tmp_path):
+    from jailbee.config_edit.layers import disabled_reason, inherited_entries
+
+    local = local_specs()
+    prefix = next(s for s in local if s.path == ("container_prefix",))
+    api_tokens = next(s for s in local if s.path == ("github", "api_tokens"))
+    token = next(s for s in local if s.path == ("github", "token"))
+    assert disabled_reason(prefix, "local")
+    assert disabled_reason(api_tokens, "local")
+    assert disabled_reason(token, "local")
+    global_token = next(s for s in global_specs() if s.path == ("github", "token"))
+    assert "--local" in (disabled_reason(global_token, "global") or "")
+    egress = next(s for s in local if s.path == ("egress_allow",))
+    ls = layers.LayerSet(tmp_path / "repo", tmp_path / "global", {"egress_allow": ["r.org"]},
+                         {"egress_allow": ["g.org"]}, tmp_path / "local", {})
+    assert inherited_entries(egress, ls, "local") == ("g.org", "r.org")
+
+
+def test_local_specs_include_credential_group_but_not_repos():
+    paths = {spec.path for spec in local_specs()}
+    assert ("credentials", "group") in paths
+    assert ("credentials", "repos") not in paths
 
 
 def test_an_explicit_null_is_a_set_value_not_an_absent_one(tmp_path):
@@ -673,6 +707,8 @@ def test_a_repo_layer_refusal_names_the_key_the_user_wrote(tmp_path):
         global_raw={},
         repo_path=repo / ".jailbee" / "config.yaml",
         repo_raw={"container_prefix": "demo", "claude_credentials": {"group": "work"}},
+        local_path=tmp_path / "local.yaml",
+        local_raw={},
     )
 
     message = validate(layer_set, "repo", [])
