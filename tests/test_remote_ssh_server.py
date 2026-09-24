@@ -1385,3 +1385,55 @@ def test_serve_async_records_itself_while_running_and_clears_after(listener, moc
 
     record.assert_called_once_with(server.__version__)
     clear.assert_called_once_with()
+
+
+def test_update_watch_ignores_an_unknown_installed_version():
+    """Mid-upgrade the metadata can be briefly missing; the watch keeps
+    looking and catches the real version once it is there."""
+    seen = iter([None, None, "1.1.0"])
+    watch = server.UpdateWatch("1.0.0", Mock(), installed=lambda: next(seen))
+
+    assert watch.changed() is None
+    assert watch.changed() is None
+    assert watch.changed() == "1.1.0"
+
+
+def test_an_upgrade_drains_live_sessions_before_hanging_up(listener, mocker):
+    """The listener closes at once; live sessions get the drain window and
+    are hung up only when it runs out."""
+    value, _ = listener
+    closed = asyncio.Event()
+
+    async def wait_closed():
+        await closed.wait()
+
+    value.wait_closed.side_effect = wait_closed
+    value.close.side_effect = closed.set
+    mocker.patch.object(server, "__version__", "1.0.0")
+    mocker.patch.object(server, "installed_version", return_value="1.1.0")
+    conn = Mock()
+    live_sets: list[set] = []
+    real_server = server.JailbeeSSHServer
+
+    def capture(live=None):
+        live_sets.append(live)
+        return real_server(live)
+
+    mocker.patch.object(server, "JailbeeSSHServer", side_effect=capture)
+
+    async def run():
+        task = asyncio.create_task(
+            server.serve_async(RemoteSSHConfig(), update_poll_seconds=0, update_drain_seconds=0.3)
+        )
+        await asyncio.sleep(0)
+        _, listen = listener
+        listen.call_args.kwargs["server_factory"]()  # registers the live set
+        live_sets[0].add(conn)
+        conn.close.side_effect = lambda: live_sets[0].discard(conn)
+        await asyncio.sleep(0.1)
+        assert conn.close.call_count == 0  # still draining
+        with pytest.raises(server.ServiceUpdatedError):
+            await task
+
+    asyncio.run(run())
+    conn.close.assert_called_once_with()

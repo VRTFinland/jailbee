@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shlex
 import shutil
 import stat
@@ -22,7 +23,7 @@ from jailbee.remote_ssh.keys import (
     read_authorized_keys,
     ssh_paths,
 )
-from jailbee.remote_ssh.running import installed_version, running_servers
+from jailbee.remote_ssh.running import running_servers
 from jailbee.systemd import systemd_user_dir, write_if_changed
 
 SSH_SERVICE = "jailbee-ssh.service"
@@ -124,7 +125,7 @@ def _systemctl_probe(action: str) -> tuple[bool, str | None]:
 
 
 def _main_pid() -> int | None:
-    """The running service's main pid, or None when it is not running."""
+    """The running service's main pid from systemd, or None when it is not running."""
     try:
         result = subprocess.run(
             ["systemctl", "--user", "show", "--property=MainPID", "--value", SSH_SERVICE],
@@ -141,37 +142,63 @@ def _main_pid() -> int | None:
     return pid or None
 
 
-def stale_service_reason(installed: str | None = None) -> str | None:
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def _service_pids() -> set[int] | None:
+    """Every pid in the SSH service's cgroup, or None when this host cannot say.
+
+    Read from the unified cgroup hierarchy, with no subprocess. A unit's
+    cgroup exists only while it runs, so an empty set means the service is
+    not running. None — no cgroup v2, or no user manager where systemd puts
+    it (inside a container, say) — leaves the answer to systemd.
+    """
+    if not (_CGROUP_ROOT / "cgroup.controllers").is_file():
+        return None
+    uid = os.getuid()
+    manager = _CGROUP_ROOT / "user.slice" / f"user-{uid}.slice" / f"user@{uid}.service"
+    if not manager.is_dir():
+        return None
+    for unit_dir in (manager / "app.slice" / SSH_SERVICE, manager / SSH_SERVICE):
+        try:
+            text = (unit_dir / "cgroup.procs").read_text()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        return {int(field) for field in text.split() if field.isdigit()}
+    return set()
+
+
+def stale_service_reason() -> str | None:
     """Why the running SSH service should be restarted, or None when it need not.
 
-    A service started before the installed JailBee keeps its old routing and
-    session marking (see `remote_ssh.running`). One that records itself
-    restarts on its own; this catches the rest — above all a service started
-    by a JailBee from before that check existed, which leaves no record.
+    A server records itself (`remote_ssh.running`) and restarts on its own
+    when JailBee is upgraded under it. The one that cannot is a service
+    started by a JailBee from before that check: it keeps its old routing
+    and session marking while every session runs the new CLI. So the
+    service is stale exactly when none of its processes has a record — a
+    recorded one, whatever its version, is either current or about to
+    restart itself.
 
-    Costs no subprocess in the common case: without the unit file there is no
-    service, and a live record of the installed version means the service
-    either is current or will restart itself. Only otherwise is systemd asked
-    for the service's pid.
+    Costs no subprocess where the cgroup hierarchy answers (`_service_pids`);
+    without the unit file there is nothing to ask at all.
     """
     if not (systemd_user_dir() / SSH_SERVICE).is_file():
         return None
-    installed = installed if installed is not None else installed_version()
+    pids = _service_pids()
+    if pids is None:
+        main = _main_pid()
+        pids = {main} if main is not None else set()
+    if not pids:
+        return None
     servers = running_servers()
-    if any(server.version == installed for server in servers.values()):
+    if any(pid in servers for pid in pids):
         return None
-    pid = _main_pid()
-    if pid is None:
-        return None
-    server = servers.get(pid)
-    running = (
-        f"JailBee {server.version}"
-        if server is not None
-        else "a JailBee older than the one that restarts itself on upgrade"
-    )
     return (
-        f"The SSH service (pid {pid}) is still running {running}, and enforces its "
-        f"rules rather than {installed}'s. Restart it: jb remote ssh restart"
+        f"The SSH service (pid {min(pids)}) was started by a JailBee that cannot "
+        f"restart itself on upgrade, and still enforces that version's rules. "
+        f"Restart it once: jb remote ssh restart"
     )
 
 

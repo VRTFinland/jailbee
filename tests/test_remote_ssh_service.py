@@ -206,6 +206,8 @@ def test_status_reports_active_service_configuration_and_key_count(
     )
     _write_keys()
     mocker.patch("jailbee.remote_ssh.service._ssh_dependency_available", return_value=True)
+    # No cgroup v2 here, so the staleness check falls back to systemd.
+    mocker.patch("jailbee.remote_ssh.service._CGROUP_ROOT", ssh_home / "no-cgroup")
     run = mocker.patch(
         "subprocess.run",
         side_effect=lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
@@ -225,7 +227,7 @@ def test_status_reports_active_service_configuration_and_key_count(
     assert [call.args[0] for call in run.call_args_list] == [
         ["systemctl", "--user", "is-enabled", SSH_SERVICE],
         ["systemctl", "--user", "is-active", SSH_SERVICE],
-        # No server record yet, so the staleness check asks for the pid.
+        # No cgroup to read the service's pids from, so systemd is asked.
         ["systemctl", "--user", "show", "--property=MainPID", "--value", SSH_SERVICE],
     ]
     assert all(
@@ -371,13 +373,23 @@ def _install_unit(ssh_home: Path) -> None:
     unit.write_text("unit")
 
 
-def _systemd_main_pid(mocker: MockerFixture, pid: int) -> object:
-    return mocker.patch(
-        "subprocess.run",
-        side_effect=lambda command, **kwargs: subprocess.CompletedProcess(
-            command, 0, stdout=f"{pid}\n"
-        ),
-    )
+def _cgroup(tmp_path: Path, monkeypatch, pids: list[int] | None, *, app_slice: bool = True) -> None:
+    """A fake unified hierarchy; ``pids=None`` leaves the unit's cgroup out."""
+    import os
+
+    from jailbee.remote_ssh import service
+
+    root = tmp_path / "cgroup"
+    root.mkdir()
+    (root / "cgroup.controllers").write_text("cpu memory")
+    uid = os.getuid()
+    manager = root / "user.slice" / f"user-{uid}.slice" / f"user@{uid}.service"
+    manager.mkdir(parents=True)
+    if pids is not None:
+        unit = (manager / "app.slice" if app_slice else manager) / service.SSH_SERVICE
+        unit.mkdir(parents=True)
+        (unit / "cgroup.procs").write_text("".join(f"{pid}\n" for pid in pids))
+    monkeypatch.setattr(service, "_CGROUP_ROOT", root)
 
 
 def test_no_unit_means_no_stale_service_and_no_subprocess(ssh_home, mocker) -> None:
@@ -385,59 +397,99 @@ def test_no_unit_means_no_stale_service_and_no_subprocess(ssh_home, mocker) -> N
 
     run = mocker.patch("subprocess.run")
 
-    assert stale_service_reason("2.0.0") is None
+    assert stale_service_reason() is None
     run.assert_not_called()
 
 
-def test_a_current_record_costs_no_subprocess(ssh_home, mocker) -> None:
-    import os
-
-    from jailbee.remote_ssh.running import record_running
+@pytest.mark.parametrize("app_slice", [True, False])
+def test_a_service_process_without_a_record_is_stale(
+    ssh_home, tmp_path, monkeypatch, mocker, app_slice
+) -> None:
     from jailbee.remote_ssh.service import stale_service_reason
 
     _install_unit(ssh_home)
-    record_running("2.0.0", pid=os.getpid())
+    _cgroup(tmp_path, monkeypatch, [4242], app_slice=app_slice)
     run = mocker.patch("subprocess.run")
 
-    assert stale_service_reason("2.0.0") is None
+    reason = stale_service_reason()
+
+    assert reason is not None
+    assert "pid 4242" in reason and "jb remote ssh restart" in reason
     run.assert_not_called()
 
 
-def test_a_service_with_no_record_predates_the_self_restart(ssh_home, mocker) -> None:
-    import os
-
-    from jailbee.remote_ssh.service import stale_service_reason
-
-    _install_unit(ssh_home)
-    _systemd_main_pid(mocker, os.getpid())
-
-    reason = stale_service_reason("2.0.0")
-
-    assert reason is not None
-    assert "older than the one that restarts itself" in reason
-    assert "jb remote ssh restart" in reason
-
-
-def test_a_service_recorded_at_an_old_version_is_stale(ssh_home, mocker) -> None:
+def test_a_recorded_service_is_never_stale_whatever_its_version(
+    ssh_home, tmp_path, monkeypatch, mocker
+) -> None:
+    """A service that records itself restarts on its own after an upgrade;
+    telling the user to restart it would be noise."""
     import os
 
     from jailbee.remote_ssh.running import record_running
     from jailbee.remote_ssh.service import stale_service_reason
 
     _install_unit(ssh_home)
-    record_running("1.9.0", pid=os.getpid())
-    _systemd_main_pid(mocker, os.getpid())
+    _cgroup(tmp_path, monkeypatch, [os.getpid(), 99999])
+    record_running("0.0.1", pid=os.getpid())
 
-    reason = stale_service_reason("2.0.0")
-
-    assert reason is not None
-    assert "JailBee 1.9.0" in reason
+    assert stale_service_reason() is None
 
 
-def test_an_inactive_service_is_never_stale(ssh_home, mocker) -> None:
+def test_a_current_foreground_serve_does_not_hide_a_stale_service(
+    ssh_home, tmp_path, monkeypatch
+) -> None:
+    """The record must belong to the service's own processes: a foreground
+    `serve` elsewhere proves nothing about the unit."""
+    import os
+
+    from jailbee.remote_ssh.running import record_running
     from jailbee.remote_ssh.service import stale_service_reason
 
     _install_unit(ssh_home)
-    _systemd_main_pid(mocker, 0)
+    _cgroup(tmp_path, monkeypatch, [4242])
+    record_running("2.0.0", pid=os.getpid())  # alive, but not in the unit's cgroup
 
-    assert stale_service_reason("2.0.0") is None
+    assert stale_service_reason() is not None
+
+
+def test_a_stopped_service_costs_no_subprocess(ssh_home, tmp_path, monkeypatch, mocker) -> None:
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    _install_unit(ssh_home)
+    _cgroup(tmp_path, monkeypatch, None)  # no cgroup for the unit: not running
+    run = mocker.patch("subprocess.run")
+
+    assert stale_service_reason() is None
+    run.assert_not_called()
+
+
+def test_without_cgroup_v2_systemd_is_asked(ssh_home, tmp_path, monkeypatch, mocker) -> None:
+    from jailbee.remote_ssh import service
+
+    _install_unit(ssh_home)
+    monkeypatch.setattr(service, "_CGROUP_ROOT", tmp_path / "no-cgroup")
+    mocker.patch(
+        "subprocess.run",
+        side_effect=lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="4242\n"
+        ),
+    )
+
+    reason = service.stale_service_reason()
+
+    assert reason is not None and "pid 4242" in reason
+
+
+def test_without_cgroup_v2_an_inactive_service_is_not_stale(
+    ssh_home, tmp_path, monkeypatch, mocker
+) -> None:
+    from jailbee.remote_ssh import service
+
+    _install_unit(ssh_home)
+    monkeypatch.setattr(service, "_CGROUP_ROOT", tmp_path / "no-cgroup")
+    mocker.patch(
+        "subprocess.run",
+        side_effect=lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="0\n"),
+    )
+
+    assert service.stale_service_reason() is None

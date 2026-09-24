@@ -45,3 +45,16 @@ def test_installed_version_reads_the_metadata_afresh(monkeypatch) -> None:
     monkeypatch.setattr(running, "version", lambda name: "9.9.9")
 
     assert running.installed_version() == "9.9.9"
+
+
+def test_installed_version_is_none_without_metadata(monkeypatch) -> None:
+    """Mid-upgrade the dist-info can be briefly gone: that is "unknown", not a
+    version the server could mistake for a change."""
+    from importlib.metadata import PackageNotFoundError
+
+    def missing(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(running, "version", missing)
+
+    assert running.installed_version() is None

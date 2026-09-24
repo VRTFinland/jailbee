@@ -38,15 +38,18 @@ class RunningServer:
     version: str
 
 
-def installed_version() -> str:
+def installed_version() -> str | None:
     """The JailBee version installed right now, read afresh from its metadata.
 
     Not `jailbee.__version__`, which is fixed when this process imported it.
+    None when no metadata is found — a source tree without an install, or the
+    moment mid-upgrade when the old dist-info is gone and the new one is not
+    yet written. Callers treat None as "nothing known", never as a change.
     """
     try:
         return version("jailbee")
     except PackageNotFoundError:
-        return "0.0.0+unknown"
+        return None
 
 
 def _records_dir() -> Path:

@@ -238,10 +238,11 @@ listener cannot move itself.
 
 Upgrading JailBee needs no restart: the service compares the installed
 version with the one it started from on every new connection and every 30
-seconds, and on a difference it tells the connecting client to reconnect,
-hangs up its sessions and exits with status 75, which the unit's
-`Restart=on-failure` turns into a restart on the new version (background
-jobs survive, as with any restart). The journal records both versions. A
+seconds. On a difference it stops accepting connections at once (a client
+connecting at that moment is told to reconnect), lets the live sessions
+finish for up to 10 minutes before hanging up the rest, and exits with
+status 75, which the unit's `Restart=on-failure` turns into a restart on the
+new version (background jobs survive, as with any restart). The journal records both versions. A
 service started by a JailBee from before this check cannot notice an
 upgrade, and keeps enforcing its old rules while every session runs the new
 CLI — `jb ls`, `jb new`, `jb shell` and `jb remote ssh status` say so and

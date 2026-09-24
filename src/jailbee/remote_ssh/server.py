@@ -67,7 +67,7 @@ class UpdateWatch:
         self,
         running: str,
         stop: Callable[[], None],
-        installed: Callable[[], str] | None = None,
+        installed: Callable[[], str | None] | None = None,
     ) -> None:
         self.running = running
         self.replaced_by: str | None = None
@@ -78,7 +78,9 @@ class UpdateWatch:
         """The version that replaced ``running``, or None while it has not."""
         if self.replaced_by is None:
             current = (self._installed or installed_version)()
-            if current != self.running:
+            # None is "unknown right now" (mid-upgrade, no dist-info), never a
+            # change: latching it would stop the server for nothing.
+            if current is not None and current != self.running:
                 self.replaced_by = current
         return self.replaced_by
 
@@ -438,6 +440,7 @@ async def serve_async(
     overrides: ServeOverrides | None = None,
     *,
     update_poll_seconds: float = 30.0,
+    update_drain_seconds: float = 600.0,
 ) -> None:
     """Serve until listener shutdown, propagating bind and configuration errors.
 
@@ -449,8 +452,12 @@ async def serve_async(
 
     Raises `ServiceUpdatedError` after stopping because JailBee was upgraded
     under this server — noticed on a connection or by the poll every
-    ``update_poll_seconds`` (see `UpdateWatch`). The process records the
-    version it serves for as long as it runs (`remote_ssh.running`).
+    ``update_poll_seconds`` (see `UpdateWatch`). Stopping closes the listener
+    at once, so no new session starts on the old code, but lets the live
+    sessions finish — a half-done `jailbee new` is worse than a late restart
+    — for at most ``update_drain_seconds``, after which the rest are hung up
+    as on SIGTERM. The process records the version it serves for as long as
+    it runs (`remote_ssh.running`).
     """
     # AsyncSSH logs complete commands at INFO and packet/input data at DEBUG.
     # This dedicated service supplies its own bounded audit fields instead.
@@ -459,10 +466,24 @@ async def serve_async(
     library_log.setLevel(max(previous_level, logging.WARNING))
     live: set[asyncssh.SSHServerConnection] = set()
     listener: asyncssh.SSHAcceptor | None = None
+    drain_deadline: asyncio.TimerHandle | None = None
 
     def stop_for_update() -> None:
-        if listener is not None:
-            _shut_down(listener, live)
+        nonlocal drain_deadline
+        if listener is None or drain_deadline is not None:
+            return
+        listener.close()
+        log.info(
+            "JailBee was updated from %s to %s; no longer accepting connections, "
+            "waiting up to %ss for %d live session(s) before restarting",
+            update.running,
+            update.replaced_by,
+            update_drain_seconds,
+            len(live),
+        )
+        drain_deadline = asyncio.get_running_loop().call_later(
+            update_drain_seconds, _shut_down, listener, live
+        )
 
     update = UpdateWatch(__version__, stop_for_update)
 
@@ -505,7 +526,14 @@ async def serve_async(
         loop.add_signal_handler(signal.SIGTERM, _shut_down, listener, live)
         try:
             await listener.wait_closed()
+            # Not left to `wait_closed`, whose waiting for open connections
+            # depends on the Python version: the drain deadline above is what
+            # bounds this, by hanging up whoever is left.
+            while update.replaced_by is not None and live:
+                await asyncio.sleep(0.2)
         finally:
+            if drain_deadline is not None:
+                drain_deadline.cancel()
             poller.cancel()
             loop.remove_signal_handler(signal.SIGTERM)
             listener.close()
