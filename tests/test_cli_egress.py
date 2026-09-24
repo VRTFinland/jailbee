@@ -560,7 +560,9 @@ def test_export_in_a_scratch_directory_names_config_init(tmp_path, monkeypatch, 
     # absence of the exception it replaces.
     assert "Traceback" not in result.output
     assert "ConfigNotFoundError" not in result.output
-    assert str(repo_root) in collapsed
+    # A path longer than the console is folded mid-word; match it with all
+    # whitespace removed (the tmp path has none).
+    assert str(repo_root) in "".join(result.output.split())
     assert "has no repo config to write `egress_allow` into" in collapsed
     assert "jailbee config init" in collapsed
     # The replacement block must NOT have been printed — there is nothing to

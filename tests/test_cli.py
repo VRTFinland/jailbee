@@ -262,7 +262,9 @@ def test_ls_repo_column_warning_names_the_repo_config_file(mocker, tmp_path):
 
     assert result.exit_code == 0, result.stdout
     combined = result.stdout + (result.stderr or "")
-    assert str(repo_config_path) in combined
+    # Rich folds a path longer than the console mid-word; match it with all
+    # whitespace removed (the tmp path has none).
+    assert str(repo_config_path) in "".join(combined.split())
 
 
 def test_ls_renders_default_columns_when_repo_fields_is_explicitly_empty(mocker, tmp_path):
@@ -9844,9 +9846,12 @@ def test_new_prints_the_scratch_notice(tmp_path, monkeypatch, mocker):
     # whitespace (including newlines) before matching phrases that may span
     # a wrap point — the repo path alone can push the line past 80 columns.
     collapsed = " ".join(result.stderr.split())
+    # A path longer than the console is folded mid-word, which a space join
+    # cannot undo: match it with all whitespace removed (the path has none).
+    dense = "".join(result.stderr.split())
 
     assert result.exit_code == 0, result.output
-    assert str(repo) in collapsed
+    assert str(repo) in dense
     assert "has no .jailbee/config.yaml" in collapsed
     assert "jailbee-scratch-base" in collapsed
     assert "jb config init" in collapsed
