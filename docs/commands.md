@@ -11,7 +11,7 @@
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
 | `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job — including a detached autostart run's supervisor; there is no separate `jailbee autostart log` |
 | `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
-| `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; Enter opens a container menu or folds a repo header. The action menu carries the workflow commands too — `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git pull`, `git diff`, `job log` — each shown only when it would do something. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `F2`/`S` settings overlay (columns + folding; Space toggles a setting), `h`/`?` help, `e`/`E` edit the selected row's repo config (`E`: the global one), `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal). Press `h`/`?` for the full key reference. |
+| `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; Enter opens a container menu or folds a repo header. The action menu carries the workflow commands too — `merge`, `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git pull`, `git diff`, `job log` — each shown only when it would do something. `!` opens an inline JailBee command line: Tab completes command paths, options and containers in the selected repository; Enter runs it and Esc/Ctrl-C cancels it. A selected container supplies an omitted, unambiguous container positional (including `!merge`'s source); a selected repo header supplies the repository only, so `!merge` lets the CLI ask for both source and target. Explicit arguments always win. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `F2`/`S` settings overlay (columns + folding; Space toggles a setting), `h`/`?` help, `e`/`E` edit the selected row's repo config (`E`: the global one), `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal). Press `h`/`?` for the full key reference. |
 | `jailbee shell <name>` | Interactive shell (lands in the in-container clone) |
 | `jailbee tmux <name>` | Attach to the autostart tmux session inside the container |
 | `jailbee exec <name> [--cwd repo\|home\|<path>] [--detach\|-d] -- <cmd>` | Run a command in the container as the dev user (e.g. `jailbee exec smoke -- pnpm test`). `--detach`/`-d` runs it in the background — it survives `jailbee` returning and its output goes to a log file inside the container (`/tmp/jailbee-exec-<timestamp>-<uuid>.log`); needed for a GUI app (`jailbee exec smoke -d -- firefox`), useful for anything long-running |
@@ -195,6 +195,12 @@ repository prefix, never a filesystem path; the registered root becomes the
 command's working directory. The same rule applies to `shell --repo PREFIX`.
 See [Security and limitations](security.md#remote-ssh) before granting access.
 
+The SSH dashboard applies its effective `remote.ssh` policy before it starts a
+dashboard action or a command entered with `!`: `exec` must be enabled and the
+command must pass the configured `commands` policy (including its allowlist,
+when used). The same host-protection rule applies even when command policy is
+otherwise permissive, unless `restrict_host: false` was explicitly configured.
+
 ### Top-level app promotion
 
 An `apps:` entry with `top_level: true` also runs as a bare `jailbee <name>
@@ -240,6 +246,12 @@ Chrome and Firefox launches reuse the same `jailbee ide` / `jailbee chrome` /
 `jailbee apps run <name> --container <container>` regardless of
 `top_level`, so it launches in the highlighted row's own container whether
 or not the entry is promoted to a top-level command.
+
+The shared per-container action menu also offers **Merge into…** when the git
+bridge is available. It starts `jailbee merge` with the highlighted container
+as its source and leaves target selection to the CLI prompt; no target is
+guessed. In the terminal dashboard, the equivalent `!merge` command follows
+the selected-container default described above.
 
 The commands that exist for the text they print — `pr`, `git push`, `git pull`,
 `git diff`, `job log` — get no terminal emulator: they run inside the GUI and
