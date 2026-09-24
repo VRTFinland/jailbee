@@ -43,8 +43,7 @@ def generation_of(cfg: Config, raw: dict[str, Any]) -> Generation:
     del cfg  # Marker names are globally reserved and deliberately repo-independent.
     profiles = raw.get("profiles") or []
     if any(
-        isinstance(profile, str)
-        and profile.endswith(("-net-work-strict", "-net-work-loose"))
+        isinstance(profile, str) and profile.endswith(("-net-work-strict", "-net-work-loose"))
         for profile in profiles
     ):
         return "work"

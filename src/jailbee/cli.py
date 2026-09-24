@@ -8495,7 +8495,9 @@ app.add_typer(net_app)
 @net_app.command("migrate")
 def net_migrate_cmd(
     undo: Annotated[bool, typer.Option("--undo", help="Use legacy for future containers.")] = False,
-    yes: Annotated[bool, typer.Option("--yes", help="Confirm unverified host firewall setup.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm unverified host firewall setup.")
+    ] = False,
 ) -> None:
     """Opt future containers into the work bridge, or undo that default."""
     from sqlmodel import Session
@@ -8506,10 +8508,15 @@ def net_migrate_cmd(
     if undo:
         with Session(get_engine()) as session:
             set_default_generation(session, "legacy")
-        success_plain("Future containers will use the legacy network. Existing containers were not changed.")
+        success_plain(
+            "Future containers will use the legacy network. Existing containers were not changed."
+        )
         return
     if not sys.stdin.isatty() and not yes:
-        error_plain("Non-interactive migration requires --yes; host firewall reachability remains unverified.")
+        error_plain(
+            "Non-interactive migration requires --yes; host firewall reachability "
+            "remains unverified."
+        )
         raise typer.Exit(1)
     warn_plain(
         "This prepares jailbee-work, but does not verify host firewall reachability. "
@@ -8526,7 +8533,10 @@ def net_migrate_cmd(
         raise typer.Exit(1) from exc
     with Session(get_engine()) as session:
         set_default_generation(session, "work")
-    success_plain("Work network prepared; future containers will use it. Host firewall reachability is unverified.")
+    success_plain(
+        "Work network prepared; future containers will use it. "
+        "Host firewall reachability is unverified."
+    )
 
 
 egress_app = typer.Typer(
