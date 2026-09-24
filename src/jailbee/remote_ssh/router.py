@@ -173,6 +173,17 @@ def known_command_paths() -> frozenset[str]:
     return _command_tree().public_leaves
 
 
+def command_leaf(argv: Sequence[str]) -> tuple[str, TyperCommand]:
+    """Return the typed leaf path and its cached Click command."""
+    typed, _ = _resolve_leaf(argv)
+    return typed, _command_tree().leaf_commands[typed]
+
+
+def known_command_aliases() -> dict[str, str]:
+    """Return hidden command aliases mapped to their canonical public paths."""
+    return dict(_command_tree().aliases)
+
+
 def known_command_short_help() -> dict[str, str]:
     """Return each public command path's Click short help text."""
     return _command_tree().public_short_help

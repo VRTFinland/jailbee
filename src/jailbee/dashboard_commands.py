@@ -1,0 +1,104 @@
+"""Pure argv construction and completion for dashboard command input."""
+
+from __future__ import annotations
+
+import shlex
+from collections.abc import Sequence
+
+from typer._click.core import ParameterSource
+
+from jailbee.remote_ssh import router
+
+# Only these leaf positionals are unambiguously a container selector/source.
+# In particular, branch-creating commands and multi-container commands are
+# intentionally absent.
+_CONTAINER_POSITIONALS: dict[str, str] = {
+    "shell": "name",
+    "tmux": "name",
+    "git diff": "name",
+    "merge": "sources",
+    "git merge": "sources",
+}
+
+
+def command_argv(text: str, selected_container: str | None) -> list[str]:
+    """Parse command text as argv and fill a safe omitted container positional."""
+    try:
+        argv = shlex.split(text)
+    except ValueError as error:
+        raise ValueError(f"cannot parse command: {error}") from error
+    if not argv:
+        raise ValueError("command cannot be empty")
+    typed, command = router.command_leaf(argv)
+    positional = _CONTAINER_POSITIONALS.get(typed)
+    if selected_container is None or positional is None:
+        return argv
+    context = command.make_context(typed.split()[-1], argv[len(typed.split()):], resilient_parsing=True)
+    with context:
+        if context.get_parameter_source(positional) is ParameterSource.DEFAULT:
+            argv.append(selected_container)
+    return argv
+
+
+def _partial_words(text: str) -> tuple[list[str], str]:
+    """Split completed words from the current fragment, tolerating open quotes."""
+    stripped = text.rstrip()
+    if not stripped:
+        return [], ""
+    # A trailing whitespace starts a new empty fragment. Otherwise identify
+    # the current token without asking shlex to parse its possibly open quote.
+    if len(stripped) != len(text):
+        try:
+            return shlex.split(stripped), ""
+        except ValueError:
+            return [], stripped
+    boundary = max(text.rfind(" "), text.rfind("\t"))
+    prefix, fragment = text[: boundary + 1], text[boundary + 1 :]
+    try:
+        words = shlex.split(prefix)
+    except ValueError:
+        words = []
+    return words, fragment.lstrip("\"'")
+
+
+def completion_candidates(
+    text: str,
+    containers: Sequence[str],
+    allowed_paths: frozenset[str] | None = None,
+) -> tuple[str, ...]:
+    """Complete cached command paths, Click options, or selected-repo containers."""
+    words, fragment = _partial_words(text)
+    paths = set(router.known_command_paths())
+    aliases = router.known_command_aliases()
+    paths.update(aliases)
+    candidates: set[str] = set()
+    for path in paths:
+        canonical = aliases.get(path, path)
+        if allowed_paths is not None and canonical not in allowed_paths:
+            continue
+        pieces = path.split()
+        prefix_words = words
+        if pieces[: len(prefix_words)] != prefix_words:
+            continue
+        next_piece = pieces[len(prefix_words)] if len(pieces) > len(prefix_words) else ""
+        if next_piece.startswith(fragment):
+            candidates.add(" ".join((*prefix_words, next_piece)))
+        if not words and len(pieces) > 1 and pieces[0].startswith(fragment):
+            candidates.add(pieces[0])
+
+    try:
+        typed, command = router.command_leaf(words)
+    except ValueError:
+        typed = ""
+        command = None
+    if command is not None:
+        candidates.update(
+            option
+            for param in command.params
+            for option in param.opts
+            if option.startswith("-") and option.startswith(fragment)
+        )
+        positional = _CONTAINER_POSITIONALS.get(typed)
+        if positional is not None and not fragment.startswith("-"):
+            candidates.update(name for name in containers if name.startswith(fragment))
+    return tuple(sorted(candidates))

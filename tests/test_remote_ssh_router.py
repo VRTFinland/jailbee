@@ -15,6 +15,8 @@ from jailbee.remote_ssh.router import (
     RouteError,
     check_arguments,
     command_path,
+    command_leaf,
+    known_command_aliases,
     help_text,
     known_command_paths,
     policy_allows,
@@ -213,6 +215,13 @@ def test_command_path_resolves_aliases_to_their_canonical_public_leaf() -> None:
     assert command_path(("diff",)) == "git diff"
     assert command_path(("egress", "ls")) == "net egress ls"
     assert command_path(("git", "pr")) == "pr"
+
+
+def test_leaf_and_alias_metadata_reuse_the_command_tree() -> None:
+    typed, command = command_leaf(("merge", "--into", "main"))
+    assert typed == "merge"
+    assert command.name == "merge"
+    assert known_command_aliases()["merge"] == "git merge"
 
 
 def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> None:
