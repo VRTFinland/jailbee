@@ -599,3 +599,20 @@ print("ordinary help works without asyncssh")
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == "ordinary help works without asyncssh\n"
+
+
+def test_remote_ssh_serve_no_restrict_host_is_passed_through(mocker: MockerFixture) -> None:
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--no-restrict-host"])
+
+    assert result.exit_code == 0, result.stdout
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(restrict_host=False))
+    assert serve.call_args.args[0].restrict_host is False

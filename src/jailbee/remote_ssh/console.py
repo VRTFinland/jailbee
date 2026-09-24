@@ -441,7 +441,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
 
         if not unknown_command(argv, ssh_config.commands):
             try:
-                policy_allows(argv, ssh_config.commands)
+                policy_allows(argv, ssh_config.commands, restrict_host=ssh_config.restrict_host)
             except RouteError as error:
                 _error(str(error))
                 continue

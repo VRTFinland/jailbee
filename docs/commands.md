@@ -129,7 +129,8 @@ without touching `global.yaml`:
 ```bash
 jb remote ssh serve [--listen ADDR] [--port N] \
                      [--dashboard/--no-dashboard] [--shell/--no-shell] [--exec/--no-exec] \
-                     [--commands disabled|allowlist|full] [--allow CMD]...
+                     [--commands disabled|allowlist|full] [--allow CMD]... \
+                     [--restrict-host/--no-restrict-host]
 ```
 
 Every flag defaults to unset, in which case `global.yaml` decides as usual;

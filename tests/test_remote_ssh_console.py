@@ -816,3 +816,22 @@ def test_console_refuses_a_host_path_argument_without_running_anything(
     err = capsys.readouterr().err
     assert "may not set --config: ls" in err
     assert "may not set --mount: new" in err
+
+
+def test_console_with_restrict_host_false_runs_host_arguments(
+    console_env: ConsoleEnv, mocker, monkeypatch
+) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    policy = RemoteSSHConfig(
+        shell=True, commands=RemoteCommandPolicy(mode="full"), restrict_host=False
+    )
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["ls --config /x", "exit"])
+
+    console.run("project", policy_json=policy.model_dump_json())
+
+    run.assert_called_once()
+    assert run.call_args.args[0][-3:] == ["ls", "--config", "/x"]

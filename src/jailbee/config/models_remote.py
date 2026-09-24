@@ -69,6 +69,14 @@ class RemoteSSHConfig(BaseModel):
         default_factory=RemoteCommandPolicy,
         description="Policy controlling which commands remote shell and exec may run.",
     )
+    restrict_host: bool = Field(
+        default=True,
+        description=(
+            "Keep remote sessions off the host itself: no host-path arguments, no "
+            "`new --mount`, no config editor, pager or GUI apps in the dashboard. "
+            "`false` makes an allowed command behave exactly as it does locally."
+        ),
+    )
 
     @field_validator("listen")
     @classmethod

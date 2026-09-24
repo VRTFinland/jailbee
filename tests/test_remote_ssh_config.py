@@ -119,3 +119,10 @@ def test_global_validation_rejects_unknown_allowlist_leaves(tmp_path, mode: str)
             },
             path,
         )
+
+
+def test_restrict_host_defaults_on_and_accepts_false() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    assert RemoteSSHConfig().restrict_host is True
+    assert RemoteSSHConfig(restrict_host=False).restrict_host is False

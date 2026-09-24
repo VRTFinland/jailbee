@@ -699,8 +699,9 @@ without a restart. `disable` preserves keys and config; `restart` is needed
 after changing `listen` or `port`; `serve` is the foreground diagnostic path.
 `serve` also takes one-off `--listen`/`--port`/`--dashboard`(`/--no-dashboard`)
 /`--shell`(`/--no-shell`)/`--exec`(`/--no-exec`)/`--commands`/`--allow`
-overrides of `remote.ssh`, for trying a policy without editing `global.yaml`
-(never written there, and the systemd unit never passes them); `--allow`,
+/`--restrict-host`(`/--no-restrict-host`) overrides of `remote.ssh`, for
+trying a policy without editing `global.yaml` (never written there, and the
+systemd unit never passes them); `--allow`,
 given at least once, replaces the configured `commands.allow` list rather
 than appending to it, e.g. `jb remote ssh serve --port 18022 --shell
 --commands allowlist --allow ls --allow new`.
@@ -734,7 +735,8 @@ has no shell operators, expansion or executable lookup. In every mode, `full`
 included, a remote command may not set a path-typed option or argument
 (`--config`, `net refresh --repo`, ...) nor `new --mount`: the policy picks
 commands, never host paths. The remote dashboard has no config editor, diff
-pager or GUI app launches.
+pager or GUI app launches. `remote.ssh.restrict_host: false` (or `serve
+--no-restrict-host`) lifts all of these at once.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered

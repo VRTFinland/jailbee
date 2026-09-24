@@ -16,6 +16,7 @@ from sqlmodel import Session
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
+from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
     from typer._click.core import Parameter
@@ -311,7 +312,9 @@ def unknown_command(argv: Sequence[str], policy: RemoteCommandPolicy) -> bool:
     return token not in _command_tree().top_level_names
 
 
-def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
+def policy_allows(
+    argv: Sequence[str], policy: RemoteCommandPolicy, *, restrict_host: bool = True
+) -> str:
     """Return the public command path when the remote policy permits it.
 
     A pure help invocation (see `_help_only_path`) is checked directly rather
@@ -322,7 +325,9 @@ def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
 
     A permitted command is then held to `check_arguments` in every mode,
     `full` included: the policy names which commands a remote caller may
-    run, never which host paths they may hand them.
+    run, never which host paths they may hand them. Only
+    `remote.ssh.restrict_host: false` (``restrict_host``) skips it, and not
+    even that inside an already restricted session (`host_restricted`).
     """
     if policy.mode == "disabled":
         raise RouteError("remote Jailbee commands are disabled")
@@ -342,7 +347,8 @@ def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
     path = command_path(argv)
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
-    check_arguments(argv)
+    if host_restricted(restrict_host):
+        check_arguments(argv)
     return path
 
 
@@ -417,7 +423,7 @@ def route(
     # `python -m jailbee` reports it, rather than this router inventing its
     # own "unknown Jailbee command" — see `unknown_command`.
     if not unknown_command(command_argv, config.commands):
-        policy_allows(command_argv, config.commands)
+        policy_allows(command_argv, config.commands, restrict_host=config.restrict_host)
     root = resolve_repo(prefix, engine=engine)
     return Route("command", command_argv, prefix, root, False)
 

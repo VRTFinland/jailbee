@@ -25,6 +25,7 @@ def test_empty_overrides_is_a_no_op_and_returns_the_same_object() -> None:
         ("dashboard", False),
         ("shell", True),
         ("exec", True),
+        ("restrict_host", False),
     ],
 )
 def test_each_given_flag_overrides_its_field(field: str, value: object) -> None:
@@ -132,3 +133,10 @@ def test_describe_overrides_shows_bare_allow_replacement() -> None:
     summary = describe_overrides(overrides)
 
     assert summary == "overrides (not from global.yaml): commands.allow=[ls]"
+
+
+def test_restrict_host_override_is_named_in_the_startup_line() -> None:
+    assert describe_overrides(ServeOverrides(restrict_host=False)) == (
+        "overrides (not from global.yaml): restrict_host=off"
+    )
+    assert ServeOverrides(restrict_host=False).is_empty() is False

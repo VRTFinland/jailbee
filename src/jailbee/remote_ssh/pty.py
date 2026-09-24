@@ -41,6 +41,9 @@ class ChildSpec:
     argv: tuple[str, ...]
     cwd: Path
     requires_pty: bool
+    # `remote.ssh.restrict_host`: whether the child is marked as a restricted
+    # remote session (see `session.child_environment`).
+    restrict_host: bool = True
 
 
 class _Reader(Protocol):
@@ -350,7 +353,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     # execve — even os.environ.copy() — could deadlock on a lock another
     # thread held at fork time. The child must do nothing but
     # chdir + execve + _exit.
-    env = child_environment(os.environ, term=term)
+    env = child_environment(os.environ, term=term, restricted=spec.restrict_host)
     pid, master = pty.fork()
     if pid == 0:
         try:
@@ -417,7 +420,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=child_environment(os.environ),
+            env=child_environment(os.environ, restricted=spec.restrict_host),
             start_new_session=True,
         )
     )

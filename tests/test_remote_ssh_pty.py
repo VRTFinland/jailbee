@@ -8,6 +8,7 @@ import io
 import signal
 import struct
 import termios
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
@@ -956,3 +957,28 @@ def test_raw_pty_eof_escalates_when_child_ignores_hup(spec, boundary, monkeypatc
     asyncio.run(scenario())
     assert boundary.killpg.call_args_list == [call(4321, signal.SIGHUP), call(4321, signal.SIGKILL)]
     runner.os.waitpid.assert_called_once_with(4321, 0)
+
+
+def test_unrestricted_pipe_child_is_left_unmarked(spec, boundary, monkeypatch):
+    """`remote.ssh.restrict_host: false`: the child's environment is the
+    service's own, with no marker and no LESSSECURE."""
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin"})
+    boundary.create.return_value = pipe_child(status=0)
+
+    asyncio.run(run_child(SSHProcess(), replace(spec, restrict_host=False)))
+
+    assert boundary.create.call_args.kwargs["env"] == {"PATH": "/bin"}
+
+
+def test_unrestricted_pty_child_is_left_unmarked(spec, boundary, monkeypatch):
+    boundary.fork.return_value = (0, -1)
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin"})
+    execute = Mock(side_effect=OSError("exec failed"))
+    monkeypatch.setattr(runner.os, "chdir", Mock())
+    monkeypatch.setattr(runner.os, "execvpe", execute)
+    monkeypatch.setattr(runner.os, "_exit", Mock(side_effect=ChildExited))
+
+    with pytest.raises(ChildExited):
+        asyncio.run(run_child(SSHProcess("xterm"), replace(spec, restrict_host=False)))
+
+    assert execute.call_args.args[2] == {"PATH": "/bin", "TERM": "xterm"}

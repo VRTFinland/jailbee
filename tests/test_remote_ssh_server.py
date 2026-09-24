@@ -1218,3 +1218,52 @@ def test_sync_serve_removes_only_its_audit_handler_and_restores_logger(
             assert existing.level == logging.WARNING
         finally:
             existing.close()
+
+
+def test_restrict_host_false_reaches_the_child_spec(child, mocker, repo):
+    ssh = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"), restrict_host=False)
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), []),
+    )
+
+    session("--repo project ls")
+
+    assert child.call_args.args[1].restrict_host is False
+
+
+def test_restrict_host_override_reaches_the_child_spec(child, configured, repo):
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    session("--repo project ls", overrides=ServeOverrides(restrict_host=False))
+
+    assert child.call_args.args[1].restrict_host is False
+
+
+def test_default_child_spec_is_restricted(child, configured, repo):
+    session("--repo project ls")
+
+    assert child.call_args.args[1].restrict_host is True
+
+
+@pytest.mark.parametrize(
+    ("restrict_host", "marker", "want"),
+    [
+        (True, None, "host restrictions: on"),
+        (False, None, "host restrictions: OFF"),
+        (False, "1", "host restrictions: on"),  # nested in a restricted session
+    ],
+)
+def test_startup_reports_host_restrictions(
+    listener, caplog, monkeypatch, restrict_host, marker, want
+):
+    if marker is None:
+        monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    else:
+        monkeypatch.setenv("JAILBEE_REMOTE_SSH", marker)
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(restrict_host=restrict_host)))
+
+    assert want in caplog.text

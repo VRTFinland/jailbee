@@ -232,7 +232,7 @@ def test_collections_of_models_stay_leaves():
 
 
 def test_build_specs_covers_every_config_leaf():
-    """92 leaves under Config, 24 under GlobalConfig, as measured.
+    """92 leaves under Config, 25 under GlobalConfig, as measured.
 
     A count, not a list: it fails loudly when a field is added or a
     recursion rule changes, and the reviewer then decides which.
@@ -256,18 +256,18 @@ def test_build_specs_covers_every_config_leaf():
     (repo-configurable PATH additions) then added one: 91 + 1 = 92 — and that
     increment is the whole `config edit` story for it, since nothing was added
     to `schema.py` or the curated `BASIC_FIELDS` list.
-    `GlobalConfig`'s 24 includes the `config_edit.write_policy` added in
+    `GlobalConfig`'s 25 includes the `config_edit.write_policy` added in
     Task 1, the `update_check` bool, and the `install_host_skills` bool:
     plain scalar fields on `GlobalConfig`, so `jailbee config edit` offers
     them without anything being added to `schema.py` for them. The other
-    7 come from `remote.ssh`, a `RemoteSSHConfig` recursed into `listen`,
-    `port`, `dashboard`, `shell`, `exec`, and its nested `commands` policy's
-    `mode` and `allow`.
+    8 come from `remote.ssh`, a `RemoteSSHConfig` recursed into `listen`,
+    `port`, `dashboard`, `shell`, `exec`, `restrict_host`, and its nested
+    `commands` policy's `mode` and `allow`.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 92
-    assert len(build_specs(GlobalConfig)) == 24
+    assert len(build_specs(GlobalConfig)) == 25
 
 
 def test_a_default_factory_field_reports_its_real_default():

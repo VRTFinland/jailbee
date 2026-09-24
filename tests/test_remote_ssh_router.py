@@ -415,3 +415,29 @@ def test_every_path_typed_parameter_is_covered_without_being_listed() -> None:
 
 def test_check_arguments_leaves_help_alone() -> None:
     check_arguments(("new", "--help"))
+
+
+def test_restrict_host_false_lets_host_arguments_through(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    assert policy_allows(("ls", "--config", "/x"), FULL, restrict_host=False) == "ls"
+    assert policy_allows(("new", "feat", "--mount"), FULL, restrict_host=False) == "new"
+
+
+def test_restrict_host_false_is_ignored_inside_a_restricted_session(monkeypatch) -> None:
+    """A nested `serve --no-restrict-host` run from a restricted session."""
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+
+    with pytest.raises(RouteError, match="may not set --config"):
+        policy_allows(("ls", "--config", "/x"), FULL, restrict_host=False)
+
+
+def test_exec_route_honours_restrict_host_false(engine, repo, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    cfg = RemoteSSHConfig(exec=True, commands=FULL, restrict_host=False)
+
+    assert route("--repo project ls --config /x", cfg, engine=engine).argv == (
+        "ls",
+        "--config",
+        "/x",
+    )

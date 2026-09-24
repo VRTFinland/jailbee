@@ -21,6 +21,7 @@ from jailbee.remote_ssh.keys import AuthorizedKey, SSHKeyError, read_authorized_
 from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides, describe_overrides
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
 from jailbee.remote_ssh.router import RouteError, command_path, help_text, route
+from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
@@ -232,6 +233,7 @@ async def handle_process(
             argv=argv,
             cwd=selected.repo_root or state_dir(),
             requires_pty=selected.requires_pty,
+            restrict_host=config.restrict_host,
         )
         if selected.repo_root is None:
             spec.cwd.mkdir(parents=True, exist_ok=True)
@@ -316,9 +318,16 @@ def _startup_summary(
             keys_line += " -- add one with: jb remote ssh key add"
     except (OSError, SSHKeyError) as exc:
         keys_line = f"authorized keys could not be read ({type(exc).__name__})"
+    restricted = host_restricted(config.restrict_host)
     lines = [
         f"Jailbee SSH server listening on {_bind_display(config.listen, port)}",
         f"  entry points: {_enabled_entry_points(config)} (commands: {config.commands.mode})",
+        "  host restrictions: "
+        + (
+            "on"
+            if restricted
+            else "OFF -- allowed commands reach the host exactly as they do locally"
+        ),
         f"  host key fingerprint: {fingerprint}",
         f"  {keys_line}",
         f"  connect example: {_connect_example(config.listen, port, config)}",

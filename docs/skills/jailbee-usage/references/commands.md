@@ -68,7 +68,7 @@ installation nor `jailbee setup` enables the service.
 | `jb remote ssh disable` | Stop and disable the unit. Leaves global config, client keys and host key intact. |
 | `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
 | `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
-| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--shell\|--no-shell] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]...` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. |
+| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--shell\|--no-shell] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]... [--restrict-host\|--no-restrict-host]` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. |
 | `jb remote ssh key add [PATH\|-]` | Read one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt (no argument, terminal) / piped stdin (no argument, no terminal) — reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
 | `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
 | `jb remote ssh key rm SHA256:FINGERPRINT` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
@@ -119,7 +119,9 @@ option or argument (`--config`, `net refresh --repo`, ...) nor `new --mount`;
 the command's own parser decides, so `-c/path`, `--config=/path` and `-bm`
 are refused too. The remote dashboard has no config editor (`e`/`E`), no diff
 pager and no GUI app launches, and `jb dashboard --gui`/`jb gui` refuse to
-start over SSH.
+start over SSH. `remote.ssh.restrict_host: false` (or `serve
+--no-restrict-host`) lifts every one of these at once; a server started from
+inside a restricted session stays restricted regardless.
 
 A hidden top-level spelling that is a byte-identical alias of a public leaf
 (`merge` → `git merge`, `pull` → `git pull`, `push` → `git push`, `fetch` →

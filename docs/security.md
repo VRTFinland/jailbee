@@ -94,6 +94,15 @@ The SSH protocol surface is also fail-closed:
   host. The argv is parsed by the command's own parser to decide this, so
   short-option clusters and `--opt=value` forms are covered.
 
+`remote.ssh.restrict_host: false` (or `jb remote ssh serve
+--no-restrict-host` for one run) lifts every host restriction above and in
+the dashboard paragraph at once: no argument check, no session marker, no
+`LESSSECURE`, and an allowed command then reaches the host exactly as it
+does locally. It is one switch on purpose — a partly lifted boundary is
+harder to reason about than either state — and the startup log announces
+`host restrictions: OFF`. A server started from inside a restricted
+session inherits its marker and stays restricted whatever the setting says.
+
 The user journal records source address, authorized-key fingerprint, bounded
 route/repository/command identifiers, decision and exit status. It does not
 record key material, complete argv, environment values, terminal contents or
