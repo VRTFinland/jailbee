@@ -223,6 +223,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
     {
         "config edit",
         "config init",
+        "config migrate",
         "remote",
         "setup",
         "init",

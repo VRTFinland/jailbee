@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from sqlmodel import Session, select
 
-from jailbee.config import Config, ConfigError, normalize_credentials_key
+from jailbee.config import Config, ConfigError
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
@@ -318,47 +318,36 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
     ]
 
 
-def _check_legacy_credentials_key() -> list[CheckResult]:
-    """Report a `global.yaml` still spelling the credential block the old way.
+def _check_pending_migrations() -> list[CheckResult]:
+    """Report config spellings `jailbee config migrate` would move.
 
-    `claude_credentials:` is deprecated in favour of `credentials:`, and the
-    config loader folds the old spelling into the new one before
-    `GlobalConfig` is built — by the time any check here holds the config, the
-    evidence is gone. That fold is why this reads the raw YAML itself, and why
-    the dismissible notice the loader prints is not enough: a dismissal is
-    invisible to doctor.
-
-    Not-ok, like the other legacy checks: the key keeps working only until
-    `LEGACY_REMOVAL_VERSION`, and nothing else says so on every run.
+    The loader folds legacy spellings before any config object exists, so this
+    check reads raw inputs through the migration planner. Parse and I/O errors
+    are already reported by config loading and are not this check's diagnosis.
     """
-    from jailbee.global_config import default_global_config_path
+    from jailbee import config_migrate
 
-    path = default_global_config_path()
     try:
-        raw = yaml.safe_load(path.read_text()) or {}
-    except OSError:  # an absent or unreadable file is not a diagnosis
+        with Session(get_engine()) as session:
+            plan = config_migrate.plan_migrations(config_migrate.gather_inputs(session))
+    except (ConfigError, OSError):
         return []
-    except yaml.YAMLError:
-        # A malformed file already fails the config load before doctor runs;
-        # this check owns only the key spelling.
+    if not plan.pending:
         return []
-    if not isinstance(raw, dict):
-        return []
-    try:
-        _, folded = normalize_credentials_key(raw, str(path))
-    except ConfigError:
-        # Both spellings at once is a hard load error the user already sees.
-        return []
-    if not folded:
-        return []
+    ids = sorted(
+        {step.migration_id for step in plan.steps}
+        | ({"egress-db-rows"} if plan.rows_to_delete else set())
+    )
+    summaries = sorted(
+        {step.summary for step in plan.steps if not step.summary.startswith("drop ")}
+    )
     return [
         CheckResult(
-            "legacy credentials key",
+            "pending config migrations",
             False,
-            f"`{path}` sets `claude_credentials`, deprecated and renamed to "
-            f"`credentials` — rename the key. The old spelling keeps working "
-            f"until {LEGACY_REMOVAL_VERSION}, where it is removed. See "
-            f"docs/config.md.",
+            f"{', '.join(ids)} — {'; '.join(summaries)}. Run `jailbee config migrate` "
+            f"to review, then `--apply`. Old spellings keep working until "
+            f"{LEGACY_REMOVAL_VERSION}.",
         )
     ]
 
@@ -650,7 +639,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     results.extend(_check_dismissed_notices())
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
-    results.extend(_check_legacy_credentials_key())
+    results.extend(_check_pending_migrations())
     results.extend(_check_claude_pool(cfg, incus, gcfg))
     if incus_available:
         # Behind the gate, unlike its neighbours: this one always reads

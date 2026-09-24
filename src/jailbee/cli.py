@@ -1033,6 +1033,48 @@ def config_validate(config: ConfigOption = None) -> None:
     raise typer.Exit(2)
 
 
+@config_app.command("migrate")
+def config_migrate_cmd(
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Write the changes (default: show them only)."),
+    ] = False,
+) -> None:
+    """Move deprecated config spellings and storage to their current homes."""
+    from sqlmodel import Session
+
+    from jailbee import config_migrate
+    from jailbee.db import get_engine
+
+    with Session(get_engine()) as session:
+        try:
+            inputs = config_migrate.gather_inputs(session)
+            plan = config_migrate.plan_migrations(inputs)
+            for conflict in plan.conflicts:
+                warn_plain(conflict)
+            if not plan.pending:
+                info("Nothing to migrate.")
+                return
+            for step in plan.steps:
+                info_plain(f"{step.migration_id}: {step.summary} ({step.path})")
+            if plan.rows_to_delete:
+                info_plain(
+                    f"egress-db-rows: {len(plan.rows_to_delete)} state.sqlite row(s) deleted after the write"
+                )
+            diff = config_migrate.render_diff(inputs, plan)
+            if not apply:
+                typer.echo(diff, nl=False)
+                info("Dry run — nothing written. Re-run with `--apply` to write it.")
+                return
+            backups = config_migrate.apply_plan(inputs, plan, session)
+        except (ConfigError, OSError) as error:
+            error_plain(f"{error}\nNothing was written.")
+            raise typer.Exit(1) from error
+    for backup in backups:
+        info_plain(f"Backup: {backup}")
+    success("Migrated. Run `jailbee apply` in affected repos to push any egress change.")
+
+
 def _is_full_screen_tty() -> bool:
     """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
 
