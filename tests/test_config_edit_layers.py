@@ -405,6 +405,27 @@ def test_validate_accepts_a_good_repo_change(opened):
     assert layers.validate(got, "repo", [YamlChange(("defaults", "cpu"), 8)]) is None
 
 
+def test_validate_loads_a_staged_local_config_override(opened):
+    from dataclasses import replace
+
+    got = opened()
+    got = replace(
+        got,
+        repo_raw={"jetbrains": {"ide": "pycharm"}},
+        global_raw={"jetbrains": {"ide": "goland"}},
+    )
+
+    assert layers.validate(got, "local", [YamlChange(("jetbrains", "ide"), "idea")]) is None
+
+
+def test_validate_rejects_container_prefix_in_the_local_layer(opened):
+    got = opened()
+    error = layers.validate(got, "local", [YamlChange(("container_prefix",), "not-allowed")])
+
+    assert error is not None
+    assert "container_prefix" in error
+
+
 def test_validate_does_not_print_the_legacy_chrome_hint_mid_session(opened, capsys):
     """`validate()` runs `load_config_from_layers` synchronously from the
     editor's save handler while the full-screen `Application` is live.
