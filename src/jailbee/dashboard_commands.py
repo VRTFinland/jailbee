@@ -44,7 +44,12 @@ def command_argv(text: str, selected_container: str | None) -> list[str]:
         raise ValueError(f"cannot parse command: {error}") from error
     if not argv:
         raise ValueError("command cannot be empty")
-    typed, command = router.command_leaf(argv)
+    try:
+        typed, command = router.command_leaf(argv)
+    except RouteError:
+        # Locally, unknown well-formed commands belong to Click's own error
+        # formatter. Remote callers still fail closed in check_dashboard_command.
+        return argv
     positional = _CONTAINER_POSITIONALS.get(typed)
     if selected_container is None or positional is None:
         return argv
@@ -55,6 +60,46 @@ def command_argv(text: str, selected_container: str | None) -> list[str]:
         if context.get_parameter_source(positional) is ParameterSource.DEFAULT:
             argv.append(selected_container)
     return argv
+
+
+def apply_completion(text: str, candidate: str) -> str:
+    """Replace only the current quote-aware token, retaining its command prefix."""
+    start = len(text)
+    quote: str | None = None
+    escaped = False
+    token_start = 0
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in ("'", '"'):
+            quote = char
+            if token_start == 0 or text[index - 1].isspace():
+                token_start = index
+        elif char.isspace():
+            token_start = index + 1
+    current = text[token_start:]
+    opening = current[0] if current[:1] in ("'", '"') else ""
+    value = candidate
+    if opening:
+        closing = quote is not None or current.endswith(opening)
+        value = candidate.replace(opening, "\\" + opening) + (opening if closing else "")
+        value = opening + value
+    elif any(char.isspace() for char in candidate):
+        value = shlex.quote(candidate)
+    return text[:token_start] + value
+
+
+def insert_options_before_separator(argv: list[str], options: Sequence[str]) -> list[str]:
+    """Insert injected CLI options before `--`, where Click can still parse them."""
+    result = list(argv)
+    index = result.index("--") if "--" in result else len(result)
+    result[index:index] = options
+    return result
 
 
 def _partial_words(text: str) -> tuple[list[str], str]:
@@ -100,6 +145,8 @@ def completion_candidates(
     text: str,
     containers: Sequence[str],
     allowed_paths: frozenset[str] | None = None,
+    *,
+    restrict_host: bool = False,
 ) -> tuple[str, ...]:
     """Complete cached command paths, Click options, or selected-repo containers."""
     words, fragment = _partial_words(text)
@@ -110,6 +157,8 @@ def completion_candidates(
     for path in paths:
         canonical = aliases.get(path, path)
         if allowed_paths is not None and canonical not in allowed_paths:
+            continue
+        if restrict_host and router.is_host_command(canonical):
             continue
         pieces = path.split()
         prefix_words = words
@@ -131,12 +180,19 @@ def completion_candidates(
         canonical = router.command_path(words)
         permitted = allowed_paths is None or canonical in allowed_paths
     if command is not None and permitted:
-        candidates.update(
-            option
-            for param in command.params
-            for option in param.opts
-            if option.startswith("-") and option.startswith(fragment)
-        )
+        for param in command.params:
+            for option in param.opts:
+                if not option.startswith("-") or not option.startswith(fragment):
+                    continue
+                if restrict_host:
+                    probe = [*typed.split(), option]
+                    if not getattr(param, "is_flag", False):
+                        probe.append("/tmp/host-path")
+                    try:
+                        router.check_arguments(probe)
+                    except RouteError:
+                        continue
+                candidates.add(option)
         positional = _CONTAINER_POSITIONALS.get(typed)
         if positional is not None and not fragment.startswith("-"):
             candidates.update(name for name in containers if name.startswith(fragment))

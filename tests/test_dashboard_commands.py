@@ -6,9 +6,11 @@ import pytest
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.dashboard_commands import (
+    apply_completion,
     check_dashboard_command,
     command_argv,
     completion_candidates,
+    insert_options_before_separator,
 )
 from jailbee.remote_ssh.router import RouteError
 
@@ -45,6 +47,20 @@ def test_ssh_dashboard_merge_alias_uses_canonical_allowlist() -> None:
         exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"])
     )
     check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
+
+
+def test_ssh_nested_dashboard_cannot_supply_server_policy_transport() -> None:
+    policy = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    with pytest.raises(RouteError):
+        check_dashboard_command(
+            ["dashboard", "--remote-policy-json", '{"exec":true,"commands":{"mode":"full"}}'],
+            policy,
+            over_ssh=True,
+        )
 
 
 def test_local_dashboard_command_does_not_apply_ssh_policy() -> None:
@@ -105,6 +121,52 @@ def test_completion_tolerates_unfinished_quote() -> None:
 
 def test_completion_tolerates_unfinished_quote_containing_space() -> None:
     assert "feature branch" in completion_candidates("shell 'feature br", ("feature branch",))
+
+
+def test_editor_completion_preserves_command_prefix_and_quote() -> None:
+    assert apply_completion("merge --in", "--into") == "merge --into"
+    assert apply_completion("shell 'feature", "feature branch") == "shell 'feature branch'"
+    assert apply_completion("shell 'feature'", "feature branch") == "shell 'feature branch'"
+
+
+def test_completion_for_repo_header_uses_header_containers_without_default() -> None:
+    assert "alpha" in completion_candidates("shell al", ("alpha", "beta"))
+    assert command_argv("shell", None) == ["shell"]
+
+
+def test_restricted_completion_filters_host_and_argument_options() -> None:
+    allowed = frozenset({"new", "shell"})
+    candidates = completion_candidates("co", ("alpha",), allowed)
+    assert "config edit" not in candidates
+    assert "config" not in candidates
+    assert "--mount" not in completion_candidates(
+        "new --m", (), allowed, restrict_host=True
+    )
+
+
+def test_remote_full_completion_hides_host_commands_and_denied_parameters() -> None:
+    paths = completion_candidates(
+        "", (), frozenset({"config edit", "new", "shell"}), restrict_host=True
+    )
+    assert "config" not in paths
+    assert "--mount" not in completion_candidates(
+        "new --m", (), frozenset({"new"}), restrict_host=True
+    )
+
+
+def test_unknown_local_command_is_not_rejected_by_preflight() -> None:
+    assert command_argv("unknown-command --mystery", None) == [
+        "unknown-command",
+        "--mystery",
+    ]
+    with pytest.raises(RouteError):
+        check_dashboard_command(["unknown-command"], None, over_ssh=True)
+
+
+def test_local_options_are_inserted_before_exec_separator() -> None:
+    assert insert_options_before_separator(
+        ["exec", "alpha", "--", "echo", "hi"], ["--config", "/repo/config.yaml"]
+    ) == ["exec", "alpha", "--config", "/repo/config.yaml", "--", "echo", "hi"]
 
 
 def test_remote_completion_maps_alias_only_when_canonical_path_allowed() -> None:

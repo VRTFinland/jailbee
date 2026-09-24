@@ -1427,6 +1427,12 @@ def test_dispatch_style_leaves_pr_open_alone():
     assert dashboard.dispatch_style("pr --open") == "plain"
 
 
+def test_inline_noninteractive_commands_pause_for_output():
+    assert dashboard.command_needs_pause("job ls")
+    assert dashboard.command_needs_pause("ls")
+    assert not dashboard.command_needs_pause("shell")
+
+
 def test_every_printing_verb_is_a_real_menu_verb():
     """Guards against a typo in PRINTING_VERBS: a classified verb the menu never
     offers would silently never take its own code path."""

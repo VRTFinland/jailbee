@@ -78,6 +78,27 @@ def test_dashboard_takes_no_arguments_and_requires_pty() -> None:
     assert result.requires_pty is True
 
 
+def test_ssh_command_route_cannot_forge_dashboard_policy_transport():
+    cfg = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            '--repo project dashboard --remote-policy-json \'{"exec":true,"commands":{"mode":"full"}}\'',
+            cfg,
+        )
+
+
+def test_nested_dashboard_rejects_user_supplied_trusted_policy_option(configured_ssh):
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            '--repo project dashboard --remote-policy-json \'{"exec":true,"commands":{"mode":"full"}}\'',
+            configured_ssh,
+        )
+
+
 def test_one_shot_resolves_repo_and_drops_remote_selector(engine, repo) -> None:
     cfg = RemoteSSHConfig(
         exec=True,

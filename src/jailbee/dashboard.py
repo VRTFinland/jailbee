@@ -41,9 +41,11 @@ from jailbee.config import (
 )
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard_commands import (
+    apply_completion,
     check_dashboard_command,
     command_argv,
     completion_candidates,
+    insert_options_before_separator,
 )
 from jailbee.dashboard_settings import (
     SettingsState,
@@ -71,6 +73,7 @@ from jailbee.paths import repo_config_path
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.session import host_restricted
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -1051,7 +1054,11 @@ def edit_command(state: CommandState, key: bytes) -> CommandState:
         if not state.suggestions:
             return state
         index = (state.index + 1) % len(state.suggestions)
-        return replace(state, text=state.suggestions[index], index=index)
+        return replace(
+            state,
+            text=apply_completion(state.text, state.suggestions[index]),
+            index=index,
+        )
     if key in (b"\r", b"\n", b"\x1b", b"\x03", b""):
         return state
     encoded = state.pending_utf8 + key
@@ -1738,6 +1745,11 @@ def dispatch_style(verb: str) -> DispatchStyle:
     return "plain"
 
 
+def command_needs_pause(typed: str) -> bool:
+    """Retain output for noninteractive commands entered in the editor."""
+    return typed not in ATTACH_VERBS and not typed.startswith(APPS_RUN_PREFIX)
+
+
 def pager_argv() -> list[str] | None:
     """The pager to page long output through, or None when the host has none.
 
@@ -2293,7 +2305,7 @@ def run(
                 try:
                     argv = command_argv(command.text, name)
                     if not over_ssh:
-                        argv.extend(repo.flags())
+                        argv = insert_options_before_separator(argv, repo.flags())
                     check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
                 except (ValueError, RouteError) as exc:
                     set_notice(str(exc))
@@ -2302,8 +2314,11 @@ def run(
 
                     def execute_command() -> int:
                         result = subprocess.run(["jailbee", *argv], cwd=repo.cwd(), check=False)
-                        typed, _leaf = ssh_router.command_leaf(argv)
-                        if dispatch_style(typed) != "plain":
+                        try:
+                            typed, _leaf = ssh_router.command_leaf(argv)
+                        except RouteError:
+                            typed = ""
+                        if command_needs_pause(typed):
                             _wait_for_return()
                         return result.returncode
 
@@ -2371,7 +2386,14 @@ def run(
                         overlay = None
                         run_command(command)
                     else:
-                        selected_group = _find_group(groups, container_of(selected))
+                        selected_group = (
+                            _find_group(groups, container_of(selected))
+                            if container_of(selected) is not None
+                            else next(
+                                (group for group in groups if selected and group.prefix == selected.key),
+                                None,
+                            )
+                        )
                         allowed_paths: frozenset[str] | None = None
                         if over_ssh:
                             if ssh_policy is None or not ssh_policy.exec:
@@ -2380,12 +2402,19 @@ def run(
                                 allowed_paths = frozenset()
                             elif ssh_policy.commands.mode == "allowlist":
                                 allowed_paths = frozenset(ssh_policy.commands.allow)
+                            elif ssh_policy.commands.mode == "full":
+                                allowed_paths = ssh_router.known_command_paths()
                         candidates = completion_candidates(
                             overlay.text,
                             tuple(c.name for c in selected_group.containers)
                             if selected_group is not None
                             else (),
                             allowed_paths,
+                            restrict_host=bool(
+                                over_ssh
+                                and ssh_policy is not None
+                                and host_restricted(ssh_policy.restrict_host)
+                            ),
                         )
                         overlay = edit_command(replace(overlay, suggestions=candidates), data)
                     continue

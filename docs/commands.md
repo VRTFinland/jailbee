@@ -195,11 +195,12 @@ repository prefix, never a filesystem path; the registered root becomes the
 command's working directory. The same rule applies to `shell --repo PREFIX`.
 See [Security and limitations](security.md#remote-ssh) before granting access.
 
-The SSH dashboard applies its effective `remote.ssh` policy before it starts a
-dashboard action or a command entered with `!`: `exec` must be enabled and the
-command must pass the configured `commands` policy (including its allowlist,
-when used). The same host-protection rule applies even when command policy is
-otherwise permissive, unless `restrict_host: false` was explicitly configured.
+For SSH dashboard sessions, the effective `remote.ssh` policy is checked before
+a command entered with `!` or the new merge action runs: `exec` must be enabled
+and the command must pass `commands` (including its allowlist, when used). The
+same host-protection rule applies even when command policy is otherwise
+permissive, unless `restrict_host: false` was explicitly configured. This policy
+scope does not change the dashboard's existing actions.
 
 ### Top-level app promotion
 
