@@ -1044,6 +1044,8 @@ class CommandState:
 def edit_command(state: CommandState, key: bytes) -> CommandState:
     """Apply one editor key, keeping ordinary dashboard shortcuts as text."""
     if key in (b"\x7f", b"\x08"):
+        if state.pending_utf8:
+            return replace(state, pending_utf8=b"")
         return replace(state, text=state.text[:-1], index=-1)
     if key == b"\t":
         if not state.suggestions:

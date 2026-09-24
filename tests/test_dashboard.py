@@ -42,6 +42,17 @@ def test_inline_editor_preserves_utf8_split_across_scripted_reads(mocker):
     )
 
 
+def test_inline_editor_backspace_clears_pending_utf8_before_completed_text():
+    state = dashboard.CommandState(text="a")
+    state = dashboard.edit_command(state, b"\xc3")
+    assert state.pending_utf8 == b"\xc3"
+
+    state = dashboard.edit_command(state, b"\x7f")
+
+    assert state.text == "a"
+    assert state.pending_utf8 == b""
+
+
 def test_inline_editor_tab_cycles_candidates():
     state = dashboard.CommandState(text="me", suggestions=("merge", "menu"), index=0)
     state = dashboard.edit_command(state, b"\t")
