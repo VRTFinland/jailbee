@@ -170,6 +170,17 @@ A push updates up to three refs in the container:
 | `refs/jailbee/base/<base>` | when the pushed source *is* the container's base branch, so `jailbee ls` AHEAD measures against the fresh base |
 | `refs/heads/<source>` | when it can be fast-forwarded (see below) |
 
+The AHEAD ±/↑ count uses the pinned `refs/jailbee/base/<base>` anchor inside
+the container. It follows the host's `<base>` branch: `jailbee checkout`,
+`jailbee git fetch` and `jailbee git pull` re-point it in **every running
+container of this repo based on that branch**, and print
+`AHEAD base refreshed: …`. Pushing the base branch with `jailbee git push`
+re-points the anchor in that container; a stopped container catches up when
+it starts, forward-only, so a stale local `<base>` never pulls the anchor back.
+`jailbee git merge` between containers moves no host branch and therefore no
+anchor. A host branch moved by plain `git` is picked up at the next of these
+JailBee operations.
+
 That last one exists because the `refs/jailbee/*` namespace is invisible to
 everyday git: a container whose local `dev` never moved makes an in-container
 `git rebase dev` silently use a stale base, and the container cannot fix that
