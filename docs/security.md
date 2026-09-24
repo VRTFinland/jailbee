@@ -134,6 +134,16 @@ tree, `.git` included, so a restricted session may neither create one nor
 enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
 mount-mode container, and clone-mode containers are unaffected.
 
+One host resource stays reachable from inside a container on purpose: the
+Wayland display socket, attached whenever the host session is Wayland. Any
+process in the container — a remote session's shell included — can open a
+window on the host's screen with it, and JailBee's own GUI launchers are
+withheld remotely only because a window there helps no remote user. A
+Wayland client draws its own surfaces and cannot read or drive other
+windows, and no X11 socket is shared. The host's session D-Bus and
+PulseAudio sockets, which do reach further, are opt-in
+([`gui`](config.md#gui)).
+
 A server imports its routing and session marking when it starts, so one left
 running across an upgrade would enforce the old version's rules. It
 therefore restarts itself when the installed version changes, before
