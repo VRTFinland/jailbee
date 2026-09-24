@@ -8492,6 +8492,43 @@ net_app = typer.Typer(
 app.add_typer(net_app)
 
 
+@net_app.command("migrate")
+def net_migrate_cmd(
+    undo: Annotated[bool, typer.Option("--undo", help="Use legacy for future containers.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm unverified host firewall setup.")] = False,
+) -> None:
+    """Opt future containers into the work bridge, or undo that default."""
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.network_generation import ensure_work_bridge, set_default_generation
+
+    if undo:
+        with Session(get_engine()) as session:
+            set_default_generation(session, "legacy")
+        success_plain("Future containers will use the legacy network. Existing containers were not changed.")
+        return
+    if not sys.stdin.isatty() and not yes:
+        error_plain("Non-interactive migration requires --yes; host firewall reachability remains unverified.")
+        raise typer.Exit(1)
+    warn_plain(
+        "This prepares jailbee-work, but does not verify host firewall reachability. "
+        "Configure your host firewall and test traffic before relying on this network."
+    )
+    if not yes and not typer.confirm("Continue with the unverified host network setup?"):
+        raise typer.Abort()
+    from jailbee.incus import Incus
+
+    try:
+        ensure_work_bridge(Incus())
+    except (RuntimeError, ValueError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    with Session(get_engine()) as session:
+        set_default_generation(session, "work")
+    success_plain("Work network prepared; future containers will use it. Host firewall reachability is unverified.")
+
+
 egress_app = typer.Typer(
     name="egress",
     help=(

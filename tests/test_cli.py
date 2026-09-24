@@ -369,6 +369,56 @@ def test_net_help() -> None:
     assert "loose" in result.stdout
 
 
+def test_net_migrate_requires_yes_when_non_interactive(mocker):
+    from typer.testing import CliRunner
+
+    ensure = mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    result = CliRunner().invoke(app, ["net", "migrate"])
+    assert result.exit_code == 1
+    assert "requires --yes" in result.output
+    ensure.assert_not_called()
+
+
+def test_net_migrate_yes_prepares_before_writing_host_default(mocker):
+    from typer.testing import CliRunner
+
+    sequence = []
+    ensure = mocker.patch(
+        "jailbee.network_generation.ensure_work_bridge",
+        side_effect=lambda _incus: sequence.append("bridge"),
+    )
+    store = mocker.patch(
+        "jailbee.network_generation.set_default_generation",
+        side_effect=lambda _session, _generation: sequence.append("default"),
+    )
+    engine = mocker.patch("jailbee.db.get_engine")
+    from sqlmodel import create_engine
+
+    engine.return_value = create_engine("sqlite://")
+    result = CliRunner().invoke(app, ["net", "migrate", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "unverified" in result.output.lower()
+    ensure.assert_called_once()
+    store.assert_called_once()
+    assert store.call_args.args[1] == "work"
+    assert sequence == ["bridge", "default"]
+
+
+def test_net_migrate_setup_failure_keeps_legacy_choice(mocker):
+    from typer.testing import CliRunner
+
+    ensure = mocker.patch(
+        "jailbee.network_generation.ensure_work_bridge",
+        side_effect=ValueError("bridge setup failed"),
+    )
+    store = mocker.patch("jailbee.network_generation.set_default_generation")
+    result = CliRunner().invoke(app, ["net", "migrate", "--yes"])
+    assert result.exit_code == 1
+    assert "bridge setup failed" in result.output
+    ensure.assert_called_once()
+    store.assert_not_called()
+
+
 def test_pool_ls_lists_every_pool(tmp_path, mocker):
     """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
     from jailbee.pool import SlotInfo
