@@ -129,7 +129,12 @@ start over SSH. The git bridge moves refs only: `git checkout`, host
 host tree are refused (pull `--into` / fetch `--as` another branch instead),
 `shell`/`tmux`/`exec` and the GUI launchers refuse a mount-mode container
 (it shares the host's working tree), and a branch-autostart privilege widening is refused even with `--yes`.
-`remote.ssh.restrict_host: false` (or `serve
+Host-management commands — `config edit`/`init`, `remote ...`, `setup`,
+`init`, `apply`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
+`net egress add`/`rm`, `registry up`/`down`, writing `account` commands,
+`mount`, `port to-container`, `gui`/`ide`/browsers/`apps run` — are refused
+in every mode, `full` and allowlists included; the startup log names any
+allowlisted one. `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts every one of these at once; a server started from
 inside a restricted session stays restricted regardless.
 

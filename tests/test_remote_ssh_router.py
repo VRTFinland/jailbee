@@ -339,7 +339,6 @@ FULL = RemoteCommandPolicy(mode="full")
         ("ls", "--config=/etc/passwd"),
         ("git", "pull", "box", "--config", "/tmp/evil.yaml"),
         ("pull", "--config", "/tmp/evil.yaml"),  # a hidden alias of `git pull`
-        ("net", "refresh", "--repo", "/home/user"),
     ],
 )
 def test_a_remote_command_never_takes_a_host_path(argv) -> None:
@@ -441,3 +440,130 @@ def test_exec_route_honours_restrict_host_false(engine, repo, monkeypatch) -> No
         "--config",
         "/x",
     )
+
+
+# Commands that run container-side (or only read), which a restricted session
+# keeps. Together with `_HOST_COMMANDS` this must cover every public leaf: a
+# new command fails `test_every_public_command_is_classified` until it is
+# put on one side.
+_CONTAINER_SIDE = frozenset(
+    {
+        "account ls",
+        "account group ls",
+        "apps ls",
+        "autostart cancel",
+        "autostart status",
+        "base usage",
+        "branch",
+        "config show",
+        "config validate",
+        "dashboard",
+        "destroy",
+        "disk-usage",
+        "dismiss",
+        "doctor",
+        "exec",
+        "git checkout",
+        "git diff",
+        "git fetch",
+        "git merge",
+        "git pull",
+        "git push",
+        "git retarget",
+        "issue apply",
+        "issue drop",
+        "issue ls",
+        "issue resolve",
+        "issue show",
+        "job clear",
+        "job log",
+        "job ls",
+        "ls",
+        "net egress export",
+        "net egress ls",
+        "net loose",
+        "net status",
+        "net strict",
+        "new",
+        "pool ls",
+        "pool prune",
+        "port ls",
+        "port rm",
+        "port to-host",
+        "pr",
+        "prune",
+        "registry status",
+        "registry verify",
+        "restart",
+        "review apply",
+        "review drop",
+        "review ls",
+        "review show",
+        "shell",
+        "snapshot create",
+        "snapshot delete",
+        "snapshot ls",
+        "snapshot restore",
+        "start",
+        "stop",
+        "submodule pr",
+        "tmux",
+        "tui",
+        "unmount",
+        "version",
+    }
+)
+
+
+def test_every_public_command_is_classified() -> None:
+    from jailbee.remote_ssh.router import is_host_command
+
+    host = {path for path in known_command_paths() if is_host_command(path)}
+    unclassified = known_command_paths() - host - _CONTAINER_SIDE
+    assert not unclassified, f"classify for remote SSH: {sorted(unclassified)}"
+    assert not host & _CONTAINER_SIDE
+    assert not _CONTAINER_SIDE - known_command_paths(), "stale entries"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("config", "edit", "--global"),
+        ("remote", "ssh", "key", "add", "-"),
+        ("remote", "ssh", "serve", "--no-restrict-host"),
+        ("setup",),
+        ("apply",),
+        ("net", "egress", "add", "box", "10.0.0.1"),
+        ("net", "refresh", "--repo", "/home/user"),
+        ("egress", "add", "box", "10.0.0.1"),  # hidden alias of `net egress add`
+        ("port", "to-container", "box", "5432"),
+        ("mount", "aws", "box"),
+        ("account", "use", "someone"),
+        ("ide", "box"),
+        ("apps", "run", "figma", "box"),
+    ],
+)
+def test_a_restricted_session_never_manages_the_host_even_in_full_mode(argv, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    with pytest.raises(RouteError, match="manages the host itself"):
+        policy_allows(argv, FULL)
+
+
+def test_host_commands_are_refused_in_allowlist_mode_too() -> None:
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["config edit", "ls"])
+
+    assert policy_allows(("ls",), allow) == "ls"
+    with pytest.raises(RouteError, match="manages the host itself"):
+        policy_allows(("config", "edit"), allow)
+
+
+def test_restrict_host_false_allows_host_commands(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    assert policy_allows(("config", "edit"), FULL, restrict_host=False) == "config edit"
+
+
+def test_host_command_group_help_stays_available() -> None:
+    """Help changes nothing; refusing it would only hide what is refused."""
+    assert policy_allows(("remote", "--help"), FULL) == "remote"

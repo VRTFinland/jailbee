@@ -835,3 +835,47 @@ def test_console_with_restrict_host_false_runs_host_arguments(
 
     run.assert_called_once()
     assert run.call_args.args[0][-3:] == ["ls", "--config", "/x"]
+
+
+def test_restricted_completion_never_offers_a_host_command(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    full = RemoteCommandPolicy(mode="full")
+
+    restricted = console._allowed_paths(full)
+    unrestricted = console._allowed_paths(full, restrict_host=False)
+
+    assert "ls" in restricted
+    assert "config edit" not in restricted
+    assert "remote ssh key add" not in restricted
+    assert {"config edit", "remote ssh key add"} <= unrestricted
+
+
+def test_console_refuses_a_host_command_in_full_mode(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["config edit --global", "exit"])
+
+    console.run("project")
+
+    run.assert_not_called()
+    assert "manages the host itself" in capsys.readouterr().err
+
+
+def test_allowlist_help_omits_a_refused_host_command(capsys, tmp_path) -> None:
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["ls", "config edit"])
+
+    console._print_help(policy, dashboard_enabled=False, repo_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "ls" in out
+    assert "config edit" not in out

@@ -202,6 +202,66 @@ def command_path(argv: Sequence[str]) -> str:
     return _resolve_leaf(argv)[1]
 
 
+# Commands a restricted remote session may never run, whatever `commands.mode`
+# says — `full` included. An entry names a leaf or a whole group. Each one
+# reaches past the containers and the git bridge into the host itself:
+#   - host configuration and the SSH service itself: `config edit`/`init`
+#     (a config decides host mounts and this very policy), `remote ...`;
+#   - host installation and host-level infrastructure: `setup`, `init`,
+#     `apply`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
+#     `registry up`/`down`;
+#   - persistent network policy: `net egress add`/`rm` accept any address,
+#     the host's own and its LAN's included;
+#   - host credentials shared by every container: `account` writes;
+#   - a host path or service brought into a container: `mount` (an
+#     `optional_mounts` entry), `port to-container`;
+#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`.
+# `tests/test_remote_ssh_router.py` partitions every public leaf between this
+# set and the container-side rest, so a new command fails the suite until
+# someone decides which side it is on.
+_HOST_COMMANDS: frozenset[str] = frozenset(
+    {
+        "config edit",
+        "config init",
+        "remote",
+        "setup",
+        "init",
+        "apply",
+        "base build",
+        "base prune",
+        "net install",
+        "net refresh",
+        "net unregister",
+        "net egress add",
+        "net egress rm",
+        "registry up",
+        "registry down",
+        "account use",
+        "account park",
+        "account rm",
+        "account group create",
+        "account group rm",
+        "account group set",
+        "account group unset",
+        "account group use",
+        "account group reset",
+        "mount",
+        "port to-container",
+        "gui",
+        "ide",
+        "chrome",
+        "firefox",
+        "browser",
+        "apps run",
+    }
+)
+
+
+def is_host_command(path: str) -> bool:
+    """True when canonical `path` is, or lies under, a `_HOST_COMMANDS` entry."""
+    return any(path == entry or path.startswith(entry + " ") for entry in _HOST_COMMANDS)
+
+
 # Parameters a remote caller may never set, by canonical command path, on top
 # of every path-typed one (see `_host_reaching_params`). Each reaches the host
 # in a way no argument type reveals:
@@ -323,9 +383,10 @@ def policy_allows(
     lies under that group, or — for the bare top-level `--help`/`-h` — only
     when the allowlist is non-empty at all.
 
-    A permitted command is then held to `check_arguments` in every mode,
-    `full` included: the policy names which commands a remote caller may
-    run, never which host paths they may hand them. Only
+    A permitted command is then held, in every mode `full` included, to
+    `is_host_command` and `check_arguments`: the policy names which commands
+    a remote caller may run, never that they may manage the host or hand a
+    command a host path. Only
     `remote.ssh.restrict_host: false` (``restrict_host``) skips it, and not
     even that inside an already restricted session (`host_restricted`).
     """
@@ -348,6 +409,10 @@ def policy_allows(
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
     if host_restricted(restrict_host):
+        if is_host_command(path):
+            raise RouteError(
+                f"`{path}` manages the host itself, which a restricted remote session never does"
+            )
         check_arguments(argv)
     return path
 

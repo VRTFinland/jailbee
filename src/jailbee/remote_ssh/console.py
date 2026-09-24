@@ -30,12 +30,14 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.router import (
     RouteError,
+    is_host_command,
     known_command_paths,
     known_command_short_help,
     policy_allows,
     resolve_repo,
     unknown_command,
 )
+from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteCommandPolicy
@@ -120,7 +122,13 @@ def _render_command_panel(
     )
 
 
-def _print_help(policy: RemoteCommandPolicy, *, dashboard_enabled: bool, repo_root: Path) -> int:
+def _print_help(
+    policy: RemoteCommandPolicy,
+    *,
+    dashboard_enabled: bool,
+    repo_root: Path,
+    restrict_host: bool = True,
+) -> int:
     """Render the console-local command panel, then this policy's Jailbee help.
 
     `full` mode hands off entirely to the real `python -m jailbee --help`,
@@ -159,7 +167,8 @@ def _print_help(policy: RemoteCommandPolicy, *, dashboard_enabled: bool, repo_ro
         status = _returncode(completed)
     else:
         short_help = known_command_short_help()
-        rows = [(path, short_help.get(path, "")) for path in sorted(policy.allow)]
+        allowed = _allowed_paths(policy, restrict_host=restrict_host)
+        rows = [(path, short_help.get(path, "")) for path in sorted(allowed)]
         _render_command_panel(rich_console, "[bold]Allowed Jailbee commands[/bold]", rows)
 
     rich_console.print("Run `<command> --help` for details on any of them.")
@@ -188,13 +197,21 @@ def _history() -> FileHistory:
     return FileHistory(str(path))
 
 
-def _allowed_paths(policy: RemoteCommandPolicy) -> frozenset[str]:
-    """Command paths this session may complete, per its own command policy."""
+def _allowed_paths(policy: RemoteCommandPolicy, *, restrict_host: bool = True) -> frozenset[str]:
+    """Command paths this session may complete, per its own command policy.
+
+    A restricted session never offers a host command (`is_host_command`),
+    which `policy_allows` would refuse anyway.
+    """
     if policy.mode == "full":
-        return known_command_paths()
-    if policy.mode == "allowlist":
-        return frozenset(policy.allow)
-    return frozenset()
+        paths = known_command_paths()
+    elif policy.mode == "allowlist":
+        paths = frozenset(policy.allow)
+    else:
+        return frozenset()
+    if host_restricted(restrict_host):
+        return frozenset(path for path in paths if not is_host_command(path))
+    return paths
 
 
 def _command_tree(paths: Sequence[str]) -> dict[str, Any]:
@@ -230,10 +247,12 @@ def _completer(paths: frozenset[str], repos: Sequence[RepoChoice]) -> NestedComp
     return NestedCompleter.from_nested_dict(tree)
 
 
-def _session(repos: Sequence[RepoChoice], policy: RemoteCommandPolicy) -> PromptSession[str]:
+def _session(
+    repos: Sequence[RepoChoice], policy: RemoteCommandPolicy, *, restrict_host: bool = True
+) -> PromptSession[str]:
     return PromptSession(
         history=_history(),
-        completer=_completer(_allowed_paths(policy), repos),
+        completer=_completer(_allowed_paths(policy, restrict_host=restrict_host), repos),
     )
 
 
@@ -351,7 +370,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
         _error("No registered repositories are available.")
         return 1
 
-    session = _session(repos, ssh_config.commands)
+    session = _session(repos, ssh_config.commands, restrict_host=ssh_config.restrict_host)
     if initial_repo is None:
         if len(repos) == 1:
             current = repos[0]
@@ -398,7 +417,10 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
                 _error("usage: help")
                 continue
             last_status = _print_help(
-                ssh_config.commands, dashboard_enabled=ssh_config.dashboard, repo_root=current.root
+                ssh_config.commands,
+                dashboard_enabled=ssh_config.dashboard,
+                repo_root=current.root,
+                restrict_host=ssh_config.restrict_host,
             )
             continue
         if command == "repos":

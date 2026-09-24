@@ -1267,3 +1267,18 @@ def test_startup_reports_host_restrictions(
         asyncio.run(server.serve_async(RemoteSSHConfig(restrict_host=restrict_host)))
 
     assert want in caplog.text
+
+
+def test_startup_names_allowlisted_host_commands_that_stay_refused(listener, caplog, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    config = RemoteSSHConfig(
+        exec=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "config edit", "setup"]),
+    )
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+
+    assert "allowlisted but refused while host restrictions are on: config edit, setup" in (
+        caplog.text
+    )

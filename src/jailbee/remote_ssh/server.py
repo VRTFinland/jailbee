@@ -20,7 +20,13 @@ from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.keys import AuthorizedKey, SSHKeyError, read_authorized_keys, ssh_paths
 from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides, describe_overrides
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
-from jailbee.remote_ssh.router import RouteError, command_path, help_text, route
+from jailbee.remote_ssh.router import (
+    RouteError,
+    command_path,
+    help_text,
+    is_host_command,
+    route,
+)
 from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
@@ -332,6 +338,12 @@ def _startup_summary(
         f"  {keys_line}",
         f"  connect example: {_connect_example(config.listen, port, config)}",
     ]
+    if restricted and config.commands.mode == "allowlist":
+        refused = sorted(path for path in config.commands.allow if is_host_command(path))
+        if refused:
+            lines.append(
+                "  allowlisted but refused while host restrictions are on: " + ", ".join(refused)
+            )
     overrides_line = describe_overrides(overrides) if overrides is not None else None
     if overrides_line is not None:
         lines.append(f"  {overrides_line}")

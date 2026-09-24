@@ -31,10 +31,11 @@ account, not a second kernel sandbox. The service runs as the same Unix UID
 that runs the local `jailbee` CLI and has the same Incus access. With
 `remote.ssh.restrict_host` at its default, a remote session reaches the
 containers and the host repo's refs, and every host-reaching path JailBee
-knows of is closed (listed below). What an enabled command does to Incus
-containers and host-local state is otherwise its normal behavior, and
-`commands.mode: full` still grants commands such as `config edit` that
-change host configuration.
+knows of is closed (listed below), whatever `commands.mode` says. What an
+enabled command does to Incus containers is otherwise its normal behavior.
+The two settings are separate axes: `commands.mode` picks which commands a
+remote caller may run, `restrict_host` whether any of them may reach past
+the containers and the git bridge into the host.
 
 Every authorized client key has identical access. There are no per-key repos,
 roles or command policies, and the fixed SSH username `jailbee` does not map
@@ -59,10 +60,21 @@ shell) and GUI app launches (they would open on the host's display). Every
 process the service starts is marked as remote (`JAILBEE_REMOTE_SSH=1`,
 inherited by everything it starts in turn) and runs with `LESSSECURE=1`.
 
-`commands.mode: full` is a high-trust setting. It grants every current public
-JailBee command and automatically grants public commands added by future
-versions, including host-affecting service, configuration and lifecycle
-commands. It also grants every hidden *alias* of a public command (`merge`,
+While `restrict_host` is on, the commands that manage the host itself are
+refused in every mode, `full` and an allowlist naming them included:
+`config edit`/`init`, every `remote ...` command, `setup`, `init`, `apply`,
+`base build`/`prune`, `net install`/`refresh`/`unregister`, `net egress
+add`/`rm` (which accept the host's own and its LAN's addresses), `registry
+up`/`down`, the `account` commands that write, `mount`, `port to-container`,
+and the GUI launchers (`gui`, `ide`, the browsers, `apps run`). The startup
+log names any allowlisted command that stays refused this way, and every
+public command is classified one way or the other by the test suite, so a
+new one cannot land unclassified.
+
+`commands.mode: full` is a high-trust setting: it grants every current
+public JailBee command and automatically grants public commands added by
+future versions — the container-side ones while `restrict_host` is on,
+all of them once it is off. It also grants every hidden *alias* of a public command (`merge`,
 `pull`, `push`, and a few others — see [`remote.ssh`](config.md#remotessh)),
 since those are policy-checked against the public command they alias, not
 their own hidden spelling. Hidden internal commands with no public twin
