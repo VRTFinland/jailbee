@@ -122,7 +122,9 @@ def _config_homes(adapter: AccountAdapter, cfg: Config) -> tuple[dict[str, Path]
 
 
 def _resolved_group(gcfg: GlobalConfig, prefix: str) -> str | None:
-    return gcfg.credentials.group_for(prefix)
+    from jailbee.config.local_layer import local_credentials
+
+    return gcfg.credentials.group_for(prefix, local_credentials(prefix))
 
 
 def _existing_group_dirs(adapter: AccountAdapter) -> list[str]:

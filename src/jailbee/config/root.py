@@ -921,9 +921,14 @@ class Config(BaseModel):
                     f"enabled: auto."
                 )
         if self.github.enabled:
-            secret = self.github.api_tokens.get(self.container_prefix)
+            secret = self.github.token_for(self.container_prefix)
             if secret is not None and not secret.get_secret_value().strip():
-                issues.append(f"github.api_tokens['{self.container_prefix}'] is empty")
+                source = (
+                    "github.token"
+                    if self.github.token is not None
+                    else f"github.api_tokens['{self.container_prefix}']"
+                )
+                issues.append(f"{source} is empty")
 
         seen_subpaths: dict[str, tuple[str, str]] = {}
         for name, agent in self.agents.items():

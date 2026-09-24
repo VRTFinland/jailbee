@@ -532,6 +532,32 @@ def test_local_token_is_used_and_needs_0600(repo_and_global):
         load_config(repo_path)
 
 
+def test_runtime_validation_uses_local_token_over_empty_legacy_entry(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True, "api_tokens": {"myrepo": "  "}}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"github": {"token": "ghp_local"}})
+
+    cfg = load_config(repo_path)
+
+    assert not any("github" in issue for issue in cfg.validate_runtime())
+
+
+def test_runtime_validation_names_empty_local_token_source(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True, "api_tokens": {"myrepo": "ghp_legacy"}}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"github": {"token": "  "}})
+
+    cfg = load_config(repo_path)
+
+    issues = cfg.validate_runtime()
+    assert any("github.token is empty" in issue for issue in issues)
+    assert not any("ghp_" in issue for issue in issues)
+
+
 def test_enabled_without_any_token_still_fails(repo_and_global):
     _, repo_path, global_path = repo_and_global
     _write(global_path, {"github": {"enabled": True}})
