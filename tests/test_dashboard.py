@@ -3916,3 +3916,30 @@ def test_sample_activity_flattens_every_group(mocker):
     dashboard.sample_activity(groups, sampler)
 
     annotate.assert_called_once_with([a, b], sampler)
+
+
+def test_remote_action_menu_never_opens_the_pr_in_a_host_browser():
+    local = dashboard.menu_actions(_ctx(pr_number=7))
+    remote = dashboard.menu_actions(_ctx(pr_number=7, remote=True))
+
+    assert ("Open PR", "pr --open") in local
+    assert all(verb != "pr --open" for _label, verb in remote)
+
+
+def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker, monkeypatch):
+    """`restrict_host: false` lifts the restrictions, not the facts of being
+    remote: the server's cwd is still no repo, the setup offer is still for
+    someone at the host, and a Qt window would still open on its display."""
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    load = mocker.patch("jailbee.config.load_repo_config")
+    advise = mocker.patch("jailbee.cli._advise_setup")
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+
+    assert CliRunner().invoke(app, ["dashboard"]).exit_code == 0
+    load.assert_not_called()
+    advise.assert_not_called()
+    assert run.call_args.kwargs["cwd_root"] is None
+    assert run.call_args.kwargs["remote"] is False
+    assert CliRunner().invoke(app, ["gui"]).exit_code == 2

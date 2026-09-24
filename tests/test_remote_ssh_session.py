@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from jailbee.remote_ssh.session import (
     REMOTE_SESSION_ENV,
+    SSH_SESSION_ENV,
     child_environment,
     host_restricted,
     is_remote_session,
+    is_ssh_session,
 )
 
 
@@ -15,6 +17,7 @@ def test_child_environment_marks_the_session_and_disarms_less() -> None:
 
     assert env == {
         "PATH": "/bin",
+        SSH_SESSION_ENV: "1",
         REMOTE_SESSION_ENV: "1",
         "LESSSECURE": "1",
         "TERM": "xterm",
@@ -48,10 +51,17 @@ def test_is_remote_session_defaults_to_the_process_environment(monkeypatch) -> N
     assert is_remote_session() is False
 
 
-def test_an_unrestricted_child_gets_its_base_environment_unchanged() -> None:
+def test_an_unrestricted_child_carries_only_the_ssh_session_marker() -> None:
     env = child_environment({"PATH": "/bin"}, term="xterm", restricted=False)
 
-    assert env == {"PATH": "/bin", "TERM": "xterm"}
+    assert env == {"PATH": "/bin", "TERM": "xterm", SSH_SESSION_ENV: "1"}
+
+
+def test_is_ssh_session_covers_restricted_and_unrestricted_sessions() -> None:
+    assert is_ssh_session({SSH_SESSION_ENV: "1"}) is True
+    assert is_ssh_session({REMOTE_SESSION_ENV: "1"}) is True
+    assert is_ssh_session({}) is False
+    assert is_remote_session({SSH_SESSION_ENV: "1"}) is False
 
 
 def test_an_unrestricted_child_keeps_a_marker_its_server_already_carries() -> None:

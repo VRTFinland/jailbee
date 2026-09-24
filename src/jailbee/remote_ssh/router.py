@@ -267,9 +267,20 @@ def is_host_command(path: str) -> bool:
 # in a way no argument type reveals:
 #   - `new --mount` bind-mounts the host repo read-write, `.git` included, so
 #     the container could plant a hook or `core.fsmonitor` that the host's own
-#     git later runs.
+#     git later runs;
+#   - `pr`/`submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
+#     on the host's display;
+#   - `--yes` on the commands that publish to GitHub with the host's own
+#     credentials (`pr`, `submodule pr`, `review apply`, `issue apply`): the
+#     remote user may publish, but each action is shown and confirmed rather
+#     than waved through — the same reasoning that refuses `--yes` for a
+#     branch's privilege widening.
 _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     "new": frozenset({"mount"}),
+    "pr": frozenset({"web", "open_only", "yes"}),
+    "submodule pr": frozenset({"web", "open_only", "yes"}),
+    "review apply": frozenset({"yes"}),
+    "issue apply": frozenset({"yes"}),
 }
 
 

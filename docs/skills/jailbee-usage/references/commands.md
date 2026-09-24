@@ -134,7 +134,9 @@ Host-management commands — `config edit`/`init`, `remote ...`, `setup`,
 `net egress add`/`rm`, `registry up`/`down`, writing `account` commands,
 `mount`, `port to-container`, `gui`/`ide`/browsers/`apps run` — are refused
 in every mode, `full` and allowlists included; the startup log names any
-allowlisted one. `remote.ssh.restrict_host: false` (or `serve
+allowlisted one. Publishing (`pr`, `submodule pr`, `review apply`, `issue
+apply`) stays allowed but refuses `--yes`, and `pr --web`/`--open` are
+refused as host browsers. `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts every one of these at once; a server started from
 inside a restricted session stays restricted regardless.
 

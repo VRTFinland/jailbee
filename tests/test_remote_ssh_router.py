@@ -567,3 +567,40 @@ def test_restrict_host_false_allows_host_commands(monkeypatch) -> None:
 def test_host_command_group_help_stays_available() -> None:
     """Help changes nothing; refusing it would only hide what is refused."""
     assert policy_allows(("remote", "--help"), FULL) == "remote"
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag"),
+    [
+        (("pr", "box", "--open"), "--open"),
+        (("pr", "box", "--web"), "--web"),
+        (("pr", "box", "--yes"), "--yes"),
+        (("submodule", "pr", "libs/x", "--web"), "--web"),
+        (("submodule", "pr", "libs/x", "-y"), "--yes"),
+        (("review", "apply", "box", "--yes"), "--yes"),
+        (("issue", "apply", "box", "-y"), "--yes"),
+    ],
+)
+def test_publishing_is_confirmed_and_never_opens_a_host_browser(argv, flag, monkeypatch) -> None:
+    """Publishing with the host's GitHub identity stays allowed, but each
+    action is confirmed: `--yes` from the remote user is not the review the
+    outbox exists for. `--web`/`--open` would start a browser on the host."""
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    with pytest.raises(RouteError, match=f"may not set {flag}"):
+        policy_allows(argv, FULL)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("pr", "box"),
+        ("review", "apply", "box"),
+        ("issue", "apply", "box"),
+        ("pr", "box", "--force"),
+    ],
+)
+def test_publishing_itself_stays_allowed(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    assert policy_allows(argv, FULL)

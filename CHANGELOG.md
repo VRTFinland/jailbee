@@ -67,7 +67,8 @@ before editing `## Unreleased`.
   container (which shares that tree) cannot be entered, host-management
   commands (`config edit`, `remote ...`, `setup`, `apply`, `net egress add`,
   `port to-container`, GUI launchers, ...) are refused in every command
-  mode including `full`, and a branch's
+  mode including `full`, publishing to GitHub (`pr`, `review apply`, `issue
+  apply`) needs each action confirmed (`--yes` refused), and a branch's
   privilege-widening autostart config cannot be approved remotely, `--yes`
   included. `remote.ssh.restrict_host: false` lifts all of these host restrictions at
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/

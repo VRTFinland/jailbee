@@ -710,7 +710,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         prefix.append(("Clear failed job", "job clear"))
     if ctx.has_job:
         prefix.append(("Job log", "job log --follow" if ctx.job_running else "job log"))
-    if ctx.pr_number is not None:
+    if ctx.pr_number is not None and not ctx.remote:
+        # `pr --open` is a browser on the host's display.
         prefix.append(("Open PR", "pr --open"))
     if _bridge_possible(ctx):
         prefix.append(("Create/update PR", "pr"))

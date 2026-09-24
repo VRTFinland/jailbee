@@ -746,7 +746,9 @@ refused (use `--into`/`--as`), a mount-mode container cannot be entered
 refused even with `--yes`. Host-management commands (`config edit`/`init`,
 `remote ...`, `setup`, `init`, `apply`, `base build`/`prune`, `net egress
 add`/`rm`, `port to-container`, `mount`, writing `account` commands, the GUI
-launchers) are refused in every mode, `full` included.
+launchers) are refused in every mode, `full` included. Publishing
+(`pr`, `review apply`, `issue apply`) stays allowed but never with `--yes`,
+and `pr --web`/`--open` are refused.
 `remote.ssh.restrict_host: false` (or `serve --no-restrict-host`) lifts all
 of these at once.
 

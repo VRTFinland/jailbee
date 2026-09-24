@@ -640,8 +640,14 @@ def _advise_setup(*, offer: bool = False) -> None:
 
     from jailbee import setup_command as sc
     from jailbee.db import get_engine
+    from jailbee.remote_ssh.session import is_ssh_session
     from jailbee.tui import hint
 
+    # Over SSH the steps would install into this host's rc files and agent
+    # config for someone who is not at it — and `setup` itself is a host
+    # command a restricted session is refused. The hint alone still prints.
+    if is_ssh_session():
+        offer = False
     try:
         shell = sc.detect_shell()
         shells = [shell] if shell else []
@@ -3366,21 +3372,23 @@ def _run_dashboard(
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend.
 
-    A remote SSH session gets the TUI in its restricted form (see
-    `dashboard.run`'s `remote`) and never the Qt one: a GUI would open on
-    the host's display, not the client's. It also shows registered repos only
-    — the server's working directory is no repo anyone chose — and skips the
-    setup offer, whose steps run on the host.
+    Any SSH session, restricted or not, gets the TUI and never the Qt one: a
+    GUI would open on the host's display, not the client's. It also shows
+    registered repos only — the server's working directory is no repo anyone
+    chose — and skips the setup offer, whose steps run on the host. A
+    *restricted* session additionally gets the TUI in its restricted form
+    (see `dashboard.run`'s `remote`).
     """
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_remote_session, is_ssh_session
 
     remote = is_remote_session()
-    if remote and gui:
+    over_ssh = is_ssh_session()
+    if over_ssh and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
-    if remote:
+    if over_ssh:
         cwd_root = None
     else:
         # Before either frontend takes the screen: this is the other command

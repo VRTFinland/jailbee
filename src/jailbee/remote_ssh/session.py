@@ -28,6 +28,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 REMOTE_SESSION_ENV = "JAILBEE_REMOTE_SSH"
+# Set for every child of the SSH server, restricted or not. It says only
+# that the person at the other end is not at this host's keyboard — which
+# decides what is pointless to offer (a Qt window, the setup steps, the
+# server's own working directory as a repo) rather than what is forbidden.
+SSH_SESSION_ENV = "JAILBEE_SSH_SESSION"
 
 
 def child_environment(
@@ -35,13 +40,15 @@ def child_environment(
 ) -> dict[str, str]:
     """The environment for a child of the SSH server, built from ``base``.
 
-    A ``restricted`` child is marked and gets `LESSSECURE=1` as well, so a
-    `less` reached through any path — a pager, a tool's own paging — cannot
-    start a shell (`!`), an editor (`v`) or a pipe (`|`) on the host. An
-    unrestricted one gets ``base`` unchanged, marker included if ``base``
-    already carries it.
+    Every child carries `SSH_SESSION_ENV`. A ``restricted`` one is also marked
+    with `REMOTE_SESSION_ENV` and gets `LESSSECURE=1`, so a `less` reached
+    through any path — a pager, a tool's own paging — cannot start a shell
+    (`!`), an editor (`v`) or a pipe (`|`) on the host. An unrestricted one
+    otherwise gets ``base`` unchanged, the restriction marker included if
+    ``base`` already carries it.
     """
     env = dict(base)
+    env[SSH_SESSION_ENV] = "1"
     if restricted:
         env[REMOTE_SESSION_ENV] = "1"
         env["LESSSECURE"] = "1"
@@ -56,6 +63,12 @@ def is_remote_session(environ: Mapping[str, str] | None = None) -> bool:
     Any non-empty value counts: the marker fails closed.
     """
     return bool((os.environ if environ is None else environ).get(REMOTE_SESSION_ENV))
+
+
+def is_ssh_session(environ: Mapping[str, str] | None = None) -> bool:
+    """True when this process descends from any SSH session, restricted or not."""
+    env = os.environ if environ is None else environ
+    return bool(env.get(SSH_SESSION_ENV)) or is_remote_session(env)
 
 
 def host_tree_refusal(action: str, hint: str | None = None) -> str:

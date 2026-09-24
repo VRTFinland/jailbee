@@ -56,9 +56,13 @@ container and git-bridge actions: creating, starting, stopping or destroying
 containers and moving commits can therefore affect host state. It withholds
 what would reach the host beyond that — the config editor (a config decides
 host mounts and this very policy), the diff pager (a pager can start a
-shell) and GUI app launches (they would open on the host's display). Every
-process the service starts is marked as remote (`JAILBEE_REMOTE_SSH=1`,
-inherited by everything it starts in turn) and runs with `LESSSECURE=1`.
+shell), "Open PR" and GUI app launches (a browser or window would open on
+the host's display). Every process the service starts is marked as remote
+(`JAILBEE_REMOTE_SSH=1`, inherited by everything it starts in turn) and runs
+with `LESSSECURE=1`. Every SSH session, restricted or not, also carries
+`JAILBEE_SSH_SESSION=1`, which keeps the dashboard to registered repos, the
+Qt dashboard refused and the post-install setup offer unmade: the one at the
+other end is not at this host.
 
 While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:
@@ -116,6 +120,10 @@ The SSH protocol surface is also fail-closed:
   script — is what the host's own tools read next. Pull into another host
   branch (`--into`) or fetch into one (`--as`), and check it out on the
   host; and
+- publishing to GitHub with the host's own `gh` (`pr`, `submodule pr`,
+  `review apply`, `issue apply`) stays available — the key holder is the
+  human the outbox is reviewed by — but never with `--yes`, so each action
+  is shown and confirmed; `--web`/`--open` are refused as host browsers;
 - a branch whose autostart config widens privileges (the escalation prompt
   of `jailbee new`) is refused outright, `--yes` included: over SSH the one
   answering that prompt is the remote user it exists to hold back.

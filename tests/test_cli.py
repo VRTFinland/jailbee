@@ -10226,3 +10226,24 @@ def test_ssh_restart_hint_never_fails_the_command(mocker, monkeypatch):
     mocker.patch("jailbee.remote_ssh.service.stale_service_reason", side_effect=OSError("boom"))
 
     cli._advise_ssh_restart()  # no exception
+
+
+@pytest.mark.parametrize("marker", ["JAILBEE_SSH_SESSION", "JAILBEE_REMOTE_SSH"])
+def test_setup_offer_is_never_made_over_ssh(mocker, monkeypatch, marker):
+    """The steps install into this host's rc files and agent config; the one
+    who would answer is not at it. Only the one-shot hint remains."""
+    from jailbee import cli
+
+    monkeypatch.delenv("JAILBEE_SSH_SESSION", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.setenv(marker, "1")
+    mocker.patch("jailbee.cli._setup_offer_allowed", return_value=True)
+    consume = mocker.patch("jailbee.setup_command.consume_hint", return_value=[])
+    pending = mocker.patch("jailbee.setup_command.hint_pending")
+    confirm = mocker.patch("jailbee.cli.typer.confirm")
+
+    cli._advise_setup(offer=True)
+
+    consume.assert_called_once()
+    pending.assert_not_called()
+    confirm.assert_not_called()

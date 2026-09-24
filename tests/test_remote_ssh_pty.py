@@ -243,7 +243,13 @@ def test_fork_child_executes_literal_argv_cwd_and_only_trusted_env(spec, boundar
     execute.assert_called_once_with(
         spec.argv[0],
         spec.argv,
-        {"PATH": "/bin", "TERM": "xterm", "JAILBEE_REMOTE_SSH": "1", "LESSSECURE": "1"},
+        {
+            "PATH": "/bin",
+            "TERM": "xterm",
+            "JAILBEE_SSH_SESSION": "1",
+            "JAILBEE_REMOTE_SSH": "1",
+            "LESSSECURE": "1",
+        },
     )
     leave.assert_called_once_with(127)
     assert runner.os.environ["TERM"] == "old"
@@ -372,7 +378,12 @@ def test_pipe_argv_env_and_separate_bounded_streams(spec, boundary, monkeypatch)
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={"PATH": "/bin", "JAILBEE_REMOTE_SSH": "1", "LESSSECURE": "1"},
+        env={
+            "PATH": "/bin",
+            "JAILBEE_SSH_SESSION": "1",
+            "JAILBEE_REMOTE_SSH": "1",
+            "LESSSECURE": "1",
+        },
         start_new_session=True,
     )
     assert process.stdout.data == b"output"
@@ -961,13 +972,14 @@ def test_raw_pty_eof_escalates_when_child_ignores_hup(spec, boundary, monkeypatc
 
 def test_unrestricted_pipe_child_is_left_unmarked(spec, boundary, monkeypatch):
     """`remote.ssh.restrict_host: false`: the child's environment is the
-    service's own, with no marker and no LESSSECURE."""
+    service's own plus the SSH-session marker — no restriction marker, no
+    LESSSECURE."""
     monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin"})
     boundary.create.return_value = pipe_child(status=0)
 
     asyncio.run(run_child(SSHProcess(), replace(spec, restrict_host=False)))
 
-    assert boundary.create.call_args.kwargs["env"] == {"PATH": "/bin"}
+    assert boundary.create.call_args.kwargs["env"] == {"PATH": "/bin", "JAILBEE_SSH_SESSION": "1"}
 
 
 def test_unrestricted_pty_child_is_left_unmarked(spec, boundary, monkeypatch):
@@ -981,4 +993,8 @@ def test_unrestricted_pty_child_is_left_unmarked(spec, boundary, monkeypatch):
     with pytest.raises(ChildExited):
         asyncio.run(run_child(SSHProcess("xterm"), replace(spec, restrict_host=False)))
 
-    assert execute.call_args.args[2] == {"PATH": "/bin", "TERM": "xterm"}
+    assert execute.call_args.args[2] == {
+        "PATH": "/bin",
+        "TERM": "xterm",
+        "JAILBEE_SSH_SESSION": "1",
+    }
