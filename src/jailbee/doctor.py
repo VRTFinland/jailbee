@@ -294,8 +294,13 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
     would be worse than the ambiguity.
     """
     from jailbee.accounts.groups import RESERVED_GROUP_NAMES
+    from jailbee.config.local_layer import all_local_credential_groups
 
-    configured = {gcfg.credentials.group, *gcfg.credentials.repos.values()}
+    configured = {
+        gcfg.credentials.group,
+        *gcfg.credentials.repos.values(),
+        *all_local_credential_groups(),
+    }
     offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
     if not offending:
         return []
@@ -306,7 +311,8 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
             f"`credentials` names a group called {', '.join(offending)}, "
             "which `jailbee account group` cannot address — it uses that word "
             "for 'no credential group'. Rename the group in "
-            "~/.config/jailbee/global.yaml and rename its directory under "
+            "~/.config/jailbee/global.yaml or the repo's file under "
+            "~/.config/jailbee/repos/, and rename its directory under "
             "<XDG_DATA_HOME>/jailbee/claude-credentials/ to match.",
         )
     ]

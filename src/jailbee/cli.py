@@ -13611,17 +13611,18 @@ def _refuse_if_agent_running_in_repo(cfg: "Config", incus: "IncusType", force: b
 
 
 def _group_after_write(cfg: "Config") -> str | None:
-    """The repo's credential group as the file just written resolves it.
+    """The repo's credential group as the files just written resolve it.
 
-    Read back from `_global_config_path_for_write` rather than from a
-    reloaded `Config`: it is the same file `_write_repo_group` patched, it
-    answers for `set`, `set none` and `unset` alike, and it does not depend
-    on `load_config` finding the same global config this command wrote.
+    Read back from the host and local files rather than a reloaded `Config`:
+    this answers for `set`, `set none` and `unset` alike.
     """
+    from jailbee.config.local_layer import local_credentials
     from jailbee.global_config import load_global_config
 
     gcfg, _ = load_global_config(_global_config_path_for_write())
-    return gcfg.credentials.group_for(cfg.container_prefix)
+    return gcfg.credentials.group_for(
+        cfg.container_prefix, local_credentials(cfg.container_prefix)
+    )
 
 
 def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:
@@ -13677,25 +13678,30 @@ def _reapply_binds_profile(config: Path | None) -> None:
 
 
 def _write_repo_group(config: Path | None, value: object) -> None:
-    """Apply one `credentials.repos.<prefix>` change and re-render.
+    """Set or clear this repo's local group, remove any legacy global entry.
 
-    A global.yaml still spelling the legacy `claude_credentials:` block is
-    migrated in the same write: the block is copied to `credentials`, the old
-    key deleted, then this repo's entry applied — see
-    `config_writer.credential_key_migration`. Reading the raw mapping first is
-    what lets the helper see the legacy key.
+    The global cleanup prevents an old entry from silently overriding unset.
+    It also migrates a legacy `claude_credentials:` block.
     """
     from jailbee import config_writer
-    from jailbee.config.common import _read_yaml_or_empty
+    from jailbee.config.common import _read_yaml_or_empty, normalize_credentials_key
 
     cfg = _load_or_exit(config)
+    prefix = cfg.container_prefix
+    config_writer.patch_local_file(
+        prefix, [config_writer.YamlChange(("credentials", "group"), value)]
+    )
     path = _global_config_path_for_write()
     raw = _read_yaml_or_empty(path)
-    changes = config_writer.credential_key_migration(
-        raw,
-        [config_writer.YamlChange(("credentials", "repos", cfg.container_prefix), value)],
-    )
-    config_writer.patch_file(path, changes)
+    folded, _ = normalize_credentials_key(raw, str(path))
+    block = folded.get("credentials")
+    repos = block.get("repos") if isinstance(block, dict) else None
+    if isinstance(repos, dict) and prefix in repos:
+        changes = config_writer.credential_key_migration(
+            raw,
+            [config_writer.YamlChange(("credentials", "repos", prefix), config_writer.DELETE)],
+        )
+        config_writer.patch_file(path, changes)
     _reapply_binds_profile(config)
 
 
@@ -14050,7 +14056,7 @@ def account_group_set_cmd(
     try:
         _write_repo_group(config, value)
     except OSError as e:
-        error(f"Could not write the global config: {e}")
+        error(f"Could not write the config: {e}")
         raise typer.Exit(2) from e
 
     # The repo's recorded account now describes an account this repo may no
@@ -14087,7 +14093,7 @@ def account_group_unset_cmd(
     try:
         _write_repo_group(config, config_writer.DELETE)
     except OSError as e:
-        error(f"Could not write the global config: {e}")
+        error(f"Could not write the config: {e}")
         raise typer.Exit(2) from e
 
     cfg = _load_or_exit(config)

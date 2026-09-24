@@ -16,6 +16,7 @@ runner = CliRunner()
 def group_env(mocker, tmp_path, monkeypatch):
     """A repo in group `work` with two containers, one deviating."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path / "myrepo", shared_dir=tmp_path / "shared", claude={"enabled": True})
@@ -226,10 +227,10 @@ def test_unset_invalidates_the_repos_recorded_account(group_env, mocker, tmp_pat
     invalidate.assert_called_once()
 
 
-def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
+def test_set_writes_the_repo_group_locally_and_drops_the_legacy_entry(group_env, mocker, tmp_path):
     """A write over a legacy file migrates it in the same write."""
     global_yaml = tmp_path / "global.yaml"
-    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: old\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
@@ -241,9 +242,12 @@ def test_set_writes_the_repo_group_to_global_yaml(group_env, mocker, tmp_path):
 
     loaded = yaml.safe_load(global_yaml.read_text())
     assert "claude_credentials" not in loaded
-    assert loaded["credentials"]["repos"]["myrepo"] == "personal"
+    assert "myrepo" not in loaded["credentials"].get("repos", {})
     # The host default is carried over — `set` is repo-scoped.
     assert loaded["credentials"]["group"] == "work"
+    from jailbee.config.local_layer import local_config_path
+
+    assert yaml.safe_load(local_config_path("myrepo").read_text())["credentials"]["group"] == "personal"
 
 
 def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
@@ -258,25 +262,35 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
     import yaml
 
     loaded = yaml.safe_load(global_yaml.read_text())
-    assert "claude_credentials" not in loaded
-    repos = loaded["credentials"]["repos"]
-    assert "myrepo" in repos and repos["myrepo"] is None
+    from jailbee.config.local_layer import local_config_path
+
+    local = yaml.safe_load(local_config_path("myrepo").read_text())
+    assert "group" in local["credentials"] and local["credentials"]["group"] is None
 
 
-def test_unset_removes_the_entry(group_env, mocker, tmp_path):
+def test_unset_removes_local_and_legacy_entries(group_env, mocker, tmp_path):
+    from jailbee.config.local_layer import local_config_path
+
+    local_path = local_config_path("myrepo")
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text("credentials:\n  group: team\n")
     global_yaml = tmp_path / "global.yaml"
     global_yaml.write_text("claude_credentials:\n  group: work\n  repos:\n    myrepo: personal\n")
     mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
     mocker.patch("jailbee.cli._reapply_binds_profile")
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
 
-    runner.invoke(app, ["account", "group", "unset"])
+    result = runner.invoke(app, ["account", "group", "unset"])
 
     import yaml
 
     loaded = yaml.safe_load(global_yaml.read_text())
     assert "claude_credentials" not in loaded
     assert "myrepo" not in loaded["credentials"]["repos"]
+    assert "group" not in yaml.safe_load(local_path.read_text()).get("credentials", {})
+    assert result.exit_code == 0, result.output
+    assert "host default: group `work`" in result.output
+    assert "Could not write the global config" not in result.output
 
 
 def test_set_rejects_the_reserved_name_before_writing(group_env, mocker, tmp_path):
@@ -335,8 +349,7 @@ def test_set_force_overrides_the_refusal(group_env, mocker, tmp_path):
     import yaml
 
     loaded = yaml.safe_load(global_yaml.read_text())
-    assert "claude_credentials" not in loaded
-    assert loaded["credentials"]["repos"]["myrepo"] == "personal"
+    assert loaded["claude_credentials"]["group"] == "work"
 
 
 def test_unset_refuses_while_claude_runs_anywhere_in_the_repo(group_env, mocker, tmp_path):

@@ -729,13 +729,16 @@ def test_choose_shared_credential_returns_none_without_a_tty(mocker):
     select.assert_not_called()
 
 
-def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(mocker, capsys):
-    """The two credential choices plus the `repos:` route out of the group —
+def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(
+    mocker, capsys, tmp_path, monkeypatch
+):
+    """The two credential choices plus the local config route out of the group —
     without the hint, a user who wants neither has no visible third option."""
     from pathlib import Path
 
     from jailbee.tui import choose_shared_credential
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
     select = mocker.patch("questionary.select")
     select.return_value.ask.return_value = "group"
@@ -749,14 +752,10 @@ def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(mocker
     assert values == ["group", "repo", "cancel"]
     out = capsys.readouterr()
     combined = out.out + out.err
-    assert "credentials.repos" in combined
+    assert "group: null" in combined
     assert "  credentials:" in combined
     assert "claude_credentials" not in combined
-    assert "global.yaml" in combined
-    # The block must be copy-pasteable: `repos` is keyed by container_prefix,
-    # and a placeholder there is the one part the user cannot fill in from
-    # the prompt alone.
-    assert "SampleApp: null" in combined
+    assert "repos/SampleApp.yaml" in combined.replace("\n", "")
 
 
 @pytest.mark.parametrize("answer", [None, "cancel"])

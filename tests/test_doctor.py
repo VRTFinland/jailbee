@@ -2586,6 +2586,23 @@ def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
     assert doctor._check_reserved_group_name(cfg, gcfg) == []
 
 
+def test_reserved_group_name_is_found_in_a_local_file(tmp_path, monkeypatch):
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.doctor import _check_reserved_group_name
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    path = local_config_path("other")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("credentials:\n  group: none\n")
+
+    results = _check_reserved_group_name(make_cfg(tmp_path / "repo"), GlobalConfig())
+    assert results and not results[0].ok
+    assert "none" in results[0].detail
+    assert "repos/" in results[0].detail
+
+
 def test_doctor_is_silent_without_a_redundant_override(tmp_path, make_cfg, mocker):
     from jailbee.doctor import _check_redundant_credential_overrides
 

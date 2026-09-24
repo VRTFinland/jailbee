@@ -239,6 +239,19 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
     return True
 
 
+def patch_local_file(prefix: str, changes: Sequence[YamlChange]) -> bool:
+    """Patch one repo's host-local config, creating its directory privately.
+
+    The directory may contain tokens and is created at 0700; new files inherit
+    `patch_file`'s 0600 default.
+    """
+    from jailbee.config.local_layer import local_config_dir, local_config_path
+
+    root = local_config_dir()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return patch_file(local_config_path(prefix), changes)
+
+
 DOCUMENTED_HEADER = (
     "# Written by `jailbee config init --global`. Comments in this file are\n"
     "# generated from jailbee's own schema and are replaced if you regenerate\n"

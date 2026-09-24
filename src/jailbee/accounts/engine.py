@@ -279,8 +279,13 @@ def registered_repos() -> list[tuple[str, Path]]:
 
 
 def _resolves_to(gcfg: GlobalConfig, prefix: str, group: str) -> bool:
-    """Whether `prefix` resolves to `group` under this host's config."""
-    resolved = gcfg.credentials.group_for(prefix)
+    """Whether `prefix` resolves to `group` under this host's config.
+
+    Reads the repo's host-local credentials block as well as the host config.
+    """
+    from jailbee.config.local_layer import local_credentials
+
+    resolved = gcfg.credentials.group_for(prefix, local_credentials(prefix))
     return resolved is not None and resolved == group
 
 
