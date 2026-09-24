@@ -226,14 +226,21 @@ def test_a_group_row_lists_every_repo_resolving_to_it(tmp_path: Path, mocker) ->
     [("local", "old", "local"), (None, "old", None)],
 )
 def test_overview_resolves_local_credential_group(
-    tmp_path: Path, mocker, monkeypatch, local_group: str | None, legacy_group: str, expected_group: str | None
+    tmp_path: Path,
+    mocker,
+    monkeypatch,
+    local_group: str | None,
+    legacy_group: str,
+    expected_group: str | None,
 ) -> None:
     config_home = tmp_path / "config"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     local_path = config_home / "jailbee" / "repos" / "myrepo.yaml"
     local_path.parent.mkdir(parents=True)
     local_path.write_text(
-        "credentials:\n  group: null\n" if local_group is None else "credentials:\n  group: local\n",
+        "credentials:\n  group: null\n"
+        if local_group is None
+        else "credentials:\n  group: local\n",
         encoding="utf-8",
     )
     cfg = _cfg(tmp_path)
