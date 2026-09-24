@@ -4342,7 +4342,8 @@ ssh-add -l                            # cardno:... keys listed
 jb restart <container>
 
 # The device must be read-only. Without `readonly: "true"` here, the
-# container can still unlink the host's sockets.
+# container can still unlink the host's sockets. `pulse-socket` is only
+# there with `gui.audio: true`; without it, it must be absent altogether.
 incus config device show <container> | grep -A4 'gpg-socket\|pulse-socket'
 
 # The host's agent must be the *same process* as before the restart, and
@@ -4370,9 +4371,12 @@ incus exec <container> -- systemctl --user --machine=dev@ is-enabled \
 incus exec <container> -- systemctl --user --machine=dev@ --failed
 ```
 
-Audio is the other half of the same fix: with `pulse-socket` read-only,
-`jb chrome` (or any GUI app) must still play sound from inside the container,
-and the host's own audio must survive the container's boot.
+Audio is the other half of the same fix. With `gui.audio: true` (the socket
+is opt-in), `pulse-socket` must be read-only, `jb chrome` (or any GUI app)
+must still play sound from inside the container, and the host's own audio
+must survive the container's boot. With `gui.audio` unset, and likewise
+`gui.dbus`, `incus config device show <container>` must list neither
+`pulse-socket` nor `dbus-socket` after a `jb restart`.
 
 ## Unprivileged user namespaces (Chrome's sandbox) smoke test
 
