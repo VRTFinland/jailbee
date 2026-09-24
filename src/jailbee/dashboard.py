@@ -69,6 +69,7 @@ from jailbee.lifecycle import (
 )
 from jailbee.paths import repo_config_path
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
+from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.router import RouteError
 from jailbee.tui import console, error
 
@@ -2262,13 +2263,23 @@ def run(
             def run_command(command: CommandState) -> None:
                 """Authorize and run the edited argv in the selected repo."""
                 name = container_of(selected)
-                group = _find_group(groups, name)
-                if group is None or name is None:
-                    set_notice("Select a container in a repo first")
+                if selected is None:
+                    set_notice("Select a repo or a container first")
+                    return
+                group = (
+                    _find_group(groups, name)
+                    if name is not None
+                    else next((g for g in groups if g.prefix == selected.key), None)
+                )
+                if group is None:
+                    set_notice("Selected repo is no longer listed")
                     return
                 repo = RepoTarget.of(group)
                 if repo is None:
-                    set_notice(view_only_note(groups, name) or "No repo available")
+                    set_notice(
+                        view_only_note(groups, name)
+                        or f"No repo found for '{group.prefix}' — this row is view-only"
+                    )
                     return
                 try:
                     argv = command_argv(command.text, name)
@@ -2279,11 +2290,14 @@ def run(
                     set_notice(str(exc))
                     return
                 try:
-                    rc = foreground(
-                        lambda: subprocess.run(
-                            ["jailbee", *argv], cwd=repo.cwd(), check=False
-                        ).returncode
-                    )
+                    def execute_command() -> int:
+                        result = subprocess.run(["jailbee", *argv], cwd=repo.cwd(), check=False)
+                        typed, _leaf = ssh_router.command_leaf(argv)
+                        if dispatch_style(typed) != "plain":
+                            _wait_for_return()
+                        return result.returncode
+
+                    rc = foreground(execute_command)
                 except OSError:
                     _report_vanished_repo(repo)
                     return

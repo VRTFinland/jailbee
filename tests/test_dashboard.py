@@ -3916,6 +3916,115 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
+def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = _drive_run(mocker, [b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    run.assert_called_once_with(["jailbee", "merge"], cwd=tmp_path, check=False)
+    wait.assert_called_once()
+
+
+def test_inline_command_on_container_uses_selected_source(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    run.assert_called_once_with(["jailbee", "merge", "alpha-x"], cwd=tmp_path, check=False)
+
+
+def test_inline_command_malformed_quote_notifies_without_spawning(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", b"!", b"merge '", b"\r"], groups=[group])
+
+    run.assert_not_called()
+    assert any("cannot parse command" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_refuses_orphan_before_spawning(mocker):
+    group = dashboard.RepoGroup("alpha", None, None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    run.assert_not_called()
+    assert any("view-only" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_refuses_without_selection_before_spawning(mocker):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"merge", b"\r"])
+
+    run.assert_not_called()
+    assert any(
+        "Select a repo or a container" in str(c.kwargs.get("notice"))
+        for c in render.call_args_list
+    )
+
+
+def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"!", b"merge", b"\r", b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+    policy = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git pull"])
+    )
+
+    dashboard.run(
+        mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True,
+        remote=True, over_ssh=True, ssh_policy=policy,
+    )
+
+    run.assert_not_called()
+    wait.assert_not_called()
+    assert any("not allowed" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_reports_vanished_repo_and_returns_to_loop(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    assert any(str(tmp_path) in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_q_inside_inline_editor_is_text_and_does_not_quit(mocker):
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"q", b"\x1b", b"q"])
+
+    assert any(
+        isinstance(c.kwargs.get("overlay"), dashboard.CommandState)
+        and c.kwargs["overlay"].text == "q"
+        for c in render.call_args_list
+    )
+
+
 def test_create_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     """The identical failure as the test above, reached through a different
     keypress: `create_container`'s own `subprocess.run(new_container_argv(...),
