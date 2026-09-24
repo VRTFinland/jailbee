@@ -66,6 +66,7 @@ from jailbee.config.models_tools import (
     BrowserConfig,
     BrowsersConfig,
     GpgConfig,
+    GuiConfig,
     JetbrainsConfig,
     SshConfig,
     TerminalConfig,
@@ -215,6 +216,14 @@ class Config(BaseModel):
             "and points `SSH_AUTH_SOCK` at it, so a YubiKey or GPG-backed SSH key "
             "works inside the container. Off by default. Applies to every repo "
             "unless a repo overrides it."
+        ),
+    )
+    gui: GuiConfig = Field(
+        default=GuiConfig(),
+        description=(
+            "Host desktop sockets beyond the display: the session D-Bus and "
+            "PulseAudio. Both off by default; the Wayland display socket is "
+            "mounted regardless. Takes effect on the container's next start."
         ),
     )
     ssh: SshConfig = Field(

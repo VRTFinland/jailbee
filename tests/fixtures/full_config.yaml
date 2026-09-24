@@ -5,6 +5,10 @@ container_user:
 gpg:
   enabled: true
 
+gui:
+  dbus: true
+  audio: true
+
 ssh:
   enabled: true
   seed_from_host: true

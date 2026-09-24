@@ -129,6 +129,15 @@ before editing `## Unreleased`.
   `agent skills (host)` and no longer depends on the Claude integration
   being enabled for the repo you happen to be standing in.
 
+- **The host's session D-Bus and PulseAudio sockets are opt-in.** Every
+  container used to get both alongside the Wayland display. The session bus
+  is the host desktop's control channel and the pulse socket its
+  microphone, and neither is needed to draw a window, so they are now
+  attached only with `gui.dbus: true` / `gui.audio: true`. The Wayland
+  socket is unchanged. GUI apps keep working without them, minus desktop
+  notifications, portals and sound. Takes effect on each container's next
+  start; set the keys to keep the old behaviour.
+
 ## 1.5.0 - 2026-09-21
 
 ### Added

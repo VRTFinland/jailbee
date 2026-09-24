@@ -28,6 +28,31 @@ class GpgConfig(BaseModel):
     )
 
 
+class GuiConfig(BaseModel):
+    """Host desktop sockets beyond the display, passed into containers on request."""
+
+    model_config = ConfigDict(extra="forbid")
+    dbus: bool = Field(
+        default=False,
+        description=(
+            "When true, bind-mounts the host's session D-Bus socket "
+            "(`/run/user/<uid>/bus`) into the container. The session bus is the "
+            "host desktop's control channel, not a display: anything in the "
+            "container can then talk to the host user's session services. Off by "
+            "default; GUI apps run without it (notifications and desktop portals "
+            "are what they lose)."
+        ),
+    )
+    audio: bool = Field(
+        default=False,
+        description=(
+            "When true, bind-mounts the host's PulseAudio socket directory "
+            "(`/run/user/<uid>/pulse`, read-only) into the container, which gives "
+            "it the host's speakers and microphone. Off by default."
+        ),
+    )
+
+
 class SshConfig(BaseModel):
     """SSH config inside containers."""
 

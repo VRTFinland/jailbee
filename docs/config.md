@@ -972,6 +972,25 @@ golden image's `/etc/profile.d/jailbee-env.sh` fallback only sets
 socket is actually present, so login shells stay clean on hosts that run
 no gpg-agent.
 
+### `gui`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `dbus` | bool | `false` | Attach the host's session D-Bus socket (`/run/user/<uid>/bus`) as the `dbus-socket` device. |
+| `audio` | bool | `false` | Attach the host's PulseAudio socket dir (`/run/user/<uid>/pulse`) as the read-only `pulse-socket` device. |
+
+The Wayland display socket is attached whenever the host session is
+Wayland, with or without this block: it is what `jailbee chrome`, `jailbee
+ide` and `apps run` draw through, and a window is all it gives the
+container. The other two came in alongside it as a desktop bundle but do
+more than draw. The session bus is the host desktop's control channel —
+with it, anything in the container can talk to the host user's session
+services — and the pulse socket is the host's speakers and microphone. So
+both are opt-in, per repo or in `global.yaml`. GUI apps run without them;
+what they lose is desktop notifications, portals and sound. A change takes
+effect on the container's next start (every boot detaches and re-attaches
+the socket devices), no `jailbee apply` needed.
+
 ### `ssh`
 
 | Key | Type | Default | Description |

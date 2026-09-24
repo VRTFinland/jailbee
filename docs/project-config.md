@@ -56,8 +56,9 @@ auto-mount is skipped there. Existing containers pick it up on the next
 A container shares the host's kernel, so a **unix socket on the host can be
 used from inside it** — the container connects to the host process on the
 other end instead of running its own copy. JailBee already does this for you:
-the Wayland, PulseAudio, D-Bus and GnuPG sockets under `/run/user/<uid>` are
-attached to each container at the same path, which is what makes
+the Wayland and GnuPG sockets under `/run/user/<uid>` are attached to each
+container at the same path (PulseAudio and D-Bus too when `gui.audio` /
+`gui.dbus` ask for them), which is what makes
 `jailbee chrome` render on your desktop, and what makes `git commit -S` and
 `ssh` work inside a container while the key stays on the host. With
 `gpg.enabled`, `SSH_AUTH_SOCK` points at the host gpg-agent's SSH socket, so

@@ -238,7 +238,7 @@ def test_attach_skips_gpg_socket_when_gpg_disabled(wayland_session, tmp_path):
     which case /run/user/<uid>/gnupg doesn't exist and Incus rejects the
     device add — breaking `jailbee start` for everyone who opted out.
     """
-    cfg = make_cfg(tmp_path, gpg={"enabled": False})
+    cfg = make_cfg(tmp_path, gpg={"enabled": False}, gui={"dbus": True, "audio": True})
     incus = MagicMock()
     incus.exec.return_value = f"{cfg.container_user.uid}\n"
     sleep_fn = MagicMock()
@@ -534,3 +534,49 @@ def test_detach_clears_the_containers_wayland_display():
     detach_runtime_devices(cfg, incus, "feat-smoke")
 
     incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
+
+
+def _attached(cfg) -> set[str]:
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+    return {call.args[1] for call in incus.config_device_add.call_args_list}
+
+
+def test_dbus_and_audio_are_not_attached_by_default(wayland_session, tmp_path):
+    """The session bus is the host desktop's control channel and the pulse
+    socket its microphone; drawing a window needs neither."""
+    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}))
+
+    assert "wayland-socket" in attached
+    assert "gpg-socket" in attached
+    assert "dbus-socket" not in attached
+    assert "pulse-socket" not in attached
+
+
+@pytest.mark.parametrize(
+    ("gui", "expected"),
+    [
+        ({"dbus": True}, {"dbus-socket"}),
+        ({"audio": True}, {"pulse-socket"}),
+        ({"dbus": True, "audio": True}, {"dbus-socket", "pulse-socket"}),
+    ],
+)
+def test_dbus_and_audio_are_each_opt_in(wayland_session, tmp_path, gui, expected):
+    attached = _attached(make_cfg(tmp_path, gui=gui))
+
+    assert attached & {"dbus-socket", "pulse-socket"} == expected
+
+
+def test_a_disabled_socket_is_detached_on_the_next_boot(tmp_path):
+    """Detach clears every socket device before a boot, so turning `gui.dbus`
+    off takes effect on the container's next start without `jb apply`."""
+    from jailbee.runtime_mounts import detach_runtime_devices
+
+    incus = MagicMock()
+    detach_runtime_devices(make_cfg(tmp_path), incus, "feat-smoke")
+
+    removed = {call.args[1] for call in incus.config_device_remove.call_args_list}
+    assert {"dbus-socket", "pulse-socket"} <= removed

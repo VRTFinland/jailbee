@@ -131,7 +131,7 @@ def _wayland_skip_reason(runtime_dir: str) -> str | None:
 def _devices_for_host(cfg: Config, *, skip_wayland: bool) -> dict[str, str]:
     """Subset of ``_socket_devices()`` that applies to this host and config.
 
-    Two devices are conditional:
+    Every device but the compositor socket is conditional:
 
     - the compositor socket, per ``skip_wayland`` (see
       ``_wayland_skip_reason``, which is also what phrases it for the user).
@@ -139,12 +139,20 @@ def _devices_for_host(cfg: Config, *, skip_wayland: bool) -> dict[str, str]:
       ``gpg.enabled: false`` the host may run no gpg-agent at all, so
       /run/user/<uid>/gnupg is likewise absent — and mounting the host's
       agent socket is exactly what that switch turns off.
+    - ``dbus-socket`` and ``pulse-socket`` are opt-in (``gui.dbus``,
+      ``gui.audio``). They came in with the display as a desktop bundle, but
+      the session bus is the host desktop's control channel and the pulse
+      socket its microphone — neither is needed to draw a window.
     """
     skip: set[str] = set()
     if skip_wayland:
         skip.add(WAYLAND_DEVICE)
     if not cfg.gpg.enabled:
         skip |= GPG_DEVICES
+    if not cfg.gui.dbus:
+        skip.add("dbus-socket")
+    if not cfg.gui.audio:
+        skip.add("pulse-socket")
     return {k: v for k, v in _socket_devices().items() if k not in skip}
 
 
