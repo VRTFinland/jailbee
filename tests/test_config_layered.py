@@ -589,7 +589,10 @@ def test_staged_local_raw_is_used_instead_of_the_file(repo_and_global):
     _, repo_path, _ = repo_and_global
     _write_local("myrepo", {"jetbrains": {"ide": "idea"}})
     cfg = load_config_from_layers(
-        {}, {"container_prefix": "myrepo"}, repo_path,
-        origin=str(repo_path), local_raw={"jetbrains": {"ide": "goland"}},
+        {},
+        {"container_prefix": "myrepo"},
+        repo_path,
+        origin=str(repo_path),
+        local_raw={"jetbrains": {"ide": "goland"}},
     )
     assert cfg.jetbrains.ide == "goland"

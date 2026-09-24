@@ -53,11 +53,12 @@ from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_ho
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from jailbee.config.models_net import LocalCredentials
+
     # Runtime import would be a cycle: `global_config` imports from
     # `jailbee.config` at module level. `from __future__ import annotations`
     # keeps the `scratch_repo_layer` annotation a string, so this is enough.
     from jailbee.global_config import ScratchConfig
-    from jailbee.config.models_net import LocalCredentials
 
 
 def _credentials_from_host_raw(
@@ -326,9 +327,7 @@ def _warn_per_repo_maps(
         conflict = local_token is not None and (
             local_token.get_secret_value() != legacy_token.get_secret_value()
         )
-        _warn_legacy_per_repo_entry(
-            global_from, "github.api_tokens", prefix, local_path, conflict
-        )
+        _warn_legacy_per_repo_entry(global_from, "github.api_tokens", prefix, local_path, conflict)
     block = host_raw.get("credentials")
     repos = block.get("repos") if isinstance(block, dict) else None
     if isinstance(repos, dict) and prefix in repos:
@@ -337,9 +336,7 @@ def _warn_per_repo_maps(
             and "group" in local_creds.model_fields_set
             and local_creds.group != repos[prefix]
         )
-        _warn_legacy_per_repo_entry(
-            global_from, "credentials.repos", prefix, local_path, conflict
-        )
+        _warn_legacy_per_repo_entry(global_from, "credentials.repos", prefix, local_path, conflict)
 
 
 def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
