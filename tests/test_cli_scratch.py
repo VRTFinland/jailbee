@@ -307,10 +307,14 @@ def test_new_in_a_scratch_dir_colliding_with_a_configured_repo_refuses(
 
     result = runner.invoke(app, ["new", "work", "--no-clone", "--no-autostart"])
     collapsed = " ".join(result.output.split())
+    # A path longer than the console is folded mid-word ("Download" /
+    # "s/myapp"), so joining lines with a space is not enough for it: compare
+    # with every whitespace run removed. The tmp path itself has none.
+    dense = "".join(result.output.split())
 
     assert result.exit_code == 1
     assert "Traceback" not in result.output
-    assert str(configured.resolve()) in collapsed
+    assert str(configured.resolve()) in dense
     assert "jailbee config init" in collapsed
     assert build.call_count == 0
     assert new_container.call_count == 0
