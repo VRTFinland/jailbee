@@ -49,14 +49,18 @@ def test_effective_entries_include_legacy_rows_during_transition(
     from jailbee.db.models import EgressOverride
 
     cfg = make_cfg(tmp_path / "myrepo").model_copy(update={"egress_allow": ["c.org"]})
-    db_session.add(EgressOverride(container_prefix=cfg.container_prefix, entry="old.org", added_at=frozen_now))
+    db_session.add(
+        EgressOverride(container_prefix=cfg.container_prefix, entry="old.org", added_at=frozen_now)
+    )
     db_session.commit()
     entries = egress_scope.effective_repo_entries(cfg, db_session)
     assert entries[0] == "c.org"
     assert "old.org" in entries
 
 
-def test_classify_labels_config_local_and_legacy(make_cfg, db_session, frozen_now, tmp_path, mocker):
+def test_classify_labels_config_local_and_legacy(
+    make_cfg, db_session, frozen_now, tmp_path, mocker
+):
     from jailbee.db.models import EgressOverride
 
     local = ["l.org", "both.org"]
@@ -67,7 +71,10 @@ def test_classify_labels_config_local_and_legacy(make_cfg, db_session, frozen_no
     db_session.add(EgressOverride(container_prefix="myrepo", entry="old.org", added_at=frozen_now))
     db_session.commit()
 
-    rows = {(r.entry, r.source): r for r in egress_scope.classify_sources(cfg, db_session, mocker.Mock())}
+    rows = {
+        (r.entry, r.source): r
+        for r in egress_scope.classify_sources(cfg, db_session, mocker.Mock())
+    }
 
     assert ("c.org", egress_scope.CONFIG_SOURCE) in rows
     assert ("both.org", egress_scope.CONFIG_SOURCE) in rows

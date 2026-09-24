@@ -256,18 +256,14 @@ def test_rm_repo_scope_config_only_entry_still_refuses(tmp_path, mocker):
     assert "config.yaml" in result.output
 
 
-def test_rm_repo_refuses_config_entry_without_changing_local_file(
-    tmp_path, mocker, monkeypatch
-):
+def test_rm_repo_refuses_config_entry_without_changing_local_file(tmp_path, mocker, monkeypatch):
     _repo(tmp_path, mocker, egress_allow=["c.org"])
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     from jailbee.egress_scope import add_local_entry, local_entries
 
     add_local_entry("myrepo", "x.org")
 
-    result = runner.invoke(
-        app, ["net", "egress", "rm", "--repo", "c.org"], env={"COLUMNS": "250"}
-    )
+    result = runner.invoke(app, ["net", "egress", "rm", "--repo", "c.org"], env={"COLUMNS": "250"})
 
     assert result.exit_code == 1
     assert "config.yaml" in result.output
