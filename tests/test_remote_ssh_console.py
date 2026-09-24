@@ -398,9 +398,7 @@ def test_help_hides_the_dashboard_row_when_dashboard_is_disabled(
         assert command in output
 
 
-def test_dashboard_runs_and_returns_to_prompt(
-    console_env: ConsoleEnv, mocker
-) -> None:
+def test_dashboard_runs_and_returns_to_prompt(console_env: ConsoleEnv, mocker) -> None:
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run",
         return_value=CompletedProcess([], 7),
