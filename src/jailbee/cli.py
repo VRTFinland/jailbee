@@ -929,7 +929,11 @@ def config_show(
             return
         # This diagnostic uses a YAML dump to mask github.token, so comments
         # are not preserved (unlike the raw repo/global views).
-        raw = yaml.safe_load(path.read_text()) or {}
+        try:
+            raw = yaml.safe_load(path.read_text()) or {}
+        except (OSError, yaml.YAMLError):
+            error_plain(f"Could not read or parse host-local config at {path}.")
+            raise typer.Exit(1) from None
         github = raw.get("github") if isinstance(raw, dict) else None
         if isinstance(github, dict) and github.get("token"):
             github["token"] = "**********"
