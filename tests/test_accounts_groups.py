@@ -597,9 +597,9 @@ def test_groups_by_prefix_from_attributes_unlabelled_containers_to_local_group(
     path.parent.mkdir(parents=True)
     path.write_text("credentials:\n  group: personal\n")
 
-    assert groups.groups_by_prefix_from(
-        _gcfg(group="work"), [_raw("myrepo-a")], ["myrepo"]
-    ) == {"myrepo": {"personal"}}
+    assert groups.groups_by_prefix_from(_gcfg(group="work"), [_raw("myrepo-a")], ["myrepo"]) == {
+        "myrepo": {"personal"}
+    }
 
 
 def test_authoritative_prefixes_from_reuses_prefetched_rows(monkeypatch, tmp_path):
