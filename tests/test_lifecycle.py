@@ -4155,6 +4155,54 @@ def _boot_events(mocker, incus):
     return events
 
 
+def test_boot_container_catches_the_base_anchor_up_forward_only(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "feat-x", "status": "Stopped", "config": {"user.jailbee.base_branch": "dev"}}
+    ]
+    events = _boot_events(mocker, incus)
+    refresh = mocker.patch(
+        "jailbee.sync.refresh_container_base",
+        side_effect=lambda *a, **kw: events.append("refresh") or True,
+    )
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    refresh.assert_called_once_with(cfg, incus, "feat-x", base_branch="dev", force=False)
+    assert events[-1] == "refresh"
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{}, {"user.jailbee.base_branch": ""}, {"user.jailbee.base_branch": "dev", "user.jailbee.mode": "mount"}],
+)
+def test_boot_container_skips_the_anchor_without_a_base_or_in_mount_mode(
+    tmp_path, mocker, config
+):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped", "config": config}]
+    _boot_events(mocker, incus)
+    refresh = mocker.patch("jailbee.sync.refresh_container_base")
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+    refresh.assert_not_called()
+
+
+def test_boot_container_survives_a_raising_anchor_refresh(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "feat-x", "status": "Stopped", "config": {"user.jailbee.base_branch": "dev"}}
+    ]
+    _boot_events(mocker, incus)
+    mocker.patch("jailbee.sync.refresh_container_base", side_effect=RuntimeError("boom"))
+
+    boot_container(cfg, incus, "feat-x", restart=False)
+
+
 def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
     """Detach must happen *before* `incus restart` so the four
     socket devices don't race with logind on the next boot. attach must

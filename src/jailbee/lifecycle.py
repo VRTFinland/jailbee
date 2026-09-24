@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -1794,6 +1794,7 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     stopped"): `jailbee restart` means "ensure running, then run autostart".
     ``restart=False`` never reboots — a running container reaching
     `incus start` fails, which is what `jailbee start` should report.
+    After boot and attachment, its AHEAD base anchor is caught up forward-only.
     """
     from jailbee.runtime_mounts import (
         attach_runtime_devices,
@@ -1801,9 +1802,11 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     )
 
     state = "Stopped"
+    labels: dict[str, Any] = {}
     for raw in incus.list_containers():
         if raw["name"] == name:
             state = raw.get("status", "Stopped")
+            labels = raw.get("config") or {}
             break
 
     # Idempotent: this is also how a container created before pooling
@@ -1825,6 +1828,20 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     from jailbee import agent_private
 
     agent_private.attach(cfg, incus, name)
+
+    # Catch the AHEAD base anchor up with the host branch. Forward-only: nothing
+    # moved `refs/heads/<base>` here, and for a base never checked out on the
+    # host that ref is often older than the `origin/<base>` the anchor was
+    # seeded from — a forced push would inflate AHEAD on every start. See
+    # `sync.refresh_container_base`. Best-effort, silent.
+    base_branch = labels.get("user.jailbee.base_branch")
+    if isinstance(base_branch, str) and base_branch and labels.get("user.jailbee.mode") != "mount":
+        from jailbee import sync
+
+        try:
+            sync.refresh_container_base(cfg, incus, name, base_branch=base_branch, force=False)
+        except Exception:  # noqa: BLE001 - a stale anchor must never fail a boot
+            pass
 
 
 def destroy_container(
