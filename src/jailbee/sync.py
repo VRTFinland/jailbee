@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
@@ -117,6 +117,8 @@ class MergeResult:
     head_oid: str
     into_branch: str | None
     pre_merge_head: str | None
+    # Short names of containers whose AHEAD base followed the merge target.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1776,16 +1778,13 @@ def _stdin_is_interactive() -> bool:
     return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
 
 
-def _maybe_refresh_base(
-    cfg: Config,
-    incus: Incus,
-    full_name: str,
-    base_branch: str | None,
-    into_branch: str | None,
-) -> None:
-    """Refresh the container's base ref iff the merge landed in its base branch."""
-    if base_branch is not None and into_branch == base_branch:
-        refresh_container_base(cfg, incus, full_name, base_branch=base_branch)
+def _with_anchors(cfg: Config, incus: Incus, result: MergeResult) -> MergeResult:
+    """Re-anchor every container based on the branch the merge landed in."""
+    if result.into_branch is None:
+        return result
+    return replace(
+        result, anchors_refreshed=refresh_bases_for(cfg, incus, result.into_branch)
+    )
 
 
 def merge_from_container(
@@ -1831,7 +1830,9 @@ def merge_from_container(
        (``ff="never"`` forces a merge commit, ``ff="auto"`` lets git decide),
        leaving host HEAD on the target.
 
-    Cleanup is handled separately by ``run_post_merge_cleanup``.
+     Every successful path re-anchors all running containers based on the
+     branch the merge landed in. Cleanup is handled separately by
+     ``run_post_merge_cleanup``.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -1893,8 +1894,7 @@ def merge_from_container(
             into_branch=target,
             pre_merge_head=pre_merge_head,
         )
-        _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-        return result
+        return _with_anchors(cfg, incus, result)
 
     # target != current here; both-None is caught by target == current above
     assert target is not None, "both target and current are None — should have merged in place"
@@ -1922,8 +1922,7 @@ def merge_from_container(
             into_branch=target,
             pre_merge_head=pre_merge_head,
         )
-        _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-        return result
+        return _with_anchors(cfg, incus, result)
 
     if not allow_checkout:
         also_ff_always = (
@@ -1950,8 +1949,7 @@ def merge_from_container(
     result = _merge_via_checkout(
         cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head, ff
     )
-    _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-    return result
+    return _with_anchors(cfg, incus, result)
 
 
 def _merge_via_checkout(
