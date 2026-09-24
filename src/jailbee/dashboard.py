@@ -715,6 +715,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         # `pr --open` is a browser on the host's display.
         prefix.append(("Open PR", "pr --open"))
     if _bridge_possible(ctx):
+        prefix.append(("Merge into…", "merge"))
         prefix.append(("Create/update PR", "pr"))
         prefix.append(("Update from base (git push)", "git push"))
         if ctx.pr_number is not None and not ctx.pr_author:
@@ -1662,6 +1663,7 @@ PRINTING_VERBS: frozenset[str] = frozenset(
         "git push --pr",
         "git pull",
         "git diff",
+        "merge",
         "job log",
         "job log --follow",
     }

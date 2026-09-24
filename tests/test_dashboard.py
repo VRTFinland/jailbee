@@ -665,6 +665,16 @@ def test_menu_actions_running_default_hides_ide_and_chrome():
     assert "chrome" not in verbs
 
 
+def test_merge_is_only_offered_for_eligible_source():
+    eligible = dashboard.MenuContext(state="Running", has_repo=True, mode="clone")
+    stopped = dashboard.MenuContext(state="Stopped", has_repo=True, mode="clone")
+    mounted = dashboard.MenuContext(state="Running", has_repo=True, mode="mount")
+    orphan = dashboard.MenuContext(state="Running", has_repo=False, mode="clone")
+    assert ("Merge into…", "merge") in dashboard.menu_actions(eligible)
+    for context in (stopped, mounted, orphan):
+        assert "merge" not in [verb for _, verb in dashboard.menu_actions(context)]
+
+
 def test_menu_actions_running_ide_enabled_only():
     actions = dashboard.menu_actions(_ctx(apps=_apps("ide")))
     assert _session_verbs(actions) == [
@@ -851,6 +861,7 @@ def test_menu_actions_running_offers_the_workflow_verbs():
     status shows both git-bridge entries (hide only a *known* no-op)."""
     verbs = [v for _, v in dashboard.menu_actions(_ctx())]
     assert verbs == [
+        "merge",
         "pr",
         "git push",
         "git pull",
@@ -1031,7 +1042,7 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
     verbs = [
         v for _, v in dashboard.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))
     ]
-    assert verbs[:4] == ["job clear", "job log", "pr --open", "pr"]
+    assert verbs[:5] == ["job clear", "job log", "pr --open", "merge", "pr"]
 
 
 def test_menu_actions_orphan_ignores_every_workflow_field():
@@ -1437,6 +1448,17 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
 
     dashboard._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x")
 
+    wait.assert_called_once_with()
+
+
+def test_dispatch_action_pauses_after_merge(mocker, tmp_path):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(_dispatch_target(tmp_path), "merge", "alpha-x")
+
+    assert run.call_args.args[0][:3] == ["jailbee", "merge", "alpha-x"]
     wait.assert_called_once_with()
 
 
