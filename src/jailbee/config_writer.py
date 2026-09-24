@@ -216,6 +216,24 @@ def write_text_atomic(path: Path, text: str, *, mode: int | None = None) -> None
         raise
 
 
+def write_with_backup(
+    path: Path, old_text: str, new_text: str, *, mode: int | None = None
+) -> Path | None:
+    """Write `new_text` to `path`, keeping `old_text` in a `.bak` sibling.
+
+    Returns the backup path, or `None` when there was no file to back up. The
+    backup inherits the original's mode so credentials are not exposed. Both
+    writes are atomic.
+    """
+    backup: Path | None = None
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode)
+        backup = path.with_name(path.name + ".bak")
+        write_text_atomic(backup, old_text, mode=mode)
+    write_text_atomic(path, new_text, mode=mode)
+    return backup
+
+
 def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
     """Apply `changes` to the YAML file at `path`. Returns whether it changed.
 

@@ -12,7 +12,6 @@ diff story is testable without a terminal or a real config file.
 from __future__ import annotations
 
 import difflib
-import stat
 from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -26,7 +25,7 @@ from jailbee.config_writer import (
     patch_yaml,
     render_documented,
     render_global_yaml,
-    write_text_atomic,
+    write_with_backup,
 )
 
 if TYPE_CHECKING:
@@ -334,10 +333,4 @@ def commit(plan: SavePlan) -> Path | None:
     commit, nothing here stops `commit` from being called on an unvalidated
     plan.
     """
-    backup: Path | None = None
-    if plan.path.exists():
-        mode = stat.S_IMODE(plan.path.stat().st_mode)
-        backup = plan.path.with_name(plan.path.name + ".bak")
-        write_text_atomic(backup, plan.old_text, mode=mode)
-    write_text_atomic(plan.path, plan.new_text)
-    return backup
+    return write_with_backup(plan.path, plan.old_text, plan.new_text)
