@@ -3636,7 +3636,20 @@ def _resolve_attachable(
         info(f"  Once you're done, clear the stale job record: jailbee job clear {short}")
         if not _confirm_attach(force=force):
             raise typer.Exit(1) from e
+    # After the wait: a background create sets the mode label on its way up.
+    _refuse_remote_mount_container(incus, resolved, short)
     return incus, resolved
+
+
+def _refuse_remote_mount_container(incus: "IncusType", resolved: str, short: str) -> None:
+    """Exit 1 when a restricted remote session asks to enter a mount-mode container."""
+    from jailbee.lifecycle import assert_remote_may_enter
+
+    try:
+        assert_remote_may_enter(incus, resolved, short)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
 
 
 def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> None:
@@ -14614,6 +14627,7 @@ def exec_cmd(
     except ValueError as e:
         error(str(e))
         raise typer.Exit(1) from e
+    _refuse_remote_mount_container(incus, resolved, name)
 
     if cwd == "home":
         target = f"/home/{CONTAINER_USERNAME}"

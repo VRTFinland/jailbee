@@ -741,7 +741,8 @@ included, a remote command may not set a path-typed option or argument
 commands, never host paths. The remote dashboard has no config editor, diff
 pager or GUI app launches. The git bridge moves refs only: `git checkout`,
 host `branch`, and `git pull`/`fetch` into the host's checked-out branch are
-refused (use `--into`/`--as`), and a branch-autostart privilege widening is
+refused (use `--into`/`--as`), a mount-mode container cannot be entered
+(`shell`/`tmux`/`exec`), and a branch-autostart privilege widening is
 refused even with `--yes`. `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts all of these at once.
 

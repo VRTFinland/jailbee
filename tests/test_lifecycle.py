@@ -8483,3 +8483,29 @@ def test_remote_session_cannot_approve_a_branch_privilege_widening(
     confirm.assert_not_called()
     incus.copy.assert_not_called()
     incus.init.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("marker", "mode", "refused"),
+    [
+        ("1", "mount", True),
+        ("1", "clone", False),
+        ("1", None, False),
+        (None, "mount", False),
+    ],
+)
+def test_assert_remote_may_enter(monkeypatch, marker, mode, refused):
+    from jailbee.lifecycle import assert_remote_may_enter
+
+    if marker is None:
+        monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    else:
+        monkeypatch.setenv("JAILBEE_REMOTE_SSH", marker)
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda n, k: mode if k == "user.jailbee.mode" else None
+
+    if refused:
+        with pytest.raises(ValueError, match="'box' is a mount-mode container"):
+            assert_remote_may_enter(incus, "p-box", "box")
+    else:
+        assert_remote_may_enter(incus, "p-box", "box")

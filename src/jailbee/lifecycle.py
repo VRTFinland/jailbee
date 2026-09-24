@@ -913,6 +913,19 @@ def assess_branch_autostart(
     return BranchAutostartAssessment(ref=ref, effective_cfg=loaded.cfg, verdict=verdict)
 
 
+def assert_remote_may_enter(incus: Incus, name: str, short: str) -> None:
+    """Refuse a restricted remote session a way into a mount-mode container.
+
+    Called by every command that opens a session or runs a process inside a
+    container (`shell`, `tmux`, `exec`, the GUI app launchers). Clone-mode
+    containers, and every container outside a restricted session, pass.
+    """
+    from jailbee.remote_ssh.session import is_remote_session, mount_container_refusal
+
+    if is_remote_session() and incus.config_get(name, "user.jailbee.mode") == "mount":
+        raise ValueError(mount_container_refusal(short))
+
+
 def _autostart_approved(opts: NewContainerOptions, ref: str | None) -> bool:
     """True when the operator has already answered the escalation question.
 

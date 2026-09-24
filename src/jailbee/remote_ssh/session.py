@@ -74,6 +74,20 @@ def host_tree_refusal(action: str, hint: str | None = None) -> str:
     return message + " Run it on the host itself."
 
 
+def mount_container_refusal(short: str) -> str:
+    """Why a restricted remote session may not enter a mount-mode container.
+
+    `jailbee new --mount` binds the host repo read-write, `.git` included:
+    inside the container is the host's own working tree, which a remote
+    session never writes (see `host_tree_refusal`).
+    """
+    return (
+        f"'{short}' is a mount-mode container: it shares the host repo's working "
+        f"tree, which a remote SSH session never reaches. Use a clone-mode "
+        f"container, or enter this one on the host itself."
+    )
+
+
 def escalation_refusal(baseline_source: str) -> str:
     """Why a restricted remote session cannot approve a privilege widening.
 

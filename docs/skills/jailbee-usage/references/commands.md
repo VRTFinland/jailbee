@@ -127,7 +127,8 @@ start over SSH. The git bridge moves refs only: `git checkout`, host
 `branch`, `git pull` into the checked-out branch or with `--checkout`, a
 `git fetch` moving the checked-out branch and a new submodule clone into the
 host tree are refused (pull `--into` / fetch `--as` another branch instead),
-and a branch-autostart privilege widening is refused even with `--yes`.
+`shell`/`tmux`/`exec` and the GUI launchers refuse a mount-mode container
+(it shares the host's working tree), and a branch-autostart privilege widening is refused even with `--yes`.
 `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts every one of these at once; a server started from
 inside a restricted session stays restricted regardless.

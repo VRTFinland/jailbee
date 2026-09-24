@@ -63,7 +63,8 @@ before editing `## Unreleased`.
   diff pager and no GUI app launches, and every process the service starts
   runs with `LESSSECURE=1`. No remote command, in any policy mode, may set a
   path-typed option or argument (`--config`, ...) or `new --mount`, the git
-  bridge moves refs but never the host's checked-out tree, and a branch's
+  bridge moves refs but never the host's checked-out tree, a mount-mode
+  container (which shares that tree) cannot be entered, and a branch's
   privilege-widening autostart config cannot be approved remotely, `--yes`
   included. `remote.ssh.restrict_host: false` lifts all of these host restrictions at
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/

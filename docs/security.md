@@ -108,10 +108,10 @@ The SSH protocol surface is also fail-closed:
   of `jailbee new`) is refused outright, `--yes` included: over SSH the one
   answering that prompt is the remote user it exists to hold back.
 
-A container the operator created with `jailbee new --mount` shares the host
-repo's working tree, `.git` included, and a remote session that reaches it
-reaches that tree. Remote `new --mount` is refused; an existing mount-mode
-container is the operator's choice to expose.
+A container created with `jailbee new --mount` shares the host repo's working
+tree, `.git` included, so a restricted session may neither create one nor
+enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
+mount-mode container, and clone-mode containers are unaffected.
 
 `remote.ssh.restrict_host: false` (or `jb remote ssh serve
 --no-restrict-host` for one run) lifts every host restriction above and in

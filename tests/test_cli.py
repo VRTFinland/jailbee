@@ -10134,3 +10134,60 @@ def test_background_new_preflight_refuses_a_widening_over_remote_ssh(
             cli._preflight_background_new(cfg, candidate)
         assert exit_info.value.exit_code == 2
     confirm.assert_not_called()
+
+
+def _mount_mode_incus(mocker):
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: "mount" if k == "user.jailbee.mode" else None
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    return incus
+
+
+def test_remote_exec_refuses_a_mount_mode_container(mocker, monkeypatch):
+    """Inside a mount-mode container is the host's own working tree."""
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    mocker.patch("jailbee.cli._load_or_exit")
+    incus = _mount_mode_incus(mocker)
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-box")
+
+    result = CliRunner().invoke(app, ["exec", "box", "--", "true"])
+
+    assert result.exit_code == 1
+    assert "mount-mode container" in result.output
+    incus.exec_interactive.assert_not_called()
+    incus.exec.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["shell", "tmux"])
+def test_remote_attach_refuses_a_mount_mode_container(mocker, monkeypatch, command):
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    mocker.patch("jailbee.cli._load_or_exit")
+    incus = _mount_mode_incus(mocker)
+    mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="p-box")
+    mocker.patch("jailbee.lifecycle.short_name", return_value="box")
+    mocker.patch("jailbee.lifecycle.wait_for_background_ready")
+    attach = mocker.patch("jailbee.cli._attach_shell", return_value=0)
+    attach_tmux = mocker.patch("jailbee.cli._attach_tmux", return_value=0)
+
+    result = CliRunner().invoke(app, [command, "box"])
+
+    assert result.exit_code == 1
+    assert "mount-mode container" in result.output
+    attach.assert_not_called()
+    attach_tmux.assert_not_called()
+    incus.exec_interactive.assert_not_called()
+
+
+def test_local_shell_still_enters_a_mount_mode_container(mocker, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    mocker.patch("jailbee.cli._load_or_exit")
+    _mount_mode_incus(mocker)
+    mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="p-box")
+    mocker.patch("jailbee.lifecycle.short_name", return_value="box")
+    mocker.patch("jailbee.lifecycle.wait_for_background_ready")
+    attach = mocker.patch("jailbee.cli._attach_shell", return_value=0)
+
+    result = CliRunner().invoke(app, ["shell", "box"])
+
+    assert result.exit_code == 0, result.output
+    attach.assert_called_once()
