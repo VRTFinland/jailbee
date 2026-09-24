@@ -74,8 +74,8 @@ def local_entries(prefix: str) -> list[str]:
 
 def add_local_entry(prefix: str, entry: str) -> bool:
     """Append an entry to the local file; return False when already present."""
-    from jailbee.config_writer import YamlChange, patch_local_file
     from jailbee.config.local_layer import read_local_raw
+    from jailbee.config_writer import YamlChange, patch_local_file
 
     raw = read_local_raw(prefix)
     if raw.get("egress_allow") == []:

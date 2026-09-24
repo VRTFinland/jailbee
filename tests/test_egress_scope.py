@@ -53,8 +53,8 @@ def test_removing_last_local_entry_deletes_key_and_preserves_inherited_egress(
 ):
     import yaml
 
-    from jailbee.config.local_layer import local_config_path
     from jailbee.config.loader import load_config
+    from jailbee.config.local_layer import local_config_path
     from jailbee.egress_scope import remove_local_entry
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
