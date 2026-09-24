@@ -81,8 +81,13 @@ def test_command_binding_and_inline_render_keep_table_visible():
     screen = Console(width=100, record=True)
     screen.print(
         dashboard.render(
-            [group], dashboard.Row("container", "alpha-x"), now=datetime.now(UTC),
-            last_refresh_age=0, interval=1, git_enabled=True, overlay=overlay,
+            [group],
+            dashboard.Row("container", "alpha-x"),
+            now=datetime.now(UTC),
+            last_refresh_age=0,
+            interval=1,
+            git_enabled=True,
+            overlay=overlay,
         )
     )
     rendered = screen.export_text()
@@ -3994,8 +3999,7 @@ def test_inline_command_refuses_without_selection_before_spawning(mocker):
 
     run.assert_not_called()
     assert any(
-        "Select a repo or a container" in str(c.kwargs.get("notice"))
-        for c in render.call_args_list
+        "Select a repo or a container" in str(c.kwargs.get("notice")) for c in render.call_args_list
     )
 
 
@@ -4016,8 +4020,14 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     )
 
     dashboard.run(
-        mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True,
-        remote=True, over_ssh=True, ssh_policy=policy,
+        mocker.Mock(),
+        None,
+        interval=0.5,
+        git_interval=1.0,
+        no_git=True,
+        remote=True,
+        over_ssh=True,
+        ssh_policy=policy,
     )
 
     run.assert_not_called()
@@ -4314,9 +4324,9 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
         restrict_host=False,
         commands=RemoteCommandPolicy(mode="full"),
     ).model_dump_json()
-    assert CliRunner().invoke(
-        app, ["dashboard", "--remote-policy-json", policy_json]
-    ).exit_code == 0
+    assert (
+        CliRunner().invoke(app, ["dashboard", "--remote-policy-json", policy_json]).exit_code == 0
+    )
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None

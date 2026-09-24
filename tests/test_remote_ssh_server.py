@@ -551,7 +551,7 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
         return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
     )
     overrides = ServeOverrides(commands_mode="full", restrict_host=False)
-    process, _ = session("dashboard", term="xterm", overrides=overrides)
+    _process, _ = session("dashboard", term="xterm", overrides=overrides)
 
     child.assert_awaited_once()
     child_argv = child.await_args.args[1].argv

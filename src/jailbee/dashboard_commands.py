@@ -48,7 +48,9 @@ def command_argv(text: str, selected_container: str | None) -> list[str]:
     positional = _CONTAINER_POSITIONALS.get(typed)
     if selected_container is None or positional is None:
         return argv
-    context = command.make_context(typed.split()[-1], argv[len(typed.split()):], resilient_parsing=True)
+    context = command.make_context(
+        typed.split()[-1], argv[len(typed.split()) :], resilient_parsing=True
+    )
     with context:
         if context.get_parameter_source(positional) is ParameterSource.DEFAULT:
             argv.append(selected_container)

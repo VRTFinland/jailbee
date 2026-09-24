@@ -3296,7 +3296,9 @@ def dashboard_cmd(
     remote_policy_json: Annotated[
         str | None,
         typer.Option(
-            "--remote-policy-json", help="Effective remote SSH policy supplied by the server.", hidden=True
+            "--remote-policy-json",
+            help="Effective remote SSH policy supplied by the server.",
+            hidden=True,
         ),
     ] = None,
 ) -> None:
@@ -3387,9 +3389,10 @@ def _run_dashboard(
     *restricted* session additionally gets the TUI in its restricted form
     (see `dashboard.run`'s `remote`).
     """
+    from pydantic import ValidationError
+
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.config.models_remote import RemoteSSHConfig
-    from pydantic import ValidationError
     from jailbee.incus import Incus
     from jailbee.remote_ssh.session import is_remote_session, is_ssh_session
 

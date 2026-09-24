@@ -413,7 +413,9 @@ def test_dashboard_runs_and_returns_to_prompt(console_env: ConsoleEnv, mocker) -
             "jailbee",
             "dashboard",
             "--remote-policy-json",
-            RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full")).model_dump_json(),
+            RemoteSSHConfig(
+                shell=True, commands=RemoteCommandPolicy(mode="full")
+            ).model_dump_json(),
         ],
         cwd=console_env.repo_root,
         check=False,
@@ -553,9 +555,7 @@ def test_dashboard_child_receives_effective_policy_json(console_env: ConsoleEnv,
             )
         )
     )
-    mocker.patch(
-        "jailbee.remote_ssh.console.load_global_config", return_value=(global_policy, [])
-    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(global_policy, []))
     effective = RemoteSSHConfig(
         shell=True,
         restrict_host=False,

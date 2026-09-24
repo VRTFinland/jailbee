@@ -39,6 +39,12 @@ from jailbee.config import (
     format_loose_after,
     load_repo_config,
 )
+from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.dashboard_commands import (
+    check_dashboard_command,
+    command_argv,
+    completion_candidates,
+)
 from jailbee.dashboard_settings import (
     SettingsState,
     enabled_names,
@@ -48,12 +54,6 @@ from jailbee.dashboard_settings import (
     switch_tab,
     toggle_current,
 )
-from jailbee.dashboard_commands import (
-    check_dashboard_command,
-    command_argv,
-    completion_candidates,
-)
-from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
     GlobalConfig,
@@ -2299,6 +2299,7 @@ def run(
                     set_notice(str(exc))
                     return
                 try:
+
                     def execute_command() -> int:
                         result = subprocess.run(["jailbee", *argv], cwd=repo.cwd(), check=False)
                         typed, _leaf = ssh_router.command_leaf(argv)
