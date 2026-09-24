@@ -57,6 +57,16 @@ def test_completion_tolerates_unfinished_quote() -> None:
     assert "feature branch" in completion_candidates("shell 'feature", ("feature branch",))
 
 
+def test_completion_tolerates_unfinished_quote_containing_space() -> None:
+    assert "feature branch" in completion_candidates("shell 'feature br", ("feature branch",))
+
+
 def test_remote_completion_maps_alias_only_when_canonical_path_allowed() -> None:
     assert "merge" in completion_candidates("me", (), frozenset({"git merge"}))
     assert "merge" not in completion_candidates("me", (), frozenset({"git pull"}))
+
+
+def test_remote_completion_hides_options_and_containers_for_disallowed_leaf() -> None:
+    allowed = frozenset({"git pull"})
+    assert "--into" not in completion_candidates("merge --in", ("alpha",), allowed)
+    assert "alpha" not in completion_candidates("merge al", ("alpha",), allowed)

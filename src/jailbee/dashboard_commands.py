@@ -42,23 +42,41 @@ def command_argv(text: str, selected_container: str | None) -> list[str]:
 
 def _partial_words(text: str) -> tuple[list[str], str]:
     """Split completed words from the current fragment, tolerating open quotes."""
-    stripped = text.rstrip()
-    if not stripped:
-        return [], ""
-    # A trailing whitespace starts a new empty fragment. Otherwise identify
-    # the current token without asking shlex to parse its possibly open quote.
-    if len(stripped) != len(text):
-        try:
-            return shlex.split(stripped), ""
-        except ValueError:
-            return [], stripped
-    boundary = max(text.rfind(" "), text.rfind("\t"))
-    prefix, fragment = text[: boundary + 1], text[boundary + 1 :]
-    try:
-        words = shlex.split(prefix)
-    except ValueError:
-        words = []
-    return words, fragment.lstrip("\"'")
+    words: list[str] = []
+    token: list[str] = []
+    quote: str | None = None
+    escaped = False
+    ended_with_separator = False
+    for char in text:
+        if escaped:
+            token.append(char)
+            escaped = False
+            ended_with_separator = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+            ended_with_separator = False
+        elif quote is not None:
+            if char == quote:
+                quote = None
+            else:
+                token.append(char)
+            ended_with_separator = False
+        elif char in ("'", '"'):
+            quote = char
+            ended_with_separator = False
+        elif char.isspace():
+            if token:
+                words.append("".join(token))
+                token.clear()
+            ended_with_separator = True
+        else:
+            token.append(char)
+            ended_with_separator = False
+    if escaped:
+        token.append("\\")
+    if ended_with_separator and quote is None:
+        return words, ""
+    return words, "".join(token)
 
 
 def completion_candidates(
@@ -91,7 +109,11 @@ def completion_candidates(
     except ValueError:
         typed = ""
         command = None
+    permitted = False
     if command is not None:
+        canonical = router.command_path(words)
+        permitted = allowed_paths is None or canonical in allowed_paths
+    if command is not None and permitted:
         candidates.update(
             option
             for param in command.params
