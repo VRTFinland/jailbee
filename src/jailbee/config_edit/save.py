@@ -38,7 +38,11 @@ if TYPE_CHECKING:
 
 WritePolicy = Literal["patch", "regenerate"]
 
-_DEFAULT_POLICY: dict[LayerName, WritePolicy] = {"global": "regenerate", "repo": "patch", "local": "patch"}
+_DEFAULT_POLICY: dict[LayerName, WritePolicy] = {
+    "global": "regenerate",
+    "repo": "patch",
+    "local": "patch",
+}
 """The per-layer default `auto` resolves to (spec 2.4).
 
 The two files have genuinely different ownership: `global.yaml` is jailbee's,

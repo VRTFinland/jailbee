@@ -53,10 +53,17 @@ def test_repo_wins_over_global_wins_over_default(tmp_path):
 def test_local_value_wins_and_local_layer_is_read(tmp_path):
     local_path = _write(tmp_path / "local.yaml", "jetbrains:\n  ide: goland\n")
     got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml", local_path)
-    origins = layers.resolve(repo_specs(), layers.LayerSet(
-        got.repo_path, got.global_path, {"jetbrains": {"ide": "pycharm"}},
-        {"jetbrains": {"ide": "idea"}}, got.local_path, got.local_raw,
-    ))
+    origins = layers.resolve(
+        repo_specs(),
+        layers.LayerSet(
+            got.repo_path,
+            got.global_path,
+            {"jetbrains": {"ide": "pycharm"}},
+            {"jetbrains": {"ide": "idea"}},
+            got.local_path,
+            got.local_raw,
+        ),
+    )
     assert origins[("jetbrains", "ide")] == layers.Origin("local", "goland")
 
 
@@ -73,8 +80,14 @@ def test_local_layer_disabled_paths_and_inherited_lists(tmp_path):
     global_token = next(s for s in global_specs() if s.path == ("github", "token"))
     assert "--local" in (disabled_reason(global_token, "global") or "")
     egress = next(s for s in local if s.path == ("egress_allow",))
-    ls = layers.LayerSet(tmp_path / "repo", tmp_path / "global", {"egress_allow": ["r.org"]},
-                         {"egress_allow": ["g.org"]}, tmp_path / "local", {})
+    ls = layers.LayerSet(
+        tmp_path / "repo",
+        tmp_path / "global",
+        {"egress_allow": ["r.org"]},
+        {"egress_allow": ["g.org"]},
+        tmp_path / "local",
+        {},
+    )
     assert inherited_entries(egress, ls, "local") == ("g.org", "r.org")
 
 

@@ -14,10 +14,10 @@ terminal driver (`app`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-import re
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import ValidationError
@@ -72,7 +72,9 @@ class Origin:
     value: object
 
 
-def read_layers(repo_config_path: Path, global_path: Path, local_path: Path | None = None) -> LayerSet:
+def read_layers(
+    repo_config_path: Path, global_path: Path, local_path: Path | None = None
+) -> LayerSet:
     """Read both layers. A missing file reads as `{}`, not as an error.
 
     Both absences are ordinary states: `jb new` works in a directory with
@@ -103,12 +105,20 @@ def read_layers(repo_config_path: Path, global_path: Path, local_path: Path | No
 
 def raw_for(layer_set: LayerSet, layer: LayerName) -> dict[str, object]:
     """The raw mapping of the layer being edited."""
-    return {"repo": layer_set.repo_raw, "global": layer_set.global_raw, "local": layer_set.local_raw}[layer]
+    return {
+        "repo": layer_set.repo_raw,
+        "global": layer_set.global_raw,
+        "local": layer_set.local_raw,
+    }[layer]
 
 
 def path_for(layer_set: LayerSet, layer: LayerName) -> Path:
     """The file the layer being edited lives in."""
-    return {"repo": layer_set.repo_path, "global": layer_set.global_path, "local": layer_set.local_path}[layer]
+    return {
+        "repo": layer_set.repo_path,
+        "global": layer_set.global_path,
+        "local": layer_set.local_path,
+    }[layer]
 
 
 def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
@@ -210,7 +220,10 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
             f"set it in ~/.config/jailbee/global.yaml."
         )
     if layer == "global" and spec.path == ("github", "token"):
-        return "`github.token` is per-repo — set it in the repo's host-local file (`jailbee config edit --local`)."
+        return (
+            "`github.token` is per-repo — set it in the repo's host-local file "
+            "(`jailbee config edit --local`)."
+        )
     if layer == "local" and spec.path[0] == "container_prefix":
         return "`container_prefix` names this file; set it in the repo config."
     if layer == "local" and spec.path == ("github", "token"):
@@ -258,7 +271,9 @@ def inherited_entries(spec: FieldSpec, layer_set: LayerSet, layer: LayerName) ->
         # [] resets, null and any non-list hit deep_merge's overlay-wins
         # branch; only a non-empty repo list appends.
         return ()
-    below = [layer_set.global_raw] if layer == "repo" else [layer_set.global_raw, layer_set.repo_raw]
+    below = (
+        [layer_set.global_raw] if layer == "repo" else [layer_set.global_raw, layer_set.repo_raw]
+    )
     inherited: list[object] = []
     for raw in below:
         present, value = lookup(raw, spec.path)
