@@ -249,6 +249,7 @@ def patch_local_file(prefix: str, changes: Sequence[YamlChange]) -> bool:
 
     root = local_config_dir()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
     return patch_file(local_config_path(prefix), changes)
 
 

@@ -587,6 +587,21 @@ def test_groups_by_prefix_from_falls_back_to_the_repos_group_with_no_containers(
     assert groups.groups_by_prefix_from(_gcfg(group="work"), [], ["myrepo"]) == {"myrepo": {"work"}}
 
 
+def test_groups_by_prefix_from_attributes_unlabelled_containers_to_local_group(
+    monkeypatch, tmp_path
+):
+    from jailbee.config.local_layer import local_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    path = local_config_path("myrepo")
+    path.parent.mkdir(parents=True)
+    path.write_text("credentials:\n  group: personal\n")
+
+    assert groups.groups_by_prefix_from(
+        _gcfg(group="work"), [_raw("myrepo-a")], ["myrepo"]
+    ) == {"myrepo": {"personal"}}
+
+
 def test_authoritative_prefixes_from_reuses_prefetched_rows(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     rows = [_raw("mixed-a"), _raw("mixed-b", "personal"), _raw("clean-a")]
@@ -602,6 +617,19 @@ def test_container_groups_reports_the_repos_group_for_an_unlabelled_container(
     rows = [_raw("myrepo-a")]
     assert groups.container_groups(_gcfg(group="work"), rows, ["myrepo"]) == [
         ("myrepo-a", "myrepo", "work")
+    ]
+
+
+def test_container_groups_attributes_unlabelled_container_to_local_group(monkeypatch, tmp_path):
+    from jailbee.config.local_layer import local_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    path = local_config_path("myrepo")
+    path.parent.mkdir(parents=True)
+    path.write_text("credentials:\n  group: personal\n")
+
+    assert groups.container_groups(_gcfg(group="work"), [_raw("myrepo-a")], ["myrepo"]) == [
+        ("myrepo-a", "myrepo", "personal")
     ]
 
 
