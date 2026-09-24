@@ -245,7 +245,8 @@ def _warn_legacy_chrome_block(source: str) -> None:
             scope=source,
             lines=(
                 f"`chrome:` in {source} is deprecated and moves to `browsers.chrome` — "
-                f"run `jailbee config migrate`, or see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
+                f"run `jailbee config migrate`, or see docs/config.md. It keeps "
+                f"working until {LEGACY_REMOVAL_VERSION}, "
                 "where it is removed.",
             ),
         )
@@ -288,7 +289,8 @@ def _warn_legacy_credentials_block(source: str) -> None:
             scope=source,
             lines=(
                 f"`claude_credentials` in {source} is deprecated and renamed to "
-                f"`credentials` — run `jailbee config migrate`, or see docs/config.md. It keeps working until "
+                f"`credentials` — run `jailbee config migrate`, or see docs/config.md. "
+                "It keeps working until "
                 f"{LEGACY_REMOVAL_VERSION}, where it is removed.",
             ),
         )

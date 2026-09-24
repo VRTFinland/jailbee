@@ -2721,9 +2721,7 @@ def test_doctor_is_silent_without_a_global_config(tmp_path, monkeypatch):
     assert _check_pending_migrations() == []
 
 
-def test_run_checks_includes_pending_config_migrations(
-    tmp_path, monkeypatch, make_cfg, mocker
-):
+def test_run_checks_includes_pending_config_migrations(tmp_path, monkeypatch, make_cfg, mocker):
     from jailbee.doctor import run_checks
 
     _write_global_yaml(monkeypatch, tmp_path, "claude_credentials: {}\n")

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
 from sqlmodel import Session, select
 
 from jailbee.config import Config, ConfigError

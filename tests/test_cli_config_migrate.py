@@ -38,9 +38,7 @@ def test_apply_writes_and_reports_backups(tmp_path, monkeypatch):
     result = runner.invoke(app, ["config", "migrate", "--apply"])
 
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(local_config_path("a").read_text()) == {
-        "credentials": {"group": "team"}
-    }
+    assert yaml.safe_load(local_config_path("a").read_text()) == {"credentials": {"group": "team"}}
     assert ".bak" in result.output
 
 
@@ -67,7 +65,6 @@ def test_dry_run_masks_github_tokens(tmp_path, monkeypatch):
     token = "ghp_secretmigrationtoken"
     _global({"github": {"api_tokens": {"a": token}}}, tmp_path, monkeypatch)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    global_path = default_global_config_path()
     result = runner.invoke(app, ["config", "migrate"])
 
     assert result.exit_code == 0

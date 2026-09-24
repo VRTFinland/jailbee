@@ -1059,7 +1059,8 @@ def config_migrate_cmd(
                 info_plain(f"{step.migration_id}: {step.summary} ({step.path})")
             if plan.rows_to_delete:
                 info_plain(
-                    f"egress-db-rows: {len(plan.rows_to_delete)} state.sqlite row(s) deleted after the write"
+                    f"egress-db-rows: {len(plan.rows_to_delete)} state.sqlite row(s) "
+                    "deleted after the write"
                 )
             diff = config_migrate.render_diff(inputs, plan)
             if not apply:
