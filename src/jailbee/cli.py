@@ -8575,10 +8575,7 @@ def egress_add_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
-    from sqlmodel import Session
-
     from jailbee import egress_scope
-    from jailbee.db import get_engine
     from jailbee.egress import NetworkResolveError, parse_egress_entry
 
     cfg = _load_or_exit(config)
@@ -8588,6 +8585,9 @@ def egress_add_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
+    if repo and entry in egress_scope.local_entries(cfg.container_prefix):
+        info(f"'{entry}' is already a repo override — nothing to do.")
+        return
     if entry in cfg.effective_egress_allow():
         info(f"'{entry}' is already allowed by your config — nothing to do.")
         return
@@ -8601,22 +8601,24 @@ def egress_add_cmd(
         raise typer.Exit(1) from e
 
     incus, container = _egress_target(name, repo, cfg)
-    with Session(get_engine()) as session:
-        if repo:
-            if not egress_scope.add_repo_extra(session, cfg.container_prefix, entry, now=_now()):
-                info(f"'{entry}' is already a repo override — nothing to do.")
-                return
-            success(f"Added repo override '{entry}'. Run `jailbee apply` to push it.")
-            return
+    if repo:
+        from jailbee.config.local_layer import local_config_path
 
-        assert container is not None
-        extras = egress_scope.container_extras(incus, container)
-        if entry in extras:
-            info(f"'{entry}' is already an override on '{container}' — nothing to do.")
-            return
-        egress_scope.set_container_extras(incus, container, [*extras, entry])
-        mode = _egress_container_mode(cfg, incus, container)
-        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+        egress_scope.add_local_entry(cfg.container_prefix, entry)
+        success(
+            f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
+            "Run `jailbee apply` to push it."
+        )
+        return
+
+    assert container is not None
+    extras = egress_scope.container_extras(incus, container)
+    if entry in extras:
+        info(f"'{entry}' is already an override on '{container}' — nothing to do.")
+        return
+    egress_scope.set_container_extras(incus, container, [*extras, entry])
+    mode = _egress_container_mode(cfg, incus, container)
+    egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' may now reach {entry}.")
 
@@ -8667,22 +8669,32 @@ def egress_rm_cmd(
     from jailbee.db import get_engine
 
     cfg = _load_or_exit(config)
+    if repo:
+        removed = egress_scope.remove_local_entry(cfg.container_prefix, entry)
+        with Session(get_engine()) as session:
+            removed = (
+                egress_scope.remove_legacy_repo_extra(session, cfg.container_prefix, entry)
+                or removed
+            )
+        if not removed:
+            if entry in cfg.effective_egress_allow():
+                error(
+                    f"'{entry}' comes from your config, not from a repo "
+                    f"override — overrides can only widen the allowlist.\n"
+                    f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
+                )
+            else:
+                error(f"'{entry}' is not a repo override.")
+            raise typer.Exit(1)
+        success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
+        return
+
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+
     incus, container = _egress_target(name, repo, cfg)
     with Session(get_engine()) as session:
-        if repo:
-            if not egress_scope.remove_repo_extra(session, cfg.container_prefix, entry):
-                if entry in cfg.effective_egress_allow():
-                    error(
-                        f"'{entry}' comes from your config, not from a repo "
-                        f"override — overrides can only widen the allowlist.\n"
-                        f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
-                    )
-                else:
-                    error(f"'{entry}' is not a repo override.")
-                raise typer.Exit(1)
-            success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
-            return
-
         assert container is not None
         extras = egress_scope.container_extras(incus, container)
         if entry not in extras:
@@ -8771,7 +8783,7 @@ def egress_ls_cmd(
         table_format.FieldSpec(
             name="note",
             header="NOTE",
-            cell=lambda r: "redundant — already in config.yaml" if r.redundant else "",
+            cell=lambda r: "redundant — already granted by config" if r.redundant else "",
             json=lambda r: "redundant" if r.redundant else "",
             # Only worth a column when at least one row has something to say.
             show_if=lambda rs: any(r.redundant for r in rs),
@@ -8852,7 +8864,10 @@ def egress_export_cmd(
         incus, container = _resolve_existing(cfg, name)
 
     with Session(get_engine()) as session:
-        overrides = list(egress_scope.repo_extras(session, cfg.container_prefix))
+        overrides = [
+            *egress_scope.local_entries(cfg.container_prefix),
+            *egress_scope.legacy_repo_extras(session, cfg.container_prefix),
+        ]
         if container is not None:
             overrides += egress_scope.container_extras(incus, container)
 
@@ -9390,7 +9405,10 @@ def _print_egress_override_status() -> None:
         incus = Incus()
         names = _list_containers_for_status(cfg, incus)
         with Session(get_engine()) as session:
-            repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
+            repo_rows = [
+                *egress_scope.local_entries(cfg.container_prefix),
+                *egress_scope.legacy_repo_extras(session, cfg.container_prefix),
+            ]
             per_container = {name: egress_scope.container_extras(incus, name) for name in names}
     except Exception:
         hint(["Could not gather egress-override status for `jailbee net status`."])

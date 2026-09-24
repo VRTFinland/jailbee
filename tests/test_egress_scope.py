@@ -10,36 +10,99 @@ from jailbee import egress_scope
 from jailbee.egress import EgressEntry
 
 
-def test_repo_extras_starts_empty(db_session):
-    assert egress_scope.repo_extras(db_session, "myrepo") == []
+def _add_legacy_extra(session, prefix, entry, *, now):
+    from jailbee.db.models import EgressOverride
+
+    if session.get(EgressOverride, (prefix, entry)) is not None:
+        return
+    session.add(EgressOverride(container_prefix=prefix, entry=entry, added_at=now))
+    session.commit()
 
 
-def test_add_repo_extra_is_idempotent(db_session, frozen_now):
-    assert egress_scope.add_repo_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
-    assert not egress_scope.add_repo_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
-    assert egress_scope.repo_extras(db_session, "myrepo") == ["nexus.corp:443"]
+def test_legacy_repo_extras_starts_empty(db_session):
+    assert egress_scope.legacy_repo_extras(db_session, "myrepo") == []
 
 
-def test_repo_extras_are_scoped_by_prefix(db_session, frozen_now):
-    egress_scope.add_repo_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
-    egress_scope.add_repo_extra(db_session, "other", "elsewhere.corp:443", now=frozen_now)
-    assert egress_scope.repo_extras(db_session, "myrepo") == ["nexus.corp:443"]
+def test_local_entries_round_trip(monkeypatch):
+    from jailbee.egress_scope import add_local_entry, local_entries, remove_local_entry
+
+    data = {"egress_allow": []}
+    monkeypatch.setattr("jailbee.config.local_layer.read_local_raw", lambda prefix: data)
+
+    def patch(prefix, changes):
+        data["egress_allow"] = changes[0].value
+        return True
+
+    monkeypatch.setattr("jailbee.config_writer.patch_local_file", patch)
+    assert add_local_entry("myrepo", "a.org")
+    assert not add_local_entry("myrepo", "a.org")
+    assert add_local_entry("myrepo", "b.org")
+    assert local_entries("myrepo") == ["a.org", "b.org"]
+    assert remove_local_entry("myrepo", "a.org")
+    assert not remove_local_entry("myrepo", "a.org")
+    assert local_entries("myrepo") == ["b.org"]
 
 
-def test_repo_extras_are_sorted(db_session, frozen_now):
+def test_effective_entries_include_legacy_rows_during_transition(
+    make_cfg, db_session, frozen_now, tmp_path
+):
+    from jailbee.db.models import EgressOverride
+
+    cfg = make_cfg(tmp_path / "myrepo").model_copy(update={"egress_allow": ["c.org"]})
+    db_session.add(EgressOverride(container_prefix=cfg.container_prefix, entry="old.org", added_at=frozen_now))
+    db_session.commit()
+    entries = egress_scope.effective_repo_entries(cfg, db_session)
+    assert entries[0] == "c.org"
+    assert "old.org" in entries
+
+
+def test_classify_labels_config_local_and_legacy(make_cfg, db_session, frozen_now, tmp_path, mocker):
+    from jailbee.db.models import EgressOverride
+
+    local = ["l.org", "both.org"]
+    mocker.patch("jailbee.egress_scope.local_entries", return_value=local)
+    cfg = make_cfg(tmp_path / "myrepo").model_copy(
+        update={"container_prefix": "myrepo", "egress_allow": ["both.org", "c.org", *local]}
+    )
+    db_session.add(EgressOverride(container_prefix="myrepo", entry="old.org", added_at=frozen_now))
+    db_session.commit()
+
+    rows = {(r.entry, r.source): r for r in egress_scope.classify_sources(cfg, db_session, mocker.Mock())}
+
+    assert ("c.org", egress_scope.CONFIG_SOURCE) in rows
+    assert ("both.org", egress_scope.CONFIG_SOURCE) in rows
+    assert not rows[("l.org", egress_scope.LOCAL_SOURCE)].redundant
+    assert rows[("both.org", egress_scope.LOCAL_SOURCE)].redundant
+    assert ("old.org", egress_scope.LEGACY_SOURCE) in rows
+    assert ("l.org", egress_scope.CONFIG_SOURCE) not in rows
+
+
+def test_legacy_rows_are_unique(db_session, frozen_now):
+    _add_legacy_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
+    _add_legacy_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
+    assert egress_scope.legacy_repo_extras(db_session, "myrepo") == ["nexus.corp:443"]
+
+
+def test_legacy_rows_are_scoped_by_prefix(db_session, frozen_now):
+    _add_legacy_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
+    _add_legacy_extra(db_session, "other", "elsewhere.corp:443", now=frozen_now)
+    assert egress_scope.legacy_repo_extras(db_session, "myrepo") == ["nexus.corp:443"]
+
+
+def test_legacy_rows_are_sorted(db_session, frozen_now):
     for entry in ("zulu.corp:443", "alpha.corp:443"):
-        egress_scope.add_repo_extra(db_session, "myrepo", entry, now=frozen_now)
-    assert egress_scope.repo_extras(db_session, "myrepo") == [
+        _add_legacy_extra(db_session, "myrepo", entry, now=frozen_now)
+    assert egress_scope.legacy_repo_extras(db_session, "myrepo") == [
         "alpha.corp:443",
         "zulu.corp:443",
     ]
 
 
-def test_remove_repo_extra_reports_whether_it_removed(db_session, frozen_now):
-    egress_scope.add_repo_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
-    assert egress_scope.remove_repo_extra(db_session, "myrepo", "nexus.corp:443")
-    assert not egress_scope.remove_repo_extra(db_session, "myrepo", "nexus.corp:443")
-    assert egress_scope.repo_extras(db_session, "myrepo") == []
+def test_remove_legacy_row_reports_whether_it_removed(db_session, frozen_now):
+    _add_legacy_extra(db_session, "myrepo", "nexus.corp:443", now=frozen_now)
+    assert egress_scope.remove_legacy_repo_extra(db_session, "myrepo", "nexus.corp:443")
+    assert not egress_scope.remove_legacy_repo_extra(db_session, "myrepo", "nexus.corp:443")
+    assert egress_scope.legacy_repo_extras(db_session, "myrepo") == []
 
 
 def test_container_extras_reads_the_label(mocker):
@@ -112,7 +175,7 @@ def test_effective_repo_entries_appends_overrides_after_config(
     db_session, make_cfg, tmp_path, frozen_now
 ):
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
-    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "nexus.corp:443", now=frozen_now)
+    _add_legacy_extra(db_session, cfg.container_prefix, "nexus.corp:443", now=frozen_now)
 
     entries = egress_scope.effective_repo_entries(cfg, db_session)
 
@@ -124,7 +187,7 @@ def test_effective_repo_entries_dedupes_an_override_already_in_config(
     db_session, make_cfg, tmp_path, frozen_now
 ):
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
-    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
+    _add_legacy_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
 
     assert egress_scope.effective_repo_entries(cfg, db_session).count("github.com") == 1
 
@@ -145,12 +208,12 @@ def test_classify_sources_marks_a_config_duplicate_redundant(
     db_session, make_cfg, tmp_path, frozen_now, mocker
 ):
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
-    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
+    _add_legacy_extra(db_session, cfg.container_prefix, "github.com", now=frozen_now)
     incus = mocker.MagicMock()
 
     rows = egress_scope.classify_sources(cfg, db_session, incus)
 
-    override = next(r for r in rows if r.source == "repo-override")
+    override = next(r for r in rows if r.source == egress_scope.LEGACY_SOURCE)
     assert override.entry == "github.com"
     assert override.redundant
 

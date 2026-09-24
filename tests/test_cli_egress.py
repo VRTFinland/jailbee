@@ -74,15 +74,40 @@ def test_add_stores_a_container_entry_by_default(tmp_path, mocker):
     assert setc.call_args[0][2] == ["nexus.corp:443"]
 
 
-def test_add_repo_stores_a_repo_entry(tmp_path, mocker):
+def test_add_repo_writes_the_local_file_without_a_db_row(tmp_path, mocker, monkeypatch):
     _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
-    add = mocker.patch("jailbee.egress_scope.add_repo_extra", return_value=True)
+    get_engine = mocker.patch("jailbee.db.get_engine")
+
+    result = runner.invoke(
+        app,
+        ["net", "egress", "add", "--repo", "nexus.corp:443"],
+        env={"COLUMNS": "250"},
+    )
+
+    from jailbee.egress_scope import local_entries
+
+    assert result.exit_code == 0, result.output
+    assert local_entries("myrepo") == ["nexus.corp:443"]
+    assert "repos/" in result.output
+    assert "myrepo.yaml" in result.output
+    get_engine.assert_not_called()
+
+
+def test_add_repo_reports_an_existing_local_entry(tmp_path, mocker, monkeypatch):
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    from jailbee.egress_scope import add_local_entry
+
+    add_local_entry("myrepo", "nexus.corp:443")
+    resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
 
     result = runner.invoke(app, ["net", "egress", "add", "--repo", "nexus.corp:443"])
 
     assert result.exit_code == 0
-    assert add.call_args[0][2] == "nexus.corp:443"
+    assert "already a repo override" in result.output
+    resolve.assert_not_called()
 
 
 def test_add_of_a_config_entry_is_a_no_op(tmp_path, mocker):
@@ -181,12 +206,36 @@ def test_rm_of_a_promoted_container_override_succeeds(tmp_path, mocker):
 def test_rm_of_a_promoted_repo_override_succeeds(tmp_path, mocker):
     """Same as above, for a --repo scope override."""
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    remove = mocker.patch("jailbee.egress_scope.remove_repo_extra", return_value=True)
+    remove = mocker.patch("jailbee.egress_scope.remove_legacy_repo_extra", return_value=True)
 
     result = runner.invoke(app, ["net", "egress", "rm", "--repo", "github.com"])
 
     assert result.exit_code == 0, result.output
     remove.assert_called_once()
+
+
+def test_rm_repo_removes_local_entry_and_legacy_row(
+    tmp_path, mocker, monkeypatch, db_engine, frozen_now
+):
+    from sqlmodel import Session
+
+    from jailbee.db.models import EgressOverride
+    from jailbee.egress_scope import add_local_entry, local_entries
+
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    add_local_entry("myrepo", "x.org")
+    with Session(db_engine) as session:
+        session.add(EgressOverride(container_prefix="myrepo", entry="x.org", added_at=frozen_now))
+        session.commit()
+    mocker.patch("jailbee.db.get_engine", return_value=db_engine)
+
+    result = runner.invoke(app, ["net", "egress", "rm", "--repo", "x.org"])
+
+    assert result.exit_code == 0, result.output
+    assert local_entries("myrepo") == []
+    with Session(db_engine) as session:
+        assert session.get(EgressOverride, ("myrepo", "x.org")) is None
 
 
 def test_rm_repo_scope_config_only_entry_still_refuses(tmp_path, mocker):
@@ -195,7 +244,7 @@ def test_rm_repo_scope_config_only_entry_still_refuses(tmp_path, mocker):
     refuses and points at config.yaml, rather than the generic "not an
     override" message."""
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.remove_repo_extra", return_value=False)
+    mocker.patch("jailbee.egress_scope.remove_legacy_repo_extra", return_value=False)
 
     result = runner.invoke(
         app,
@@ -205,6 +254,24 @@ def test_rm_repo_scope_config_only_entry_still_refuses(tmp_path, mocker):
 
     assert result.exit_code == 1
     assert "config.yaml" in result.output
+
+
+def test_rm_repo_refuses_config_entry_without_changing_local_file(
+    tmp_path, mocker, monkeypatch
+):
+    _repo(tmp_path, mocker, egress_allow=["c.org"])
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    from jailbee.egress_scope import add_local_entry, local_entries
+
+    add_local_entry("myrepo", "x.org")
+
+    result = runner.invoke(
+        app, ["net", "egress", "rm", "--repo", "c.org"], env={"COLUMNS": "250"}
+    )
+
+    assert result.exit_code == 1
+    assert "config.yaml" in result.output
+    assert local_entries("myrepo") == ["x.org"]
 
 
 # --- ls --------------------------------------------------------------------
@@ -259,7 +326,7 @@ def test_ls_with_no_container_hints_on_stderr_that_overrides_are_not_shown(tmp_p
 
 def test_export_emits_file_entries_plus_overrides(tmp_path, mocker):
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["net", "egress", "export"])
 
@@ -275,7 +342,7 @@ def test_export_resolves_the_container_argument_through_the_same_resolver_as_add
     container_extras = mocker.patch(
         "jailbee.egress_scope.container_extras", return_value=["nexus.corp:443"]
     )
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
 
     result = runner.invoke(app, ["net", "egress", "export", "feat"])
 
@@ -291,7 +358,7 @@ def test_export_with_no_container_hints_on_stderr_and_keeps_stdout_pure(tmp_path
     stdout — stdout here is the literal replacement block a user pastes
     into config.yaml, so any stray text on that stream would corrupt it."""
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["net", "egress", "export"])
 
@@ -318,7 +385,7 @@ def test_export_never_emits_a_feature_auto_added_host(tmp_path, mocker):
         "jailbee.cli._resolve_config_path",
         return_value=repo_root / ".jailbee" / "config.yaml",
     )
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
 
     result = runner.invoke(app, ["net", "egress", "export"])
@@ -361,7 +428,7 @@ def test_export_never_emits_the_global_layers_own_egress_allow(tmp_path, mocker,
     # Non-empty, so render_config_block emits the real replacement block
     # rather than its "nothing to promote" comment — see
     # render_config_block's early return for an empty `overrides`.
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
 
     result = runner.invoke(app, ["net", "egress", "export"])
@@ -377,7 +444,7 @@ def test_exported_block_replaces_the_key_and_reloads_cleanly(tmp_path, mocker):
     from jailbee.config import load_config
 
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     block = runner.invoke(app, ["net", "egress", "export"]).stdout
 
@@ -414,7 +481,7 @@ def test_alias_is_hidden_from_root_help_but_named_in_the_group_help():
 
 def test_config_show_effective_includes_repo_overrides(tmp_path, mocker):
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["config", "show"])
 
@@ -423,7 +490,7 @@ def test_config_show_effective_includes_repo_overrides(tmp_path, mocker):
 
 def test_config_show_repo_layer_is_untouched_by_overrides(tmp_path, mocker):
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["config", "show", "--layer", "repo"])
 
@@ -434,7 +501,7 @@ def test_net_status_lists_containers_carrying_overrides(tmp_path, mocker, capsys
     from jailbee.cli import _print_egress_override_status
 
     cfg, _incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
     # `_print_egress_override_status` loads its config via `load_config(
     # find_repo_config())` directly (matching its sibling `_print_loose_status`'s
     # best-effort-silent shape), not via `_load_or_exit` — so patching that,
@@ -461,7 +528,7 @@ def test_net_status_survives_and_reports_a_mid_fetch_failure(tmp_path, mocker):
     the swallowed failure must not go unreported either: a one-line stderr
     note is required, not silence."""
     cfg, _incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=[])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
     mocker.patch("jailbee.cli.load_config", return_value=cfg)
     mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
     mocker.patch(
@@ -549,7 +616,7 @@ def test_export_in_a_scratch_directory_names_config_init(tmp_path, monkeypatch, 
     `scratch.config` is host-wide — so `export` must say so instead of
     tracebacking on `_resolve_config_path`."""
     repo_root, _gpath = _scratch_repo(tmp_path, monkeypatch, mocker)
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["net", "egress", "export"])
     collapsed = " ".join(result.output.split())
@@ -616,7 +683,7 @@ def test_export_for_a_configured_repo_still_names_the_repo_file(tmp_path, mocker
     """The scratch branch must not swallow the configured case: a real repo
     still exports its `egress_allow:` replacement block."""
     _repo(tmp_path, mocker, egress_allow=["github.com"])
-    mocker.patch("jailbee.egress_scope.repo_extras", return_value=["nexus.corp:443"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["nexus.corp:443"])
 
     result = runner.invoke(app, ["net", "egress", "export"])
 
