@@ -227,9 +227,7 @@ class Credentials(BaseModel):
             _validated_group(group)
         return value
 
-    def group_for(
-        self, container_prefix: str, local: LocalCredentials | None = None
-    ) -> str | None:
+    def group_for(self, container_prefix: str, local: LocalCredentials | None = None) -> str | None:
         """The credential group one repo resolves to, or None when it shares none.
 
         A local `credentials.group` key wins (including explicit `null`), then

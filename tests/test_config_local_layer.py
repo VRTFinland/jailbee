@@ -63,8 +63,16 @@ def test_broken_yaml_local_file_names_the_file():
 
 @pytest.mark.parametrize(
     "key",
-    ["container_prefix", "credential_group", "claude_credentials_dir", "scratch",
-     "config_edit", "update_check", "remote", "install_host_skills"],
+    [
+        "container_prefix",
+        "credential_group",
+        "claude_credentials_dir",
+        "scratch",
+        "config_edit",
+        "update_check",
+        "remote",
+        "install_host_skills",
+    ],
 )
 def test_refused_keys_name_the_key_and_the_file(key):
     with pytest.raises(ConfigError, match=rf"`{key}`.*/tmp/x.yaml|/tmp/x.yaml.*`{key}`"):
