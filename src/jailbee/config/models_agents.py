@@ -620,6 +620,19 @@ class GithubConfig(BaseModel):
             "`load_config_from_text` hard-fails otherwise."
         ),
     )
+    token: SecretStr | None = Field(
+        default=None,
+        description=(
+            "This repo's fine-grained GitHub PAT, with the same read-only scopes as "
+            "`api_tokens`. Valid only in the host-local file "
+            "`~/.config/jailbee/repos/<container_prefix>.yaml`, which must then be mode "
+            "0600; wins over this repo's `api_tokens` entry."
+        ),
+    )
+
+    def token_for(self, container_prefix: str) -> SecretStr | None:
+        """The token this repo's containers get: `token`, else its `api_tokens` entry."""
+        return self.token if self.token is not None else self.api_tokens.get(container_prefix)
 
 
 class Autostart(BaseModel):

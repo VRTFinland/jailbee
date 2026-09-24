@@ -267,7 +267,7 @@ def test_build_specs_covers_every_config_leaf():
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 94
+    assert len(build_specs(Config)) == 95
     assert len(build_specs(GlobalConfig)) == 25
 
 

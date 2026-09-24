@@ -229,6 +229,9 @@ def classify(annotation: object) -> Classified:
 
     if _is_model(ann):
         return Classified(FieldKind.SUBMODEL, item_model=ann)
+    if ann is SecretStr:
+        # `github.token` is visible but noneditable in the config editor.
+        return Classified(FieldKind.STR, secret=True)
     if ann is bool:
         return Classified(FieldKind.BOOL)
     if ann is int:
