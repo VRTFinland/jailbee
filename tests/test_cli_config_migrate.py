@@ -70,3 +70,36 @@ def test_dry_run_masks_github_tokens(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert "********" in result.output
     assert token not in result.output
+
+
+def test_partial_write_failure_does_not_claim_nothing_was_written(tmp_path, monkeypatch, mocker):
+    _global({"credentials": {"repos": {"a": "team"}}}, tmp_path, monkeypatch)
+
+    def fail_after_a_write(inputs, plan, session):
+        local = local_config_path("a")
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text("credentials:\n  group: team\n")
+        raise OSError("simulated second-file write failure")
+
+    mocker.patch("jailbee.config_migrate.apply_plan", side_effect=fail_after_a_write)
+    result = runner.invoke(app, ["config", "migrate", "--apply"])
+
+    assert result.exit_code == 1
+    assert "may have partially written files" in result.output
+    assert "Check the files and backups" in result.output
+    assert "rerun `jailbee config migrate --apply`" in result.output
+    assert "Nothing was written" not in result.output
+
+
+def test_preflight_validation_failure_says_no_files_were_written(tmp_path, monkeypatch):
+    _global({"credentials": {"repos": {"a": "team"}}}, tmp_path, monkeypatch)
+    path = local_config_path("a")
+    path.parent.mkdir(parents=True)
+    path.write_text("egress_allow: invalid\n")
+
+    result = runner.invoke(app, ["config", "migrate", "--apply"])
+
+    assert result.exit_code == 1
+    assert "Preflight failed; no files were written" in result.output
+    assert "Nothing was written" not in result.output
+    assert "egress_allow: invalid" in path.read_text()

@@ -226,10 +226,13 @@ def write_with_backup(
     writes are atomic.
     """
     backup: Path | None = None
+    original_mode: int | None = None
     if path.exists():
-        mode = stat.S_IMODE(path.stat().st_mode)
+        original_mode = stat.S_IMODE(path.stat().st_mode)
         backup = path.with_name(path.name + ".bak")
-        write_text_atomic(backup, old_text, mode=mode)
+        write_text_atomic(backup, old_text, mode=original_mode)
+    if mode is None:
+        mode = original_mode
     write_text_atomic(path, new_text, mode=mode)
     return backup
 

@@ -181,6 +181,13 @@ def _egress_db_rows(state: _State) -> None:
                 f"{path} has a malformed egress_allow value; legacy rows left in the database."
             )
             continue
+        if current == []:
+            state.conflicts.append(
+                f"{path} has an explicit egress_allow: [] reset; legacy rows "
+                "left in the database to avoid re-enabling inherited grants. "
+                "Remove the reset explicitly before migrating these rows."
+            )
+            continue
         current_list = current if isinstance(current, list) else []
         missing = [entry for entry in entries if entry not in current_list]
         if missing:
@@ -291,6 +298,11 @@ def _validate(inputs: MigrationInputs, plan: Plan) -> None:
                 raise ConfigError(f"Config validation failed in {path}:\n{error}") from error
         else:
             validate_local_raw(raw, str(path))
+
+
+def validate_plan(inputs: MigrationInputs, plan: Plan) -> None:
+    """Preflight all resulting files without writing any migration output."""
+    _validate(inputs, plan)
 
 
 def apply_plan(inputs: MigrationInputs, plan: Plan, session: Session) -> list[Path]:

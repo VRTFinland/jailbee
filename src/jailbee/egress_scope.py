@@ -75,7 +75,15 @@ def local_entries(prefix: str) -> list[str]:
 def add_local_entry(prefix: str, entry: str) -> bool:
     """Append an entry to the local file; return False when already present."""
     from jailbee.config_writer import YamlChange, patch_local_file
+    from jailbee.config.local_layer import read_local_raw
 
+    raw = read_local_raw(prefix)
+    if raw.get("egress_allow") == []:
+        raise ValueError(
+            "Cannot add a repo egress override while the local file has "
+            "`egress_allow: []`, which resets inherited grants; remove "
+            "`egress_allow: []` explicitly before adding an entry."
+        )
     current = local_entries(prefix)
     if entry in current:
         return False
@@ -85,12 +93,16 @@ def add_local_entry(prefix: str, entry: str) -> bool:
 
 def remove_local_entry(prefix: str, entry: str) -> bool:
     """Remove an entry from the local file; return False when absent."""
-    from jailbee.config_writer import YamlChange, patch_local_file
+    from jailbee.config_writer import DELETE, YamlChange, patch_local_file
 
     current = local_entries(prefix)
     if entry not in current:
         return False
-    patch_local_file(prefix, [YamlChange(("egress_allow",), [e for e in current if e != entry])])
+    remaining = [e for e in current if e != entry]
+    patch_local_file(
+        prefix,
+        [YamlChange(("egress_allow",), remaining if remaining else DELETE)],
+    )
     return True
 
 

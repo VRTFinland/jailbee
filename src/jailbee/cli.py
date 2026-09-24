@@ -1096,7 +1096,19 @@ def config_migrate_cmd(
                 typer.echo(diff, nl=False)
                 info("Dry run — nothing written. Re-run with `--apply` to write it.")
                 return
-            backups = config_migrate.apply_plan(inputs, plan, session)
+            try:
+                config_migrate.validate_plan(inputs, plan)
+            except (ConfigError, OSError) as error:
+                error_plain(f"{error}\nPreflight failed; no files were written.")
+                raise typer.Exit(1) from error
+            try:
+                backups = config_migrate.apply_plan(inputs, plan, session)
+            except (ConfigError, OSError) as error:
+                error_plain(
+                    f"{error}\nMigration may have partially written files. "
+                    "Check the files and backups, then rerun `jailbee config migrate --apply`."
+                )
+                raise typer.Exit(1) from error
         except (ConfigError, OSError) as error:
             error_plain(f"{error}\nNothing was written.")
             raise typer.Exit(1) from error
@@ -8710,7 +8722,11 @@ def egress_add_cmd(
     if repo:
         from jailbee.config.local_layer import local_config_path
 
-        egress_scope.add_local_entry(cfg.container_prefix, entry)
+        try:
+            egress_scope.add_local_entry(cfg.container_prefix, entry)
+        except ValueError as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
         success(
             f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
             "Run `jailbee apply` to push it."

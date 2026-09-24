@@ -148,6 +148,16 @@ def test_malformed_local_egress_is_preserved_and_rows_are_not_deleted(existing):
     assert local_config_path("a") not in plan.new_texts
 
 
+def test_empty_local_egress_reset_conflicts_and_keeps_legacy_rows():
+    inputs = _inputs({}, {"a": {"egress_allow": []}}, rows={"a": ["legacy.org"]})
+    plan = plan_migrations(inputs)
+
+    assert any("explicit egress_allow: [] reset" in conflict for conflict in plan.conflicts)
+    assert plan.rows_to_delete == ()
+    assert local_config_path("a") not in plan.new_texts
+    assert yaml.safe_load(inputs.texts[local_config_path("a")]) == {"egress_allow": []}
+
+
 def test_apply_writes_private_files_backs_up_and_deletes_rows(db_session, frozen_now):
     from jailbee.db.models import EgressOverride
 
@@ -191,3 +201,39 @@ def test_apply_writes_nothing_when_a_result_fails_validation(db_session):
     with pytest.raises(ConfigError, match=str(bad)):
         apply_plan(inputs, plan_migrations(inputs), db_session)
     assert {p: p.read_text() for p in (gpath, bad)} == before
+
+
+def test_apply_migration_token_secures_existing_local_file_but_preserves_backup_mode(
+    db_session, tmp_path, monkeypatch, mocker
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    local = local_config_path("a")
+    local.parent.mkdir(parents=True)
+    local.write_text("egress_allow: [x.org]\n")
+    local.chmod(0o644)
+    global_path = default_global_config_path()
+    token_text = "github:\n  api_tokens:\n    a: ghp_secret\n"
+    inputs = MigrationInputs(
+        global_path=global_path,
+        texts={local: local.read_text(), global_path: token_text},
+    )
+    plan = plan_migrations(inputs)
+
+    backups = apply_plan(inputs, plan, db_session)
+
+    backup = local.with_name("a.yaml.bak")
+    assert backup in backups
+    assert stat.S_IMODE(backup.stat().st_mode) == 0o644
+    assert stat.S_IMODE(local.stat().st_mode) == 0o600
+    from jailbee.config.local_layer import validate_local_raw
+
+    validate_local_raw(yaml.safe_load(local.read_text()), str(local))
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text("container_prefix: a\n")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    from jailbee.config.loader import load_config
+
+    cfg = load_config(repo)
+    token = cfg.github.token_for("a")
+    assert token is not None and token.get_secret_value() == "ghp_secret"

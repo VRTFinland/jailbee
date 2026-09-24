@@ -26,11 +26,16 @@ def test_legacy_repo_extras_starts_empty(db_session):
 def test_local_entries_round_trip(monkeypatch):
     from jailbee.egress_scope import add_local_entry, local_entries, remove_local_entry
 
-    data = {"egress_allow": []}
+    data = {}
     monkeypatch.setattr("jailbee.config.local_layer.read_local_raw", lambda prefix: data)
 
     def patch(prefix, changes):
-        data["egress_allow"] = changes[0].value
+        from jailbee.config_writer import DELETE
+
+        if changes[0].value is DELETE:
+            data.pop("egress_allow", None)
+        else:
+            data["egress_allow"] = changes[0].value
         return True
 
     monkeypatch.setattr("jailbee.config_writer.patch_local_file", patch)
@@ -41,6 +46,49 @@ def test_local_entries_round_trip(monkeypatch):
     assert remove_local_entry("myrepo", "a.org")
     assert not remove_local_entry("myrepo", "a.org")
     assert local_entries("myrepo") == ["b.org"]
+
+
+def test_removing_last_local_entry_deletes_key_and_preserves_inherited_egress(
+    tmp_path, monkeypatch, mocker
+):
+    import yaml
+
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.config.loader import load_config
+    from jailbee.egress_scope import remove_local_entry
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
+    repo.parent.mkdir(parents=True)
+    repo.write_text("container_prefix: myrepo\negress_allow: [repo.org]\n")
+    global_path = tmp_path / "config" / "jailbee" / "global.yaml"
+    global_path.parent.mkdir(parents=True)
+    global_path.write_text("egress_allow: [global.org]\n")
+    local_path = local_config_path("myrepo")
+    local_path.parent.mkdir(parents=True)
+    local_path.write_text("egress_allow: [local.org]\n")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    cfg = load_config(repo)
+    assert cfg.egress_allow == ["global.org", "repo.org", "local.org"]
+    assert remove_local_entry("myrepo", "local.org")
+    assert yaml.safe_load(local_path.read_text()) == {}
+    assert load_config(repo).egress_allow == ["global.org", "repo.org"]
+
+
+def test_adding_entry_rejects_explicit_local_empty_reset(tmp_path, monkeypatch):
+    from jailbee.config.local_layer import local_config_path
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    path = local_config_path("myrepo")
+    path.parent.mkdir(parents=True)
+    path.write_text("egress_allow: []\n")
+
+    with pytest.raises(ValueError, match=r"remove `egress_allow: \[\]` explicitly"):
+        egress_scope.add_local_entry("myrepo", "extra.org")
+    assert path.read_text() == "egress_allow: []\n"
+    assert not egress_scope.remove_local_entry("myrepo", "not-present.org")
+    assert path.read_text() == "egress_allow: []\n"
 
 
 def test_effective_entries_include_legacy_rows_during_transition(

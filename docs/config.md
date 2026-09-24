@@ -50,9 +50,9 @@ github:
 ```
 
 The local file containing `github.token` must be mode `0600`; JailBee rejects
-it if group or other permissions are present. `github.token` is masked and
-read-only in the interactive config editor; edit the YAML file directly to
-change it. `github.api_tokens` is deprecated and will be removed in 2.0.0;
+it if group or other permissions are present. `github.token` remains visible
+as a masked, disabled row in the interactive config editor; edit the YAML file
+directly to change it. `github.api_tokens` is deprecated and will be removed in 2.0.0;
 move entries with [`jailbee config migrate`](commands.md#configuration).
 
 Credential-group membership is also host-specific. A local group overrides
@@ -102,7 +102,9 @@ this local file.
 
 `jailbee config migrate` previews migrations without writing anything. Review
 the diff, then pass `--apply` to write changes. It moves legacy `chrome:`
-blocks to `browsers.chrome`, renames global `claude_credentials:` to
+blocks found in `global.yaml` or host-local files to `browsers.chrome`; a
+`chrome:` block in a committed repo config must be updated there manually.
+It renames global `claude_credentials:` to
 `credentials:`, moves `github.api_tokens` and `credentials.repos` entries into
 the matching local files, and repo-scoped egress overrides from `state.sqlite`
 into local `egress_allow` lists. Existing edited files are backed up as `.bak`

@@ -110,6 +110,23 @@ def test_add_repo_reports_an_existing_local_entry(tmp_path, mocker, monkeypatch)
     resolve.assert_not_called()
 
 
+def test_add_repo_rejects_a_local_empty_reset_without_changing_it(tmp_path, mocker, monkeypatch):
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    from jailbee.config.local_layer import local_config_path
+
+    path = local_config_path("myrepo")
+    path.parent.mkdir(parents=True)
+    path.write_text("egress_allow: []\n")
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+
+    result = runner.invoke(app, ["net", "egress", "add", "--repo", "nexus.corp:443"])
+
+    assert result.exit_code == 1
+    assert "resets inherited grants" in result.output
+    assert path.read_text() == "egress_allow: []\n"
+
+
 def test_add_of_a_config_entry_is_a_no_op(tmp_path, mocker):
     _repo(tmp_path, mocker, egress_allow=["github.com"])
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
