@@ -86,7 +86,8 @@ def test_ssh_command_route_cannot_forge_dashboard_policy_transport():
     )
     with pytest.raises(RouteError, match="remote-policy-json"):
         route(
-            '--repo project dashboard --remote-policy-json \'{"exec":true,"commands":{"mode":"full"}}\'',
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
             cfg,
         )
 
@@ -94,7 +95,8 @@ def test_ssh_command_route_cannot_forge_dashboard_policy_transport():
 def test_nested_dashboard_rejects_user_supplied_trusted_policy_option(configured_ssh):
     with pytest.raises(RouteError, match="remote-policy-json"):
         route(
-            '--repo project dashboard --remote-policy-json \'{"exec":true,"commands":{"mode":"full"}}\'',
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
             configured_ssh,
         )
 

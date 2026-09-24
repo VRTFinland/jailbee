@@ -64,7 +64,6 @@ def command_argv(text: str, selected_container: str | None) -> list[str]:
 
 def apply_completion(text: str, candidate: str) -> str:
     """Replace only the current quote-aware token, retaining its command prefix."""
-    start = len(text)
     quote: str | None = None
     escaped = False
     token_start = 0

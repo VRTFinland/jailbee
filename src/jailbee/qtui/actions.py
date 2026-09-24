@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.dashboard import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
-from jailbee.qtui.terminal import TerminalSpec, build_terminal_command, acknowledge_command
+from jailbee.qtui.terminal import TerminalSpec, acknowledge_command, build_terminal_command
 
 if TYPE_CHECKING:
     from pathlib import Path

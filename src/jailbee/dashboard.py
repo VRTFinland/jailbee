@@ -2390,7 +2390,11 @@ def run(
                             _find_group(groups, container_of(selected))
                             if container_of(selected) is not None
                             else next(
-                                (group for group in groups if selected and group.prefix == selected.key),
+                                (
+                                    group
+                                    for group in groups
+                                    if selected and group.prefix == selected.key
+                                ),
                                 None,
                             )
                         )

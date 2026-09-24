@@ -139,9 +139,7 @@ def test_restricted_completion_filters_host_and_argument_options() -> None:
     candidates = completion_candidates("co", ("alpha",), allowed)
     assert "config edit" not in candidates
     assert "config" not in candidates
-    assert "--mount" not in completion_candidates(
-        "new --m", (), allowed, restrict_host=True
-    )
+    assert "--mount" not in completion_candidates("new --m", (), allowed, restrict_host=True)
 
 
 def test_remote_full_completion_hides_host_commands_and_denied_parameters() -> None:

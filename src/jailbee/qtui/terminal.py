@@ -7,9 +7,9 @@ into the Qt window, so v1 spawns a standalone host emulator.
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-import shlex
 
 # Args each known emulator wants *before* the command to run. Emulators not
 # listed here fall back to ``-e`` (the historical default).
@@ -78,5 +78,6 @@ def acknowledge_command(inner_argv: list[str]) -> list[str]:
     return [
         "sh",
         "-c",
-        f"{command}; status=$?; printf '\\nMerge finished (exit %s). Press Enter to close.' \"$status\"; read _",
+        f"{command}; status=$?; printf '\\nMerge finished (exit %s). Press Enter to close.' "
+        '"$status"; read _',
     ]
