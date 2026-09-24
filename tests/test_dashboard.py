@@ -2444,8 +2444,12 @@ def test_small_width_keeps_help_cue_in_the_top_border(tmp_path):
     g = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     out = _render_text(
         dashboard.render(
-            [g], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC),
-            last_refresh_age=1.0, interval=3.0, git_enabled=True,
+            [g],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
         ),
         width=42,
     )
@@ -2930,9 +2934,12 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
     )
     out = _render_text(
         dashboard.render(
-            [g], selected=dashboard.Row("container", "alpha-one"),
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), last_refresh_age=1.0,
-            interval=3.0, git_enabled=True,
+            [g],
+            selected=dashboard.Row("container", "alpha-one"),
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
             overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")]),
         )
     )

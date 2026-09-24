@@ -917,7 +917,9 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
     ),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
-    KeyBinding("enter", (b"\r", b"\n"), "Enter", "open a container menu or fold a repo header", "Navigate"),
+    KeyBinding(
+        "enter", (b"\r", b"\n"), "Enter", "open a container menu or fold a repo header", "Navigate"
+    ),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
     KeyBinding(
         "settings-toggle",
