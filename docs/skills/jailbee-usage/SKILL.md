@@ -730,7 +730,11 @@ allowing `git merge` also allows `merge`. A public group's own help (`git`,
 `git --help`) is allowed on its own whenever some command under it is
 allowed, and so is the bare top-level `--help`. A name matching no command at
 all is run anyway, so `jailbee` reports its own "No such command" error. It
-has no shell operators, expansion or executable lookup.
+has no shell operators, expansion or executable lookup. In every mode, `full`
+included, a remote command may not set a path-typed option or argument
+(`--config`, `net refresh --repo`, ...) nor `new --mount`: the policy picks
+commands, never host paths. The remote dashboard has no config editor, diff
+pager or GUI app launches.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered

@@ -8,7 +8,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
@@ -16,6 +16,10 @@ from sqlmodel import Session
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
+
+if TYPE_CHECKING:
+    from typer._click.core import Parameter
+    from typer.core import TyperCommand
 
 RouteKind = Literal["help", "dashboard", "console", "command"]
 
@@ -69,6 +73,10 @@ class _CommandTree:
     text (`Command.get_short_help_str()`), read by the console's `help` in
     `allowlist` mode to list each allowed command with the same one-line
     description Typer itself would show for it.
+
+    `leaf_commands` maps every routable leaf path — public and alias alike,
+    as typed — to its Click command, whose parameters `check_arguments`
+    parses a remote argv against.
     """
 
     public_leaves: frozenset[str]
@@ -76,6 +84,7 @@ class _CommandTree:
     public_groups: dict[str, bool]
     top_level_names: frozenset[str]
     public_short_help: dict[str, str]
+    leaf_commands: dict[str, TyperCommand]
 
 
 def _leaf_identity(command: object) -> int:
@@ -111,6 +120,7 @@ def _command_tree() -> _CommandTree:
     public_by_identity: dict[int, str] = {}
     public_short_help: dict[str, str] = {}
     hidden_leaves: list[tuple[str, int]] = []
+    commands: dict[str, TyperCommand] = {}
     public_groups: dict[str, bool] = {}
 
     def walk(
@@ -128,6 +138,7 @@ def _command_tree() -> _CommandTree:
         if not prefix:
             return
         path = " ".join(prefix)
+        commands[path] = command
         if is_hidden:
             hidden_leaves.append((path, _leaf_identity(command)))
         else:
@@ -150,6 +161,9 @@ def _command_tree() -> _CommandTree:
         public_groups=public_groups,
         top_level_names=top_level_names,
         public_short_help=public_short_help,
+        leaf_commands={
+            path: commands[path] for path in (*public_leaves, *aliases) if path in commands
+        },
     )
 
 
@@ -163,14 +177,8 @@ def known_command_short_help() -> dict[str, str]:
     return _command_tree().public_short_help
 
 
-def command_path(argv: Sequence[str]) -> str:
-    """Resolve an argument vector to its longest public or aliased command leaf.
-
-    A hidden alias (its Click callback is byte-identical to some public
-    leaf's — see `_CommandTree`) resolves to that public leaf's path, the
-    canonical path every policy decision is made against, even though `argv`
-    itself keeps whichever spelling the caller actually typed.
-    """
+def _resolve_leaf(argv: Sequence[str]) -> tuple[str, str]:
+    """(typed, canonical) paths of the longest public or aliased leaf `argv` names."""
     tree = _command_tree()
     candidates = tree.public_leaves | tree.aliases.keys()
     matches = [
@@ -179,7 +187,80 @@ def command_path(argv: Sequence[str]) -> str:
     if not matches:
         raise RouteError("unknown Jailbee command")
     longest = max(matches, key=lambda path: len(path.split()))
-    return tree.aliases.get(longest, longest)
+    return longest, tree.aliases.get(longest, longest)
+
+
+def command_path(argv: Sequence[str]) -> str:
+    """Resolve an argument vector to its longest public or aliased command leaf.
+
+    A hidden alias (its Click callback is byte-identical to some public
+    leaf's — see `_CommandTree`) resolves to that public leaf's path, the
+    canonical path every policy decision is made against, even though `argv`
+    itself keeps whichever spelling the caller actually typed.
+    """
+    return _resolve_leaf(argv)[1]
+
+
+# Parameters a remote caller may never set, by canonical command path, on top
+# of every path-typed one (see `_host_reaching_params`). Each reaches the host
+# in a way no argument type reveals:
+#   - `new --mount` bind-mounts the host repo read-write, `.git` included, so
+#     the container could plant a hook or `core.fsmonitor` that the host's own
+#     git later runs.
+_REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
+    "new": frozenset({"mount"}),
+}
+
+
+def _host_reaching_params(command: TyperCommand, canonical: str) -> list[Parameter]:
+    """The parameters of `command` a remote argv must leave at their default.
+
+    Every path-typed parameter qualifies without being listed: a host path
+    chosen by the SSH client is a host file read (`--config` reports what it
+    could not parse, contents included) or a host directory treated as a repo
+    (a config it points at decides host mounts). Typer builds each `Path`
+    annotation as a `TyperPath`, and a file argument as Click's `File`.
+    """
+    from typer._click.types import File
+    from typer.models import TyperPath
+
+    denied = _REMOTE_DENIED_PARAMS.get(canonical, frozenset())
+    return [
+        param
+        for param in command.params
+        if isinstance(param.type, TyperPath | File) or param.name in denied
+    ]
+
+
+def check_arguments(argv: Sequence[str]) -> None:
+    """Refuse a remote argv that sets a host-reaching parameter of its leaf.
+
+    The argv is parsed by the leaf's own Click command, exactly as the real
+    invocation will parse it, and only the resulting parameter sources are
+    consulted. No token scan could be trusted with this: `-c` hides inside a
+    short-option cluster, `--config=x` carries its value, and a `--` taken
+    as an option's value leaves the options after it live. A parse this
+    cannot complete is refused — the real one would fail too.
+    """
+    from typer._click.core import ParameterSource
+
+    typed, canonical = _resolve_leaf(argv)
+    command = _command_tree().leaf_commands[typed]
+    params = _host_reaching_params(command, canonical)
+    if not params:
+        return
+    words = typed.split()
+    try:
+        ctx = command.make_context(words[-1], list(argv[len(words) :]), resilient_parsing=True)
+    except Exception as error:
+        raise RouteError(f"cannot parse remote command arguments: {canonical}") from error
+    with ctx:
+        for param in params:
+            if param.name is None:
+                continue
+            if ctx.get_parameter_source(param.name) is ParameterSource.COMMANDLINE:
+                shown = param.opts[0] if param.opts else param.name
+                raise RouteError(f"remote Jailbee commands may not set {shown}: {canonical}")
 
 
 def _help_only_path(argv: Sequence[str]) -> str | None:
@@ -238,6 +319,10 @@ def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
     permits it outright; `allowlist` permits it only when some allowed leaf
     lies under that group, or — for the bare top-level `--help`/`-h` — only
     when the allowlist is non-empty at all.
+
+    A permitted command is then held to `check_arguments` in every mode,
+    `full` included: the policy names which commands a remote caller may
+    run, never which host paths they may hand them.
     """
     if policy.mode == "disabled":
         raise RouteError("remote Jailbee commands are disabled")
@@ -257,6 +342,7 @@ def policy_allows(argv: Sequence[str], policy: RemoteCommandPolicy) -> str:
     path = command_path(argv)
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
+    check_arguments(argv)
     return path
 
 

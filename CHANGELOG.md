@@ -61,7 +61,8 @@ before editing `## Unreleased`.
   are accepted but ignored — never passed to the child. The remote
   dashboard withholds what would reach the host itself: no config editor, no
   diff pager and no GUI app launches, and every process the service starts
-  runs with `LESSSECURE=1`. `jb remote ssh
+  runs with `LESSSECURE=1`. No remote command, in any policy mode, may set a
+  path-typed option or argument (`--config`, ...) or `new --mount`. `jb remote ssh
   serve` also takes one-off `--listen`/`--port`/`--dashboard`/`--shell`/
   `--exec`/`--commands`/`--allow` overrides for trying a policy without
   editing `global.yaml`; the systemd service never passes them.

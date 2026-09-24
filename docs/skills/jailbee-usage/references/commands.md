@@ -114,6 +114,13 @@ all current and future public leaves but never hidden internal commands. All
 authorized keys share the same policy and every registered repo. Treat `full`
 and the dashboard as host-capable access, not a read-only view.
 
+In every mode, `full` included, a remote command may not set a path-typed
+option or argument (`--config`, `net refresh --repo`, ...) nor `new --mount`;
+the command's own parser decides, so `-c/path`, `--config=/path` and `-bm`
+are refused too. The remote dashboard has no config editor (`e`/`E`), no diff
+pager and no GUI app launches, and `jb dashboard --gui`/`jb gui` refuse to
+start over SSH.
+
 A hidden top-level spelling that is a byte-identical alias of a public leaf
 (`merge` → `git merge`, `pull` → `git pull`, `push` → `git push`, `fetch` →
 `git fetch`, `checkout` → `git checkout`, `retarget` → `git retarget`, `diff`

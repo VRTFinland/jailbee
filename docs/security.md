@@ -82,10 +82,17 @@ The SSH protocol surface is also fail-closed:
   process, which is built from the service's own environment;
 - the interactive `shell` entry point is a restricted JailBee console, not a
   POSIX shell, and implements no pipes, redirection, expansion or executable
-  lookup; and
+  lookup;
 - one-shot commands are parsed into an argv without invoking a shell, and
   `--repo` resolves an exact registered prefix rather than a client-supplied
-  filesystem path.
+  filesystem path; and
+- in every command mode, `full` included, a remote command may not set a
+  path-typed option or argument — `--config` would read any host file (its
+  parse errors echo the contents) or make any host directory a repo whose
+  config decides host mounts — nor `jailbee new --mount`, whose read-write
+  bind of the host repo includes `.git`, where a planted hook runs on the
+  host. The argv is parsed by the command's own parser to decide this, so
+  short-option clusters and `--opt=value` forms are covered.
 
 The user journal records source address, authorized-key fingerprint, bounded
 route/repository/command identifiers, decision and exit status. It does not

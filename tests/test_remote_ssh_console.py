@@ -793,3 +793,26 @@ def test_select_repo_ctrl_d_cancels(_select_repo_io) -> None:
 def test_select_repo_escape_cancels(_select_repo_io) -> None:
     """Regression: upstream `questionary.select` leaves a bare Esc hanging forever."""
     assert _select_repo_io("\x1b") is None
+
+
+def test_console_refuses_a_host_path_argument_without_running_anything(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["ls --config /etc/passwd", "new feat -m", "exit"])
+
+    console.run("project")
+
+    run.assert_not_called()
+    err = capsys.readouterr().err
+    assert "may not set --config: ls" in err
+    assert "may not set --mount: new" in err

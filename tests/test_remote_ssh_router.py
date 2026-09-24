@@ -13,6 +13,7 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh.router import (
     Route,
     RouteError,
+    check_arguments,
     command_path,
     help_text,
     known_command_paths,
@@ -324,3 +325,93 @@ def test_help_lists_only_configured_entrypoints() -> None:
     assert "  dashboard" in all_entrypoints
     assert "  shell [--repo PREFIX]" in all_entrypoints
     assert "  --repo PREFIX COMMAND [ARGS...]" in all_entrypoints
+
+
+FULL = RemoteCommandPolicy(mode="full")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("ls", "--config", "/home/user/.config/gh/hosts.yml"),
+        ("ls", "-c", "/etc/passwd"),
+        ("ls", "-c/etc/passwd"),
+        ("ls", "--config=/etc/passwd"),
+        ("git", "pull", "box", "--config", "/tmp/evil.yaml"),
+        ("pull", "--config", "/tmp/evil.yaml"),  # a hidden alias of `git pull`
+        ("net", "refresh", "--repo", "/home/user"),
+    ],
+)
+def test_a_remote_command_never_takes_a_host_path(argv) -> None:
+    """`--config` reads any host file (its parse errors echo the contents) and
+    makes any host directory a repo whose config decides host mounts."""
+    with pytest.raises(RouteError, match="may not set"):
+        policy_allows(argv, FULL)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("new", "feat", "--mount"),
+        ("new", "-m", "feat"),
+        ("new", "-bm", "feat"),  # inside a short-option cluster
+        ("new", "--name", "--", "--mount", "feat"),  # `--` consumed as a value
+    ],
+)
+def test_a_remote_new_never_mounts_the_host_repo(argv) -> None:
+    """The mount is read-write and includes `.git`: a hook planted there runs
+    on the host the next time the host's git touches the repo."""
+    with pytest.raises(RouteError, match="may not set --mount: new"):
+        policy_allows(argv, FULL)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("ls", "--all"),
+        ("new", "feat", "main", "--shell"),
+        ("new", "--", "--mount"),  # a branch named "--mount", not the option
+        ("exec", "box", "--", "ls", "-c", "x"),  # the container command's own -c
+        ("git", "pull", "box", "--ff-only"),
+    ],
+)
+def test_ordinary_remote_arguments_pass(argv) -> None:
+    assert policy_allows(argv, FULL)
+
+
+def test_the_argument_policy_holds_in_allowlist_mode_too() -> None:
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["ls", "new"])
+
+    assert policy_allows(("ls",), allow) == "ls"
+    with pytest.raises(RouteError, match="may not set --config"):
+        policy_allows(("ls", "--config", "/x"), allow)
+    with pytest.raises(RouteError, match="may not set --mount"):
+        policy_allows(("new", "x", "-m"), allow)
+
+
+def test_exec_route_refuses_a_host_path_before_resolving_the_repo(engine, repo) -> None:
+    cfg = RemoteSSHConfig(exec=True, commands=FULL)
+
+    with pytest.raises(RouteError, match="may not set --config"):
+        route("--repo project ls --config /etc/passwd", cfg, engine=engine)
+
+
+def test_every_path_typed_parameter_is_covered_without_being_listed() -> None:
+    """A future `Path` option is refused on day one: the rule is the type, not
+    a list someone must remember to extend."""
+    from typer._click.types import File
+    from typer.models import TyperPath
+
+    from jailbee.remote_ssh.router import _command_tree, _host_reaching_params
+
+    tree = _command_tree()
+    for typed, command in tree.leaf_commands.items():
+        canonical = tree.aliases.get(typed, typed)
+        path_params = {p.name for p in command.params if isinstance(p.type, TyperPath | File)}
+        covered = {p.name for p in _host_reaching_params(command, canonical)}
+        assert path_params <= covered, typed
+    assert "config" in {p.name for p in _host_reaching_params(tree.leaf_commands["ls"], "ls")}
+
+
+def test_check_arguments_leaves_help_alone() -> None:
+    check_arguments(("new", "--help"))
