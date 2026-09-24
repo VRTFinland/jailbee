@@ -2088,8 +2088,8 @@ def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
     assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "old_removed_col")
 
 
-def _render_text(renderable: RenderableType) -> str:
-    console = Console(record=True, width=200)
+def _render_text(renderable: RenderableType, width: int = 200) -> str:
+    console = Console(record=True, width=width)
     console.print(renderable)
     return console.export_text()
 
@@ -2172,6 +2172,64 @@ def test_render_empty_groups_shows_placeholder():
     )
     assert "no containers" in out.lower()
     assert "no-git" in out
+
+
+def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
+    prefix = "long-repository-prefix"
+    group = dashboard.RepoGroup(prefix, str(tmp_path), None, [_ci(f"{prefix}-one", prefix)])
+    out = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state",),
+        ),
+        width=48,
+    )
+    assert prefix in out
+    assert "Running" in out
+    wide = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state",),
+        ),
+        width=100,
+    )
+    assert prefix in wide
+
+
+def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
+    groups = [
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-one", "a")]),
+        dashboard.RepoGroup(
+            "a-much-longer-repository",
+            "/b",
+            None,
+            [_ci("a-much-longer-repository-two", "a-much-longer-repository")],
+        ),
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state",),
+        )
+    )
+    data_lines = [line for line in out.splitlines() if "Running" in line]
+    assert len(data_lines) == 2
+    assert [line.index("Running") for line in data_lines] == [data_lines[0].index("Running")] * 2
 
 
 def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
@@ -3319,7 +3377,7 @@ def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path)
     # starts with a literal space.
     header_indent = len(header_line[1:]) - len(header_line[1:].lstrip(" "))
     data_indent = len(data_line[1:]) - len(data_line[1:].lstrip(" "))
-    assert header_indent == data_indent
+    assert header_indent < data_indent
 
 
 def test_render_counts_every_container_even_when_folded(tmp_path):

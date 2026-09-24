@@ -30,6 +30,7 @@ from rich import box
 from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from jailbee import table_format
 from jailbee.config import (
@@ -1133,6 +1134,81 @@ def _hint_line(overlay: Overlay | None) -> str:
     )
 
 
+def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str]) -> Text:
+    """Render a repo heading independently of the table's data columns."""
+    marker = "▸" if group.prefix in folded else "▾"
+    label = f"{marker} {group.prefix}  ({len(group.containers)})"
+    style = "bold yellow" if group.repo_root is None else "bold cyan"
+    if group.repo_root is None:
+        label += "  (orphan)"
+    result = Text.from_markup(
+        f"{'▸ ' if selected == Row('repo', group.prefix) else ''}[{style}]{label}[/]"
+    )
+    if selected == Row("repo", group.prefix):
+        result.stylize("bold bright_white")
+    return result
+
+
+def repo_table(
+    group: RepoGroup,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    selected: Row | None,
+    *,
+    show_header: bool,
+) -> Table:
+    """Render one repo's rows with globally aligned table columns."""
+    table = Table(
+        box=None,
+        pad_edge=False,
+        expand=False,
+        show_edge=False,
+        show_header=show_header,
+        padding=(0, 1),
+    )
+    for field_spec, width in zip(fields, widths, strict=True):
+        table.add_column(
+            field_spec.header if show_header else "",
+            justify=field_spec.justify,
+            width=width,
+            min_width=1,
+            no_wrap=False,
+        )
+    for container in group.containers:
+        is_selected = selected == Row("container", container.name)
+        cells: list[str] = []
+        for index, field_spec in enumerate(fields):
+            value = (
+                container.name
+                if field_spec.name == "name" and group.repo_root is None
+                else field_spec.cell(container)
+            )
+            if index == 0:
+                value = ("[bold cyan]▸[/] " if is_selected else "  ") + value
+            cells.append(value)
+        table.add_row(*cells, style="bold bright_white" if is_selected else None)
+    return table
+
+
+def _dashboard_column_widths(
+    fields: list[FieldSpecCI], rows: list[tuple[RepoGroup, ContainerInfo]]
+) -> tuple[int, ...]:
+    """Measure visible headers and cells once for cross-repo consistency."""
+    widths: list[int] = []
+    for index, field_spec in enumerate(fields):
+        values = [field_spec.header]
+        for group, container in rows:
+            value = (
+                container.name
+                if field_spec.name == "name" and group.repo_root is None
+                else field_spec.cell(container)
+            )
+            values.append(value)
+        measured = max(Text.from_markup(value).cell_len for value in values)
+        widths.append(measured + (2 if index == 0 else 0))
+    return tuple(widths)
+
+
 def render(
     groups: list[RepoGroup],
     selected: Row | None,
@@ -1165,60 +1241,23 @@ def render(
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
     fields = visible_fields(now, visible, enabled)
 
-    table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
-    for i, f in enumerate(fields):
-        # The *first* column carries a 2-char arrow gutter on data rows,
-        # whichever field that happens to be — the settings overlay lets
-        # `name` be disabled, so the gutter cannot be pinned to that field
-        # by name. Pad its header so the column lines up.
-        header = ("  " + f.header) if i == 0 else f.header
-        table.add_column(header, justify=f.justify)
-
+    visible_groups = [g for g in groups if g.containers]
+    visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
+    widths = _dashboard_column_widths(fields, visible_rows)
+    sections: list[RenderableType] = []
+    headers_shown = False
     if not all_containers:
-        table.add_row("(no containers found)", *([""] * (len(fields) - 1)))
+        sections.append("(no containers found)")
     else:
-        first_group = True
-        for g in groups:
-            if not g.containers:
-                continue
-            if not first_group:
-                table.add_row(*([""] * len(fields)))  # blank spacer between groups
-            first_group = False
-            is_folded = g.prefix in folded
-            marker = "▸" if is_folded else "▾"
-            is_orphan = g.repo_root is None
-            label = f"{marker} {g.prefix}  ({len(g.containers)})"
-            if is_orphan:
-                label += "  (orphan)"
-            label_style = "bold yellow" if is_orphan else "bold cyan"
-            header_sel = selected is not None and selected == Row("repo", g.prefix)
-            gutter = "[bold cyan]▸[/] " if header_sel else "  "
-            table.add_row(
-                gutter + f"[{label_style}]{label}[/]",
-                *([""] * (len(fields) - 1)),
-                style="bold bright_white" if header_sel else None,
-            )
-            if is_folded:
-                continue
-            for c in g.containers:
-                is_sel = (
-                    selected is not None and selected.kind == "container" and selected.key == c.name
+        for group in visible_groups:
+            sections.append(repo_heading(group, selected, folded))
+            if group.prefix not in folded:
+                sections.append(
+                    repo_table(group, fields, widths, selected, show_header=not headers_shown)
                 )
-                cells: list[str] = []
-                for i, f in enumerate(fields):
-                    # `name` shows the full container name (not the
-                    # repo-prefix-stripped display name) for an orphan row,
-                    # since there is no known repo to have stripped a prefix
-                    # from — independent of whether `name` happens to be the
-                    # first column.
-                    value = c.name if (f.name == "name" and is_orphan) else f.cell(c)
-                    if i == 0:
-                        gutter = "[bold cyan]▸[/] " if is_sel else "  "
-                        value = gutter + value
-                    cells.append(value)
-                table.add_row(*cells, style="bold bright_white" if is_sel else None)
+                headers_shown = True
 
-    body: list[RenderableType] = [table, ""]
+    body: list[RenderableType] = [Group(*sections), ""]
     if overlay is not None:
         if isinstance(overlay, MenuState):
             panel = _render_menu(overlay)
