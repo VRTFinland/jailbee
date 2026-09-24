@@ -837,6 +837,30 @@ def test_check_github_insecure_global_perms(tmp_path, monkeypatch):
     assert "insecure perms" in perms.detail
 
 
+def test_check_github_reports_the_local_file_perms(tmp_path, monkeypatch):
+    from pydantic import SecretStr
+
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.config.models_agents import GithubConfig
+    from jailbee.doctor import _check_github
+    from tests.conftest import make_cfg
+
+    _set_global_yaml_perms(monkeypatch, tmp_path, 0o600)
+    cfg = make_cfg(tmp_path, container_prefix="sampleapp").model_copy(
+        update={"github": GithubConfig(enabled=True, token=SecretStr("ghp_local"))}
+    )
+    path = local_config_path(cfg.container_prefix)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("github:\n  token: ghp_local\n")
+    path.chmod(0o644)
+
+    results = _check_github(cfg)
+    perms = next(r for r in results if r.name == "github local config perms")
+    assert not perms.ok
+    assert f"chmod 600 {path}" in perms.detail
+    assert all("ghp_local" not in r.detail for r in results)
+
+
 # ---- egress pool checks ----
 
 

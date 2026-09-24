@@ -555,6 +555,28 @@ def test_github_token_step_emits_step_with_quoted_token(tmp_path):
     assert "SecretStr" not in step.run
 
 
+def test_github_token_step_prefers_the_local_token(tmp_path):
+    from pydantic import SecretStr
+
+    from jailbee.autostart import _github_token_step
+    from jailbee.config.models_agents import GithubConfig
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, container_prefix="sampleapp").model_copy(
+        update={
+            "github": GithubConfig(
+                enabled=True,
+                token=SecretStr("ghp_local"),
+                api_tokens={"sampleapp": SecretStr("ghp_legacy")},
+            )
+        }
+    )
+    step = _github_token_step(cfg)
+    assert step is not None
+    assert "ghp_local" in step.run
+    assert "ghp_legacy" not in step.run
+
+
 def test_github_token_not_part_of_run_autostart(tmp_path):
     """The github-token step is injected by ``inject_github_token`` (infra),
     NOT by ``run_autostart`` — so --no-autostart can skip user steps without

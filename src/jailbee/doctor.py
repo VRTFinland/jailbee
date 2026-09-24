@@ -1755,9 +1755,9 @@ def _check_github(cfg: Config) -> list[CheckResult]:
     """Doctor checks for the github integration.
 
     Empty list when github.enabled=false. One info-level CheckResult
-    when enabled but this repo's container_prefix has no token entry
+    when enabled but this repo's container_prefix has no token
     (legitimate "this repo doesn't use gh" state). Four checks when a
-    non-empty token is in scope: global.yaml perms, non-empty value, PAT
+    non-empty token is in scope: token-file perms, non-empty value, PAT
     shape heuristic, and an informational reminder that the token should be
     read-only — jailbee never probes GitHub to verify effective fine-grained
     PAT permissions, so this is guidance, not verification.
@@ -1768,7 +1768,9 @@ def _check_github(cfg: Config) -> list[CheckResult]:
     if not cfg.github.enabled:
         return []
 
-    secret = cfg.github.api_tokens.get(cfg.container_prefix)
+    from jailbee.config.local_layer import local_config_path
+
+    secret = cfg.github.token_for(cfg.container_prefix)
     if secret is None:
         return [
             CheckResult(
@@ -1777,8 +1779,8 @@ def _check_github(cfg: Config) -> list[CheckResult]:
                 detail=(
                     f"no token configured for container_prefix "
                     f"'{cfg.container_prefix}' — gh will not authenticate "
-                    f"in this repo's containers (add an entry under "
-                    f"github.api_tokens to enable)"
+                    f"in this repo's containers (set `github.token` in "
+                    f"{local_config_path(cfg.container_prefix)} to enable)"
                 ),
             ),
         ]
@@ -1787,35 +1789,27 @@ def _check_github(cfg: Config) -> list[CheckResult]:
 
     results: list[CheckResult] = []
 
-    gy = default_global_config_path()
-    if gy.exists():
-        mode = gy.stat().st_mode & 0o777
+    def _token_file_perms(name: str, path: Path) -> CheckResult:
+        if not path.exists():
+            return CheckResult(name=name, ok=False, detail=f"{path} does not exist")
+        mode = path.stat().st_mode & 0o777
         if mode & 0o077 != 0:
-            results.append(
-                CheckResult(
-                    name="github global.yaml perms",
-                    ok=False,
-                    detail=(
-                        f"~/.config/jailbee/global.yaml has insecure perms "
-                        f"(0{mode:03o}) — run `chmod 600 {gy}`"
-                    ),
-                )
+            return CheckResult(
+                name=name,
+                ok=False,
+                detail=f"{path} has insecure perms (0{mode:03o}) — run `chmod 600 {path}`",
             )
-        else:
-            results.append(
-                CheckResult(
-                    name="github global.yaml perms",
-                    ok=True,
-                    detail="0600",
-                )
+        return CheckResult(name=name, ok=True, detail="0600")
+
+    if cfg.github.token is not None:
+        results.append(
+            _token_file_perms(
+                "github local config perms", local_config_path(cfg.container_prefix)
             )
+        )
     else:
         results.append(
-            CheckResult(
-                name="github global.yaml perms",
-                ok=False,
-                detail=f"{gy} does not exist",
-            )
+            _token_file_perms("github global.yaml perms", default_global_config_path())
         )
 
     token = secret.get_secret_value().strip()
@@ -1824,7 +1818,7 @@ def _check_github(cfg: Config) -> list[CheckResult]:
             CheckResult(
                 name="github token non-empty",
                 ok=False,
-                detail=f"github.api_tokens['{cfg.container_prefix}'] is empty",
+                detail=f"github token for '{cfg.container_prefix}' is empty",
             )
         )
         return results
