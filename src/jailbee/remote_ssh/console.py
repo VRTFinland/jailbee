@@ -433,7 +433,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
                 _error("remote dashboard is disabled")
                 continue
             completed = _run_foreground(
-                [sys.executable, "-m", "jailbee", "dashboard", "--registered-only"],
+                [sys.executable, "-m", "jailbee", "dashboard"],
                 current.root,
             )
             last_status = _returncode(completed)

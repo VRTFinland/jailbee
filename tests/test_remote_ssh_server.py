@@ -337,7 +337,7 @@ def test_interactive_routes_require_pty(command, child, configured, repo):
 @pytest.mark.parametrize(
     ("command", "arguments", "requires_pty", "has_repo"),
     [
-        ("dashboard", ("dashboard", "--registered-only"), True, False),
+        ("dashboard", ("dashboard",), True, False),
         ("shell", ("_remote-console",), True, False),
         ("shell --repo project", ("_remote-console", "--repo", "project"), True, True),
         ("--repo project ls --all", ("ls", "--all"), False, True),

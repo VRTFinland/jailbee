@@ -398,7 +398,7 @@ def test_help_hides_the_dashboard_row_when_dashboard_is_disabled(
         assert command in output
 
 
-def test_dashboard_runs_registered_only_and_returns_to_prompt(
+def test_dashboard_runs_and_returns_to_prompt(
     console_env: ConsoleEnv, mocker
 ) -> None:
     run = mocker.patch(
@@ -409,7 +409,7 @@ def test_dashboard_runs_registered_only_and_returns_to_prompt(
 
     assert console.run("project") == 7
     run.assert_called_once_with(
-        [sys.executable, "-m", "jailbee", "dashboard", "--registered-only"],
+        [sys.executable, "-m", "jailbee", "dashboard"],
         cwd=console_env.repo_root,
         check=False,
     )

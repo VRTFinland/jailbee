@@ -68,9 +68,10 @@ def test_control_whitespace_is_rejected_before_empty_routing(raw: str) -> None:
         route(raw, RemoteSSHConfig())
 
 
-def test_dashboard_is_registered_only_and_requires_pty() -> None:
+def test_dashboard_takes_no_arguments_and_requires_pty() -> None:
+    """Its remote form comes from the session marker `pty.py` sets, not argv."""
     result = route("dashboard", RemoteSSHConfig())
-    assert result.argv == ("dashboard", "--registered-only")
+    assert result.argv == ("dashboard",)
     assert result.requires_pty is True
 
 

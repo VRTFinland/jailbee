@@ -58,7 +58,10 @@ before editing `## Unreleased`.
   command execution require an exact-leaf allowlist or the explicit
   high-trust `full` policy. Password login, host shells, file transfer,
   forwarding are not exposed, and client environment requests (`SendEnv`)
-  are accepted but ignored — never passed to the child. `jb remote ssh
+  are accepted but ignored — never passed to the child. The remote
+  dashboard withholds what would reach the host itself: no config editor, no
+  diff pager and no GUI app launches, and every process the service starts
+  runs with `LESSSECURE=1`. `jb remote ssh
   serve` also takes one-off `--listen`/`--port`/`--dashboard`/`--shell`/
   `--exec`/`--commands`/`--allow` overrides for trying a policy without
   editing `global.yaml`; the systemd service never passes them.

@@ -16,6 +16,8 @@ from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
+from jailbee.remote_ssh.session import child_environment
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
@@ -348,8 +350,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     # execve — even os.environ.copy() — could deadlock on a lock another
     # thread held at fork time. The child must do nothing but
     # chdir + execve + _exit.
-    env = os.environ.copy()
-    env["TERM"] = term
+    env = child_environment(os.environ, term=term)
     pid, master = pty.fork()
     if pid == 0:
         try:
@@ -416,7 +417,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
+            env=child_environment(os.environ),
             start_new_session=True,
         )
     )

@@ -2271,7 +2271,7 @@ remote:
 |---|---|---|---|
 | `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
-| `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts `jailbee dashboard --registered-only` and requires a PTY. |
+| `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
 | `shell` | bool | `false` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Requires `commands.mode` to be `allowlist` or `full`. |
 | `exec` | bool | `false` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. Requires `commands.mode` to be `allowlist` or `full`. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `disabled` | Policy shared by the interactive console and one-shot execution. `disabled` rejects JailBee commands; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts every public leaf. It does not control the separately enabled dashboard entry point. |

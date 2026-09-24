@@ -300,7 +300,7 @@ def route(
             raise RouteError("dashboard does not accept remote arguments")
         if not config.dashboard:
             raise RouteError("remote dashboard is disabled")
-        return Route("dashboard", ("dashboard", "--registered-only"), None, None, True)
+        return Route("dashboard", ("dashboard",), None, None, True)
 
     if argv[0] == "shell":
         if not config.shell:

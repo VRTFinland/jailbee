@@ -3246,14 +3246,6 @@ def dashboard_cmd(
             help="Run the GUI attached to this terminal instead of detaching to the background.",
         ),
     ] = False,
-    registered_only: Annotated[
-        bool,
-        typer.Option(
-            "--registered-only",
-            hidden=True,
-            help="Use registered repositories only (internal remote launch option).",
-        ),
-    ] = False,
 ) -> None:
     """Live, auto-refreshing view of jailbee containers across all repos.
 
@@ -3268,7 +3260,6 @@ def dashboard_cmd(
             no_git=no_git,
             gui=gui,
             foreground=foreground,
-            registered_only=registered_only,
         )
     )
 
@@ -3291,7 +3282,6 @@ def tui_cmd(
             no_git=no_git,
             gui=False,
             foreground=False,
-            registered_only=False,
         )
     )
 
@@ -3321,7 +3311,6 @@ def gui_cmd(
             no_git=no_git,
             gui=True,
             foreground=foreground,
-            registered_only=False,
         )
     )
 
@@ -3333,13 +3322,24 @@ def _run_dashboard(
     no_git: bool,
     gui: bool,
     foreground: bool,
-    registered_only: bool,
 ) -> int:
-    """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend."""
+    """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend.
+
+    A remote SSH session gets the TUI in its restricted form (see
+    `dashboard.run`'s `remote`) and never the Qt one: a GUI would open on
+    the host's display, not the client's. It also shows registered repos only
+    — the server's working directory is no repo anyone chose — and skips the
+    setup offer, whose steps run on the host.
+    """
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.incus import Incus
+    from jailbee.remote_ssh.session import is_remote_session
 
-    if registered_only:
+    remote = is_remote_session()
+    if remote and gui:
+        error("The graphical dashboard is not available over remote SSH.")
+        return 2
+    if remote:
         cwd_root = None
     else:
         # Before either frontend takes the screen: this is the other command
@@ -3395,16 +3395,12 @@ def _run_dashboard(
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
-        child_command = (
-            ["dashboard", "--gui", "--foreground", "--registered-only"]
-            if registered_only
-            else ["gui", "--foreground"]
-        )
         child_argv = [
             sys.executable,
             "-m",
             "jailbee",
-            *child_command,
+            "gui",
+            "--foreground",
             "--git-interval",
             str(git_interval),
         ]
@@ -3431,6 +3427,7 @@ def _run_dashboard(
         interval=interval if interval is not None else 3.0,
         git_interval=git_interval,
         no_git=no_git,
+        remote=remote,
     )
 
 

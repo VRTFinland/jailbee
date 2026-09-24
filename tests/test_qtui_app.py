@@ -1223,10 +1223,11 @@ def test_on_new_container_launches_in_a_terminal(mocker):
     assert action.argv == [
         "jailbee",
         "new",
-        "feat-x",
-        "main",
         "--config",
         "/repo/.jailbee/config.yaml",
+        "--",
+        "feat-x",
+        "main",
     ]
     assert action.cwd == Path("/repo")
     popen.assert_called_once()
@@ -1255,7 +1256,7 @@ def test_on_new_container_omits_config_and_runs_a_scratch_repo_in_its_root(mocke
     controller.on_new_container("s")
 
     action = resolve.call_args.args[0]
-    assert action.argv == ["jailbee", "new", "feat-x", "main"]
+    assert action.argv == ["jailbee", "new", "--", "feat-x", "main"]
     assert action.cwd == Path("/scratch")
     assert popen.call_args.kwargs["cwd"] == Path("/scratch")
 

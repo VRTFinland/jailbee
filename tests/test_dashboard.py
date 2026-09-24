@@ -718,6 +718,30 @@ def test_action_menu_lists_every_registry_app():
     assert ("Launch figma", "figma") in actions
 
 
+def test_remote_action_menu_offers_no_app_launches():
+    """A GUI app would open on the host's display, not the SSH client's."""
+    apps = _apps("ide", "chrome", "figma")
+    local = dashboard.menu_actions(_ctx(apps=apps))
+    remote = dashboard.menu_actions(_ctx(apps=apps, remote=True))
+
+    assert {verb for _label, verb in local} >= {"ide", "chrome", "figma"}
+    assert not {verb for _label, verb in remote} & {"ide", "chrome", "figma"}
+    assert [a for a in local if a[1] not in {"ide", "chrome", "figma"}] == remote
+
+
+def test_remote_quick_keys_refuse_gui_apps_and_say_why():
+    group = dashboard.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
+    group.apps = _apps("ide", "chrome")
+
+    assert dashboard.quick_verb([group], "alpha-x", "action:ide") == "ide"
+    assert dashboard.quick_verb([group], "alpha-x", "action:ide", remote=True) is None
+    assert dashboard.quick_verb([group], "alpha-x", "action:chrome", remote=True) is None
+    assert dashboard.quick_verb([group], "alpha-x", "action:shell", remote=True) == "shell"
+    note = dashboard.quick_reject_note([group], "alpha-x", "action:ide", remote=True)
+    assert note == "GUI apps are not available over remote SSH"
+    assert dashboard.open_menu([group], "alpha-x", remote=True) is not None
+
+
 def test_action_menu_renders_a_builtins_description_as_its_label():
     """A builtin's `AppSpec.description` (e.g. "JetBrains idea") is real,
     user-facing English — the bare verb the earlier lowercase labels used is
@@ -1387,6 +1411,23 @@ def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
     # must not be pinned to one.
     assert "cwd" not in viewer.kwargs
     run.assert_not_called()  # the paged path replaces the plain run entirely
+
+
+def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
+    """`less`'s `!`, `v` and `|` would run on the host. A remote diff is
+    printed and paused on instead, and no pager process exists at all."""
+    mocker.patch.object(dashboard, "pager_argv", return_value=["less", "-R"])
+    popen = mocker.patch.object(dashboard.subprocess, "Popen")
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = dashboard._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x", remote=True)
+
+    assert rc == 0
+    popen.assert_not_called()
+    assert run.call_args.args[0][:4] == ["jailbee", "git", "diff", "alpha-x"]
+    wait.assert_called_once_with()
 
 
 def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
@@ -2517,10 +2558,11 @@ def test_new_container_argv_passes_the_base_positionally(tmp_path):
     assert dashboard.new_container_argv(target, "dashboard-fixes", "config-improvements") == [
         "jailbee",
         "new",
-        "dashboard-fixes",
-        "config-improvements",
         "--config",
         str(config_path),
+        "--",
+        "dashboard-fixes",
+        "config-improvements",
     ]
 
 
@@ -2528,7 +2570,34 @@ def test_new_container_argv_omits_config_for_a_scratch_repo(tmp_path):
     """No file to point `--config` at — the caller runs it in the repo root."""
     argv = dashboard.new_container_argv(dashboard.RepoTarget(tmp_path, None), "feat/x", "main")
 
-    assert argv == ["jailbee", "new", "feat/x", "main"]
+    assert argv == ["jailbee", "new", "--", "feat/x", "main"]
+
+
+@pytest.mark.parametrize("answer", ["--mount", "--yes", "--config=/tmp/evil.yaml", "-m"])
+def test_new_container_argv_never_reads_a_typed_answer_as_an_option(tmp_path, answer):
+    """Branch and base are typed free text. Without `--`, a branch "--mount"
+    would give the container the host repo read-write."""
+    for branch, base in ((answer, "main"), ("feat", answer)):
+        argv = dashboard.new_container_argv(dashboard.RepoTarget(tmp_path, None), branch, base)
+        separator = argv.index("--")
+        assert argv[separator + 1 :] == [branch, base]
+
+
+def test_new_container_argv_separator_really_stops_option_parsing(tmp_path):
+    """Parse with the real `jailbee new` command, so the `--` is proven to be
+    honoured by Click rather than merely present in the list."""
+    from typer.main import get_command
+
+    from jailbee.cli import app as cli_app
+
+    argv = dashboard.new_container_argv(dashboard.RepoTarget(tmp_path, None), "--mount", "--yes")
+    command = get_command(cli_app).commands["new"]  # type: ignore[attr-defined]
+
+    ctx = command.make_context("new", argv[2:])
+
+    assert ctx.params["mount"] is False
+    assert ctx.params["yes"] is False
+    assert ctx.params["container_branch"] == "--mount"
 
 
 def test_new_container_argv_carries_no_yes_flag(tmp_path):
@@ -2944,44 +3013,62 @@ def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
     assert run.call_args.kwargs["cwd_root"] is None
 
 
-def test_registered_only_dashboard_never_loads_the_cwd(mocker) -> None:
+def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkeypatch) -> None:
+    """A remote SSH session: registered repos only, no setup offer (its steps
+    run on the host), and `run` told it is remote."""
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
-    result = CliRunner().invoke(app, ["dashboard", "--registered-only"])
+    result = CliRunner().invoke(app, ["dashboard"])
 
     assert result.exit_code == 0
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None
+    assert run.call_args.kwargs["remote"] is True
 
 
-def test_registered_only_dashboard_flag_is_hidden_from_help() -> None:
-    result = CliRunner().invoke(app, ["dashboard", "--help"])
+def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=OSError("no repo"))
+    mocker.patch("jailbee.cli._advise_setup")
+    run = mocker.patch("jailbee.dashboard.run", return_value=0)
+    mocker.patch("jailbee.incus.Incus")
+
+    result = CliRunner().invoke(app, ["dashboard"])
 
     assert result.exit_code == 0
-    assert "--registered-only" not in result.output
+    assert run.call_args.kwargs["remote"] is False
 
 
-def test_registered_only_dashboard_gui_detach_reexecs_registered_only(mocker) -> None:
-    load = mocker.patch("jailbee.config.load_repo_config")
-    advise = mocker.patch("jailbee.cli._advise_setup")
+@pytest.mark.parametrize("argv", [["dashboard", "--gui"], ["gui"], ["gui", "--foreground"]])
+def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -> None:
+    """A Qt window would open on the host's display, not the SSH client's."""
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    mocker.patch("jailbee.cli._advise_setup")
     mocker.patch("jailbee.incus.Incus")
     preflight = mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
     popen = mocker.patch("subprocess.Popen")
 
-    result = CliRunner().invoke(app, ["dashboard", "--registered-only", "--gui"])
+    result = CliRunner().invoke(app, argv)
 
-    assert result.exit_code == 0
-    load.assert_not_called()
-    advise.assert_not_called()
-    preflight.assert_called_once_with(None)
+    assert result.exit_code == 2
+    assert "not available over remote SSH" in result.output
+    preflight.assert_not_called()
     qrun.assert_not_called()
-    argv = popen.call_args.args[0]
-    assert argv[3:7] == ["dashboard", "--gui", "--foreground", "--registered-only"]
+    popen.assert_not_called()
+
+
+def test_registered_only_flag_is_gone() -> None:
+    """The remote form is decided by the session marker, not a flag a caller
+    could forget to pass."""
+    result = CliRunner().invoke(app, ["dashboard", "--registered-only"])
+
+    assert result.exit_code == 2
 
 
 def test_dashboard_command_lets_a_programming_error_out_of_the_probe(mocker):
@@ -3394,7 +3481,11 @@ def _mock_terminal(mocker):
 
 
 def _drive_run(
-    mocker, key_sequence: list[bytes], groups: list[dashboard.RepoGroup] | None = None
+    mocker,
+    key_sequence: list[bytes],
+    groups: list[dashboard.RepoGroup] | None = None,
+    *,
+    remote: bool = False,
 ) -> int:
     """Run the real ``dashboard.run()`` key loop with a fake terminal.
 
@@ -3415,7 +3506,9 @@ def _drive_run(
     padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
 
-    return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+    return dashboard.run(
+        mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True, remote=remote
+    )
 
 
 def test_run_gathers_a_base_snapshot_before_taking_the_screen(mocker):
@@ -3636,6 +3729,24 @@ def test_run_dispatches_e_and_shift_e_to_edit_config(mocker, tmp_path):
     assert argvs[0][:3] == ["jailbee", "config", "edit"]
     assert "--global" not in argvs[0]
     assert "--global" in argvs[1]
+
+
+def test_remote_run_never_opens_the_config_editor(mocker, tmp_path):
+    """Over remote SSH, `e`/`E` would hand the client an editor for host
+    mounts and for `remote.ssh` itself — the policy that is meant to bound
+    that very client. Nothing is spawned; a notice says why."""
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
+    )
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"e", b"E"], groups=[group], remote=True)
+
+    assert rc == 0
+    run.assert_not_called()
+    notices = [call.kwargs.get("notice") for call in render.call_args_list]
+    assert dashboard.REMOTE_CONFIG_EDIT_NOTE in notices
 
 
 def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):

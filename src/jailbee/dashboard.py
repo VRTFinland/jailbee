@@ -589,6 +589,9 @@ class MenuContext:
     ``apps`` mirrors the repo's GUI app registry (sourced from
     ``RepoGroup.apps``) rather than two integration switches — one
     "Launch <label>" entry appears per :class:`AppMenuEntry`, in order.
+
+    ``remote`` is a remote SSH session (see :func:`run`), which gets no app
+    launches: a GUI app would open on the host's display, not the client's.
     """
 
     state: str
@@ -602,6 +605,7 @@ class MenuContext:
     has_job: bool = False
     job_running: bool = False
     git_status: GitStatus | None = None
+    remote: bool = False
 
 
 # The GitStatus cell values that mean "there is provably nothing to do". Every
@@ -728,7 +732,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
             ("Attach tmux", "tmux"),
             ("Open shell", "shell"),
         ]
-        for app in ctx.apps:
+        for app in [] if ctx.remote else ctx.apps:
             actions.append((f"Launch {app.label}", app.verb))
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
@@ -977,7 +981,9 @@ def binding_for_token(token: str) -> KeyBinding | None:
     return next((b for b in KEY_BINDINGS if b.token == token), None)
 
 
-def quick_verb(groups: list[RepoGroup], name: str | None, token: str) -> str | None:
+def quick_verb(
+    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False
+) -> str | None:
     """The verb a quick-action key should dispatch for ``name``, else None.
 
     None covers both "not an action key" and "that action isn't offered here".
@@ -988,7 +994,7 @@ def quick_verb(groups: list[RepoGroup], name: str | None, token: str) -> str | N
     binding = binding_for_token(token)
     if binding is None or binding.verb is None:
         return None
-    offered = {verb for _label, verb in actions_for_container(groups, name)}
+    offered = {verb for _label, verb in actions_for_container(groups, name, remote=remote)}
     return binding.verb if binding.verb in offered else None
 
 
@@ -1014,14 +1020,16 @@ class MenuState:
 Overlay = MenuState | SettingsState | Literal["help"]
 
 
-def open_menu(groups: list[RepoGroup], name: str | None) -> MenuState | None:
+def open_menu(
+    groups: list[RepoGroup], name: str | None, *, remote: bool = False
+) -> MenuState | None:
     """The menu for ``name``, or None when there is nothing to show.
 
     None covers every no-actions case — unknown container, nothing selected,
     or a view-only (orphan) group. Callers surface :func:`view_only_note`
     instead, because an empty menu frame is indistinguishable from a broken one.
     """
-    actions = actions_for_container(groups, name)
+    actions = actions_for_container(groups, name, remote=remote)
     if name is None or not actions:
         return None
     return MenuState(name, actions)
@@ -1086,12 +1094,15 @@ def _render_help() -> RenderableType:
     )
 
 
-def quick_reject_note(groups: list[RepoGroup], name: str | None, token: str) -> str:
+def quick_reject_note(
+    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False
+) -> str:
     """Why a quick-action key did nothing, as one user-facing sentence.
 
     A key that silently declines is indistinguishable from a broken one, and
     the reason matters: a view-only row explains itself differently from a
-    stopped container or a repo with the IDE turned off.
+    stopped container or a repo with the IDE turned off — and from a remote
+    session, which never launches GUI apps (see :attr:`MenuContext.remote`).
     """
     if name is None:
         return "No container is selected"
@@ -1099,6 +1110,8 @@ def quick_reject_note(groups: list[RepoGroup], name: str | None, token: str) -> 
     if note is not None:
         return note
     binding = binding_for_token(token)
+    if remote and binding is not None and binding.verb in _GUI_VERBS:
+        return "GUI apps are not available over remote SSH"
     what = f"'{binding.hint}' ({binding.label})" if binding is not None else f"'{token}'"
     return f"{what} is not available for '{name}'"
 
@@ -1317,12 +1330,15 @@ def terminal_title_scope(stream: TextIO) -> Iterator[None]:
         stream.flush()
 
 
-def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tuple[str, str]]:
+def actions_for_container(
+    groups: list[RepoGroup], name: str | None, *, remote: bool = False
+) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
 
     Single source of truth shared by the TUI action menu, the Qt table view,
     and the Qt card view. Returns ``[]`` for an unknown container or a
-    view-only (orphan) group.
+    view-only (orphan) group. ``remote`` is :attr:`MenuContext.remote`; the
+    Qt views never pass it, since a remote session never gets them.
     """
     group = _find_group(groups, name)
     if group is None or name is None:
@@ -1352,6 +1368,7 @@ def actions_for_container(groups: list[RepoGroup], name: str | None) -> list[tup
             # alive — that is what makes `--follow` the right form.
             job_running=container.job_phase is not None and not job_clearable,
             git_status=container.git_status,
+            remote=remote,
         )
     )
 
@@ -1419,6 +1436,9 @@ def new_container_reject_note_for_prefix(groups: list[RepoGroup], prefix: str) -
     if RepoTarget.of(group) is not None:
         return None
     return f"'{group.prefix}' has no repo directory — nothing to create against"
+
+
+REMOTE_CONFIG_EDIT_NOTE = "Config editing is not available over remote SSH"
 
 
 def config_edit_reject_note_for_prefix(
@@ -1510,8 +1530,12 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     No `--yes`: `jailbee new` asks about reusing an existing branch and about
     the branch-autostart escalation, and both front-ends give it a terminal to
     ask in rather than answering for the user.
+
+    Both answers are typed free text, so they follow `--`: a branch named
+    `--mount` or `--yes` is refused as a branch name by `jailbee new`, never
+    read as the option it spells.
     """
-    return ["jailbee", "new", branch, base, *target.flags()]
+    return ["jailbee", "new", *target.flags(), "--", branch, base]
 
 
 # Verbs routed through the CLI's attach guard, which asks "continue anyway?"
@@ -1529,6 +1553,9 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
 # version would need a real call site with a `Config` in hand before it is
 # worth adding.
 ATTACH_VERBS: frozenset[str] = frozenset({"shell", "tmux", "ide", "chrome", "firefox", "browser"})
+
+# The attach verbs that open a window rather than a terminal.
+_GUI_VERBS: frozenset[str] = ATTACH_VERBS - {"shell", "tmux"}
 
 # The verb prefix `_app_menu_verb` composes for a config-sourced `apps:`
 # entry (see its docstring). These are attach verbs too — the app launches
@@ -1658,7 +1685,7 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     return producer.wait()
 
 
-def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
+def _dispatch_action(target: RepoTarget, verb: str, name: str, *, remote: bool = False) -> int:
     """Run ``jailbee <verb> <name>`` against ``target``; return its exit code.
 
     The single dispatch point shared by the inline action menu and the
@@ -1681,6 +1708,11 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
     and nothing at all for the rest. A missing or unstartable pager degrades to
     the pause rather than losing the output.
 
+    A remote session (``remote``) never gets a pager: every pager worth the
+    name can run commands (`less`'s ``!``, ``v`` and ``|``, `more`'s ``!``),
+    and here they would run on the host. The paged verbs fall back to the
+    keypress pause instead, and the client's own scrollback does the paging.
+
     Raises ``OSError`` (uncaught here) if ``target.cwd()`` has disappeared out
     from under the dispatch — the caller (:func:`run`'s ``dispatch``) turns
     that into a notice naming the directory rather than letting it take the
@@ -1691,6 +1723,8 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str) -> int:
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
+    if style == "paged" and remote:
+        style = "output"
     if style == "paged":
         pager = pager_argv()
         if pager is not None:
@@ -1734,6 +1768,7 @@ def run(
     interval: float,
     git_interval: float,
     no_git: bool,
+    remote: bool = False,
 ) -> int:
     """Main dashboard loop.
 
@@ -1741,6 +1776,12 @@ def run(
     publishes it under a lock; this (main) thread only renders the latest
     snapshot and handles input on a fast timer, so keystrokes stay responsive
     even while a gather (which blocks on incus/git) is in flight.
+
+    ``remote`` is a remote SSH session, whose user may reach containers and
+    the repos' git bridge but not the host itself. Everything here that runs
+    on the host beyond that is withheld: the config editor (a config decides
+    host mounts and the SSH policy itself), the pager (which can start a
+    shell) and GUI app launches (which open on the host's display).
     """
     from rich.live import Live
 
@@ -1963,7 +2004,7 @@ def run(
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
                 try:
-                    rc = foreground(lambda: _dispatch_action(repo, verb, target))
+                    rc = foreground(lambda: _dispatch_action(repo, verb, target, remote=remote))
                 except OSError:
                     _report_vanished_repo(repo)
                     return
@@ -2162,7 +2203,7 @@ def run(
                         persist_view_state(ViewState(enabled, folded))
                     else:
                         container = container_of(selected)
-                        overlay = open_menu(groups, container)
+                        overlay = open_menu(groups, container, remote=remote)
                         if overlay is None and container is not None:
                             note = view_only_note(groups, container)
                             set_notice(note or f"No actions available for '{container}'")
@@ -2179,13 +2220,15 @@ def run(
                     overlay = open_settings_overlay()
                 elif key.startswith("action:"):
                     container = container_of(selected)
-                    verb = quick_verb(groups, container, key)
+                    verb = quick_verb(groups, container, key, remote=remote)
                     if verb is not None and container is not None:
                         dispatch(container, verb)
                     else:
-                        set_notice(quick_reject_note(groups, container, key))
+                        set_notice(quick_reject_note(groups, container, key, remote=remote))
                 elif key == "new":
                     create_container()
+                elif key in ("config-edit", "config-edit-global") and remote:
+                    set_notice(REMOTE_CONFIG_EDIT_NOTE)
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "refresh":

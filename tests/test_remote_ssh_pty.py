@@ -239,7 +239,11 @@ def test_fork_child_executes_literal_argv_cwd_and_only_trusted_env(spec, boundar
     with pytest.raises(ChildExited):
         asyncio.run(run_child(SSHProcess("xterm"), spec))
     chdir.assert_called_once_with(spec.cwd)
-    execute.assert_called_once_with(spec.argv[0], spec.argv, {"PATH": "/bin", "TERM": "xterm"})
+    execute.assert_called_once_with(
+        spec.argv[0],
+        spec.argv,
+        {"PATH": "/bin", "TERM": "xterm", "JAILBEE_REMOTE_SSH": "1", "LESSSECURE": "1"},
+    )
     leave.assert_called_once_with(127)
     assert runner.os.environ["TERM"] == "old"
 
@@ -255,14 +259,15 @@ def test_child_env_is_built_before_fork_not_in_the_child(spec, boundary, monkeyp
     called.
     """
     prepared = False
+    build = runner.child_environment
 
-    class RecordingEnviron(dict):
-        def copy(self):
-            nonlocal prepared
-            prepared = True
-            return dict(self)
+    def recording_build(*args, **kwargs):
+        nonlocal prepared
+        prepared = True
+        return build(*args, **kwargs)
 
-    monkeypatch.setattr(runner.os, "environ", RecordingEnviron({"PATH": "/bin"}))
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin"})
+    monkeypatch.setattr(runner, "child_environment", recording_build)
 
     def fork():
         assert prepared, "env must be built before pty.fork(), not in the forked child"
@@ -366,7 +371,7 @@ def test_pipe_argv_env_and_separate_bounded_streams(spec, boundary, monkeypatch)
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={"PATH": "/bin"},
+        env={"PATH": "/bin", "JAILBEE_REMOTE_SSH": "1", "LESSSECURE": "1"},
         start_new_session=True,
     )
     assert process.stdout.data == b"output"

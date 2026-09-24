@@ -48,11 +48,14 @@ port forward, and securing that route are the operator's responsibility.
 JailBee does not configure TLS, a firewall, a VPN or NAT for this service.
 
 Entry points are deliberately narrow, but they are not read-only. In
-particular, the remote dashboard runs the existing dashboard with registered
-repos only and exposes its normal actions. Creating, starting, stopping or
-destroying containers and moving commits can therefore affect host state.
-GUI actions may fail when the systemd user service has no graphical-session
-environment; there is no special remote GUI transport.
+particular, the remote dashboard shows registered repos only and exposes its
+container and git-bridge actions: creating, starting, stopping or destroying
+containers and moving commits can therefore affect host state. It withholds
+what would reach the host beyond that — the config editor (a config decides
+host mounts and this very policy), the diff pager (a pager can start a
+shell) and GUI app launches (they would open on the host's display). Every
+process the service starts is marked as remote (`JAILBEE_REMOTE_SSH=1`,
+inherited by everything it starts in turn) and runs with `LESSSECURE=1`.
 
 `commands.mode: full` is a high-trust setting. It grants every current public
 JailBee command and automatically grants public commands added by future
