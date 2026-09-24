@@ -125,6 +125,11 @@ tree, `.git` included, so a restricted session may neither create one nor
 enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
 mount-mode container, and clone-mode containers are unaffected.
 
+A server imports its routing and session marking when it starts, so one left
+running across an upgrade would enforce the old version's rules. It
+therefore restarts itself when the installed version changes, before
+serving another session (see [Installation](installation.md#optional-ssh-service)).
+
 `remote.ssh.restrict_host: false` (or `jb remote ssh serve
 --no-restrict-host` for one run) lifts every host restriction above and in
 the dashboard paragraph at once: no argument check, no session marker, no

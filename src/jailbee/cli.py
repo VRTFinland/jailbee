@@ -584,6 +584,30 @@ def _advise_update() -> None:
         return
 
 
+def _advise_ssh_restart() -> None:
+    """Print a hint when the SSH service predates the installed JailBee.
+
+    Same contract as `_advise_upgrade`. A service that records its version
+    restarts itself on upgrade; this is for the one that cannot — started by
+    a JailBee from before that — which otherwise keeps enforcing old rules
+    while every session runs the new CLI. Not shown inside a remote session,
+    which can do nothing about it.
+    """
+    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.tui import hint
+
+    try:
+        if is_remote_session():
+            return
+        from jailbee.remote_ssh import service
+
+        reason = service.stale_service_reason()
+        if reason is not None:
+            hint([reason])
+    except Exception:  # advice is a courtesy; must never fail the command
+        return
+
+
 def _setup_offer_allowed() -> bool:
     """True when jailbee may stop and *ask* about the missing setup steps.
 
@@ -1468,6 +1492,7 @@ def list_cmd(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_ssh_restart()
     _advise_update()
     # `--format json` is for a parser, terminal or not: never stop to ask there.
     _advise_setup(offer=fmt == "table")
@@ -2285,6 +2310,7 @@ def new_cmd(
     # ask for — a rebuilt base image, an applied profile set — has now had its
     # chance to happen, and it is still ahead of the container itself.
     _advise_upgrade(cfg)
+    _advise_ssh_restart()
     _advise_update()
 
     # Register this repo with the refresh timer and resolve the pool
@@ -3216,6 +3242,7 @@ def shell(
 
     cfg = _load_or_exit(config)
     _advise_upgrade(cfg)
+    _advise_ssh_restart()
     _advise_update()
     _advise_setup()
     incus, name = _resolve_attachable(cfg, name, force=force, attach_cmd="shell")

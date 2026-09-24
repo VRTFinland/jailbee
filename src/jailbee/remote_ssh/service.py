@@ -22,6 +22,7 @@ from jailbee.remote_ssh.keys import (
     read_authorized_keys,
     ssh_paths,
 )
+from jailbee.remote_ssh.running import installed_version, running_servers
 from jailbee.systemd import systemd_user_dir, write_if_changed
 
 SSH_SERVICE = "jailbee-ssh.service"
@@ -122,6 +123,58 @@ def _systemctl_probe(action: str) -> tuple[bool, str | None]:
     return result.returncode == 0, None
 
 
+def _main_pid() -> int | None:
+    """The running service's main pid, or None when it is not running."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", "--property=MainPID", "--value", SSH_SERVICE],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    try:
+        pid = int((result.stdout or "").strip())
+    except ValueError:
+        return None
+    return pid or None
+
+
+def stale_service_reason(installed: str | None = None) -> str | None:
+    """Why the running SSH service should be restarted, or None when it need not.
+
+    A service started before the installed JailBee keeps its old routing and
+    session marking (see `remote_ssh.running`). One that records itself
+    restarts on its own; this catches the rest — above all a service started
+    by a JailBee from before that check existed, which leaves no record.
+
+    Costs no subprocess in the common case: without the unit file there is no
+    service, and a live record of the installed version means the service
+    either is current or will restart itself. Only otherwise is systemd asked
+    for the service's pid.
+    """
+    if not (systemd_user_dir() / SSH_SERVICE).is_file():
+        return None
+    installed = installed if installed is not None else installed_version()
+    servers = running_servers()
+    if any(server.version == installed for server in servers.values()):
+        return None
+    pid = _main_pid()
+    if pid is None:
+        return None
+    server = servers.get(pid)
+    running = (
+        f"JailBee {server.version}"
+        if server is not None
+        else "a JailBee older than the one that restarts itself on upgrade"
+    )
+    return (
+        f"The SSH service (pid {pid}) is still running {running}, and enforces its "
+        f"rules rather than {installed}'s. Restart it: jb remote ssh restart"
+    )
+
+
 def _entrypoints(config: RemoteSSHConfig) -> tuple[str, ...]:
     return tuple(
         name
@@ -161,6 +214,10 @@ def status() -> ServiceStatus:
         warn("The SSH service is not enabled.")
     if not active:
         warn("The SSH service is not active.")
+    else:
+        stale = stale_service_reason()
+        if stale is not None:
+            warn(stale)
 
     try:
         global_config, _warnings = load_global_config(default_global_config_path())

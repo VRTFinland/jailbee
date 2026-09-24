@@ -73,7 +73,9 @@ before editing `## Unreleased`.
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/
   `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
   overrides for trying a policy without editing `global.yaml`; the systemd
-  service never passes them.
+  service never passes them. The service restarts itself when JailBee is
+  upgraded under it (checked on each connection and every 30 seconds), so it
+  never keeps enforcing an older version's rules.
 
 - **Host-gated GitHub issue management: containers stage issue actions, a
   human applies them.** An in-container agent can now create, edit, comment

@@ -234,7 +234,20 @@ sudo loginctl enable-linger "$USER"
 ```
 
 After changing `listen` or `port`, run `jb remote ssh restart`; a running
-listener cannot move itself. Entry-point and command-policy edits apply to a
+listener cannot move itself.
+
+Upgrading JailBee needs no restart: the service compares the installed
+version with the one it started from on every new connection and every 30
+seconds, and on a difference it tells the connecting client to reconnect,
+hangs up its sessions and exits with status 75, which the unit's
+`Restart=on-failure` turns into a restart on the new version (background
+jobs survive, as with any restart). The journal records both versions. A
+service started by a JailBee from before this check cannot notice an
+upgrade, and keeps enforcing its old rules while every session runs the new
+CLI — `jb ls`, `jb new`, `jb shell` and `jb remote ssh status` say so and
+name `jb remote ssh restart`, which this one time is needed by hand. The
+startup log line `host restrictions: on` is new with the restricted mode, so
+its presence shows a current server. Entry-point and command-policy edits apply to a
 new SSH session without a restart. If access fails, keep the listener on
 loopback, run `jb remote ssh status`, validate `global.yaml`, and inspect the
 journal. `jb remote ssh serve` starts the same listener in the foreground for

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import asyncssh
 
+from jailbee import __version__
 from jailbee.config import ConfigError
 from jailbee.db import state_dir
 from jailbee.global_config import default_global_config_path, load_global_config
@@ -27,12 +28,62 @@ from jailbee.remote_ssh.router import (
     is_host_command,
     route,
 )
+from jailbee.remote_ssh.running import clear_running, installed_version, record_running
 from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
 
 log = logging.getLogger(__name__)
+
+
+# Exit status of a server that stopped because JailBee was upgraded under it:
+# non-zero, so the unit's `Restart=on-failure` starts it again on the new code
+# (EX_TEMPFAIL — the stop is temporary by design).
+SERVICE_UPDATED_EXIT = 75
+
+
+class ServiceUpdatedError(RuntimeError):
+    """The server stopped because the installed JailBee version changed."""
+
+    def __init__(self, running: str, installed: str) -> None:
+        super().__init__(f"JailBee was updated from {running} to {installed}")
+        self.running = running
+        self.installed = installed
+
+
+class UpdateWatch:
+    """Notices that JailBee was upgraded under this server, and stops it.
+
+    A running server keeps the routing and session-marking code it imported
+    at startup; left running across an upgrade it would start sessions of the
+    new CLI without the marker that CLI's remote restrictions key on. So the
+    installed version is compared with ``running`` on every new connection
+    and on a timer (`serve_async`), and the first difference stops the server
+    for the unit to restart. See `remote_ssh.running`.
+    """
+
+    def __init__(
+        self,
+        running: str,
+        stop: Callable[[], None],
+        installed: Callable[[], str] | None = None,
+    ) -> None:
+        self.running = running
+        self.replaced_by: str | None = None
+        self._stop = stop
+        self._installed = installed
+
+    def changed(self) -> str | None:
+        """The version that replaced ``running``, or None while it has not."""
+        if self.replaced_by is None:
+            current = (self._installed or installed_version)()
+            if current != self.running:
+                self.replaced_by = current
+        return self.replaced_by
+
+    def stop(self) -> None:
+        self._stop()
 
 
 class JailbeeSSHServer(asyncssh.SSHServer):
@@ -149,9 +200,16 @@ def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
 
 
 async def handle_process(
-    process: asyncssh.SSHServerProcess[bytes], overrides: ServeOverrides | None = None
+    process: asyncssh.SSHServerProcess[bytes],
+    overrides: ServeOverrides | None = None,
+    *,
+    update: UpdateWatch | None = None,
 ) -> None:
     """Reload channel policy, dispatch one route, and audit its final outcome.
+
+    `update`, when given, is checked first: a session never starts on a
+    server that JailBee has since been upgraded under. The client is told to
+    reconnect and the server stops, to be restarted on the new version.
 
     `overrides` (from `jb remote ssh serve`'s command-line flags) is
     reapplied on top of every fresh `load_global_config` reload below, so a
@@ -161,6 +219,18 @@ async def handle_process(
     existed. A rejected merge raises `ConfigError`, handled the same as a
     broken `global.yaml` already is, just below.
     """
+    if update is not None and (installed := update.changed()) is not None:
+        pty = process.term_type is not None
+        process.stderr.write(
+            _server_text(
+                f"JailBee was updated to {installed}; the SSH service is restarting. "
+                f"Reconnect in a moment.\n",
+                pty=pty,
+            )
+        )
+        process.exit(SERVICE_UPDATED_EXIT)
+        update.stop()
+        return
     kind, prefix, path = "unknown", None, None
     decision = "rejected"
     reason = "completed"
@@ -363,7 +433,12 @@ def _shut_down(listener: asyncssh.SSHAcceptor, live: set[asyncssh.SSHServerConne
         conn.close()
 
 
-async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None = None) -> None:
+async def serve_async(
+    config: RemoteSSHConfig,
+    overrides: ServeOverrides | None = None,
+    *,
+    update_poll_seconds: float = 30.0,
+) -> None:
     """Serve until listener shutdown, propagating bind and configuration errors.
 
     `overrides` is bind-time only for `config.listen`/`config.port` (the
@@ -371,6 +446,11 @@ async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None 
     listener cannot move itself). For every other field it is carried into
     `handle_process` so it is reapplied on each session's own
     `load_global_config` reload; see `handle_process`.
+
+    Raises `ServiceUpdatedError` after stopping because JailBee was upgraded
+    under this server — noticed on a connection or by the poll every
+    ``update_poll_seconds`` (see `UpdateWatch`). The process records the
+    version it serves for as long as it runs (`remote_ssh.running`).
     """
     # AsyncSSH logs complete commands at INFO and packet/input data at DEBUG.
     # This dedicated service supplies its own bounded audit fields instead.
@@ -378,21 +458,25 @@ async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None 
     previous_level = library_log.level
     library_log.setLevel(max(previous_level, logging.WARNING))
     live: set[asyncssh.SSHServerConnection] = set()
+    listener: asyncssh.SSHAcceptor | None = None
+
+    def stop_for_update() -> None:
+        if listener is not None:
+            _shut_down(listener, live)
+
+    update = UpdateWatch(__version__, stop_for_update)
 
     def server_factory() -> JailbeeSSHServer:
         return JailbeeSSHServer(live)
 
-    process_factory: Callable[[asyncssh.SSHServerProcess[bytes]], Coroutine[Any, Any, None]]
-    if overrides is None or overrides.is_empty():
-        process_factory = handle_process
-    else:
+    def process_factory(process: asyncssh.SSHServerProcess[bytes]) -> Coroutine[Any, Any, None]:
+        effective = None if overrides is None or overrides.is_empty() else overrides
+        return handle_process(process, effective, update=update)
 
-        def _process_factory(
-            process: asyncssh.SSHServerProcess[bytes],
-        ) -> Coroutine[Any, Any, None]:
-            return handle_process(process, overrides)
-
-        process_factory = _process_factory
+    async def poll_for_update() -> None:
+        while update.changed() is None:
+            await asyncio.sleep(update_poll_seconds)
+        update.stop()
 
     try:
         listener = await asyncssh.listen(
@@ -411,6 +495,8 @@ async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None 
             gss_host=None,
         )
         log.info(_startup_summary(config, listener, overrides))
+        record_running(__version__)
+        poller = asyncio.create_task(poll_for_update())
         loop = asyncio.get_running_loop()
         # `KillMode=process` in the unit leaves this SIGTERM handling to us,
         # so that `--background` workers (a different process group in the
@@ -420,8 +506,17 @@ async def serve_async(config: RemoteSSHConfig, overrides: ServeOverrides | None 
         try:
             await listener.wait_closed()
         finally:
+            poller.cancel()
             loop.remove_signal_handler(signal.SIGTERM)
             listener.close()
+            clear_running()
+        if update.replaced_by is not None:
+            log.info(
+                "Jailbee SSH server stopped: JailBee was updated from %s to %s",
+                update.running,
+                update.replaced_by,
+            )
+            raise ServiceUpdatedError(update.running, update.replaced_by)
         log.info("Jailbee SSH server stopped")
     finally:
         library_log.setLevel(previous_level)
@@ -443,6 +538,11 @@ def serve(config: RemoteSSHConfig, overrides: ServeOverrides | None = None) -> N
     try:
         try:
             asyncio.run(serve_async(config, overrides))
+        except ServiceUpdatedError:
+            # Non-zero on purpose: `Restart=on-failure` is what brings the
+            # service back on the new version. A foreground `serve` just ends,
+            # its last log line saying why.
+            raise SystemExit(SERVICE_UPDATED_EXIT) from None
         except KeyboardInterrupt:
             # No custom SIGINT handler is installed (only SIGTERM, above), so
             # asyncio.run's default cancellation-on-interrupt path runs the

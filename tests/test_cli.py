@@ -10191,3 +10191,38 @@ def test_local_shell_still_enters_a_mount_mode_container(mocker, monkeypatch):
 
     assert result.exit_code == 0, result.output
     attach.assert_called_once()
+
+
+def test_ssh_restart_hint_names_the_stale_service(mocker, monkeypatch, capsys):
+    from jailbee import cli
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    mocker.patch(
+        "jailbee.remote_ssh.service.stale_service_reason",
+        return_value="The SSH service (pid 7) is stale. Restart it: jb remote ssh restart",
+    )
+
+    cli._advise_ssh_restart()
+
+    assert "jb remote ssh restart" in capsys.readouterr().err
+
+
+def test_ssh_restart_hint_is_silent_in_a_remote_session(mocker, monkeypatch, capsys):
+    from jailbee import cli
+
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    reason = mocker.patch("jailbee.remote_ssh.service.stale_service_reason", return_value="x")
+
+    cli._advise_ssh_restart()
+
+    reason.assert_not_called()
+    assert capsys.readouterr().err == ""
+
+
+def test_ssh_restart_hint_never_fails_the_command(mocker, monkeypatch):
+    from jailbee import cli
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    mocker.patch("jailbee.remote_ssh.service.stale_service_reason", side_effect=OSError("boom"))
+
+    cli._advise_ssh_restart()  # no exception

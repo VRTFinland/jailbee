@@ -225,6 +225,8 @@ def test_status_reports_active_service_configuration_and_key_count(
     assert [call.args[0] for call in run.call_args_list] == [
         ["systemctl", "--user", "is-enabled", SSH_SERVICE],
         ["systemctl", "--user", "is-active", SSH_SERVICE],
+        # No server record yet, so the staleness check asks for the pid.
+        ["systemctl", "--user", "show", "--property=MainPID", "--value", SSH_SERVICE],
     ]
     assert all(
         call.kwargs == {"check": False, "capture_output": True, "text": True}
@@ -359,3 +361,83 @@ def test_status_never_imports_asyncssh_or_starts_the_service(
         ["systemctl", "--user", "is-enabled", SSH_SERVICE],
         ["systemctl", "--user", "is-active", SSH_SERVICE],
     ]
+
+
+def _install_unit(ssh_home: Path) -> None:
+    from jailbee.remote_ssh.service import SSH_SERVICE
+
+    unit = ssh_home / ".config" / "systemd" / "user" / SSH_SERVICE
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    unit.write_text("unit")
+
+
+def _systemd_main_pid(mocker: MockerFixture, pid: int) -> object:
+    return mocker.patch(
+        "subprocess.run",
+        side_effect=lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=f"{pid}\n"
+        ),
+    )
+
+
+def test_no_unit_means_no_stale_service_and_no_subprocess(ssh_home, mocker) -> None:
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    run = mocker.patch("subprocess.run")
+
+    assert stale_service_reason("2.0.0") is None
+    run.assert_not_called()
+
+
+def test_a_current_record_costs_no_subprocess(ssh_home, mocker) -> None:
+    import os
+
+    from jailbee.remote_ssh.running import record_running
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    _install_unit(ssh_home)
+    record_running("2.0.0", pid=os.getpid())
+    run = mocker.patch("subprocess.run")
+
+    assert stale_service_reason("2.0.0") is None
+    run.assert_not_called()
+
+
+def test_a_service_with_no_record_predates_the_self_restart(ssh_home, mocker) -> None:
+    import os
+
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    _install_unit(ssh_home)
+    _systemd_main_pid(mocker, os.getpid())
+
+    reason = stale_service_reason("2.0.0")
+
+    assert reason is not None
+    assert "older than the one that restarts itself" in reason
+    assert "jb remote ssh restart" in reason
+
+
+def test_a_service_recorded_at_an_old_version_is_stale(ssh_home, mocker) -> None:
+    import os
+
+    from jailbee.remote_ssh.running import record_running
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    _install_unit(ssh_home)
+    record_running("1.9.0", pid=os.getpid())
+    _systemd_main_pid(mocker, os.getpid())
+
+    reason = stale_service_reason("2.0.0")
+
+    assert reason is not None
+    assert "JailBee 1.9.0" in reason
+
+
+def test_an_inactive_service_is_never_stale(ssh_home, mocker) -> None:
+    from jailbee.remote_ssh.service import stale_service_reason
+
+    _install_unit(ssh_home)
+    _systemd_main_pid(mocker, 0)
+
+    assert stale_service_reason("2.0.0") is None

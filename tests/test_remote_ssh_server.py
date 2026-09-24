@@ -790,8 +790,9 @@ def test_listener_exposes_only_binary_session_capabilities(listener):
     # `server_factory` is a per-run closure (it shares a live-connection
     # registry with the SIGTERM handler), not the class directly.
     assert isinstance(kwargs.pop("server_factory")(), server.JailbeeSSHServer)
+    # Also a per-run closure: it hands every session the run's UpdateWatch.
+    assert callable(kwargs.pop("process_factory"))
     assert kwargs == {
-        "process_factory": server.handle_process,
         "server_host_keys": [str(ssh_paths().host_key)],
         "encoding": None,
         "agent_forwarding": False,
@@ -1282,3 +1283,105 @@ def test_startup_names_allowlisted_host_commands_that_stay_refused(listener, cap
     assert "allowlisted but refused while host restrictions are on: config edit, setup" in (
         caplog.text
     )
+
+
+def test_process_factory_passes_the_run_update_watch(listener, mocker):
+    # A plain Mock: the factory's coroutine is never awaited here.
+    handle = mocker.patch.object(server, "handle_process", new=Mock())
+    asyncio.run(server.serve_async(RemoteSSHConfig()))
+    _, listen = listener
+    factory = listen.call_args.kwargs["process_factory"]
+    process = object()
+
+    factory(process)
+
+    args, kwargs = handle.call_args
+    assert args == (process, None)
+    assert isinstance(kwargs["update"], server.UpdateWatch)
+    assert kwargs["update"].running == server.__version__
+
+
+def test_update_watch_reports_the_replacing_version_once_it_differs():
+    installed = iter(["1.0.0", "1.1.0", "1.2.0"])
+    stop = Mock()
+    watch = server.UpdateWatch("1.0.0", stop, installed=lambda: next(installed))
+
+    assert watch.changed() is None
+    assert watch.changed() == "1.1.0"
+    assert watch.changed() == "1.1.0"  # latched: not re-read once changed
+    stop.assert_not_called()
+    watch.stop()
+    stop.assert_called_once_with()
+
+
+def test_a_session_on_an_upgraded_server_is_refused_and_stops_the_server(child, configured):
+    stop = Mock()
+    watch = server.UpdateWatch("1.0.0", stop, installed=lambda: "1.1.0")
+
+    async def run():
+        process, channel = actual_process("--repo project ls")
+        await server.handle_process(process, None, update=watch)
+        return channel
+
+    channel = asyncio.run(run())
+
+    assert b"JailBee was updated to 1.1.0" in output(channel, 1)
+    channel.exit.assert_called_once_with(server.SERVICE_UPDATED_EXIT)
+    child.assert_not_awaited()
+    configured.assert_not_called()
+    stop.assert_called_once_with()
+
+
+def test_a_session_on_a_current_server_runs_normally(child, configured, repo):
+    watch = server.UpdateWatch("1.0.0", Mock(), installed=lambda: "1.0.0")
+
+    async def run():
+        process, channel = actual_process("--repo project ls")
+        await server.handle_process(process, None, update=watch)
+        return channel
+
+    channel = asyncio.run(run())
+
+    child.assert_awaited_once()
+    channel.exit.assert_called_once_with(7)
+
+
+def test_serve_async_stops_and_raises_when_the_poll_sees_an_upgrade(listener, mocker):
+    value, _ = listener
+    closed = asyncio.Event()
+
+    async def wait_closed():
+        await closed.wait()
+
+    value.wait_closed.side_effect = wait_closed
+    value.close.side_effect = closed.set
+    mocker.patch.object(server, "__version__", "1.0.0")
+    versions = iter(["1.0.0", "1.0.0"])
+    mocker.patch.object(server, "installed_version", side_effect=lambda: next(versions, "1.1.0"))
+
+    with pytest.raises(server.ServiceUpdatedError) as info:
+        asyncio.run(server.serve_async(RemoteSSHConfig(), update_poll_seconds=0))
+
+    assert (info.value.running, info.value.installed) == ("1.0.0", "1.1.0")
+    value.close.assert_called()
+
+
+def test_serve_exits_75_after_an_upgrade(mocker):
+    mocker.patch.object(
+        server, "serve_async", side_effect=server.ServiceUpdatedError("1.0.0", "1.1.0")
+    )
+
+    with pytest.raises(SystemExit) as info:
+        server.serve(RemoteSSHConfig())
+
+    assert info.value.code == 75
+
+
+def test_serve_async_records_itself_while_running_and_clears_after(listener, mocker):
+    record = mocker.patch.object(server, "record_running")
+    clear = mocker.patch.object(server, "clear_running")
+
+    asyncio.run(server.serve_async(RemoteSSHConfig()))
+
+    record.assert_called_once_with(server.__version__)
+    clear.assert_called_once_with()
