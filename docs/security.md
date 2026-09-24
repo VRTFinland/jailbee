@@ -24,6 +24,17 @@ into a container — those are ordinary files. That is why running an agent
 with its own guardrails off is reasonable *inside* a `jailbee` container —
 see [Running an agent without prompts](#running-an-agent-without-prompts).
 
+Host-local per-repo settings live outside the checkout at
+`~/.config/jailbee/repos/<container_prefix>.yaml` (or under
+`$XDG_CONFIG_HOME`). This is the supported location for per-repo secrets such
+as `github.token`; JailBee creates the directory as `0700` and each local
+config file as `0600`. A file carrying `github.token` is rejected unless it
+has mode `0600`. The legacy `github.api_tokens` map remains in
+`~/.config/jailbee/global.yaml` until migrated; that file must also be `0600`
+while it contains tokens. Keep both files private. `container.env` is not
+secret storage: values are written into the Incus profile and are visible
+with `incus profile show`.
+
 ### Remote SSH
 
 The optional SSH server is a capability boundary inside the current user's
@@ -195,7 +206,7 @@ mode, the network — including a push to `origin`. With `github.enabled`, the
 container's own `GH_TOKEN` — see the limitation below.
 
 **GitHub token scope is a documentation contract, not an enforced one.**
-The recommended fine-grained PAT (`github.api_tokens`, injected as
+The recommended fine-grained PAT (`github.token`, injected as
 `GH_TOKEN`) is read-only by design — Contents, Issues, Pull requests, and
 Metadata all set to Read — so that every GitHub write an in-container agent
 proposes must go through the host-side outbox (`jailbee issue apply` /

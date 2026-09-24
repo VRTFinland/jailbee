@@ -7,6 +7,16 @@ description: Use when configuring a new repository to work with `jailbee` — ad
 
 Goal: take any existing git repo and make `jailbee new <name>` work for it. The repo needs at minimum `<repo>/.jailbee/config.yaml`. Beyond that, the configuration is **repo-specific** — stack versions, system packages, autostart commands, and egress endpoints all depend on what the repo actually does.
 
+Keep shared, repo-required settings in the committed `.jailbee/config.yaml`;
+put per-host choices in `~/.config/jailbee/repos/<container_prefix>.yaml`
+(`$XDG_CONFIG_HOME` equivalent when set). Tokens (`github.token`), credential
+groups, and personal agent enable/disable choices belong in that host-local
+file, not in the committed repo config. The local file is never committed and
+JailBee creates it with mode `0600` (its containing directory is `0700`).
+Inspect it with `jailbee config show --layer local` or edit it with
+`jailbee config edit --local`; `github.token` itself is intentionally
+read-only in the interactive editor and must be changed in the YAML file.
+
 This skill walks Claude through inspecting the repo, generating a tailored config, and (optionally) adding `install.d/` snippets for stack tools the bundled golden image doesn't cover.
 
 **A quicker path exists for throwaway work.** `jailbee new` already runs in
@@ -480,8 +490,8 @@ fastest way to see the error without doing anything else. Rejected:
 - **Don't run `jailbee init` / `jailbee base build` / `jailbee new` automatically.** These mutate host-level Incus state and the golden-image build is slow. Show the user the commands and let them run.
 - **Don't invent autostart commands.** Read the repo's README / Makefile / package.json scripts and use exactly what's documented.
 - **Don't add `github.com` to `egress_allow`.** That's a security boundary by design.
-- **Don't put personal credentials in the per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The per-repo file is committed to git and shared with the team.
-- **Don't enable host-tooling blocks in the per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `browsers.chrome`, `browsers.firefox` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config. The same goes for `agents.<name>.enabled`/`claude.enabled` — an agent's login state is personal, so turn it on in global config unless the repo needs everyone to have that agent.
+- **Don't put host-wide credentials or settings in the committed per-repo file.** `~/.gnupg`, `~/.gitconfig`, JetBrains Toolbox, and the host Chrome install belong in `~/.config/jailbee/global.yaml`. The host-local per-repo file is for repo-specific personal choices: tokens, credential groups, and agent enable/disable preferences.
+- **Don't enable host-tooling blocks in the committed per-repo file unless the repo really requires it.** `gpg`, `ssh`, `jetbrains`, `browsers.chrome`, `browsers.firefox` all default to `enabled: false`; users opt in via `~/.config/jailbee/global.yaml`. If a repo absolutely needs (e.g.) JetBrains tooling for everyone, then a per-repo `jetbrains.enabled: true` is fine — otherwise leave the master switch to the user's global config.
 
 ## Inside a JailBee container
 
