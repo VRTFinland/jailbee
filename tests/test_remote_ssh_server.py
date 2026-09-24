@@ -357,6 +357,12 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
         # dedicated regression test on this argument's *content*.
         policy = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
         expected_argv = (*expected_argv, "--policy-json", policy.model_dump_json())
+    elif arguments[0] == "dashboard":
+        expected_argv = (
+            *expected_argv,
+            "--remote-policy-json",
+            configured.return_value[0].remote.ssh.model_dump_json(),
+        )
     child.assert_awaited_once_with(
         process,
         ChildSpec(
@@ -530,6 +536,30 @@ def test_overrides_are_reapplied_after_a_per_session_global_config_reload(child,
     first_channel.exit.assert_called_once_with(7)
     second_channel.exit.assert_called_once_with(7)
     assert child.await_count == 2
+
+
+def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child, mocker):
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    raw = RemoteSSHConfig(
+        shell=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
+    )
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
+    )
+    overrides = ServeOverrides(commands_mode="full", restrict_host=False)
+    process, _ = session("dashboard", term="xterm", overrides=overrides)
+
+    child.assert_awaited_once()
+    child_argv = child.await_args.args[1].argv
+    assert child_argv[-2] == "--remote-policy-json"
+    effective = RemoteSSHConfig.model_validate_json(child_argv[-1])
+    assert effective.commands.mode == "full"
+    assert effective.restrict_host is False
+    assert raw.commands.mode == "allowlist"
 
 
 def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):

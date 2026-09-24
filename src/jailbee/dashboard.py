@@ -48,6 +48,8 @@ from jailbee.dashboard_settings import (
     switch_tab,
     toggle_current,
 )
+from jailbee.dashboard_commands import check_dashboard_command
+from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
     GlobalConfig,
@@ -63,6 +65,7 @@ from jailbee.lifecycle import (
 )
 from jailbee.paths import repo_config_path
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
+from jailbee.remote_ssh.router import RouteError
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -1768,7 +1771,15 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     return producer.wait()
 
 
-def _dispatch_action(target: RepoTarget, verb: str, name: str, *, remote: bool = False) -> int:
+def _dispatch_action(
+    target: RepoTarget,
+    verb: str,
+    name: str,
+    *,
+    remote: bool = False,
+    over_ssh: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+) -> int:
     """Run ``jailbee <verb> <name>`` against ``target``; return its exit code.
 
     The single dispatch point shared by the inline action menu and the
@@ -1802,7 +1813,9 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str, *, remote: bool =
     whole TUI down. That is deliberately *not* caught as "pager failed": see
     :class:`_PagerUnavailableError`.
     """
-    argv = ["jailbee", *verb.split(), name, *target.flags()]
+    argv = ["jailbee", *verb.split(), name, *(target.flags() if not over_ssh else [])]
+    if verb == "merge":
+        check_dashboard_command(argv[1:], ssh_policy, over_ssh=over_ssh)
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
@@ -1852,6 +1865,8 @@ def run(
     git_interval: float,
     no_git: bool,
     remote: bool = False,
+    over_ssh: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
 ) -> int:
     """Main dashboard loop.
 
@@ -2087,7 +2102,19 @@ def run(
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
                 try:
-                    rc = foreground(lambda: _dispatch_action(repo, verb, target, remote=remote))
+                    rc = foreground(
+                        lambda: _dispatch_action(
+                            repo,
+                            verb,
+                            target,
+                            remote=remote,
+                            over_ssh=over_ssh,
+                            ssh_policy=ssh_policy,
+                        )
+                    )
+                except RouteError as exc:
+                    set_notice(str(exc))
+                    return
                 except OSError:
                     _report_vanished_repo(repo)
                     return

@@ -3162,13 +3162,37 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
-    result = CliRunner().invoke(app, ["dashboard"])
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    policy_json = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="full")
+    ).model_dump_json()
+    result = CliRunner().invoke(app, ["dashboard", "--remote-policy-json", policy_json])
 
     assert result.exit_code == 0
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None
     assert run.call_args.kwargs["remote"] is True
+    assert run.call_args.kwargs["over_ssh"] is True
+    assert run.call_args.kwargs["ssh_policy"].model_dump_json() == policy_json
+
+
+@pytest.mark.parametrize("policy_json", [None, "not-json"])
+def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, policy_json):
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    run = mocker.patch("jailbee.dashboard.run")
+    popen = mocker.patch("subprocess.Popen")
+    argv = ["dashboard"]
+    if policy_json is not None:
+        argv += ["--remote-policy-json", policy_json]
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code == 2
+    assert "policy" in result.output
+    run.assert_not_called()
+    popen.assert_not_called()
 
 
 def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
@@ -3201,6 +3225,27 @@ def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -
     preflight.assert_not_called()
     qrun.assert_not_called()
     popen.assert_not_called()
+
+
+def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.remote_ssh.router import RouteError
+
+    target = dashboard.RepoTarget(tmp_path, None)
+    run = mocker.patch("jailbee.dashboard.subprocess.run")
+    policy = RemoteSSHConfig(exec=False)
+
+    with pytest.raises(RouteError, match="disabled"):
+        dashboard._dispatch_action(
+            target,
+            "merge",
+            "alpha",
+            remote=True,
+            over_ssh=True,
+            ssh_policy=policy,
+        )
+
+    run.assert_not_called()
 
 
 def test_registered_only_flag_is_gone() -> None:
@@ -4079,7 +4124,16 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
-    assert CliRunner().invoke(app, ["dashboard"]).exit_code == 0
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    policy_json = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    ).model_dump_json()
+    assert CliRunner().invoke(
+        app, ["dashboard", "--remote-policy-json", policy_json]
+    ).exit_code == 0
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None

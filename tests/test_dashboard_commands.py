@@ -4,7 +4,39 @@ from __future__ import annotations
 
 import pytest
 
-from jailbee.dashboard_commands import command_argv, completion_candidates
+from jailbee.dashboard_commands import check_dashboard_command, command_argv, completion_candidates
+from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+from jailbee.remote_ssh.router import RouteError
+
+
+@pytest.mark.parametrize(
+    ("argv", "policy"),
+    [
+        (["merge", "alpha"], RemoteSSHConfig(exec=False)),
+        (["merge", "alpha"], RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))),
+        (["merge", "alpha"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git pull"]))),
+        (["config", "edit"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
+        (["pr", "--yes"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
+        (["merge", "--config", "/tmp/host.yaml", "alpha"], RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))),
+    ],
+)
+def test_ssh_dashboard_command_refuses_commands_outside_policy(
+    argv: list[str], policy: RemoteSSHConfig
+) -> None:
+    with pytest.raises(RouteError):
+        check_dashboard_command(argv, policy, over_ssh=True)
+
+
+def test_ssh_dashboard_merge_alias_uses_canonical_allowlist() -> None:
+    policy = RemoteSSHConfig(
+        exec=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"])
+    )
+    check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
+
+
+def test_local_dashboard_command_does_not_apply_ssh_policy() -> None:
+    check_dashboard_command(["config", "edit"], None, over_ssh=False)
 
 
 def test_merge_alias_gets_selected_source() -> None:

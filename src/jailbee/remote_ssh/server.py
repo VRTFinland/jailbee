@@ -307,6 +307,8 @@ async def handle_process(
             # own and ignoring every override flag (e.g. `--commands full`,
             # `--shell`), including its own `dashboard` check.
             argv = (*argv, "--policy-json", config.model_dump_json())
+        elif selected.kind == "dashboard":
+            argv = (*argv, "--remote-policy-json", config.model_dump_json())
         spec = ChildSpec(
             argv=argv,
             cwd=selected.repo_root or state_dir(),

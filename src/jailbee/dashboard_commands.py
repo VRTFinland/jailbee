@@ -7,7 +7,9 @@ from collections.abc import Sequence
 
 from typer._click.core import ParameterSource
 
+from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.remote_ssh import router
+from jailbee.remote_ssh.router import RouteError
 
 # Only these leaf positionals are unambiguously a container selector/source.
 # In particular, branch-creating commands and multi-container commands are
@@ -19,6 +21,19 @@ _CONTAINER_POSITIONALS: dict[str, str] = {
     "merge": "sources",
     "git merge": "sources",
 }
+
+
+def check_dashboard_command(
+    argv: Sequence[str], policy: RemoteSSHConfig | None, *, over_ssh: bool
+) -> None:
+    """Refuse dashboard-launched SSH commands outside the effective policy."""
+    if not over_ssh:
+        return
+    if policy is None:
+        raise RouteError("remote SSH dashboard has no server policy")
+    if not policy.exec:
+        raise RouteError("remote command execution is disabled")
+    router.policy_allows(argv, policy.commands, restrict_host=policy.restrict_host)
 
 
 def command_argv(text: str, selected_container: str | None) -> list[str]:
