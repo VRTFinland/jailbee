@@ -54,7 +54,9 @@ def test_conflicting_local_token_is_skipped_and_reported():
 
 
 def test_identical_local_token_just_drops_the_legacy_entry():
-    inputs = _inputs({"github": {"api_tokens": {"a": "ghp_x"}}}, {"a": {"github": {"token": "ghp_x"}}})
+    inputs = _inputs(
+        {"github": {"api_tokens": {"a": "ghp_x"}}}, {"a": {"github": {"token": "ghp_x"}}}
+    )
     plan = plan_migrations(inputs)
     assert plan.conflicts == ()
     assert "api_tokens" not in (_load(plan, inputs.global_path).get("github") or {})
@@ -115,7 +117,10 @@ def test_apply_writes_private_files_backs_up_and_deletes_rows(db_session, frozen
 
     local = local_config_path("a")
     assert stat.S_IMODE(local.stat().st_mode) == 0o600
-    assert yaml.safe_load(local.read_text()) == {"github": {"token": "ghp_a"}, "egress_allow": ["y.org"]}
+    assert yaml.safe_load(local.read_text()) == {
+        "github": {"token": "ghp_a"},
+        "egress_allow": ["y.org"],
+    }
     assert gpath.with_name("global.yaml.bak") in backups
     assert stat.S_IMODE(gpath.with_name("global.yaml.bak").stat().st_mode) == 0o600
     assert db_session.get(EgressOverride, ("a", "y.org")) is None

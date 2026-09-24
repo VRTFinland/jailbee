@@ -75,7 +75,9 @@ class _State:
     def raw(self, path: Path) -> dict[str, object]:
         return _parse_yaml_text(self.texts.get(path, ""), str(path))
 
-    def change(self, migration_id: str, summary: str, path: Path, changes: list[YamlChange]) -> None:
+    def change(
+        self, migration_id: str, summary: str, path: Path, changes: list[YamlChange]
+    ) -> None:
         if changes:
             self.texts[path] = patch_yaml(self.texts.get(path, ""), changes)
             self.steps.append(Step(migration_id, summary, path, tuple(changes)))
@@ -84,7 +86,10 @@ class _State:
 def _chrome_block(state: _State) -> None:
     from jailbee.config.loader import resolve_browsers_raw
 
-    paths = [state.inputs.global_path, *sorted(p for p in state.texts if p != state.inputs.global_path)]
+    paths = [
+        state.inputs.global_path,
+        *sorted(p for p in state.texts if p != state.inputs.global_path),
+    ]
     for path in paths:
         raw = state.raw(path)
         if isinstance(raw.get("chrome"), dict):
@@ -152,7 +157,11 @@ def _egress_db_rows(state: _State) -> None:
     for prefix, entries in sorted(state.inputs.egress_rows.items()):
         path = local_config_path(prefix)
         current = state.raw(path).get("egress_allow") or []
-        current_list = [entry for entry in current if isinstance(entry, str)] if isinstance(current, list) else []
+        current_list = (
+            [entry for entry in current if isinstance(entry, str)]
+            if isinstance(current, list)
+            else []
+        )
         missing = [entry for entry in entries if entry not in current_list]
         if missing:
             state.change(
@@ -202,7 +211,9 @@ def gather_inputs(session: Session) -> MigrationInputs:
         texts[global_path] = global_path.read_text(encoding="utf-8")
     root = local_config_dir()
     if root.is_dir():
-        texts.update({path: path.read_text(encoding="utf-8") for path in sorted(root.glob("*.yaml"))})
+        texts.update(
+            {path: path.read_text(encoding="utf-8") for path in sorted(root.glob("*.yaml"))}
+        )
     return MigrationInputs(global_path, texts, legacy_rows_by_prefix(session))
 
 
