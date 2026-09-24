@@ -48,7 +48,11 @@ from jailbee.dashboard_settings import (
     switch_tab,
     toggle_current,
 )
-from jailbee.dashboard_commands import check_dashboard_command
+from jailbee.dashboard_commands import (
+    check_dashboard_command,
+    command_argv,
+    completion_candidates,
+)
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
@@ -968,6 +972,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     ),
     KeyBinding("tab", (b"\t",), "", "", "View"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
+    KeyBinding("command", (b"!",), "!", "run a jailbee command", "Actions", brief="command"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
     KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
@@ -1025,7 +1030,33 @@ class MenuState:
 
 # What occupies the slot under the table. All three overlays are mutually
 # exclusive by construction — no combination of them is a representable state.
-Overlay = MenuState | SettingsState | Literal["help"]
+@dataclass(frozen=True)
+class CommandState:
+    """Inline command editor state, independent of terminal/input handling."""
+
+    text: str
+    suggestions: tuple[str, ...] = ()
+    index: int = -1
+
+
+def edit_command(state: CommandState, key: bytes) -> CommandState:
+    """Apply one editor key, keeping ordinary dashboard shortcuts as text."""
+    if key in (b"\x7f", b"\x08"):
+        return replace(state, text=state.text[:-1], index=-1)
+    if key == b"\t":
+        if not state.suggestions:
+            return state
+        index = (state.index + 1) % len(state.suggestions)
+        return replace(state, text=state.suggestions[index], index=index)
+    if key in (b"\r", b"\n", b"\x1b", b"\x03", b""):
+        return state
+    text = key.decode("utf-8", errors="ignore")
+    if text and text.isprintable():
+        return replace(state, text=state.text + text, index=-1)
+    return state
+
+
+Overlay = MenuState | SettingsState | CommandState | Literal["help"]
 
 
 def open_menu(
@@ -1133,6 +1164,8 @@ def _hint_line(overlay: Overlay | None) -> str:
             "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
             "[bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
         )
+    if isinstance(overlay, CommandState):
+        return "[bold]Enter[/bold] run  ·  [bold]Tab[/bold] complete  ·  [bold]Esc[/bold] cancel"
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
     return ""
@@ -1307,6 +1340,11 @@ def render(
     if overlay is not None:
         if isinstance(overlay, MenuState):
             panel = _render_menu(overlay)
+        elif isinstance(overlay, CommandState):
+            lines = [f"> {overlay.text}▏"]
+            if overlay.suggestions:
+                lines.append("  " + "   ".join(overlay.suggestions))
+            panel = Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
         elif isinstance(overlay, SettingsState):
             panel = render_settings(overlay, dynamic=dynamic_column_names())
         else:
@@ -2102,6 +2140,12 @@ def run(
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
                 try:
+                    argv = [*verb.split(), target, *(repo.flags() if not over_ssh else [])]
+                    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
+                except RouteError as exc:
+                    set_notice(str(exc))
+                    return
+                try:
                     rc = foreground(
                         lambda: _dispatch_action(
                             repo,
@@ -2215,6 +2259,38 @@ def run(
                     set_notice(f"'jailbee config edit' exited {rc}")
                 force.set()  # config may have changed under every row
 
+            def run_command(command: CommandState) -> None:
+                """Authorize and run the edited argv in the selected repo."""
+                name = container_of(selected)
+                group = _find_group(groups, name)
+                if group is None or name is None:
+                    set_notice("Select a container in a repo first")
+                    return
+                repo = RepoTarget.of(group)
+                if repo is None:
+                    set_notice(view_only_note(groups, name) or "No repo available")
+                    return
+                try:
+                    argv = command_argv(command.text, name)
+                    if not over_ssh:
+                        argv.extend(repo.flags())
+                    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
+                except (ValueError, RouteError) as exc:
+                    set_notice(str(exc))
+                    return
+                try:
+                    rc = foreground(
+                        lambda: subprocess.run(
+                            ["jailbee", *argv], cwd=repo.cwd(), check=False
+                        ).returncode
+                    )
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
+                if rc != 0:
+                    set_notice(f"'jailbee {' '.join(argv)}' exited {rc}")
+                force.set()
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
@@ -2262,7 +2338,34 @@ def run(
                 ready, _, _ = select.select([sys.stdin], [], [], 0.25)
                 if not ready:
                     continue
-                key = parse_key(os.read(fd, _KEY_READ_BYTES))
+                data = os.read(fd, _KEY_READ_BYTES)
+                if isinstance(overlay, CommandState):
+                    if data in (b"\x1b", b"\x03", b""):
+                        overlay = None
+                    elif data in (b"\r", b"\n"):
+                        command = overlay
+                        overlay = None
+                        run_command(command)
+                    else:
+                        selected_group = _find_group(groups, container_of(selected))
+                        allowed_paths: frozenset[str] | None = None
+                        if over_ssh:
+                            if ssh_policy is None or not ssh_policy.exec:
+                                allowed_paths = frozenset()
+                            elif ssh_policy.commands.mode == "disabled":
+                                allowed_paths = frozenset()
+                            elif ssh_policy.commands.mode == "allowlist":
+                                allowed_paths = frozenset(ssh_policy.commands.allow)
+                        candidates = completion_candidates(
+                            overlay.text,
+                            tuple(c.name for c in selected_group.containers)
+                            if selected_group is not None
+                            else (),
+                            allowed_paths,
+                        )
+                        overlay = edit_command(replace(overlay, suggestions=candidates), data)
+                    continue
+                key = parse_key(data)
                 if key == "interrupt":
                     break
                 if overlay is not None:
@@ -2319,6 +2422,8 @@ def run(
                             set_notice(note or f"No actions available for '{container}'")
                 elif key == "help":
                     overlay = "help"
+                elif key == "command":
+                    overlay = CommandState("")
                 elif key == "settings":
                     overlay = open_settings_overlay()
                 elif key.startswith("action:"):

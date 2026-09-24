@@ -18,6 +18,57 @@ from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
 
+def test_inline_editor_keeps_shortcuts_as_text():
+    state = dashboard.CommandState(text="", suggestions=(), index=0)
+    assert dashboard.edit_command(state, b"q").text == "q"
+
+
+def test_inline_editor_handles_editing_and_utf8():
+    state = dashboard.CommandState(text="", suggestions=(), index=0)
+    state = dashboard.edit_command(state, "é shell".encode())
+    state = dashboard.edit_command(state, b"\x7f")
+    assert state.text == "é shel"
+
+
+def test_inline_editor_tab_cycles_candidates():
+    state = dashboard.CommandState(text="me", suggestions=("merge", "menu"), index=0)
+    state = dashboard.edit_command(state, b"\t")
+    assert state.text == "menu"
+    assert state.index == 1
+
+
+def test_inline_editor_tab_without_candidates_is_safe():
+    state = dashboard.CommandState(text="merge '", suggestions=())
+    assert dashboard.edit_command(state, b"\t") == state
+
+
+def test_inline_editor_completion_preserves_unfinished_quote():
+    from jailbee.dashboard_commands import completion_candidates
+
+    text = "shell 'feature"
+    state = dashboard.CommandState(
+        text=text, suggestions=completion_candidates(text, ("feature branch",))
+    )
+    assert "feature branch" in state.suggestions
+
+
+def test_command_binding_and_inline_render_keep_table_visible():
+    group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-x", "alpha")])
+    overlay = dashboard.CommandState(text="git d", suggestions=("git diff",))
+    screen = Console(width=100, record=True)
+    screen.print(
+        dashboard.render(
+            [group], dashboard.Row("container", "alpha-x"), now=datetime.now(UTC),
+            last_refresh_age=0, interval=1, git_enabled=True, overlay=overlay,
+        )
+    )
+    rendered = screen.export_text()
+    assert dashboard.parse_key(b"!") == "command"
+    assert "▸ x" in rendered
+    assert "git d" in rendered
+    assert "git diff" in rendered
+
+
 def test_nothing_to_show_message_blames_no_single_cause():
     """The launch guard fires whenever the cwd resolves to no repo, and that
     has several causes: no config file with `scratch.enabled` false, but also
