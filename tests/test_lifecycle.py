@@ -4175,11 +4175,13 @@ def test_boot_container_catches_the_base_anchor_up_forward_only(tmp_path, mocker
 
 @pytest.mark.parametrize(
     "config",
-    [{}, {"user.jailbee.base_branch": ""}, {"user.jailbee.base_branch": "dev", "user.jailbee.mode": "mount"}],
+    [
+        {},
+        {"user.jailbee.base_branch": ""},
+        {"user.jailbee.base_branch": "dev", "user.jailbee.mode": "mount"},
+    ],
 )
-def test_boot_container_skips_the_anchor_without_a_base_or_in_mount_mode(
-    tmp_path, mocker, config
-):
+def test_boot_container_skips_the_anchor_without_a_base_or_in_mount_mode(tmp_path, mocker, config):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "feat-x", "status": "Stopped", "config": config}]

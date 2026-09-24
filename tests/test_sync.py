@@ -461,7 +461,9 @@ def test_sync_refs_leaves_a_diverged_branch_alone(mocker, make_cfg, tmp_path):
 def test_sync_refs_re_anchors_every_container_on_the_target(
     mocker, make_cfg, tmp_path, rev_parse, current, expected_status
 ):
-    """`up-to-date` counts: the reported bug printed 'already up to date' while anchors were stale."""
+    """`up-to-date` counts: the reported bug printed 'already up to date'
+    while anchors were stale.
+    """
     from jailbee import sync
 
     cfg = make_cfg(tmp_path)

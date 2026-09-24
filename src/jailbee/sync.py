@@ -1413,7 +1413,14 @@ def sync_refs_from_container(
     )
     anchors = (
         refresh_bases_for(cfg, incus, target)
-        if placement.status in {"created", "up-to-date", "fast-forwarded", "forced", "checked-out-ff"}
+        if placement.status
+        in {
+            "created",
+            "up-to-date",
+            "fast-forwarded",
+            "forced",
+            "checked-out-ff",
+        }
         else ()
     )
     return SyncRefsResult(
@@ -1782,9 +1789,7 @@ def _with_anchors(cfg: Config, incus: Incus, result: MergeResult) -> MergeResult
     """Re-anchor every container based on the branch the merge landed in."""
     if result.into_branch is None:
         return result
-    return replace(
-        result, anchors_refreshed=refresh_bases_for(cfg, incus, result.into_branch)
-    )
+    return replace(result, anchors_refreshed=refresh_bases_for(cfg, incus, result.into_branch))
 
 
 def merge_from_container(

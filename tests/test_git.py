@@ -1,7 +1,7 @@
 """Tests for git helpers."""
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest

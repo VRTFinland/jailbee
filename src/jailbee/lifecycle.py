@@ -1840,7 +1840,7 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
 
         try:
             sync.refresh_container_base(cfg, incus, name, base_branch=base_branch, force=False)
-        except Exception:  # noqa: BLE001 - a stale anchor must never fail a boot
+        except Exception:
             pass
 
 
