@@ -2042,6 +2042,36 @@ def refresh_container_base(
     return True
 
 
+def refresh_bases_for(cfg: Config, incus: Incus, branch: str) -> tuple[str, ...]:
+    """Re-anchor every running container of this repo whose base is `branch`.
+
+    Called after a command has set or confirmed the host's `refs/heads/<branch>`
+    — checkout, fetch, pull into it — so `jailbee ls` AHEAD follows the host
+    branch for *every* container based on it, not only the one the command
+    named. Re-anchoring a container whose work is not in `branch` is harmless:
+    the probe diffs `base...HEAD`, so a newer base still reports only that
+    container's own commits.
+
+    Skips stopped containers (a push needs a running `receive-pack`; boot
+    catches them up) and mount-mode ones (they share the host's `.git`).
+    Returns the short names that were re-anchored, in listing order. Never
+    raises.
+    """
+    from jailbee.lifecycle import list_containers, short_name
+
+    try:
+        infos = list_containers(cfg, incus, fast=True)
+    except IncusError:
+        return ()
+    refreshed: list[str] = []
+    for info in infos:
+        if info.base_branch != branch or info.state != "Running" or info.mode == "mount":
+            continue
+        if refresh_container_base(cfg, incus, info.name, base_branch=branch):
+            refreshed.append(short_name(cfg, info.name))
+    return tuple(refreshed)
+
+
 def ff_container_branch(
     incus: Incus,
     full_name: str,

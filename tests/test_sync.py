@@ -5391,6 +5391,77 @@ def test_refresh_container_base_rejected_forward_only_push_is_false(mocker, make
     submods.assert_not_called()
 
 
+# ---- refresh_bases_for ----------------------------------------------------
+
+
+def _info(name, *, state="Running", mode="clone", base_branch="dev"):
+    from jailbee.lifecycle import ContainerInfo
+
+    return ContainerInfo(
+        name=name,
+        state=state,
+        network=None,
+        ip=None,
+        memory_limit=None,
+        mode=mode,
+        base_branch=base_branch,
+    )
+
+
+def test_refresh_bases_for_selects_running_clone_containers_on_that_base(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    p = cfg.container_prefix
+    listing = mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[
+            _info(f"{p}-a"),
+            _info(f"{p}-other-base", base_branch="main"),
+            _info(f"{p}-no-base", base_branch=None),
+            _info(f"{p}-stopped", state="Stopped"),
+            _info(f"{p}-mounted", mode="mount"),
+            _info(f"{p}-b"),
+        ],
+    )
+    refresh = mocker.patch("jailbee.sync.refresh_container_base", return_value=True)
+    incus = mocker.MagicMock()
+
+    names = sync.refresh_bases_for(cfg, incus, "dev")
+
+    assert names == ("a", "b")
+    assert [c.args[2] for c in refresh.call_args_list] == [f"{p}-a", f"{p}-b"]
+    assert all(c.kwargs == {"base_branch": "dev"} for c in refresh.call_args_list)
+    assert "all_repos" not in listing.call_args.kwargs
+
+
+def test_refresh_bases_for_reports_only_successful_refreshes(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    p = cfg.container_prefix
+    mocker.patch(
+        "jailbee.lifecycle.list_containers", return_value=[_info(f"{p}-a"), _info(f"{p}-b")]
+    )
+    mocker.patch("jailbee.sync.refresh_container_base", side_effect=[False, True])
+
+    assert sync.refresh_bases_for(cfg, mocker.MagicMock(), "dev") == ("b",)
+
+
+def test_refresh_bases_for_swallows_a_listing_failure(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+    from jailbee.incus import IncusError
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", side_effect=IncusError("daemon down"))
+    refresh = mocker.patch("jailbee.sync.refresh_container_base")
+
+    assert sync.refresh_bases_for(cfg, mocker.MagicMock(), "dev") == ()
+    refresh.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # publish_branch_from_container
 # ---------------------------------------------------------------------------
