@@ -894,12 +894,13 @@ class KeyBinding:
 
     :data:`KEY_BINDINGS` is the single source for all three — :func:`parse_key`
     is built from ``keys``, the quick-action gate from ``verb``, the help
-    overlay from ``hint``/``label``/``group``, and the always-visible hint line
-    from ``brief``. Three hand-maintained lists would drift.
+    overlay from ``hint``/``label``/``group``. Three hand-maintained lists
+    would drift.
 
     ``hint`` is empty for a token whose sibling documents it (``down`` is
     covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is the terse word used in the
-    hint line, or None to keep the key in the help overlay only.
+    hint line, or None to keep the key in the help overlay only. Ordinary
+    dashboard mode has no permanent hint line.
     """
 
     token: str
@@ -916,15 +917,14 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
     ),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
-    KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
+    KeyBinding("enter", (b"\r", b"\n"), "Enter", "open a container menu or fold a repo header", "Navigate"),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
     KeyBinding(
-        "fold",
+        "settings-toggle",
         (b" ",),
         "Space",
-        "fold/unfold the repo group",
-        "Navigate",
-        brief="fold",
+        "toggle the selected setting",
+        "Settings",
     ),
     KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
     KeyBinding(
@@ -962,7 +962,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     ),
     KeyBinding("tab", (b"\t",), "", "", "View"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
-    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
+    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
     KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
 )
@@ -1119,7 +1119,7 @@ def quick_reject_note(
 
 
 def _hint_line(overlay: Overlay | None) -> str:
-    """The keybinding hint shown on the last line of the panel body."""
+    """Contextual controls shown only while an overlay is open."""
     if isinstance(overlay, MenuState):
         return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
     if isinstance(overlay, SettingsState):
@@ -1129,9 +1129,7 @@ def _hint_line(overlay: Overlay | None) -> str:
         )
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
-    return "  ·  ".join(
-        f"[bold]{b.hint}[/bold] {b.brief}" for b in KEY_BINDINGS if b.brief is not None
-    )
+    return ""
 
 
 def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str]) -> Text:
@@ -1302,7 +1300,6 @@ def render(
             folded,
             empty=not all_containers,
         ),
-        "",
     ]
     if overlay is not None:
         if isinstance(overlay, MenuState):
@@ -1311,8 +1308,7 @@ def render(
             panel = render_settings(overlay, dynamic=dynamic_column_names())
         else:
             panel = _render_help()
-        body += [panel, ""]
-    body.append(_hint_line(overlay))
+        body += ["", panel, _hint_line(overlay)]
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
@@ -1324,7 +1320,7 @@ def render(
     # the age ticks — a title that resizes drags the whole line with it.
     age_field = f"{min(last_refresh_age, 99.0):>2.0f}s/{interval:.0f}s"
     title = (
-        f"[bold]jailbee dashboard[/]  ·  {n_repos} repos · {n_ctr} containers"
+        f"[bold]jailbee dashboard[/]  ·  [dim]h/? help[/]  ·  {n_repos} repos · {n_ctr} containers"
         f"{folded_note}{git_note}  ·  {now:%H:%M:%S}  ·  [dim]↻[/dim] {age_field}"
     )
     # Subtitle is notice-only: a transient message on the bottom border cannot
@@ -2262,7 +2258,7 @@ def run(
                             overlay = move_settings(overlay, -1 if key == "up" else 1)
                         elif key == "tab":
                             overlay = switch_tab(overlay)
-                        elif key == "fold":
+                        elif key == "settings-toggle":
                             overlay = toggle_current(overlay)
                             enabled = enabled_names(overlay)
                             folded = overlay.folded
@@ -2293,13 +2289,6 @@ def run(
                         if overlay is None and container is not None:
                             note = view_only_note(groups, container)
                             set_notice(note or f"No actions available for '{container}'")
-                elif key == "fold":
-                    prefix = fold_target(groups, selected)
-                    if prefix is None:
-                        set_notice("No repo group is selected")
-                    else:
-                        folded = toggle_folded(folded, prefix)
-                        persist_view_state(ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
                 elif key == "settings":

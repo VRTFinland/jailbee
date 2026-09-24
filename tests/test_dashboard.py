@@ -2153,8 +2153,9 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
     assert "gamma" in out and "orphan" in out
     assert "one" in out  # display_name with prefix stripped
     assert "gamma-x" in out
-    # footer keybindings present
-    assert "Enter" in out and "quit" in out
+    # Ordinary mode has a compact help cue, not a permanent keybinding footer.
+    assert "h/? help" in out.splitlines()[0]
+    assert "Enter menu" not in out and "q quit" not in out
     # selected row marked with arrow
     assert "▸" in out
 
@@ -2414,7 +2415,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     assert "▸" not in other_line
 
 
-def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
+def test_normal_mode_help_is_in_frame_not_footer(tmp_path):
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
@@ -2433,8 +2434,22 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
             overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0),
         )
     )
-    assert "Enter" in browsing and "quit" in browsing and "Esc" not in browsing
-    assert "Esc" in menu_open and "cancel" in menu_open and "quit" not in menu_open
+    assert "h/? help" in browsing.splitlines()[0]
+    assert "Enter menu" not in browsing
+    assert "Space fold" not in browsing
+    assert "Esc" in menu_open and "cancel" in menu_open
+
+
+def test_small_width_keeps_help_cue_in_the_top_border(tmp_path):
+    g = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    out = _render_text(
+        dashboard.render(
+            [g], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0, interval=3.0, git_enabled=True,
+        ),
+        width=42,
+    )
+    assert "h/? help" in out.splitlines()[0]
 
 
 def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
@@ -2901,33 +2916,28 @@ def test_render_help_overlay_documents_every_key(tmp_path):
         if b.hint:
             assert b.hint in out, f"{b.token}: hint {b.hint!r} missing from help"
             assert b.label in out, f"{b.token}: label {b.label!r} missing from help"
+    assert "fold a repo header" in out
+    assert "toggle the selected setting" in out
     # Help replaces neither the table nor the hint line, and explains gating.
     assert "NAME" in out and "one" in out
     assert "offered" in out or "available" in out
     assert "close" in out
 
 
-def test_render_hint_line_is_built_from_the_key_table(tmp_path):
+def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     out = _render_text(
         dashboard.render(
-            [g],
-            selected=None,
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
-            last_refresh_age=1.0,
-            interval=3.0,
-            git_enabled=True,
+            [g], selected=dashboard.Row("container", "alpha-one"),
+            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), last_refresh_age=1.0,
+            interval=3.0, git_enabled=True,
+            overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")]),
         )
     )
-    hint_line = next(ln for ln in out.splitlines() if "refresh" in ln and "quit" in ln)
-    for b in dashboard.KEY_BINDINGS:
-        if b.brief:
-            assert b.brief in hint_line, f"{b.token}: {b.brief!r} missing from the hint line"
-            assert b.hint in hint_line
-    # The rarely-used keys stay in help only, so the line cannot grow unbounded.
-    assert "Chrome" not in hint_line
+    assert "Enter run" in out and "Esc cancel" in out
+    assert "h/? help" in out.splitlines()[0]
 
 
 def test_parse_key_separates_escape_from_interrupt():
@@ -3467,13 +3477,18 @@ def test_show_if_is_computed_from_visible_containers_only(tmp_path):
     assert "PR" not in folded
 
 
-def test_fold_key_is_bound_to_space_and_documented():
-    """A key that is not in KEY_BINDINGS is invisible in the help overlay and
-    the hint line, which is how the two used to drift."""
-    assert dashboard.parse_key(b" ") == "fold"
-    binding = dashboard.binding_for_token("fold")
+def test_space_key_is_settings_toggle_and_enter_remains_bound():
+    assert dashboard.parse_key(b" ") == "settings-toggle"
+    binding = dashboard.binding_for_token("settings-toggle")
     assert binding is not None
     assert binding.hint and binding.label
+    assert dashboard.parse_key(b"\r") == "enter"
+
+
+def test_run_space_only_persists_when_settings_overlay_is_open(mocker):
+    save = mocker.patch.object(dashboard, "save_view_state")
+    assert _drive_run(mocker, [b" ", b"S", b" "]) == 0
+    save.assert_called_once()
 
 
 def test_settings_key_is_bound_to_f2_and_shift_s():
