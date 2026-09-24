@@ -5344,6 +5344,53 @@ def test_refresh_container_base_swallows_push_error(mocker, make_cfg, tmp_path):
     assert ok is False
 
 
+def test_refresh_container_base_pushes_quietly(mocker, make_cfg, tmp_path):
+    from jailbee.sync import refresh_container_base
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="base-oid")
+    mock_push = mocker.patch("jailbee.sync.git.push_url")
+
+    refresh_container_base(cfg, mocker.MagicMock(), "p-feat-x", base_branch="main")
+
+    assert mock_push.call_args.kwargs == {"quiet": True}
+
+
+def test_refresh_container_base_forward_only_drops_the_plus(mocker, make_cfg, tmp_path):
+    from jailbee.sync import refresh_container_base
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="base-oid")
+    mock_push = mocker.patch("jailbee.sync.git.push_url")
+
+    ok = refresh_container_base(
+        cfg, mocker.MagicMock(), "p-feat-x", base_branch="main", force=False
+    )
+
+    assert ok is True
+    assert mock_push.call_args.args[2] == "refs/heads/main:refs/jailbee/base/main"
+
+
+def test_refresh_container_base_rejected_forward_only_push_is_false(mocker, make_cfg, tmp_path):
+    from jailbee import git
+    from jailbee.sync import refresh_container_base
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="base-oid")
+    mocker.patch("jailbee.sync.git.push_url", side_effect=git.GitError("exit 1"))
+    submods = mocker.patch("jailbee.sync._refresh_submodule_base_anchors")
+
+    ok = refresh_container_base(
+        cfg, mocker.MagicMock(), "p-feat-x", base_branch="main", force=False
+    )
+
+    assert ok is False
+    submods.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # publish_branch_from_container
 # ---------------------------------------------------------------------------

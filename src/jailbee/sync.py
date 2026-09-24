@@ -2003,7 +2003,9 @@ def _refresh_submodule_base_anchors(
         pass
 
 
-def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_branch: str) -> bool:
+def refresh_container_base(
+    cfg: Config, incus: Incus, full_name: str, *, base_branch: str, force: bool = True
+) -> bool:
     """Sync the host's `base_branch` tip into the container's `refs/jailbee/base/<base_branch>`.
 
     This is the ref the `jailbee ls` probe prefers when computing AHEAD ±/↑, so
@@ -2015,13 +2017,24 @@ def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_br
     Best-effort: returns True if the ref was pushed, False if the host base
     does not resolve or the transport fails. Never raises — a refresh problem
     must not fail the surrounding pull/push/new.
+
+    ``force=False`` pushes without the leading ``+``: git then rejects an
+    update that is not a fast-forward of the current anchor, and this returns
+    False. Boot uses it — there nothing moved ``refs/heads/<base>``, which for
+    a base never checked out on the host is often *older* than the
+    ``origin/<base>`` the anchor was seeded from, and a forced push would move
+    the anchor backwards. The push is always quiet: callers report the
+    outcome themselves.
     """
     if git.rev_parse(cfg.repo_root, f"refs/heads/{base_branch}") is None:
         return False
     try:
         url = _build_receive_url(cfg, incus, full_name)
         git.push_url(
-            cfg.repo_root, url, f"+refs/heads/{base_branch}:refs/jailbee/base/{base_branch}"
+            cfg.repo_root,
+            url,
+            f"{'+' if force else ''}refs/heads/{base_branch}:refs/jailbee/base/{base_branch}",
+            quiet=True,
         )
     except (git.GitError, IncusError):
         return False

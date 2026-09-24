@@ -1,6 +1,7 @@
 """Tests for git helpers."""
 
 from pathlib import Path
+import subprocess
 from subprocess import CompletedProcess
 
 import pytest
@@ -831,6 +832,23 @@ def test_push_url_invokes_git_with_protocol_ext_allowed(mocker, tmp_path):
         "+refs/heads/main:refs/jailbee/host/main",
     ]
     assert kwargs == {"cwd": tmp_path}
+
+
+def test_push_url_quiet_discards_git_output(mocker, tmp_path):
+    mock_call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    git.push_url(
+        tmp_path,
+        "ext::echo dummy",
+        "refs/heads/main:refs/jailbee/base/main",
+        quiet=True,
+    )
+
+    _, kwargs = mock_call.call_args
+    assert kwargs == {
+        "cwd": tmp_path,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
 
 
 def test_push_url_raises_git_error_on_non_zero_exit(mocker, tmp_path):
