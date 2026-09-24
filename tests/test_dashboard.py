@@ -581,7 +581,7 @@ def test_carry_forward_git_status_empty_prev_is_noop():
 
 
 def test_selectable_rows_interleaves_headers_and_containers():
-    """Repo headers are selectable rows. That is what lets `Space` reach a
+    """Repo headers are selectable rows. That is what lets `Enter` reach a
     group whose containers are hidden — and it makes the cursor behave like
     the tree it is drawing."""
     groups = [
@@ -3329,8 +3329,7 @@ def test_actions_for_container_no_clear_without_a_job():
 
 
 def test_fold_target_works_from_a_header_and_from_a_container():
-    """Space is forgiving: it folds the current row's group whether the cursor
-    is on the header or on any container inside it."""
+    """Resolve the group for either a header or one of its container rows."""
     groups = [dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")])]
     assert dashboard.fold_target(groups, dashboard.Row("repo", "a")) == "a"
     assert dashboard.fold_target(groups, dashboard.Row("container", "a-1")) == "a"
@@ -3697,7 +3696,7 @@ def test_run_does_not_repeat_the_seeded_gather_when_git_is_disabled(mocker):
 
 
 def test_run_degrades_when_save_view_state_fails(mocker):
-    """A DB write failure on the keypress path (fold key, Enter on a header,
+    """A DB write failure on the keypress path (Space in settings, Enter on a header,
     the settings overlay toggle) must not crash the session.
 
     Before this branch the TUI never wrote to the DB at all, so a failing
@@ -3711,7 +3710,7 @@ def test_run_degrades_when_save_view_state_fails(mocker):
         dashboard, "save_view_state", side_effect=OSError("database is locked")
     )
     # "S" opens the settings overlay, Space toggles the field under the
-    # cursor (a fold-key press on the Fields tab) — one of the three
+    # cursor on the Fields tab — one of the three
     # persist_view_state call sites, reached with no live groups at all.
     rc = _drive_run(mocker, [b"S", b" "])
 
@@ -3740,14 +3739,12 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
     closes whatever was open.
 
     There is no live group in this harness (``gather_live`` returns
-    ``[]``), so a bare-table fold keypress (`Space` with no overlay open)
-    has nothing to act on and never reaches ``save_view_state`` — see
-    ``fold_target``. That makes ``save_view_state`` firing after
-    ``h`` then ``S`` then `Space` a discriminating signal that ``S``
-    actually opened the settings overlay (whose own `Space`/fold handling
-    unconditionally calls ``persist_view_state``), rather than merely
-    closing help and leaving the bare table's fold key to reject the
-    keypress silently. Fails if `"settings"` goes back to being grouped
+    ``[]``), and Space is only handled by the settings overlay. That makes
+    ``save_view_state`` firing after ``h`` then ``S`` then `Space` a
+    discriminating signal that ``S`` actually opened the settings overlay,
+    whose Space handling calls ``persist_view_state``, rather than merely
+    closing help and leaving the bare table to reject the keypress silently.
+    Fails if `"settings"` goes back to being grouped
     with `("cancel", "quit")`, which only closes whatever overlay is open.
     """
     save = mocker.patch.object(dashboard, "save_view_state")

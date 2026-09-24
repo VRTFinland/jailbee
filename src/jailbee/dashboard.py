@@ -549,9 +549,9 @@ def container_of(row: Row | None) -> str | None:
 def fold_target(groups: list[RepoGroup], row: Row | None) -> str | None:
     """The repo prefix a fold key should act on for ``row``, else None.
 
-    Accepts either kind of row: folding from inside a group is the common
-    gesture ("get this out of my way"), and requiring the cursor to be on the
-    header first would make the key feel arbitrary.
+    Accepts either kind of row so callers can resolve a group's prefix from
+    its header or one of its container rows. The live-table fold action is
+    currently triggered from a repo header; settings provide the other route.
     """
     if row is None:
         return None
@@ -898,9 +898,9 @@ class KeyBinding:
     would drift.
 
     ``hint`` is empty for a token whose sibling documents it (``down`` is
-    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is the terse word used in the
-    hint line, or None to keep the key in the help overlay only. Ordinary
-    dashboard mode has no permanent hint line.
+    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is retained as optional
+    concise key metadata; keys without one remain documented in the help
+    overlay through their ``hint``/``label`` fields.
     """
 
     token: str
@@ -1273,18 +1273,15 @@ def render(
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
-    One shared table (columns aligned across all repos); each repo is a
-    section header row inside it. The selected container is marked with a
+    Repo sections are rendered in the dashboard body with aligned columns.
+    The selected row is marked with a
     ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel whose
     left-aligned title carries the summary, the clock and a fixed-width
     refresh field; the subtitle carries a transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
     the table so the dashboard it acts on stays on screen. ``notice`` is a
-    transient message
-    (a rejected key, a view-only row) shown in the subtitle; the keybinding
-    hint lives in the panel body, where Rich can wrap it instead of the
-    subtitle silently clipping it.
+    transient message (a rejected key, a view-only row) shown in the subtitle.
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
