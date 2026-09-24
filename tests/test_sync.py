@@ -8291,3 +8291,20 @@ def test_remote_fetch_still_creates_a_branch_that_is_not_checked_out(
     result = sync.sync_refs_from_container(cfg, incus, "feat-foo")
 
     assert result.superproject.status == "created"
+
+
+def test_remote_pull_refuses_before_fetching_anything(mocker, make_cfg, tmp_path, remote_session):
+    """Settled before the fetch: not even refs/jailbee/... moves."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-foo")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    fetch = mocker.patch("jailbee.sync.fetch_from_container")
+    transport = mocker.patch("jailbee.sync.submodules.transport_submodules_to_host")
+
+    with pytest.raises(sync.SyncError, match="checked out on the host"):
+        sync.merge_from_container(cfg, incus, "feat-foo")
+
+    fetch.assert_not_called()
+    transport.assert_not_called()

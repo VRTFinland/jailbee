@@ -2157,3 +2157,29 @@ def test_gitmodules_paths_at_reads_the_commit_blob(mocker):
     assert submodules._gitmodules_paths_at(run, "/repo", "deadbeef") == [("sub", "sub")]
     args = run.call_args[0][1]
     assert args[:3] == ["config", "--blob", "deadbeef:.gitmodules"]
+
+
+def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
+    mocker, tmp_path, monkeypatch, capsys
+):
+    """Cloning is a checkout into the host tree. Over remote SSH the new
+    submodule is skipped with a warning — not a fatal error that would sink
+    the ref-only transfer of everything else — and no directory is made."""
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    cfg = _cfg_repo(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = " 1111 libs/new (v1)\n"
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
+    fetch = mocker.patch("jailbee.submodules.git.fetch_url_multi")
+    clone = mocker.patch("jailbee.submodules.git.clone_url")
+
+    submodules.transport_submodules_to_host(
+        cfg, incus, "full-c", "feat-x", repo_dir="/home/dev/repo"
+    )
+
+    clone.assert_not_called()
+    fetch.assert_not_called()
+    assert not (tmp_path / "libs").exists()
+    # Rich wraps at the console width; compare with the line breaks joined.
+    printed = " ".join(capsys.readouterr().out.split())
+    assert "not cloned into the host tree over remote SSH" in printed

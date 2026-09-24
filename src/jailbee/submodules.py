@@ -1198,6 +1198,20 @@ def transport_submodules_to_host(
         url = _sub_upload_pack_url(cfg, container, repo_dir, path)
         host_sub = repo_root / path
         if not host_subrepo_exists(repo_root, path):
+            from jailbee.remote_ssh.session import is_remote_session
+
+            if is_remote_session():
+                # A clone is a checkout into the host tree, which a restricted
+                # remote session never writes (`git.clone_url` refuses it).
+                # Skipped rather than fatal, so the ref-only transfer of
+                # everything else still happens; the placement then reports
+                # this submodule "unreachable".
+                _warn(
+                    f"submodule '{path}' is new in the container; it is not cloned "
+                    f"into the host tree over remote SSH — run this on the host to "
+                    f"bring it in."
+                )
+                continue
             host_sub.parent.mkdir(parents=True, exist_ok=True)
             git.clone_url(url, host_sub)
             _repoint_cloned_subrepo(incus, container, repo_dir, path, host_sub, uid=uid)

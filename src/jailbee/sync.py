@@ -1814,18 +1814,11 @@ def merge_from_container(
 
     Cleanup is handled separately by ``run_post_merge_cleanup``.
     """
-    from jailbee.lifecycle import resolve_container_name
+    from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
-    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
-    container_branch = fetch_result.branch
-    fetched_ref = f"refs/jailbee/{short}/{container_branch}"
-
-    from jailbee.lifecycle import container_repo_dir
-
+    # The target is settled before anything is fetched, so a restricted
+    # remote session is refused before a single ref moves.
     full_name = resolve_container_name(cfg, incus, short)
-    repo_dir = container_repo_dir(cfg, incus, full_name)
-    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
-
     base_label = incus.config_get(full_name, "user.jailbee.base_branch")
     base_branch = base_label if isinstance(base_label, str) and base_label else None
     target = into if into is not None else base_branch
@@ -1841,6 +1834,13 @@ def merge_from_container(
         )
     elif allow_checkout:
         _refuse_remote_tree_write("`--checkout`", "Pull without it to update the ref only.")
+
+    fetch_result = fetch_from_container(cfg, incus, short, branch=branch, tags=tags)
+    container_branch = fetch_result.branch
+    fetched_ref = f"refs/jailbee/{short}/{container_branch}"
+
+    repo_dir = container_repo_dir(cfg, incus, full_name)
+    submodules.transport_submodules_to_host(cfg, incus, full_name, short, repo_dir=repo_dir)
 
     if target == current:
         # In-place path: HEAD IS the target branch.

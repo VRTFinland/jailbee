@@ -113,13 +113,14 @@ The SSH protocol surface is also fail-closed:
   short-option clusters and `--opt=value` forms are covered.
 
 - the git bridge updates refs only. `git checkout`, `branch` on the host,
-  `git pull` into the host's checked-out branch or with `--checkout`, a
-  `git fetch` that would move the checked-out branch, and cloning a new
-  submodule into the host tree are all refused: whatever lands in the
-  checked-out tree — a repo config that decides host mounts, a build
-  script — is what the host's own tools read next. Pull into another host
-  branch (`--into`) or fetch into one (`--as`), and check it out on the
-  host; and
+  `git pull` into the host's checked-out branch or with `--checkout`, and a
+  `git fetch` that would move the checked-out branch are refused before
+  anything is fetched; a submodule new in the container is not cloned into
+  the host tree (skipped with a warning, the rest still transfers).
+  Whatever lands in the checked-out tree — a repo config that decides host
+  mounts, a build script — is what the host's own tools read next. Pull
+  into another host branch (`--into`) or fetch into one (`--as`), and check
+  it out on the host;
 - publishing to GitHub with the host's own `gh` (`pr`, `submodule pr`,
   `review apply`, `issue apply`) stays available — the key holder is the
   human the outbox is reviewed by — but never with `--yes`, so each action

@@ -124,9 +124,10 @@ the command's own parser decides, so `-c/path`, `--config=/path` and `-bm`
 are refused too. The remote dashboard has no config editor (`e`/`E`), no diff
 pager and no GUI app launches, and `jb dashboard --gui`/`jb gui` refuse to
 start over SSH. The git bridge moves refs only: `git checkout`, host
-`branch`, `git pull` into the checked-out branch or with `--checkout`, a
-`git fetch` moving the checked-out branch and a new submodule clone into the
-host tree are refused (pull `--into` / fetch `--as` another branch instead),
+`branch`, `git pull` into the checked-out branch or with `--checkout` and a
+`git fetch` moving the checked-out branch are refused (pull `--into` / fetch
+`--as` another branch instead), a submodule new in the container is skipped
+with a warning rather than cloned into the host tree,
 `shell`/`tmux`/`exec` and the GUI launchers refuse a mount-mode container
 (it shares the host's working tree), and a branch-autostart privilege widening is refused even with `--yes`.
 Host-management commands — `config edit`/`init`, `remote ...`, `setup`,

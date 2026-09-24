@@ -533,3 +533,25 @@ def test_post_create_gui_launches_warns_without_a_session(tmp_path, mocker):
 
     warn_mock.assert_called_once()
     launcher.assert_not_called()
+
+
+def test_remote_apps_ls_still_inspects_a_mount_mode_container(tmp_path, mocker, monkeypatch):
+    """`apps ls` only probes; it opens nothing inside the container, so the
+    mount-mode refusal (for commands that enter) does not apply."""
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: "mount" if k == "user.jailbee.mode" else None
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="p-c1")
+    mocker.patch("jailbee.lifecycle.short_name", return_value="c1")
+    mocker.patch("jailbee.lifecycle.wait_for_background_ready")
+    mocker.patch("jailbee.apps.probe", return_value="missing")
+
+    result = runner.invoke(app, ["apps", "ls", "c1"])
+
+    assert result.exit_code == 0, result.output
+    assert "mount-mode" not in result.output

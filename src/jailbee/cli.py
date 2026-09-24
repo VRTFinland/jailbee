@@ -3589,8 +3589,13 @@ def _resolve_attachable(
     *,
     force: bool = False,
     attach_cmd: str = "shell",
+    enters: bool = True,
 ) -> tuple["IncusType", str]:
     """Resolve a container for an attach command, waiting for in-flight ops.
+
+    ``enters`` is False for a caller that only inspects the container
+    (`apps ls`) rather than opening a session or starting a process in it:
+    only an entering caller is held to `lifecycle.assert_remote_may_enter`.
 
     Like :func:`_resolve_existing`, but in-flight ``jailbee new --background``
     containers resolve by name and appear in the picker; once resolved, the
@@ -3672,7 +3677,8 @@ def _resolve_attachable(
         if not _confirm_attach(force=force):
             raise typer.Exit(1) from e
     # After the wait: a background create sets the mode label on its way up.
-    _refuse_remote_mount_container(incus, resolved, short)
+    if enters:
+        _refuse_remote_mount_container(incus, resolved, short)
     return incus, resolved
 
 
@@ -12267,7 +12273,9 @@ def apps_ls_cmd(
 
     status: dict[str, str] = {}
     if name is not None:
-        incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd="apps ls")
+        incus, resolved = _resolve_attachable(
+            cfg, name, force=force, attach_cmd="apps ls", enters=False
+        )
         status = {s.name: probe(cfg, incus, resolved, s) for s in specs}
 
     all_fields: list[table_format.FieldSpec[AppSpec]] = [
