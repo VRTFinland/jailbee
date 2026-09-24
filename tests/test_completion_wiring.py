@@ -205,7 +205,7 @@ def test_fixed_choice_options_complete_their_values():
         ("jailbee pool ls", "fmt", ["table", "json"]),
         ("jailbee chrome-pool ls", "fmt", ["table", "json"]),
         ("jailbee disk-usage", "fmt", ["table", "json"]),
-        ("jailbee config show", "layer", ["global", "repo", "effective"]),
+        ("jailbee config show", "layer", ["global", "repo", "local", "effective"]),
         ("jailbee new", "attach", ["shell", "tmux", "none"]),
         ("jailbee shell", "user", ["dev", "root"]),
     ]

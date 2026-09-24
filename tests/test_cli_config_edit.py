@@ -50,6 +50,44 @@ def test_global_opens_the_global_layer_and_regenerates(tmp_path, mocker):
     assert run.call_args.kwargs["policy"] == "regenerate"
 
 
+def test_local_layer_opens_for_resolved_prefix(tmp_path, mocker, monkeypatch):
+    cfg = _repo(tmp_path)
+    cfg.write_text("container_prefix: myrepo\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)
+    run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
+
+    result = runner.invoke(app, ["config", "edit", "--local", "--config", str(cfg)])
+
+    from jailbee.config.local_layer import local_config_path
+
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["layer"] == "local"
+    assert run.call_args.kwargs["layer_set"].local_path == local_config_path("myrepo")
+
+
+def test_local_edit_rejects_global_and_regenerate(tmp_path):
+    cfg = _repo(tmp_path)
+    for args in (("--local", "--global"), ("--local", "--write", "regenerate")):
+        result = runner.invoke(app, ["config", "edit", *args, "--config", str(cfg)])
+        assert result.exit_code == 2
+
+
+def test_local_edit_refuses_invalid_prefix_without_sentinel_file(tmp_path, mocker, monkeypatch):
+    cfg = _repo(tmp_path)
+    cfg.write_text("container_prefix: INVALID_prefix\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)
+    run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
+
+    result = runner.invoke(app, ["config", "edit", "--local", "--config", str(cfg)])
+
+    assert result.exit_code == 1
+    assert "valid container_prefix" in result.output
+    assert not (tmp_path / "xdg" / "jailbee" / "repos" / "invalid-prefix.yaml").exists()
+    run.assert_not_called()
+
+
 def test_the_write_flag_wins(tmp_path, mocker):
     cfg = _repo(tmp_path)
     mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Final
 
 from prompt_toolkit.styles import Style
 
-from jailbee.config_edit.layers import disabled_reason, inherited_entries, lookup
+from jailbee.config_edit.layers import disabled_reason, inherited_entries, lookup, path_for
 from jailbee.config_edit.schema import FieldKind, dotted, is_drilldown
 from jailbee.config_edit.state import (
     UNSET,
@@ -48,6 +48,7 @@ _ORIGIN_LABEL = {
     "default": "(default)",
     "global": "(global)",
     "repo": "(repo)",
+    "local": "(local)",
     "set": "(set)",
 }
 
@@ -182,7 +183,7 @@ def _staged_suffix(state: EditorState, spec: FieldSpec) -> str:
 
 def title_bar(state: EditorState, layer_set: LayerSet) -> StyleAndTextTuples:
     """Which file is open, how deep the trail has gone, and what is pending."""
-    path = layer_set.repo_path if state.layer == "repo" else layer_set.global_path
+    path = path_for(layer_set, state.layer)
     count = len(changes(state))
     trail = " ▸ ".join(str(crumb) for crumb in state.trail[1:])
     where = f"   {state.trail[0]} ▸ {trail}" if len(state.trail) > 1 else ""

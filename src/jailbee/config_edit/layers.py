@@ -227,7 +227,10 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     if layer == "local" and spec.path[0] == "container_prefix":
         return "`container_prefix` names this file; set it in the repo config."
     if layer == "local" and spec.path == ("github", "token"):
-        return "`github.token` is managed by the local credential store and cannot be edited here."
+        return (
+            "Secrets are not editable here — the editor will not paint a token on a "
+            "terminal. Edit the file by hand and keep it at mode 0600."
+        )
     if layer == "local" and spec.path[:2] == ("github", "api_tokens"):
         return "This file is already per-repo — use `github.token` instead."
     return None

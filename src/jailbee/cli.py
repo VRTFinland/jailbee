@@ -873,14 +873,14 @@ def config_show(
         str,
         typer.Option(
             "--layer",
-            help="Which config layer to print: global | repo | effective (default).",
-            autocompletion=completion.complete_choices("global", "repo", "effective"),
+            help="Which config layer to print: global | repo | local | effective (default).",
+            autocompletion=completion.complete_choices("global", "repo", "local", "effective"),
         ),
     ] = "effective",
 ) -> None:
     """Print the loaded configuration as YAML."""
-    if layer not in {"global", "repo", "effective"}:
-        error(f"--layer must be one of: global, repo, effective. Got: {layer!r}")
+    if layer not in {"global", "repo", "local", "effective"}:
+        error(f"--layer must be one of: global, repo, local, effective. Got: {layer!r}")
         raise typer.Exit(2)
 
     if layer == "global":
@@ -919,19 +919,44 @@ def config_show(
         typer.echo(path.read_text(), nl=False)
         return
 
+    if layer == "local":
+        from jailbee.config.local_layer import local_config_path
+
+        cfg = _load_or_exit(config)
+        path = local_config_path(cfg.container_prefix)
+        typer.echo(f"# Host-local config: {path}")
+        if not path.exists():
+            return
+        # This diagnostic uses a YAML dump to mask github.token, so comments
+        # are not preserved (unlike the raw repo/global views).
+        raw = yaml.safe_load(path.read_text()) or {}
+        github = raw.get("github") if isinstance(raw, dict) else None
+        if isinstance(github, dict) and github.get("token"):
+            github["token"] = "**********"
+        typer.echo(yaml.safe_dump(raw, sort_keys=False), nl=False)
+        return
+
     # effective (default) — current behaviour
     from jailbee.config import SCRATCH_ORIGIN_SUFFIX
 
     cfg = _load_or_exit(config)
     if cfg.is_synthetic():
+        from jailbee.config.local_layer import local_config_path
+
+        local_path = local_config_path(cfg.container_prefix)
+        suffix = f" + {local_path}" if local_path.exists() else ""
         info(
             f"# Effective config (merged from global + "
-            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX})"
+            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}{suffix})"
         )
     else:
         # `_resolve_config_path` invariant: the `is_synthetic()` branch above
         # is what makes this call safe — there is a file here.
-        info(f"# Effective config (merged from global + {_resolve_config_path(config)})")
+        from jailbee.config.local_layer import local_config_path
+
+        local_path = local_config_path(cfg.container_prefix)
+        suffix = f" + {local_path}" if local_path.exists() else ""
+        info(f"# Effective config (merged from global + {_resolve_config_path(config)}{suffix})")
     data = cfg.model_dump(mode="json")
 
     from sqlmodel import Session
@@ -1134,6 +1159,10 @@ def config_edit_cmd(
             help="Edit ~/.config/jailbee/global.yaml instead of the repo config.",
         ),
     ] = False,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="Edit this repo's host-local overrides."),
+    ] = False,
     write: Annotated[
         str | None,
         typer.Option(
@@ -1146,12 +1175,18 @@ def config_edit_cmd(
 ) -> None:
     """Edit configuration interactively, with per-option help."""
     from jailbee.config_edit.app import run_editor
-    from jailbee.config_edit.layers import read_layers
+    from jailbee.config_edit.layers import LayerName, read_layers
     from jailbee.config_edit.save import WritePolicy, configured_policy, resolve_policy
-    from jailbee.config_edit.schema import global_specs, repo_specs
+    from jailbee.config_edit.schema import global_specs, local_specs, repo_specs
     from jailbee.paths import repo_config_dir_name
 
     write_policy: WritePolicy | None
+    if local and global_:
+        error("--local and --global are mutually exclusive.")
+        raise typer.Exit(2)
+    if local and write == "regenerate":
+        error("--local always writes a minimal patch; --write regenerate is not available for it.")
+        raise typer.Exit(2)
     if write is None:
         write_policy = None
     elif write == "patch":
@@ -1177,10 +1212,22 @@ def config_edit_cmd(
         repo_path = cwd / repo_config_dir_name(cwd) / "config.yaml"
     global_path = default_global_config_path()
 
-    layer: Literal["repo", "global"] = "global" if global_ else "repo"
-    specs = global_specs() if global_ else repo_specs()
+    local_path = _local_config_path_for(repo_path)
+    if local and local_path is None:
+        error_plain(
+            "Cannot resolve a valid container_prefix for this repo; set `container_prefix:` "
+            "in the repo config first."
+        )
+        raise typer.Exit(1)
+    if local_path is None:
+        from jailbee.config.local_layer import local_config_dir
+
+        local_path = local_config_dir() / ".none.yaml"
+
+    layer: LayerName = "global" if global_ else ("local" if local else "repo")
+    specs = global_specs() if global_ else (local_specs() if local else repo_specs())
     try:
-        layer_set = read_layers(repo_path, global_path)
+        layer_set = read_layers(repo_path, global_path, local_path)
     except ConfigError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
@@ -1204,6 +1251,18 @@ def config_edit_cmd(
         error_plain(str(e))
         raise typer.Exit(1) from e
     raise typer.Exit(code)
+
+
+def _local_config_path_for(repo_path: Path) -> Path | None:
+    """Resolve the host-local path using the loader's raw-layer prefix rule."""
+    from jailbee.config.common import _read_yaml_or_empty, _split_host_keys, deep_merge
+    from jailbee.config.loader import derive_prefix
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.config.models_host import _PREFIX_RE
+
+    _, global_overlay = _split_host_keys(_read_yaml_or_empty(default_global_config_path()))
+    prefix = derive_prefix(deep_merge(global_overlay, _read_yaml_or_empty(repo_path)), repo_path)
+    return local_config_path(prefix) if _PREFIX_RE.match(prefix) else None
 
 
 def _offer_editor(*, global_layer: bool) -> None:
