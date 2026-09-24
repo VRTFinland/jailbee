@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, submodules
 from jailbee.incus import IncusError
+from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
@@ -36,6 +37,19 @@ SourcePref = Literal["origin", "local"]
 ``refs/heads/<source>``. Configured repo-wide via ``push.push_from`` and
 overridable per invocation (``jailbee git push --from-origin/--from-local``).
 """
+
+
+def _refuse_remote_tree_write(action: str, hint: str | None = None) -> None:
+    """Refuse, before anything is written, a flow that would change the host tree.
+
+    A restricted remote session updates refs only (see
+    `remote_ssh.session.host_tree_refusal`). `git`'s guarded primitives are the
+    backstop; refusing here too, at the top of each flow, is what gives the
+    user a message that names the command and what to run instead, rather
+    than one about whichever primitive happened to be reached first.
+    """
+    if is_remote_session():
+        raise SyncError(host_tree_refusal(action, hint))
 
 
 class SyncError(RuntimeError):
@@ -1446,6 +1460,13 @@ def _place_host_branch(
     old_oid = git.rev_parse(cfg.repo_root, ref)
     moving_an_existing_ref = old_oid is not None and old_oid != new_oid
     if moving_an_existing_ref and git.get_current_branch(cfg.repo_root) == target:
+        # Before the merge, not by its GitError: the classification below
+        # would report the refusal as a dirty tree or a divergence.
+        _refuse_remote_tree_write(
+            f"Moving '{target}', the branch checked out on the host,",
+            "Fetch into another host branch with --as, or check out another "
+            "branch on the host first.",
+        )
         try:
             git.merge_ref(cfg.repo_root, fetched_ref, message=None, no_ff=False, ff_only=True)
         except git.GitError:
@@ -1568,6 +1589,10 @@ def checkout_from_container(
 
     Returns a `CheckoutResult` so the CLI can print a post-op summary.
     """
+    _refuse_remote_tree_write(
+        "`jailbee git checkout`",
+        "`jailbee git fetch` updates the host branch without checking it out.",
+    )
     # force is deliberately left at its default: a checkout must never
     # overwrite host history the way `jailbee git pull --force` can.
     refs = sync_refs_from_container(cfg, incus, short, branch=branch, as_name=as_name, tags=tags)
@@ -1657,8 +1682,13 @@ def checkout_submodules_on_host(
 
     Purely local — moves no objects between host and container. Raises
     ``SyncError`` when the host is in detached HEAD and no ``branch`` override
-    is given.
+    is given, and in a restricted remote session, where every step of it
+    rewrites the host's working tree.
     """
+    _refuse_remote_tree_write(
+        "Placing the host repo on a branch",
+        "`--container` aligns a container's tree instead.",
+    )
     resolved = branch if branch is not None else git.get_current_branch(cfg.repo_root)
     if resolved is None:
         raise SyncError(
@@ -1802,6 +1832,15 @@ def merge_from_container(
     current = git.get_current_branch(cfg.repo_root)
     if target is None:
         target = current  # legacy fallback: merge into HEAD
+
+    if target == current:
+        _refuse_remote_tree_write(
+            f"Merging into '{target}', the branch checked out on the host,",
+            "Pull into another host branch with --into, or check out another "
+            "branch on the host first.",
+        )
+    elif allow_checkout:
+        _refuse_remote_tree_write("`--checkout`", "Pull without it to update the ref only.")
 
     if target == current:
         # In-place path: HEAD IS the target branch.

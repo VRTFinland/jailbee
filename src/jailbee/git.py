@@ -569,6 +569,28 @@ class GitError(RuntimeError):
     """Raised when a git command fails. Carries stderr in the message."""
 
 
+class HostTreeWriteRefusedError(GitError):
+    """A restricted remote SSH session asked to change the host's working tree.
+
+    A `GitError`, so every caller of the guarded primitives already turns it
+    into a clean error. The flows that reach them refuse earlier with a
+    message of their own (see `sync`); this is the backstop that holds for a
+    path nobody thought of.
+    """
+
+
+def _refuse_host_tree_write(action: str) -> None:
+    """Raise `HostTreeWriteRefusedError` inside a restricted remote session.
+
+    Guards every primitive here that writes the host's checked-out tree:
+    `checkout_branch`, `merge_ref`, `submodule_update` and `clone_url`.
+    """
+    from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
+
+    if is_remote_session():
+        raise HostTreeWriteRefusedError(host_tree_refusal(action))
+
+
 def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "reachable") -> None:
     """Run `git fetch <url> <refspec>` in repo_root.
 
@@ -1067,6 +1089,7 @@ def checkout_branch(repo_root: Path, branch: str) -> None:
 
     Raises `GitError` on non-zero exit.
     """
+    _refuse_host_tree_write(f"Checking out '{branch}'")
     returncode = subprocess.call(["git", "checkout", branch], cwd=repo_root)
     if returncode != 0:
         raise GitError(f"git checkout failed (exit {returncode})")
@@ -1086,6 +1109,7 @@ def merge_ref(
     case the user has already seen git's stderr and the working tree is
     in merge state for manual resolution.
     """
+    _refuse_host_tree_write(f"Merging '{ref}'")
     cmd = ["git", "merge"]
     if ff_only:
         cmd.append("--ff-only")
@@ -1119,6 +1143,7 @@ def submodule_update(repo_root: Path) -> None:
     paths work (git blocks the file transport for submodules by default
     since 2.38 / CVE-2022-39253). Output is inherited by the parent.
     """
+    _refuse_host_tree_write("Updating the submodules")
     returncode = subprocess.call(
         [
             "git",
@@ -1206,7 +1231,11 @@ def clone_url(url: str, dest: Path) -> None:
     ``--no-recurse-submodules``: a brand-new submodule's own nested submodules
     (if any) are initialized separately and offline; cloning must not try to
     reach their upstreams.
+
+    Always into the host's working tree (a new submodule's checkout), so it
+    is refused in a restricted remote session like the other tree writers.
     """
+    _refuse_host_tree_write(f"Cloning a new submodule into '{dest}'")
     returncode = subprocess.call(
         [
             "git",

@@ -28,11 +28,13 @@ see [Running an agent without prompts](#running-an-agent-without-prompts).
 
 The optional SSH server is a capability boundary inside the current user's
 account, not a second kernel sandbox. The service runs as the same Unix UID
-that runs the local `jailbee` CLI and has the same Incus access. It never
-deliberately launches a host shell, but every enabled JailBee command keeps
-the host-side effects it has locally: it can change the host repo, Incus
-containers, host-local configuration and other user-owned state according to
-that command's normal behavior.
+that runs the local `jailbee` CLI and has the same Incus access. With
+`remote.ssh.restrict_host` at its default, a remote session reaches the
+containers and the host repo's refs, and every host-reaching path JailBee
+knows of is closed (listed below). What an enabled command does to Incus
+containers and host-local state is otherwise its normal behavior, and
+`commands.mode: full` still grants commands such as `config edit` that
+change host configuration.
 
 Every authorized client key has identical access. There are no per-key repos,
 roles or command policies, and the fixed SSH username `jailbee` does not map
@@ -93,6 +95,23 @@ The SSH protocol surface is also fail-closed:
   bind of the host repo includes `.git`, where a planted hook runs on the
   host. The argv is parsed by the command's own parser to decide this, so
   short-option clusters and `--opt=value` forms are covered.
+
+- the git bridge updates refs only. `git checkout`, `branch` on the host,
+  `git pull` into the host's checked-out branch or with `--checkout`, a
+  `git fetch` that would move the checked-out branch, and cloning a new
+  submodule into the host tree are all refused: whatever lands in the
+  checked-out tree — a repo config that decides host mounts, a build
+  script — is what the host's own tools read next. Pull into another host
+  branch (`--into`) or fetch into one (`--as`), and check it out on the
+  host; and
+- a branch whose autostart config widens privileges (the escalation prompt
+  of `jailbee new`) is refused outright, `--yes` included: over SSH the one
+  answering that prompt is the remote user it exists to hold back.
+
+A container the operator created with `jailbee new --mount` shares the host
+repo's working tree, `.git` included, and a remote session that reaches it
+reaches that tree. Remote `new --mount` is refused; an existing mount-mode
+container is the operator's choice to expose.
 
 `remote.ssh.restrict_host: false` (or `jb remote ssh serve
 --no-restrict-host` for one run) lifts every host restriction above and in

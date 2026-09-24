@@ -711,8 +711,12 @@ Client forms at the default loopback endpoint:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
-ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
+
+The `--` is for the client: OpenSSH keeps parsing its own options after the
+destination while the next word starts with `-`, so a bare `--repo` fails with
+`unknown option -- -`.
 
 A commandless login prints the enabled forms and exits. Dashboard and the
 restricted JailBee console need `-t`. Every one-shot command requires an exact
@@ -735,7 +739,10 @@ has no shell operators, expansion or executable lookup. In every mode, `full`
 included, a remote command may not set a path-typed option or argument
 (`--config`, `net refresh --repo`, ...) nor `new --mount`: the policy picks
 commands, never host paths. The remote dashboard has no config editor, diff
-pager or GUI app launches. `remote.ssh.restrict_host: false` (or `serve
+pager or GUI app launches. The git bridge moves refs only: `git checkout`,
+host `branch`, and `git pull`/`fetch` into the host's checked-out branch are
+refused (use `--into`/`--as`), and a branch-autostart privilege widening is
+refused even with `--yes`. `remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts all of these at once.
 
 The service runs as the same host UID as local JailBee, and every authorized

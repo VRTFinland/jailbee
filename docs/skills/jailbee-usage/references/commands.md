@@ -79,8 +79,12 @@ grammar is exactly:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
-ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
+
+The `--` is for the client: OpenSSH keeps parsing its own options after the
+destination while the next word starts with `-`, so a bare `--repo` fails with
+`unknown option -- -`.
 
 A commandless login prints help listing only configured entry points and exits
 zero. `dashboard` and the restricted console require a PTY. One-shot commands
@@ -119,7 +123,12 @@ option or argument (`--config`, `net refresh --repo`, ...) nor `new --mount`;
 the command's own parser decides, so `-c/path`, `--config=/path` and `-bm`
 are refused too. The remote dashboard has no config editor (`e`/`E`), no diff
 pager and no GUI app launches, and `jb dashboard --gui`/`jb gui` refuse to
-start over SSH. `remote.ssh.restrict_host: false` (or `serve
+start over SSH. The git bridge moves refs only: `git checkout`, host
+`branch`, `git pull` into the checked-out branch or with `--checkout`, a
+`git fetch` moving the checked-out branch and a new submodule clone into the
+host tree are refused (pull `--into` / fetch `--as` another branch instead),
+and a branch-autostart privilege widening is refused even with `--yes`.
+`remote.ssh.restrict_host: false` (or `serve
 --no-restrict-host`) lifts every one of these at once; a server started from
 inside a restricted session stays restricted regardless.
 

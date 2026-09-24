@@ -8441,3 +8441,45 @@ def test_destroy_container_survives_a_private_release_failure(tmp_path, mocker):
     destroy_container(cfg, incus, "x", force=True)
 
     incus.delete.assert_called_once_with("x", force=True)
+
+
+@pytest.mark.parametrize("assume_yes", [False, True])
+def test_remote_session_cannot_approve_a_branch_privilege_widening(
+    mocker, make_cfg, tmp_path, monkeypatch, assume_yes
+):
+    """Over SSH the one answering the gate is the remote user it holds back:
+    the widening is refused before anything is created, `--yes` or not."""
+    from types import SimpleNamespace
+
+    from jailbee import lifecycle
+    from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions, new_container
+
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    mocker.patch.object(lifecycle, "resolve_clone_ref", return_value=MagicMock())
+    verdict = SimpleNamespace(prompts=True, baseline_source="origin/main")
+    mocker.patch.object(
+        lifecycle,
+        "assess_branch_autostart",
+        return_value=BranchAutostartAssessment(ref="abc", effective_cfg=cfg, verdict=verdict),
+    )
+    confirm = MagicMock(return_value=True)
+    opts = NewContainerOptions(
+        container_branch="feat",
+        name="p-feat",
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="golden",
+        clone=True,
+        assume_yes=assume_yes,
+    )
+
+    with pytest.raises(ValueError, match="remote SSH session cannot approve"):
+        new_container(cfg, incus, opts, confirm_fn=confirm)
+
+    confirm.assert_not_called()
+    incus.copy.assert_not_called()
+    incus.init.assert_not_called()

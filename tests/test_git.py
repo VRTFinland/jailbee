@@ -1831,3 +1831,42 @@ def test_fetch_url_reachable_passes_no_tag_flag(mocker, tmp_path):
     argv = call.call_args[0][0]
     assert "--tags" not in argv
     assert "--no-tags" not in argv
+
+
+# A restricted remote SSH session never writes the host's checked-out tree.
+
+
+_TREE_WRITERS = [
+    ("checkout_branch", lambda: git.checkout_branch(Path("/repo"), "main")),
+    (
+        "merge_ref",
+        lambda: git.merge_ref(Path("/repo"), "refs/x", message=None, no_ff=False, ff_only=True),
+    ),
+    ("submodule_update", lambda: git.submodule_update(Path("/repo"))),
+    ("clone_url", lambda: git.clone_url("ext::x", Path("/repo/sub"))),
+]
+
+
+@pytest.mark.parametrize(("name", "call"), _TREE_WRITERS)
+def test_tree_writers_refuse_in_a_restricted_remote_session(mocker, monkeypatch, name, call):
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    spawn = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+
+    with pytest.raises(git.HostTreeWriteRefusedError, match="checked-out working tree"):
+        call()
+
+    spawn.assert_not_called()
+
+
+@pytest.mark.parametrize(("name", "call"), _TREE_WRITERS)
+def test_tree_writers_run_outside_a_remote_session(mocker, monkeypatch, name, call):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    spawn = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+
+    call()
+
+    spawn.assert_called_once()
+
+
+def test_the_refusal_is_a_git_error_every_caller_already_handles():
+    assert issubclass(git.HostTreeWriteRefusedError, git.GitError)

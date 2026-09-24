@@ -2495,6 +2495,12 @@ def _preflight_background_new(
 
     verdict = assessment.verdict
     approved_ref: str | None = None
+    if verdict is not None and verdict.prompts:
+        from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
+
+        if is_remote_session():
+            error(escalation_refusal(verdict.baseline_source))
+            raise typer.Exit(2)
     if verdict is not None and verdict.prompts and not opts.assume_yes:
         if not _stdin_is_interactive():
             error(

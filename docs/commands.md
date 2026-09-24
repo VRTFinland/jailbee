@@ -152,8 +152,12 @@ accepted client forms are:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
-ssh -p 8022 jailbee@localhost --repo PREFIX COMMAND [ARGS...]
+ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
+
+The `--` is for the client: OpenSSH keeps parsing its own options after the
+destination while the next word starts with `-`, so a bare `--repo` fails with
+`unknown option -- -`.
 
 A commandless `ssh -p 8022 jailbee@localhost` prints help containing only the
 configured entry points and exits successfully. `dashboard` and the remote

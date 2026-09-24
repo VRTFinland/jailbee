@@ -183,7 +183,7 @@ Run a one-shot command without a PTY:
 
 ```bash
 ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" ls
+  -- --repo "$JB_SSH_PREFIX" ls
 ```
 
 Expect the repo's normal `jb ls` output and exit status. A path in place of
@@ -196,7 +196,7 @@ causes JailBee's normal confirmation, decline it once, then repeat and accept:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" new feat/ssh-smoke
+  -- --repo "$JB_SSH_PREFIX" new feat/ssh-smoke
 ```
 
 ### Container terminals, resize, Ctrl-C and disconnect cleanup
@@ -206,7 +206,7 @@ not the reserved remote console entry point:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+  -- --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
 ```
 
 Inside the container run `stty size`, resize the local terminal, and run it
@@ -215,7 +215,7 @@ client, then exercise tmux in the same PTY:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" tmux "$JB_SSH_CONTAINER"
+  -- --repo "$JB_SSH_PREFIX" tmux "$JB_SSH_CONTAINER"
 ```
 
 Expect the real tmux session; detach normally and confirm the SSH command
@@ -223,7 +223,7 @@ returns. Next start a long foreground command and press Ctrl-C:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" exec "$JB_SSH_CONTAINER" -- sleep 300
+  -- --repo "$JB_SSH_PREFIX" exec "$JB_SSH_CONTAINER" -- sleep 300
 ```
 
 Expect Ctrl-C to reach the foreground process group, the remote command to
@@ -234,7 +234,7 @@ process, then type OpenSSH's `~.` escape at the start of a line:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
+  -- --repo "$JB_SSH_PREFIX" shell "$JB_SSH_CONTAINER"
 # inside the container:
 echo $$ >/tmp/jailbee-ssh-smoke.pid
 exec sleep 300
@@ -279,9 +279,9 @@ session must reject `ls` and accept `version`:
 jb config edit --global
 jb config validate
 ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" ls
+  -- --repo "$JB_SSH_PREFIX" ls
 ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" version
+  -- --repo "$JB_SSH_PREFIX" version
 ```
 
 Restore the original allowlist for the remaining checks. No service restart is
@@ -351,7 +351,7 @@ LANG LC_*` out of the box), so this is the step that must work unmodified:
 ```bash
 JAILBEE_SMOKE=blocked ssh -o SendEnv=JAILBEE_SMOKE \
   "${JB_SSH_COMMON[@]}" jailbee@localhost \
-  --repo "$JB_SSH_PREFIX" ls &
+  -- --repo "$JB_SSH_PREFIX" ls &
 child_ssh=$!
 pid=$(pgrep -f "python3? -m jailbee --repo $JB_SSH_PREFIX ls" | head -1)
 if [ -n "$pid" ]; then

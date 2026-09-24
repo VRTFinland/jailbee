@@ -62,8 +62,10 @@ before editing `## Unreleased`.
   dashboard withholds what would reach the host itself: no config editor, no
   diff pager and no GUI app launches, and every process the service starts
   runs with `LESSSECURE=1`. No remote command, in any policy mode, may set a
-  path-typed option or argument (`--config`, ...) or `new --mount`.
-  `remote.ssh.restrict_host: false` lifts all of these host restrictions at
+  path-typed option or argument (`--config`, ...) or `new --mount`, the git
+  bridge moves refs but never the host's checked-out tree, and a branch's
+  privilege-widening autostart config cannot be approved remotely, `--yes`
+  included. `remote.ssh.restrict_host: false` lifts all of these host restrictions at
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/
   `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
   overrides for trying a policy without editing `global.yaml`; the systemd

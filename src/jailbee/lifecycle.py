@@ -1046,6 +1046,13 @@ def new_container(
     assessment = assess_branch_autostart(cfg, opts, clone_ref)
     effective_cfg = assessment.effective_cfg
     verdict = assessment.verdict
+    if verdict is not None and verdict.prompts:
+        from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
+
+        # Ahead of `_autostart_approved`: over SSH neither `--yes` nor a
+        # carried approval came from the operator the gate asks.
+        if is_remote_session():
+            raise ValueError(f"Aborted: {escalation_refusal(verdict.baseline_source)}")
     if verdict is not None and verdict.prompts and not _autostart_approved(opts, assessment.ref):
         if opts.approved_autostart_ref is not None:
             # Approved, but for a different commit than this run resolved: the

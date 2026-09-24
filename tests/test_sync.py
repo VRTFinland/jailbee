@@ -8181,3 +8181,113 @@ def test_every_tag_policy_value_is_handled_in_both_transports(mocker, tmp_path, 
         assert has_tag_spec is (policy != "none"), (
             f"policy {policy!r} produced tag refspecs={has_tag_spec}"
         )
+
+
+# A restricted remote SSH session updates refs only: every flow that would
+# write the host's checked-out tree refuses before anything is written.
+
+
+@pytest.fixture
+def remote_session(monkeypatch):
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+
+
+def test_remote_checkout_refuses_before_fetching(mocker, make_cfg, tmp_path, remote_session):
+    refs = mocker.patch("jailbee.sync.sync_refs_from_container")
+
+    with pytest.raises(sync.SyncError, match=r"`jailbee git checkout`.*git fetch"):
+        sync.checkout_from_container(make_cfg(tmp_path), mocker.MagicMock(), "feat-foo")
+
+    refs.assert_not_called()
+
+
+def test_remote_host_branch_alignment_refuses(mocker, make_cfg, tmp_path, remote_session):
+    checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    update = mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+
+    with pytest.raises(sync.SyncError, match="--container"):
+        sync.checkout_submodules_on_host(
+            make_cfg(tmp_path), branch="main", switch_superproject=True
+        )
+
+    checkout.assert_not_called()
+    update.assert_not_called()
+
+
+def test_remote_pull_into_the_checked_out_branch_refuses(
+    mocker, make_cfg, tmp_path, remote_session
+):
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+
+    with pytest.raises(sync.SyncError, match=r"checked out on the host.*--into"):
+        _drive_merge_in_place(mocker, tmp_path, make_cfg, ff="auto")
+
+    merge_ref.assert_not_called()
+
+
+def test_remote_pull_with_checkout_refuses(mocker, make_cfg, tmp_path, remote_session):
+    merge_ref = mocker.patch("jailbee.git.merge_ref")
+
+    with pytest.raises(sync.SyncError, match="`--checkout`"):
+        _drive_merge_via_checkout(mocker, tmp_path, make_cfg, ff="auto")
+
+    merge_ref.assert_not_called()
+    sync.git.checkout_branch.assert_not_called()
+
+
+def test_remote_pull_into_another_branch_still_fast_forwards_the_ref(
+    mocker, make_cfg, tmp_path, remote_session
+):
+    """The ref-only path stays open: that is the whole remote git bridge."""
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.config_get.side_effect = lambda n, k: {"user.jailbee.base_branch": "dev"}.get(k)
+    mocker.patch("jailbee.sync.fetch_from_container", return_value=_fake_fetch("feat/x"))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-feat-x")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.sync.submodules.transport_submodules_to_host")
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="other")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="ccc")
+    ff = mocker.patch("jailbee.sync.git.fast_forward_branch", return_value=True)
+    checkout = mocker.patch("jailbee.sync.git.checkout_branch")
+    mocker.patch("jailbee.sync.refresh_container_base")
+
+    result = sync.merge_from_container(cfg, incus, "feat-x")
+
+    assert result.into_branch == "dev"
+    ff.assert_called_once()
+    checkout.assert_not_called()
+
+
+def test_remote_fetch_refuses_to_move_the_checked_out_branch(
+    mocker, make_cfg, tmp_path, remote_session
+):
+    """Refused by name — not left to `merge_ref`'s GitError, which the
+    placement would misreport as a dirty tree."""
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="oldsha")
+    merge = mocker.patch("jailbee.sync.git.merge_ref")
+    dirty = mocker.patch("jailbee.sync.git.host_tree_dirty")
+
+    with pytest.raises(sync.SyncError, match=r"'feat/foo', the branch checked out.*--as"):
+        sync.sync_refs_from_container(cfg, incus, "feat-foo")
+
+    merge.assert_not_called()
+    dirty.assert_not_called()
+
+
+def test_remote_fetch_still_creates_a_branch_that_is_not_checked_out(
+    mocker, make_cfg, tmp_path, remote_session
+):
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value=None)
+    mocker.patch("jailbee.sync.git.update_ref", return_value=True)
+    mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
+
+    result = sync.sync_refs_from_container(cfg, incus, "feat-foo")
+
+    assert result.superproject.status == "created"

@@ -10096,3 +10096,41 @@ def test_ls_does_not_sample_for_a_configured_field_list_in_json_mode(mocker, tmp
 
     assert result.exit_code == 0, result.stdout
     annotate.assert_not_called()
+
+
+def test_background_new_preflight_refuses_a_widening_over_remote_ssh(
+    mocker, make_cfg, tmp_path, monkeypatch
+):
+    """`--yes` is the remote user's own answer, not the operator's."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import typer
+
+    from jailbee import cli
+    from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions
+
+    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=mocker.MagicMock())
+    verdict = SimpleNamespace(prompts=True, baseline_source="origin/main")
+    mocker.patch(
+        "jailbee.lifecycle.assess_branch_autostart",
+        return_value=BranchAutostartAssessment(ref="abc", effective_cfg=cfg, verdict=verdict),
+    )
+    confirm = mocker.patch("jailbee.tui.default_confirm", return_value=True)
+    opts = NewContainerOptions(
+        container_branch="feat",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="golden",
+        clone=True,
+    )
+
+    for candidate in (opts, replace(opts, assume_yes=True)):
+        with pytest.raises(typer.Exit) as exit_info:
+            cli._preflight_background_new(cfg, candidate)
+        assert exit_info.value.exit_code == 2
+    confirm.assert_not_called()
