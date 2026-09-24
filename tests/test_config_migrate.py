@@ -100,6 +100,54 @@ def test_diff_never_shows_a_token():
     assert "ghp_secret" not in render_diff(inputs, plan_migrations(inputs))
 
 
+def test_diff_redacts_existing_local_token_from_old_and_new_text():
+    inputs = _inputs({}, {"a": {"github": {"token": "ghp_local_secret"}}}, rows={"a": ["x.org"]})
+    plan = plan_migrations(inputs)
+    assert "ghp_local_secret" in inputs.texts[local_config_path("a")]
+    assert "ghp_local_secret" in plan.new_texts[local_config_path("a")]
+    assert "ghp_local_secret" not in render_diff(inputs, plan)
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"credentials": {"repos": {"../outside": "team"}}},
+        {"github": {"api_tokens": {"../outside": "ghp_secret"}}},
+    ],
+)
+def test_invalid_legacy_map_prefix_is_reported_and_kept(legacy):
+    inputs = _inputs(legacy)
+    plan = plan_migrations(inputs)
+
+    assert any("../outside" in conflict for conflict in plan.conflicts)
+    assert not plan.new_texts
+    assert local_config_path("../outside") not in plan.new_texts
+    migrated_global = _load(plan, inputs.global_path, inputs)
+    if "credentials" in legacy:
+        assert "../outside" in migrated_global["credentials"]["repos"]
+    else:
+        assert "../outside" in migrated_global["github"]["api_tokens"]
+
+
+def test_invalid_egress_db_prefix_is_reported_and_row_is_not_scheduled_for_deletion():
+    inputs = _inputs({}, rows={"../outside": ["x.org"]})
+    plan = plan_migrations(inputs)
+
+    assert any("../outside" in conflict for conflict in plan.conflicts)
+    assert plan.rows_to_delete == ()
+    assert not plan.new_texts
+
+
+@pytest.mark.parametrize("existing", ["not-a-list", ["x.org", 7]])
+def test_malformed_local_egress_is_preserved_and_rows_are_not_deleted(existing):
+    inputs = _inputs({}, {"a": {"egress_allow": existing}}, rows={"a": ["y.org"]})
+    plan = plan_migrations(inputs)
+
+    assert any("egress_allow" in conflict for conflict in plan.conflicts)
+    assert plan.rows_to_delete == ()
+    assert local_config_path("a") not in plan.new_texts
+
+
 def test_apply_writes_private_files_backs_up_and_deletes_rows(db_session, frozen_now):
     from jailbee.db.models import EgressOverride
 

@@ -15,6 +15,7 @@ import yaml
 
 from jailbee.config.common import _HOST_LEVEL_KEYS, _parse_yaml_text, normalize_credentials_key
 from jailbee.config.local_layer import local_config_dir, local_config_path, validate_local_raw
+from jailbee.config.models_host import _PREFIX_RE
 from jailbee.config_writer import DELETE, YamlChange, credential_key_migration, patch_yaml
 
 if TYPE_CHECKING:
@@ -31,6 +32,11 @@ MIGRATION_IDS: tuple[str, ...] = (
 )
 
 _MASK = "********"
+
+
+def _valid_prefix(prefix: object) -> bool:
+    """Whether a legacy key can safely identify a local config file."""
+    return isinstance(prefix, str) and _PREFIX_RE.fullmatch(prefix) is not None
 
 
 @dataclass(frozen=True)
@@ -128,7 +134,11 @@ def _per_repo_map(
     dotted_local = ".".join(local_key)
     deletes: list[YamlChange] = []
     for prefix, value in sorted(entries.items()):
-        if not isinstance(prefix, str):
+        if not _valid_prefix(prefix):
+            state.conflicts.append(
+                f"{dotted_map}.{prefix!r} is not a valid repo prefix; "
+                "left in place to avoid writing outside the local config directory."
+            )
             continue
         lpath = local_config_path(prefix)
         lblock = state.raw(lpath).get(local_key[0])
@@ -155,13 +165,23 @@ def _per_repo_map(
 
 def _egress_db_rows(state: _State) -> None:
     for prefix, entries in sorted(state.inputs.egress_rows.items()):
+        if not _valid_prefix(prefix):
+            state.conflicts.append(
+                f"legacy egress rows for {prefix!r} have an invalid repo prefix; "
+                "left in the database."
+            )
+            continue
         path = local_config_path(prefix)
-        current = state.raw(path).get("egress_allow") or []
-        current_list = (
-            [entry for entry in current if isinstance(entry, str)]
-            if isinstance(current, list)
-            else []
-        )
+        raw = state.raw(path)
+        current = raw.get("egress_allow")
+        if "egress_allow" in raw and (
+            not isinstance(current, list) or not all(isinstance(entry, str) for entry in current)
+        ):
+            state.conflicts.append(
+                f"{path} has a malformed egress_allow value; legacy rows left in the database."
+            )
+            continue
+        current_list = current if isinstance(current, list) else []
         missing = [entry for entry in entries if entry not in current_list]
         if missing:
             state.change(
