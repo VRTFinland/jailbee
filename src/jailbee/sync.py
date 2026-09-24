@@ -82,6 +82,8 @@ class CheckoutResult:
     branch: str
     head_oid: str
     created_new: bool
+    # Short names of containers whose AHEAD base followed the target branch.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,8 @@ class SyncRefsResult:
     target: str
     superproject: BranchPlacement
     submodules: tuple[submodules.SubBranchPlacement, ...]
+    # Short names of containers whose AHEAD base followed the target branch.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1379,6 +1383,9 @@ def sync_refs_from_container(
     rule here would silently split one container's history across two host
     branch names depending on which command the user reached for.
 
+    After placement, every running container based on the target branch is
+    re-anchored — see `refresh_bases_for`.
+
     Non-fast-forward leaves the branch alone and reports `"diverged"`; `force`
     overwrites it, **except** when it is the checked-out branch, where the
     result is `"refused"`: an `update-ref` there would leave the index and
@@ -1402,11 +1409,17 @@ def sync_refs_from_container(
     sub_placements = submodules.place_branches_from_commit(
         cfg.repo_root, fetch_result.new_oid, target, force=force
     )
+    anchors = (
+        refresh_bases_for(cfg, incus, target)
+        if placement.status in {"created", "up-to-date", "fast-forwarded", "forced", "checked-out-ff"}
+        else ()
+    )
     return SyncRefsResult(
         fetch=fetch_result,
         target=target,
         superproject=placement,
         submodules=tuple(sub_placements),
+        anchors_refreshed=anchors,
     )
 
 
@@ -1588,6 +1601,8 @@ def checkout_from_container(
     `jailbee git pull`.
 
     Returns a `CheckoutResult` so the CLI can print a post-op summary.
+    It also re-anchors every running container based on the target branch — see
+    `refresh_bases_for`.
     """
     _refuse_remote_tree_write(
         "`jailbee git checkout`",
@@ -1662,7 +1677,11 @@ def checkout_from_container(
         raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
     submodules.update_submodules_on_host(cfg.repo_root, branch=target)
     return CheckoutResult(
-        fetch=refs.fetch, branch=target, head_oid=head_oid, created_new=created_new
+        fetch=refs.fetch,
+        branch=target,
+        head_oid=head_oid,
+        created_new=created_new,
+        anchors_refreshed=refs.anchors_refreshed,
     )
 
 

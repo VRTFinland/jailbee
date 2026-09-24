@@ -454,6 +454,76 @@ def test_sync_refs_leaves_a_diverged_branch_alone(mocker, make_cfg, tmp_path):
     update.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("rev_parse", "current", "expected_status"),
+    [(None, "main", "created"), ("newsha", "feat/foo", "up-to-date")],
+)
+def test_sync_refs_re_anchors_every_container_on_the_target(
+    mocker, make_cfg, tmp_path, rev_parse, current, expected_status
+):
+    """`up-to-date` counts: the reported bug printed 'already up to date' while anchors were stale."""
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value=current)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value=rev_parse)
+    mocker.patch("jailbee.sync.git.update_ref", return_value=True)
+    mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
+    fan_out = mocker.patch("jailbee.sync.refresh_bases_for", return_value=("a", "b"))
+
+    result = sync.sync_refs_from_container(cfg, incus, "feat-foo")
+
+    assert result.superproject.status == expected_status
+    fan_out.assert_called_once_with(cfg, incus, "feat/foo")
+    assert result.anchors_refreshed == ("a", "b")
+
+
+def test_sync_refs_does_not_re_anchor_a_diverged_branch(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    cfg = make_cfg(tmp_path)
+    incus, _ = _sync_refs_setup(mocker, cfg)
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="main")
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="oldsha")
+    mocker.patch("jailbee.sync.git.run_capture", return_value=(False, ""))
+    mocker.patch("jailbee.sync.git.update_ref")
+    mocker.patch("jailbee.submodules.place_branches_from_commit", return_value=[])
+    fan_out = mocker.patch("jailbee.sync.refresh_bases_for")
+
+    result = sync.sync_refs_from_container(cfg, incus, "feat-foo")
+
+    assert result.superproject.status == "diverged"
+    fan_out.assert_not_called()
+    assert result.anchors_refreshed == ()
+
+
+def test_checkout_carries_the_anchors_sync_refs_refreshed(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+    from jailbee.sync import BranchPlacement, SyncRefsResult
+
+    cfg = make_cfg(tmp_path)
+    fetch = _stub_fetch(mocker).return_value
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=SyncRefsResult(
+            fetch=fetch,
+            target="feat/foo",
+            superproject=BranchPlacement("refs/heads/feat/foo", "up-to-date", "x", "x"),
+            submodules=(),
+            anchors_refreshed=("a",),
+        ),
+    )
+    mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
+    mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
+    fan_out = mocker.patch("jailbee.sync.refresh_bases_for")
+
+    result = sync.checkout_from_container(cfg, mocker.MagicMock(), "feat-foo")
+
+    assert result.anchors_refreshed == ("a",)
+    fan_out.assert_not_called()
+
+
 def test_sync_refs_forces_a_diverged_branch_that_is_not_checked_out(mocker, make_cfg, tmp_path):
     from jailbee import sync
 
