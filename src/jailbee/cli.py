@@ -13620,9 +13620,7 @@ def _group_after_write(cfg: "Config") -> str | None:
     from jailbee.global_config import load_global_config
 
     gcfg, _ = load_global_config(_global_config_path_for_write())
-    return gcfg.credentials.group_for(
-        cfg.container_prefix, local_credentials(cfg.container_prefix)
-    )
+    return gcfg.credentials.group_for(cfg.container_prefix, local_credentials(cfg.container_prefix))
 
 
 def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:

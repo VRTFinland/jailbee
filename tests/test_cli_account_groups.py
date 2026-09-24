@@ -247,7 +247,10 @@ def test_set_writes_the_repo_group_locally_and_drops_the_legacy_entry(group_env,
     assert loaded["credentials"]["group"] == "work"
     from jailbee.config.local_layer import local_config_path
 
-    assert yaml.safe_load(local_config_path("myrepo").read_text())["credentials"]["group"] == "personal"
+    assert (
+        yaml.safe_load(local_config_path("myrepo").read_text())["credentials"]["group"]
+        == "personal"
+    )
 
 
 def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
@@ -261,7 +264,6 @@ def test_set_none_writes_an_explicit_null(group_env, mocker, tmp_path):
 
     import yaml
 
-    loaded = yaml.safe_load(global_yaml.read_text())
     from jailbee.config.local_layer import local_config_path
 
     local = yaml.safe_load(local_config_path("myrepo").read_text())
