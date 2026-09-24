@@ -1803,14 +1803,10 @@ def _check_github(cfg: Config) -> list[CheckResult]:
 
     if cfg.github.token is not None:
         results.append(
-            _token_file_perms(
-                "github local config perms", local_config_path(cfg.container_prefix)
-            )
+            _token_file_perms("github local config perms", local_config_path(cfg.container_prefix))
         )
     else:
-        results.append(
-            _token_file_perms("github global.yaml perms", default_global_config_path())
-        )
+        results.append(_token_file_perms("github global.yaml perms", default_global_config_path()))
 
     token = secret.get_secret_value().strip()
     if not token:
