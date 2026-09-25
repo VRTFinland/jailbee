@@ -76,11 +76,18 @@ def test_allow_override_replaces_rather_than_appends() -> None:
     assert "git pull" not in result.commands.allow
 
 
-def test_invalid_combination_raises_config_error_not_a_traceback_worthy_exception() -> None:
+def test_invalid_empty_allowlist_raises_config_error_not_a_traceback_worthy_exception() -> None:
     base = RemoteSSHConfig()
 
     with pytest.raises(ConfigError, match="commands"):
-        apply_ssh_overrides(base, ServeOverrides(shell=True))
+        apply_ssh_overrides(base, ServeOverrides(commands_mode="allowlist"))
+
+
+def test_disabled_commands_override_preserves_enabled_routes() -> None:
+    result = apply_ssh_overrides(RemoteSSHConfig(), ServeOverrides(commands_mode="disabled"))
+
+    assert (result.dashboard, result.shell, result.exec) == (True, True, True)
+    assert result.commands.mode == "disabled"
 
 
 def test_allowlist_override_with_no_allow_entries_is_rejected() -> None:

@@ -281,7 +281,10 @@ def repo(tmp_path, db_engine, monkeypatch):
 @pytest.mark.parametrize("command", [None, "", "  "])
 def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child):
     _, channel = session(command)
-    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
+    assert output(channel) == (
+        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"  --repo PREFIX COMMAND [ARGS...]\n"
+    )
     assert output(channel, 1) == b""
     channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
@@ -297,14 +300,20 @@ def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
     gets CRLF for free.
     """
     _, channel = session(None, term="xterm")
-    assert output(channel) == b"Available remote commands:\r\n  help\r\n  dashboard\r\n"
+    assert output(channel) == (
+        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  shell [--repo PREFIX]\r\n"
+        b"  --repo PREFIX COMMAND [ARGS...]\r\n"
+    )
     channel.exit.assert_called_once_with(0)
 
 
 def test_commandless_help_stays_bare_lf_without_a_pty(child):
     """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
     _, channel = session(None)
-    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
+    assert output(channel) == (
+        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"  --repo PREFIX COMMAND [ARGS...]\n"
+    )
     assert b"\r\n" not in output(channel)
 
 
@@ -315,10 +324,13 @@ def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
     _, first = session("--repo project ls")
     first.exit.assert_called_once_with(7)
     path.write_text(
-        "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    commands:\n      mode: full\n"
+        "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    exec: false\n"
+        "    commands:\n      mode: full\n"
     )
     _, help_channel = session()
-    assert output(help_channel) == b"Available remote commands:\n  help\n  shell [--repo PREFIX]\n"
+    assert output(help_channel) == (
+        b"Available remote commands:\n  help\n  shell [--repo PREFIX]\n"
+    )
     _, last = session("--repo project ls")
     last.exit.assert_called_once_with(2)
     assert b"execution is disabled" in output(last, 1)
@@ -335,7 +347,10 @@ def test_commandless_login_uses_configured_dashboard_and_explicit_help(child, mo
     dashboard.exit.assert_called_once_with(7)
 
     _, help_channel = session("help")
-    assert output(help_channel) == b"Available remote commands:\n  help\n  dashboard\n"
+    assert output(help_channel) == (
+        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"  --repo PREFIX COMMAND [ARGS...]\n"
+    )
     help_channel.exit.assert_called_once_with(0)
     assert child.await_count == 1
 
@@ -508,8 +523,8 @@ def test_unknown_command_is_delegated_to_the_child_for_its_own_error(child, conf
     ("command", "settings", "message"),
     [
         ("dashboard", {"dashboard": False, "shell": True}, b"dashboard is disabled"),
-        ("shell", {}, b"shell is disabled"),
-        ("--repo project ls", {}, b"execution is disabled"),
+        ("shell", {"shell": False}, b"shell is disabled"),
+        ("--repo project ls", {"exec": False}, b"execution is disabled"),
     ],
 )
 def test_disabled_entrypoint_cannot_spawn(command, settings, message, child, mocker):
@@ -618,7 +633,7 @@ def test_invalid_override_combination_rejects_the_session_like_a_broken_config(c
     """An override that fails validation is handled like a broken `global.yaml`."""
     from jailbee.remote_ssh.overrides import ServeOverrides
 
-    _, channel = session("dashboard", overrides=ServeOverrides(shell=True))
+    _, channel = session("dashboard", overrides=ServeOverrides(commands_mode="allowlist"))
 
     assert b"commands" in output(channel, 1).lower()
     channel.exit.assert_called_once_with(2)
@@ -657,7 +672,10 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
 
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
-    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
+    assert output(channel) == (
+        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"  --repo PREFIX COMMAND [ARGS...]\n"
+    )
     channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
 

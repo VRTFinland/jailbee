@@ -195,7 +195,7 @@ def test_invalid_console_shapes_are_rejected(raw: str, engine) -> None:
 
 
 def test_disabled_shell_and_exec_entrypoints_are_rejected(engine, repo) -> None:
-    cfg = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(shell=False, exec=False, commands=RemoteCommandPolicy(mode="full"))
     with pytest.raises(RouteError, match="shell is disabled"):
         route("shell", cfg)
     with pytest.raises(RouteError, match="shell is disabled"):
@@ -253,6 +253,15 @@ def test_full_policy_allows_public_leaves_but_never_hidden_commands(engine, repo
 def test_disabled_command_policy_rejects_public_commands() -> None:
     with pytest.raises(RouteError, match="remote Jailbee commands are disabled"):
         policy_allows(("ls",), RemoteCommandPolicy())
+
+
+def test_disabled_policy_blocks_exec_but_routes_dashboard_and_shell(engine, repo) -> None:
+    cfg = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
+
+    with pytest.raises(RouteError, match="remote Jailbee commands are disabled"):
+        route("--repo project ls", cfg, engine=engine)
+    assert route("dashboard", cfg).kind == "dashboard"
+    assert route("shell", cfg).kind == "console"
 
 
 # --- A: hidden aliases resolve to their canonical public path (Problem A) ---
@@ -372,7 +381,7 @@ def test_one_shot_exec_lets_an_unknown_command_through(engine, repo) -> None:
 
 
 def test_help_lists_only_configured_entrypoints() -> None:
-    dashboard_only = help_text(RemoteSSHConfig())
+    dashboard_only = help_text(RemoteSSHConfig(shell=False, exec=False))
     assert "  dashboard" in dashboard_only
     assert "  shell [--repo PREFIX]" not in dashboard_only
     assert "  --repo PREFIX COMMAND [ARGS...]" not in dashboard_only

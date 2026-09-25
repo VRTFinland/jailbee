@@ -358,7 +358,13 @@ def test_help_lists_only_the_allowed_commands_in_allowlist_mode(
 def test_help_says_commands_are_disabled_in_disabled_mode(
     console_env: ConsoleEnv, mocker, capsys
 ) -> None:
-    config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig(dashboard=True)))
+    config = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(
+                dashboard=True, commands=RemoteCommandPolicy(mode="disabled")
+            )
+        )
+    )
     mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))
     run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
     console_env.lines(["help", "exit"])

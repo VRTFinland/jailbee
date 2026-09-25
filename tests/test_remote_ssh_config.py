@@ -8,15 +8,15 @@ from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, Remo
 from jailbee.global_config import GlobalConfig, validate_global_raw
 
 
-def test_remote_ssh_defaults_are_dashboard_only() -> None:
+def test_remote_ssh_defaults_enable_all_routes_with_full_commands() -> None:
     ssh = GlobalConfig().remote.ssh
     assert ssh.listen == "127.0.0.1"
     assert ssh.port == 8022
     assert ssh.dashboard is True
     assert ssh.default_entrypoint == "help"
-    assert ssh.shell is False
-    assert ssh.exec is False
-    assert ssh.commands.mode == "disabled"
+    assert ssh.shell is True
+    assert ssh.exec is True
+    assert ssh.commands.mode == "full"
     assert ssh.commands.allow == []
 
 
@@ -35,10 +35,9 @@ def test_command_entrypoint_accepts_an_enabled_policy(mode: str, allow: list[str
     assert ssh.commands.allow == allow
 
 
-@pytest.mark.parametrize("entrypoint", ["shell", "exec"])
-def test_command_entrypoint_requires_a_command_policy(entrypoint: str) -> None:
-    with pytest.raises(ValidationError, match=r"commands\.mode"):
-        RemoteSSHConfig(**{entrypoint: True})
+def test_disabled_command_policy_does_not_disable_routes() -> None:
+    ssh = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
+    assert (ssh.dashboard, ssh.shell, ssh.exec) == (True, True, True)
 
 
 def test_allowlist_mode_requires_at_least_one_leaf() -> None:

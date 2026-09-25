@@ -416,7 +416,7 @@ def test_remote_ssh_serve_allow_replaces_rather_than_appends(
     assert effective.commands.allow == ["ls"]
 
 
-def test_remote_ssh_serve_invalid_override_combination_is_a_clean_error(
+def test_remote_ssh_serve_empty_allowlist_override_is_a_clean_error(
     mocker: MockerFixture,
 ) -> None:
     from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
@@ -427,7 +427,9 @@ def test_remote_ssh_serve_invalid_override_combination_is_a_clean_error(
     ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
     serve = mocker.patch("jailbee.remote_ssh.server.serve")
 
-    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--shell"])
+    result = CliRunner().invoke(
+        app, ["remote", "ssh", "serve", "--commands", "allowlist"]
+    )
 
     assert result.exit_code == 1
     assert "Traceback" not in result.stderr

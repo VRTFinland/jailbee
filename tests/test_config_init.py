@@ -333,9 +333,9 @@ def test_global_template_round_trip_preserves_default_remote_ssh_policy(tmp_path
     assert global_config.remote.ssh.listen == "127.0.0.1"
     assert global_config.remote.ssh.port == 8022
     assert global_config.remote.ssh.dashboard is True
-    assert global_config.remote.ssh.shell is False
-    assert global_config.remote.ssh.exec is False
-    assert global_config.remote.ssh.commands.mode == "disabled"
+    assert global_config.remote.ssh.shell is True
+    assert global_config.remote.ssh.exec is True
+    assert global_config.remote.ssh.commands.mode == "full"
     assert global_config.remote.ssh.commands.allow == []
 
 
