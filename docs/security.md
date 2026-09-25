@@ -86,10 +86,12 @@ log names any allowlisted command that stays refused this way, and every
 public command is classified one way or the other by the test suite, so a
 new one cannot land unclassified.
 
-`commands.mode: full` is a high-trust setting: it grants the classified public
-JailBee commands. It does
-not automatically grant a newly added or unclassified command: classification
-is fail-closed, including in `full` mode. It also grants every hidden *alias* of a public command (`merge`,
+`commands.mode: full` is a high-trust setting. In restricted sessions it
+grants classified public JailBee commands, and newly added or unclassified
+commands fail closed. With `restrict_host: false` and no inherited restricted
+session marker, `full` admits public leaves including future ones, except
+reserved routes and hidden internal commands. It also grants every hidden
+*alias* of a public command (`merge`,
 `pull`, `push`, and a few others — see [`remote.ssh`](config.md#remotessh)),
 since those are policy-checked against the public command they alias, not
 their own hidden spelling. Hidden internal commands with no public twin

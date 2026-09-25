@@ -166,7 +166,10 @@ and exits successfully by default. Set `remote.ssh.default_entrypoint` in the
 host's `global.yaml` to `dashboard` or `shell` to open that entry point instead;
 an explicit `help` always prints the list. All three entry points are enabled
 by default, while `commands.mode` independently governs console and one-shot
-commands (the dashboard is not controlled by that command policy). `dashboard`
+commands across the console and dashboard; `exec: false` disables one-shot
+execution only. `commands.mode: disabled` blocks dashboard actions that run
+JailBee commands, but not dashboard navigation or the console's local
+navigation. `dashboard`
 and the remote console require `-t`; one-shot commands do not inherently require a PTY, though
 an interactive JailBee command may. Server-written text (this help, and any
 rejection) uses CRLF line endings whenever the client negotiated a PTY (which
@@ -190,11 +193,9 @@ A hidden alias (`merge`, `pull`, `push`, ...) is policy-checked against the
 public command it aliases, so `allow: [git merge]` also permits typing
 `merge`. A public group's own help — `git`, or `git --help`/`-h` — is
 permitted on its own whenever some command under it is allowed (or in `full`
-mode); the bare top-level `--help`/`-h` works the same way. A name that
-matches no JailBee command at all, hidden or public, is not rejected by the
-console itself: it is run anyway, so `jailbee` reports its own "No such
-command" error, with suggestions, exactly like it would locally. The console
-performs no shell expansion, pipes, redirection or executable lookup.
+mode); the bare top-level `--help`/`-h` works the same way. Unknown commands
+are rejected before a JailBee child starts. The console performs no shell
+expansion, pipes, redirection or executable lookup.
 
 Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
 repository prefix, never a filesystem path; the registered root becomes the
@@ -202,11 +203,13 @@ command's working directory. The same rule applies to `shell --repo PREFIX`.
 See [Security and limitations](security.md#remote-ssh) before granting access.
 
 For SSH dashboard sessions, the effective `remote.ssh` policy is checked before
-a command entered with `!` or the new merge action runs: `exec` must be enabled
-and the command must pass `commands` (including its allowlist, when used). The
-same host-protection rule applies even when command policy is otherwise
-permissive, unless `restrict_host: false` was explicitly configured. This policy
-scope does not change the dashboard's existing actions. Each new SSH channel
+any action that runs a JailBee command, including `!`, merge, container actions,
+quick keys, and creation. These actions are blocked by `commands.mode: disabled`;
+`exec` controls only one-shot SSH execution. Dashboard navigation remains
+available, and console-local navigation remains available while JailBee
+commands are disabled. The same host-protection rule applies even when command
+policy is otherwise permissive, unless `restrict_host: false` was explicitly
+configured. Each new SSH channel
 gets the current validated effective policy; a console or dashboard already
 running keeps its startup snapshot. An upgrade adopting the enabled entry-point
 defaults can expose the console and command routes on an already-enabled service

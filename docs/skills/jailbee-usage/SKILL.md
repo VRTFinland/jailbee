@@ -781,10 +781,11 @@ key has identical access to the configured surface across all registered
 repos. By default, dashboard, console and one-shot execution are enabled on
 `127.0.0.1:8022`; the shared command policy defaults to `full`, while host
 restrictions remain on. Prefer exact-leaf allowlists for narrower command
-access. `commands.mode: full` is a high-trust, broad command policy: it admits
-classified public commands, but newly added or unclassified commands fail
-closed. It does not lift host restrictions; `remote.ssh.restrict_host: false`
-does that. See the full command behavior and security boundary in
+access. `commands.mode: full` is high trust: in restricted sessions it admits
+classified public commands and newly added or unclassified commands fail
+closed. With `remote.ssh.restrict_host: false` and no inherited restricted
+session marker, it admits public leaves including future ones except reserved
+routes and hidden internal commands. See the full command behavior and security boundary in
 [`references/commands.md`](references/commands.md#remote-ssh).
 
 ## Other day-to-day commands

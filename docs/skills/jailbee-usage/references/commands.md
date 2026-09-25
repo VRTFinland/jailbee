@@ -118,12 +118,14 @@ confused with the JailBee command aliases below.
 Policy lives only in host-global `remote.ssh`. Defaults are
 `127.0.0.1:8022`, with dashboard, console and one-shot execution enabled,
 `commands.mode: full`, and host restrictions on. Entry-point switches are
-separate from the shared command policy: `commands.mode` governs console and
-one-shot commands, not the dashboard. An allowlist names exact public leaves
-(`git pull`, not `git`); `full` admits classified public leaves but newly added
-or unclassified commands fail closed, and hidden internal commands are never
-included. `full` is high-trust and broad, but does not disable host restrictions;
-`restrict_host: false` lifts those restrictions. All authorized keys share the
+separate from command policy: `exec: false` disables one-shot execution only.
+`commands.mode: disabled` blocks dashboard actions that run commands, while
+dashboard navigation and console-local navigation remain available. An
+allowlist names exact public leaves (`git pull`, not `git`); in restricted
+sessions, `full` admits classified public leaves and newly added or unclassified
+commands fail closed. With `restrict_host: false` and no inherited restricted
+session marker, `full` admits public leaves including future ones except
+reserved routes and hidden internal commands. All authorized keys share the
 same policy and every registered repo. Treat the dashboard and broadly
 configured command access as host-capable access, not a read-only view.
 
