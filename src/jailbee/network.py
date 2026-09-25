@@ -27,6 +27,11 @@ from jailbee.egress import EgressEntry
 ALLOWLIST_DESC_PREFIX = "allowlisted: "
 
 
+def work_loose_rule(ip: str) -> dict[str, str]:
+    """Allow only traffic sourced by one verified work-container address."""
+    return {"action": "allow", "source": f"{ip}/32", "state": "enabled"}
+
+
 def _allow_rules(entries: list[EgressEntry]) -> list[dict[str, str]]:
     """The `allow` egress rules for `entries`, shared by both ACL renderers.
 
