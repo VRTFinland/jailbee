@@ -15,6 +15,19 @@ from jailbee.dashboard_commands import (
 from jailbee.remote_ssh.router import RouteError
 
 
+def test_completion_respects_default_and_disabled_remote_policy() -> None:
+    from jailbee.remote_ssh.router import allowed_command_paths
+
+    full = RemoteSSHConfig()
+    disabled = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
+
+    full_paths = allowed_command_paths(full.commands, restrict_host=full.restrict_host)
+    disabled_paths = allowed_command_paths(disabled.commands, restrict_host=disabled.restrict_host)
+
+    assert "merge" in completion_candidates("m", (), full_paths)
+    assert completion_candidates("m", (), disabled_paths) == ()
+
+
 @pytest.mark.parametrize(
     ("argv", "policy"),
     [

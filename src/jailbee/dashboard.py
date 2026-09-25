@@ -45,6 +45,7 @@ from jailbee.dashboard_commands import (
     check_dashboard_command,
     command_argv,
     completion_candidates,
+    dashboard_action_argv,
     insert_options_before_separator,
 )
 from jailbee.dashboard_settings import (
@@ -999,7 +1000,8 @@ def binding_for_token(token: str) -> KeyBinding | None:
 
 
 def quick_verb(
-    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False
+    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False,
 ) -> str | None:
     """The verb a quick-action key should dispatch for ``name``, else None.
 
@@ -1011,7 +1013,9 @@ def quick_verb(
     binding = binding_for_token(token)
     if binding is None or binding.verb is None:
         return None
-    offered = {verb for _label, verb in actions_for_container(groups, name, remote=remote)}
+    offered = {verb for _label, verb in actions_for_container(
+        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
+    )}
     return binding.verb if binding.verb in offered else None
 
 
@@ -1077,7 +1081,8 @@ Overlay = MenuState | SettingsState | CommandState | Literal["help"]
 
 
 def open_menu(
-    groups: list[RepoGroup], name: str | None, *, remote: bool = False
+    groups: list[RepoGroup], name: str | None, *, remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
 ) -> MenuState | None:
     """The menu for ``name``, or None when there is nothing to show.
 
@@ -1085,7 +1090,8 @@ def open_menu(
     or a view-only (orphan) group. Callers surface :func:`view_only_note`
     instead, because an empty menu frame is indistinguishable from a broken one.
     """
-    actions = actions_for_container(groups, name, remote=remote)
+    actions = actions_for_container(groups, name, remote=remote, ssh_policy=ssh_policy,
+                                    over_ssh=over_ssh)
     if name is None or not actions:
         return None
     return MenuState(name, actions)
@@ -1151,7 +1157,8 @@ def _render_help() -> RenderableType:
 
 
 def quick_reject_note(
-    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False
+    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
 ) -> str:
     """Why a quick-action key did nothing, as one user-facing sentence.
 
@@ -1471,7 +1478,8 @@ def terminal_title_scope(stream: TextIO) -> Iterator[None]:
 
 
 def actions_for_container(
-    groups: list[RepoGroup], name: str | None, *, remote: bool = False
+    groups: list[RepoGroup], name: str | None, *, remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
 ) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
 
@@ -1493,7 +1501,7 @@ def actions_for_container(
         and container.job_pid is not None
         and background.clearable(container.job_phase, container.job_pid)
     )
-    return menu_actions(
+    actions = menu_actions(
         MenuContext(
             state=container.state,
             has_repo=RepoTarget.of(group) is not None,
@@ -1511,6 +1519,19 @@ def actions_for_container(
             remote=remote,
         )
     )
+    if over_ssh:
+        permitted: list[tuple[str, str]] = []
+        for label, verb in actions:
+            try:
+                check_dashboard_command(
+                    dashboard_action_argv(verb, name, force=verb in ATTACH_VERBS),
+                    ssh_policy, over_ssh=True,
+                )
+            except RouteError:
+                continue
+            permitted.append((label, verb))
+        return permitted
+    return actions
 
 
 def view_only_note(groups: list[RepoGroup], name: str | None) -> str | None:
@@ -1873,9 +1894,11 @@ def _dispatch_action(
     whole TUI down. That is deliberately *not* caught as "pager failed": see
     :class:`_PagerUnavailableError`.
     """
+    action_argv = dashboard_action_argv(
+        verb, name, force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX)
+    )
+    check_dashboard_command(action_argv, ssh_policy, over_ssh=over_ssh)
     argv = ["jailbee", *verb.split(), name, *(target.flags() if not over_ssh else [])]
-    if verb == "merge":
-        check_dashboard_command(argv[1:], ssh_policy, over_ssh=over_ssh)
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
@@ -2200,6 +2223,11 @@ def run(
                 option is `--yes`, i.e. accepting a network-widening branch
                 config unseen.
                 """
+                try:
+                    check_dashboard_command(["new"], ssh_policy, over_ssh=over_ssh)
+                except RouteError as exc:
+                    set_notice(str(exc))
+                    return
                 note = new_container_reject_note(groups, selected)
                 if note is not None:
                     set_notice(note)
@@ -2233,9 +2261,17 @@ def run(
                         )
                         _wait_for_return()
                         return 0
-                    rc = subprocess.run(
-                        new_container_argv(repo, branch, base), check=False, cwd=repo.cwd()
-                    ).returncode
+                    argv = (
+                        ["jailbee", "new", "--", branch, base]
+                        if over_ssh
+                        else new_container_argv(repo, branch, base)
+                    )
+                    try:
+                        check_dashboard_command(argv[1:], ssh_policy, over_ssh=over_ssh)
+                    except RouteError as exc:
+                        set_notice(str(exc))
+                        return 0
+                    rc = subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
                     _wait_for_return()
                     return rc
 
@@ -2472,7 +2508,8 @@ def run(
                         persist_view_state(ViewState(enabled, folded))
                     else:
                         container = container_of(selected)
-                        overlay = open_menu(groups, container, remote=remote)
+                        overlay = open_menu(groups, container, remote=remote,
+                                            ssh_policy=ssh_policy, over_ssh=over_ssh)
                         if overlay is None and container is not None:
                             note = view_only_note(groups, container)
                             set_notice(note or f"No actions available for '{container}'")
@@ -2484,11 +2521,13 @@ def run(
                     overlay = open_settings_overlay()
                 elif key.startswith("action:"):
                     container = container_of(selected)
-                    verb = quick_verb(groups, container, key, remote=remote)
+                    verb = quick_verb(groups, container, key, remote=remote,
+                                      ssh_policy=ssh_policy, over_ssh=over_ssh)
                     if verb is not None and container is not None:
                         dispatch(container, verb)
                     else:
-                        set_notice(quick_reject_note(groups, container, key, remote=remote))
+                        set_notice(quick_reject_note(groups, container, key, remote=remote,
+                                                     ssh_policy=ssh_policy, over_ssh=over_ssh))
                 elif key == "new":
                     create_container()
                 elif key in ("config-edit", "config-edit-global") and remote:

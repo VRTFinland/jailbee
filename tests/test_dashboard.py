@@ -550,6 +550,38 @@ def test_actions_for_container_offers_actions_to_a_scratch_group():
     assert "tmux" in verbs and "destroy" in verbs
 
 
+def test_remote_actions_filter_against_canonical_policy_and_argv():
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.dashboard_commands import dashboard_action_argv
+
+    groups = [dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])]
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
+
+    assert [verb for _, verb in dashboard.actions_for_container(
+        groups, "alpha-1", over_ssh=True, ssh_policy=policy
+    )] == ["merge"]
+    assert dashboard_action_argv("tmux", "alpha-1", force=True) == [
+        "tmux", "alpha-1", "--force"
+    ]
+    assert "--config" not in dashboard_action_argv("git push --pr", "alpha-1")
+
+
+def test_remote_full_and_disabled_actions_follow_policy():
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    groups = [dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])]
+    full = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"))
+    disabled = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
+
+    full_verbs = [verb for _, verb in dashboard.actions_for_container(
+        groups, "alpha-1", over_ssh=True, ssh_policy=full
+    )]
+    assert {"merge", "shell", "tmux"} <= set(full_verbs)
+    assert dashboard.actions_for_container(
+        groups, "alpha-1", over_ssh=True, ssh_policy=disabled
+    ) == []
+
+
 def test_view_only_note_is_none_when_the_container_has_actions():
     groups = [
         dashboard.RepoGroup(
@@ -1270,6 +1302,20 @@ def test_dispatch_action_forces_the_attach_verbs(mocker, tmp_path):
             check=False,
             cwd=tmp_path,
         )
+
+
+def test_dispatch_action_rechecks_remote_policy_before_subprocess(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.remote_ssh.router import RouteError
+
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
+    with pytest.raises(RouteError):
+        dashboard._dispatch_action(
+            _dispatch_target(tmp_path), "stop", "alpha-x", over_ssh=True,
+            ssh_policy=policy,
+        )
+    run.assert_not_called()
 
 
 def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
