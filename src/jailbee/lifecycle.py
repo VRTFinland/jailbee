@@ -2124,7 +2124,11 @@ def switch_network(
         if mode not in ("strict", "loose"):
             raise ValueError(f"Unknown network mode: {mode}")
         switch_work_network(
-            cfg, incus, name, cast(Literal["strict", "loose"], mode), mirror_endpoint=mirror_endpoint
+            cfg,
+            incus,
+            name,
+            cast(Literal["strict", "loose"], mode),
+            mirror_endpoint=mirror_endpoint,
         )
         return
 

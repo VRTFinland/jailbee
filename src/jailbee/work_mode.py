@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.profiles import profile_names
 from jailbee.work_network import verify_work_nic, work_network_lock
 
 if TYPE_CHECKING:
@@ -34,7 +33,6 @@ def switch_work_network(
     verify_work_nic(incus, name, ip)
 
     from jailbee import work_acl
-
     from jailbee.network import acl_name
 
     strict_acl = acl_name(cfg)

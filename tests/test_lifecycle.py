@@ -5034,14 +5034,18 @@ def test_work_switch_loose_grants_before_removing_nic_acl(make_cfg, tmp_path, mo
     cfg = make_cfg(tmp_path / "myrepo")
     incus = MagicMock()
     name = "myrepo-x"
-    incus.list_containers.return_value = [{
-        "name": name,
-        "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
-        "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-egress"])},
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
+            "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-egress"])},
+        }
+    ]
     calls = []
     mocker.patch("jailbee.work_acl.grant_work_loose", side_effect=lambda *a: calls.append("grant"))
-    mocker.patch("jailbee.work_acl.revoke_work_loose", side_effect=lambda *a: calls.append("revoke"))
+    mocker.patch(
+        "jailbee.work_acl.revoke_work_loose", side_effect=lambda *a: calls.append("revoke")
+    )
     mocker.patch("jailbee.work_network.work_network_lock")
     mocker.patch.object(incus, "config_device_set", side_effect=lambda *a: calls.append("nic"))
     mocker.patch("jailbee.hosts.clear_hosts")
@@ -5060,11 +5064,13 @@ def test_work_switch_restores_strict_acl_when_marker_update_fails(make_cfg, tmp_
     cfg = make_cfg(tmp_path / "myrepo")
     incus = MagicMock()
     name = "myrepo-x"
-    incus.list_containers.return_value = [{
-        "name": name,
-        "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
-        "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-allowlist"])},
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
+            "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-allowlist"])},
+        }
+    ]
     mocker.patch("jailbee.work_acl.grant_work_loose")
     mocker.patch("jailbee.work_network.work_network_lock")
     incus.profile_assign.side_effect = RuntimeError("marker failed")
