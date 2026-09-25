@@ -11,11 +11,17 @@ def test_strict_switch_reconciles_extras_before_marker_and_exception_removal(
     cfg = make_cfg(tmp_path / "repo")
     name = f"{cfg.container_prefix}-feature"
     nic = {
-        "type": "nic", "network": "jailbee-work", "ipv4.address": "10.42.0.2",
-        "security.ipv4_filtering": "true", "security.acls": "old",
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
+        "security.ipv4_filtering": "true",
+        "security.acls": "old",
     }
-    raw = {"name": name, "profiles": [f"{cfg.container_prefix}-net-work-loose"],
-           "devices": {"eth0": nic}}
+    raw = {
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-loose"],
+        "devices": {"eth0": nic},
+    }
     incus = MagicMock()
     incus.list_containers.return_value = [raw]
     order = []
@@ -24,7 +30,9 @@ def test_strict_switch_reconciles_extras_before_marker_and_exception_removal(
         side_effect=lambda *_, **__: order.append("nic"),
     )
     incus.profile_assign.side_effect = lambda *_: order.append("marker")
-    mocker.patch("jailbee.work_acl.revoke_work_loose", side_effect=lambda *_: order.append("revoke"))
+    mocker.patch(
+        "jailbee.work_acl.revoke_work_loose", side_effect=lambda *_: order.append("revoke")
+    )
     mocker.patch("jailbee.hosts.apply_hosts")
 
     switch_work_network(cfg, incus, name, "strict")
@@ -38,10 +46,15 @@ def test_work_mode_state_requires_bridge_source_policy_agreement(make_cfg, tmp_p
     cfg = make_cfg(tmp_path / "repo")
     raw = {
         "profiles": [f"{cfg.container_prefix}-net-work-loose"],
-        "devices": {"eth0": {
-            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.42.0.2",
-            "security.ipv4_filtering": "true", "security.acls": "",
-        }},
+        "devices": {
+            "eth0": {
+                "type": "nic",
+                "network": "jailbee-work",
+                "ipv4.address": "10.42.0.2",
+                "security.ipv4_filtering": "true",
+                "security.acls": "",
+            }
+        },
     }
     mocker.patch("jailbee.work_acl.work_loose_policy_matches", return_value=False)
 

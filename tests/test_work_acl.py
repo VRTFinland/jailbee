@@ -79,11 +79,16 @@ def test_work_extra_materialization_keeps_nic_and_applies_repo_union(make_cfg, t
     cfg = make_cfg(tmp_path / "repo")
     name = f"{cfg.container_prefix}-work"
     nic = {
-        "type": "nic", "network": "jailbee-work", "ipv4.address": "10.42.0.2",
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
         "security.ipv4_filtering": "true",
     }
-    raw = {"name": name, "profiles": [f"{cfg.container_prefix}-net-work-strict"],
-           "devices": {"eth0": nic}}
+    raw = {
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "devices": {"eth0": nic},
+    }
     incus = MagicMock()
     attached = ["jailbee-work-baseline"]
     incus.network_get.side_effect = lambda *_: ",".join(attached)
@@ -93,12 +98,14 @@ def test_work_extra_materialization_keeps_nic_and_applies_repo_union(make_cfg, t
     incus.list_containers.return_value = [raw]
     incus.network_acl_exists.return_value = True
     incus.network_acl_show.return_value = extra_acl_yaml(
-        extra_acl_name(name), [EgressEntry(destinations=["203.0.113.8"], port=443, description="test")]
+        extra_acl_name(name),
+        [EgressEntry(destinations=["203.0.113.8"], port=443, description="test")],
     )
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["test:443"])
-    mocker.patch("jailbee.egress_scope._resolve_entries_tolerant", return_value=[
-        EgressEntry(destinations=["203.0.113.8"], port=443, description="test")
-    ])
+    mocker.patch(
+        "jailbee.egress_scope._resolve_entries_tolerant",
+        return_value=[EgressEntry(destinations=["203.0.113.8"], port=443, description="test")],
+    )
 
     apply_work_container_acl(cfg, incus, name)
 
@@ -110,18 +117,19 @@ def test_work_extra_materialization_keeps_nic_and_applies_repo_union(make_cfg, t
     assert f"{cfg.container_prefix}-allowlist" in attached
 
 
-def test_removing_last_work_extra_drops_nic_reference_before_acl_delete(
-    make_cfg, tmp_path, mocker
-):
+def test_removing_last_work_extra_drops_nic_reference_before_acl_delete(make_cfg, tmp_path, mocker):
     cfg = make_cfg(tmp_path / "repo")
     name = f"{cfg.container_prefix}-work"
     nic = {
-        "type": "nic", "network": "jailbee-work", "ipv4.address": "10.42.0.2",
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
         "security.ipv4_filtering": "true",
         "security.acls": f"{cfg.container_prefix}-allowlist,{extra_acl_name(name)}",
     }
     raw = {
-        "name": name, "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
         "devices": {"eth0": nic},
     }
     incus = MagicMock()
@@ -243,18 +251,22 @@ def test_work_loose_health_requires_exact_attached_source_rule(make_cfg, tmp_pat
     incus.network_get.return_value = f"jailbee-work-baseline,{cfg.container_prefix}-work-loose"
     incus.list_containers.return_value = [container(name, mode="loose")]
     incus.network_acl_exists.return_value = True
-    incus.network_acl_show.return_value = yaml.safe_dump({
-        "name": f"{cfg.container_prefix}-work-loose",
-        "egress": [{"action": "allow", "source": "10.42.0.2/32", "state": "enabled"}],
-        "ingress": [],
-    })
+    incus.network_acl_show.return_value = yaml.safe_dump(
+        {
+            "name": f"{cfg.container_prefix}-work-loose",
+            "egress": [{"action": "allow", "source": "10.42.0.2/32", "state": "enabled"}],
+            "ingress": [],
+        }
+    )
 
     assert work_loose_policy_matches(cfg, incus)
-    incus.network_acl_show.return_value = yaml.safe_dump({
-        "name": f"{cfg.container_prefix}-work-loose",
-        "egress": [{"action": "allow", "source": "0.0.0.0/0", "state": "enabled"}],
-        "ingress": [],
-    })
+    incus.network_acl_show.return_value = yaml.safe_dump(
+        {
+            "name": f"{cfg.container_prefix}-work-loose",
+            "egress": [{"action": "allow", "source": "0.0.0.0/0", "state": "enabled"}],
+            "ingress": [],
+        }
+    )
     assert not work_loose_policy_matches(cfg, incus)
 
 

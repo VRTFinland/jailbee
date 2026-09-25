@@ -61,12 +61,14 @@ def _work_occupants(incus: Incus) -> list[dict[str, Any]]:
             raise ValueError(f"Unexpected instance on {WORK_BRIDGE}: {name!r}")
         profiles = raw.get("profiles") or []
         markers = [
-            p for p in profiles
+            p
+            for p in profiles
             if isinstance(p, str) and p.endswith(("-net-work-strict", "-net-work-loose"))
         ]
         if len(markers) != 1:
             raise ValueError(
-                f"Unexpected instance on {WORK_BRIDGE}: {name} has conflicting or missing work markers"
+                f"Unexpected instance on {WORK_BRIDGE}: {name} has conflicting or "
+                "missing work markers"
             )
         local_devices = raw.get("devices") or {}
         local_eth0 = local_devices.get("eth0") if isinstance(local_devices, dict) else None
@@ -218,7 +220,8 @@ def apply_work_container_acl(
         raise ValueError(f"{name} work eth0 is not filtered and reserved")
     profiles = raw.get("profiles") or []
     markers = [
-        p for p in profiles
+        p
+        for p in profiles
         if isinstance(p, str) and p.endswith(("-net-work-strict", "-net-work-loose"))
     ]
     if len(markers) != 1:
@@ -232,9 +235,7 @@ def apply_work_container_acl(
         if not incus.network_acl_exists(extras_name):
             incus.network_acl_create(extras_name)
         incus.network_acl_set_yaml(extras_name, extra_acl_yaml(extras_name, entries))
-    keep_extra_acl = bool(raw_extras) and (
-        bool(entries) or incus.network_acl_exists(extras_name)
-    )
+    keep_extra_acl = bool(raw_extras) and (bool(entries) or incus.network_acl_exists(extras_name))
     acls = [] if loose else [acl_name(cfg), *([extras_name] if keep_extra_acl else [])]
     local_devices = raw.get("devices") or {}
     local_nic = local_devices.get("eth0")

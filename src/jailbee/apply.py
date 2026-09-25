@@ -180,7 +180,8 @@ def run_apply(
     raw_all = incus.list_containers()
     repo_prefix = f"{cfg.container_prefix}-"
     repo_instances = [
-        raw for raw in raw_all
+        raw
+        for raw in raw_all
         if isinstance(raw.get("name"), str) and raw["name"].startswith(repo_prefix)
     ]
     work_present = any(generation_of(cfg, raw) == "work" for raw in repo_instances)

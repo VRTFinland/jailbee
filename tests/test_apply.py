@@ -206,7 +206,8 @@ def test_work_default_reconciles_work_profiles_without_attaching_legacy_acl(
     legacy_union = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
     names = profile_names(cfg)
     yamls = {
-        names.base: base_profile_yaml(cfg), names.binds: binds_profile_yaml(cfg),
+        names.base: base_profile_yaml(cfg),
+        names.binds: binds_profile_yaml(cfg),
         names.net_strict: net_profile_yaml(cfg, "strict"),
         names.net_loose: net_profile_yaml(cfg, "loose"),
         **work_profile_yamls(cfg),

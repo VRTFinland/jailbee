@@ -46,14 +46,19 @@ def test_reservation_scans_expanded_devices_even_with_unrelated_local_device(mon
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     incus = MagicMock()
     incus.network_get.return_value = "10.42.0.1/29"
-    incus.list_containers.return_value = [{
-        "name": "profile-work",
-        "devices": {"root": {"type": "disk", "path": "/"}},
-        "expanded_devices": {"eth0": {
-            "network": "jailbee-work", "ipv4.address": "10.42.0.2",
-            "security.ipv4_filtering": "true",
-        }},
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "profile-work",
+            "devices": {"root": {"type": "disk", "path": "/"}},
+            "expanded_devices": {
+                "eth0": {
+                    "network": "jailbee-work",
+                    "ipv4.address": "10.42.0.2",
+                    "security.ipv4_filtering": "true",
+                }
+            },
+        }
+    ]
     assert reserve_work_ipv4(incus, "new") == "10.42.0.3"
 
 
@@ -61,14 +66,20 @@ def test_authoritative_local_work_nic_is_required_for_managed_identity(monkeypat
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     incus = MagicMock()
     incus.network_get.return_value = "10.42.0.1/29"
-    incus.list_containers.return_value = [{
-        "name": "managed", "profiles": ["repo-net-work-strict"],
-        "devices": {"root": {"type": "disk", "path": "/"}},
-        "expanded_devices": {"eth0": {
-            "network": "jailbee-work", "ipv4.address": "10.42.0.2",
-            "security.ipv4_filtering": "true",
-        }},
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "managed",
+            "profiles": ["repo-net-work-strict"],
+            "devices": {"root": {"type": "disk", "path": "/"}},
+            "expanded_devices": {
+                "eth0": {
+                    "network": "jailbee-work",
+                    "ipv4.address": "10.42.0.2",
+                    "security.ipv4_filtering": "true",
+                }
+            },
+        }
+    ]
     with pytest.raises(ValueError, match="authoritative local eth0"):
         reserve_work_ipv4(incus, "managed")
 

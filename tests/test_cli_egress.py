@@ -76,9 +76,9 @@ def test_add_stores_a_container_entry_by_default(tmp_path, mocker):
 
 def test_add_dispatches_work_instance_without_legacy_nic_mutator(tmp_path, mocker):
     cfg, incus = _repo(tmp_path, mocker)
-    incus.list_containers.return_value = [{
-        "name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-strict"]
-    }]
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-strict"]}
+    ]
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     apply_work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
     mocker.patch("jailbee.work_acl.reconcile_work_acl")
@@ -92,9 +92,9 @@ def test_add_dispatches_work_instance_without_legacy_nic_mutator(tmp_path, mocke
 
 def test_rm_dispatches_work_instance_without_legacy_nic_mutator(tmp_path, mocker):
     cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
-    incus.list_containers.return_value = [{
-        "name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-loose"]
-    }]
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-loose"]}
+    ]
     mocker.patch("jailbee.egress_scope.set_container_extras")
     apply_work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
     mocker.patch("jailbee.work_acl.reconcile_work_acl")

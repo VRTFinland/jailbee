@@ -52,7 +52,8 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
         devices = [local_devices, expanded_devices]
         name_matches = container.get("name") == name
         work_markers = [
-            profile for profile in (container.get("profiles") or [])
+            profile
+            for profile in (container.get("profiles") or [])
             if isinstance(profile, str)
             and profile.endswith(("-net-work-strict", "-net-work-loose"))
         ]
@@ -88,7 +89,9 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
                 occupied.add(parsed)
                 if container.get("name") == name:
                     if device.get("security.ipv4_filtering") != "true":
-                        raise ValueError(f"{name} has a work NIC reservation without IPv4 filtering")
+                        raise ValueError(
+                            f"{name} has a work NIC reservation without IPv4 filtering"
+                        )
                     if (
                         parsed not in interface.network
                         or parsed == interface.ip

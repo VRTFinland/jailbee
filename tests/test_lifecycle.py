@@ -5133,9 +5133,9 @@ def test_work_switch_strict_retry_finishes_pending_marker_and_revoke(make_cfg, t
     revoke = mocker.patch("jailbee.work_acl.revoke_work_loose")
     apply_work = mocker.patch(
         "jailbee.work_acl.apply_work_container_acl",
-        side_effect=lambda *_args, **_kwargs: incus.list_containers.return_value[0][
-            "devices"
-        ]["eth0"].update({"security.acls": "myrepo-allowlist"}),
+        side_effect=lambda *_args, **_kwargs: incus.list_containers.return_value[0]["devices"][
+            "eth0"
+        ].update({"security.acls": "myrepo-allowlist"}),
     )
     mocker.patch("jailbee.work_network.work_network_lock")
     mocker.patch("jailbee.hosts.apply_hosts")
