@@ -281,7 +281,7 @@ def repo(tmp_path, db_engine, monkeypatch):
 @pytest.mark.parametrize("command", [None, "", "  "])
 def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child):
     _, channel = session(command)
-    assert output(channel) == b"Available remote commands:\n  dashboard\n"
+    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
     assert output(channel, 1) == b""
     channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
@@ -297,14 +297,14 @@ def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
     gets CRLF for free.
     """
     _, channel = session(None, term="xterm")
-    assert output(channel) == b"Available remote commands:\r\n  dashboard\r\n"
+    assert output(channel) == b"Available remote commands:\r\n  help\r\n  dashboard\r\n"
     channel.exit.assert_called_once_with(0)
 
 
 def test_commandless_help_stays_bare_lf_without_a_pty(child):
     """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
     _, channel = session(None)
-    assert output(channel) == b"Available remote commands:\n  dashboard\n"
+    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
     assert b"\r\n" not in output(channel)
 
 
@@ -318,11 +318,37 @@ def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
         "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    commands:\n      mode: full\n"
     )
     _, help_channel = session()
-    assert output(help_channel) == b"Available remote commands:\n  shell [--repo PREFIX]\n"
+    assert output(help_channel) == b"Available remote commands:\n  help\n  shell [--repo PREFIX]\n"
     _, last = session("--repo project ls")
     last.exit.assert_called_once_with(2)
     assert b"execution is disabled" in output(last, 1)
     assert child.await_count == 1
+
+
+def test_commandless_login_uses_configured_dashboard_and_explicit_help(child, mocker):
+    ssh = RemoteSSHConfig(default_entrypoint="dashboard")
+    mocker.patch.object(
+        server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
+    )
+    _, dashboard = session(term="xterm")
+    assert child.await_args.args[1].argv[:4] == (sys.executable, "-m", "jailbee", "dashboard")
+    dashboard.exit.assert_called_once_with(7)
+
+    _, help_channel = session("help")
+    assert output(help_channel) == b"Available remote commands:\n  help\n  dashboard\n"
+    help_channel.exit.assert_called_once_with(0)
+    assert child.await_count == 1
+
+
+def test_commandless_dashboard_without_pty_is_rejected(child, mocker):
+    ssh = RemoteSSHConfig(default_entrypoint="dashboard")
+    mocker.patch.object(
+        server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
+    )
+    _, channel = session()
+    assert b"retry with ssh -t" in output(channel, 1)
+    channel.exit.assert_called_once_with(2)
+    child.assert_not_awaited()
 
 
 @pytest.mark.parametrize("command", ["dashboard", "shell", "shell --repo project"])
@@ -357,6 +383,12 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
         # dedicated regression test on this argument's *content*.
         policy = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
         expected_argv = (*expected_argv, "--policy-json", policy.model_dump_json())
+    elif arguments[0] == "dashboard":
+        expected_argv = (
+            *expected_argv,
+            "--remote-policy-json",
+            configured.return_value[0].remote.ssh.model_dump_json(),
+        )
     child.assert_awaited_once_with(
         process,
         ChildSpec(
@@ -532,6 +564,30 @@ def test_overrides_are_reapplied_after_a_per_session_global_config_reload(child,
     assert child.await_count == 2
 
 
+def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child, mocker):
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    raw = RemoteSSHConfig(
+        shell=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
+    )
+    mocker.patch.object(
+        server,
+        "load_global_config",
+        return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
+    )
+    overrides = ServeOverrides(commands_mode="full", restrict_host=False)
+    _process, _ = session("dashboard", term="xterm", overrides=overrides)
+
+    child.assert_awaited_once()
+    child_argv = child.await_args.args[1].argv
+    assert child_argv[-2] == "--remote-policy-json"
+    effective = RemoteSSHConfig.model_validate_json(child_argv[-1])
+    assert effective.commands.mode == "full"
+    assert effective.restrict_host is False
+    assert raw.commands.mode == "allowlist"
+
+
 def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):
     """The `overrides=None` default must not change today's reload behaviour."""
     first_raw = RemoteSSHConfig(
@@ -601,7 +657,7 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
 
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
-    assert output(channel) == b"Available remote commands:\n  dashboard\n"
+    assert output(channel) == b"Available remote commands:\n  help\n  dashboard\n"
     channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
 

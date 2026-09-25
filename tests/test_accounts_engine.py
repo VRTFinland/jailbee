@@ -153,6 +153,20 @@ def test_registry_raises_for_an_unknown_agent() -> None:
         base.get_adapter("nosuchagent")
 
 
+def test_group_members_include_repos_grouped_by_their_local_file(mocker, tmp_path, monkeypatch):
+    from jailbee.accounts import engine
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.global_config import GlobalConfig
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mocker.patch.object(engine, "registered_repos", return_value=[("a", None), ("b", None)])
+    path = local_config_path("b")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("credentials:\n  group: team\n")
+
+    assert engine.group_member_prefixes(GlobalConfig(), "team") == ["b"]
+
+
 def _write(path: Path, email: str, refresh: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"login": {"email": email, "refresh": refresh}}), encoding="utf-8")

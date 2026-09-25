@@ -3263,6 +3263,116 @@ def test_cli_config_show_layer_repo_prints_repo_yaml(tmp_path, monkeypatch):
     assert "ide: idea" not in result.stdout
 
 
+def test_cli_config_show_local_masks_token_and_names_path(tmp_path, monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text("container_prefix: myrepo\n")
+    path = tmp_path / ".config" / "jailbee" / "repos" / "myrepo.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github:\n  token: ghp_secret\negress_allow: [x.org]\n")
+    path.chmod(0o600)
+
+    result = runner.invoke(app, ["config", "show", "--layer", "local"])
+
+    assert result.exit_code == 0, result.output
+    assert "ghp_secret" not in result.stdout
+    assert "**********" in result.stdout
+    assert "x.org" in result.stdout
+    assert str(path) in result.stdout
+
+
+def test_cli_config_show_local_handles_read_race_without_leaking_contents(
+    tmp_path, monkeypatch, mocker
+):
+    import pathlib
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text("container_prefix: myrepo\n")
+    path = tmp_path / ".config" / "jailbee" / "repos" / "myrepo.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github:\n  token: ghp_private\n")
+    path.chmod(0o600)
+    original_read_text = pathlib.Path.read_text
+    local_reads = 0
+
+    def read_with_race(candidate, *args, **kwargs):
+        nonlocal local_reads
+        if candidate == path:
+            local_reads += 1
+            if local_reads == 2:
+                raise OSError("private file content ghp_private")
+        return original_read_text(candidate, *args, **kwargs)
+
+    mocker.patch("pathlib.Path.read_text", read_with_race)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "local"])
+
+    assert local_reads == 2
+    assert result.exit_code == 1
+    assert "Could not read or parse host-local config" in result.output
+    assert "ghp_private" not in result.output
+    assert "github:" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_config_show_local_handles_parse_race_without_leaking_contents(
+    tmp_path, monkeypatch, mocker
+):
+    import pathlib
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text("container_prefix: myrepo\n")
+    path = tmp_path / ".config" / "jailbee" / "repos" / "myrepo.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github:\n  token: ghp_private\n")
+    path.chmod(0o600)
+    original_read_text = pathlib.Path.read_text
+    local_reads = 0
+
+    def read_with_parse_race(candidate, *args, **kwargs):
+        nonlocal local_reads
+        if candidate == path:
+            local_reads += 1
+            if local_reads == 2:
+                return "github: [ghp_private\n"
+        return original_read_text(candidate, *args, **kwargs)
+
+    mocker.patch("pathlib.Path.read_text", read_with_parse_race)
+
+    result = CliRunner().invoke(app, ["config", "show", "--layer", "local"])
+
+    assert local_reads == 2
+    assert result.exit_code == 1
+    assert "Could not read or parse host-local config" in result.output
+    assert "ghp_private" not in result.output
+    assert "github:" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_config_show_effective_names_present_local_file(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text("container_prefix: myrepo\n")
+    (tmp_path / ".git").mkdir()
+    path = tmp_path / ".config" / "jailbee" / "repos" / "myrepo.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("egress_allow: [local.example]\n")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+
+    result = CliRunner().invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.output
+    compact_output = "".join(result.stdout.split())
+    assert "".join(str(path).split()) in compact_output
+
+
 def test_cli_config_show_layer_global_empty_when_missing(tmp_path, monkeypatch):
     runner = CliRunner()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))

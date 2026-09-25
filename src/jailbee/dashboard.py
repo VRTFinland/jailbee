@@ -27,9 +27,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 
 from rich import box
-from rich.console import Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from jailbee import table_format
 from jailbee.config import (
@@ -37,6 +38,14 @@ from jailbee.config import (
     ColumnConfig,
     format_loose_after,
     load_repo_config,
+)
+from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.dashboard_commands import (
+    apply_completion,
+    check_dashboard_command,
+    command_argv,
+    completion_candidates,
+    insert_options_before_separator,
 )
 from jailbee.dashboard_settings import (
     SettingsState,
@@ -62,6 +71,9 @@ from jailbee.lifecycle import (
 )
 from jailbee.paths import repo_config_path
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
+from jailbee.remote_ssh import router as ssh_router
+from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.session import host_restricted
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -548,9 +560,9 @@ def container_of(row: Row | None) -> str | None:
 def fold_target(groups: list[RepoGroup], row: Row | None) -> str | None:
     """The repo prefix a fold key should act on for ``row``, else None.
 
-    Accepts either kind of row: folding from inside a group is the common
-    gesture ("get this out of my way"), and requiring the cursor to be on the
-    header first would make the key feel arbitrary.
+    Accepts either kind of row so callers can resolve a group's prefix from
+    its header or one of its container rows. The live-table fold action is
+    currently triggered from a repo header; settings provide the other route.
     """
     if row is None:
         return None
@@ -714,6 +726,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         # `pr --open` is a browser on the host's display.
         prefix.append(("Open PR", "pr --open"))
     if _bridge_possible(ctx):
+        prefix.append(("Merge into…", "merge"))
         prefix.append(("Create/update PR", "pr"))
         prefix.append(("Update from base (git push)", "git push"))
         if ctx.pr_number is not None and not ctx.pr_author:
@@ -893,12 +906,13 @@ class KeyBinding:
 
     :data:`KEY_BINDINGS` is the single source for all three — :func:`parse_key`
     is built from ``keys``, the quick-action gate from ``verb``, the help
-    overlay from ``hint``/``label``/``group``, and the always-visible hint line
-    from ``brief``. Three hand-maintained lists would drift.
+    overlay from ``hint``/``label``/``group``. Three hand-maintained lists
+    would drift.
 
     ``hint`` is empty for a token whose sibling documents it (``down`` is
-    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is the terse word used in the
-    hint line, or None to keep the key in the help overlay only.
+    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is retained as optional
+    concise key metadata; keys without one remain documented in the help
+    overlay through their ``hint``/``label`` fields.
     """
 
     token: str
@@ -915,15 +929,16 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
     ),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
-    KeyBinding("enter", (b"\r", b"\n"), "Enter", "open the action menu", "Navigate", brief="menu"),
+    KeyBinding(
+        "enter", (b"\r", b"\n"), "Enter", "open a container menu or fold a repo header", "Navigate"
+    ),
     KeyBinding("cancel", (b"\x1b",), "Esc", "close the menu or help", "Navigate"),
     KeyBinding(
-        "fold",
+        "settings-toggle",
         (b" ",),
         "Space",
-        "fold/unfold the repo group",
-        "Navigate",
-        brief="fold",
+        "toggle the selected setting",
+        "Settings",
     ),
     KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
     KeyBinding(
@@ -961,7 +976,8 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     ),
     KeyBinding("tab", (b"\t",), "", "", "View"),
     KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
-    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View", brief="quit"),
+    KeyBinding("command", (b"!",), "!", "run a jailbee command", "Actions", brief="command"),
+    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
     KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
 )
@@ -1018,7 +1034,46 @@ class MenuState:
 
 # What occupies the slot under the table. All three overlays are mutually
 # exclusive by construction — no combination of them is a representable state.
-Overlay = MenuState | SettingsState | Literal["help"]
+@dataclass(frozen=True)
+class CommandState:
+    """Inline command editor state, independent of terminal/input handling."""
+
+    text: str
+    suggestions: tuple[str, ...] = ()
+    index: int = -1
+    pending_utf8: bytes = b""
+
+
+def edit_command(state: CommandState, key: bytes) -> CommandState:
+    """Apply one editor key, keeping ordinary dashboard shortcuts as text."""
+    if key in (b"\x7f", b"\x08"):
+        if state.pending_utf8:
+            return replace(state, pending_utf8=b"")
+        return replace(state, text=state.text[:-1], index=-1)
+    if key == b"\t":
+        if not state.suggestions:
+            return state
+        index = (state.index + 1) % len(state.suggestions)
+        return replace(
+            state,
+            text=apply_completion(state.text, state.suggestions[index]),
+            index=index,
+        )
+    if key in (b"\r", b"\n", b"\x1b", b"\x03", b""):
+        return state
+    encoded = state.pending_utf8 + key
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if exc.reason == "unexpected end of data" and exc.end == len(encoded):
+            return replace(state, pending_utf8=encoded)
+        text = encoded.decode("utf-8", errors="replace")
+    if text and text.isprintable():
+        return replace(state, text=state.text + text, index=-1, pending_utf8=b"")
+    return state
+
+
+Overlay = MenuState | SettingsState | CommandState | Literal["help"]
 
 
 def open_menu(
@@ -1118,7 +1173,7 @@ def quick_reject_note(
 
 
 def _hint_line(overlay: Overlay | None) -> str:
-    """The keybinding hint shown on the last line of the panel body."""
+    """Contextual controls shown only while an overlay is open."""
     if isinstance(overlay, MenuState):
         return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
     if isinstance(overlay, SettingsState):
@@ -1126,11 +1181,135 @@ def _hint_line(overlay: Overlay | None) -> str:
             "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
             "[bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
         )
+    if isinstance(overlay, CommandState):
+        return "[bold]Enter[/bold] run  ·  [bold]Tab[/bold] complete  ·  [bold]Esc[/bold] cancel"
     if overlay is not None:  # "help"
         return "[bold]Esc[/bold] / [bold]h[/bold] close"
-    return "  ·  ".join(
-        f"[bold]{b.hint}[/bold] {b.brief}" for b in KEY_BINDINGS if b.brief is not None
+    return ""
+
+
+def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str]) -> Text:
+    """Render a repo heading independently of the table's data columns."""
+    marker = "▸" if group.prefix in folded else "▾"
+    label = f"{marker} {group.prefix}  ({len(group.containers)})"
+    style = "bold yellow" if group.repo_root is None else "bold cyan"
+    if group.repo_root is None:
+        label += "  (orphan)"
+    result = Text.from_markup(
+        f"{'▸ ' if selected == Row('repo', group.prefix) else ''}[{style}]{label}[/]"
     )
+    if selected == Row("repo", group.prefix):
+        result.stylize("bold bright_white")
+    return result
+
+
+def repo_table(
+    group: RepoGroup,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    selected: Row | None,
+    *,
+    show_header: bool,
+) -> Table:
+    """Render one repo's rows with globally aligned table columns."""
+    table = Table(
+        box=None,
+        pad_edge=False,
+        expand=False,
+        show_edge=False,
+        show_header=show_header,
+        padding=(0, 1),
+    )
+    for field_spec, width in zip(fields, widths, strict=True):
+        table.add_column(
+            field_spec.header if show_header else "",
+            justify=field_spec.justify,
+            width=width,
+            min_width=1,
+            no_wrap=False,
+        )
+    for container in group.containers:
+        is_selected = selected == Row("container", container.name)
+        cells: list[str] = []
+        for index, field_spec in enumerate(fields):
+            value = (
+                container.name
+                if field_spec.name == "name" and group.repo_root is None
+                else field_spec.cell(container)
+            )
+            if index == 0:
+                value = ("[bold cyan]▸[/] " if is_selected else "  ") + value
+            cells.append(value)
+        table.add_row(*cells, style="bold bright_white" if is_selected else None)
+    return table
+
+
+def _dashboard_column_widths(
+    fields: list[FieldSpecCI], rows: list[tuple[RepoGroup, ContainerInfo]]
+) -> tuple[int, ...]:
+    """Measure visible headers and cells once for cross-repo consistency."""
+    widths: list[int] = []
+    for index, field_spec in enumerate(fields):
+        values = [field_spec.header]
+        for group, container in rows:
+            value = (
+                container.name
+                if field_spec.name == "name" and group.repo_root is None
+                else field_spec.cell(container)
+            )
+            values.append(value)
+        measured = max(Text.from_markup(value).cell_len for value in values)
+        widths.append(measured + (2 if index == 0 else 0))
+    return tuple(widths)
+
+
+def _fit_dashboard_column_widths(widths: tuple[int, ...], available_width: int) -> tuple[int, ...]:
+    """Fit measured columns to Rich's current content width, retaining minima."""
+    if not widths:
+        return widths
+    # Each table column has one cell of horizontal padding on either side.
+    budget = max(len(widths), available_width - 2 * len(widths))
+    if sum(widths) <= budget:
+        return widths
+    scale = budget / sum(widths)
+    fitted = [max(1, int(width * scale)) for width in widths]
+    while sum(fitted) > budget:
+        largest = max(range(len(fitted)), key=fitted.__getitem__)
+        if fitted[largest] == 1:
+            break
+        fitted[largest] -= 1
+    while sum(fitted) < budget:
+        smallest_ratio = min(range(len(fitted)), key=lambda i: fitted[i] / widths[i])
+        fitted[smallest_ratio] += 1
+    return tuple(fitted)
+
+
+@dataclass(frozen=True)
+class _RepoSections:
+    groups: list[RepoGroup]
+    fields: list[FieldSpecCI]
+    widths: tuple[int, ...]
+    selected: Row | None
+    folded: frozenset[str]
+    empty: bool
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        widths = _fit_dashboard_column_widths(self.widths, options.max_width)
+        sections: list[RenderableType] = []
+        headers_shown = False
+        if self.empty:
+            sections.append("(no containers found)")
+        else:
+            for group in self.groups:
+                sections.append(repo_heading(group, self.selected, self.folded))
+                if group.prefix not in self.folded:
+                    sections.append(
+                        repo_table(
+                            group, self.fields, widths, self.selected, show_header=not headers_shown
+                        )
+                    )
+                    headers_shown = True
+        yield Group(*sections)
 
 
 def render(
@@ -1148,86 +1327,46 @@ def render(
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
-    One shared table (columns aligned across all repos); each repo is a
-    section header row inside it. The selected container is marked with a
+    Repo sections are rendered in the dashboard body with aligned columns.
+    The selected row is marked with a
     ``▸`` gutter arrow and bold styling. Wrapped in a rounded Panel whose
     left-aligned title carries the summary, the clock and a fixed-width
     refresh field; the subtitle carries a transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
     the table so the dashboard it acts on stays on screen. ``notice`` is a
-    transient message
-    (a rejected key, a view-only row) shown in the subtitle; the keybinding
-    hint lives in the panel body, where Rich can wrap it instead of the
-    subtitle silently clipping it.
+    transient message (a rejected key, a view-only row) shown in the subtitle.
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
     fields = visible_fields(now, visible, enabled)
 
-    table = Table(box=None, pad_edge=False, expand=False, show_edge=False)
-    for i, f in enumerate(fields):
-        # The *first* column carries a 2-char arrow gutter on data rows,
-        # whichever field that happens to be — the settings overlay lets
-        # `name` be disabled, so the gutter cannot be pinned to that field
-        # by name. Pad its header so the column lines up.
-        header = ("  " + f.header) if i == 0 else f.header
-        table.add_column(header, justify=f.justify)
-
-    if not all_containers:
-        table.add_row("(no containers found)", *([""] * (len(fields) - 1)))
-    else:
-        first_group = True
-        for g in groups:
-            if not g.containers:
-                continue
-            if not first_group:
-                table.add_row(*([""] * len(fields)))  # blank spacer between groups
-            first_group = False
-            is_folded = g.prefix in folded
-            marker = "▸" if is_folded else "▾"
-            is_orphan = g.repo_root is None
-            label = f"{marker} {g.prefix}  ({len(g.containers)})"
-            if is_orphan:
-                label += "  (orphan)"
-            label_style = "bold yellow" if is_orphan else "bold cyan"
-            header_sel = selected is not None and selected == Row("repo", g.prefix)
-            gutter = "[bold cyan]▸[/] " if header_sel else "  "
-            table.add_row(
-                gutter + f"[{label_style}]{label}[/]",
-                *([""] * (len(fields) - 1)),
-                style="bold bright_white" if header_sel else None,
-            )
-            if is_folded:
-                continue
-            for c in g.containers:
-                is_sel = (
-                    selected is not None and selected.kind == "container" and selected.key == c.name
-                )
-                cells: list[str] = []
-                for i, f in enumerate(fields):
-                    # `name` shows the full container name (not the
-                    # repo-prefix-stripped display name) for an orphan row,
-                    # since there is no known repo to have stripped a prefix
-                    # from — independent of whether `name` happens to be the
-                    # first column.
-                    value = c.name if (f.name == "name" and is_orphan) else f.cell(c)
-                    if i == 0:
-                        gutter = "[bold cyan]▸[/] " if is_sel else "  "
-                        value = gutter + value
-                    cells.append(value)
-                table.add_row(*cells, style="bold bright_white" if is_sel else None)
-
-    body: list[RenderableType] = [table, ""]
+    visible_groups = [g for g in groups if g.containers]
+    visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
+    widths = _dashboard_column_widths(fields, visible_rows)
+    body: list[RenderableType] = [
+        _RepoSections(
+            visible_groups,
+            fields,
+            widths,
+            selected,
+            folded,
+            empty=not all_containers,
+        ),
+    ]
     if overlay is not None:
         if isinstance(overlay, MenuState):
             panel = _render_menu(overlay)
+        elif isinstance(overlay, CommandState):
+            lines = [f"> {overlay.text}▏"]
+            if overlay.suggestions:
+                lines.append("  " + "   ".join(overlay.suggestions))
+            panel = Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
         elif isinstance(overlay, SettingsState):
             panel = render_settings(overlay, dynamic=dynamic_column_names())
         else:
             panel = _render_help()
-        body += [panel, ""]
-    body.append(_hint_line(overlay))
+        body += ["", panel, _hint_line(overlay)]
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
@@ -1239,7 +1378,7 @@ def render(
     # the age ticks — a title that resizes drags the whole line with it.
     age_field = f"{min(last_refresh_age, 99.0):>2.0f}s/{interval:.0f}s"
     title = (
-        f"[bold]jailbee dashboard[/]  ·  {n_repos} repos · {n_ctr} containers"
+        f"[bold]jailbee dashboard[/]  ·  [dim]h/? help[/]  ·  {n_repos} repos · {n_ctr} containers"
         f"{folded_note}{git_note}  ·  {now:%H:%M:%S}  ·  [dim]↻[/dim] {age_field}"
     )
     # Subtitle is notice-only: a transient message on the bottom border cannot
@@ -1582,6 +1721,7 @@ PRINTING_VERBS: frozenset[str] = frozenset(
         "git push --pr",
         "git pull",
         "git diff",
+        "merge",
         "job log",
         "job log --follow",
     }
@@ -1603,6 +1743,11 @@ def dispatch_style(verb: str) -> DispatchStyle:
     if verb in _OUTPUT_VERBS:
         return "output"
     return "plain"
+
+
+def command_needs_pause(typed: str) -> bool:
+    """Retain output for noninteractive commands entered in the editor."""
+    return typed not in ATTACH_VERBS and not typed.startswith(APPS_RUN_PREFIX)
 
 
 def pager_argv() -> list[str] | None:
@@ -1686,7 +1831,15 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     return producer.wait()
 
 
-def _dispatch_action(target: RepoTarget, verb: str, name: str, *, remote: bool = False) -> int:
+def _dispatch_action(
+    target: RepoTarget,
+    verb: str,
+    name: str,
+    *,
+    remote: bool = False,
+    over_ssh: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+) -> int:
     """Run ``jailbee <verb> <name>`` against ``target``; return its exit code.
 
     The single dispatch point shared by the inline action menu and the
@@ -1720,7 +1873,9 @@ def _dispatch_action(target: RepoTarget, verb: str, name: str, *, remote: bool =
     whole TUI down. That is deliberately *not* caught as "pager failed": see
     :class:`_PagerUnavailableError`.
     """
-    argv = ["jailbee", *verb.split(), name, *target.flags()]
+    argv = ["jailbee", *verb.split(), name, *(target.flags() if not over_ssh else [])]
+    if verb == "merge":
+        check_dashboard_command(argv[1:], ssh_policy, over_ssh=over_ssh)
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
@@ -1770,6 +1925,8 @@ def run(
     git_interval: float,
     no_git: bool,
     remote: bool = False,
+    over_ssh: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
 ) -> int:
     """Main dashboard loop.
 
@@ -2005,7 +2162,25 @@ def run(
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
                 try:
-                    rc = foreground(lambda: _dispatch_action(repo, verb, target, remote=remote))
+                    if verb == "merge":
+                        check_dashboard_command(["merge", target], ssh_policy, over_ssh=over_ssh)
+                except RouteError as exc:
+                    set_notice(str(exc))
+                    return
+                try:
+                    rc = foreground(
+                        lambda: _dispatch_action(
+                            repo,
+                            verb,
+                            target,
+                            remote=remote,
+                            over_ssh=over_ssh,
+                            ssh_policy=ssh_policy,
+                        )
+                    )
+                except RouteError as exc:
+                    set_notice(str(exc))
+                    return
                 except OSError:
                     _report_vanished_repo(repo)
                     return
@@ -2106,6 +2281,55 @@ def run(
                     set_notice(f"'jailbee config edit' exited {rc}")
                 force.set()  # config may have changed under every row
 
+            def run_command(command: CommandState) -> None:
+                """Authorize and run the edited argv in the selected repo."""
+                name = container_of(selected)
+                if selected is None:
+                    set_notice("Select a repo or a container first")
+                    return
+                group = (
+                    _find_group(groups, name)
+                    if name is not None
+                    else next((g for g in groups if g.prefix == selected.key), None)
+                )
+                if group is None:
+                    set_notice("Selected repo is no longer listed")
+                    return
+                repo = RepoTarget.of(group)
+                if repo is None:
+                    set_notice(
+                        view_only_note(groups, name)
+                        or f"No repo found for '{group.prefix}' — this row is view-only"
+                    )
+                    return
+                try:
+                    argv = command_argv(command.text, name)
+                    if not over_ssh:
+                        argv = insert_options_before_separator(argv, repo.flags())
+                    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
+                except (ValueError, RouteError) as exc:
+                    set_notice(str(exc))
+                    return
+                try:
+
+                    def execute_command() -> int:
+                        result = subprocess.run(["jailbee", *argv], cwd=repo.cwd(), check=False)
+                        try:
+                            typed, _leaf = ssh_router.command_leaf(argv)
+                        except RouteError:
+                            typed = ""
+                        if command_needs_pause(typed):
+                            _wait_for_return()
+                        return result.returncode
+
+                    rc = foreground(execute_command)
+                except OSError:
+                    _report_vanished_repo(repo)
+                    return
+                if rc != 0:
+                    set_notice(f"'jailbee {' '.join(argv)}' exited {rc}")
+                force.set()
+
             while not stop.is_set():
                 with lock:
                     groups = shared_groups
@@ -2153,7 +2377,52 @@ def run(
                 ready, _, _ = select.select([sys.stdin], [], [], 0.25)
                 if not ready:
                     continue
-                key = parse_key(os.read(fd, _KEY_READ_BYTES))
+                data = os.read(fd, _KEY_READ_BYTES)
+                if isinstance(overlay, CommandState):
+                    if data in (b"\x1b", b"\x03", b""):
+                        overlay = None
+                    elif data in (b"\r", b"\n"):
+                        command = overlay
+                        overlay = None
+                        run_command(command)
+                    else:
+                        selected_group = (
+                            _find_group(groups, container_of(selected))
+                            if container_of(selected) is not None
+                            else next(
+                                (
+                                    group
+                                    for group in groups
+                                    if selected and group.prefix == selected.key
+                                ),
+                                None,
+                            )
+                        )
+                        allowed_paths: frozenset[str] | None = None
+                        if over_ssh:
+                            if ssh_policy is None or not ssh_policy.exec:
+                                allowed_paths = frozenset()
+                            elif ssh_policy.commands.mode == "disabled":
+                                allowed_paths = frozenset()
+                            elif ssh_policy.commands.mode == "allowlist":
+                                allowed_paths = frozenset(ssh_policy.commands.allow)
+                            elif ssh_policy.commands.mode == "full":
+                                allowed_paths = ssh_router.known_command_paths()
+                        candidates = completion_candidates(
+                            overlay.text,
+                            tuple(c.name for c in selected_group.containers)
+                            if selected_group is not None
+                            else (),
+                            allowed_paths,
+                            restrict_host=bool(
+                                over_ssh
+                                and ssh_policy is not None
+                                and host_restricted(ssh_policy.restrict_host)
+                            ),
+                        )
+                        overlay = edit_command(replace(overlay, suggestions=candidates), data)
+                    continue
+                key = parse_key(data)
                 if key == "interrupt":
                     break
                 if overlay is not None:
@@ -2177,7 +2446,7 @@ def run(
                             overlay = move_settings(overlay, -1 if key == "up" else 1)
                         elif key == "tab":
                             overlay = switch_tab(overlay)
-                        elif key == "fold":
+                        elif key == "settings-toggle":
                             overlay = toggle_current(overlay)
                             enabled = enabled_names(overlay)
                             folded = overlay.folded
@@ -2208,15 +2477,10 @@ def run(
                         if overlay is None and container is not None:
                             note = view_only_note(groups, container)
                             set_notice(note or f"No actions available for '{container}'")
-                elif key == "fold":
-                    prefix = fold_target(groups, selected)
-                    if prefix is None:
-                        set_notice("No repo group is selected")
-                    else:
-                        folded = toggle_folded(folded, prefix)
-                        persist_view_state(ViewState(enabled, folded))
                 elif key == "help":
                     overlay = "help"
+                elif key == "command":
+                    overlay = CommandState("")
                 elif key == "settings":
                     overlay = open_settings_overlay()
                 elif key.startswith("action:"):

@@ -227,14 +227,38 @@ class Credentials(BaseModel):
             _validated_group(group)
         return value
 
-    def group_for(self, container_prefix: str) -> str | None:
+    def group_for(self, container_prefix: str, local: LocalCredentials | None = None) -> str | None:
         """The credential group one repo resolves to, or None when it shares none.
 
-        A `repos` entry wins over `group` *including when it is `null`* —
-        opting one repo out is the only way to keep it on its own credential
-        while the rest of the host shares one.
+        A local `credentials.group` key wins (including explicit `null`), then
+        a `repos` entry (also including `null`), then the host default.
         """
+        if local is not None and "group" in local.model_fields_set:
+            return local.group
         return self.repos[container_prefix] if container_prefix in self.repos else self.group
+
+
+class LocalCredentials(BaseModel):
+    """The `credentials` block of one repo's host-local file.
+
+    Presence matters, not just the value: explicit `group: null` opts out,
+    while an absent key falls through to global config.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    group: str | None = Field(
+        default=None,
+        description=(
+            "This repo's credential group on this host. Wins over `credentials.group` "
+            "and `credentials.repos` in global.yaml, including when `null`, which keeps "
+            "the repo on its own credential."
+        ),
+    )
+
+    @field_validator("group")
+    @classmethod
+    def _check_group(cls, value: str | None) -> str | None:
+        return _validated_group(value)
 
 
 def parse_loose_ttl(raw: str) -> timedelta | None:

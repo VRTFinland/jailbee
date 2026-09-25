@@ -216,6 +216,27 @@ def write_text_atomic(path: Path, text: str, *, mode: int | None = None) -> None
         raise
 
 
+def write_with_backup(
+    path: Path, old_text: str, new_text: str, *, mode: int | None = None
+) -> Path | None:
+    """Write `new_text` to `path`, keeping `old_text` in a `.bak` sibling.
+
+    Returns the backup path, or `None` when there was no file to back up. The
+    backup inherits the original's mode so credentials are not exposed. Both
+    writes are atomic.
+    """
+    backup: Path | None = None
+    original_mode: int | None = None
+    if path.exists():
+        original_mode = stat.S_IMODE(path.stat().st_mode)
+        backup = path.with_name(path.name + ".bak")
+        write_text_atomic(backup, old_text, mode=original_mode)
+    if mode is None:
+        mode = original_mode
+    write_text_atomic(path, new_text, mode=mode)
+    return backup
+
+
 def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
     """Apply `changes` to the YAML file at `path`. Returns whether it changed.
 
@@ -237,6 +258,20 @@ def patch_file(path: Path, changes: Sequence[YamlChange]) -> bool:
         return False
     write_text_atomic(path, patched)
     return True
+
+
+def patch_local_file(prefix: str, changes: Sequence[YamlChange]) -> bool:
+    """Patch one repo's host-local config, creating its directory privately.
+
+    The directory may contain tokens and is created at 0700; new files inherit
+    `patch_file`'s 0600 default.
+    """
+    from jailbee.config.local_layer import local_config_dir, local_config_path
+
+    root = local_config_dir()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    return patch_file(local_config_path(prefix), changes)
 
 
 DOCUMENTED_HEADER = (

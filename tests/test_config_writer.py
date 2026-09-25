@@ -147,6 +147,33 @@ def test_patch_file_leaves_no_temp_file_behind(tmp_path: Path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["global.yaml"]
 
 
+def test_patch_local_file_creates_a_private_dir_and_file(tmp_path, monkeypatch):
+    from jailbee.config.local_layer import local_config_dir, local_config_path
+    from jailbee.config_writer import patch_local_file
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    assert patch_local_file("myapp", [YamlChange(("egress_allow",), ["x.org"])])
+    assert stat.S_IMODE(local_config_dir().stat().st_mode) == 0o700
+    path = local_config_path("myapp")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "x.org" in path.read_text()
+
+
+def test_patch_local_file_tightens_an_existing_directory(tmp_path, monkeypatch):
+    from jailbee.config.local_layer import local_config_dir
+    from jailbee.config_writer import patch_local_file
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    root = local_config_dir()
+    root.mkdir(parents=True)
+    root.chmod(0o777)
+
+    patch_local_file("myapp", [YamlChange(("credentials", "group"), "team")])
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+
+
 def test_patch_yaml_edits_one_field_of_one_list_entry_in_place():
     """The other entries, and the comments among them, survive byte-identically."""
     text = (

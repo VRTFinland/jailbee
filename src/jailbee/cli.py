@@ -873,14 +873,14 @@ def config_show(
         str,
         typer.Option(
             "--layer",
-            help="Which config layer to print: global | repo | effective (default).",
-            autocompletion=completion.complete_choices("global", "repo", "effective"),
+            help="Which config layer to print: global | repo | local | effective (default).",
+            autocompletion=completion.complete_choices("global", "repo", "local", "effective"),
         ),
     ] = "effective",
 ) -> None:
     """Print the loaded configuration as YAML."""
-    if layer not in {"global", "repo", "effective"}:
-        error(f"--layer must be one of: global, repo, effective. Got: {layer!r}")
+    if layer not in {"global", "repo", "local", "effective"}:
+        error(f"--layer must be one of: global, repo, local, effective. Got: {layer!r}")
         raise typer.Exit(2)
 
     if layer == "global":
@@ -919,19 +919,48 @@ def config_show(
         typer.echo(path.read_text(), nl=False)
         return
 
+    if layer == "local":
+        from jailbee.config.local_layer import local_config_path
+
+        cfg = _load_or_exit(config)
+        path = local_config_path(cfg.container_prefix)
+        typer.echo(f"# Host-local config: {path}")
+        if not path.exists():
+            return
+        # This diagnostic uses a YAML dump to mask github.token, so comments
+        # are not preserved (unlike the raw repo/global views).
+        try:
+            raw = yaml.safe_load(path.read_text()) or {}
+        except (OSError, yaml.YAMLError):
+            error_plain(f"Could not read or parse host-local config at {path}.")
+            raise typer.Exit(1) from None
+        github = raw.get("github") if isinstance(raw, dict) else None
+        if isinstance(github, dict) and github.get("token"):
+            github["token"] = "**********"
+        typer.echo(yaml.safe_dump(raw, sort_keys=False), nl=False)
+        return
+
     # effective (default) — current behaviour
     from jailbee.config import SCRATCH_ORIGIN_SUFFIX
 
     cfg = _load_or_exit(config)
     if cfg.is_synthetic():
+        from jailbee.config.local_layer import local_config_path
+
+        local_path = local_config_path(cfg.container_prefix)
+        suffix = f" + {local_path}" if local_path.exists() else ""
         info(
             f"# Effective config (merged from global + "
-            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX})"
+            f"{default_global_config_path()}{SCRATCH_ORIGIN_SUFFIX}{suffix})"
         )
     else:
         # `_resolve_config_path` invariant: the `is_synthetic()` branch above
         # is what makes this call safe — there is a file here.
-        info(f"# Effective config (merged from global + {_resolve_config_path(config)})")
+        from jailbee.config.local_layer import local_config_path
+
+        local_path = local_config_path(cfg.container_prefix)
+        suffix = f" + {local_path}" if local_path.exists() else ""
+        info(f"# Effective config (merged from global + {_resolve_config_path(config)}{suffix})")
     data = cfg.model_dump(mode="json")
 
     from sqlmodel import Session
@@ -1033,6 +1062,61 @@ def config_validate(config: ConfigOption = None) -> None:
     raise typer.Exit(2)
 
 
+@config_app.command("migrate")
+def config_migrate_cmd(
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Write the changes (default: show them only)."),
+    ] = False,
+) -> None:
+    """Move deprecated config spellings and storage to their current homes."""
+    from sqlmodel import Session
+
+    from jailbee import config_migrate
+    from jailbee.db import get_engine
+
+    with Session(get_engine()) as session:
+        try:
+            inputs = config_migrate.gather_inputs(session)
+            plan = config_migrate.plan_migrations(inputs)
+            for conflict in plan.conflicts:
+                warn_plain(conflict)
+            if not plan.pending:
+                info("Nothing to migrate.")
+                return
+            for step in plan.steps:
+                info_plain(f"{step.migration_id}: {step.summary} ({step.path})")
+            if plan.rows_to_delete:
+                info_plain(
+                    f"egress-db-rows: {len(plan.rows_to_delete)} state.sqlite row(s) "
+                    "deleted after the write"
+                )
+            diff = config_migrate.render_diff(inputs, plan)
+            if not apply:
+                typer.echo(diff, nl=False)
+                info("Dry run — nothing written. Re-run with `--apply` to write it.")
+                return
+            try:
+                config_migrate.validate_plan(inputs, plan)
+            except (ConfigError, OSError) as error:
+                error_plain(f"{error}\nPreflight failed; no files were written.")
+                raise typer.Exit(1) from error
+            try:
+                backups = config_migrate.apply_plan(inputs, plan, session)
+            except (ConfigError, OSError) as error:
+                error_plain(
+                    f"{error}\nMigration may have partially written files. "
+                    "Check the files and backups, then rerun `jailbee config migrate --apply`."
+                )
+                raise typer.Exit(1) from error
+        except (ConfigError, OSError) as error:
+            error_plain(f"{error}\nNothing was written.")
+            raise typer.Exit(1) from error
+    for backup in backups:
+        info_plain(f"Backup: {backup}")
+    success("Migrated. Run `jailbee apply` in affected repos to push any egress change.")
+
+
 def _is_full_screen_tty() -> bool:
     """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
 
@@ -1091,6 +1175,10 @@ def config_edit_cmd(
             help="Edit ~/.config/jailbee/global.yaml instead of the repo config.",
         ),
     ] = False,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="Edit this repo's host-local overrides."),
+    ] = False,
     write: Annotated[
         str | None,
         typer.Option(
@@ -1103,12 +1191,18 @@ def config_edit_cmd(
 ) -> None:
     """Edit configuration interactively, with per-option help."""
     from jailbee.config_edit.app import run_editor
-    from jailbee.config_edit.layers import read_layers
+    from jailbee.config_edit.layers import LayerName, read_layers
     from jailbee.config_edit.save import WritePolicy, configured_policy, resolve_policy
-    from jailbee.config_edit.schema import global_specs, repo_specs
+    from jailbee.config_edit.schema import global_specs, local_specs, repo_specs
     from jailbee.paths import repo_config_dir_name
 
     write_policy: WritePolicy | None
+    if local and global_:
+        error("--local and --global are mutually exclusive.")
+        raise typer.Exit(2)
+    if local and write == "regenerate":
+        error("--local always writes a minimal patch; --write regenerate is not available for it.")
+        raise typer.Exit(2)
     if write is None:
         write_policy = None
     elif write == "patch":
@@ -1134,10 +1228,22 @@ def config_edit_cmd(
         repo_path = cwd / repo_config_dir_name(cwd) / "config.yaml"
     global_path = default_global_config_path()
 
-    layer: Literal["repo", "global"] = "global" if global_ else "repo"
-    specs = global_specs() if global_ else repo_specs()
+    local_path = _local_config_path_for(repo_path)
+    if local and local_path is None:
+        error_plain(
+            "Cannot resolve a valid container_prefix for this repo; set `container_prefix:` "
+            "in the repo config first."
+        )
+        raise typer.Exit(1)
+    if local_path is None:
+        from jailbee.config.local_layer import local_config_dir
+
+        local_path = local_config_dir() / ".none.yaml"
+
+    layer: LayerName = "global" if global_ else ("local" if local else "repo")
+    specs = global_specs() if global_ else (local_specs() if local else repo_specs())
     try:
-        layer_set = read_layers(repo_path, global_path)
+        layer_set = read_layers(repo_path, global_path, local_path)
     except ConfigError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
@@ -1161,6 +1267,18 @@ def config_edit_cmd(
         error_plain(str(e))
         raise typer.Exit(1) from e
     raise typer.Exit(code)
+
+
+def _local_config_path_for(repo_path: Path) -> Path | None:
+    """Resolve the host-local path using the loader's raw-layer prefix rule."""
+    from jailbee.config.common import _read_yaml_or_empty, _split_host_keys, deep_merge
+    from jailbee.config.loader import derive_prefix
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.config.models_host import _PREFIX_RE
+
+    _, global_overlay = _split_host_keys(_read_yaml_or_empty(default_global_config_path()))
+    prefix = derive_prefix(deep_merge(global_overlay, _read_yaml_or_empty(repo_path)), repo_path)
+    return local_config_path(prefix) if _PREFIX_RE.match(prefix) else None
 
 
 def _offer_editor(*, global_layer: bool) -> None:
@@ -3293,6 +3411,14 @@ def dashboard_cmd(
             help="Run the GUI attached to this terminal instead of detaching to the background.",
         ),
     ] = False,
+    remote_policy_json: Annotated[
+        str | None,
+        typer.Option(
+            "--remote-policy-json",
+            help="Effective remote SSH policy supplied by the server.",
+            hidden=True,
+        ),
+    ] = None,
 ) -> None:
     """Live, auto-refreshing view of jailbee containers across all repos.
 
@@ -3307,6 +3433,7 @@ def dashboard_cmd(
             no_git=no_git,
             gui=gui,
             foreground=foreground,
+            remote_policy_json=remote_policy_json,
         )
     )
 
@@ -3369,6 +3496,7 @@ def _run_dashboard(
     no_git: bool,
     gui: bool,
     foreground: bool,
+    remote_policy_json: str | None = None,
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend.
 
@@ -3379,7 +3507,10 @@ def _run_dashboard(
     *restricted* session additionally gets the TUI in its restricted form
     (see `dashboard.run`'s `remote`).
     """
+    from pydantic import ValidationError
+
     from jailbee.config import ConfigError, load_repo_config
+    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.incus import Incus
     from jailbee.remote_ssh.session import is_remote_session, is_ssh_session
 
@@ -3388,6 +3519,16 @@ def _run_dashboard(
     if over_ssh and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
+    ssh_policy: RemoteSSHConfig | None = None
+    if over_ssh:
+        if remote_policy_json is None:
+            error("remote SSH dashboard has no server policy")
+            return 2
+        try:
+            ssh_policy = RemoteSSHConfig.model_validate_json(remote_policy_json)
+        except ValidationError as exc:
+            error(f"invalid remote SSH policy: {exc}")
+            return 2
     if over_ssh:
         cwd_root = None
     else:
@@ -3477,6 +3618,8 @@ def _run_dashboard(
         git_interval=git_interval,
         no_git=no_git,
         remote=remote,
+        over_ssh=over_ssh,
+        ssh_policy=ssh_policy,
     )
 
 
@@ -8635,10 +8778,7 @@ def egress_add_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
-    from sqlmodel import Session
-
     from jailbee import egress_scope
-    from jailbee.db import get_engine
     from jailbee.egress import NetworkResolveError, parse_egress_entry
 
     cfg = _load_or_exit(config)
@@ -8648,6 +8788,9 @@ def egress_add_cmd(
         error(str(e))
         raise typer.Exit(2) from e
 
+    if repo and entry in egress_scope.local_entries(cfg.container_prefix):
+        info(f"'{entry}' is already a repo override — nothing to do.")
+        return
     if entry in cfg.effective_egress_allow():
         info(f"'{entry}' is already allowed by your config — nothing to do.")
         return
@@ -8661,33 +8804,39 @@ def egress_add_cmd(
         raise typer.Exit(1) from e
 
     incus, container = _egress_target(name, repo, cfg)
-    with Session(get_engine()) as session:
-        if repo:
-            if not egress_scope.add_repo_extra(session, cfg.container_prefix, entry, now=_now()):
-                info(f"'{entry}' is already a repo override — nothing to do.")
-                return
-            success(f"Added repo override '{entry}'. Run `jailbee apply` to push it.")
-            return
+    if repo:
+        from jailbee.config.local_layer import local_config_path
 
-        assert container is not None
-        extras = egress_scope.container_extras(incus, container)
-        if entry in extras:
-            info(f"'{entry}' is already an override on '{container}' — nothing to do.")
-            return
-        egress_scope.set_container_extras(incus, container, [*extras, entry])
-        mode = _egress_container_mode(cfg, incus, container)
-        from jailbee.network_generation import generation_of
+        try:
+            egress_scope.add_local_entry(cfg.container_prefix, entry)
+        except ValueError as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
+        success(
+            f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
+            "Run `jailbee apply` to push it."
+        )
+        return
 
-        raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
-        if generation_of(cfg, raw) == "work":
-            from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
-            from jailbee.work_network import work_network_lock
+    assert container is not None
+    extras = egress_scope.container_extras(incus, container)
+    if entry in extras:
+        info(f"'{entry}' is already an override on '{container}' — nothing to do.")
+        return
+    egress_scope.set_container_extras(incus, container, [*extras, entry])
+    mode = _egress_container_mode(cfg, incus, container)
+    from jailbee.network_generation import generation_of
 
-            with work_network_lock():
-                apply_work_container_acl(cfg, incus, container)
-                reconcile_work_acl(cfg, incus)
-        else:
-            egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+        from jailbee.work_network import work_network_lock
+
+        with work_network_lock():
+            apply_work_container_acl(cfg, incus, container)
+            reconcile_work_acl(cfg, incus)
+    else:
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' may now reach {entry}.")
 
@@ -8738,22 +8887,28 @@ def egress_rm_cmd(
     from jailbee.db import get_engine
 
     cfg = _load_or_exit(config)
+    if repo:
+        removed = egress_scope.remove_local_entry(cfg.container_prefix, entry)
+        with Session(get_engine()) as session:
+            removed = (
+                egress_scope.remove_legacy_repo_extra(session, cfg.container_prefix, entry)
+                or removed
+            )
+        if not removed:
+            if entry in cfg.effective_egress_allow():
+                error(
+                    f"'{entry}' comes from your config, not from a repo "
+                    f"override — overrides can only widen the allowlist.\n"
+                    f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
+                )
+            else:
+                error(f"'{entry}' is not a repo override.")
+            raise typer.Exit(1)
+        success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
+        return
+
     incus, container = _egress_target(name, repo, cfg)
     with Session(get_engine()) as session:
-        if repo:
-            if not egress_scope.remove_repo_extra(session, cfg.container_prefix, entry):
-                if entry in cfg.effective_egress_allow():
-                    error(
-                        f"'{entry}' comes from your config, not from a repo "
-                        f"override — overrides can only widen the allowlist.\n"
-                        f"Edit {_egress_config_source(cfg, config)} and run `jailbee apply`."
-                    )
-                else:
-                    error(f"'{entry}' is not a repo override.")
-                raise typer.Exit(1)
-            success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
-            return
-
         assert container is not None
         extras = egress_scope.container_extras(incus, container)
         if entry not in extras:
@@ -8853,7 +9008,7 @@ def egress_ls_cmd(
         table_format.FieldSpec(
             name="note",
             header="NOTE",
-            cell=lambda r: "redundant — already in config.yaml" if r.redundant else "",
+            cell=lambda r: "redundant — already granted by config" if r.redundant else "",
             json=lambda r: "redundant" if r.redundant else "",
             # Only worth a column when at least one row has something to say.
             show_if=lambda rs: any(r.redundant for r in rs),
@@ -8934,7 +9089,10 @@ def egress_export_cmd(
         incus, container = _resolve_existing(cfg, name)
 
     with Session(get_engine()) as session:
-        overrides = list(egress_scope.repo_extras(session, cfg.container_prefix))
+        overrides = [
+            *egress_scope.local_entries(cfg.container_prefix),
+            *egress_scope.legacy_repo_extras(session, cfg.container_prefix),
+        ]
         if container is not None:
             overrides += egress_scope.container_extras(incus, container)
 
@@ -9472,7 +9630,10 @@ def _print_egress_override_status() -> None:
         incus = Incus()
         names = _list_containers_for_status(cfg, incus)
         with Session(get_engine()) as session:
-            repo_rows = egress_scope.repo_extras(session, cfg.container_prefix)
+            repo_rows = [
+                *egress_scope.local_entries(cfg.container_prefix),
+                *egress_scope.legacy_repo_extras(session, cfg.container_prefix),
+            ]
             per_container = {name: egress_scope.container_extras(incus, name) for name in names}
     except Exception:
         hint(["Could not gather egress-override status for `jailbee net status`."])
@@ -13693,17 +13854,16 @@ def _refuse_if_agent_running_in_repo(cfg: "Config", incus: "IncusType", force: b
 
 
 def _group_after_write(cfg: "Config") -> str | None:
-    """The repo's credential group as the file just written resolves it.
+    """The repo's credential group as the files just written resolve it.
 
-    Read back from `_global_config_path_for_write` rather than from a
-    reloaded `Config`: it is the same file `_write_repo_group` patched, it
-    answers for `set`, `set none` and `unset` alike, and it does not depend
-    on `load_config` finding the same global config this command wrote.
+    Read back from the host and local files rather than a reloaded `Config`:
+    this answers for `set`, `set none` and `unset` alike.
     """
+    from jailbee.config.local_layer import local_credentials
     from jailbee.global_config import load_global_config
 
     gcfg, _ = load_global_config(_global_config_path_for_write())
-    return gcfg.credentials.group_for(cfg.container_prefix)
+    return gcfg.credentials.group_for(cfg.container_prefix, local_credentials(cfg.container_prefix))
 
 
 def _drop_redundant_overrides(cfg: "Config", incus: "IncusType", group: str | None) -> None:
@@ -13759,25 +13919,30 @@ def _reapply_binds_profile(config: Path | None) -> None:
 
 
 def _write_repo_group(config: Path | None, value: object) -> None:
-    """Apply one `credentials.repos.<prefix>` change and re-render.
+    """Set or clear this repo's local group, remove any legacy global entry.
 
-    A global.yaml still spelling the legacy `claude_credentials:` block is
-    migrated in the same write: the block is copied to `credentials`, the old
-    key deleted, then this repo's entry applied — see
-    `config_writer.credential_key_migration`. Reading the raw mapping first is
-    what lets the helper see the legacy key.
+    The global cleanup prevents an old entry from silently overriding unset.
+    It also migrates a legacy `claude_credentials:` block.
     """
     from jailbee import config_writer
-    from jailbee.config.common import _read_yaml_or_empty
+    from jailbee.config.common import _read_yaml_or_empty, normalize_credentials_key
 
     cfg = _load_or_exit(config)
+    prefix = cfg.container_prefix
+    config_writer.patch_local_file(
+        prefix, [config_writer.YamlChange(("credentials", "group"), value)]
+    )
     path = _global_config_path_for_write()
     raw = _read_yaml_or_empty(path)
-    changes = config_writer.credential_key_migration(
-        raw,
-        [config_writer.YamlChange(("credentials", "repos", cfg.container_prefix), value)],
-    )
-    config_writer.patch_file(path, changes)
+    folded, _ = normalize_credentials_key(raw, str(path))
+    block = folded.get("credentials")
+    repos = block.get("repos") if isinstance(block, dict) else None
+    if isinstance(repos, dict) and prefix in repos:
+        changes = config_writer.credential_key_migration(
+            raw,
+            [config_writer.YamlChange(("credentials", "repos", prefix), config_writer.DELETE)],
+        )
+        config_writer.patch_file(path, changes)
     _reapply_binds_profile(config)
 
 
@@ -14132,7 +14297,7 @@ def account_group_set_cmd(
     try:
         _write_repo_group(config, value)
     except OSError as e:
-        error(f"Could not write the global config: {e}")
+        error(f"Could not write the config: {e}")
         raise typer.Exit(2) from e
 
     # The repo's recorded account now describes an account this repo may no
@@ -14169,7 +14334,7 @@ def account_group_unset_cmd(
     try:
         _write_repo_group(config, config_writer.DELETE)
     except OSError as e:
-        error(f"Could not write the global config: {e}")
+        error(f"Could not write the config: {e}")
         raise typer.Exit(2) from e
 
     cfg = _load_or_exit(config)

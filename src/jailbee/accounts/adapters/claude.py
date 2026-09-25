@@ -839,7 +839,7 @@ class ClaudeAdapter:
           would ever read it again and a stale grant left in the shared tree
           only invites confusion. Cancelling — or having no TTY to ask on —
           raises the original `ConfigError`, which still names the
-          `credentials.repos` opt-out for a user who wants neither shared
+          local `credentials.group: null` opt-out for a user who wants neither shared
           login. Deleting a credential is safe here precisely because the two
           are *independent* grants: two `/login`s to one account each mint
           their own refresh-token lineage, so deleting one leaves the
@@ -874,8 +874,9 @@ class ClaudeAdapter:
                     f"({repo_cred}). Sharing one account means one of the two logins "
                     f"becomes unused, and jailbee will not choose for you. Either "
                     f"delete this repo's copy to adopt the group's login, or point "
-                    f"this repo at another group (or `null`) under "
-                    f"`credentials.repos` in ~/.config/jailbee/global.yaml."
+                    f"this repo at another group (or `null`) in "
+                    f"`credentials.group` in ~/.config/jailbee/repos/{cfg.container_prefix}.yaml "
+                    f"(or run `jailbee account group set`)."
                 )
             if keep == "group":
                 repo_cred.unlink()

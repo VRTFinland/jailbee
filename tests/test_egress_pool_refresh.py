@@ -873,12 +873,20 @@ def test_refresh_all_continues_when_one_repo_refresh_raises(
 def test_refresh_pool_includes_repo_overrides_in_the_acl(
     db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
 ) -> None:
-    from jailbee import egress_scope
     from jailbee.egress_pool import refresh_pool
     from jailbee.global_config import GlobalConfig
 
     cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
-    egress_scope.add_repo_extra(db_session, cfg.container_prefix, "nexus.corp", now=frozen_now)
+    from jailbee.db.models import EgressOverride
+
+    db_session.add(
+        EgressOverride(
+            container_prefix=cfg.container_prefix,
+            entry="nexus.corp",
+            added_at=frozen_now,
+        )
+    )
+    db_session.commit()
     mocker.patch(
         "jailbee.egress_pool.resolve_with_status",
         return_value=({"github.com": ["1.1.1.1"], "nexus.corp": ["10.0.5.7"]}, {}),

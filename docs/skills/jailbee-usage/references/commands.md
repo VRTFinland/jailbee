@@ -79,6 +79,7 @@ grammar is exactly:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost help
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
@@ -87,7 +88,10 @@ destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
 A commandless login prints help listing only configured entry points and exits
-zero. `dashboard` and the restricted console require a PTY. One-shot commands
+zero by default. `remote.ssh.default_entrypoint` in the host's `global.yaml`
+can select `dashboard` or `shell` instead (the selected entry point must be
+enabled). Explicit `help` always prints the list. `dashboard` and the
+restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
 Every one-shot request starts with `--repo PREFIX`; it is an exact registered
 repository prefix, never a path, and its registered root becomes cwd. Text
@@ -553,9 +557,9 @@ ignores `fields` entirely.
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd
 repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos; repo headers
 are cursor stops, not skipped), `Enter` action menu (or fold/unfold the repo
-group when the cursor is on its header), `Space` fold/unfold the repo group
-under the cursor (works from the header or any container row in it), `F2`/`S`
-settings overlay (columns + folding), `r` force refresh, `h`/`?` keybinding
+group when the cursor is on its header), `Space` toggle the selected setting
+in the settings overlay, `F2`/`S` settings overlay (columns + folding), `r`
+force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
 menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` always quits

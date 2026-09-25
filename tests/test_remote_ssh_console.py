@@ -407,7 +407,16 @@ def test_dashboard_runs_and_returns_to_prompt(console_env: ConsoleEnv, mocker) -
 
     assert console.run("project") == 7
     run.assert_called_once_with(
-        [sys.executable, "-m", "jailbee", "dashboard"],
+        [
+            sys.executable,
+            "-m",
+            "jailbee",
+            "dashboard",
+            "--remote-policy-json",
+            RemoteSSHConfig(
+                shell=True, commands=RemoteCommandPolicy(mode="full")
+            ).model_dump_json(),
+        ],
         cwd=console_env.repo_root,
         check=False,
     )
@@ -535,6 +544,43 @@ def test_policy_json_dashboard_check_also_uses_the_passed_policy(
 
     assert "dashboard is disabled" in capsys.readouterr().err
     run.assert_not_called()
+
+
+def test_dashboard_child_receives_effective_policy_json(console_env: ConsoleEnv, mocker) -> None:
+    global_policy = GlobalConfig(
+        remote=RemoteConfig(
+            ssh=RemoteSSHConfig(
+                shell=True,
+                commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
+            )
+        )
+    )
+    mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(global_policy, []))
+    effective = RemoteSSHConfig(
+        shell=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["dashboard", "exit"])
+
+    assert console.run("project", effective.model_dump_json()) == 0
+
+    run.assert_called_once_with(
+        [
+            sys.executable,
+            "-m",
+            "jailbee",
+            "dashboard",
+            "--remote-policy-json",
+            effective.model_dump_json(),
+        ],
+        cwd=console_env.repo_root,
+        check=False,
+    )
 
 
 def test_invalid_policy_json_fails_cleanly(console_env: ConsoleEnv, capsys) -> None:

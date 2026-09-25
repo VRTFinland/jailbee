@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from sqlmodel import Session, select
 
-from jailbee.config import Config, ConfigError, normalize_credentials_key
+from jailbee.config import Config, ConfigError
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
 from jailbee.git import detect_upstream_remote
@@ -295,8 +295,13 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
     would be worse than the ambiguity.
     """
     from jailbee.accounts.groups import RESERVED_GROUP_NAMES
+    from jailbee.config.local_layer import all_local_credential_groups
 
-    configured = {gcfg.credentials.group, *gcfg.credentials.repos.values()}
+    configured = {
+        gcfg.credentials.group,
+        *gcfg.credentials.repos.values(),
+        *all_local_credential_groups(),
+    }
     offending = sorted(n for n in configured if n in RESERVED_GROUP_NAMES)
     if not offending:
         return []
@@ -307,53 +312,43 @@ def _check_reserved_group_name(cfg: Config, gcfg: GlobalConfig) -> list[CheckRes
             f"`credentials` names a group called {', '.join(offending)}, "
             "which `jailbee account group` cannot address — it uses that word "
             "for 'no credential group'. Rename the group in "
-            "~/.config/jailbee/global.yaml and rename its directory under "
+            "~/.config/jailbee/global.yaml or the repo's file under "
+            "~/.config/jailbee/repos/, and rename its directory under "
             "<XDG_DATA_HOME>/jailbee/claude-credentials/ to match.",
         )
     ]
 
 
-def _check_legacy_credentials_key() -> list[CheckResult]:
-    """Report a `global.yaml` still spelling the credential block the old way.
+def _check_pending_migrations() -> list[CheckResult]:
+    """Report config spellings `jailbee config migrate` would move.
 
-    `claude_credentials:` is deprecated in favour of `credentials:`, and the
-    config loader folds the old spelling into the new one before
-    `GlobalConfig` is built — by the time any check here holds the config, the
-    evidence is gone. That fold is why this reads the raw YAML itself, and why
-    the dismissible notice the loader prints is not enough: a dismissal is
-    invisible to doctor.
-
-    Not-ok, like the other legacy checks: the key keeps working only until
-    `LEGACY_REMOVAL_VERSION`, and nothing else says so on every run.
+    The loader folds legacy spellings before any config object exists, so this
+    check reads raw inputs through the migration planner. Parse and I/O errors
+    are already reported by config loading and are not this check's diagnosis.
     """
-    from jailbee.global_config import default_global_config_path
+    from jailbee import config_migrate
 
-    path = default_global_config_path()
     try:
-        raw = yaml.safe_load(path.read_text()) or {}
-    except OSError:  # an absent or unreadable file is not a diagnosis
+        with Session(get_engine()) as session:
+            plan = config_migrate.plan_migrations(config_migrate.gather_inputs(session))
+    except (ConfigError, OSError):
         return []
-    except yaml.YAMLError:
-        # A malformed file already fails the config load before doctor runs;
-        # this check owns only the key spelling.
+    if not plan.pending:
         return []
-    if not isinstance(raw, dict):
-        return []
-    try:
-        _, folded = normalize_credentials_key(raw, str(path))
-    except ConfigError:
-        # Both spellings at once is a hard load error the user already sees.
-        return []
-    if not folded:
-        return []
+    ids = sorted(
+        {step.migration_id for step in plan.steps}
+        | ({"egress-db-rows"} if plan.rows_to_delete else set())
+    )
+    summaries = sorted(
+        {step.summary for step in plan.steps if not step.summary.startswith("drop ")}
+    )
     return [
         CheckResult(
-            "legacy credentials key",
+            "pending config migrations",
             False,
-            f"`{path}` sets `claude_credentials`, deprecated and renamed to "
-            f"`credentials` — rename the key. The old spelling keeps working "
-            f"until {LEGACY_REMOVAL_VERSION}, where it is removed. See "
-            f"docs/config.md.",
+            f"{', '.join(ids)} — {'; '.join(summaries)}. Run `jailbee config migrate` "
+            f"to review, then `--apply`. Old spellings keep working until "
+            f"{LEGACY_REMOVAL_VERSION}.",
         )
     ]
 
@@ -645,7 +640,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     results.extend(_check_dismissed_notices())
     results.extend(_check_claude_credentials(cfg, gcfg))
     results.extend(_check_reserved_group_name(cfg, gcfg))
-    results.extend(_check_legacy_credentials_key())
+    results.extend(_check_pending_migrations())
     results.extend(_check_claude_pool(cfg, incus, gcfg))
     if incus_available:
         # Behind the gate, unlike its neighbours: this one always reads
@@ -1939,9 +1934,9 @@ def _check_github(cfg: Config) -> list[CheckResult]:
     """Doctor checks for the github integration.
 
     Empty list when github.enabled=false. One info-level CheckResult
-    when enabled but this repo's container_prefix has no token entry
+    when enabled but this repo's container_prefix has no token
     (legitimate "this repo doesn't use gh" state). Four checks when a
-    non-empty token is in scope: global.yaml perms, non-empty value, PAT
+    non-empty token is in scope: token-file perms, non-empty value, PAT
     shape heuristic, and an informational reminder that the token should be
     read-only — jailbee never probes GitHub to verify effective fine-grained
     PAT permissions, so this is guidance, not verification.
@@ -1952,7 +1947,9 @@ def _check_github(cfg: Config) -> list[CheckResult]:
     if not cfg.github.enabled:
         return []
 
-    secret = cfg.github.api_tokens.get(cfg.container_prefix)
+    from jailbee.config.local_layer import local_config_path
+
+    secret = cfg.github.token_for(cfg.container_prefix)
     if secret is None:
         return [
             CheckResult(
@@ -1961,8 +1958,8 @@ def _check_github(cfg: Config) -> list[CheckResult]:
                 detail=(
                     f"no token configured for container_prefix "
                     f"'{cfg.container_prefix}' — gh will not authenticate "
-                    f"in this repo's containers (add an entry under "
-                    f"github.api_tokens to enable)"
+                    f"in this repo's containers (set `github.token` in "
+                    f"{local_config_path(cfg.container_prefix)} to enable)"
                 ),
             ),
         ]
@@ -1971,36 +1968,24 @@ def _check_github(cfg: Config) -> list[CheckResult]:
 
     results: list[CheckResult] = []
 
-    gy = default_global_config_path()
-    if gy.exists():
-        mode = gy.stat().st_mode & 0o777
+    def _token_file_perms(name: str, path: Path) -> CheckResult:
+        if not path.exists():
+            return CheckResult(name=name, ok=False, detail=f"{path} does not exist")
+        mode = path.stat().st_mode & 0o777
         if mode & 0o077 != 0:
-            results.append(
-                CheckResult(
-                    name="github global.yaml perms",
-                    ok=False,
-                    detail=(
-                        f"~/.config/jailbee/global.yaml has insecure perms "
-                        f"(0{mode:03o}) — run `chmod 600 {gy}`"
-                    ),
-                )
-            )
-        else:
-            results.append(
-                CheckResult(
-                    name="github global.yaml perms",
-                    ok=True,
-                    detail="0600",
-                )
-            )
-    else:
-        results.append(
-            CheckResult(
-                name="github global.yaml perms",
+            return CheckResult(
+                name=name,
                 ok=False,
-                detail=f"{gy} does not exist",
+                detail=f"{path} has insecure perms (0{mode:03o}) — run `chmod 600 {path}`",
             )
+        return CheckResult(name=name, ok=True, detail="0600")
+
+    if cfg.github.token is not None:
+        results.append(
+            _token_file_perms("github local config perms", local_config_path(cfg.container_prefix))
         )
+    else:
+        results.append(_token_file_perms("github global.yaml perms", default_global_config_path()))
 
     token = secret.get_secret_value().strip()
     if not token:
@@ -2008,7 +1993,7 @@ def _check_github(cfg: Config) -> list[CheckResult]:
             CheckResult(
                 name="github token non-empty",
                 ok=False,
-                detail=f"github.api_tokens['{cfg.container_prefix}'] is empty",
+                detail=f"github token for '{cfg.container_prefix}' is empty",
             )
         )
         return results

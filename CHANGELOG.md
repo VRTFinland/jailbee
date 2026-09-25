@@ -10,6 +10,14 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Host-local per-repo configuration.** Per-host overrides now live outside
+  the checkout in `~/.config/jailbee/repos/<container_prefix>.yaml`, above
+  the committed repo layer in configuration precedence. Use `jailbee config
+  edit --local` / `jailbee config show --layer local` to edit or inspect it, and
+  `jailbee config migrate` to preview and move legacy per-repo settings (pass
+  `--apply` to write). Local files are private (`0600`); egress additions
+  append to lower-layer lists, while `egress_allow: []` clears them.
+
 - **Every agent in a container knows JailBee, not just Claude.** JailBee's
   own `jailbee-usage`, `jailbee-repo-setup` and `jailbee-pr-review` skills
   used to be copied into Claude Code's shared skills directory alone, so a
@@ -42,8 +50,9 @@ before editing `## Unreleased`.
   old spellings all keep working and are removed in 2.0.0. The three a user
   types warn once per invocation: `jailbee claude …`, `--claude-group`, and a
   `claude_credentials:` block in `global.yaml` — which any write jailbee makes
-  to that file (`jailbee account group set`/`unset`, a `jailbee config edit
-  --global` save) also renames to `credentials:` in place. The two read out of
+  to the relevant config file (`jailbee account group set`/`unset` writes the
+  host-local repo file; `jailbee config edit --global` writes the global file)
+  also renames to `credentials:` in place. The two read out of
   state nobody retypes are accepted silently: the
   `user.jailbee.claude_group` container label (read, never written) and the
   `claude` / `claude_group` column names. See
@@ -72,11 +81,14 @@ before editing `## Unreleased`.
   privilege-widening autostart config cannot be approved remotely, `--yes`
   included. `remote.ssh.restrict_host: false` lifts all of these host restrictions at
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/
-  `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
-  overrides for trying a policy without editing `global.yaml`; the systemd
-  service never passes them. The service restarts itself when JailBee is
-  upgraded under it (checked on each connection and every 30 seconds), so it
-  never keeps enforcing an older version's rules.
+   `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
+   overrides for trying a policy without editing `global.yaml`; the systemd
+   service never passes them. A commandless login shows the enabled remote
+   forms by default; `remote.ssh.default_entrypoint` can open the dashboard or
+   console instead, while an explicit SSH `help` always shows the forms. The
+   service restarts itself when JailBee is upgraded under it (checked on each
+   connection and every 30 seconds), so it never keeps enforcing an older
+   version's rules.
 
 - **Host-gated GitHub issue management: containers stage issue actions, a
   human applies them.** An in-container agent can now create, edit, comment
@@ -137,6 +149,13 @@ before editing `## Unreleased`.
   socket is unchanged. GUI apps keep working without them, minus desktop
   notifications, portals and sound. Takes effect on each container's next
   start; set the keys to keep the old behaviour.
+
+### Deprecated
+
+- `github.api_tokens`, `credentials.repos`, and repo-scope egress overrides
+  stored in `state.sqlite` are deprecated and will be removed in 2.0.0.
+  `jailbee config migrate --apply` moves these values into the host-local
+  per-repo config files; conflicting values are left for manual resolution.
 
 ### Fixed
 

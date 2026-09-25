@@ -529,8 +529,9 @@ Three facts that matter when explaining this:
 - **Container scope is the default**, and dies with the container (stored
   in its own label). `--repo` is the wider, explicit opt-in: every
   container of the repo, on this host only.
-- **Host-local, not committed** either way — never shared with the team,
-  never seen by a reviewer or CI. That's also the risk: see
+- **Host-local, not committed** either way — repo-scoped entries are stored
+  in `~/.config/jailbee/repos/<container_prefix>.yaml`, never shared with the
+  team or seen by a reviewer or CI. That's also the risk: see
   [docs/security.md](../../security.md#egress-overrides) before suggesting
   one as a substitute for adding to `config.yaml`. If a host turns out to
   be needed permanently, `jailbee net egress export` prints a paste-over
@@ -572,9 +573,13 @@ a container of *another* repo in the same group. Point the user at the host —
 `jailbee doctor` there names this repo's group and lists its other member
 repos, and prints nothing at all when the repo shares no credential.
 
-**Joining or leaving a group** is a host-side edit to `credentials` in
-`~/.config/jailbee/global.yaml` followed by `jailbee apply` in each affected
-repo. Two things about that are worth warning a user about before they run it:
+**The host-wide default** is `credentials.group` in
+`~/.config/jailbee/global.yaml`; a repo-specific membership is
+`credentials.group` in `~/.config/jailbee/repos/<prefix>.yaml`. Use
+`jailbee account group set <name|none>` / `unset` to change this repo's local
+choice. `jailbee config edit --local` edits the local file, and
+`jailbee config show --layer local` inspects it. Two things about changing
+membership are worth warning a user about:
 
 - Joining **moves** this repo's credential into the group directory. If the
   group already holds a login and this repo has one too, `apply` asks which to
@@ -585,6 +590,12 @@ repo. Two things about that are worth warning a user about before they run it:
 
 Neither is reversible by jailbee, and neither can be run from inside a
 container — there is no `jb` binary there.
+
+Older `github.api_tokens`, `credentials.repos` and repo-scoped egress rows in
+`state.sqlite` can be migrated with `jailbee config migrate`. It is a dry run
+by default; review the diff, then pass `--apply`. Conflicts are left in place
+for manual resolution. `jailbee dismiss legacy-per-repo-map` dismisses the
+legacy-map notice after you've handled it.
 
 ## Switching which account is in use — `jailbee account`
 
@@ -728,7 +739,10 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-A commandless login prints the enabled forms and exits. Dashboard and the
+A commandless login prints the enabled forms and exits by default; set
+`remote.ssh.default_entrypoint: dashboard` (or `shell`, if enabled) in the
+host's `global.yaml` to open that entry point instead. `ssh jailbee@host help`
+always prints the enabled forms. Dashboard and the
 restricted JailBee console need `-t`. Every one-shot command requires an exact
 registered `PREFIX`; `--repo` never accepts a path. Started without `--repo`,
 the console shows an arrow-key menu of registered repos (skipped when exactly
@@ -1244,9 +1258,9 @@ superproject PR's gitlink bump then points at a merged commit.
 
 ## Using `gh` / `git push` to GitHub from inside a container
 
-`gh` is baked into every container. For it to authenticate, the `github` block
-must be enabled in `~/.config/jailbee/global.yaml` (a per-repo token map keyed by
-`container_prefix`). And remember the **strict gate**: even with a token, the
+`gh` is baked into every container. For it to authenticate, `github.enabled`
+must be true in the global config and this repo's token must be set in
+`~/.config/jailbee/repos/<container_prefix>.yaml` as `github.token`. And remember the **strict gate**: even with a token, the
 network call needs **loose** mode. So the in-container pattern is: `jailbee net loose
 <name>` on the host → do the GitHub op inside → `jailbee net strict <name>`.
 

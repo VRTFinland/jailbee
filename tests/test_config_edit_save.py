@@ -6,19 +6,22 @@ policy and diff story is testable without a terminal.
 
 from __future__ import annotations
 
+import stat
+
 import yaml
 
 from jailbee.config_edit.layers import read_layers
 from jailbee.config_edit.save import (
     SavePlan,
     build_plan,
+    commit,
     configured_policy,
     redact,
     render_layer,
     resolve_policy,
     secret_values,
 )
-from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, repo_specs
+from jailbee.config_edit.schema import FieldKind, FieldSpec, global_specs, local_specs, repo_specs
 from jailbee.config_writer import DELETE, YamlChange
 
 
@@ -37,6 +40,34 @@ def test_auto_picks_the_documented_default_per_layer():
     """global.yaml is jailbee's to own; a repo config is read as a PR diff."""
     assert resolve_policy("global", configured="auto") == "regenerate"
     assert resolve_policy("repo", configured="auto") == "patch"
+    assert resolve_policy("local") == "patch"
+    assert resolve_policy("local", configured="regenerate") == "patch"
+
+
+def test_local_save_patches_the_local_file(tmp_path):
+    local = tmp_path / "repos" / "demo.yaml"
+    local.parent.mkdir()
+    local.write_text("egress_allow:\n- a.org\n")
+    layers = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml", local)
+    plan = build_plan(
+        layers, "local", [YamlChange(("jetbrains", "ide"), "idea")], local_specs(), "patch"
+    )
+    assert plan.path == local
+    assert "- a.org" in plan.new_text
+    assert "ide: idea" in plan.new_text
+
+
+def test_local_commit_creates_private_directory_and_file(tmp_path):
+    local = tmp_path / "repos" / "demo.yaml"
+    layers = read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml", local)
+    plan = build_plan(
+        layers, "local", [YamlChange(("jetbrains", "ide"), "idea")], local_specs(), "patch"
+    )
+
+    commit(plan)
+
+    assert stat.S_IMODE(local.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(local.stat().st_mode) == 0o600
 
 
 def test_the_flag_beats_the_config_key():

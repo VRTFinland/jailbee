@@ -1,6 +1,7 @@
 # Configuration reference
 
-`jailbee` reads two configuration files:
+`jailbee` reads a committed repo config, an optional global config, and an
+optional host-local per-repo override:
 
 1. **Per-repo:** `<repo>/.jailbee/config.yaml` — required for a repo you work
    in regularly. A directory with no such file still works, though: unless
@@ -13,24 +14,116 @@ Run `jailbee config init` in a repo to generate a per-repo template.
 
 ## Configuration layers
 
-`jailbee` loads configuration from two YAML files and deep-merges them:
+`jailbee` loads configuration from its defaults and three YAML layers and
+deep-merges them:
 
 | Layer | Path | Purpose |
 |---|---|---|
 | Global (user-level) | `~/.config/jailbee/global.yaml` (or `$XDG_CONFIG_HOME/jailbee/global.yaml`) | Personal defaults applied to every repo (mounts, IDE preference, common egress endpoints). |
 | Repo | `<repo>/.jailbee/config.yaml` | Per-repo configuration (stack versions, autostart, repo-specific egress, resources). |
+| Host-local repo | `~/.config/jailbee/repos/<container_prefix>.yaml` (or `$XDG_CONFIG_HOME/jailbee/repos/<container_prefix>.yaml`) | Per-repo, per-host overrides and credentials; never committed. |
 
-Repo-level values overlay user-level values. The effective `Config` Python object passed to every `jailbee` command is the merged result.
+Precedence is **defaults < global < repo < host-local repo**. The effective `Config` Python object passed to every `jailbee` command is the merged result.
+
+## Host-local overrides (`repos/<prefix>.yaml`)
+
+Use the host-local file for a repo-specific choice that should not be shared
+with teammates. It lives under the JailBee config directory (normally
+`~/.config/jailbee/repos/`), named for the repo's `container_prefix`; it is
+outside the checkout and is never committed. JailBee creates the directory
+with mode `0700` and local files with mode `0600`.
+
+For example, disable an agent only for this repo on this host:
+
+```yaml
+agents:
+  codex:
+    enabled: false
+```
+
+Keep the GitHub integration's `enabled` switch in `global.yaml` if it should
+apply host-wide, but put this repo's token in its local file:
+
+```yaml
+github:
+  token: github_pat_...
+```
+
+The local file containing `github.token` must be mode `0600`; JailBee rejects
+it if group or other permissions are present. `github.token` remains visible
+as a masked, disabled row in the interactive config editor; edit the YAML file
+directly to change it. `github.api_tokens` is deprecated and will be removed in 2.0.0;
+move entries with [`jailbee config migrate`](commands.md#configuration).
+
+Credential-group membership is also host-specific. A local group overrides
+the global default; explicit `null` opts this repo out of sharing:
+
+```yaml
+credentials:
+  group: team-a
+```
+
+```yaml
+credentials:
+  group: null
+```
+
+`credentials.repos` in `global.yaml` is deprecated and will be removed in
+2.0.0; migrate its entries into the local `credentials.group` field.
+
+Lists follow the ordinary layering rule: the local list appends to what the
+global and committed repo layers grant. To clear all grants from those layers,
+set the local list to `[]`:
+
+```yaml
+egress_allow:
+  - pypi.org:443
+```
+
+```yaml
+egress_allow: []
+```
+
+A local list cannot replace the lower-layer list with *only* its own entries;
+it can append entries or clear the accumulated list, but not express a
+replacement subset.
+
+The local file is a per-repo overlay, not another host-global config. It
+rejects `container_prefix`, computed fields such as `credential_group` and
+`claude_credentials_dir`, the host-only keys `scratch`, `config_edit`,
+`update_check`, `install_host_skills`, `remote`, and `claude_credentials`, and
+`github.api_tokens`. Other `Config` fields—including `ls`, `dashboard`, and
+`docker_registry_mirror`—are allowed in the local overlay. Refused keys either
+describe the file/repo identity, apply to the whole host, or are legacy
+per-repo maps; put host-wide settings in `global.yaml` and per-repo secrets in
+this local file.
+
+### Migrating older per-repo settings
+
+`jailbee config migrate` previews migrations without writing anything. Review
+the diff, then pass `--apply` to write changes. It moves legacy `chrome:`
+blocks found in `global.yaml` or host-local files to `browsers.chrome`; a
+`chrome:` block in a committed repo config must be updated there manually.
+It renames global `claude_credentials:` to
+`credentials:`, moves `github.api_tokens` and `credentials.repos` entries into
+the matching local files, and repo-scoped egress overrides from `state.sqlite`
+into local `egress_allow` lists. Existing edited files are backed up as `.bak`
+files.
+Conflicting values, malformed local lists, and invalid repo prefixes are
+reported and left in place for manual resolution; a conflict does not discard
+either value. After migration, run `jailbee apply` in affected repos to apply
+egress changes. Legacy settings remain readable until migrated (the deprecated
+spellings are scheduled for removal in 2.0.0).
 
 ### Merge rules
 
 | Source type | Rule | How to reset |
 |---|---|---|
-| Scalar (`str`, `int`, `bool`, `Path`, enum) | Repo value replaces user value | `null` in repo clears |
-| List | Repo list appended to user list (exception: `apps.<name>.command` replaces instead — see [`apps` layering](#apps-layering)) | `[]` in repo replaces with empty list |
+| Scalar (`str`, `int`, `bool`, `Path`, enum) | Higher layer replaces lower layer | `null` in the higher layer clears |
+| List | Each higher-layer list appends to lower-layer lists (exception: `apps.<name>.command` replaces instead — see [`apps` layering](#apps-layering)) | `[]` in a higher layer replaces the accumulated list with an empty list |
 | Map / dict | Recursive deep-merge per key | No bulk reset — set an individual key to `null` to clear it (an empty `{}` is a no-op) |
 
-Example: a user-level `host_mounts` entry plus a repo-level one yields two mounts after merge. A repo that needs to *exclude* a user mount must `host_mounts: []` and re-list everything it wants.
+Example: a global `host_mounts` entry plus a repo-level one yields two mounts after merge. A higher layer that needs to *exclude* lower-layer entries must set `host_mounts: []` and re-list everything it wants. The local layer follows this rule too.
 
 Three keys are exempt from this pipeline — see [Keys that bypass the deep-merge pipeline](#keys-that-bypass-the-deep-merge-pipeline).
 
@@ -332,7 +425,7 @@ Container-wide settings applied via the Incus base profile.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `env` | map | `{}` | Env vars injected into every process Incus starts in the container — `jailbee shell`, `jailbee tmux`, autostart steps, and any nested tmux/shell. Values are passed through verbatim (no shell expansion). Keys must match `[A-Za-z_][A-Za-z0-9_]*`. |
+| `env` | map | `{}` | Non-secret env vars injected into every process Incus starts in the container — `jailbee shell`, `jailbee tmux`, autostart steps, and any nested tmux/shell. Values are passed through verbatim (no shell expansion). These are visible in `incus profile show`; do not store secrets here. Keys must match `[A-Za-z_][A-Za-z0-9_]*`. |
 | `path` | list[string] | `[]` | Container-side directories prepended to `PATH` — repo-internal scripts, a vendored toolchain. See [`container.path`](#containerpath) below. |
 
 `container.env` is ambient: it applies to interactive shells (`jailbee shell`),
@@ -2146,23 +2239,20 @@ GitHub CLI (`gh`) integration. When enabled, `jailbee`:
 ```yaml
 github:
   enabled: true
-  api_tokens:
-    sampleapp:     github_pat_AAA...   # one entry per GitHub owner
-    personal-tool: github_pat_BBB...
 ```
 
-Keys are `container_prefix` values from `.jailbee/config.yaml`; each
-container picks the token matching its prefix. One entry per GitHub
-resource owner (fine-grained PATs are scoped per-owner).
+`enabled` is a host-wide integration switch and normally lives in
+`global.yaml`. Put each repo's token in its host-local file instead; see
+[Host-local overrides](#host-local-overrides-reposprefixyaml). A fine-grained
+PAT is scoped to its owner and selected repositories.
 
-**Placement constraint:** the `github` block must live in
-`~/.config/jailbee/global.yaml`. Placing it in any repo's
-`.jailbee/config.yaml` is rejected at load time — committing a repo file
-with a token would leak it.
+**Placement constraint:** `github.enabled` belongs in `global.yaml`, while
+`github.token` belongs in the host-local per-repo file. A `github` block in
+committed `.jailbee/config.yaml` is rejected to avoid committing a secret.
 
-**Permissions:** when `api_tokens` is non-empty, `~/.config/jailbee/global.yaml`
-must be mode `0600`. `jailbee config validate` / `load_config` fail loudly
-otherwise; run `chmod 600 ~/.config/jailbee/global.yaml` after editing.
+**Permissions:** a local file containing `github.token` must be mode `0600`.
+`jailbee config validate` / `load_config` fail otherwise; run
+`chmod 600 ~/.config/jailbee/repos/<container_prefix>.yaml` after editing.
 
 **Token shape:** prefer fine-grained PATs (`github_pat_*`) scoped to
 "Only select repositories" with **Contents: Read, Issues: Read,
@@ -2182,24 +2272,25 @@ Field defaults:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. Opt-in via global.yaml. |
-| `api_tokens` | dict[str, SecretStr] | `{}` | Map from `container_prefix` to PAT. Values masked in `repr(cfg)` to avoid accidental log leaks. |
+| `token` | SecretStr | unset | This repo's GitHub PAT; set only in the host-local file. Masked in output and read-only in the interactive config editor. |
+| `api_tokens` | dict[str, SecretStr] | `{}` | **Deprecated; removed in 2.0.0.** Legacy map from `container_prefix` to PAT; migrate to local `github.token` with `jailbee config migrate`. |
 
-`enabled: true` with empty `api_tokens` is rejected at load time.
-A repo whose `container_prefix` is not in `api_tokens` produces an
-info-level doctor message ("no token configured") — `gh` still runs
-but cannot authenticate, which is the legitimate "this repo doesn't
-use gh" state.
+`enabled: true` requires at least one applicable token at config-load time:
+either a legacy `github.api_tokens` entry or this repo's local `github.token`.
+Without one, loading the config fails and asks you to set a token. With a
+valid token, `jailbee doctor` checks its presence and permissions.
 
 ## Global config (`~/.config/jailbee/global.yaml`)
 
-Optional. Host-global settings shared across all repos. It is the required
-home for the [`github`](#github) block (above) and the usual home for the
+Optional. Host-global settings shared across all repos. It is the usual home
+for the [`github.enabled`](#github) switch (above) and the usual home for the
 opt-in integration blocks (`gpg`, `ssh`, `jetbrains`, `browsers`, `agents`).
 `agents:` is valid at both layers, though — see [`agents`](#agents) above —
 and a repo entry merges over a global one, so a team default set globally
 can still be adjusted per repo.
-Three blocks are unique to this file: the Docker registry mirror overrides,
-`remote` (below), and `credentials` (below).
+The Docker registry mirror overrides and `remote` (below) are unique to this
+file. `credentials.group` is the host-wide default and may be overridden for
+one repo in its host-local file (above).
 
 ```yaml
 docker_registry_mirror:
@@ -2261,6 +2352,7 @@ remote:
     dashboard: true
     shell: false
     exec: false
+    default_entrypoint: help
     commands:
       mode: disabled
       allow: []
@@ -2294,6 +2386,7 @@ remote:
 | `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
 | `shell` | bool | `false` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Requires `commands.mode` to be `allowlist` or `full`. |
 | `exec` | bool | `false` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. Requires `commands.mode` to be `allowlist` or `full`. |
+| `default_entrypoint` | `help` \| `dashboard` \| `shell` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `shell` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `disabled` | Policy shared by the interactive console and one-shot execution. `disabled` rejects JailBee commands; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts every public leaf. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). It does not control the separately enabled dashboard entry point. |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard; a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net egress add`, `port to-container`, the GUI launchers, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
@@ -2335,6 +2428,7 @@ Validation rejects all of these combinations:
 
 - `dashboard: false`, `shell: false`, and `exec: false` together;
 - `shell: true` or `exec: true` while `commands.mode: disabled`;
+- `default_entrypoint: dashboard` or `shell` while that entry point is disabled;
 - `commands.mode: allowlist` with an empty `allow` list;
 - duplicate, malformed, or unknown command paths; unknown fields; a non-IP
   `listen` value; and a port outside `1..65535`.
@@ -2352,11 +2446,11 @@ settings still belong here; the systemd service never passes those flags.
 
 ### `credentials`
 
-Lets several repos on this host share one login per agent. Host-level
-only, like `scratch` and `config_edit`: setting `credentials` or the
-computed `credential_group` in a repo's `.jailbee/config.yaml` is
-rejected at load time, because a repo config is typically committed and a
-group name is a property of this one machine, not the team.
+Lets several repos on this host share one login per agent. The default
+`credentials.group` belongs in this host-level block; a repo-specific
+`credentials.group` override belongs in that repo's host-local file, not its
+committed `.jailbee/config.yaml`. The computed `credential_group` is never a
+YAML key.
 
 ```yaml
 credentials:
@@ -2370,6 +2464,11 @@ credentials:
 |---|---|---|---|
 | `group` | `str \| None` | `None` (unset); `default` in a freshly generated `global.yaml` | Default credential group for every repo on the host. Absent means no sharing. |
 | `repos` | `dict[str, str \| None]` | `{}` | Per-repo override keyed by `container_prefix`. Wins over `group`, **including when the value is `null`** — that is the only way to keep one repo on its own credential while the rest of the host shares one. |
+
+`credentials.repos` is deprecated and will be removed in 2.0.0. Migrate
+entries to each repo's local `credentials.group` using
+[`jailbee config migrate`](commands.md#configuration); new per-repo choices
+should not be added to this map.
 
 A group name must match `[a-z0-9][a-z0-9-]*`: it becomes one directory name
 per agent, under `<xdg_data_home>/jailbee/<agent>-credentials/<group>/`

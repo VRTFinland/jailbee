@@ -3,10 +3,8 @@
 Three sources feed a container's allowlist, and this module is the only
 place that knows all three:
 
-1. ``config.yaml``'s ``egress_allow`` plus jailbee's feature auto-additions
-   (``Config.effective_egress_allow``) — committed, shared with the team.
-2. Repo-scope overrides in ``state.sqlite`` — **host-local**: they are not in
-   git, so they never reach a teammate.
+1. Config layers (global, repo and host-local) plus feature auto-additions.
+2. Unmigrated repo-scope rows in ``state.sqlite`` until 2.0.0.
 3. Container-scope overrides in the container's ``user.jailbee.egress_extra``
    label — host-local *and* container-local.
 
@@ -23,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,7 +31,7 @@ from sqlmodel import select
 from jailbee.db.models import EgressOverride
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from collections.abc import Iterable
 
     from sqlmodel import Session
 
@@ -60,27 +59,65 @@ _BRIDGE_EXTRAS_SUFFIX = "-container-extras"
 _DIGEST_LEN = 8
 
 
-# ---- repo scope (state.sqlite) ------------------------------------------
+# ---- repo scope (host-local config file) --------------------------------
 
 
-def repo_extras(session: Session, prefix: str) -> list[str]:
-    """Host-local override entries for one repo, sorted."""
+def local_entries(prefix: str) -> list[str]:
+    """The host-local file's own egress_allow list, in file order."""
+    from jailbee.config.local_layer import read_local_raw
+
+    value = read_local_raw(prefix).get("egress_allow") or []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def add_local_entry(prefix: str, entry: str) -> bool:
+    """Append an entry to the local file; return False when already present."""
+    from jailbee.config.local_layer import read_local_raw
+    from jailbee.config_writer import YamlChange, patch_local_file
+
+    raw = read_local_raw(prefix)
+    if raw.get("egress_allow") == []:
+        raise ValueError(
+            "Cannot add a repo egress override while the local file has "
+            "`egress_allow: []`, which resets inherited grants; remove "
+            "`egress_allow: []` explicitly before adding an entry."
+        )
+    current = local_entries(prefix)
+    if entry in current:
+        return False
+    patch_local_file(prefix, [YamlChange(("egress_allow",), [*current, entry])])
+    return True
+
+
+def remove_local_entry(prefix: str, entry: str) -> bool:
+    """Remove an entry from the local file; return False when absent."""
+    from jailbee.config_writer import DELETE, YamlChange, patch_local_file
+
+    current = local_entries(prefix)
+    if entry not in current:
+        return False
+    remaining = [e for e in current if e != entry]
+    patch_local_file(
+        prefix,
+        [YamlChange(("egress_allow",), remaining if remaining else DELETE)],
+    )
+    return True
+
+
+# ---- repo scope, legacy (state.sqlite) — remove in 2.0.0 ----------------
+
+
+def legacy_repo_extras(session: Session, prefix: str) -> list[str]:
+    """Unmigrated repo-scope rows for one repo, sorted."""
     rows = session.exec(
         select(EgressOverride).where(EgressOverride.container_prefix == prefix)
     ).all()
     return sorted(row.entry for row in rows)
 
 
-def add_repo_extra(session: Session, prefix: str, entry: str, *, now: datetime) -> bool:
-    """Add one override. Returns False when it was already there."""
-    if session.get(EgressOverride, (prefix, entry)) is not None:
-        return False
-    session.add(EgressOverride(container_prefix=prefix, entry=entry, added_at=now))
-    session.commit()
-    return True
-
-
-def remove_repo_extra(session: Session, prefix: str, entry: str) -> bool:
+def remove_legacy_repo_extra(session: Session, prefix: str, entry: str) -> bool:
     """Remove one override. Returns False when it was not there."""
     row = session.get(EgressOverride, (prefix, entry))
     if row is None:
@@ -88,6 +125,23 @@ def remove_repo_extra(session: Session, prefix: str, entry: str) -> bool:
     session.delete(row)
     session.commit()
     return True
+
+
+def legacy_rows_by_prefix(session: Session) -> dict[str, list[str]]:
+    """Every legacy row, grouped by repo."""
+    out: dict[str, list[str]] = {}
+    for row in session.exec(select(EgressOverride)).all():
+        out.setdefault(row.container_prefix, []).append(row.entry)
+    return {prefix: sorted(entries) for prefix, entries in sorted(out.items())}
+
+
+def delete_legacy_rows(session: Session, pairs: Iterable[tuple[str, str]]) -> None:
+    """Delete migrated rows; already-absent pairs are ignored."""
+    for prefix, entry in pairs:
+        row = session.get(EgressOverride, (prefix, entry))
+        if row is not None:
+            session.delete(row)
+    session.commit()
 
 
 # ---- container scope (Incus label) --------------------------------------
@@ -168,7 +222,8 @@ def bridge_extras_acl_name(prefix: str) -> str:
 
 
 CONFIG_SOURCE = "config"
-REPO_SOURCE = "repo-override"
+LOCAL_SOURCE = "local"
+LEGACY_SOURCE = "db (legacy)"
 CONTAINER_SOURCE = "container"
 
 
@@ -176,8 +231,7 @@ CONTAINER_SOURCE = "container"
 class EntryRow:
     """One applicable entry and where it came from.
 
-    ``redundant`` marks an override that ``config.yaml`` already grants —
-    which is how a user sees that a promoted entry can now be removed.
+    ``redundant`` marks an override also granted by another config source.
     """
 
     entry: str
@@ -188,12 +242,14 @@ class EntryRow:
 def effective_repo_entries(cfg: Config, session: Session) -> list[str]:
     """Every raw entry that applies to this repo's shared ACL.
 
-    ``cfg.effective_egress_allow()`` first (config plus jailbee's feature
-    auto-additions), then host-local repo overrides. Order is preserved so
-    the ACL diff stays readable; duplicates are dropped.
+    Config (all three layers, host-local included) plus feature auto-additions,
+    then unmigrated legacy rows. Order is preserved and duplicates are dropped.
     """
     seen: dict[str, None] = {}
-    for entry in [*cfg.effective_egress_allow(), *repo_extras(session, cfg.container_prefix)]:
+    for entry in [
+        *cfg.effective_egress_allow(),
+        *legacy_repo_extras(session, cfg.container_prefix),
+    ]:
         seen.setdefault(entry, None)
     return list(seen)
 
@@ -233,17 +289,22 @@ def classify_sources(
     emitted a row ``ls`` calls config-sourced would put a duplicate into the
     user's config.
     """
-    config_entries = cfg.effective_egress_allow()
+    effective = cfg.effective_egress_allow()
+    local = local_entries(cfg.container_prefix)
+    legacy = legacy_repo_extras(session, cfg.container_prefix)
+    remaining = Counter(effective)
+    remaining.subtract(Counter(local))
+    config_entries = [e for e in dict.fromkeys(effective) if remaining[e] > 0]
     config_set = set(config_entries)
-    repo_override_entries = repo_extras(session, cfg.container_prefix)
 
     rows = [EntryRow(entry=e, source=CONFIG_SOURCE) for e in config_entries]
+    rows += [EntryRow(entry=e, source=LOCAL_SOURCE, redundant=e in config_set) for e in local]
     rows += [
-        EntryRow(entry=e, source=REPO_SOURCE, redundant=e in config_set)
-        for e in repo_override_entries
+        EntryRow(entry=e, source=LEGACY_SOURCE, redundant=e in config_set or e in local)
+        for e in legacy
     ]
     if container is not None:
-        repo_set = config_set | set(repo_override_entries)
+        repo_set = config_set | set(local) | set(legacy)
         rows += [
             EntryRow(entry=e, source=CONTAINER_SOURCE, redundant=e in repo_set)
             for e in container_extras(incus, container)

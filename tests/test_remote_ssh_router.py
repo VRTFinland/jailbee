@@ -14,8 +14,10 @@ from jailbee.remote_ssh.router import (
     Route,
     RouteError,
     check_arguments,
+    command_leaf,
     command_path,
     help_text,
+    known_command_aliases,
     known_command_paths,
     policy_allows,
     resolve_repo,
@@ -59,6 +61,36 @@ def test_empty_command_routes_to_help() -> None:
     assert result == Route("help", (), None, None, False)
 
 
+@pytest.mark.parametrize("raw", [None, "", "  "])
+def test_configured_default_routes_to_dashboard(raw: str | None) -> None:
+    result = route(raw, RemoteSSHConfig(default_entrypoint="dashboard"))
+    assert result == Route("dashboard", ("dashboard",), None, None, True)
+
+
+def test_configured_default_routes_to_console() -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    assert route(None, cfg) == Route("console", ("_remote-console",), None, None, True)
+
+
+@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "shell"])
+def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str) -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint=default_entrypoint,
+        shell=True,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    assert route("help", cfg) == Route("help", (), None, None, False)
+
+
+def test_explicit_entrypoint_overrides_default() -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    assert route("dashboard", cfg) == Route("dashboard", ("dashboard",), None, None, True)
+
+
 def test_whitespace_command_routes_to_help() -> None:
     assert route("  ", RemoteSSHConfig()).kind == "help"
 
@@ -74,6 +106,29 @@ def test_dashboard_takes_no_arguments_and_requires_pty() -> None:
     result = route("dashboard", RemoteSSHConfig())
     assert result.argv == ("dashboard",)
     assert result.requires_pty is True
+
+
+def test_ssh_command_route_cannot_forge_dashboard_policy_transport():
+    cfg = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
+            cfg,
+        )
+
+
+def test_nested_dashboard_rejects_user_supplied_trusted_policy_option(configured_ssh):
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
+            configured_ssh,
+        )
 
 
 def test_one_shot_resolves_repo_and_drops_remote_selector(engine, repo) -> None:
@@ -213,6 +268,13 @@ def test_command_path_resolves_aliases_to_their_canonical_public_leaf() -> None:
     assert command_path(("diff",)) == "git diff"
     assert command_path(("egress", "ls")) == "net egress ls"
     assert command_path(("git", "pr")) == "pr"
+
+
+def test_leaf_and_alias_metadata_reuse_the_command_tree() -> None:
+    typed, command = command_leaf(("merge", "--into", "main"))
+    assert typed == "merge"
+    assert command.name == "merge"
+    assert known_command_aliases()["merge"] == "git merge"
 
 
 def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> None:

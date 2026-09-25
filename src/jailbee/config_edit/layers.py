@@ -14,6 +14,7 @@ terminal driver (`app`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -42,12 +43,12 @@ if TYPE_CHECKING:
 
     from jailbee.config_edit.schema import FieldSpec
 
-LayerName = Literal["repo", "global"]
+LayerName = Literal["repo", "global", "local"]
 
 
 @dataclass(frozen=True)
 class LayerSet:
-    """Both raw YAML mappings, plus where they came from.
+    """Raw YAML mappings for repo, global and host-local `repos/<prefix>.yaml`.
 
     `raw` mappings are the plain `yaml.safe_load` result — never
     `model_dump()` output. `config_writer.render_documented` refuses the
@@ -59,17 +60,21 @@ class LayerSet:
     global_path: Path
     repo_raw: dict[str, object]
     global_raw: dict[str, object]
+    local_path: Path
+    local_raw: dict[str, object]
 
 
 @dataclass(frozen=True)
 class Origin:
     """Which layer supplies a path's current value, and what it is."""
 
-    source: Literal["default", "global", "repo"]
+    source: Literal["default", "global", "repo", "local"]
     value: object
 
 
-def read_layers(repo_config_path: Path, global_path: Path) -> LayerSet:
+def read_layers(
+    repo_config_path: Path, global_path: Path, local_path: Path | None = None
+) -> LayerSet:
     """Read both layers. A missing file reads as `{}`, not as an error.
 
     Both absences are ordinary states: `jb new` works in a directory with
@@ -78,17 +83,42 @@ def read_layers(repo_config_path: Path, global_path: Path) -> LayerSet:
     `ConfigError` from `_read_yaml_or_empty` — that is a real problem and
     the editor should report it rather than silently show defaults.
     """
+    repo_raw = _read_yaml_or_empty(repo_config_path)
+    global_raw = _read_yaml_or_empty(global_path)
+    if local_path is None:
+        from jailbee.config.common import deep_merge
+        from jailbee.config.loader import derive_prefix
+        from jailbee.config.local_layer import local_config_path
+
+        prefix = derive_prefix(deep_merge(global_raw, repo_raw), repo_config_path)
+        safe_prefix = prefix if re.fullmatch(r"[a-z0-9][a-z0-9-]*", prefix) else "invalid-prefix"
+        local_path = local_config_path(safe_prefix)
     return LayerSet(
         repo_path=repo_config_path,
         global_path=global_path,
-        repo_raw=_read_yaml_or_empty(repo_config_path),
-        global_raw=_read_yaml_or_empty(global_path),
+        repo_raw=repo_raw,
+        global_raw=global_raw,
+        local_path=local_path,
+        local_raw=_read_yaml_or_empty(local_path),
     )
 
 
 def raw_for(layer_set: LayerSet, layer: LayerName) -> dict[str, object]:
     """The raw mapping of the layer being edited."""
-    return layer_set.repo_raw if layer == "repo" else layer_set.global_raw
+    return {
+        "repo": layer_set.repo_raw,
+        "global": layer_set.global_raw,
+        "local": layer_set.local_raw,
+    }[layer]
+
+
+def path_for(layer_set: LayerSet, layer: LayerName) -> Path:
+    """The file the layer being edited lives in."""
+    return {
+        "repo": layer_set.repo_path,
+        "global": layer_set.global_path,
+        "local": layer_set.local_path,
+    }[layer]
 
 
 def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
@@ -121,7 +151,7 @@ def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
 
 
 def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Origin]:
-    """Where each spec's value comes from: repo, else global, else the default.
+    """Where each spec's value comes from: local, else repo, else global, else default.
 
     Independent of which layer is open. A repo-layer editor still marks an
     inherited value `(global)`, so the user can see that editing it will
@@ -146,17 +176,16 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     global_raw = resolve_browsers_raw(
         normalize_credentials_key(layer_set.global_raw, str(layer_set.global_path))[0]
     )
+    local_raw = resolve_browsers_raw(layer_set.local_raw)
     out: dict[KeyPath, Origin] = {}
     for spec in specs:
-        present, value = lookup(repo_raw, spec.path)
-        if present:
-            out[spec.path] = Origin("repo", value)
-            continue
-        present, value = lookup(global_raw, spec.path)
-        if present:
-            out[spec.path] = Origin("global", value)
-            continue
-        out[spec.path] = Origin("default", spec.default)
+        for source, raw in (("local", local_raw), ("repo", repo_raw), ("global", global_raw)):
+            present, value = lookup(raw, spec.path)
+            if present:
+                out[spec.path] = Origin(source, value)  # type: ignore[arg-type] # source is the literal tuple member
+                break
+        else:
+            out[spec.path] = Origin("default", spec.default)
     return out
 
 
@@ -190,6 +219,20 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
             f"`{spec.path[0]}` is host-local and is rejected in a repo config — "
             f"set it in ~/.config/jailbee/global.yaml."
         )
+    if layer == "global" and spec.path == ("github", "token"):
+        return (
+            "`github.token` is per-repo — set it in the repo's host-local file "
+            "(`jailbee config edit --local`)."
+        )
+    if layer == "local" and spec.path[0] == "container_prefix":
+        return "`container_prefix` names this file; set it in the repo config."
+    if layer == "local" and spec.path == ("github", "token"):
+        return (
+            "Secrets are not editable here — the editor will not paint a token on a "
+            "terminal. Edit the file by hand and keep it at mode 0600."
+        )
+    if layer == "local" and spec.path[:2] == ("github", "api_tokens"):
+        return "This file is already per-repo — use `github.token` instead."
     return None
 
 
@@ -220,21 +263,30 @@ def inherited_entries(spec: FieldSpec, layer_set: LayerSet, layer: LayerName) ->
     non-empty and inheritance reappears after a save. Recomputing against
     staged edits belongs to the UI plan.
     """
-    if layer != "repo" or spec.kind not in _APPENDING_KINDS:
+    if layer == "global" or spec.kind not in _APPENDING_KINDS:
         return ()
     if spec.path[0] in _HOST_LEVEL_KEYS:
         # Split out before deep_merge ever runs; global.yaml's block is a
         # separate object merged field-wise by Config._effective_columns.
         return ()
-    repo_present, repo_value = lookup(layer_set.repo_raw, spec.path)
-    if repo_present and not (isinstance(repo_value, list) and repo_value):
+    own_present, own_value = lookup(raw_for(layer_set, layer), spec.path)
+    if own_present and not (isinstance(own_value, list) and own_value):
         # [] resets, null and any non-list hit deep_merge's overlay-wins
         # branch; only a non-empty repo list appends.
         return ()
-    present, value = lookup(layer_set.global_raw, spec.path)
-    if not present or not isinstance(value, list):
-        return ()
-    return tuple(value)
+    below = (
+        [layer_set.global_raw] if layer == "repo" else [layer_set.global_raw, layer_set.repo_raw]
+    )
+    inherited: list[object] = []
+    for raw in below:
+        present, value = lookup(raw, spec.path)
+        if not present:
+            continue
+        if not isinstance(value, list) or not value:
+            inherited = []
+        else:
+            inherited.extend(value)
+    return tuple(inherited)
 
 
 def apply_changes(raw: dict[str, object], changes: Sequence[YamlChange]) -> dict[str, object]:
@@ -351,6 +403,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
     """
     global_raw = layer_set.global_raw
     repo_raw = layer_set.repo_raw
+    local_raw = layer_set.local_raw
     # A write that touches a legacy `claude_credentials:` block must migrate it
     # in the same write (copy to `credentials`, delete the old key) or the
     # staged mapping would carry both spellings and `normalize_credentials_key`
@@ -364,13 +417,15 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
         # `credentials` — a key that is not in the user's file — instead of the
         # `claude_credentials` they actually wrote.
         repo_raw = apply_changes(repo_raw, changes)
-    else:
+    elif layer == "global":
         changes = credential_key_migration(global_raw, changes)
         global_raw = apply_changes(global_raw, changes)
         if not layer_set.repo_path.exists() and not (
             lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]
         ):
             repo_raw = {**repo_raw, "container_prefix": _PLACEHOLDER_PREFIX}
+    else:
+        local_raw = apply_changes(layer_set.local_raw, changes)
     try:
         load_config_from_layers(
             global_raw,
@@ -379,6 +434,8 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
             origin=str(layer_set.repo_path),
             global_origin=str(layer_set.global_path),
             emit_hint=False,
+            local_raw=local_raw,
+            local_origin=str(layer_set.local_path),
         )
         if layer == "global":
             validate_global_raw(global_raw, layer_set.global_path, emit_hint=False)

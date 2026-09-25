@@ -7,6 +7,7 @@ into the Qt window, so v1 spawns a standalone host emulator.
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -69,3 +70,14 @@ def detect_terminal(
 def build_terminal_command(spec: TerminalSpec, inner_argv: list[str]) -> list[str]:
     """Compose the full argv that launches ``inner_argv`` in a new terminal."""
     return [spec.binary, *spec.run_args, *inner_argv]
+
+
+def acknowledge_command(inner_argv: list[str]) -> list[str]:
+    """Keep merge's report visible after the interactive child exits."""
+    command = shlex.join(inner_argv)
+    return [
+        "sh",
+        "-c",
+        f"{command}; status=$?; printf '\\nMerge finished (exit %s). Press Enter to close.' "
+        '"$status"; read _',
+    ]

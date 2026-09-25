@@ -25,6 +25,7 @@ from jailbee.config.common import (
     normalize_credentials_key,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
+from jailbee.config.local_layer import check_token_perms, local_config_path, split_local_raw
 from jailbee.config.models_agents import AutostartStage
 from jailbee.config.models_columns import (
     _COLUMN_DEFAULT,
@@ -51,6 +52,8 @@ from jailbee.paths import REPO_CONFIG_DIRS, repo_config_path_warned, xdg_data_ho
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from jailbee.config.models_net import LocalCredentials
 
     # Runtime import would be a cycle: `global_config` imports from
     # `jailbee.config` at module level. `from __future__ import annotations`
@@ -123,6 +126,14 @@ def _derive_repo_root(config_path: Path) -> Path:
     --config flag is a debug tool and accepts odd inputs.
     """
     return config_path.parent.parent
+
+
+def derive_prefix(merged_raw: dict[str, object], config_path: Path) -> str:
+    """Resolve an explicit prefix or the repo directory name before validation."""
+    explicit = merged_raw.get("container_prefix")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    return _derive_repo_root(config_path).name
 
 
 def _default_shared_dir(container_prefix: str) -> Path:
@@ -234,7 +245,8 @@ def _warn_legacy_chrome_block(source: str) -> None:
             scope=source,
             lines=(
                 f"`chrome:` in {source} is deprecated and moves to `browsers.chrome` — "
-                f"see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}, "
+                f"run `jailbee config migrate`, or see docs/config.md. It keeps "
+                f"working until {LEGACY_REMOVAL_VERSION}, "
                 "where it is removed.",
             ),
         )
@@ -277,11 +289,56 @@ def _warn_legacy_credentials_block(source: str) -> None:
             scope=source,
             lines=(
                 f"`claude_credentials` in {source} is deprecated and renamed to "
-                f"`credentials` — see docs/config.md. It keeps working until "
+                f"`credentials` — run `jailbee config migrate`, or see docs/config.md. "
+                "It keeps working until "
                 f"{LEGACY_REMOVAL_VERSION}, where it is removed.",
             ),
         )
     )
+
+
+@functools.cache
+def _warn_legacy_per_repo_entry(
+    source: str, key: str, prefix: str, local_path: str, conflict: bool
+) -> None:
+    """Warn once about a repo entry in a deprecated global per-repo map."""
+    from jailbee.notices import Notice, emit
+
+    lines = [
+        f"`{key}.{prefix}` in {source} is deprecated — per-repo values move to "
+        f"{local_path}. Run `jailbee config migrate` to move it. It keeps working "
+        f"until {LEGACY_REMOVAL_VERSION}.",
+    ]
+    if conflict:
+        lines.append(f"{local_path} also sets it, with a different value; that one wins.")
+    emit(Notice(key="legacy-per-repo-map", scope=source, lines=tuple(lines)))
+
+
+def _warn_per_repo_maps(
+    global_from: str,
+    host_raw: dict[str, object],
+    cfg: Config,
+    local_creds: LocalCredentials | None,
+) -> None:
+    """Emit deprecation notices for this repo's entries in old global maps."""
+    prefix = cfg.container_prefix
+    local_path = str(local_config_path(prefix))
+    legacy_token = cfg.github.api_tokens.get(prefix)
+    if legacy_token is not None:
+        local_token = cfg.github.token
+        conflict = local_token is not None and (
+            local_token.get_secret_value() != legacy_token.get_secret_value()
+        )
+        _warn_legacy_per_repo_entry(global_from, "github.api_tokens", prefix, local_path, conflict)
+    block = host_raw.get("credentials")
+    repos = block.get("repos") if isinstance(block, dict) else None
+    if isinstance(repos, dict) and prefix in repos:
+        conflict = (
+            local_creds is not None
+            and "group" in local_creds.model_fields_set
+            and local_creds.group != repos[prefix]
+        )
+        _warn_legacy_per_repo_entry(global_from, "credentials.repos", prefix, local_path, conflict)
 
 
 def resolve_browsers_raw(raw: dict[str, object]) -> dict[str, object]:
@@ -362,7 +419,7 @@ def _build_config_from_dict(
     object.__setattr__(cfg, "upstream_remote", upstream_remote)
     object.__setattr__(cfg, "default_branch", detect_default_branch(repo_root, upstream_remote))
     if not cfg.container_prefix:
-        object.__setattr__(cfg, "container_prefix", repo_root.name)
+        object.__setattr__(cfg, "container_prefix", derive_prefix(raw, config_path))
     if not _PREFIX_RE.match(cfg.container_prefix):
         raise ConfigError(
             f"Invalid container_prefix '{cfg.container_prefix}': must match "
@@ -531,6 +588,8 @@ def load_config_from_layers(
     origin: str,
     global_origin: str | None = None,
     emit_hint: bool = True,
+    local_raw: dict[str, object] | None = None,
+    local_origin: str | None = None,
 ) -> Config:
     """Build a validated `Config` from two already-parsed raw layers.
 
@@ -607,6 +666,13 @@ def load_config_from_layers(
                 f"teammate and name a group that exists on one machine only."
             )
 
+    global_github = global_for_merge.get("github")
+    if isinstance(global_github, dict) and "token" in global_github:
+        raise ConfigError(
+            f"`github.token` in {global_from} is per-repo — set it in "
+            f"{local_config_path('<container_prefix>')}, or use `github.api_tokens` here."
+        )
+
     merged = deep_merge(global_for_merge, repo_raw)
     # `apps:` needs one rule `deep_merge` cannot express: `AppEntry.command`
     # must be replaced by the repo layer, not appended to (see
@@ -615,14 +681,32 @@ def load_config_from_layers(
     repo_apps = repo_raw.get("apps")
     if isinstance(global_apps, dict) and isinstance(repo_apps, dict):
         merged["apps"] = merge_apps_raw(global_apps, repo_apps)
-    cfg = _build_config_from_dict(merged, path, origin=origin)
+
+    prefix = derive_prefix(merged, path)
+    local_path = local_config_path(prefix) if _PREFIX_RE.match(prefix) else None
+    if local_raw is None:
+        local_raw = _read_yaml_or_empty(local_path) if local_path is not None else {}
+    local_from = local_origin or str(local_path)
+    _check_retired_keys(local_raw)
+    local_overlay, local_creds = split_local_raw(local_raw, local_from)
+    if emit_hint:
+        _warn_legacy_chrome_layers([(local_from, local_overlay)])
+
+    before_apps = merged.get("apps")
+    merged = deep_merge(merged, local_overlay)
+    local_apps = local_overlay.get("apps")
+    if isinstance(before_apps, dict) and isinstance(local_apps, dict):
+        merged["apps"] = merge_apps_raw(before_apps, local_apps)
+
+    label = f"{origin} (+ {local_from})" if local_overlay else origin
+    cfg = _build_config_from_dict(merged, path, origin=label)
 
     creds = _credentials_from_host_raw(host_raw, default_global_config_path())
-    object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix))
+    object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix, local_creds))
 
     _validate_pooled_caches(cfg)
 
-    # Token security: global.yaml must be 0600 when it carries github.api_tokens.
+    # Token security: each file holding a token must be private.
     if cfg.github.api_tokens:
         gy = default_global_config_path()
         if gy.exists():
@@ -633,11 +717,21 @@ def load_config_from_layers(
                     f"(0{mode:03o}). Run `chmod 600 {gy}`."
                 )
 
-    if cfg.github.enabled and not cfg.github.api_tokens:
+    if local_path is not None and local_origin is None:
+        check_token_perms(local_path, local_overlay)
+
+    if (
+        cfg.github.enabled
+        and not cfg.github.api_tokens
+        and cfg.github.token_for(cfg.container_prefix) is None
+    ):
         raise ConfigError(
-            "github.enabled=true but github.api_tokens is empty. "
-            "Add at least one entry: <container_prefix>: <github_pat_...>"
+            "github.enabled=true but github.api_tokens is empty and no github.token "
+            f"is set in {local_config_path(cfg.container_prefix)}. Set one of them."
         )
+
+    if emit_hint:
+        _warn_per_repo_maps(global_from, host_raw, cfg, local_creds)
 
     return cfg
 

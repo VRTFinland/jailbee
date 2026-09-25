@@ -18,6 +18,85 @@ from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
 
+def test_inline_editor_keeps_shortcuts_as_text():
+    state = dashboard.CommandState(text="", suggestions=(), index=0)
+    assert dashboard.edit_command(state, b"q").text == "q"
+
+
+def test_inline_editor_handles_editing_and_utf8():
+    state = dashboard.CommandState(text="", suggestions=(), index=0)
+    state = dashboard.edit_command(state, "é shell".encode())
+    state = dashboard.edit_command(state, b"\x7f")
+    assert state.text == "é shel"
+
+
+def test_inline_editor_preserves_utf8_split_across_scripted_reads(mocker):
+    rendered = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"\xc3", b"\xa9", b"\x1b", b"q"])
+
+    assert any(
+        isinstance(call.kwargs.get("overlay"), dashboard.CommandState)
+        and call.kwargs["overlay"].text == "é"
+        for call in rendered.call_args_list
+    )
+
+
+def test_inline_editor_backspace_clears_pending_utf8_before_completed_text():
+    state = dashboard.CommandState(text="a")
+    state = dashboard.edit_command(state, b"\xc3")
+    assert state.pending_utf8 == b"\xc3"
+
+    state = dashboard.edit_command(state, b"\x7f")
+
+    assert state.text == "a"
+    assert state.pending_utf8 == b""
+
+
+def test_inline_editor_tab_cycles_candidates():
+    state = dashboard.CommandState(text="me", suggestions=("merge", "menu"), index=0)
+    state = dashboard.edit_command(state, b"\t")
+    assert state.text == "menu"
+    assert state.index == 1
+
+
+def test_inline_editor_tab_without_candidates_is_safe():
+    state = dashboard.CommandState(text="merge '", suggestions=())
+    assert dashboard.edit_command(state, b"\t") == state
+
+
+def test_inline_editor_completion_preserves_unfinished_quote():
+    from jailbee.dashboard_commands import completion_candidates
+
+    text = "shell 'feature"
+    state = dashboard.CommandState(
+        text=text, suggestions=completion_candidates(text, ("feature branch",))
+    )
+    assert "feature branch" in state.suggestions
+
+
+def test_command_binding_and_inline_render_keep_table_visible():
+    group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-x", "alpha")])
+    overlay = dashboard.CommandState(text="git d", suggestions=("git diff",))
+    screen = Console(width=100, record=True)
+    screen.print(
+        dashboard.render(
+            [group],
+            dashboard.Row("container", "alpha-x"),
+            now=datetime.now(UTC),
+            last_refresh_age=0,
+            interval=1,
+            git_enabled=True,
+            overlay=overlay,
+        )
+    )
+    rendered = screen.export_text()
+    assert dashboard.parse_key(b"!") == "command"
+    assert "▸ x" in rendered
+    assert "git d" in rendered
+    assert "git diff" in rendered
+
+
 def test_nothing_to_show_message_blames_no_single_cause():
     """The launch guard fires whenever the cwd resolves to no repo, and that
     has several causes: no config file with `scratch.enabled` false, but also
@@ -581,7 +660,7 @@ def test_carry_forward_git_status_empty_prev_is_noop():
 
 
 def test_selectable_rows_interleaves_headers_and_containers():
-    """Repo headers are selectable rows. That is what lets `Space` reach a
+    """Repo headers are selectable rows. That is what lets `Enter` reach a
     group whose containers are hidden — and it makes the cursor behave like
     the tree it is drawing."""
     groups = [
@@ -663,6 +742,16 @@ def test_menu_actions_running_default_hides_ide_and_chrome():
     verbs = [a for _, a in actions]
     assert "ide" not in verbs
     assert "chrome" not in verbs
+
+
+def test_merge_is_only_offered_for_eligible_source():
+    eligible = dashboard.MenuContext(state="Running", has_repo=True, mode="clone")
+    stopped = dashboard.MenuContext(state="Stopped", has_repo=True, mode="clone")
+    mounted = dashboard.MenuContext(state="Running", has_repo=True, mode="mount")
+    orphan = dashboard.MenuContext(state="Running", has_repo=False, mode="clone")
+    assert ("Merge into…", "merge") in dashboard.menu_actions(eligible)
+    for context in (stopped, mounted, orphan):
+        assert "merge" not in [verb for _, verb in dashboard.menu_actions(context)]
 
 
 def test_menu_actions_running_ide_enabled_only():
@@ -851,6 +940,7 @@ def test_menu_actions_running_offers_the_workflow_verbs():
     status shows both git-bridge entries (hide only a *known* no-op)."""
     verbs = [v for _, v in dashboard.menu_actions(_ctx())]
     assert verbs == [
+        "merge",
         "pr",
         "git push",
         "git pull",
@@ -1031,7 +1121,7 @@ def test_menu_actions_job_log_precedes_the_pr_entries():
     verbs = [
         v for _, v in dashboard.menu_actions(_ctx(job_clearable=True, has_job=True, pr_number=7))
     ]
-    assert verbs[:4] == ["job clear", "job log", "pr --open", "pr"]
+    assert verbs[:5] == ["job clear", "job log", "pr --open", "merge", "pr"]
 
 
 def test_menu_actions_orphan_ignores_every_workflow_field():
@@ -1337,6 +1427,12 @@ def test_dispatch_style_leaves_pr_open_alone():
     assert dashboard.dispatch_style("pr --open") == "plain"
 
 
+def test_inline_noninteractive_commands_pause_for_output():
+    assert dashboard.command_needs_pause("job ls")
+    assert dashboard.command_needs_pause("ls")
+    assert not dashboard.command_needs_pause("shell")
+
+
 def test_every_printing_verb_is_a_real_menu_verb():
     """Guards against a typo in PRINTING_VERBS: a classified verb the menu never
     offers would silently never take its own code path."""
@@ -1437,6 +1533,17 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
 
     dashboard._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x")
 
+    wait.assert_called_once_with()
+
+
+def test_dispatch_action_pauses_after_merge(mocker, tmp_path):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(_dispatch_target(tmp_path), "merge", "alpha-x")
+
+    assert run.call_args.args[0][:3] == ["jailbee", "merge", "alpha-x"]
     wait.assert_called_once_with()
 
 
@@ -2088,8 +2195,8 @@ def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
     assert load_view_state(engine, FRONTEND_TUI).columns == ("name", "old_removed_col")
 
 
-def _render_text(renderable: RenderableType) -> str:
-    console = Console(record=True, width=200)
+def _render_text(renderable: RenderableType, width: int = 200) -> str:
+    console = Console(record=True, width=width)
     console.print(renderable)
     return console.export_text()
 
@@ -2153,8 +2260,9 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
     assert "gamma" in out and "orphan" in out
     assert "one" in out  # display_name with prefix stripped
     assert "gamma-x" in out
-    # footer keybindings present
-    assert "Enter" in out and "quit" in out
+    # Ordinary mode has a compact help cue, not a permanent keybinding footer.
+    assert "h/? help" in out.splitlines()[0]
+    assert "Enter menu" not in out and "q quit" not in out
     # selected row marked with arrow
     assert "▸" in out
 
@@ -2172,6 +2280,107 @@ def test_render_empty_groups_shows_placeholder():
     )
     assert "no containers" in out.lower()
     assert "no-git" in out
+
+
+def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
+    prefix = "long-repository-prefix"
+    group = dashboard.RepoGroup(prefix, str(tmp_path), None, [_ci(f"{prefix}-one", prefix)])
+    out = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state",),
+        ),
+        width=48,
+    )
+    for rendered in (
+        out,
+        _render_text(
+            dashboard.render(
+                [group],
+                selected=None,
+                now=datetime(2026, 6, 8, tzinfo=UTC),
+                last_refresh_age=1.0,
+                interval=3.0,
+                git_enabled=True,
+                enabled=("state",),
+            ),
+            width=100,
+        ),
+    ):
+        heading_line = next(line for line in rendered.splitlines() if prefix in line)
+        data_line = next(line for line in rendered.splitlines() if "Running" in line)
+        assert len(prefix) > len("Running")
+        assert heading_line.index("▾") < data_line.index("Running")
+
+
+def test_render_empty_repo_data_shows_placeholder(tmp_path):
+    group = dashboard.RepoGroup("empty", str(tmp_path), None, [])
+    out = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+        )
+    )
+    assert "no containers found" in out
+
+
+def test_narrow_multi_column_render_stays_within_available_content_width(tmp_path):
+    group = dashboard.RepoGroup(
+        "long-repository-prefix",
+        str(tmp_path),
+        None,
+        [_ci("long-repository-prefix-one", "long-repository-prefix")],
+    )
+    rendered = _render_text(
+        dashboard.render(
+            [group],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state", "network", "name"),
+        ),
+        width=32,
+    )
+    table_lines = [line for line in rendered.splitlines() if "Running" in line]
+    assert table_lines
+    assert max(len(line) for line in table_lines) <= 32
+
+
+def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
+    groups = [
+        dashboard.RepoGroup("a", "/a", None, [_ci("a-one", "a")]),
+        dashboard.RepoGroup(
+            "a-much-longer-repository",
+            "/b",
+            None,
+            [_ci("a-much-longer-repository-two", "a-much-longer-repository")],
+        ),
+    ]
+    out = _render_text(
+        dashboard.render(
+            groups,
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+            enabled=("state",),
+        )
+    )
+    data_lines = [line for line in out.splitlines() if "Running" in line]
+    assert len(data_lines) == 2
+    assert [line.index("Running") for line in data_lines] == [data_lines[0].index("Running")] * 2
 
 
 def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
@@ -2313,7 +2522,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     assert "▸" not in other_line
 
 
-def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
+def test_normal_mode_help_is_in_frame_not_footer(tmp_path):
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
@@ -2332,8 +2541,26 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
             overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0),
         )
     )
-    assert "Enter" in browsing and "quit" in browsing and "Esc" not in browsing
-    assert "Esc" in menu_open and "cancel" in menu_open and "quit" not in menu_open
+    assert "h/? help" in browsing.splitlines()[0]
+    assert "Enter menu" not in browsing
+    assert "Space fold" not in browsing
+    assert "Esc" in menu_open and "cancel" in menu_open
+
+
+def test_small_width_keeps_help_cue_in_the_top_border(tmp_path):
+    g = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    out = _render_text(
+        dashboard.render(
+            [g],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            last_refresh_age=1.0,
+            interval=3.0,
+            git_enabled=True,
+        ),
+        width=42,
+    )
+    assert "h/? help" in out.splitlines()[0]
 
 
 def test_render_shows_a_notice_and_omits_it_when_none(tmp_path):
@@ -2800,33 +3027,31 @@ def test_render_help_overlay_documents_every_key(tmp_path):
         if b.hint:
             assert b.hint in out, f"{b.token}: hint {b.hint!r} missing from help"
             assert b.label in out, f"{b.token}: label {b.label!r} missing from help"
+    assert "fold a repo header" in out
+    assert "toggle the selected setting" in out
     # Help replaces neither the table nor the hint line, and explains gating.
     assert "NAME" in out and "one" in out
     assert "offered" in out or "available" in out
     assert "close" in out
 
 
-def test_render_hint_line_is_built_from_the_key_table(tmp_path):
+def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
     g = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     out = _render_text(
         dashboard.render(
             [g],
-            selected=None,
+            selected=dashboard.Row("container", "alpha-one"),
             now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
             last_refresh_age=1.0,
             interval=3.0,
             git_enabled=True,
+            overlay=dashboard.MenuState("alpha-one", [("Attach tmux", "tmux")]),
         )
     )
-    hint_line = next(ln for ln in out.splitlines() if "refresh" in ln and "quit" in ln)
-    for b in dashboard.KEY_BINDINGS:
-        if b.brief:
-            assert b.brief in hint_line, f"{b.token}: {b.brief!r} missing from the hint line"
-            assert b.hint in hint_line
-    # The rarely-used keys stay in help only, so the line cannot grow unbounded.
-    assert "Chrome" not in hint_line
+    assert "Enter run" in out and "Esc cancel" in out
+    assert "h/? help" in out.splitlines()[0]
 
 
 def test_parse_key_separates_escape_from_interrupt():
@@ -3022,13 +3247,37 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
-    result = CliRunner().invoke(app, ["dashboard"])
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    policy_json = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="full")
+    ).model_dump_json()
+    result = CliRunner().invoke(app, ["dashboard", "--remote-policy-json", policy_json])
 
     assert result.exit_code == 0
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None
     assert run.call_args.kwargs["remote"] is True
+    assert run.call_args.kwargs["over_ssh"] is True
+    assert run.call_args.kwargs["ssh_policy"].model_dump_json() == policy_json
+
+
+@pytest.mark.parametrize("policy_json", [None, "not-json"])
+def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, policy_json):
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    run = mocker.patch("jailbee.dashboard.run")
+    popen = mocker.patch("subprocess.Popen")
+    argv = ["dashboard"]
+    if policy_json is not None:
+        argv += ["--remote-policy-json", policy_json]
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code == 2
+    assert "policy" in result.output
+    run.assert_not_called()
+    popen.assert_not_called()
 
 
 def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
@@ -3061,6 +3310,60 @@ def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -
     preflight.assert_not_called()
     qrun.assert_not_called()
     popen.assert_not_called()
+
+
+def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.remote_ssh.router import RouteError
+
+    target = dashboard.RepoTarget(tmp_path, None)
+    run = mocker.patch("jailbee.dashboard.subprocess.run")
+    policy = RemoteSSHConfig(exec=False)
+
+    with pytest.raises(RouteError, match="disabled"):
+        dashboard._dispatch_action(
+            target,
+            "merge",
+            "alpha",
+            remote=True,
+            over_ssh=True,
+            ssh_policy=policy,
+        )
+
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(("key", "verb"), [(b"t", "tmux"), (b"s", "shell")])
+def test_ssh_dashboard_existing_attach_actions_work_without_exec(
+    mocker, tmp_path, key, verb
+) -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", key, b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert (
+        dashboard.run(
+            mocker.Mock(),
+            None,
+            interval=0.5,
+            git_interval=1.0,
+            no_git=True,
+            remote=True,
+            over_ssh=True,
+            ssh_policy=RemoteSSHConfig(),
+        )
+        == 0
+    )
+    child.assert_called_once_with(
+        ["jailbee", verb, "alpha-x", "--force"], check=False, cwd=tmp_path
+    )
 
 
 def test_registered_only_flag_is_gone() -> None:
@@ -3211,8 +3514,7 @@ def test_actions_for_container_no_clear_without_a_job():
 
 
 def test_fold_target_works_from_a_header_and_from_a_container():
-    """Space is forgiving: it folds the current row's group whether the cursor
-    is on the header or on any container inside it."""
+    """Resolve the group for either a header or one of its container rows."""
     groups = [dashboard.RepoGroup("a", "/a", None, [_ci("a-1", "a")])]
     assert dashboard.fold_target(groups, dashboard.Row("repo", "a")) == "a"
     assert dashboard.fold_target(groups, dashboard.Row("container", "a-1")) == "a"
@@ -3319,7 +3621,7 @@ def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path)
     # starts with a literal space.
     header_indent = len(header_line[1:]) - len(header_line[1:].lstrip(" "))
     data_indent = len(data_line[1:]) - len(data_line[1:].lstrip(" "))
-    assert header_indent == data_indent
+    assert header_indent < data_indent
 
 
 def test_render_counts_every_container_even_when_folded(tmp_path):
@@ -3366,13 +3668,18 @@ def test_show_if_is_computed_from_visible_containers_only(tmp_path):
     assert "PR" not in folded
 
 
-def test_fold_key_is_bound_to_space_and_documented():
-    """A key that is not in KEY_BINDINGS is invisible in the help overlay and
-    the hint line, which is how the two used to drift."""
-    assert dashboard.parse_key(b" ") == "fold"
-    binding = dashboard.binding_for_token("fold")
+def test_space_key_is_settings_toggle_and_enter_remains_bound():
+    assert dashboard.parse_key(b" ") == "settings-toggle"
+    binding = dashboard.binding_for_token("settings-toggle")
     assert binding is not None
     assert binding.hint and binding.label
+    assert dashboard.parse_key(b"\r") == "enter"
+
+
+def test_run_space_only_persists_when_settings_overlay_is_open(mocker):
+    save = mocker.patch.object(dashboard, "save_view_state")
+    assert _drive_run(mocker, [b" ", b"S", b" "]) == 0
+    save.assert_called_once()
 
 
 def test_settings_key_is_bound_to_f2_and_shift_s():
@@ -3574,7 +3881,7 @@ def test_run_does_not_repeat_the_seeded_gather_when_git_is_disabled(mocker):
 
 
 def test_run_degrades_when_save_view_state_fails(mocker):
-    """A DB write failure on the keypress path (fold key, Enter on a header,
+    """A DB write failure on the keypress path (Space in settings, Enter on a header,
     the settings overlay toggle) must not crash the session.
 
     Before this branch the TUI never wrote to the DB at all, so a failing
@@ -3588,7 +3895,7 @@ def test_run_degrades_when_save_view_state_fails(mocker):
         dashboard, "save_view_state", side_effect=OSError("database is locked")
     )
     # "S" opens the settings overlay, Space toggles the field under the
-    # cursor (a fold-key press on the Fields tab) — one of the three
+    # cursor on the Fields tab — one of the three
     # persist_view_state call sites, reached with no live groups at all.
     rc = _drive_run(mocker, [b"S", b" "])
 
@@ -3617,14 +3924,12 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
     closes whatever was open.
 
     There is no live group in this harness (``gather_live`` returns
-    ``[]``), so a bare-table fold keypress (`Space` with no overlay open)
-    has nothing to act on and never reaches ``save_view_state`` — see
-    ``fold_target``. That makes ``save_view_state`` firing after
-    ``h`` then ``S`` then `Space` a discriminating signal that ``S``
-    actually opened the settings overlay (whose own `Space`/fold handling
-    unconditionally calls ``persist_view_state``), rather than merely
-    closing help and leaving the bare table's fold key to reject the
-    keypress silently. Fails if `"settings"` goes back to being grouped
+    ``[]``), and Space is only handled by the settings overlay. That makes
+    ``save_view_state`` firing after ``h`` then ``S`` then `Space` a
+    discriminating signal that ``S`` actually opened the settings overlay,
+    whose Space handling calls ``persist_view_state``, rather than merely
+    closing help and leaving the bare table to reject the keypress silently.
+    Fails if `"settings"` goes back to being grouped
     with `("cancel", "quit")`, which only closes whatever overlay is open.
     """
     save = mocker.patch.object(dashboard, "save_view_state")
@@ -3676,6 +3981,120 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert rc == 0  # run() returned normally — the OSError did not propagate
     notices = [call.kwargs.get("notice") for call in render.call_args_list]
     assert any(n is not None and str(tmp_path) in n for n in notices)
+
+
+def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = _drive_run(mocker, [b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    run.assert_called_once_with(["jailbee", "merge"], cwd=tmp_path, check=False)
+    wait.assert_called_once()
+
+
+def test_inline_command_on_container_uses_selected_source(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    rc = _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    run.assert_called_once_with(["jailbee", "merge", "alpha-x"], cwd=tmp_path, check=False)
+
+
+def test_inline_command_malformed_quote_notifies_without_spawning(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", b"!", b"merge '", b"\r"], groups=[group])
+
+    run.assert_not_called()
+    assert any("cannot parse command" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_refuses_orphan_before_spawning(mocker):
+    group = dashboard.RepoGroup("alpha", None, None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    run.assert_not_called()
+    assert any("view-only" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_refuses_without_selection_before_spawning(mocker):
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"merge", b"\r"])
+
+    run.assert_not_called()
+    assert any(
+        "Select a repo or a container" in str(c.kwargs.get("notice")) for c in render.call_args_list
+    )
+
+
+def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"!", b"merge", b"\r", b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+    policy = RemoteSSHConfig(
+        exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git pull"])
+    )
+
+    dashboard.run(
+        mocker.Mock(),
+        None,
+        interval=0.5,
+        git_interval=1.0,
+        no_git=True,
+        remote=True,
+        over_ssh=True,
+        ssh_policy=policy,
+    )
+
+    run.assert_not_called()
+    wait.assert_not_called()
+    assert any("not allowed" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_inline_command_reports_vanished_repo_and_returns_to_loop(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=OSError("gone"))
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    rc = _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
+
+    assert rc == 0
+    assert any(str(tmp_path) in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_q_inside_inline_editor_is_text_and_does_not_quit(mocker):
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"!", b"q", b"\x1b", b"q"])
+
+    assert any(
+        isinstance(c.kwargs.get("overlay"), dashboard.CommandState)
+        and c.kwargs["overlay"].text == "q"
+        for c in render.call_args_list
+    )
 
 
 def test_create_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
@@ -3937,7 +4356,16 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
     run = mocker.patch("jailbee.dashboard.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
-    assert CliRunner().invoke(app, ["dashboard"]).exit_code == 0
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    policy_json = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    ).model_dump_json()
+    assert (
+        CliRunner().invoke(app, ["dashboard", "--remote-policy-json", policy_json]).exit_code == 0
+    )
     load.assert_not_called()
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None

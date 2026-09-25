@@ -320,9 +320,11 @@ def groups_by_prefix_from(
     Stopped containers count: a stopped container keeps its label and will
     write the config home again when it next runs.
     """
+    from jailbee.config.local_layer import local_credentials
+
     result: dict[str, set[str | None]] = {}
     for prefix in prefixes:
-        repo = gcfg.credentials.group_for(prefix)
+        repo = gcfg.credentials.group_for(prefix, local_credentials(prefix))
         found: set[str | None] = set()
         for row in rows:
             name = str(row.get("name", ""))
@@ -397,6 +399,8 @@ def container_groups(
     `app-web-x` — the longest wins, since that is the one whose
     `jailbee new` really created it.
     """
+    from jailbee.config.local_layer import local_credentials
+
     ordered = sorted(prefixes, key=len, reverse=True)
     out: list[tuple[str, str, str | None]] = []
     for row in rows:
@@ -404,7 +408,7 @@ def container_groups(
         prefix = next((p for p in ordered if name.startswith(f"{p}-")), None)
         if prefix is None:
             continue
-        resolved = gcfg.credentials.group_for(prefix)
+        resolved = gcfg.credentials.group_for(prefix, local_credentials(prefix))
         label = _label_group(row.get("config") or {})
         group = resolved if label is INHERIT else label
         out.append((name, prefix, group))  # type: ignore[arg-type] # narrowed by sentinel

@@ -221,6 +221,40 @@ def test_a_group_row_lists_every_repo_resolving_to_it(tmp_path: Path, mocker) ->
     assert row.containers == ("myrepo-a", "other-a")
 
 
+@pytest.mark.parametrize(
+    ("local_group", "legacy_group", "expected_group"),
+    [("local", "old", "local"), (None, "old", None)],
+)
+def test_overview_resolves_local_credential_group(
+    tmp_path: Path,
+    mocker,
+    monkeypatch,
+    local_group: str | None,
+    legacy_group: str,
+    expected_group: str | None,
+) -> None:
+    config_home = tmp_path / "config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    local_path = config_home / "jailbee" / "repos" / "myrepo.yaml"
+    local_path.parent.mkdir(parents=True)
+    local_path.write_text(
+        "credentials:\n  group: null\n"
+        if local_group is None
+        else "credentials:\n  group: local\n",
+        encoding="utf-8",
+    )
+    cfg = _cfg(tmp_path)
+    gcfg = _gcfg(repos={"myrepo": legacy_group})
+
+    overview = accounts_overview.build(CLAUDE, cfg, gcfg, _incus(mocker))
+
+    if expected_group is None:
+        assert _row(overview, None, "myrepo") is not None
+    else:
+        assert _row(overview, expected_group) is not None
+    assert _row(overview, legacy_group) is None
+
+
 def test_an_ungrouped_repo_holder_is_its_own_row(tmp_path: Path, mocker) -> None:
     """`no group` is not one shared holder: each such repo keeps its own login,
     so each is a row of its own, named by the repo."""

@@ -260,13 +260,12 @@ def choose_shared_credential(
     apply` still fails loudly instead of blocking on a prompt no one can
     answer.
 
-    The printed note names the `credentials.repos` opt-out, because
+    The printed note names the local `credentials.group: null` opt-out, because
     "keep this repo on its own login" is a *config* answer, not a runtime one:
-    it is not offered as a third choice (jailbee does not edit `global.yaml`),
+    it is not offered as a third choice (jailbee does not edit config files),
     so without the note a user who wants neither shared login sees no way out.
     `container_prefix` is there only to make that note copy-pasteable — it is
-    the key `repos` is dictionaries by, and the one part of the block the user
-    cannot guess from the prompt.
+    the prefix makes the suggested file path copy-pasteable.
     """
     if not sys.stdin.isatty():
         return None
@@ -281,14 +280,15 @@ def choose_shared_credential(
         f"({repo_cred}) hold a Claude login. Only one can be shared; the "
         f"other becomes unused and is deleted."
     )
+    from jailbee.config.local_layer import local_config_path
+
     hint(
         [
             "To keep this repo on its own login instead, cancel and add it "
-            "under `credentials.repos` in "
-            "~/.config/jailbee/global.yaml:",
+            "to its host-local config file:",
             "  credentials:",
-            "    repos:",
-            f"      {container_prefix}: null",
+            "    group: null",
+            f"File: {local_config_path(container_prefix)}",
             "then re-run `jailbee apply`.",
         ]
     )

@@ -48,6 +48,23 @@ def test_build_action_shell_is_interactive():
     assert ac.confirm is False
 
 
+def test_merge_needs_a_terminal_in_qt():
+    assert a.launch_mode("merge") == "terminal"
+    with pytest.raises(a.TerminalNotFoundError):
+        a.resolve_launch(
+            a.ActionCommand(["jailbee", "merge", "alpha"], "terminal", False, Path("/repo")),
+            None,
+        )
+
+
+def test_qt_merge_terminal_waits_after_cli_report():
+    action = a.build_action("merge", "alpha", _t("/repo/.jailbee/config.yaml"))
+    launched = a.resolve_launch(action, TerminalSpec("xterm", ["-e"]))
+    assert launched[:3] == ["xterm", "-e", "sh"]
+    assert "Press Enter to close" in launched[4]
+    assert "jailbee merge alpha" in launched[4]
+
+
 def test_build_action_destroy_requires_confirm():
     ac = a.build_action("destroy", "p-foo", _t("/repo/.gie/config.yaml"))
     assert ac.confirm is True

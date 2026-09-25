@@ -15,6 +15,7 @@ from jailbee.config import HostMount
 from jailbee.config_edit import state as st
 from jailbee.config_edit.layers import raw_for, read_layers, resolve
 from jailbee.config_edit.render import (
+    _ORIGIN_LABEL,
     _SECRET_MASK,
     body_pane,
     collection_pane,
@@ -90,6 +91,16 @@ def _state(layer_set, layer="repo", specs=SPECS, **kwargs):
 
 
 _HOST_MOUNTS_SPEC = next(s for s in SPECS if s.path == ("host_mounts",))
+
+
+def test_local_layer_title_and_origin_use_local_label(tmp_path):
+    layers = _layers(tmp_path, repo_text="container_prefix: testrepo\n")
+    local_path = tmp_path / "repos" / "testrepo.yaml"
+    layers = replace(layers, local_path=local_path)
+    state = _state(layers, layer="local", trail=("gpg",))
+
+    assert _ORIGIN_LABEL["local"] == "(local)"
+    assert str(local_path) in _text(title_bar(state, layers))
 
 
 def _mounts(entries):

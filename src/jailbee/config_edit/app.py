@@ -700,7 +700,9 @@ class Editor:
         """
         from jailbee.config_edit.layers import raw_for, read_layers, resolve
 
-        self.layer_set = read_layers(self.layer_set.repo_path, self.layer_set.global_path)
+        self.layer_set = read_layers(
+            self.layer_set.repo_path, self.layer_set.global_path, self.layer_set.local_path
+        )
         fresh = st.open_editor(
             layer=self.state.layer,
             specs=self.state.specs,

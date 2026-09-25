@@ -2894,9 +2894,8 @@ jailbee destroy feat-pickersmoke --force
 # From any repo (or none): launch the live view.
 jailbee dashboard
 # expect: alternate-screen TUI, one section per repo with its containers,
-#         a highlighted row, and a footer hint line reading (at minimum)
-#         "↑/↓ (j/k) move · Enter menu · Space fold · t tmux · s shell ·
-#          r refresh · F2 / S settings · h / ? help · q quit".
+#         and a highlighted row. The normal table has no persistent key-hint
+#         footer; keybindings are shown with h / ?.
 
 # Create activity in another terminal and watch it appear within a few seconds:
 jailbee new feat/dashsmoke --background
@@ -2946,12 +2945,10 @@ jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git 
 #  Ctrl-C -> always quits, restoring the terminal, even with an overlay open
 
 # Folding a repo group:
-#  Space on a repo header -> the header collapses to "▸ <prefix> (N)" and its
-#     container rows disappear; Space again (▾) unfolds and the rows return.
-#  Space on any container row inside a group -> same fold/unfold, no need to
-#     move the cursor up to the header first.
-#  Enter on a header -> same effect as Space (mirrors the Qt card view's
-#     clickable header); confirm it does NOT open the action menu.
+#  Enter on a repo header -> the header collapses to "▸ <prefix> (N)" and its
+#     container rows disappear; Enter again (▾) unfolds and the rows return.
+#  Enter on a container row -> opens that container's action menu; Space does
+#     not fold groups from the live table.
 #  Fold a group, then jailbee new inside it in another terminal -> the new
 #     container's row stays hidden until you unfold; the header's count goes
 #     up regardless.
@@ -2978,7 +2975,7 @@ jailbee dashboard
 #  Try to turn off the last enabled column -> refused (the checkbox stays
 #     checked); there is no such thing as a table with zero columns.
 #  Switch to the Repos tab (Tab) -> toggle a repo's fold state from here too;
-#     confirm it matches what Space does from the live table.
+#     confirm it matches the folding behavior of Enter on a live-table header.
 #  A field vocabulary this long does not fit under a normal terminal height:
 #     confirm the panel shows only a window of rows around the cursor (not
 #     all ~20+ fields at once), with a dim "↑ N more" / "↓ N more" line when

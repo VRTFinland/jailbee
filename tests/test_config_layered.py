@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from jailbee.config import ConfigError, load_config
+from jailbee.config.local_layer import local_config_path
 
 
 def _write(path: Path, data: dict) -> None:
@@ -450,3 +451,174 @@ def test_confirm_repo_overrides_global(repo_and_global):
     cfg = load_config(repo_path)
 
     assert cfg.confirm.auto_target is True
+
+
+def _write_local(prefix: str, data: dict, mode: int = 0o600) -> Path:
+    path = local_config_path(prefix)
+    _write(path, data)
+    path.chmod(mode)
+    return path
+
+
+def test_local_scalar_overrides_repo(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {"container_prefix": "myrepo", "jetbrains": {"ide": "pycharm"}})
+    _write_local("myrepo", {"jetbrains": {"ide": "idea"}})
+
+    assert load_config(repo_path).jetbrains.ide == "idea"
+
+
+def test_local_list_appends_and_empty_list_clears(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"egress_allow": ["g.org"]})
+    _write(repo_path, {"container_prefix": "myrepo", "egress_allow": ["r.org"]})
+    _write_local("myrepo", {"egress_allow": ["l.org"]})
+    assert load_config(repo_path).egress_allow == ["g.org", "r.org", "l.org"]
+
+    _write_local("myrepo", {"egress_allow": []})
+    assert load_config(repo_path).egress_allow == []
+
+
+def test_local_file_is_found_by_the_derived_prefix(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {})
+    _write_local("myrepo", {"jetbrains": {"ide": "idea"}})
+    assert load_config(repo_path).jetbrains.ide == "idea"
+
+
+def test_local_can_disable_an_agent_the_global_layer_enables(repo_and_global):
+    from jailbee.agents import enabled_agent_specs
+
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"agents": {"codex": {"enabled": True}}})
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"agents": {"codex": {"enabled": False}}})
+    names = [s.name for s in enabled_agent_specs(load_config(repo_path))]
+    assert "codex" not in names
+
+
+def test_illegal_directory_prefix_still_raises_the_prefix_error(tmp_path, mocker, monkeypatch):
+    repo_root = tmp_path / "My_Repo"
+    (repo_root / ".jailbee").mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo_path = repo_root / ".jailbee" / "config.yaml"
+    _write(repo_path, {})
+
+    with pytest.raises(ConfigError, match=r"Invalid container_prefix 'My_Repo'"):
+        load_config(repo_path)
+
+
+def test_local_container_prefix_is_refused_naming_the_local_file(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(repo_path, {"container_prefix": "myrepo"})
+    path = _write_local("myrepo", {"container_prefix": "other"})
+
+    with pytest.raises(ConfigError, match=str(path)):
+        load_config(repo_path)
+
+
+def test_local_token_is_used_and_needs_0600(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True}})
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"github": {"token": "ghp_local"}})
+    cfg = load_config(repo_path)
+    secret = cfg.github.token_for("myrepo")
+    assert secret is not None and secret.get_secret_value() == "ghp_local"
+
+    local_config_path("myrepo").chmod(0o644)
+    with pytest.raises(ConfigError, match=r"chmod 600"):
+        load_config(repo_path)
+
+
+def test_runtime_validation_uses_local_token_over_empty_legacy_entry(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True, "api_tokens": {"myrepo": "  "}}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"github": {"token": "ghp_local"}})
+
+    cfg = load_config(repo_path)
+
+    assert not any("github" in issue for issue in cfg.validate_runtime())
+
+
+def test_runtime_validation_names_empty_local_token_source(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True, "api_tokens": {"myrepo": "ghp_legacy"}}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"github": {"token": "  "}})
+
+    cfg = load_config(repo_path)
+
+    issues = cfg.validate_runtime()
+    assert any("github.token is empty" in issue for issue in issues)
+    assert not any("ghp_" in issue for issue in issues)
+
+
+def test_enabled_without_any_token_still_fails(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"enabled": True}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    with pytest.raises(ConfigError, match=r"api_tokens is empty"):
+        load_config(repo_path)
+
+
+def test_token_in_global_yaml_is_refused(repo_and_global):
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"github": {"token": "ghp_x"}})
+    global_path.chmod(0o600)
+    _write(repo_path, {"container_prefix": "myrepo"})
+    with pytest.raises(ConfigError, match=r"github\.token.*per-repo"):
+        load_config(repo_path)
+
+
+def test_local_group_wins_over_the_legacy_map_and_warns_on_conflict(repo_and_global, mocker):
+    hint = mocker.patch("jailbee.tui.hint")
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"credentials": {"repos": {"myrepo": "old"}}})
+    _write(repo_path, {"container_prefix": "myrepo"})
+    _write_local("myrepo", {"credentials": {"group": "new"}})
+    assert load_config(repo_path).credential_group == "new"
+    text = " ".join(line for call in hint.call_args_list for line in call.args[0])
+    assert "credentials.repos.myrepo" in text
+    assert "jailbee config migrate" in text
+    assert "different value" in text
+
+
+def test_legacy_map_alone_still_works_and_points_at_migrate(repo_and_global, mocker):
+    hint = mocker.patch("jailbee.tui.hint")
+    _, repo_path, global_path = repo_and_global
+    _write(global_path, {"credentials": {"repos": {"myrepo": "old"}}})
+    _write(repo_path, {"container_prefix": "myrepo"})
+    assert load_config(repo_path).credential_group == "old"
+    text = " ".join(line for call in hint.call_args_list for line in call.args[0])
+    assert "jailbee config migrate" in text
+    assert "different value" not in text
+
+
+def test_branch_autostart_gets_local_tweaks(repo_and_global):
+    from jailbee.config import load_config_from_text
+
+    _, repo_path, _ = repo_and_global
+    _write_local("myrepo", {"autostart": {"env": {"FROM_LOCAL": "1"}}})
+    cfg = load_config_from_text("container_prefix: myrepo\n", repo_path)
+    assert cfg.autostart.env["FROM_LOCAL"] == "1"
+
+
+def test_staged_local_raw_is_used_instead_of_the_file(repo_and_global):
+    from jailbee.config import load_config_from_layers
+
+    _, repo_path, _ = repo_and_global
+    _write_local("myrepo", {"jetbrains": {"ide": "idea"}})
+    cfg = load_config_from_layers(
+        {},
+        {"container_prefix": "myrepo"},
+        repo_path,
+        origin=str(repo_path),
+        local_raw={"jetbrains": {"ide": "goland"}},
+    )
+    assert cfg.jetbrains.ide == "goland"

@@ -42,6 +42,9 @@ have, the corrections below win. Everything else in it holds unchanged.
 
 ## What this environment adds
 
+- **No extra git worktree is needed inside JailBee.** This checkout already
+  runs in an isolated container; work on its current branch instead of asking
+  to create another worktree for implementation plans.
 - **`git push` and anything else that mutates the remote needs explicit human
   approval, every time.** `CLAUDE.md:191` already says this; it is restated
   here because it is the one rule whose breach cannot be undone locally. One

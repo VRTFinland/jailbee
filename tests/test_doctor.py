@@ -837,6 +837,30 @@ def test_check_github_insecure_global_perms(tmp_path, monkeypatch):
     assert "insecure perms" in perms.detail
 
 
+def test_check_github_reports_the_local_file_perms(tmp_path, monkeypatch):
+    from pydantic import SecretStr
+
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.config.models_agents import GithubConfig
+    from jailbee.doctor import _check_github
+    from tests.conftest import make_cfg
+
+    _set_global_yaml_perms(monkeypatch, tmp_path, 0o600)
+    cfg = make_cfg(tmp_path, container_prefix="sampleapp").model_copy(
+        update={"github": GithubConfig(enabled=True, token=SecretStr("ghp_local"))}
+    )
+    path = local_config_path(cfg.container_prefix)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("github:\n  token: ghp_local\n")
+    path.chmod(0o644)
+
+    results = _check_github(cfg)
+    perms = next(r for r in results if r.name == "github local config perms")
+    assert not perms.ok
+    assert f"chmod 600 {path}" in perms.detail
+    assert all("ghp_local" not in r.detail for r in results)
+
+
 # ---- egress pool checks ----
 
 
@@ -2693,6 +2717,23 @@ def test_doctor_is_silent_about_an_ordinary_group_name(tmp_path):
     assert doctor._check_reserved_group_name(cfg, gcfg) == []
 
 
+def test_reserved_group_name_is_found_in_a_local_file(tmp_path, monkeypatch):
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.doctor import _check_reserved_group_name
+    from jailbee.global_config import GlobalConfig
+    from tests.conftest import make_cfg
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    path = local_config_path("other")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("credentials:\n  group: none\n")
+
+    results = _check_reserved_group_name(make_cfg(tmp_path / "repo"), GlobalConfig())
+    assert results and not results[0].ok
+    assert "none" in results[0].detail
+    assert "repos/" in results[0].detail
+
+
 def test_doctor_is_silent_without_a_redundant_override(tmp_path, make_cfg, mocker):
     from jailbee.doctor import _check_redundant_credential_overrides
 
@@ -2767,7 +2808,7 @@ def test_doctor_stays_quiet_when_the_containers_cannot_be_listed(tmp_path, make_
     assert _check_redundant_credential_overrides(cfg, incus) == []
 
 
-# ---- legacy `claude_credentials:` key in global.yaml ----
+# ---- pending config migrations ----
 
 
 def _write_global_yaml(monkeypatch, tmp_path, text: str) -> Path:
@@ -2780,52 +2821,45 @@ def _write_global_yaml(monkeypatch, tmp_path, text: str) -> Path:
     return path
 
 
-def test_doctor_flags_a_legacy_credentials_key(tmp_path, monkeypatch):
-    """The loader folds `claude_credentials` into `credentials` before
-    `GlobalConfig` exists, so the evidence is invisible from there — doctor
-    must read the raw file to still see it."""
-    from jailbee.doctor import _check_legacy_credentials_key
+def test_doctor_reports_pending_migrations(tmp_path, monkeypatch):
+    from jailbee.doctor import _check_pending_migrations
 
     _write_global_yaml(monkeypatch, tmp_path, "claude_credentials:\n  group: work\n")
 
-    results = _check_legacy_credentials_key()
+    results = _check_pending_migrations()
 
     assert len(results) == 1
-    assert results[0].name == "legacy credentials key"
+    assert results[0].name == "pending config migrations"
     assert results[0].ok is False
     assert "claude_credentials" in results[0].detail
-    assert "`credentials`" in results[0].detail
-    assert "2.0.0" in results[0].detail
+    assert "jailbee config migrate" in results[0].detail
 
 
-def test_doctor_is_silent_for_the_current_credentials_key(tmp_path, monkeypatch):
-    """The new spelling is the supported one; there is nothing to migrate."""
-    from jailbee.doctor import _check_legacy_credentials_key
+def test_doctor_is_quiet_with_nothing_pending(tmp_path, monkeypatch):
+    from jailbee.doctor import _check_pending_migrations
 
     _write_global_yaml(monkeypatch, tmp_path, "credentials:\n  group: work\n")
 
-    assert _check_legacy_credentials_key() == []
+    assert _check_pending_migrations() == []
 
 
 def test_doctor_is_silent_without_a_global_config(tmp_path, monkeypatch):
     """An absent file is the default host; there is nothing to diagnose."""
-    from jailbee.doctor import _check_legacy_credentials_key
+    from jailbee.doctor import _check_pending_migrations
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
 
-    assert _check_legacy_credentials_key() == []
+    assert _check_pending_migrations() == []
 
 
-def test_run_checks_includes_the_legacy_credentials_key_check(
-    tmp_path, monkeypatch, make_cfg, mocker
-):
+def test_run_checks_includes_pending_config_migrations(tmp_path, monkeypatch, make_cfg, mocker):
     from jailbee.doctor import run_checks
 
     _write_global_yaml(monkeypatch, tmp_path, "claude_credentials: {}\n")
 
     names = {r.name for r in run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())}
 
-    assert "legacy credentials key" in names
+    assert "pending config migrations" in names
 
 
 # ---- _subid_fix: the remedy must fit the namespace it is given ----

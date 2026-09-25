@@ -185,7 +185,7 @@ def _github_token_step(cfg: Config) -> AutostartStep | None:
 
     Returns None when:
       - github.enabled is false
-      - cfg.container_prefix is not a key in github.api_tokens
+      - no token applies (``GithubConfig.token_for`` returns None)
       - the resolved token is empty after strip (validate_runtime would have
         flagged this; defensive guard)
 
@@ -197,7 +197,7 @@ def _github_token_step(cfg: Config) -> AutostartStep | None:
     """
     if not cfg.github.enabled:
         return None
-    secret = cfg.github.api_tokens.get(cfg.container_prefix)
+    secret = cfg.github.token_for(cfg.container_prefix)
     if secret is None:
         return None
     token = secret.get_secret_value().strip()
