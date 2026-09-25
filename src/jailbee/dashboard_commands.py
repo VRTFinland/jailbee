@@ -14,7 +14,8 @@ from jailbee.remote_ssh.router import RouteError
 
 def dashboard_action_argv(verb: str, name: str, *, force: bool = False) -> list[str]:
     """Build canonical user-visible argv for one dashboard container action."""
-    return [*verb.split(), name, *( ["--force"] if force else [] )]
+    return [*verb.split(), name, *(["--force"] if force else [])]
+
 
 # Only these leaf positionals are unambiguously a container selector/source.
 # In particular, branch-creating commands and multi-container commands are

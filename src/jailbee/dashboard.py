@@ -1000,8 +1000,13 @@ def binding_for_token(token: str) -> KeyBinding | None:
 
 
 def quick_verb(
-    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False,
+    groups: list[RepoGroup],
+    name: str | None,
+    token: str,
+    *,
+    remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
 ) -> str | None:
     """The verb a quick-action key should dispatch for ``name``, else None.
 
@@ -1013,9 +1018,12 @@ def quick_verb(
     binding = binding_for_token(token)
     if binding is None or binding.verb is None:
         return None
-    offered = {verb for _label, verb in actions_for_container(
-        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
-    )}
+    offered = {
+        verb
+        for _label, verb in actions_for_container(
+            groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
+        )
+    }
     return binding.verb if binding.verb in offered else None
 
 
@@ -1081,8 +1089,12 @@ Overlay = MenuState | SettingsState | CommandState | Literal["help"]
 
 
 def open_menu(
-    groups: list[RepoGroup], name: str | None, *, remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
+    groups: list[RepoGroup],
+    name: str | None,
+    *,
+    remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
 ) -> MenuState | None:
     """The menu for ``name``, or None when there is nothing to show.
 
@@ -1090,8 +1102,9 @@ def open_menu(
     or a view-only (orphan) group. Callers surface :func:`view_only_note`
     instead, because an empty menu frame is indistinguishable from a broken one.
     """
-    actions = actions_for_container(groups, name, remote=remote, ssh_policy=ssh_policy,
-                                    over_ssh=over_ssh)
+    actions = actions_for_container(
+        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh
+    )
     if name is None or not actions:
         return None
     return MenuState(name, actions)
@@ -1157,8 +1170,13 @@ def _render_help() -> RenderableType:
 
 
 def quick_reject_note(
-    groups: list[RepoGroup], name: str | None, token: str, *, remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
+    groups: list[RepoGroup],
+    name: str | None,
+    token: str,
+    *,
+    remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
 ) -> str:
     """Why a quick-action key did nothing, as one user-facing sentence.
 
@@ -1478,8 +1496,12 @@ def terminal_title_scope(stream: TextIO) -> Iterator[None]:
 
 
 def actions_for_container(
-    groups: list[RepoGroup], name: str | None, *, remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None, over_ssh: bool = False
+    groups: list[RepoGroup],
+    name: str | None,
+    *,
+    remote: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+    over_ssh: bool = False,
 ) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
 
@@ -1525,7 +1547,8 @@ def actions_for_container(
             try:
                 check_dashboard_command(
                     dashboard_action_argv(verb, name, force=verb in ATTACH_VERBS),
-                    ssh_policy, over_ssh=True,
+                    ssh_policy,
+                    over_ssh=True,
                 )
             except RouteError:
                 continue
@@ -2508,8 +2531,13 @@ def run(
                         persist_view_state(ViewState(enabled, folded))
                     else:
                         container = container_of(selected)
-                        overlay = open_menu(groups, container, remote=remote,
-                                            ssh_policy=ssh_policy, over_ssh=over_ssh)
+                        overlay = open_menu(
+                            groups,
+                            container,
+                            remote=remote,
+                            ssh_policy=ssh_policy,
+                            over_ssh=over_ssh,
+                        )
                         if overlay is None and container is not None:
                             note = view_only_note(groups, container)
                             set_notice(note or f"No actions available for '{container}'")
@@ -2521,13 +2549,27 @@ def run(
                     overlay = open_settings_overlay()
                 elif key.startswith("action:"):
                     container = container_of(selected)
-                    verb = quick_verb(groups, container, key, remote=remote,
-                                      ssh_policy=ssh_policy, over_ssh=over_ssh)
+                    verb = quick_verb(
+                        groups,
+                        container,
+                        key,
+                        remote=remote,
+                        ssh_policy=ssh_policy,
+                        over_ssh=over_ssh,
+                    )
                     if verb is not None and container is not None:
                         dispatch(container, verb)
                     else:
-                        set_notice(quick_reject_note(groups, container, key, remote=remote,
-                                                     ssh_policy=ssh_policy, over_ssh=over_ssh))
+                        set_notice(
+                            quick_reject_note(
+                                groups,
+                                container,
+                                key,
+                                remote=remote,
+                                ssh_policy=ssh_policy,
+                                over_ssh=over_ssh,
+                            )
+                        )
                 elif key == "new":
                     create_container()
                 elif key in ("config-edit", "config-edit-global") and remote:
