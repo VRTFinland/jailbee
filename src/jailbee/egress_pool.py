@@ -553,6 +553,17 @@ def _refresh_container_extras(
             if not incus.network_acl_exists(acl):
                 incus.network_acl_create(acl)
             _apply_acl_with_nft_quirk(incus, acl, extra_acl_yaml(acl, entries))
+            from jailbee.network_generation import generation_of
+
+            raw = next(
+                (item for item in incus.list_containers() if item.get("name") == container.name),
+                None,
+            )
+            if raw is not None and generation_of(cfg, raw) == "work":
+                from jailbee.work_network import reconcile_work_nic, work_network_lock
+
+                with work_network_lock():
+                    reconcile_work_nic(cfg, incus, raw)
         except Exception as e:
             log.warning("refresh_pool: container extras failed for %s: %s", container.name, e)
 
@@ -564,6 +575,23 @@ def _refresh_container_extras(
         egress_scope.sync_bridge_extras(cfg, incus)
     except Exception as e:
         log.warning("refresh_pool: bridge extras sync failed: %s", e)
+    try:
+        from jailbee.network_generation import generation_of
+
+        has_work = any(
+            generation_of(cfg, raw) == "work"
+            and str(raw.get("name", "")).startswith(f"{cfg.container_prefix}-")
+            for raw in incus.list_containers()
+        )
+        if has_work:
+            from jailbee.work_acl import ensure_work_repo_acl, reconcile_work_acl
+            from jailbee.work_network import work_network_lock
+
+            with work_network_lock():
+                ensure_work_repo_acl(cfg, incus)
+                reconcile_work_acl(cfg, incus)
+    except Exception as e:
+        log.warning("refresh_pool: work bridge ACL sync failed: %s", e)
 
 
 def _prune_container_pools(incus: Incus, session: Session) -> list[str]:

@@ -14,6 +14,30 @@ from jailbee.work_acl import (
     reconcile_work_acl,
     revoke_work_loose,
 )
+from jailbee.work_network import reconcile_work_nic
+
+
+def test_reconcile_work_nic_preserves_verified_bridge_and_reservation(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-work"
+    original = {
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
+        "security.ipv4_filtering": "true",
+    }
+    raw = {"name": name, "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+           "devices": {"eth0": original}}
+    incus = MagicMock()
+    incus.list_containers.return_value = [raw]
+    incus.config_get.return_value = "[]"
+    incus.network_acl_exists.return_value = True
+
+    reconcile_work_nic(cfg, incus, raw)
+
+    incus.config_device_set.assert_called_once_with(
+        name, "eth0", {**original, "security.acls": f"{cfg.container_prefix}-allowlist"}
+    )
 
 
 def container(name: str, ip: str = "10.42.0.2", mode: str = "loose") -> dict:

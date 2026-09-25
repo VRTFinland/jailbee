@@ -12,6 +12,7 @@ from jailbee.db import state_dir
 from jailbee.network_generation import WORK_BRIDGE
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.incus import Incus
 
 
@@ -119,3 +120,35 @@ def verify_work_nic(incus: Incus, name: str, ip: str) -> None:
             raise ValueError(f"{name} has incompatible {scope} work NIC bridge or IPv4 reservation")
         if eth0.get("security.ipv4_filtering") != "true":
             raise ValueError(f"{name} {scope} work NIC requires security.ipv4_filtering=true")
+
+
+def reconcile_work_nic(cfg: Config, incus: Incus, raw: dict[str, object]) -> None:
+    """Rebuild a work instance's local NIC ACLs, retaining its bridge and IP."""
+    from jailbee.egress_scope import container_extras, extra_acl_name
+    from jailbee.network import acl_name
+    from jailbee.network_generation import generation_of
+
+    if generation_of(cfg, raw) != "work":
+        return
+    name = raw.get("name")
+    if not isinstance(name, str):
+        raise ValueError("Work instance has no name")
+    devices = raw.get("devices") or {}
+    device = devices.get("eth0") if isinstance(devices, dict) else None
+    if not isinstance(device, dict) or device.get("network") != WORK_BRIDGE:
+        raise ValueError(f"{name} has incompatible work NIC configuration")
+    ip = device.get("ipv4.address")
+    if not isinstance(ip, str) or device.get("security.ipv4_filtering") != "true":
+        raise ValueError(f"{name} has incompatible work NIC configuration")
+
+    profile_value = raw.get("profiles")
+    profiles = profile_value if isinstance(profile_value, list) else []
+    loose = any(isinstance(p, str) and p.endswith("-net-work-loose") for p in profiles)
+    acls = [] if loose else [acl_name(cfg)]
+    if not loose and container_extras(incus, name):
+        extra = extra_acl_name(name)
+        if incus.network_acl_exists(extra):
+            acls.append(extra)
+    desired = work_nic(ip, acls)
+    if device != desired:
+        incus.config_device_set(name, "eth0", desired)

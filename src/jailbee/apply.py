@@ -157,6 +157,7 @@ def run_apply(
     """Apply current config to profiles, ACL, and live container state."""
     from jailbee import egress_scope
     from jailbee.lifecycle import short_name
+    from jailbee.network_generation import generation_of
     from jailbee.tui import info, warn, warn_plain
 
     info("Applying configuration...")
@@ -316,6 +317,10 @@ def run_apply(
     running_names: list[str] = []
     ports_changed: list[str] = []
     port_failures: list[tuple[str, str]] = []
+    raw_by_name = {raw.get("name"): raw for raw in incus.list_containers()}
+    from jailbee.work_acl import ensure_work_repo_acl, reconcile_work_acl
+    from jailbee.work_network import reconcile_work_nic, work_network_lock
+
     for ci in containers:
         # Reconcile forwards first, and for stopped containers too: a proxy
         # device on a stopped container takes effect on its next boot, so
@@ -362,9 +367,16 @@ def run_apply(
         # once after this loop instead of once per container — the rebuild
         # reads every container's extra ACL, so a per-container sync would
         # make it O(containers²) Incus calls for an identical result.
-        egress_scope.apply_container_acl(
-            cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
-        )
+        raw = raw_by_name.get(ci.name)
+        if raw is not None and generation_of(cfg, raw) == "work":
+            with work_network_lock():
+                reconcile_work_nic(cfg, incus, raw)
+                ensure_work_repo_acl(cfg, incus)
+                reconcile_work_acl(cfg, incus)
+        else:
+            egress_scope.apply_container_acl(
+                cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
+            )
 
         if ci.state != "Running":
             continue
