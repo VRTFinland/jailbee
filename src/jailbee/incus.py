@@ -761,6 +761,12 @@ class Incus:
         result = self._run(["network", "get", name, key])
         return result.stdout.strip()
 
+    def network_leases(self, name: str) -> list[dict[str, Any]]:
+        """Return DHCP leases reported for a managed network."""
+        result = self._run(["network", "list-leases", name, "--format", "json"])
+        leases = json.loads(result.stdout) if result.stdout else []
+        return [lease for lease in leases if isinstance(lease, dict)]
+
     def network_set(self, name: str, key: str, value: str) -> None:
         """Set a single network config key."""
         self._run(["network", "set", name, key, value])

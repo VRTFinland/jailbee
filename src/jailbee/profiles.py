@@ -494,3 +494,35 @@ def net_profile_yaml(cfg: Config, mode: str) -> str:
         "devices": {"eth0": eth0},
     }
     return yaml.safe_dump(profile, sort_keys=False)
+
+
+def work_profile_yamls(cfg: Config) -> dict[str, str]:
+    """Render stable work NIC base and NIC-free strict/loose marker profiles."""
+    prefix = cfg.container_prefix
+    names = {
+        f"{prefix}-net-work": {
+            "name": f"{prefix}-net-work",
+            "description": "Stable JailBee work network NIC",
+            "config": {},
+            "devices": {
+                "eth0": {
+                    "type": "nic",
+                    "network": "jailbee-work",
+                    "security.ipv4_filtering": "true",
+                }
+            },
+        },
+        f"{prefix}-net-work-strict": {
+            "name": f"{prefix}-net-work-strict",
+            "description": "JailBee work network strict mode marker",
+            "config": {},
+            "devices": {},
+        },
+        f"{prefix}-net-work-loose": {
+            "name": f"{prefix}-net-work-loose",
+            "description": "JailBee work network loose mode marker",
+            "config": {},
+            "devices": {},
+        },
+    }
+    return {name: yaml.safe_dump(profile, sort_keys=False) for name, profile in names.items()}

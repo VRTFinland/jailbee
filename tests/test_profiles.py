@@ -1020,6 +1020,24 @@ def test_net_profile_yaml_rejects_offline():
         net_profile_yaml(_cfg(), "offline")
 
 
+def test_work_profile_yamls_have_base_nic_and_nic_free_markers():
+    from jailbee.profiles import work_profile_yamls
+
+    cfg = _cfg()
+    profiles = {name: yaml.safe_load(text) for name, text in work_profile_yamls(cfg).items()}
+    assert set(profiles) == {
+        f"{cfg.container_prefix}-net-work",
+        f"{cfg.container_prefix}-net-work-strict",
+        f"{cfg.container_prefix}-net-work-loose",
+    }
+    assert (
+        profiles[f"{cfg.container_prefix}-net-work"]["devices"]["eth0"]["network"] == "jailbee-work"
+    )
+    assert all(
+        not p["devices"] for name, p in profiles.items() if name.endswith(("strict", "loose"))
+    )
+
+
 def test_pooled_caches_are_not_profile_devices(tmp_path):
     """A pooled cache is a per-container device, never a profile mount."""
     cfg = load_config_from_text(

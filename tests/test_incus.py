@@ -459,6 +459,11 @@ def test_network_get_returns_empty_string_when_unset(incus, mocker):
     assert result == ""
 
 
+def test_network_leases_returns_json_objects(incus, mocker):
+    _mock_run(mocker, stdout='[{"address":"10.0.0.2"}]')
+    assert incus.network_leases("jailbee-work") == [{"address": "10.0.0.2"}]
+
+
 def test_network_set_invokes_cli(incus, mocker):
     run = _mock_run(mocker)
     incus.network_set("incusbr0", "security.acls", "myrepo-allowlist")
