@@ -420,9 +420,8 @@ def test_net_migrate_setup_failure_keeps_legacy_choice(mocker):
 
 
 def test_net_migrate_undo_selects_legacy_without_touching_instances(mocker):
-    from typer.testing import CliRunner
-
     from sqlmodel import create_engine
+    from typer.testing import CliRunner
 
     engine = mocker.patch("jailbee.db.get_engine", return_value=create_engine("sqlite://"))
     store = mocker.patch("jailbee.network_generation.set_default_generation")

@@ -1124,12 +1124,22 @@ def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_se
     incus = MagicMock()
     incus.exists.return_value = False
     incus.network_get.return_value = "10.10.0.1/24"
-    incus.list_containers.side_effect = [[], [{
-        "name": "repo-feat-x", "devices": {"eth0": {
-            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
-            "security.ipv4_filtering": "true",
-        }},
-    }]]
+    incus.list_containers.side_effect = [
+        [],
+        [
+            {
+                "name": "repo-feat-x",
+                "devices": {
+                    "eth0": {
+                        "type": "nic",
+                        "network": "jailbee-work",
+                        "ipv4.address": "10.10.0.2",
+                        "security.ipv4_filtering": "true",
+                    }
+                },
+            }
+        ],
+    ]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
@@ -1181,8 +1191,7 @@ def test_new_work_allocations_across_repos_are_unique(tmp_path, mocker, db_sessi
         new_container(
             cfg,
             incus,
-            NewContainerOptions(branch, None, "strict", "8GiB", 2, "base", True,
-                                autostart=False),
+            NewContainerOptions(branch, None, "strict", "8GiB", 2, "base", True, autostart=False),
         )
 
     assert instances["repo-one-feat-one"]["ipv4.address"] == "10.10.0.2"
@@ -1193,12 +1202,22 @@ def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
-    incus.list_containers.side_effect = [[], [{
-        "name": "repo-feat-x", "devices": {"eth0": {
-            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
-            "security.ipv4_filtering": "true",
-        }},
-    }]]
+    incus.list_containers.side_effect = [
+        [],
+        [
+            {
+                "name": "repo-feat-x",
+                "devices": {
+                    "eth0": {
+                        "type": "nic",
+                        "network": "jailbee-work",
+                        "ipv4.address": "10.10.0.2",
+                        "security.ipv4_filtering": "true",
+                    }
+                },
+            }
+        ],
+    ]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
@@ -1214,8 +1233,7 @@ def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
     new_container(
         cfg,
         incus,
-        NewContainerOptions("feat/x", None, "loose", "8GiB", 2, "base", True,
-                            autostart=False),
+        NewContainerOptions("feat/x", None, "loose", "8GiB", 2, "base", True, autostart=False),
     )
 
     assert order == ["grant", "start"]
@@ -1226,12 +1244,22 @@ def test_scratch_directory_creation_uses_work_profiles(tmp_path, mocker, db_sess
     incus = MagicMock()
     incus.exists.return_value = False
     incus.profile_exists.return_value = True
-    incus.list_containers.side_effect = [[], [{
-        "name": "scratch-test", "devices": {"eth0": {
-            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
-            "security.ipv4_filtering": "true",
-        }},
-    }]]
+    incus.list_containers.side_effect = [
+        [],
+        [
+            {
+                "name": "scratch-test",
+                "devices": {
+                    "eth0": {
+                        "type": "nic",
+                        "network": "jailbee-work",
+                        "ipv4.address": "10.10.0.2",
+                        "security.ipv4_filtering": "true",
+                    }
+                },
+            }
+        ],
+    ]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
@@ -1241,8 +1269,7 @@ def test_scratch_directory_creation_uses_work_profiles(tmp_path, mocker, db_sess
     new_container(
         cfg,
         incus,
-        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", True,
-                            autostart=False),
+        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", True, autostart=False),
     )
 
     assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-work-strict"
@@ -1264,8 +1291,7 @@ def test_work_acl_failure_aborts_before_init(tmp_path, mocker, db_session):
         new_container(
             cfg,
             incus,
-            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
-                                autostart=False),
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True, autostart=False),
         )
 
     incus.init.assert_not_called()
@@ -1278,26 +1304,34 @@ def test_work_creation_rejects_unfiltered_nic_and_removes_fresh_instance(
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
-    incus.list_containers.side_effect = [[], [{
-        "name": "repo-feat-x",
-        "profiles": ["repo-base", "repo-net-work-strict"],
-        "devices": {"eth0": {
-            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
-            "security.ipv4_filtering": "false",
-        }},
-    }]]
+    incus.list_containers.side_effect = [
+        [],
+        [
+            {
+                "name": "repo-feat-x",
+                "profiles": ["repo-base", "repo-net-work-strict"],
+                "devices": {
+                    "eth0": {
+                        "type": "nic",
+                        "network": "jailbee-work",
+                        "ipv4.address": "10.10.0.2",
+                        "security.ipv4_filtering": "false",
+                    }
+                },
+            }
+        ],
+    ]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
     mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
     _select_work_generation(mocker, db_session)
 
-    with pytest.raises(ValueError, match="security.ipv4_filtering=true"):
+    with pytest.raises(ValueError, match=r"security.ipv4_filtering=true"):
         new_container(
             cfg,
             incus,
-            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
-                                autostart=False),
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True, autostart=False),
         )
 
     incus.delete.assert_called_once_with("repo-feat-x", force=True)
@@ -1310,10 +1344,13 @@ def test_undo_default_uses_legacy_for_new_container_only(tmp_path, mocker, db_se
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
-    incus.list_containers.return_value = [{
-        "name": "other-work", "profiles": ["other-base", "other-net-work-loose"],
-        "devices": {"eth0": {"network": "jailbee-work", "ipv4.address": "10.10.0.9"}},
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": "other-work",
+            "profiles": ["other-base", "other-net-work-loose"],
+            "devices": {"eth0": {"network": "jailbee-work", "ipv4.address": "10.10.0.9"}},
+        }
+    ]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.work_network.reserve_work_ipv4")
     db_session.add(HostNetworkDefault(id=1, generation="work"))
@@ -1325,8 +1362,7 @@ def test_undo_default_uses_legacy_for_new_container_only(tmp_path, mocker, db_se
     new_container(
         cfg,
         incus,
-        NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
-                            autostart=False),
+        NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True, autostart=False),
     )
 
     assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-strict"
