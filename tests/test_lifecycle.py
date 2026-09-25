@@ -5084,6 +5084,62 @@ def test_work_switch_restores_strict_acl_when_marker_update_fails(make_cfg, tmp_
     ]
 
 
+def test_work_switch_strict_marker_failure_is_reported_as_strict_and_retryable(
+    make_cfg, tmp_path, mocker
+):
+    from jailbee.lifecycle import current_network_mode
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = MagicMock()
+    name = "myrepo-x"
+    item = {
+        "name": name,
+        "profiles": ["default", "myrepo-base", "myrepo-net-work-loose"],
+        "devices": {"eth0": work_nic("10.42.0.2", [])},
+    }
+    incus.list_containers.return_value = [item]
+    mocker.patch("jailbee.work_acl.revoke_work_loose")
+    mocker.patch("jailbee.work_network.work_network_lock")
+    incus.profile_assign.side_effect = RuntimeError("marker update failed")
+
+    with pytest.raises(RuntimeError, match="marker update failed"):
+        switch_network(cfg, incus, name, "strict")
+
+    item["devices"]["eth0"]["security.acls"] = "myrepo-allowlist"
+    assert current_network_mode(cfg, incus, name) == "strict"
+    incus.config_device_set.assert_called_once_with(
+        name, "eth0", {"security.acls": "myrepo-allowlist"}
+    )
+
+
+def test_work_switch_strict_retry_finishes_pending_marker_and_revoke(make_cfg, tmp_path, mocker):
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = MagicMock()
+    name = "myrepo-x"
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": ["default", "myrepo-base", "myrepo-net-work-loose"],
+            "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-allowlist"])},
+        }
+    ]
+    incus.profile_assign.side_effect = [RuntimeError("transient"), None]
+    revoke = mocker.patch("jailbee.work_acl.revoke_work_loose")
+    mocker.patch("jailbee.work_network.work_network_lock")
+    mocker.patch("jailbee.hosts.apply_hosts")
+
+    with pytest.raises(RuntimeError, match="transient"):
+        switch_network(cfg, incus, name, "strict")
+    switch_network(cfg, incus, name, "strict")
+
+    assert incus.profile_assign.call_count == 2
+    assert incus.config_device_set.call_count == 2
+    assert revoke.call_count == 1
+
+
 # ---- resolve_container_name ----
 
 

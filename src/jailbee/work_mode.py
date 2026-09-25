@@ -2,13 +2,45 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee.work_network import verify_work_nic, work_network_lock
 
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+
+
+def work_mode_state(cfg: Config, raw: dict[str, Any]) -> tuple[str | None, bool]:
+    """Return conservative mode and whether marker and authoritative NIC agree."""
+    profiles = raw.get("profiles") or []
+    marker = next(
+        (
+            profile.rsplit("-", 1)[-1]
+            for profile in profiles
+            if isinstance(profile, str)
+            and profile.endswith(("-net-work-strict", "-net-work-loose"))
+        ),
+        None,
+    )
+    devices = raw.get("devices") or {}
+    nic = devices.get("eth0") if isinstance(devices, dict) else None
+    valid_nic = (
+        isinstance(nic, dict)
+        and nic.get("type") == "nic"
+        and nic.get("network") == "jailbee-work"
+        and nic.get("security.ipv4_filtering") == "true"
+        and isinstance(nic.get("ipv4.address"), str)
+    )
+    acls = nic.get("security.acls", "") if isinstance(nic, dict) else ""
+    from jailbee.network import acl_name
+
+    nic_mode = "strict" if acl_name(cfg) in str(acls).split(",") else "loose"
+    if marker not in ("strict", "loose"):
+        return None, False
+    if not valid_nic:
+        return "strict", False
+    return (marker, True) if marker == nic_mode else ("strict", False)
 
 
 def switch_work_network(

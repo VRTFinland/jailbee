@@ -2080,13 +2080,15 @@ def current_network_mode(
     for raw in incus.list_containers():
         if raw["name"] == name:
             if generation_of(cfg, raw) == "work":
-                profiles = raw.get("profiles") or []
-                for profile in profiles:
-                    if isinstance(profile, str) and profile.endswith(
-                        ("-net-work-strict", "-net-work-loose")
-                    ):
-                        return profile.rsplit("-", 1)[-1]
-                return None
+                from jailbee.work_mode import work_mode_state
+
+                mode, agrees = work_mode_state(cfg, raw)
+                if not agrees:
+                    warn_plain(
+                        f"Network mode mismatch for '{name}' (work marker and eth0 ACL disagree); "
+                        "treating it as strict until reconciled."
+                    )
+                return mode
             for p in raw["profiles"]:
                 if p in mode_by_profile:
                     return mode_by_profile[p]

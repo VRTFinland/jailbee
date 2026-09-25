@@ -5586,6 +5586,19 @@ def test_net_strict_clears_loose_labels(tmp_path, mocker):
     assert "user.jailbee.loose_revert_to" in unset_keys
 
 
+def test_net_loose_failure_does_not_write_ttl_or_acknowledge_success(tmp_path, mocker):
+    incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
+    mocker.patch("jailbee.lifecycle.switch_network", side_effect=ValueError("transition failed"))
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
+
+    assert result.exit_code == 1
+    assert "transition failed" in result.output
+    assert "is now on network: loose" not in result.output
+    assert incus.config_set.call_count == 0
+    assert incus.config_unset.call_count == 0
+
+
 def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):
     """`jailbee new --network loose` with the mirror down succeeds by design,
     so `net strict` is where a Docker repo first meets a broken dockerd — and
