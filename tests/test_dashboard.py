@@ -3846,6 +3846,8 @@ def _drive_run(
     groups: list[dashboard.RepoGroup] | None = None,
     *,
     remote: bool = False,
+    over_ssh: bool = False,
+    ssh_policy=None,
 ) -> int:
     """Run the real ``dashboard.run()`` key loop with a fake terminal.
 
@@ -3867,7 +3869,116 @@ def _drive_run(
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
 
     return dashboard.run(
-        mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True, remote=remote
+        mocker.Mock(),
+        None,
+        interval=0.5,
+        git_interval=1.0,
+        no_git=True,
+        remote=remote,
+        over_ssh=over_ssh,
+        ssh_policy=ssh_policy,
+    )
+
+
+def test_ssh_disabled_policy_rejects_new_before_prompt_or_spawn(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    prompt = mocker.patch("typer.prompt")
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
+
+    _drive_run(mocker, [b"n"], groups=[group], remote=True, over_ssh=True, ssh_policy=policy)
+
+    prompt.assert_not_called()
+    child.assert_not_called()
+    assert any("disabled" in str(call.kwargs.get("notice")) for call in render.call_args_list)
+
+
+def test_ssh_allowlisted_new_prompts_then_spawns_final_argv(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    prompt = mocker.patch("typer.prompt", side_effect=["feature", "main"])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "new_container_base_default", return_value="main")
+    mocker.patch.object(dashboard, "_wait_for_return")
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["new"]))
+
+    _drive_run(mocker, [b"n"], groups=[group], remote=True, over_ssh=True, ssh_policy=policy)
+
+    assert prompt.call_count == 2
+    child.assert_any_call(["jailbee", "new", "--", "feature", "main"], check=False, cwd=tmp_path)
+
+
+def test_ssh_inline_shell_works_when_exec_entrypoint_is_disabled(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    policy = RemoteSSHConfig(
+        exec=False, commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"])
+    )
+
+    _drive_run(
+        mocker,
+        [b"j", b"!", b"shell", b"\r"],
+        groups=[group],
+        remote=True,
+        over_ssh=True,
+        ssh_policy=policy,
+    )
+
+    child.assert_called_once_with(["jailbee", "shell", "alpha-x"], cwd=tmp_path, check=False)
+
+
+@pytest.mark.parametrize("change", ["policy", "eligibility"])
+def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_path, change):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    container = _ci("alpha-x", "alpha")
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [container])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    select_count = 0
+
+    def select(*args, **kwargs):
+        nonlocal select_count
+        select_count += 1
+        if select_count == 3:
+            if change == "policy":
+                policy.commands.allow[:] = ["git merge"]
+            else:
+                container.state = "Stopped"
+        return ([True], [], [])
+
+    mocker.patch.object(dashboard.select, "select", side_effect=select)
+    keys = itertools.chain([b"j", b"\r", b"\r", b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+    policy = RemoteSSHConfig(
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["tmux", "shell"])
+    )
+
+    dashboard.run(
+        mocker.Mock(),
+        None,
+        interval=0.5,
+        git_interval=1.0,
+        no_git=True,
+        remote=True,
+        over_ssh=True,
+        ssh_policy=policy,
+    )
+
+    assert not any(call.args[0][0] == "jailbee" for call in child.call_args_list)
+    assert any(
+        notice and ("not allowed" in notice or "no longer available" in notice)
+        for notice in (call.kwargs.get("notice") for call in render.call_args_list)
     )
 
 

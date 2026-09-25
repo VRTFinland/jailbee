@@ -2208,10 +2208,29 @@ def run(
                 if repo is None:
                     return  # an orphan group: no repo root to address a child at
                 try:
-                    if verb == "merge":
-                        check_dashboard_command(["merge", target], ssh_policy, over_ssh=over_ssh)
+                    check_dashboard_command(
+                        dashboard_action_argv(
+                            verb,
+                            target,
+                            force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX),
+                        ),
+                        ssh_policy,
+                        over_ssh=over_ssh,
+                    )
                 except RouteError as exc:
                     set_notice(str(exc))
+                    return
+                if verb not in {
+                    current_verb
+                    for _label, current_verb in actions_for_container(
+                        groups,
+                        target,
+                        remote=remote,
+                        ssh_policy=ssh_policy,
+                        over_ssh=over_ssh,
+                    )
+                }:
+                    set_notice(f"Action '{verb}' is no longer available for '{target}'")
                     return
                 try:
                     rc = foreground(
