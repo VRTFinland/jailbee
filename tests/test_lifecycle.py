@@ -1282,8 +1282,9 @@ def test_scratch_directory_creation_uses_work_profiles(tmp_path, monkeypatch, mo
     new_container(
         cfg,
         incus,
-        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", False,
-                            autostart=False),
+        NewContainerOptions(
+            "", "scratch-test", "strict", "8GiB", 2, "base", False, autostart=False
+        ),
     )
 
     assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-work-strict"
