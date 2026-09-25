@@ -43,6 +43,36 @@ def test_reconcile_work_nic_preserves_verified_bridge_and_reservation(make_cfg, 
     )
 
 
+def test_reconcile_work_nic_adds_only_that_strict_containers_extra_acl(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-work"
+    original = {
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
+        "security.ipv4_filtering": "true",
+    }
+    raw = {
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "devices": {"eth0": original},
+    }
+    incus = MagicMock()
+    incus.config_get.return_value = '["nexus.corp:443"]'
+    incus.network_acl_exists.return_value = True
+
+    reconcile_work_nic(cfg, incus, raw)
+
+    incus.config_device_set.assert_called_once_with(
+        name,
+        "eth0",
+        {
+            **original,
+            "security.acls": f"{cfg.container_prefix}-allowlist,{extra_acl_name(name)}",
+        },
+    )
+
+
 def container(name: str, ip: str = "10.42.0.2", mode: str = "loose") -> dict:
     return {
         "name": name,

@@ -575,6 +575,35 @@ def test_sync_bridge_extras_unions_every_container_extra_acl(make_cfg, tmp_path,
     )
 
 
+def test_sync_bridge_extras_keeps_work_generation_extras_off_legacy_bridge(
+    make_cfg, tmp_path, mocker
+):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _bridge_incus(
+        mocker,
+        containers=["myrepo-old", "myrepo-work"],
+        acl_yamls={
+            "myrepo-old-extra": _extra_acl(
+                "myrepo-old-extra",
+                EgressEntry(destinations=["10.0.5.7"], port=443, description="old.corp:443"),
+            ),
+            "myrepo-work-extra": _extra_acl(
+                "myrepo-work-extra",
+                EgressEntry(destinations=["10.0.9.1"], port=8443, description="work.corp:8443"),
+            ),
+        },
+    )
+    incus.list_containers.return_value[1]["profiles"] = [
+        f"{cfg.container_prefix}-net-work-strict"
+    ]
+
+    egress_scope.sync_bridge_extras(cfg, incus)
+
+    _name, body = _union_written(incus)
+    assert {rule["destination"] for rule in body["egress"]} == {"10.0.5.7"}
+    incus.network_acl_show.assert_called_once_with("myrepo-old-extra")
+
+
 def test_sync_bridge_extras_never_puts_the_union_on_a_nic(make_cfg, tmp_path, mocker):
     """The whole point of the union ACL: it widens the shared network chain
     only. Applied to a NIC it would hand every container of the repo every
