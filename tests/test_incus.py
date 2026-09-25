@@ -459,6 +459,11 @@ def test_network_get_returns_empty_string_when_unset(incus, mocker):
     assert result == ""
 
 
+def test_network_leases_returns_json_objects(incus, mocker):
+    _mock_run(mocker, stdout='[{"address":"10.0.0.2"}]')
+    assert incus.network_leases("jailbee-work") == [{"address": "10.0.0.2"}]
+
+
 def test_network_set_invokes_cli(incus, mocker):
     run = _mock_run(mocker)
     incus.network_set("incusbr0", "security.acls", "myrepo-allowlist")
@@ -582,6 +587,13 @@ def test_config_get_invokes_cli(incus, mocker):
     incus.config_get("feat-foo", "user.jailbee.branch")
     args = run.call_args[0][0]
     assert args == ["incus", "config", "get", "feat-foo", "user.jailbee.branch"]
+
+
+def test_config_show_expanded_includes_effective_profile_devices(incus, mocker):
+    run = _mock_run(mocker, stdout="devices: {}\n")
+
+    assert incus.config_show("feat-foo", expanded=True) == "devices: {}\n"
+    assert run.call_args[0][0] == ["incus", "config", "show", "feat-foo", "--expanded"]
 
 
 def test_run_passes_devnull_stdin_so_terminal_input_is_not_eaten(incus, mocker):

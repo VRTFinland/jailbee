@@ -3406,6 +3406,39 @@ def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> N
     run.assert_not_called()
 
 
+@pytest.mark.parametrize(("key", "verb"), [(b"t", "tmux"), (b"s", "shell")])
+def test_ssh_dashboard_existing_attach_actions_work_without_exec(
+    mocker, tmp_path, key, verb
+) -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", key, b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert (
+        dashboard.run(
+            mocker.Mock(),
+            None,
+            interval=0.5,
+            git_interval=1.0,
+            no_git=True,
+            remote=True,
+            over_ssh=True,
+            ssh_policy=RemoteSSHConfig(),
+        )
+        == 0
+    )
+    child.assert_called_once_with(
+        ["jailbee", verb, "alpha-x", "--force"], check=False, cwd=tmp_path
+    )
+
+
 def test_registered_only_flag_is_gone() -> None:
     """The remote form is decided by the session marker, not a flag a caller
     could forget to pass."""

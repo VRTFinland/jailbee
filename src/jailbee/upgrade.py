@@ -227,6 +227,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "installs it alongside the other bundled skills"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "work-network profiles and bridge ACL provisioning changed; existing "
+            "legacy containers remain on legacy networking"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

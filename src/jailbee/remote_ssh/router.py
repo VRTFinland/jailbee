@@ -220,7 +220,7 @@ def command_path(argv: Sequence[str]) -> str:
 #     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
 #     `apply`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
-#     `registry up`/`down`;
+#     `net migrate`, `registry up`/`down`;
 #   - persistent network policy: `net egress add`/`rm` accept any address,
 #     the host's own and its LAN's included;
 #   - host credentials shared by every container: `account` writes;
@@ -242,6 +242,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "base build",
         "base prune",
         "net install",
+        "net migrate",
         "net refresh",
         "net unregister",
         "net egress add",

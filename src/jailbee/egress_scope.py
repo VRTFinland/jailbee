@@ -660,7 +660,13 @@ def _union_of_container_extras(cfg: Config, incus: Incus) -> list[EgressEntry]:
     from jailbee.network import entries_from_acl_yaml
 
     prefix = f"{cfg.container_prefix}-"
-    names = sorted(raw["name"] for raw in incus.list_containers() if raw["name"].startswith(prefix))
+    from jailbee.network_generation import generation_of
+
+    names = sorted(
+        raw["name"]
+        for raw in incus.list_containers()
+        if raw["name"].startswith(prefix) and generation_of(cfg, raw) == "legacy"
+    )
 
     merged: dict[str, EgressEntry] = {}
     for container in names:

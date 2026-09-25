@@ -157,6 +157,7 @@ def run_apply(
     """Apply current config to profiles, ACL, and live container state."""
     from jailbee import egress_scope
     from jailbee.lifecycle import short_name
+    from jailbee.network_generation import default_generation, generation_of
     from jailbee.tui import info, warn, warn_plain
 
     info("Applying configuration...")
@@ -176,7 +177,17 @@ def run_apply(
     # `jailbee new` bootstraps one straight through `run_apply`.
     _ensure_repo_acl(cfg, incus)
 
+    raw_all = incus.list_containers()
+    repo_prefix = f"{cfg.container_prefix}-"
+    repo_instances = [
+        raw
+        for raw in raw_all
+        if isinstance(raw.get("name"), str) and raw["name"].startswith(repo_prefix)
+    ]
+    work_present = any(generation_of(cfg, raw) == "work" for raw in repo_instances)
+    legacy_present = any(generation_of(cfg, raw) == "legacy" for raw in repo_instances)
     with Session(get_engine()) as session:
+        host_default = default_generation(session)
         register_repo(session, cfg)
         refresh_result = refresh_pool(
             cfg,
@@ -265,6 +276,10 @@ def run_apply(
         names.net_strict: net_profile_yaml(cfg, "strict"),
         names.net_loose: net_profile_yaml(cfg, "loose"),
     }
+    if host_default == "work" or work_present:
+        from jailbee.profiles import work_profile_yamls
+
+        profile_yamls.update(work_profile_yamls(cfg))
     offline_migrated = _drop_offline_net_profile(cfg, incus)
 
     info("Checking profiles...")
@@ -287,7 +302,9 @@ def run_apply(
         else:
             profiles_unchanged.append(name)
 
-    _ensure_acl_attached_to_bridge(cfg, incus)
+    maintain_legacy = host_default == "legacy" or legacy_present
+    if maintain_legacy:
+        _ensure_acl_attached_to_bridge(cfg, incus)
 
     # Sync the mirror's env file once, before re-applying per-container
     # dockerd proxy: the repo's extra upstream registries, plus the
@@ -316,6 +333,10 @@ def run_apply(
     running_names: list[str] = []
     ports_changed: list[str] = []
     port_failures: list[tuple[str, str]] = []
+    raw_by_name = {raw.get("name"): raw for raw in incus.list_containers()}
+    from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+    from jailbee.work_network import work_network_lock
+
     for ci in containers:
         # Reconcile forwards first, and for stopped containers too: a proxy
         # device on a stopped container takes effect on its next boot, so
@@ -362,9 +383,15 @@ def run_apply(
         # once after this loop instead of once per container — the rebuild
         # reads every container's extra ACL, so a per-container sync would
         # make it O(containers²) Incus calls for an identical result.
-        egress_scope.apply_container_acl(
-            cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
-        )
+        raw = raw_by_name.get(ci.name)
+        if raw is not None and generation_of(cfg, raw) == "work":
+            with work_network_lock():
+                apply_work_container_acl(cfg, incus, ci.name)
+                reconcile_work_acl(cfg, incus)
+        else:
+            egress_scope.apply_container_acl(
+                cfg, incus, ci.name, mode=ci.network or "strict", sync_bridge=False
+            )
 
         if ci.state != "Running":
             continue
@@ -402,7 +429,8 @@ def run_apply(
     # the union. Without this, a container-scope grant reaches the NIC chain
     # and nothing else, and stays silently unreachable — see
     # `egress_scope.sync_bridge_extras`.
-    egress_scope.sync_bridge_extras(cfg, incus)
+    if maintain_legacy:
+        egress_scope.sync_bridge_extras(cfg, incus)
 
     restarted: list[str] = []
     restart_failures: list[tuple[str, str]] = []

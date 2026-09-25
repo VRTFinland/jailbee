@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.lifecycle import current_network_mode, switch_network
+from jailbee.network_generation import generation_of
 from jailbee.profiles import profile_names
 
 if TYPE_CHECKING:
@@ -112,6 +113,26 @@ def check_and_revert_loose(
                 continue
 
             current = current_network_mode(cfg, incus, name)
+            if generation_of(cfg, raw) == "work":
+                from jailbee.work_mode import work_mode_state
+
+                state, agrees = work_mode_state(cfg, raw, incus)
+                if not agrees:
+                    # Reconcile interrupted work transitions to strict before
+                    # discarding the retry labels. A stale loose marker must
+                    # never remove strict NIC enforcement on a subsequent run.
+                    switch_network(
+                        cfg,
+                        incus,
+                        name,
+                        "strict",
+                        mirror_endpoint=mirror_endpoint,
+                    )
+                    incus.config_unset(name, "user.jailbee.loose_until")
+                    incus.config_unset(name, "user.jailbee.loose_revert_to")
+                    out.append(RevertResult(container=name, reverted_to="strict"))
+                    continue
+                current = state
             if current != "loose":
                 # Orphan labels — user switched manually but cleanup
                 # didn't run. Clean up the labels without touching the

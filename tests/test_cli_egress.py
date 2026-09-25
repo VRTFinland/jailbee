@@ -74,6 +74,38 @@ def test_add_stores_a_container_entry_by_default(tmp_path, mocker):
     assert setc.call_args[0][2] == ["nexus.corp:443"]
 
 
+def test_add_dispatches_work_instance_without_legacy_nic_mutator(tmp_path, mocker):
+    cfg, incus = _repo(tmp_path, mocker)
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-strict"]}
+    ]
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    apply_work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
+    mocker.patch("jailbee.work_acl.reconcile_work_acl")
+
+    result = runner.invoke(app, ["net", "egress", "add", "nexus.corp:443"])
+
+    assert result.exit_code == 0, result.output
+    apply_work.assert_called_once_with(cfg, incus, "myrepo-feat")
+    mocker.patch("jailbee.egress_scope.apply_container_acl").assert_not_called()
+
+
+def test_rm_dispatches_work_instance_without_legacy_nic_mutator(tmp_path, mocker):
+    cfg, incus = _repo(tmp_path, mocker, extras=["nexus.corp:443"])
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-loose"]}
+    ]
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    apply_work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
+    mocker.patch("jailbee.work_acl.reconcile_work_acl")
+
+    result = runner.invoke(app, ["net", "egress", "rm", "nexus.corp:443"])
+
+    assert result.exit_code == 0, result.output
+    apply_work.assert_called_once_with(cfg, incus, "myrepo-feat")
+    mocker.patch("jailbee.egress_scope.apply_container_acl").assert_not_called()
+
+
 def test_add_repo_writes_the_local_file_without_a_db_row(tmp_path, mocker, monkeypatch):
     _repo(tmp_path, mocker)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
