@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
@@ -63,7 +64,6 @@ def ensure_work_bridge(incus: Incus) -> None:
 def verify_work_bridge_config(incus: Incus) -> None:
     """Refuse an owned network whose managed bridge contract has drifted."""
     expected = {
-        "ipv4.address": "auto",
         "ipv4.nat": "true",
         "ipv6.address": "none",
         "ipv6.nat": "false",
@@ -72,9 +72,23 @@ def verify_work_bridge_config(incus: Incus) -> None:
         raise ValueError("jailbee-work has incompatible network type (expected bridge)")
     for key, value in expected.items():
         actual = incus.network_get(WORK_BRIDGE, key)
-        if value is not None and actual != value:
+        if actual != value:
             raise ValueError(f"jailbee-work has incompatible {key}: {actual!r}")
-    if incus.network_get(WORK_BRIDGE, "security.acls") != _BASELINE_ACL:
+    ipv4_address = incus.network_get(WORK_BRIDGE, "ipv4.address")
+    try:
+        interface = ipaddress.ip_interface(ipv4_address)
+    except ValueError as exc:
+        raise ValueError(
+            f"jailbee-work has no valid effective IPv4 CIDR: {ipv4_address!r}"
+        ) from exc
+    if not isinstance(interface, ipaddress.IPv4Interface):
+        raise ValueError(f"jailbee-work has no valid effective IPv4 CIDR: {ipv4_address!r}")
+    acl_names = {
+        name.strip()
+        for name in incus.network_get(WORK_BRIDGE, "security.acls").split(",")
+        if name.strip()
+    }
+    if _BASELINE_ACL not in acl_names:
         raise ValueError("jailbee-work is missing its default-deny baseline ACL")
     _verify_baseline_acl(incus)
 
@@ -87,7 +101,6 @@ def create_owned_ipv4_only_work_bridge(incus: Incus) -> None:
         incus.network_create(WORK_BRIDGE)
         created = True
         incus.network_set(WORK_BRIDGE, "ipv4.address", "auto")
-        incus.network_set(WORK_BRIDGE, "ipv4.address", "auto")
         incus.network_set(WORK_BRIDGE, "ipv4.nat", "true")
         incus.network_set(WORK_BRIDGE, "ipv6.address", "none")
         incus.network_set(WORK_BRIDGE, "ipv6.nat", "false")
@@ -98,13 +111,24 @@ def create_owned_ipv4_only_work_bridge(incus: Incus) -> None:
         # Attach only after ACL creation/configuration succeeds.
         incus.network_set(WORK_BRIDGE, "security.acls", _BASELINE_ACL)
         verify_work_bridge_config(incus)
-    except Exception:
+    except Exception as setup_error:
+        cleanup_errors: list[Exception] = []
         if created:
             try:
                 incus.network_delete(WORK_BRIDGE)
-            finally:
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            else:
                 if acl_created:
-                    incus.network_acl_delete(_BASELINE_ACL)
+                    try:
+                        incus.network_acl_delete(_BASELINE_ACL)
+                    except Exception as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+        if cleanup_errors:
+            raise ExceptionGroup(
+                "Work bridge setup failed and cleanup was incomplete",
+                [setup_error, *cleanup_errors],
+            ) from None
         raise
 
 
