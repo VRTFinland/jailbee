@@ -758,6 +758,30 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                 )
             ]
             if work_default or work_instances:
+                device_maps: dict[str, dict[str, Any]] = {}
+                inspection_errors: list[str] = []
+                for container in containers:
+                    instance_name = container.get("name")
+                    if not isinstance(instance_name, str):
+                        continue
+                    expanded_devices = container.get("expanded_devices")
+                    raw_devices = container.get("devices")
+                    if isinstance(expanded_devices, dict) and expanded_devices:
+                        device_maps[instance_name] = expanded_devices
+                        continue
+                    if isinstance(raw_devices, dict) and raw_devices:
+                        device_maps[instance_name] = raw_devices
+                        if isinstance(raw_devices.get("eth0"), dict):
+                            continue
+                    try:
+                        expanded = yaml.safe_load(incus.config_show(instance_name, expanded=True)) or {}
+                    except (IncusError, yaml.YAMLError) as e:
+                        inspection_errors.append(f"{instance_name}: {e}")
+                        continue
+                    expanded_devices = expanded.get("devices") if isinstance(expanded, dict) else None
+                    if isinstance(expanded_devices, dict):
+                        device_maps[instance_name] = expanded_devices
+
                 try:
                     work_present = incus.network_exists(WORK_BRIDGE)
                 except IncusError as e:
@@ -774,31 +798,30 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                             "run `jailbee net migrate`",
                         )
                     )
-                occupants = [
-                    c
-                    for c in containers
-                    if any(
+                occupants: list[dict[str, Any]] = []
+                for container in containers:
+                    profiles = container.get("profiles") or []
+                    marked_work = generation_of(cfg, container) == "work"
+                    instance_name = container.get("name")
+                    devices = device_maps.get(str(instance_name), {})
+                    on_work_bridge = any(
                         isinstance(device, dict) and device.get("network") == WORK_BRIDGE
-                        for device in (c.get("devices") or c.get("expanded_devices") or {}).values()
+                        for device in devices.values()
                     )
+                    if marked_work or on_work_bridge:
+                        occupants.append(container)
+
+                problems = [
+                    f"NIC details could not be inspected for {error}" for error in inspection_errors
                 ]
-                problems: list[str] = []
                 addresses: dict[str, str] = {}
                 for container in occupants:
                     name = str(container.get("name", "unknown"))
                     profiles = container.get("profiles") or []
-                    work_nic = next(
-                        (
-                            item
-                            for key, item in (
-                                container.get("devices") or container.get("expanded_devices") or {}
-                            ).items()
-                            if key == "eth0"
-                            and isinstance(item, dict)
-                            and item.get("network") == WORK_BRIDGE
-                        ),
-                        {},
-                    )
+                    work_nic = device_maps.get(name, {}).get("eth0")
+                    if not isinstance(work_nic, dict) or work_nic.get("network") != WORK_BRIDGE:
+                        problems.append(f"{name} has a work marker but no confirmed eth0 NIC on {WORK_BRIDGE}")
+                        work_nic = {}
                     if generation_of(cfg, container) != "work":
                         problems.append(f"foreign/unmarked occupant {name}")
                     if work_nic.get("security.ipv4_filtering") != "true":
@@ -852,6 +875,15 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                     )
                 if not work_present:
                     pass
+                elif problems:
+                    results.append(
+                        CheckResult(
+                            f"network {WORK_BRIDGE} reachability",
+                            True,
+                            "not verified — work-network occupants or NIC policy could not be confirmed",
+                            skipped=True,
+                        )
+                    )
                 elif not any(c.get("status") == "Running" for c in occupants):
                     results.append(
                         CheckResult(

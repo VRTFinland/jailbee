@@ -2600,6 +2600,74 @@ def test_work_bridge_reports_foreign_unfiltered_and_duplicate_occupants(tmp_path
     assert "loose TTL but its mode marker is strict" in policy.detail
 
 
+def test_marker_recovers_work_nic_when_list_omits_device_fields(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    incus.network_get.return_value = "10.20.0.1/24"
+    incus.network_acl_show.return_value = ""
+    incus.exec.return_value = "0\n"
+    name = f"{cfg.container_prefix}-marked"
+    marker = f"{cfg.container_prefix}-net-work-strict"
+    incus.list_containers.return_value = [_running(name, [marker], ipv4="10.20.0.9")]
+    incus.config_show.return_value = (
+        "devices:\n  eth0:\n    type: nic\n    network: jailbee-work\n"
+        "    ipv4.address: 10.20.0.9\n    security.ipv4_filtering: 'true'\n"
+        f"    security.acls: {cfg.container_prefix}-allowlist\n"
+    )
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    reachability = _bridge_check(results, "jailbee-work")
+    assert reachability is not None and reachability.ok and not reachability.skipped
+    assert "not verified" not in reachability.detail
+    assert incus.exec.called
+    assert not any(row.name == "network jailbee-work policy" for row in results)
+
+
+def test_work_default_finds_foreign_nic_from_expanded_config(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    incus.list_containers.return_value = [_running("foreign", ["default"], ipv4="10.20.0.8")]
+    incus.config_show.return_value = (
+        "devices:\n  eth0:\n    type: nic\n    network: jailbee-work\n"
+        "    ipv4.address: 10.20.0.8\n"
+    )
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    policy = next(row for row in results if row.name == "network jailbee-work policy")
+    assert not policy.ok
+    assert "foreign/unmarked occupant foreign" in policy.detail
+    reachability = _bridge_check(results, "jailbee-work")
+    assert reachability is not None and reachability.skipped
+    assert "not verified" in reachability.detail
+
+
+def test_uninspectable_marked_work_nic_is_not_reported_as_success(tmp_path, mocker):
+    from jailbee.incus import IncusError
+
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    name = f"{cfg.container_prefix}-marked"
+    incus.list_containers.return_value = [_running(name, [f"{cfg.container_prefix}-net-work-strict"])]
+    incus.config_show.side_effect = IncusError("cannot inspect expanded config")
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    policy = next(row for row in results if row.name == "network jailbee-work policy")
+    assert not policy.ok
+    assert "NIC details could not be inspected" in policy.detail
+    reachability = _bridge_check(results, "jailbee-work")
+    assert reachability is not None and reachability.skipped
+    assert "not verified" in reachability.detail
+
+
 def test_doctor_reports_a_group_named_none(tmp_path, mocker):
     """`none` is the CLI's word for "no group", so a group of that name is unaddressable."""
     from jailbee import doctor

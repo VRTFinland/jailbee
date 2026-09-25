@@ -589,6 +589,13 @@ def test_config_get_invokes_cli(incus, mocker):
     assert args == ["incus", "config", "get", "feat-foo", "user.jailbee.branch"]
 
 
+def test_config_show_expanded_includes_effective_profile_devices(incus, mocker):
+    run = _mock_run(mocker, stdout="devices: {}\n")
+
+    assert incus.config_show("feat-foo", expanded=True) == "devices: {}\n"
+    assert run.call_args[0][0] == ["incus", "config", "show", "feat-foo", "--expanded"]
+
+
 def test_run_passes_devnull_stdin_so_terminal_input_is_not_eaten(incus, mocker):
     # Regression: `incus exec` (and other non-interactive incus commands)
     # used to inherit the parent's stdin, so `incus exec` forwarded

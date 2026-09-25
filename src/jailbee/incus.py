@@ -618,6 +618,13 @@ class Incus:
         value = result.stdout.strip()
         return value or None
 
+    def config_show(self, name: str, *, expanded: bool = False) -> str:
+        """Return an instance's config YAML, optionally including profile devices."""
+        args = ["config", "show", name]
+        if expanded:
+            args.append("--expanded")
+        return self._run(args).stdout
+
     def config_unset(self, name: str, key: str) -> None:
         """Remove a container config key. Idempotent — unsetting an absent
         key is a no-op (Incus prints `Error: Config option not found` to
