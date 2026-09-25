@@ -81,11 +81,14 @@ before editing `## Unreleased`.
   privilege-widening autostart config cannot be approved remotely, `--yes`
   included. `remote.ssh.restrict_host: false` lifts all of these host restrictions at
   once. `jb remote ssh serve` also takes one-off `--listen`/`--port`/
-  `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
-  overrides for trying a policy without editing `global.yaml`; the systemd
-  service never passes them. The service restarts itself when JailBee is
-  upgraded under it (checked on each connection and every 30 seconds), so it
-  never keeps enforcing an older version's rules.
+   `--dashboard`/`--shell`/`--exec`/`--commands`/`--allow`/`--restrict-host`
+   overrides for trying a policy without editing `global.yaml`; the systemd
+   service never passes them. A commandless login shows the enabled remote
+   forms by default; `remote.ssh.default_entrypoint` can open the dashboard or
+   console instead, while an explicit SSH `help` always shows the forms. The
+   service restarts itself when JailBee is upgraded under it (checked on each
+   connection and every 30 seconds), so it never keeps enforcing an older
+   version's rules.
 
 - **Host-gated GitHub issue management: containers stage issue actions, a
   human applies them.** An in-container agent can now create, edit, comment

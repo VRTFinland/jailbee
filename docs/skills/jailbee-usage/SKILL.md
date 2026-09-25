@@ -739,7 +739,10 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-A commandless login prints the enabled forms and exits. Dashboard and the
+A commandless login prints the enabled forms and exits by default; set
+`remote.ssh.default_entrypoint: dashboard` (or `shell`, if enabled) in the
+host's `global.yaml` to open that entry point instead. `ssh jailbee@host help`
+always prints the enabled forms. Dashboard and the
 restricted JailBee console need `-t`. Every one-shot command requires an exact
 registered `PREFIX`; `--repo` never accepts a path. Started without `--repo`,
 the console shows an arrow-key menu of registered repos (skipped when exactly

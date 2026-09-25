@@ -475,11 +475,13 @@ def route(
     engine: Engine | None = None,
 ) -> Route:
     """Route one remote SSH command according to the restricted grammar."""
-    if raw is None:
+    argv = _parse(raw) if raw is not None else ()
+    if not argv:
+        if config.default_entrypoint != "help":
+            return route(config.default_entrypoint, config, engine=engine)
         return Route("help", (), None, None, False)
 
-    argv = _parse(raw)
-    if not argv:
+    if argv == ("help",):
         return Route("help", (), None, None, False)
 
     if argv[0] == "dashboard":
@@ -525,7 +527,7 @@ def route(
 
 def help_text(config: RemoteSSHConfig) -> str:
     """Describe only the remote entry points enabled by ``config``."""
-    lines = ["Available remote commands:"]
+    lines = ["Available remote commands:", "  help"]
     if config.dashboard:
         lines.append("  dashboard")
     if config.shell:

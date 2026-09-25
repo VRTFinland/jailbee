@@ -153,6 +153,7 @@ accepted client forms are:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -p 8022 jailbee@localhost help
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
@@ -160,8 +161,10 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-A commandless `ssh -p 8022 jailbee@localhost` prints help containing only the
-configured entry points and exits successfully. `dashboard` and the remote
+A commandless `ssh -p 8022 jailbee@localhost` prints the enabled entry points
+and exits successfully by default. Set `remote.ssh.default_entrypoint` in the
+host's `global.yaml` to `dashboard` or `shell` to open that entry point instead;
+an explicit `help` always prints the list. `dashboard` and the remote
 console require `-t`; one-shot commands do not inherently require a PTY, though
 an interactive JailBee command may. Server-written text (this help, and any
 rejection) uses CRLF line endings whenever the client negotiated a PTY (which

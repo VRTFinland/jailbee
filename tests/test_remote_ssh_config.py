@@ -13,6 +13,7 @@ def test_remote_ssh_defaults_are_dashboard_only() -> None:
     assert ssh.listen == "127.0.0.1"
     assert ssh.port == 8022
     assert ssh.dashboard is True
+    assert ssh.default_entrypoint == "help"
     assert ssh.shell is False
     assert ssh.exec is False
     assert ssh.commands.mode == "disabled"
@@ -48,6 +49,23 @@ def test_allowlist_mode_requires_at_least_one_leaf() -> None:
 def test_all_entrypoints_cannot_be_disabled() -> None:
     with pytest.raises(ValidationError, match="at least one"):
         RemoteSSHConfig(dashboard=False, shell=False, exec=False)
+
+
+@pytest.mark.parametrize("entrypoint", ["dashboard", "shell"])
+def test_default_entrypoint_must_be_enabled(entrypoint: str) -> None:
+    with pytest.raises(ValidationError, match="default_entrypoint"):
+        RemoteSSHConfig(
+            default_entrypoint=entrypoint,
+            dashboard=entrypoint != "dashboard",
+            shell=entrypoint != "shell",
+            exec=True,
+            commands=RemoteCommandPolicy(mode="full"),
+        )
+
+
+def test_default_entrypoint_rejects_one_shot_commands() -> None:
+    with pytest.raises(ValidationError, match="default_entrypoint"):
+        RemoteSSHConfig(default_entrypoint="ls")
 
 
 @pytest.mark.parametrize("port", [0, 65536])

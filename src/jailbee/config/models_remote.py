@@ -65,6 +65,10 @@ class RemoteSSHConfig(BaseModel):
         default=False,
         description="Whether SSH clients may execute a jailbee command directly.",
     )
+    default_entrypoint: Literal["help", "dashboard", "shell"] = Field(
+        default="help",
+        description="Entry point opened when an SSH client supplies no command.",
+    )
     commands: RemoteCommandPolicy = Field(
         default_factory=RemoteCommandPolicy,
         description="Policy controlling which commands remote shell and exec may run.",
@@ -90,6 +94,8 @@ class RemoteSSHConfig(BaseModel):
             raise ValueError("remote.ssh must enable at least one entry point")
         if self.commands.mode == "disabled" and (self.shell or self.exec):
             raise ValueError("remote.ssh shell/exec require commands.mode allowlist or full")
+        if self.default_entrypoint != "help" and not getattr(self, self.default_entrypoint):
+            raise ValueError("remote.ssh.default_entrypoint must be an enabled entry point")
         return self
 
 

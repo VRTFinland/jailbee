@@ -61,6 +61,36 @@ def test_empty_command_routes_to_help() -> None:
     assert result == Route("help", (), None, None, False)
 
 
+@pytest.mark.parametrize("raw", [None, "", "  "])
+def test_configured_default_routes_to_dashboard(raw: str | None) -> None:
+    result = route(raw, RemoteSSHConfig(default_entrypoint="dashboard"))
+    assert result == Route("dashboard", ("dashboard",), None, None, True)
+
+
+def test_configured_default_routes_to_console() -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    assert route(None, cfg) == Route("console", ("_remote-console",), None, None, True)
+
+
+@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "shell"])
+def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str) -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint=default_entrypoint,
+        shell=True,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    assert route("help", cfg) == Route("help", (), None, None, False)
+
+
+def test_explicit_entrypoint_overrides_default() -> None:
+    cfg = RemoteSSHConfig(
+        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    assert route("dashboard", cfg) == Route("dashboard", ("dashboard",), None, None, True)
+
+
 def test_whitespace_command_routes_to_help() -> None:
     assert route("  ", RemoteSSHConfig()).kind == "help"
 
