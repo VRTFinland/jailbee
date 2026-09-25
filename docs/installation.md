@@ -273,9 +273,10 @@ doctor` or the symptom it describes says so;
 Incus's default networking needs no changes. But if your host runs a
 firewall, allow the managed bridges used on this host:
 
-- `incusbr0` — Incus's default. Used by the `strict` profile.
-- `jailbee-loose` — created by `jailbee init`. Used by the `loose` profile so the
-  per-repo allowlist ACL on `incusbr0` doesn't leak into "open egress" mode.
+- `incusbr0` — Incus's default. Used by the legacy `strict` profile.
+- `jailbee-loose` — created by `jailbee init`. Used by the legacy `loose`
+  profile so the per-repo allowlist ACL on `incusbr0` doesn't leak into
+  "open egress" mode.
 - `jailbee-work` — created only after the explicit `jb net migrate` opt-in;
   used by new work-generation containers in both modes.
 

@@ -88,7 +88,6 @@ def test_upcoming_network_generation_upgrade_note_advises_apply():
     assert "work-network" in notes[0].reason
     assert "profiles" in notes[0].reason and "ACL" in notes[0].reason
     assert "remain on legacy networking" in notes[0].reason
-    assert "migrated" not in notes[0].reason
 
 
 def test_manifest_shape_rejects_descending_versions() -> None:

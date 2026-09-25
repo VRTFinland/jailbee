@@ -4717,8 +4717,9 @@ not connect even after temporarily adding B's source IPv4; B could connect.
 An unmarked work-bridge occupant blocked a loose grant and was flagged by
 `jb doctor`. `jb net migrate --undo` changed the future default to legacy
 without moving either existing work instance. After detaching the test-only
-ACL from `incusbr0`, the unmanaged instance could still reach an external
-destination that repo A's strict container could not.
+ACL from `incusbr0`, `incus exec jb-net-smoke-legacy -- nc -vz -w 5
+1.0.0.1 443` succeeded while the same probe from repo A's strict container
+timed out. The work bridge still carried the repo ACL; `incusbr0` had none.
 
 The rig required removing GPU devices, `raw.idmap`, and the `/etc/localtime`
 bind from **test-owned** profiles to start nested containers (see the nested
