@@ -1071,7 +1071,7 @@ def _cfg_for_new(tmp_path, *, clone_from="local", autofetch=False):
         }
     )
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     (repo / ".git").mkdir()
     object.__setattr__(cfg, "repo_root", repo)
     object.__setattr__(cfg, "default_branch", "dev")
@@ -1111,34 +1111,35 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     incus.start.assert_called_once_with("repo-feat-x")
 
 
-def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker):
-    from sqlmodel import Session
-
-    from jailbee.db import get_engine
+def _select_work_generation(mocker, db_session):
     from jailbee.db.models import HostNetworkDefault
 
+    mocker.patch("jailbee.db.get_engine", return_value=db_session.bind)
+    db_session.add(HostNetworkDefault(id=1, generation="work"))
+    db_session.commit()
+
+
+def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_session):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
     incus.exists.return_value = False
     incus.network_get.return_value = "10.10.0.1/24"
+    incus.list_containers.side_effect = [[], [{
+        "name": "repo-feat-x", "devices": {"eth0": {
+            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
+            "security.ipv4_filtering": "true",
+        }},
+    }]]
     mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
     mocker.patch("jailbee.network_generation.ensure_work_bridge")
     mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
     mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
-    engine = get_engine()
-    with Session(engine) as session:
-        session.add(HostNetworkDefault(id=1, generation="work"))
-        session.commit()
-    try:
-        new_container(
-            cfg,
-            incus,
-            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
-        )
-    finally:
-        with Session(engine) as session:
-            session.delete(session.get(HostNetworkDefault, 1))
-            session.commit()
+    _select_work_generation(mocker, db_session)
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
+    )
     assert f"{cfg.container_prefix}-net-work-strict" in incus.profile_assign.call_args.args[1]
     incus.config_device_override.assert_called_once_with(
         "repo-feat-x",
@@ -1151,6 +1152,186 @@ def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker):
             "security.acls": f"{cfg.container_prefix}-allowlist",
         },
     )
+
+
+def test_new_work_allocations_across_repos_are_unique(tmp_path, mocker, db_session):
+    first_cfg = _cfg_for_new(tmp_path / "repo-one")
+    second_cfg = _cfg_for_new(tmp_path / "repo-two")
+    object.__setattr__(first_cfg, "container_prefix", "repo-one")
+    object.__setattr__(second_cfg, "container_prefix", "repo-two")
+    incus = MagicMock()
+    incus.network_get.return_value = "10.10.0.1/24"
+    instances = {}
+    incus.list_containers.side_effect = lambda: [
+        {"name": name, "devices": {"eth0": device}} for name, device in instances.items()
+    ]
+
+    def remember_nic(name, _device_name, properties):
+        instances[name] = properties
+
+    incus.config_device_override.side_effect = remember_nic
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.state_dir", return_value=tmp_path / "state")
+    _select_work_generation(mocker, db_session)
+
+    for cfg, branch in ((first_cfg, "feat/one"), (second_cfg, "feat/two")):
+        incus.exists.return_value = False
+        new_container(
+            cfg,
+            incus,
+            NewContainerOptions(branch, None, "strict", "8GiB", 2, "base", True,
+                                autostart=False),
+        )
+
+    assert instances["repo-one-feat-one"]["ipv4.address"] == "10.10.0.2"
+    assert instances["repo-two-feat-two"]["ipv4.address"] == "10.10.0.3"
+
+
+def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.side_effect = [[], [{
+        "name": "repo-feat-x", "devices": {"eth0": {
+            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
+            "security.ipv4_filtering": "true",
+        }},
+    }]]
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    order = []
+    mocker.patch(
+        "jailbee.work_acl.grant_work_loose",
+        side_effect=lambda *_args: order.append("grant"),
+    )
+    incus.start.side_effect = lambda *_args: order.append("start")
+    _select_work_generation(mocker, db_session)
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions("feat/x", None, "loose", "8GiB", 2, "base", True,
+                            autostart=False),
+    )
+
+    assert order == ["grant", "start"]
+
+
+def test_scratch_directory_creation_uses_work_profiles(tmp_path, mocker, db_session):
+    cfg = _cfg_for_new(tmp_path / "scratch")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.profile_exists.return_value = True
+    incus.list_containers.side_effect = [[], [{
+        "name": "scratch-test", "devices": {"eth0": {
+            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
+            "security.ipv4_filtering": "true",
+        }},
+    }]]
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    _select_work_generation(mocker, db_session)
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", True,
+                            autostart=False),
+    )
+
+    assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-work-strict"
+
+
+def test_work_acl_failure_aborts_before_init(tmp_path, mocker, db_session):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch(
+        "jailbee.work_acl.ensure_work_repo_acl",
+        side_effect=ValueError("missing work ACL"),
+    )
+    _select_work_generation(mocker, db_session)
+
+    with pytest.raises(ValueError, match="missing work ACL"):
+        new_container(
+            cfg,
+            incus,
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
+                                autostart=False),
+        )
+
+    incus.init.assert_not_called()
+    incus.start.assert_not_called()
+
+
+def test_work_creation_rejects_unfiltered_nic_and_removes_fresh_instance(
+    tmp_path, mocker, db_session
+):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.side_effect = [[], [{
+        "name": "repo-feat-x",
+        "profiles": ["repo-base", "repo-net-work-strict"],
+        "devices": {"eth0": {
+            "type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
+            "security.ipv4_filtering": "false",
+        }},
+    }]]
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    _select_work_generation(mocker, db_session)
+
+    with pytest.raises(ValueError, match="security.ipv4_filtering=true"):
+        new_container(
+            cfg,
+            incus,
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
+                                autostart=False),
+        )
+
+    incus.delete.assert_called_once_with("repo-feat-x", force=True)
+    incus.start.assert_not_called()
+
+
+def test_undo_default_uses_legacy_for_new_container_only(tmp_path, mocker, db_session):
+    from jailbee.db.models import HostNetworkDefault
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = [{
+        "name": "other-work", "profiles": ["other-base", "other-net-work-loose"],
+        "devices": {"eth0": {"network": "jailbee-work", "ipv4.address": "10.10.0.9"}},
+    }]
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.work_network.reserve_work_ipv4")
+    db_session.add(HostNetworkDefault(id=1, generation="work"))
+    db_session.commit()
+    from jailbee.network_generation import set_default_generation
+
+    set_default_generation(db_session, "legacy")
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions("feat/x", None, "strict", "8GiB", 2, "base", True,
+                            autostart=False),
+    )
+
+    assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-strict"
+    incus.config_device_override.assert_not_called()
+    assert incus.list_containers.return_value[0]["profiles"][-1] == "other-net-work-loose"
 
 
 def test_new_container_relocates_legacy_claude_json(tmp_path, mocker):

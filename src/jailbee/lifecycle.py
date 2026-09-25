@@ -1174,7 +1174,12 @@ def new_container(
         from jailbee.network import acl_name
         from jailbee.network_generation import ensure_work_bridge
         from jailbee.work_acl import ensure_work_repo_acl, grant_work_loose
-        from jailbee.work_network import reserve_work_ipv4, work_network_lock, work_nic
+        from jailbee.work_network import (
+            reserve_work_ipv4,
+            verify_work_nic,
+            work_network_lock,
+            work_nic,
+        )
 
         with work_network_lock():
             fresh = False
@@ -1196,6 +1201,7 @@ def new_container(
                 )
                 acl_names = [acl_name(cfg)] if opts.network == "strict" else []
                 incus.config_device_override(name, "eth0", work_nic(ip, acl_names))
+                verify_work_nic(incus, name, ip)
                 if opts.network == "loose":
                     grant_work_loose(cfg, incus, name)
             except Exception:

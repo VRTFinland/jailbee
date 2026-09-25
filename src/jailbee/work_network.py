@@ -99,3 +99,16 @@ def work_nic(ip: str, acl_names: list[str]) -> dict[str, str]:
     if acl_names:
         result["security.acls"] = ",".join(acl_names)
     return result
+
+
+def verify_work_nic(incus: Incus, name: str, ip: str) -> None:
+    """Verify the effective local eth0 before starting a new work instance."""
+    raw = next((item for item in incus.list_containers() if item.get("name") == name), None)
+    devices = (raw or {}).get("devices") or (raw or {}).get("expanded_devices") or {}
+    eth0 = devices.get("eth0")
+    if not isinstance(eth0, dict) or eth0.get("type") != "nic":
+        raise ValueError(f"{name} has no effective eth0 work NIC")
+    if eth0.get("network") != WORK_BRIDGE or eth0.get("ipv4.address") != ip:
+        raise ValueError(f"{name} has incompatible work NIC bridge or IPv4 reservation")
+    if eth0.get("security.ipv4_filtering") != "true":
+        raise ValueError(f"{name} work NIC requires security.ipv4_filtering=true")

@@ -419,6 +419,24 @@ def test_net_migrate_setup_failure_keeps_legacy_choice(mocker):
     store.assert_not_called()
 
 
+def test_net_migrate_undo_selects_legacy_without_touching_instances(mocker):
+    from typer.testing import CliRunner
+
+    from sqlmodel import create_engine
+
+    engine = mocker.patch("jailbee.db.get_engine", return_value=create_engine("sqlite://"))
+    store = mocker.patch("jailbee.network_generation.set_default_generation")
+    bridge = mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    result = CliRunner().invoke(app, ["net", "migrate", "--undo"])
+
+    assert result.exit_code == 0, result.output
+    store.assert_called_once()
+    assert store.call_args.args[1] == "legacy"
+    bridge.assert_not_called()
+    engine.assert_called_once()
+    assert "existing containers were not changed" in " ".join(result.output.lower().split())
+
+
 def test_pool_ls_lists_every_pool(tmp_path, mocker):
     """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
     from jailbee.pool import SlotInfo
