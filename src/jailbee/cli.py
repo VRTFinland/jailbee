@@ -306,18 +306,18 @@ def remote_ssh_serve_cmd(
 
 @app.command("_remote-console", hidden=True)
 def remote_console_cmd(
-    repo: Annotated[
-        str | None,
-        typer.Option("--repo", help="Initial registered repository prefix."),
-    ] = None,
     policy_json: Annotated[
-        str | None,
+        str,
         typer.Option(
             "--policy-json",
             hidden=True,
             help="Internal: the session's effective remote SSH policy, set only by "
             "`jb remote ssh serve` when it spawns this console.",
         ),
+    ],
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Initial registered repository prefix."),
     ] = None,
 ) -> None:
     """Run the restricted interactive console for an SSH child."""

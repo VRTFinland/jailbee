@@ -528,13 +528,13 @@ def test_remote_ssh_serve_ctrl_c_exit_propagates_cleanly_through_the_cli(
     assert "Traceback" not in flat_output(result.stderr)
 
 
-def test_remote_console_is_hidden_but_delegates(mocker: MockerFixture) -> None:
+def test_remote_console_requires_policy_and_stays_hidden(mocker: MockerFixture) -> None:
     run = mocker.patch("jailbee.remote_ssh.console.run", return_value=7)
 
     result = CliRunner().invoke(app, ["_remote-console", "--repo", "project"])
 
-    assert result.exit_code == 7
-    run.assert_called_once_with("project", None)
+    assert result.exit_code != 0
+    run.assert_not_called()
     assert "_remote-console" not in CliRunner().invoke(app, ["--help"]).stdout
 
 

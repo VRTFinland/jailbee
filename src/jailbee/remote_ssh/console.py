@@ -27,7 +27,6 @@ from sqlmodel import Session, select
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.db import get_engine, state_dir
 from jailbee.db.models import RegisteredRepo
-from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.router import (
     RouteError,
     allowed_command_paths,
@@ -312,19 +311,9 @@ def _run_foreground(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[b
 
 
 def _load_policy(policy_json: str | None) -> RemoteSSHConfig | None:
-    """Validate a server-supplied effective policy, or signal to fall back.
-
-    `None` means "load `global.yaml` myself" — the only path left for a
-    console started outside `jb remote ssh serve` (there is none today, but
-    nothing here assumes one). A non-`None` value is never trusted as-is:
-    it goes through the very same `RemoteSSHConfig` pydantic model
-    `global.yaml` itself is validated with, exactly like `apply_ssh_overrides`
-    revalidates CLI overrides. Returns `None` on invalid input too, after
-    printing why — the caller treats that as a startup failure, never as
-    "fall back to global.yaml", since a server that sent a policy at all
-    must have a bug worth surfacing, not a silent downgrade.
-    """
+    """Validate the server-supplied effective policy, failing closed if absent."""
     if policy_json is None:
+        _error("missing remote SSH policy")
         return None
     try:
         return RemoteSSHConfig.model_validate_json(policy_json)
@@ -336,7 +325,7 @@ def _load_policy(policy_json: str | None) -> RemoteSSHConfig | None:
 def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
     """Run a policy-restricted interactive Jailbee command console.
 
-    `policy_json`, when given, is the SSH server's already-computed
+    `policy_json` is the SSH server's already-computed
     *effective* `RemoteSSHConfig` for this session (`global.yaml` merged
     with any `jb remote ssh serve` overrides) — see `server.handle_process`.
     Using it instead of reloading `global.yaml` here is the fix for the bug
@@ -346,13 +335,9 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
     this session, matching the console's existing "load once" contract for
     everything else it decides with.
     """
-    if policy_json is not None:
-        ssh_config = _load_policy(policy_json)
-        if ssh_config is None:
-            return 1
-    else:
-        global_config, _ = load_global_config(default_global_config_path())
-        ssh_config = global_config.remote.ssh
+    ssh_config = _load_policy(policy_json)
+    if ssh_config is None:
+        return 1
     repos = registered_repos()
     if not repos:
         _error("No registered repositories are available.")
