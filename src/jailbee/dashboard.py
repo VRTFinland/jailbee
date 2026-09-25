@@ -1193,6 +1193,22 @@ def quick_reject_note(
     binding = binding_for_token(token)
     if remote and binding is not None and binding.verb in _GUI_VERBS:
         return "GUI apps are not available over remote SSH"
+    if over_ssh and binding is not None and binding.verb is not None:
+        eligible = {verb for _label, verb in actions_for_container(groups, name, remote=remote)}
+        if binding.verb in eligible:
+            try:
+                check_dashboard_command(
+                    dashboard_action_argv(
+                        binding.verb,
+                        name,
+                        force=binding.verb in ATTACH_VERBS
+                        or binding.verb.startswith(APPS_RUN_PREFIX),
+                    ),
+                    ssh_policy,
+                    over_ssh=True,
+                )
+            except RouteError as exc:
+                return str(exc)
     what = f"'{binding.hint}' ({binding.label})" if binding is not None else f"'{token}'"
     return f"{what} is not available for '{name}'"
 

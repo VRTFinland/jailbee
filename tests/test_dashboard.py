@@ -3040,6 +3040,19 @@ def test_quick_reject_note_names_the_key_and_the_container(tmp_path):
     assert "'t'" in note and "tmux" in note and "alpha-x" in note
 
 
+def test_quick_reject_note_reports_remote_policy_denial(tmp_path):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
+
+    note = dashboard.quick_reject_note(
+        [group], "alpha-x", "action:push", ssh_policy=policy, over_ssh=True
+    )
+
+    assert note == "Jailbee command is not allowed: git push"
+
+
 def test_quick_reject_note_prefers_the_view_only_explanation():
     orphan = dashboard.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
 
