@@ -1153,13 +1153,15 @@ def new_container(
             if not incus.profile_exists(profile_name):
                 incus.profile_create(profile_name)
                 incus.profile_set_yaml(profile_name, content)
-    missing = [
-        p
-        for p in (names.base, names.binds, names.net_strict, names.net_loose)
-        if not incus.profile_exists(p)
-    ] if generation == "legacy" else [
-        p for p in (names.base, names.binds) if not incus.profile_exists(p)
-    ]
+    missing = (
+        [
+            p
+            for p in (names.base, names.binds, names.net_strict, names.net_loose)
+            if not incus.profile_exists(p)
+        ]
+        if generation == "legacy"
+        else [p for p in (names.base, names.binds) if not incus.profile_exists(p)]
+    )
     if missing:
         raise ValueError(
             f"jailbee new: this repo's profiles do not exist yet: {', '.join(missing)}.\n"
@@ -1192,9 +1194,7 @@ def new_container(
                         f"{cfg.container_prefix}-net-work-{opts.network}",
                     ],
                 )
-                acl_names = (
-                    [acl_name(cfg)] if opts.network == "strict" else []
-                )
+                acl_names = [acl_name(cfg)] if opts.network == "strict" else []
                 incus.config_device_override(name, "eth0", work_nic(ip, acl_names))
                 if opts.network == "loose":
                     grant_work_loose(cfg, incus, name)

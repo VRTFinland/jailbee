@@ -1133,8 +1133,7 @@ def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker):
         new_container(
             cfg,
             incus,
-            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True,
-                                autostart=False),
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
         )
     finally:
         with Session(engine) as session:
@@ -1142,9 +1141,15 @@ def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker):
             session.commit()
     assert f"{cfg.container_prefix}-net-work-strict" in incus.profile_assign.call_args.args[1]
     incus.config_device_override.assert_called_once_with(
-        "repo-feat-x", "eth0",
-        {"type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
-         "security.ipv4_filtering": "true", "security.acls": f"{cfg.container_prefix}-allowlist"},
+        "repo-feat-x",
+        "eth0",
+        {
+            "type": "nic",
+            "network": "jailbee-work",
+            "ipv4.address": "10.10.0.2",
+            "security.ipv4_filtering": "true",
+            "security.acls": f"{cfg.container_prefix}-allowlist",
+        },
     )
 
 
