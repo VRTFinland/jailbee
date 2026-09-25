@@ -61,10 +61,6 @@ def console_env(tmp_path: Path, mocker) -> ConsoleEnv:
     mocker.patch("jailbee.remote_ssh.console.default_global_config_path", return_value=tmp_path)
     mocker.patch("jailbee.remote_ssh.console.state_dir", return_value=tmp_path)
     mocker.patch(
-        "jailbee.remote_ssh.console.known_command_paths",
-        return_value=frozenset({"git pull", "ls"}),
-    )
-    mocker.patch(
         "jailbee.remote_ssh.console.allowed_command_paths",
         side_effect=lambda policy, **kwargs: frozenset(
             path
