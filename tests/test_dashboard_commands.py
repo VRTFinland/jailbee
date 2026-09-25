@@ -18,7 +18,7 @@ from jailbee.remote_ssh.router import RouteError
 @pytest.mark.parametrize(
     ("argv", "policy"),
     [
-        (["merge", "alpha"], RemoteSSHConfig(exec=False)),
+        (["merge", "alpha"], RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))),
         (["merge", "alpha"], RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))),
         (
             ["merge", "alpha"],
@@ -45,6 +45,14 @@ def test_ssh_dashboard_command_refuses_commands_outside_policy(
 def test_ssh_dashboard_merge_alias_uses_canonical_allowlist() -> None:
     policy = RemoteSSHConfig(
         exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"])
+    )
+    check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
+
+
+def test_ssh_dashboard_commands_policy_is_independent_of_exec_flag() -> None:
+    policy = RemoteSSHConfig(
+        exec=False,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]),
     )
     check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
 

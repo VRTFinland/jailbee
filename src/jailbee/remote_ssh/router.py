@@ -173,6 +173,20 @@ def known_command_paths() -> frozenset[str]:
     return _command_tree().public_leaves
 
 
+def allowed_command_paths(
+    policy: RemoteCommandPolicy, *, restrict_host: bool = True
+) -> frozenset[str]:
+    """Return public leaf paths accepted by the common command decision."""
+    allowed: set[str] = set()
+    for path in known_command_paths():
+        try:
+            policy_allows(path.split(), policy, restrict_host=restrict_host)
+        except RouteError:
+            continue
+        allowed.add(path)
+    return frozenset(allowed)
+
+
 def command_leaf(argv: Sequence[str]) -> tuple[str, TyperCommand]:
     """Return the typed leaf path and its cached Click command."""
     typed, _ = _resolve_leaf(argv)
@@ -265,6 +279,75 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "firefox",
         "browser",
         "apps run",
+    }
+)
+
+
+_CONTAINER_COMMANDS = frozenset(
+    {
+        "account ls",
+        "account group ls",
+        "apps ls",
+        "autostart cancel",
+        "autostart status",
+        "base usage",
+        "branch",
+        "config show",
+        "config validate",
+        "dashboard",
+        "destroy",
+        "disk-usage",
+        "dismiss",
+        "doctor",
+        "exec",
+        "git checkout",
+        "git diff",
+        "git fetch",
+        "git merge",
+        "git pull",
+        "git push",
+        "git retarget",
+        "issue apply",
+        "issue drop",
+        "issue ls",
+        "issue resolve",
+        "issue show",
+        "job clear",
+        "job log",
+        "job ls",
+        "ls",
+        "net egress export",
+        "net egress ls",
+        "net loose",
+        "net status",
+        "net strict",
+        "new",
+        "pool ls",
+        "pool prune",
+        "port ls",
+        "port rm",
+        "port to-host",
+        "pr",
+        "prune",
+        "registry status",
+        "registry verify",
+        "restart",
+        "review apply",
+        "review drop",
+        "review ls",
+        "review show",
+        "shell",
+        "snapshot create",
+        "snapshot delete",
+        "snapshot ls",
+        "snapshot restore",
+        "start",
+        "stop",
+        "submodule pr",
+        "tmux",
+        "tui",
+        "unmount",
+        "version",
     }
 )
 
@@ -434,15 +517,21 @@ def policy_allows(
     path = command_path(argv)
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
-    # A nested dashboard cannot claim the server-to-child transport option,
-    # even when host access is deliberately unrestricted.
     if path == "dashboard":
         check_arguments(argv)
+    if path in {"dashboard", "tui"}:
+        raise RouteError(
+            f"`{path}` is reserved; use the remote dashboard route or console navigation"
+        )
+    # A nested dashboard cannot claim the server-to-child transport option,
+    # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):
         if is_host_command(path):
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"
             )
+        if path not in _CONTAINER_COMMANDS:
+            raise RouteError(f"remote Jailbee command is not classified: {path}")
         check_arguments(argv)
     return path
 
@@ -516,11 +605,7 @@ def route(
 
     prefix = argv[1]
     command_argv = argv[2:]
-    # A genuinely unknown command name is handed straight through so
-    # `python -m jailbee` reports it, rather than this router inventing its
-    # own "unknown Jailbee command" — see `unknown_command`.
-    if not unknown_command(command_argv, config.commands):
-        policy_allows(command_argv, config.commands, restrict_host=config.restrict_host)
+    policy_allows(command_argv, config.commands, restrict_host=config.restrict_host)
     root = resolve_repo(prefix, engine=engine)
     return Route("command", command_argv, prefix, root, False)
 

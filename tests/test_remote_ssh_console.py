@@ -64,6 +64,14 @@ def console_env(tmp_path: Path, mocker) -> ConsoleEnv:
         "jailbee.remote_ssh.console.known_command_paths",
         return_value=frozenset({"git pull", "ls"}),
     )
+    mocker.patch(
+        "jailbee.remote_ssh.console.allowed_command_paths",
+        side_effect=lambda policy, **kwargs: frozenset(
+            path
+            for path in ("git pull", "ls")
+            if policy.mode == "full" or (policy.mode == "allowlist" and path in policy.allow)
+        ),
+    )
     return ConsoleEnv(prompt, repo_root, other_root)
 
 
@@ -695,22 +703,18 @@ def test_bare_group_help_runs_instead_of_being_rejected(console_env: ConsoleEnv,
     )
 
 
-def test_unknown_command_is_delegated_to_jailbee_for_its_own_error(
+def test_unknown_command_is_rejected_without_running_jailbee(
     console_env: ConsoleEnv, mocker
 ) -> None:
-    """Problem C: a genuinely unknown name gets Jailbee's own error, not ours."""
+    """Unknown names fail closed before the child invocation."""
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run",
         return_value=CompletedProcess([], 2),
     )
     console_env.lines(["nosuchcmd --flag", "exit"])
 
-    assert console.run("project") == 2
-    run.assert_called_once_with(
-        [sys.executable, "-m", "jailbee", "nosuchcmd", "--flag"],
-        cwd=console_env.repo_root,
-        check=False,
-    )
+    assert console.run("project") == 0
+    run.assert_not_called()
 
 
 def test_hidden_internal_command_is_still_rejected_by_the_console(

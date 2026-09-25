@@ -31,8 +31,6 @@ def check_dashboard_command(
         return
     if policy is None:
         raise RouteError("remote SSH dashboard has no server policy")
-    if not policy.exec:
-        raise RouteError("remote command execution is disabled")
     router.policy_allows(argv, policy.commands, restrict_host=policy.restrict_host)
 
 

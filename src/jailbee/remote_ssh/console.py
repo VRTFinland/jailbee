@@ -30,14 +30,11 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.remote_ssh.router import (
     RouteError,
-    is_host_command,
-    known_command_paths,
+    allowed_command_paths,
     known_command_short_help,
     policy_allows,
     resolve_repo,
-    unknown_command,
 )
-from jailbee.remote_ssh.session import host_restricted
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteCommandPolicy
@@ -200,18 +197,9 @@ def _history() -> FileHistory:
 def _allowed_paths(policy: RemoteCommandPolicy, *, restrict_host: bool = True) -> frozenset[str]:
     """Command paths this session may complete, per its own command policy.
 
-    A restricted session never offers a host command (`is_host_command`),
-    which `policy_allows` would refuse anyway.
+    Paths are filtered by the same policy decision used when dispatching.
     """
-    if policy.mode == "full":
-        paths = known_command_paths()
-    elif policy.mode == "allowlist":
-        paths = frozenset(policy.allow)
-    else:
-        return frozenset()
-    if host_restricted(restrict_host):
-        return frozenset(path for path in paths if not is_host_command(path))
-    return paths
+    return allowed_command_paths(policy, restrict_host=restrict_host)
 
 
 def _command_tree(paths: Sequence[str]) -> dict[str, Any]:
@@ -468,18 +456,11 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             last_status = _returncode(completed)
             continue
 
-        if not unknown_command(argv, ssh_config.commands):
-            try:
-                policy_allows(argv, ssh_config.commands, restrict_host=ssh_config.restrict_host)
-            except RouteError as error:
-                _error(str(error))
-                continue
-        # A genuinely unknown command name (Problem C) is run as-is: Typer
-        # itself reports "No such command", with suggestions, in its own
-        # style — better than this console inventing its own message for a
-        # name it never had an opinion about. A leading option, or a hidden
-        # internal command with no public alias, is left to `policy_allows`
-        # above and stays rejected here as before.
+        try:
+            policy_allows(argv, ssh_config.commands, restrict_host=ssh_config.restrict_host)
+        except RouteError as error:
+            _error(str(error))
+            continue
 
         completed = _run_foreground([sys.executable, "-m", "jailbee", *argv], current.root)
         last_status = _returncode(completed)

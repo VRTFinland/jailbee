@@ -3313,12 +3313,12 @@ def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -
 
 
 def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> None:
-    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
     from jailbee.remote_ssh.router import RouteError
 
     target = dashboard.RepoTarget(tmp_path, None)
     run = mocker.patch("jailbee.dashboard.subprocess.run")
-    policy = RemoteSSHConfig(exec=False)
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
 
     with pytest.raises(RouteError, match="disabled"):
         dashboard._dispatch_action(

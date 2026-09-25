@@ -374,10 +374,10 @@ def test_unknown_command_is_false_when_commands_are_disabled() -> None:
     assert unknown_command(("nosuchcmd",), RemoteCommandPolicy()) is False
 
 
-def test_one_shot_exec_lets_an_unknown_command_through(engine, repo) -> None:
+def test_one_shot_exec_rejects_an_unknown_command(engine, repo) -> None:
     cfg = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
-    result = route("--repo project nosuchcmd --flag", cfg, engine=engine)
-    assert result.argv == ("nosuchcmd", "--flag")
+    with pytest.raises(RouteError, match="unknown Jailbee command"):
+        route("--repo project nosuchcmd --flag", cfg, engine=engine)
 
 
 def test_help_lists_only_configured_entrypoints() -> None:
@@ -517,83 +517,41 @@ def test_exec_route_honours_restrict_host_false(engine, repo, monkeypatch) -> No
 # keeps. Together with `_HOST_COMMANDS` this must cover every public leaf: a
 # new command fails `test_every_public_command_is_classified` until it is
 # put on one side.
-_CONTAINER_SIDE = frozenset(
-    {
-        "account ls",
-        "account group ls",
-        "apps ls",
-        "autostart cancel",
-        "autostart status",
-        "base usage",
-        "branch",
-        "config show",
-        "config validate",
-        "dashboard",
-        "destroy",
-        "disk-usage",
-        "dismiss",
-        "doctor",
-        "exec",
-        "git checkout",
-        "git diff",
-        "git fetch",
-        "git merge",
-        "git pull",
-        "git push",
-        "git retarget",
-        "issue apply",
-        "issue drop",
-        "issue ls",
-        "issue resolve",
-        "issue show",
-        "job clear",
-        "job log",
-        "job ls",
-        "ls",
-        "net egress export",
-        "net egress ls",
-        "net loose",
-        "net status",
-        "net strict",
-        "new",
-        "pool ls",
-        "pool prune",
-        "port ls",
-        "port rm",
-        "port to-host",
-        "pr",
-        "prune",
-        "registry status",
-        "registry verify",
-        "restart",
-        "review apply",
-        "review drop",
-        "review ls",
-        "review show",
-        "shell",
-        "snapshot create",
-        "snapshot delete",
-        "snapshot ls",
-        "snapshot restore",
-        "start",
-        "stop",
-        "submodule pr",
-        "tmux",
-        "tui",
-        "unmount",
-        "version",
-    }
-)
 
 
 def test_every_public_command_is_classified() -> None:
-    from jailbee.remote_ssh.router import is_host_command
+    from jailbee.remote_ssh.router import _CONTAINER_COMMANDS, is_host_command
 
     host = {path for path in known_command_paths() if is_host_command(path)}
-    unclassified = known_command_paths() - host - _CONTAINER_SIDE
+    unclassified = known_command_paths() - host - _CONTAINER_COMMANDS
     assert not unclassified, f"classify for remote SSH: {sorted(unclassified)}"
-    assert not host & _CONTAINER_SIDE
-    assert not _CONTAINER_SIDE - known_command_paths(), "stale entries"
+    assert not host & _CONTAINER_COMMANDS
+    assert not _CONTAINER_COMMANDS - known_command_paths(), "stale entries"
+
+
+def test_policy_refuses_unclassified_commands_unless_host_unrestricted(monkeypatch) -> None:
+    from jailbee.remote_ssh import router
+
+    monkeypatch.setattr(router, "_CONTAINER_COMMANDS", router._CONTAINER_COMMANDS - {"ls"})
+    with pytest.raises(RouteError, match="not classified"):
+        router.policy_allows(["ls"], FULL)
+    assert router.policy_allows(["ls"], FULL, restrict_host=False) == "ls"
+
+
+def test_allowed_paths_uses_policy_and_host_restriction() -> None:
+    from jailbee.remote_ssh.router import allowed_command_paths
+
+    policy = RemoteCommandPolicy(mode="allowlist", allow=["git merge", "config edit"])
+    assert allowed_command_paths(policy) == frozenset({"git merge"})
+    assert allowed_command_paths(policy, restrict_host=False) == frozenset(
+        {"git merge", "config edit"}
+    )
+
+
+def test_nested_dashboard_and_tui_are_never_commands() -> None:
+    for path in ("dashboard", "tui"):
+        with pytest.raises(RouteError, match="reserved"):
+            policy_allows([path], FULL, restrict_host=False)
 
 
 @pytest.mark.parametrize(

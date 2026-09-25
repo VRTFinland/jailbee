@@ -2400,14 +2400,13 @@ def run(
                         )
                         allowed_paths: frozenset[str] | None = None
                         if over_ssh:
-                            if ssh_policy is None or not ssh_policy.exec:
+                            if ssh_policy is None:
                                 allowed_paths = frozenset()
-                            elif ssh_policy.commands.mode == "disabled":
-                                allowed_paths = frozenset()
-                            elif ssh_policy.commands.mode == "allowlist":
-                                allowed_paths = frozenset(ssh_policy.commands.allow)
-                            elif ssh_policy.commands.mode == "full":
-                                allowed_paths = ssh_router.known_command_paths()
+                            else:
+                                allowed_paths = ssh_router.allowed_command_paths(
+                                    ssh_policy.commands,
+                                    restrict_host=ssh_policy.restrict_host,
+                                )
                         candidates = completion_candidates(
                             overlay.text,
                             tuple(c.name for c in selected_group.containers)
