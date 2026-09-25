@@ -281,7 +281,7 @@ firewall, allow the managed bridges used on this host:
 
 ### firewalld
 
-Add both bridges to the trusted zone:
+Add the bridges you use to the trusted zone (`jailbee-work` only after opt-in):
 
 ```bash
 sudo firewall-cmd --permanent --zone=trusted --add-interface=incusbr0
@@ -305,7 +305,7 @@ silent — so on a fresh host, apply the rules below rather than waiting for
 Each active bridge needs the same minimal opening: one `ufw route` rule plus three
 `before.rules` lines, repeated per bridge.
 
-**1. Allow forwarding from both bridges** — lets containers reach the
+**1. Allow forwarding from each active bridge** — lets containers reach the
 internet via NAT. Reply traffic returns automatically through UFW's
 `ESTABLISHED,RELATED` rule, so no symmetric "out" rule is needed.
 

@@ -232,7 +232,7 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"apply"}),
         reason=(
             "work-network profiles and bridge ACL provisioning changed; existing "
-            "legacy containers remain legacy until explicitly migrated"
+            "legacy containers remain on legacy networking"
         ),
     ),
 )

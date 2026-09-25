@@ -146,8 +146,9 @@ matters for CDN-fronted services that round-robin a small IP pool. Those same
 resolved IPs are pinned into each strict-mode container's `/etc/hosts`, so the
 container's own DNS resolution can't drift from what the ACL was built
 against. `jailbee apply --no-restart` re-resolves and refreshes both live,
-without a container restart. `loose` mode (a dedicated bridge with no ACL)
-is the other selectable state.
+without a container restart. On legacy containers, `loose` mode uses a
+dedicated bridge with no ACL; the optional work-network generation below
+keeps both modes on the same bridge.
 
 ### Optional work-network generation
 
