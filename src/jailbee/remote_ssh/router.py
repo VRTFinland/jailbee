@@ -173,6 +173,17 @@ def known_command_paths() -> frozenset[str]:
     return _command_tree().public_leaves
 
 
+def command_leaf(argv: Sequence[str]) -> tuple[str, TyperCommand]:
+    """Return the typed leaf path and its cached Click command."""
+    typed, _ = _resolve_leaf(argv)
+    return typed, _command_tree().leaf_commands[typed]
+
+
+def known_command_aliases() -> dict[str, str]:
+    """Return hidden command aliases mapped to their canonical public paths."""
+    return dict(_command_tree().aliases)
+
+
 def known_command_short_help() -> dict[str, str]:
     """Return each public command path's Click short help text."""
     return _command_tree().public_short_help
@@ -277,6 +288,9 @@ def is_host_command(path: str) -> bool:
 #     than waved through — the same reasoning that refuses `--yes` for a
 #     branch's privilege widening.
 _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
+    # This hidden option is a server-to-child transport, never a caller
+    # capability. A dashboard command inside a console must not forge it.
+    "dashboard": frozenset({"remote_policy_json"}),
     "new": frozenset({"mount"}),
     "pr": frozenset({"web", "open_only", "yes"}),
     "submodule pr": frozenset({"web", "open_only", "yes"}),
@@ -420,6 +434,10 @@ def policy_allows(
     path = command_path(argv)
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
+    # A nested dashboard cannot claim the server-to-child transport option,
+    # even when host access is deliberately unrestricted.
+    if path == "dashboard":
+        check_arguments(argv)
     if host_restricted(restrict_host):
         if is_host_command(path):
             raise RouteError(

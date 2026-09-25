@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from jailbee.dashboard import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
-from jailbee.qtui.terminal import TerminalSpec, build_terminal_command
+from jailbee.qtui.terminal import TerminalSpec, acknowledge_command, build_terminal_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,7 +32,9 @@ if TYPE_CHECKING:
 #                to say beyond its exit code.
 LaunchMode = Literal["terminal", "output", "detached"]
 
-_TERMINAL_VERBS: frozenset[str] = frozenset({"shell", "tmux", "review apply", "issue apply"})
+_TERMINAL_VERBS: frozenset[str] = frozenset(
+    {"shell", "tmux", "merge", "review apply", "issue apply"}
+)
 
 # Verbs that warrant a confirmation dialog before dispatching.
 _CONFIRM_VERBS: frozenset[str] = frozenset({"destroy", "git pull"})
@@ -88,6 +90,7 @@ class ActionCommand:
     launch: LaunchMode
     confirm: bool
     cwd: Path
+    verb: str = ""
 
 
 def build_action(
@@ -138,7 +141,9 @@ def build_action(
         argv.append("--force")
     if extra_flags:
         argv += extra_flags
-    return ActionCommand(argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd())
+    return ActionCommand(
+        argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd(), verb=verb
+    )
 
 
 def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list[str]:
@@ -157,4 +162,5 @@ def resolve_launch(action: ActionCommand, terminal: TerminalSpec | None) -> list
             "No terminal emulator found for an interactive action. "
             "Set $JAILBEE_TERMINAL or install one (e.g. gnome-terminal, konsole, xterm)."
         )
-    return build_terminal_command(terminal, action.argv)
+    argv = acknowledge_command(action.argv) if action.verb == "merge" else action.argv
+    return build_terminal_command(terminal, argv)

@@ -14,8 +14,10 @@ from jailbee.remote_ssh.router import (
     Route,
     RouteError,
     check_arguments,
+    command_leaf,
     command_path,
     help_text,
+    known_command_aliases,
     known_command_paths,
     policy_allows,
     resolve_repo,
@@ -74,6 +76,29 @@ def test_dashboard_takes_no_arguments_and_requires_pty() -> None:
     result = route("dashboard", RemoteSSHConfig())
     assert result.argv == ("dashboard",)
     assert result.requires_pty is True
+
+
+def test_ssh_command_route_cannot_forge_dashboard_policy_transport():
+    cfg = RemoteSSHConfig(
+        exec=True,
+        restrict_host=False,
+        commands=RemoteCommandPolicy(mode="full"),
+    )
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
+            cfg,
+        )
+
+
+def test_nested_dashboard_rejects_user_supplied_trusted_policy_option(configured_ssh):
+    with pytest.raises(RouteError, match="remote-policy-json"):
+        route(
+            "--repo project dashboard --remote-policy-json "
+            '\'{"exec":true,"commands":{"mode":"full"}}\'',
+            configured_ssh,
+        )
 
 
 def test_one_shot_resolves_repo_and_drops_remote_selector(engine, repo) -> None:
@@ -213,6 +238,13 @@ def test_command_path_resolves_aliases_to_their_canonical_public_leaf() -> None:
     assert command_path(("diff",)) == "git diff"
     assert command_path(("egress", "ls")) == "net egress ls"
     assert command_path(("git", "pr")) == "pr"
+
+
+def test_leaf_and_alias_metadata_reuse_the_command_tree() -> None:
+    typed, command = command_leaf(("merge", "--into", "main"))
+    assert typed == "merge"
+    assert command.name == "merge"
+    assert known_command_aliases()["merge"] == "git merge"
 
 
 def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> None:

@@ -3411,6 +3411,14 @@ def dashboard_cmd(
             help="Run the GUI attached to this terminal instead of detaching to the background.",
         ),
     ] = False,
+    remote_policy_json: Annotated[
+        str | None,
+        typer.Option(
+            "--remote-policy-json",
+            help="Effective remote SSH policy supplied by the server.",
+            hidden=True,
+        ),
+    ] = None,
 ) -> None:
     """Live, auto-refreshing view of jailbee containers across all repos.
 
@@ -3425,6 +3433,7 @@ def dashboard_cmd(
             no_git=no_git,
             gui=gui,
             foreground=foreground,
+            remote_policy_json=remote_policy_json,
         )
     )
 
@@ -3487,6 +3496,7 @@ def _run_dashboard(
     no_git: bool,
     gui: bool,
     foreground: bool,
+    remote_policy_json: str | None = None,
 ) -> int:
     """Shared dispatch for `dashboard` and `gui`: pick the TUI or Qt frontend.
 
@@ -3497,7 +3507,10 @@ def _run_dashboard(
     *restricted* session additionally gets the TUI in its restricted form
     (see `dashboard.run`'s `remote`).
     """
+    from pydantic import ValidationError
+
     from jailbee.config import ConfigError, load_repo_config
+    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.incus import Incus
     from jailbee.remote_ssh.session import is_remote_session, is_ssh_session
 
@@ -3506,6 +3519,16 @@ def _run_dashboard(
     if over_ssh and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
+    ssh_policy: RemoteSSHConfig | None = None
+    if over_ssh:
+        if remote_policy_json is None:
+            error("remote SSH dashboard has no server policy")
+            return 2
+        try:
+            ssh_policy = RemoteSSHConfig.model_validate_json(remote_policy_json)
+        except ValidationError as exc:
+            error(f"invalid remote SSH policy: {exc}")
+            return 2
     if over_ssh:
         cwd_root = None
     else:
@@ -3595,6 +3618,8 @@ def _run_dashboard(
         git_interval=git_interval,
         no_git=no_git,
         remote=remote,
+        over_ssh=over_ssh,
+        ssh_policy=ssh_policy,
     )
 
 
