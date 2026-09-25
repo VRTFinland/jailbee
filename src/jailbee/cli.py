@@ -3848,6 +3848,16 @@ def _print_fetch_summary(cfg: "Config", short: str, result: "FetchResult") -> No
         info_plain(f"  {line}")
 
 
+def _print_anchor_refresh(names: tuple[str, ...]) -> None:
+    """Name the containers whose AHEAD base followed the host branch.
+
+    Without it, other containers' `jailbee ls` AHEAD numbers change after a
+    checkout or pull with no visible cause.
+    """
+    if names:
+        info(f"AHEAD base refreshed: {', '.join(names)}")
+
+
 def _placement_remedy(status: str, *, name: str, short: str) -> str:
     """The one remedy line for a placement failure — see `sync.HostPlacementStatus`
     and `submodules.PlacementStatus`.
@@ -4872,6 +4882,7 @@ def fetch(
 
     _print_fetch_summary(cfg, short, result.fetch)
     _print_placement_report(result, short)
+    _print_anchor_refresh(result.anchors_refreshed)
 
 
 # Top-level alias — hidden from `jailbee --help`; full docstring inherited from `fetch`.
@@ -4968,6 +4979,7 @@ def checkout(
         raise typer.Exit(1) from exc
 
     _print_fetch_summary(cfg, short, result.fetch)
+    _print_anchor_refresh(result.anchors_refreshed)
     success(f"Now on '{result.branch}' at {result.head_oid[:7]}.")
 
 
@@ -5033,6 +5045,7 @@ def _do_single_pull(
     info(f"HEAD now at {result.head_oid[:7]}.")
     if allow_checkout and result.into_branch:
         info(f"Now on '{result.into_branch}'.")
+    _print_anchor_refresh(result.anchors_refreshed)
 
     cleanup_result = sync.run_post_merge_cleanup(
         cfg,

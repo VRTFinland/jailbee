@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
@@ -82,6 +82,8 @@ class CheckoutResult:
     branch: str
     head_oid: str
     created_new: bool
+    # Short names of containers whose AHEAD base followed the target branch.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,8 @@ class MergeResult:
     head_oid: str
     into_branch: str | None
     pre_merge_head: str | None
+    # Short names of containers whose AHEAD base followed the merge target.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,6 +241,8 @@ class SyncRefsResult:
     target: str
     superproject: BranchPlacement
     submodules: tuple[submodules.SubBranchPlacement, ...]
+    # Short names of containers whose AHEAD base followed the target branch.
+    anchors_refreshed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1379,6 +1385,9 @@ def sync_refs_from_container(
     rule here would silently split one container's history across two host
     branch names depending on which command the user reached for.
 
+    After placement, every running container based on the target branch is
+    re-anchored — see `refresh_bases_for`.
+
     Non-fast-forward leaves the branch alone and reports `"diverged"`; `force`
     overwrites it, **except** when it is the checked-out branch, where the
     result is `"refused"`: an `update-ref` there would leave the index and
@@ -1402,11 +1411,24 @@ def sync_refs_from_container(
     sub_placements = submodules.place_branches_from_commit(
         cfg.repo_root, fetch_result.new_oid, target, force=force
     )
+    anchors = (
+        refresh_bases_for(cfg, incus, target)
+        if placement.status
+        in {
+            "created",
+            "up-to-date",
+            "fast-forwarded",
+            "forced",
+            "checked-out-ff",
+        }
+        else ()
+    )
     return SyncRefsResult(
         fetch=fetch_result,
         target=target,
         superproject=placement,
         submodules=tuple(sub_placements),
+        anchors_refreshed=anchors,
     )
 
 
@@ -1588,6 +1610,8 @@ def checkout_from_container(
     `jailbee git pull`.
 
     Returns a `CheckoutResult` so the CLI can print a post-op summary.
+    It also re-anchors every running container based on the target branch — see
+    `refresh_bases_for`.
     """
     _refuse_remote_tree_write(
         "`jailbee git checkout`",
@@ -1662,7 +1686,11 @@ def checkout_from_container(
         raise SyncError(f"checkout succeeded but HEAD did not resolve on branch '{target}'")
     submodules.update_submodules_on_host(cfg.repo_root, branch=target)
     return CheckoutResult(
-        fetch=refs.fetch, branch=target, head_oid=head_oid, created_new=created_new
+        fetch=refs.fetch,
+        branch=target,
+        head_oid=head_oid,
+        created_new=created_new,
+        anchors_refreshed=refs.anchors_refreshed,
     )
 
 
@@ -1757,16 +1785,11 @@ def _stdin_is_interactive() -> bool:
     return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
 
 
-def _maybe_refresh_base(
-    cfg: Config,
-    incus: Incus,
-    full_name: str,
-    base_branch: str | None,
-    into_branch: str | None,
-) -> None:
-    """Refresh the container's base ref iff the merge landed in its base branch."""
-    if base_branch is not None and into_branch == base_branch:
-        refresh_container_base(cfg, incus, full_name, base_branch=base_branch)
+def _with_anchors(cfg: Config, incus: Incus, result: MergeResult) -> MergeResult:
+    """Re-anchor every container based on the branch the merge landed in."""
+    if result.into_branch is None:
+        return result
+    return replace(result, anchors_refreshed=refresh_bases_for(cfg, incus, result.into_branch))
 
 
 def merge_from_container(
@@ -1812,7 +1835,9 @@ def merge_from_container(
        (``ff="never"`` forces a merge commit, ``ff="auto"`` lets git decide),
        leaving host HEAD on the target.
 
-    Cleanup is handled separately by ``run_post_merge_cleanup``.
+     Every successful path re-anchors all running containers based on the
+     branch the merge landed in. Cleanup is handled separately by
+     ``run_post_merge_cleanup``.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
 
@@ -1874,8 +1899,7 @@ def merge_from_container(
             into_branch=target,
             pre_merge_head=pre_merge_head,
         )
-        _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-        return result
+        return _with_anchors(cfg, incus, result)
 
     # target != current here; both-None is caught by target == current above
     assert target is not None, "both target and current are None — should have merged in place"
@@ -1903,8 +1927,7 @@ def merge_from_container(
             into_branch=target,
             pre_merge_head=pre_merge_head,
         )
-        _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-        return result
+        return _with_anchors(cfg, incus, result)
 
     if not allow_checkout:
         also_ff_always = (
@@ -1931,8 +1954,7 @@ def merge_from_container(
     result = _merge_via_checkout(
         cfg, fetch_result, short, container_branch, fetched_ref, target, pre_merge_head, ff
     )
-    _maybe_refresh_base(cfg, incus, full_name, base_branch, result.into_branch)
-    return result
+    return _with_anchors(cfg, incus, result)
 
 
 def _merge_via_checkout(
@@ -2003,7 +2025,9 @@ def _refresh_submodule_base_anchors(
         pass
 
 
-def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_branch: str) -> bool:
+def refresh_container_base(
+    cfg: Config, incus: Incus, full_name: str, *, base_branch: str, force: bool = True
+) -> bool:
     """Sync the host's `base_branch` tip into the container's `refs/jailbee/base/<base_branch>`.
 
     This is the ref the `jailbee ls` probe prefers when computing AHEAD ±/↑, so
@@ -2015,18 +2039,59 @@ def refresh_container_base(cfg: Config, incus: Incus, full_name: str, *, base_br
     Best-effort: returns True if the ref was pushed, False if the host base
     does not resolve or the transport fails. Never raises — a refresh problem
     must not fail the surrounding pull/push/new.
+
+    ``force=False`` pushes without the leading ``+``: git then rejects an
+    update that is not a fast-forward of the current anchor, and this returns
+    False. Boot uses it — there nothing moved ``refs/heads/<base>``, which for
+    a base never checked out on the host is often *older* than the
+    ``origin/<base>`` the anchor was seeded from, and a forced push would move
+    the anchor backwards. The push is always quiet: callers report the
+    outcome themselves.
     """
     if git.rev_parse(cfg.repo_root, f"refs/heads/{base_branch}") is None:
         return False
     try:
         url = _build_receive_url(cfg, incus, full_name)
         git.push_url(
-            cfg.repo_root, url, f"+refs/heads/{base_branch}:refs/jailbee/base/{base_branch}"
+            cfg.repo_root,
+            url,
+            f"{'+' if force else ''}refs/heads/{base_branch}:refs/jailbee/base/{base_branch}",
+            quiet=True,
         )
     except (git.GitError, IncusError):
         return False
     _refresh_submodule_base_anchors(cfg, incus, full_name, base_branch=base_branch)
     return True
+
+
+def refresh_bases_for(cfg: Config, incus: Incus, branch: str) -> tuple[str, ...]:
+    """Re-anchor every running container of this repo whose base is `branch`.
+
+    Called after a command has set or confirmed the host's `refs/heads/<branch>`
+    — checkout, fetch, pull into it — so `jailbee ls` AHEAD follows the host
+    branch for *every* container based on it, not only the one the command
+    named. Re-anchoring a container whose work is not in `branch` is harmless:
+    the probe diffs `base...HEAD`, so a newer base still reports only that
+    container's own commits.
+
+    Skips stopped containers (a push needs a running `receive-pack`; boot
+    catches them up) and mount-mode ones (they share the host's `.git`).
+    Returns the short names that were re-anchored, in listing order. Never
+    raises.
+    """
+    from jailbee.lifecycle import list_containers, short_name
+
+    try:
+        infos = list_containers(cfg, incus, fast=True)
+    except IncusError:
+        return ()
+    refreshed: list[str] = []
+    for info in infos:
+        if info.base_branch != branch or info.state != "Running" or info.mode == "mount":
+            continue
+        if refresh_container_base(cfg, incus, info.name, base_branch=branch):
+            refreshed.append(short_name(cfg, info.name))
+    return tuple(refreshed)
 
 
 def ff_container_branch(

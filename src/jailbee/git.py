@@ -640,7 +640,7 @@ def fetch_url(repo_root: Path, url: str, refspec: str, *, tags: TagPolicy = "rea
         raise GitError(f"git fetch failed (exit {returncode})")
 
 
-def push_url(repo_root: Path, url: str, refspec: str) -> None:
+def push_url(repo_root: Path, url: str, refspec: str, *, quiet: bool = False) -> None:
     """Run `git push <url> <refspec>` in repo_root.
 
     Mirror of `fetch_url` for the host->container direction. Used by
@@ -663,11 +663,26 @@ def push_url(repo_root: Path, url: str, refspec: str) -> None:
 
     git's output is inherited by the parent process — the user sees the
     push progress and any error from receive-pack directly.
+
+    ``quiet=True`` discards git's output instead — for pushes that are
+    plumbing rather than the user's request (the AHEAD base anchor), whose
+    outcome the caller reports itself.
     """
-    returncode = subprocess.call(
-        ["git", "-c", "protocol.ext.allow=always", "push", "--no-recurse-submodules", url, refspec],
-        cwd=repo_root,
-    )
+    args = [
+        "git",
+        "-c",
+        "protocol.ext.allow=always",
+        "push",
+        "--no-recurse-submodules",
+        url,
+        refspec,
+    ]
+    if quiet:
+        returncode = subprocess.call(
+            args, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    else:
+        returncode = subprocess.call(args, cwd=repo_root)
     if returncode != 0:
         raise GitError(f"git push failed (exit {returncode})")
 

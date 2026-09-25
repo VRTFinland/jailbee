@@ -154,6 +154,18 @@ before editing `## Unreleased`.
   `jailbee config migrate --apply` moves these values into the host-local
   per-repo config files; conflicting values are left for manual resolution.
 
+### Fixed
+
+- **`jailbee ls` AHEAD no longer goes stale after `jailbee checkout`.**
+  Checking a container's branch out onto the host left its AHEAD ±/↑ — and
+  that of every other container based on the same branch — counting against
+  the old base, even when the host branch was already at the container's tip.
+  `jailbee checkout`, `jailbee git fetch` and `jailbee git pull` now re-point
+  the AHEAD base of every running container based on the branch they leave in
+  place and name those containers; `jailbee git pull` used to do this only for
+  the container it merged, and only when merging into its own base. A stopped
+  container catches up when it starts.
+
 ## 1.5.0 - 2026-09-21
 
 ### Added

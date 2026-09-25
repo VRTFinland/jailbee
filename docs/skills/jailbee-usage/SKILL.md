@@ -379,6 +379,16 @@ container to merge into instead of quietly merging into the host.
 branch), **WT** (uncommitted changes), **AHEAD ±**/**↑** (commits ahead of base),
 and **MERGE**. Stopped and mount-mode containers show `—` in the git columns.
 
+AHEAD counts against the container's pinned `refs/jailbee/base/<base>` anchor.
+`jailbee checkout`, `jailbee git fetch` and `jailbee git pull` re-point it in
+every running container of this repo based on the host branch they leave in
+place, and report the names with `AHEAD base refreshed: …`. `jailbee git push`
+re-points it when pushing the base branch; a stopped container catches up when
+it starts (forward-only, so a stale local base never pulls the anchor back).
+Container-to-container `jailbee git merge` moves no host branch and no anchor.
+A host branch moved with plain `git` is picked up at the next of these JailBee
+operations.
+
 **MERGE**'s values, in priority order — a live state always outranks a
 prediction:
 

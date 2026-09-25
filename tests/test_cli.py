@@ -3697,6 +3697,22 @@ def test_git_fetch_calls_sync_refs_and_prints_the_branch(mocker, tmp_path):
     assert called.call_args.kwargs["force"] is False
     assert called.call_args.kwargs["as_name"] is None
     assert "refs/heads/feat/foo" in result.output
+    assert "AHEAD base refreshed" not in result.output
+
+
+def test_git_fetch_reports_re_anchored_containers(mocker, tmp_path):
+    from dataclasses import replace
+
+    _fetch_setup(mocker, tmp_path)
+    mocker.patch(
+        "jailbee.sync.sync_refs_from_container",
+        return_value=replace(_sync_refs_result(), anchors_refreshed=("a",)),
+    )
+
+    result = runner.invoke(app, ["git", "fetch", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "AHEAD base refreshed: a" in result.output
 
 
 def test_git_fetch_forwards_as_and_force(mocker, tmp_path):
@@ -3921,6 +3937,41 @@ def test_cli_checkout_prints_summary(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     assert "1 commit(s) ahead of HEAD" in result.output
     assert "Now on 'feat/foo' at def5678" in result.output
+    assert "AHEAD base refreshed" not in result.output
+
+
+def test_cli_checkout_reports_re_anchored_containers(mocker, tmp_path):
+    from jailbee.sync import CheckoutResult, FetchResult
+
+    runner = CliRunner()
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "sampleapp"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    mocker.patch(
+        "jailbee.cli._resolve_existing_detailed",
+        return_value=(
+            mocker.MagicMock(),
+            ResolvedContainer(name="sampleapp-feat-foo", auto_selected=False),
+        ),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    mocker.patch(
+        "jailbee.sync.checkout_from_container",
+        return_value=CheckoutResult(
+            fetch=FetchResult("feat/foo", None, "def5678def", "aaa0000aaa", 1),
+            branch="feat/foo",
+            head_oid="def5678def",
+            created_new=True,
+            anchors_refreshed=("worker-1", "combined-1"),
+        ),
+    )
+    mocker.patch("jailbee.git.log_oneline", return_value=["def5678 fix"])
+
+    result = runner.invoke(app, ["git", "checkout", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    assert "AHEAD base refreshed: worker-1, combined-1" in result.output
 
 
 def _stub_pull_result(
@@ -3989,6 +4040,41 @@ def test_cli_pull_prints_summary(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     assert "Merged 'feat/foo' from container 'feat-foo' into 'main'." in result.output
     assert "HEAD now at f00ba12" in result.output
+    assert "AHEAD base refreshed" not in result.output
+
+
+def test_cli_pull_reports_re_anchored_containers_before_cleanup(mocker, tmp_path):
+    from dataclasses import replace
+
+    runner = CliRunner()
+    cfg_mock = mocker.MagicMock()
+    cfg_mock.repo_root = tmp_path
+    cfg_mock.container_prefix = "sampleapp"
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
+    mocker.patch(
+        "jailbee.cli._resolve_existing_detailed",
+        return_value=(
+            mocker.MagicMock(),
+            ResolvedContainer(name="sampleapp-feat-foo", auto_selected=False),
+        ),
+    )
+    mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
+    mocker.patch(
+        "jailbee.sync.merge_from_container",
+        return_value=replace(_stub_pull_result(), anchors_refreshed=("feat-foo",)),
+    )
+    mocker.patch(
+        "jailbee.sync.run_post_merge_cleanup",
+        return_value=_stub_cleanup_result(destroyed=True),
+    )
+    mocker.patch("jailbee.git.log_oneline", return_value=["def5678 fix"])
+
+    result = runner.invoke(app, ["git", "pull", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    anchor_line = result.output.index("AHEAD base refreshed: feat-foo")
+    cleanup_line = result.output.index("Destroyed container")
+    assert anchor_line < cleanup_line
 
 
 def test_cli_pull_flag_forces_always(mocker, tmp_path):
