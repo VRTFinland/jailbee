@@ -5,7 +5,11 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from jailbee.egress import EgressEntry
+from jailbee.egress_scope import extra_acl_name
+from jailbee.network import extra_acl_yaml
 from jailbee.work_acl import (
+    ensure_work_repo_acl,
     grant_work_loose,
     reconcile_work_acl,
     revoke_work_loose,
@@ -45,6 +49,39 @@ def test_grant_adds_repo_acl_without_losing_baseline_or_other_repo(make_cfg, tmp
     )
     rendered = yaml.safe_load(incus.network_acl_set_yaml.call_args.args[1])
     assert rendered["egress"] == [{"action": "allow", "source": "10.42.0.2/32", "state": "enabled"}]
+
+
+def test_ensure_repo_acl_attaches_allowlist_extras_and_preserves_other_repos(make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-a"
+    repo_extra = extra_acl_name(name)
+    union_name = f"{cfg.container_prefix}-container-extras"
+    incus = MagicMock()
+    incus.network_get.return_value = (
+        f"jailbee-work-baseline,other-repo-allowlist,{cfg.container_prefix}-allowlist,"
+        "jailbee-work-baseline"
+    )
+    incus.list_containers.return_value = [container(name)]
+    incus.network_acl_exists.return_value = True
+    incus.network_acl_show.return_value = extra_acl_yaml(
+        repo_extra,
+        [EgressEntry(destinations=["203.0.113.8", "203.0.113.9"], port=443, description="test")],
+    )
+
+    ensure_work_repo_acl(cfg, incus)
+
+    incus.network_set.assert_called_once_with(
+        "jailbee-work",
+        "security.acls",
+        f"jailbee-work-baseline,{cfg.container_prefix}-allowlist,{union_name},other-repo-allowlist",
+    )
+    incus.network_acl_set_yaml.assert_called_once()
+    union = yaml.safe_load(incus.network_acl_set_yaml.call_args.args[1])
+    assert union["name"] == union_name
+    assert [rule["destination"] for rule in union["egress"]] == [
+        "203.0.113.8",
+        "203.0.113.9",
+    ]
 
 
 @pytest.mark.parametrize(
