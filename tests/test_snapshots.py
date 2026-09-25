@@ -70,3 +70,19 @@ def test_restore_snapshot_rematerialises_the_egress_acl(make_cfg, tmp_path, mock
 
     incus.snapshot_restore.assert_called_once_with("myrepo-feat", "before-upgrade")
     assert apply_acl.call_args.args[2] == "myrepo-feat"
+
+
+def test_restore_work_snapshot_never_calls_legacy_nic_mutator(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-strict"]}
+    ]
+    legacy = mocker.patch("jailbee.egress_scope.apply_container_acl")
+    work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
+    mocker.patch("jailbee.work_acl.reconcile_work_acl")
+
+    restore_snapshot(cfg, incus, "myrepo-feat", "before-upgrade")
+
+    work.assert_called_once_with(cfg, incus, "myrepo-feat")
+    legacy.assert_not_called()

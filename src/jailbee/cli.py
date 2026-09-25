@@ -8635,6 +8635,53 @@ net_app = typer.Typer(
 app.add_typer(net_app)
 
 
+@net_app.command("migrate")
+def net_migrate_cmd(
+    undo: Annotated[bool, typer.Option("--undo", help="Use legacy for future containers.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm unverified host firewall setup.")
+    ] = False,
+) -> None:
+    """Opt future containers into the work bridge, or undo that default."""
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.network_generation import ensure_work_bridge, set_default_generation
+
+    if undo:
+        with Session(get_engine()) as session:
+            set_default_generation(session, "legacy")
+        success_plain(
+            "Future containers will use the legacy network. Existing containers were not changed."
+        )
+        return
+    if not sys.stdin.isatty() and not yes:
+        error_plain(
+            "Non-interactive migration requires --yes; host firewall reachability "
+            "remains unverified."
+        )
+        raise typer.Exit(1)
+    warn_plain(
+        "This prepares jailbee-work, but does not verify host firewall reachability. "
+        "Configure your host firewall and test traffic before relying on this network."
+    )
+    if not yes and not typer.confirm("Continue with the unverified host network setup?"):
+        raise typer.Abort()
+    from jailbee.incus import Incus
+
+    try:
+        ensure_work_bridge(Incus())
+    except (RuntimeError, ValueError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    with Session(get_engine()) as session:
+        set_default_generation(session, "work")
+    success_plain(
+        "Work network prepared; future containers will use it. "
+        "Host firewall reachability is unverified."
+    )
+
+
 egress_app = typer.Typer(
     name="egress",
     help=(
@@ -8778,7 +8825,18 @@ def egress_add_cmd(
         return
     egress_scope.set_container_extras(incus, container, [*extras, entry])
     mode = _egress_container_mode(cfg, incus, container)
-    egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    from jailbee.network_generation import generation_of
+
+    raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+        from jailbee.work_network import work_network_lock
+
+        with work_network_lock():
+            apply_work_container_acl(cfg, incus, container)
+            reconcile_work_acl(cfg, incus)
+    else:
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' may now reach {entry}.")
 
@@ -8849,10 +8907,6 @@ def egress_rm_cmd(
         success(f"Removed repo override '{entry}'. Run `jailbee apply` to push it.")
         return
 
-    from sqlmodel import Session
-
-    from jailbee.db import get_engine
-
     incus, container = _egress_target(name, repo, cfg)
     with Session(get_engine()) as session:
         assert container is not None
@@ -8869,7 +8923,18 @@ def egress_rm_cmd(
             raise typer.Exit(1)
         egress_scope.set_container_extras(incus, container, [e for e in extras if e != entry])
         mode = _egress_container_mode(cfg, incus, container)
-        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+        from jailbee.network_generation import generation_of
+
+        raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+        if generation_of(cfg, raw) == "work":
+            from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+            from jailbee.work_network import work_network_lock
+
+            with work_network_lock():
+                apply_work_container_acl(cfg, incus, container)
+                reconcile_work_acl(cfg, incus)
+        else:
+            egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' can no longer reach {entry}.")
 

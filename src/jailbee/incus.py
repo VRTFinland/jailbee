@@ -618,6 +618,13 @@ class Incus:
         value = result.stdout.strip()
         return value or None
 
+    def config_show(self, name: str, *, expanded: bool = False) -> str:
+        """Return an instance's config YAML, optionally including profile devices."""
+        args = ["config", "show", name]
+        if expanded:
+            args.append("--expanded")
+        return self._run(args).stdout
+
     def config_unset(self, name: str, key: str) -> None:
         """Remove a container config key. Idempotent — unsetting an absent
         key is a no-op (Incus prints `Error: Config option not found` to
@@ -761,6 +768,12 @@ class Incus:
         result = self._run(["network", "get", name, key])
         return result.stdout.strip()
 
+    def network_leases(self, name: str) -> list[dict[str, Any]]:
+        """Return DHCP leases reported for a managed network."""
+        result = self._run(["network", "list-leases", name, "--format", "json"])
+        leases = json.loads(result.stdout) if result.stdout else []
+        return [lease for lease in leases if isinstance(lease, dict)]
+
     def network_set(self, name: str, key: str, value: str) -> None:
         """Set a single network config key."""
         self._run(["network", "set", name, key, value])
@@ -770,6 +783,16 @@ class Incus:
         result = self._run(["network", "list", "--format", "json"])
         nets = json.loads(result.stdout) if result.stdout else []
         return any(n["name"] == name for n in nets)
+
+    def network_type(self, name: str) -> str | None:
+        """Return a network's Incus type (for example, ``bridge``)."""
+        result = self._run(["network", "list", "--format", "json"])
+        nets = json.loads(result.stdout) if result.stdout else []
+        for network in nets:
+            if network["name"] == name:
+                network_type = network.get("type")
+                return network_type if isinstance(network_type, str) else None
+        return None
 
     def network_create(self, name: str, network_type: str = "bridge") -> None:
         """Create a managed Incus network. Caller ensures idempotency."""

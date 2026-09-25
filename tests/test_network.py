@@ -8,7 +8,7 @@ import yaml
 
 from jailbee.config import load_config
 from jailbee.egress import EgressEntry, build_egress_entries
-from jailbee.network import acl_name, allowlist_acl_yaml, entries_from_acl_yaml
+from jailbee.network import acl_name, allowlist_acl_yaml, entries_from_acl_yaml, work_loose_rule
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -490,6 +490,14 @@ def test_extra_acl_yaml_bare_host_has_no_port_field():
     )
     assert "destination_port" not in parsed["egress"][0]
     assert "protocol" not in parsed["egress"][0]
+
+
+def test_work_loose_rule_is_source_only():
+    assert work_loose_rule("10.42.0.17") == {
+        "action": "allow",
+        "source": "10.42.0.17/32",
+        "state": "enabled",
+    }
 
 
 def test_extra_acl_yaml_round_trips_through_entries_from_acl_yaml():

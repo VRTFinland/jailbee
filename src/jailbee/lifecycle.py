@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from jailbee import table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -1139,11 +1139,29 @@ def new_container(
     # cannot show (it selects on profile membership) yet which blocks the next
     # `jailbee new` with "already exists". Refusing up front leaves nothing
     # behind, and says what Incus's own "Profile not found" does not.
-    missing = [
-        p
-        for p in (names.base, names.binds, names.net_strict, names.net_loose)
-        if not incus.profile_exists(p)
-    ]
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.network_generation import default_generation
+
+    with Session(get_engine()) as session:
+        generation = default_generation(session)
+    if generation == "work":
+        from jailbee.profiles import work_profile_yamls
+
+        for profile_name, content in work_profile_yamls(cfg).items():
+            if not incus.profile_exists(profile_name):
+                incus.profile_create(profile_name)
+                incus.profile_set_yaml(profile_name, content)
+    missing = (
+        [
+            p
+            for p in (names.base, names.binds, names.net_strict, names.net_loose)
+            if not incus.profile_exists(p)
+        ]
+        if generation == "legacy"
+        else [p for p in (names.base, names.binds) if not incus.profile_exists(p)]
+    )
     if missing:
         raise ValueError(
             f"jailbee new: this repo's profiles do not exist yet: {', '.join(missing)}.\n"
@@ -1152,17 +1170,60 @@ def new_container(
         )
 
     _phase("creating")
-    incus.init(opts.from_base, name)
-    try:
-        incus.profile_assign(
-            name,
-            [
-                "default",
-                names.base,
-                names.binds,
-                names.net_by_mode[opts.network],
-            ],
+    if generation == "work":
+        from jailbee.network import acl_name
+        from jailbee.network_generation import ensure_work_bridge
+        from jailbee.work_acl import ensure_work_repo_acl, grant_work_loose
+        from jailbee.work_network import (
+            reserve_work_ipv4,
+            verify_work_nic,
+            work_network_lock,
+            work_nic,
         )
+
+        with work_network_lock():
+            fresh = False
+            try:
+                ensure_work_bridge(incus)
+                ensure_work_repo_acl(cfg, incus)
+                ip = reserve_work_ipv4(incus, name)
+                incus.init(opts.from_base, name)
+                fresh = True
+                incus.profile_assign(
+                    name,
+                    [
+                        "default",
+                        names.base,
+                        names.binds,
+                        f"{cfg.container_prefix}-net-work",
+                        f"{cfg.container_prefix}-net-work-{opts.network}",
+                    ],
+                )
+                acl_names = [acl_name(cfg)] if opts.network == "strict" else []
+                incus.config_device_override(name, "eth0", work_nic(ip, acl_names))
+                verify_work_nic(incus, name, ip)
+                if opts.network == "loose":
+                    grant_work_loose(cfg, incus, name)
+            except Exception:
+                if fresh:
+                    try:
+                        incus.delete(name, force=True)
+                    except Exception:
+                        pass
+                raise
+    else:
+        incus.init(opts.from_base, name)
+    try:
+        if generation == "legacy":
+            incus.profile_assign(
+                name,
+                [
+                    "default",
+                    names.base,
+                    names.binds,
+                    names.net_by_mode[opts.network],
+                ],
+            )
     except IncusError:
         # The profiles exist (the pre-flight above said so) but Incus rejected
         # them anyway — a `host_mounts` entry whose source path is gone does
@@ -2012,10 +2073,22 @@ def current_network_mode(
     profile attached (e.g. brand-new container before init, or user-
     customised profiles).
     """
+    from jailbee.network_generation import generation_of
+
     names = profile_names(cfg)
     mode_by_profile = {v: k for k, v in names.net_by_mode.items()}
     for raw in incus.list_containers():
         if raw["name"] == name:
+            if generation_of(cfg, raw) == "work":
+                from jailbee.work_mode import work_mode_state
+
+                mode, agrees = work_mode_state(cfg, raw, incus)
+                if not agrees:
+                    warn_plain(
+                        f"Network mode mismatch for '{name}' (work marker and eth0 ACL disagree); "
+                        "treating it as strict until reconciled."
+                    )
+                return mode
             for p in raw["profiles"]:
                 if p in mode_by_profile:
                     return mode_by_profile[p]
@@ -2041,6 +2114,25 @@ def switch_network(
     names = profile_names(cfg)
     if mode not in names.net_by_mode:
         raise ValueError(f"Unknown network mode: {mode}")
+
+    from jailbee.network_generation import generation_of
+
+    raw = next((item for item in incus.list_containers() if item.get("name") == name), None)
+    if raw is None:
+        raise ValueError(f"Container '{name}' not found")
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_mode import switch_work_network
+
+        if mode not in ("strict", "loose"):
+            raise ValueError(f"Unknown network mode: {mode}")
+        switch_work_network(
+            cfg,
+            incus,
+            name,
+            cast(Literal["strict", "loose"], mode),
+            mirror_endpoint=mirror_endpoint,
+        )
+        return
 
     target_profile = names.net_by_mode[mode]
     own_net_profiles = set(names.net_by_mode.values())

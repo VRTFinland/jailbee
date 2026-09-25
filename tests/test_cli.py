@@ -369,6 +369,73 @@ def test_net_help() -> None:
     assert "loose" in result.stdout
 
 
+def test_net_migrate_requires_yes_when_non_interactive(mocker):
+    from typer.testing import CliRunner
+
+    ensure = mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    result = CliRunner().invoke(app, ["net", "migrate"])
+    assert result.exit_code == 1
+    assert "requires --yes" in result.output
+    ensure.assert_not_called()
+
+
+def test_net_migrate_yes_prepares_before_writing_host_default(mocker):
+    from typer.testing import CliRunner
+
+    sequence = []
+    ensure = mocker.patch(
+        "jailbee.network_generation.ensure_work_bridge",
+        side_effect=lambda _incus: sequence.append("bridge"),
+    )
+    store = mocker.patch(
+        "jailbee.network_generation.set_default_generation",
+        side_effect=lambda _session, _generation: sequence.append("default"),
+    )
+    engine = mocker.patch("jailbee.db.get_engine")
+    from sqlmodel import create_engine
+
+    engine.return_value = create_engine("sqlite://")
+    result = CliRunner().invoke(app, ["net", "migrate", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "unverified" in result.output.lower()
+    ensure.assert_called_once()
+    store.assert_called_once()
+    assert store.call_args.args[1] == "work"
+    assert sequence == ["bridge", "default"]
+
+
+def test_net_migrate_setup_failure_keeps_legacy_choice(mocker):
+    from typer.testing import CliRunner
+
+    ensure = mocker.patch(
+        "jailbee.network_generation.ensure_work_bridge",
+        side_effect=ValueError("bridge setup failed"),
+    )
+    store = mocker.patch("jailbee.network_generation.set_default_generation")
+    result = CliRunner().invoke(app, ["net", "migrate", "--yes"])
+    assert result.exit_code == 1
+    assert "bridge setup failed" in result.output
+    ensure.assert_called_once()
+    store.assert_not_called()
+
+
+def test_net_migrate_undo_selects_legacy_without_touching_instances(mocker):
+    from sqlmodel import create_engine
+    from typer.testing import CliRunner
+
+    engine = mocker.patch("jailbee.db.get_engine", return_value=create_engine("sqlite://"))
+    store = mocker.patch("jailbee.network_generation.set_default_generation")
+    bridge = mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    result = CliRunner().invoke(app, ["net", "migrate", "--undo"])
+
+    assert result.exit_code == 0, result.output
+    store.assert_called_once()
+    assert store.call_args.args[1] == "legacy"
+    bridge.assert_not_called()
+    engine.assert_called_once()
+    assert "existing containers were not changed" in " ".join(result.output.lower().split())
+
+
 def test_pool_ls_lists_every_pool(tmp_path, mocker):
     """`jailbee pool ls` (no NAME) concatenates slots across every pool."""
     from jailbee.pool import SlotInfo
@@ -5627,6 +5694,19 @@ def test_net_strict_clears_loose_labels(tmp_path, mocker):
     unset_keys = [c.args[1] for c in incus.config_unset.call_args_list]
     assert "user.jailbee.loose_until" in unset_keys
     assert "user.jailbee.loose_revert_to" in unset_keys
+
+
+def test_net_loose_failure_does_not_write_ttl_or_acknowledge_success(tmp_path, mocker):
+    incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
+    mocker.patch("jailbee.lifecycle.switch_network", side_effect=ValueError("transition failed"))
+
+    result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
+
+    assert result.exit_code == 1
+    assert "transition failed" in result.output
+    assert "is now on network: loose" not in result.output
+    assert incus.config_set.call_count == 0
+    assert incus.config_unset.call_count == 0
 
 
 def test_net_strict_warns_when_a_wanted_mirror_is_unavailable(tmp_path, mocker):

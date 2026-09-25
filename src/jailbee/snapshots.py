@@ -35,10 +35,20 @@ def restore_snapshot(cfg: Config, incus: Incus, container: str, tag: str) -> Non
     """
     from jailbee import egress_scope
     from jailbee.lifecycle import current_network_mode
+    from jailbee.network_generation import generation_of
 
     incus.snapshot_restore(container, tag)
     mode = current_network_mode(cfg, incus, container) or "strict"
-    egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+    raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+        from jailbee.work_network import work_network_lock
+
+        with work_network_lock():
+            apply_work_container_acl(cfg, incus, container)
+            reconcile_work_acl(cfg, incus)
+    else:
+        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
 
 
 def delete_snapshot(incus: Incus, container: str, tag: str) -> None:

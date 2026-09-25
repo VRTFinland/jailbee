@@ -21,11 +21,12 @@ from pathlib import Path
 from sqlalchemy.engine import Connection, Engine
 from sqlmodel import Session, SQLModel, create_engine
 
+from jailbee.db.models import HostNetworkDefault as HostNetworkDefault
 from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 
 def state_dir() -> Path:
@@ -219,6 +220,11 @@ def _migrate_to_v12(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v13(conn: Connection) -> None:
+    """v12 -> v13 adds the host_network_default table via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -232,6 +238,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     10: _migrate_to_v10,
     11: _migrate_to_v11,
     12: _migrate_to_v12,
+    13: _migrate_to_v13,
 }
 
 

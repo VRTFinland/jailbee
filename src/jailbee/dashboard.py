@@ -1325,6 +1325,68 @@ def _fit_dashboard_column_widths(widths: tuple[int, ...], available_width: int) 
     return tuple(fitted)
 
 
+# First to go when space is tight. A personal hide_first list precedes this
+# order; NAME is the last resort even when listed there.
+_AUTO_HIDE_ORDER = (
+    "full_name",
+    "git_status",
+    "loose_until",
+    "ip",
+    "doing",
+    "repo",
+    "created",
+    "memory_limit",
+    "local_diff",
+    "local_count",
+    "base",
+    "mem",
+    "cpu",
+    "ahead_diff",
+    "group",
+    "issues",
+    "pr",
+    "ttl",
+    "mode",
+    "ahead_count",
+    "wt",
+    "conflict",
+    "job",
+    "network",
+    "state",
+    "name",
+)
+
+
+def _fit_dashboard_fields(
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    available_width: int,
+    hide_first: Sequence[str],
+) -> tuple[list[FieldSpecCI], tuple[int, ...]]:
+    """Temporarily omit low-priority fields until their readable widths fit."""
+    kept = list(range(len(fields)))
+    priorities = tuple(dict.fromkeys((*hide_first, *_AUTO_HIDE_ORDER)))
+    order = {name: index for index, name in enumerate(priorities)}
+
+    def required_width() -> int:
+        # The selection marker moves to the first *remaining* column.
+        gutter = 2 if kept and kept[0] != 0 else 0
+        return sum(widths[i] + 2 for i in kept) + gutter
+
+    while len(kept) > 1 and required_width() > available_width:
+        discard = min(
+            kept,
+            key=lambda i: (
+                1 if fields[i].name == "name" else 0,
+                order.get(fields[i].name, len(order)),
+                -widths[i],
+            ),
+        )
+        kept.remove(discard)
+    fitted = tuple(widths[i] + (2 if pos == 0 and i != 0 else 0) for pos, i in enumerate(kept))
+    return [fields[i] for i in kept], fitted
+
+
 @dataclass(frozen=True)
 class _RepoSections:
     groups: list[RepoGroup]
@@ -1333,9 +1395,13 @@ class _RepoSections:
     selected: Row | None
     folded: frozenset[str]
     empty: bool
+    hide_first: Sequence[str] = ()
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        widths = _fit_dashboard_column_widths(self.widths, options.max_width)
+        fields, measured = _fit_dashboard_fields(
+            self.fields, self.widths, options.max_width, self.hide_first
+        )
+        widths = _fit_dashboard_column_widths(measured, options.max_width)
         sections: list[RenderableType] = []
         headers_shown = False
         if self.empty:
@@ -1346,7 +1412,7 @@ class _RepoSections:
                 if group.prefix not in self.folded:
                     sections.append(
                         repo_table(
-                            group, self.fields, widths, self.selected, show_header=not headers_shown
+                            group, fields, widths, self.selected, show_header=not headers_shown
                         )
                     )
                     headers_shown = True
@@ -1365,6 +1431,7 @@ def render(
     overlay: Overlay | None = None,
     notice: str | None = None,
     folded: frozenset[str] = frozenset(),
+    hide_first: Sequence[str] = (),
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -1393,6 +1460,7 @@ def render(
             selected,
             folded,
             empty=not all_containers,
+            hide_first=hide_first,
         ),
     ]
     if overlay is not None:
@@ -2023,6 +2091,7 @@ def run(
     view_state = seed_view_state(engine, FRONTEND_TUI)
     enabled: tuple[str, ...] | None = view_state.columns
     folded: frozenset[str] = view_state.folded
+    hide_first = tuple(_global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)
@@ -2465,6 +2534,7 @@ def run(
                         overlay=overlay,
                         notice=notice,
                         folded=folded,
+                        hide_first=hide_first,
                     ),
                     refresh=True,
                 )

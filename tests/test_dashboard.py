@@ -2410,6 +2410,79 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
     assert max(len(line) for line in table_lines) <= 32
 
 
+def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frame = dashboard.render(
+        [group],
+        selected=None,
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        last_refresh_age=1.0,
+        interval=3.0,
+        git_enabled=True,
+        enabled=("name", "state", "created", "network"),
+    )
+
+    narrow = _render_text(frame, width=32)
+    wide = _render_text(frame, width=100)
+    narrow_again = _render_text(frame, width=32)
+
+    assert "NAME" in narrow and "STATE" in narrow
+    assert "CREA" not in narrow and "NETWORK" in narrow
+    assert "CREATED" in wide and "NETWORK" in wide
+    assert narrow_again == narrow
+
+
+def test_render_uses_configured_auto_hide_order(tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frame = dashboard.render(
+        [group],
+        selected=None,
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        last_refresh_age=1.0,
+        interval=3.0,
+        git_enabled=True,
+        enabled=("name", "state", "created", "network"),
+        hide_first=("state",),
+    )
+    narrow = _render_text(frame, width=32)
+
+    assert "NAME" in narrow and "CREATED" in narrow
+    assert "STATE" not in narrow
+
+
+def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frame = dashboard.render(
+        [group],
+        selected=None,
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        last_refresh_age=1.0,
+        interval=3.0,
+        git_enabled=True,
+        enabled=("state",),
+    )
+
+    assert "STATE" in _render_text(frame, width=20)
+
+
+def test_render_selected_gutter_stays_on_row_when_first_column_is_hidden(tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frame = dashboard.render(
+        [group],
+        selected=dashboard.Row("container", "alpha-one"),
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        last_refresh_age=1.0,
+        interval=3.0,
+        git_enabled=True,
+        enabled=("state", "network"),
+        hide_first=("state",),
+    )
+
+    out = _render_text(frame, width=19)
+
+    assert any("▸" in line and "strict" in line for line in out.splitlines())
+
+
 def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
     groups = [
         dashboard.RepoGroup("a", "/a", None, [_ci("a-one", "a")]),

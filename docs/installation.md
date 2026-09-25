@@ -271,19 +271,23 @@ doctor` or the symptom it describes says so;
 ## Host networking (only if you use a firewall)
 
 Incus's default networking needs no changes. But if your host runs a
-firewall, its two managed bridges must be allowed through:
+firewall, allow the managed bridges used on this host:
 
-- `incusbr0` — Incus's default. Used by the `strict` profile.
-- `jailbee-loose` — created by `jailbee init`. Used by the `loose` profile so the
-  per-repo allowlist ACL on `incusbr0` doesn't leak into "open egress" mode.
+- `incusbr0` — Incus's default. Used by the legacy `strict` profile.
+- `jailbee-loose` — created by `jailbee init`. Used by the legacy `loose`
+  profile so the per-repo allowlist ACL on `incusbr0` doesn't leak into
+  "open egress" mode.
+- `jailbee-work` — created only after the explicit `jb net migrate` opt-in;
+  used by new work-generation containers in both modes.
 
 ### firewalld
 
-Add both bridges to the trusted zone:
+Add the bridges you use to the trusted zone (`jailbee-work` only after opt-in):
 
 ```bash
 sudo firewall-cmd --permanent --zone=trusted --add-interface=incusbr0
 sudo firewall-cmd --permanent --zone=trusted --add-interface=jailbee-loose
+sudo firewall-cmd --permanent --zone=trusted --add-interface=jailbee-work
 sudo firewall-cmd --reload
 ```
 
@@ -299,16 +303,17 @@ running on a bridge there is no symptom to read, and the check stays
 silent — so on a fresh host, apply the rules below rather than waiting for
 `doctor` to ask for them.
 
-Both bridges need the same minimal opening: one `ufw route` rule plus three
+Each active bridge needs the same minimal opening: one `ufw route` rule plus three
 `before.rules` lines, repeated per bridge.
 
-**1. Allow forwarding from both bridges** — lets containers reach the
+**1. Allow forwarding from each active bridge** — lets containers reach the
 internet via NAT. Reply traffic returns automatically through UFW's
 `ESTABLISHED,RELATED` rule, so no symmetric "out" rule is needed.
 
 ```bash
 sudo ufw route allow in on incusbr0
 sudo ufw route allow in on jailbee-loose
+sudo ufw route allow in on jailbee-work
 ```
 
 These are persistent (UFW saves them) and visible in `ufw status`.
@@ -333,6 +338,11 @@ Add the following lines inside the `*filter` section of
 -A ufw-before-input -i jailbee-loose -p udp --dport 67 -j ACCEPT
 -A ufw-before-input -i jailbee-loose -p udp --dport 53 -j ACCEPT
 -A ufw-before-input -i jailbee-loose -p tcp --dport 53 -j ACCEPT
+
+# allow Incus dnsmasq on jailbee-work (DHCP + DNS for work-generation bridge)
+-A ufw-before-input -i jailbee-work -p udp --dport 67 -j ACCEPT
+-A ufw-before-input -i jailbee-work -p udp --dport 53 -j ACCEPT
+-A ufw-before-input -i jailbee-work -p tcp --dport 53 -j ACCEPT
 ```
 
 Reload UFW: `sudo ufw reload`.
@@ -355,10 +365,40 @@ incus delete ufw-test-loose --force
 
 If `IPV4` is empty after these steps, run `jailbee doctor` for diagnostics.
 
-**Existing setups.** If your host already has the `incusbr0` rules from
-an earlier JailBee install, you only need to add the `jailbee-loose` ones (one
-`ufw route allow in` plus the three `before.rules` lines), then
-`ufw reload`. `jailbee net loose <container>` will then work end-to-end.
+**Existing setups.** Add rules only for bridges your firewall does not already
+cover. A legacy-only host does not need `jailbee-work`; after opting in, add
+its route rule and three input rules, then `ufw reload` (or add it to
+firewalld's trusted zone above). `jb doctor` probes a running work container
+and reports the failed DHCP, DNS or allowed-egress stage with the relevant
+bridge-specific rule. A present bridge with no running work container is
+reported as **not verified**, not healthy.
+
+### Optional work-network activation and rollback
+
+Package upgrade does not move any container or change the default. Existing
+containers continue on their legacy bridge and profile. To use the shared,
+stable-address work network for future containers, first install the one-time
+firewall rules above when applicable, then explicitly opt in:
+
+```bash
+jb net migrate
+```
+
+The command prepares the `jailbee-work` bridge and baseline ACL, then asks
+before changing the host-wide default for future containers. It cannot prove
+firewall reachability without a running work container; confirm only after
+applying host firewall setup. Existing legacy containers are not moved. To
+undo activation:
+
+```bash
+jb net migrate --undo
+```
+
+Undo changes only the default for future containers. It does not move existing
+work containers or remove their bridge/ACLs; those resources remain maintained
+while any work-generation instance uses them. This migration is optional for
+existing environments; `jb apply` maintains both generations and does not
+silently migrate containers.
 
 **Why this is the minimal set.** A naive setup might add e.g.
 `ufw allow in on incusbr0` and `ufw route allow out on incusbr0` as

@@ -261,6 +261,15 @@ class HostSetupState(SQLModel, table=True):
     )
 
 
+class HostNetworkDefault(SQLModel, table=True):
+    """Host-wide default network generation for future instances."""
+
+    __tablename__ = "host_network_default"
+
+    id: int = Field(default=1, primary_key=True)
+    generation: str = "legacy"
+
+
 class DismissedNotice(SQLModel, table=True):
     """One advisory the user has marked read, and the state it was read at.
 

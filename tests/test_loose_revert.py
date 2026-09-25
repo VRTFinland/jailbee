@@ -399,3 +399,83 @@ def test_legacy_flag_value_one_still_blocks_the_revert(tmp_path, mocker):
     check_and_revert_loose(cfg, incus, now=datetime.now(UTC))
 
     assert switch.call_count == 0
+
+
+def test_expired_legacy_loose_reverts_after_host_default_undo(tmp_path, mocker, now):
+    """Existing legacy instances keep their backend after host-default undo."""
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    incus = mocker.Mock(spec=Incus)
+    name = "demo-old"
+    incus.list_containers.return_value = [
+        {"name": name, "profiles": ["demo-base", "demo-net-loose"]}
+    ]
+    past = (now - timedelta(minutes=1)).isoformat()
+    incus.config_get.side_effect = lambda _name, key: {
+        "user.jailbee.loose_until": past,
+        "user.jailbee.loose_revert_to": "strict",
+        "user.jailbee.autostart_in_progress": None,
+    }.get(key)
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    result = check_and_revert_loose(cfg, incus, now=now)
+
+    assert result == [RevertResult(container=name, reverted_to="strict")]
+    switch.assert_called_once_with(cfg, incus, name, "strict", mirror_endpoint=None)
+
+
+def test_inconsistent_work_mode_reconciles_strict_before_future_ttl(tmp_path, mocker, now):
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    incus = mocker.Mock(spec=Incus)
+    name = "demo-work"
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": ["demo-base", "demo-net-work-loose"],
+            "devices": {"eth0": work_nic("10.42.0.2", ["demo-allowlist"])},
+        }
+    ]
+    future = (now + timedelta(minutes=5)).isoformat()
+    incus.config_get.side_effect = lambda _name, key: {
+        "user.jailbee.loose_until": future,
+        "user.jailbee.loose_revert_to": "strict",
+        "user.jailbee.autostart_in_progress": None,
+    }.get(key)
+    switch = mocker.patch("jailbee.loose_revert.switch_network")
+
+    result = check_and_revert_loose(cfg, incus, now=now)
+
+    assert result == [RevertResult(container=name, reverted_to="strict")]
+    switch.assert_called_once_with(cfg, incus, name, "strict", mirror_endpoint=None)
+    assert [call.args[1] for call in incus.config_unset.call_args_list] == [
+        "user.jailbee.loose_until",
+        "user.jailbee.loose_revert_to",
+    ]
+
+
+def test_failed_inconsistent_work_reconcile_preserves_ttl_for_retry(tmp_path, mocker, now):
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path, container_prefix="demo")
+    incus = mocker.Mock(spec=Incus)
+    name = "demo-work"
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "profiles": ["demo-base", "demo-net-work-loose"],
+            "devices": {"eth0": work_nic("10.42.0.2", ["demo-allowlist"])},
+        }
+    ]
+    future = (now + timedelta(minutes=5)).isoformat()
+    incus.config_get.side_effect = lambda _name, key: {
+        "user.jailbee.loose_until": future,
+        "user.jailbee.loose_revert_to": "strict",
+        "user.jailbee.autostart_in_progress": None,
+    }.get(key)
+    mocker.patch("jailbee.loose_revert.switch_network", side_effect=RuntimeError("retry strict"))
+
+    results = check_and_revert_loose(cfg, incus, now=now)
+
+    assert results == [RevertResult(container=name, reverted_to=None, error="retry strict")]
+    incus.config_unset.assert_not_called()

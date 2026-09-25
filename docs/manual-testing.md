@@ -4680,3 +4680,71 @@ jb restart apply-race-test   # the documented fix, either way
 jb pool ls gradle
 # expect: a slot allocated to apply-race-test
 ```
+
+## Work-network migration, isolation and continuity (real host)
+
+> Manual integration recipe only: unit tests mock Incus and do not establish
+> firewall reachability, packet filtering or TCP continuity. Run on a
+> disposable host with two registered repos and a reachable TCP service that
+> holds connections open (a test server you control is preferable).
+
+1. Apply the host firewall instructions in
+   [Installation](installation.md#host-networking-only-if-you-use-a-firewall),
+   then run `jb net migrate` in one repo and confirm. Create one work container
+   in each repo. Record each `incus config show --expanded <name>` NIC's bridge,
+   IPv4 reservation and `security.ipv4_filtering`; both should use
+   `jailbee-work`, with distinct addresses and filtering enabled.
+2. In repo A, start a long-lived TCP echo connection from a container to the
+   controlled service while loose. Send a numbered line every second and
+   record each reply (a silent `nc <server> <port>` session does not prove the
+   socket survived). Keep sending while switching strict, loose, then strict
+   again. Confirm replies continue on the **same socket**, the NIC's IPv4 and
+   interface index stay unchanged, and a **new** connection forbidden by
+   strict fails after the final switch. Existing loose-established flows may
+   survive strict; this is intentional, not immediate revocation.
+3. Keep repo B strict throughout. Verify it cannot reach a destination allowed
+   only by repo A's loose exception. Attempt source spoofing from A by
+   configuring its NIC with B's reserved IPv4 and initiating a fresh request;
+   the request must not acquire B's broader access. Remove the temporary
+   address immediately and confirm the original address remains configured.
+4. Run `jb doctor` with work containers stopped and again with one running.
+   The stopped case must say reachability is **not verified**; the running case
+   should probe DHCP lease, gateway DNS and an allowlisted TCP destination.
+   On a disposable host, temporarily remove one bridge firewall opening to
+   verify the matching DHCP, DNS or egress instruction names `jailbee-work`.
+5. Start an unmanaged Incus instance on `incusbr0`; confirm it remains
+   unaffected. A foreign/unmarked instance attached to `jailbee-work` must be
+   diagnosed and must prevent policy widening; do not add one to a production
+   host. Finally run `jb net migrate --undo`, verify future containers default
+   to legacy and confirm existing work instances remain on `jailbee-work`.
+
+Record host, Incus version, firewall, commands and observed outcomes separately
+from mocked unit-test results. This recipe is not evidence that it has been run.
+
+### Nested-rig observation (2026-09-25)
+
+On a disposable nested Incus 6.0.5 daemon (nftables, Ubuntu 26.04), two
+work-generation containers received distinct filtered IPv4 reservations on
+`jailbee-work` (`10.164.79.2` and `.3`); an unmanaged container stayed on
+`incusbr0`. A TCP echo socket opened in loose mode returned 40 consecutive
+numbered replies across loose → strict → loose → strict without changing its
+work NIC or reserved address. A fresh connection to the same endpoint timed
+out in strict mode. While repo B was loose, repo A's strict container could
+not connect even after temporarily adding B's source IPv4; B could connect.
+An unmarked work-bridge occupant blocked a loose grant and was flagged by
+`jb doctor`. `jb net migrate --undo` changed the future default to legacy
+without moving either existing work instance. After detaching the test-only
+ACL from `incusbr0`, `incus exec jb-net-smoke-legacy -- nc -vz -w 5
+1.0.0.1 443` succeeded while the same probe from repo A's strict container
+timed out. The work bridge still carried the repo ACL; `incusbr0` had none.
+
+The rig required removing GPU devices, `raw.idmap`, and the `/etc/localtime`
+bind from **test-owned** profiles to start nested containers (see the nested
+rig prerequisites above). For the test allowlist, the first `jb net refresh`
+reported an nftables `acl.incusbr0` flush-chain error as cosmetic, but the
+ACL in Incus remained empty. Attaching the test ACL to the test rig's
+`incusbr0` created that chain; a second refresh then populated the ACL, and
+the temporary attachment was removed before the unmanaged-container check.
+This is an observed setup limitation, not proof that the first refresh applied
+its allowlist. UFW/firewalld behavior, Docker mirror access, and a real host
+outside nested Incus were **not tested**.

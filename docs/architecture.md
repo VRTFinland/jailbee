@@ -146,8 +146,34 @@ matters for CDN-fronted services that round-robin a small IP pool. Those same
 resolved IPs are pinned into each strict-mode container's `/etc/hosts`, so the
 container's own DNS resolution can't drift from what the ACL was built
 against. `jailbee apply --no-restart` re-resolves and refreshes both live,
-without a container restart. `loose` mode (a dedicated bridge with no ACL)
-is the other selectable state.
+without a container restart. On legacy containers, `loose` mode uses a
+dedicated bridge with no ACL; the optional work-network generation below
+keeps both modes on the same bridge.
+
+### Optional work-network generation
+
+`jb net migrate` is an explicit host-wide opt-in for **future** working
+containers. It provisions `jailbee-work` with IPv4 DHCP/NAT, no routed IPv6,
+and a DHCP/DNS-only baseline ACL before storing the new default. Both strict
+and loose work instances keep the same filtered NIC, reserved IPv4 and bridge;
+mode changes swap policy rather than moving the interface. Strict policy uses
+the repo allowlist and per-container extras. Loose adds a source-IP-scoped
+bridge exception for that container, so it does not widen another repo's
+policy. Existing containers keep their legacy generation until destroyed;
+`jb apply` reconciles both generations. `jb net migrate --undo` restores only
+the future-container default and leaves in-use resources intact.
+
+The shared bridge is host-wide across repositories. Before broadening its
+policy JailBee checks all occupants and their IPv4 filtering. Doctor reports
+foreign/unmarked occupants, duplicate reservations, missing filtering and
+policy-marker inconsistencies rather than treating the host default as the
+instance's mode. The generation requires one-time host firewall setup on
+firewalled systems; reachability is only verified by probing a running work
+container (see [Installation](installation.md#host-networking-only-if-you-use-a-firewall)).
+Loose networking on this bridge is IPv4-only. Removing a loose exception
+blocks new forbidden connections, but an already established loose-created
+flow may persist after returning to strict; strict is not immediate session
+revocation.
 
 Port forwards sit outside this mechanism by construction. A forward
 (`host_ports` in config, or an ad hoc `jailbee port`) is one Incus `proxy`

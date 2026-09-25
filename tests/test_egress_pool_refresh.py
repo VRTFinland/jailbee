@@ -11,7 +11,7 @@ from pytest_mock import MockerFixture
 from sqlmodel import Session, select
 
 from jailbee.config.loader import _scratch_prefix
-from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
+from jailbee.db.models import HostNetworkDefault, PoolIP, RefreshState, RegisteredRepo
 
 
 @pytest.fixture
@@ -1356,3 +1356,113 @@ def test_refresh_pool_does_not_recreate_an_existing_repo_acl(
 
     incus.network_acl_create.assert_not_called()
     assert [c[0][0] for c in incus.network_acl_set_yaml.call_args_list] == [acl_name(cfg)]
+
+
+def test_refresh_pool_reconciles_shared_acl_on_both_bridges_after_db_default_loss(
+    db_session: Session,
+    make_cfg: Any,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    frozen_now: datetime,
+) -> None:
+    """Instance markers retain work ACLs without a DB default; legacy stopped
+    loose instances keep their existing incusbr0 ACL attachment too."""
+    from jailbee.egress import EgressEntry
+    from jailbee.egress_pool import refresh_pool
+    from jailbee.egress_scope import extra_acl_name
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+    from jailbee.network import acl_name, extra_acl_yaml
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=["github.com"])
+    work_name = f"{cfg.container_prefix}-work-strict"
+    old_name = f"{cfg.container_prefix}-old-loose-stopped"
+    work_raw = {
+        "name": work_name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "devices": {
+            "eth0": {
+                "type": "nic",
+                "network": "jailbee-work",
+                "ipv4.address": "10.42.0.2",
+                "security.ipv4_filtering": "true",
+            }
+        },
+    }
+    old_raw = {
+        "name": old_name,
+        "profiles": [f"{cfg.container_prefix}-net-loose"],
+        "devices": {"eth0": {"network": "jailbee-loose"}},
+    }
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [work_raw, old_raw]
+    legacy_acls = f"{acl_name(cfg)},other-repo-allowlist"
+    work_acls = "jailbee-work-baseline"
+    incus.network_get.side_effect = lambda network, key: (
+        legacy_acls if network == "incusbr0" else work_acls
+    )
+    work_extra_acl = extra_acl_name(work_name)
+    incus.network_acl_exists.side_effect = lambda name: name in {acl_name(cfg), work_extra_acl}
+    incus.network_acl_show.side_effect = lambda name: extra_acl_yaml(
+        name,
+        [EgressEntry(destinations=["10.0.5.7"], port=443, description="nexus.corp:443")],
+    )
+    incus.config_get.side_effect = lambda name, key: (
+        '["nexus.corp:443"]' if name == work_name else None
+    )
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        side_effect=[
+            ({"github.com": ["1.1.1.1"]}, {}),
+            ({"nexus.corp": ["10.0.5.7"]}, {}),
+        ],
+    )
+    mocker.patch("jailbee.egress_pool._compute_mirror_endpoint", return_value=None)
+    mocker.patch("jailbee.egress_pool._update_strict_container_hosts")
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=work_name,
+                state="Stopped",
+                network="strict",
+                ip=None,
+                memory_limit=None,
+            ),
+            ContainerInfo(
+                name=old_name,
+                state="Stopped",
+                network="loose",
+                ip=None,
+                memory_limit=None,
+            ),
+        ],
+    )
+
+    result = refresh_pool(cfg, GlobalConfig(), incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"
+    assert db_session.get(HostNetworkDefault, 1) is None
+    work_membership_writes = [
+        call.args[2].split(",")
+        for call in incus.network_set.call_args_list
+        if call.args[:2] == ("jailbee-work", "security.acls")
+    ]
+    assert any(
+        "jailbee-work-baseline" in names and acl_name(cfg) in names
+        for names in work_membership_writes
+    )
+    assert not any(
+        call.args[:2] == ("incusbr0", "security.acls") and acl_name(cfg) not in call.args[2]
+        for call in incus.network_set.call_args_list
+    )
+    assert any(call.args[0] == acl_name(cfg) for call in incus.network_acl_set_yaml.call_args_list)
+    assert any(call.args[0] == work_extra_acl for call in incus.network_acl_set_yaml.call_args_list)
+    assert incus.config_device_set.call_args.args == (
+        work_name,
+        "eth0",
+        {
+            **work_raw["devices"]["eth0"],
+            "security.acls": f"{acl_name(cfg)},{work_extra_acl}",
+        },
+    )
