@@ -164,8 +164,10 @@ destination while the next word starts with `-`, so a bare `--repo` fails with
 A commandless `ssh -p 8022 jailbee@localhost` prints the enabled entry points
 and exits successfully by default. Set `remote.ssh.default_entrypoint` in the
 host's `global.yaml` to `dashboard` or `shell` to open that entry point instead;
-an explicit `help` always prints the list. `dashboard` and the remote
-console require `-t`; one-shot commands do not inherently require a PTY, though
+an explicit `help` always prints the list. All three entry points are enabled
+by default, while `commands.mode` independently governs console and one-shot
+commands (the dashboard is not controlled by that command policy). `dashboard`
+and the remote console require `-t`; one-shot commands do not inherently require a PTY, though
 an interactive JailBee command may. Server-written text (this help, and any
 rejection) uses CRLF line endings whenever the client negotiated a PTY (which
 OpenSSH does even for a commandless, `-t`-less login) and plain LF otherwise;
@@ -204,7 +206,12 @@ a command entered with `!` or the new merge action runs: `exec` must be enabled
 and the command must pass `commands` (including its allowlist, when used). The
 same host-protection rule applies even when command policy is otherwise
 permissive, unless `restrict_host: false` was explicitly configured. This policy
-scope does not change the dashboard's existing actions.
+scope does not change the dashboard's existing actions. Each new SSH channel
+gets the current validated effective policy; a console or dashboard already
+running keeps its startup snapshot. An upgrade adopting the enabled entry-point
+defaults can expose the console and command routes on an already-enabled service
+unless `global.yaml` disables them; review that policy and authorized keys
+before upgrading.
 
 ### Top-level app promotion
 

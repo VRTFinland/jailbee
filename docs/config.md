@@ -2342,24 +2342,9 @@ or broaden remote access. Installing JailBee does not start a listener. See
 and enable steps and [Security and limitations](security.md#remote-ssh) for
 the trust boundary.
 
-The built-in defaults are dashboard-only on IPv4 loopback:
-
-```yaml
-remote:
-  ssh:
-    listen: 127.0.0.1
-    port: 8022
-    dashboard: true
-    shell: false
-    exec: false
-    default_entrypoint: help
-    commands:
-      mode: disabled
-      allow: []
-    restrict_host: true
-```
-
-To opt into the interactive JailBee console and selected one-shot commands:
+The built-in defaults enable all three entry points on IPv4 loopback. The
+command policy is shared by the console and one-shot commands; it does not
+enable or disable the dashboard:
 
 ```yaml
 remote:
@@ -2369,6 +2354,23 @@ remote:
     dashboard: true
     shell: true
     exec: true
+    default_entrypoint: help
+    commands:
+      mode: full
+      allow: []
+    restrict_host: true
+```
+
+To restrict command execution to selected public command leaves, replace
+`full` with an exact-leaf allowlist (entry points remain independently
+enabled):
+
+```yaml
+remote:
+  ssh:
+    listen: 127.0.0.1
+    port: 8022
+    dashboard: true
     commands:
       mode: allowlist
       allow:
@@ -2384,10 +2386,10 @@ remote:
 | `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
 | `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
-| `shell` | bool | `false` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Requires `commands.mode` to be `allowlist` or `full`. |
-| `exec` | bool | `false` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. Requires `commands.mode` to be `allowlist` or `full`. |
+| `shell` | bool | `true` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Requires `commands.mode` to be `allowlist` or `full`. |
+| `exec` | bool | `true` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. Requires `commands.mode` to be `allowlist` or `full`. |
 | `default_entrypoint` | `help` \| `dashboard` \| `shell` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `shell` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
-| `commands.mode` | `disabled` \| `allowlist` \| `full` | `disabled` | Policy shared by the interactive console and one-shot execution. `disabled` rejects JailBee commands; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts every public leaf. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). It does not control the separately enabled dashboard entry point. |
+| `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` | Policy shared by the interactive console and one-shot execution. `disabled` rejects JailBee commands; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. Unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). It does not control the separately enabled dashboard entry point. |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard; a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net egress add`, `port to-container`, the GUI launchers, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
 
@@ -2419,10 +2421,12 @@ not a hidden or disallowed command — is not rejected by this router at all:
 it is handed to `jailbee` itself, which reports its own "No such command"
 error, with suggestions, in any mode except `disabled`.
 
-`full` includes **all current and future public commands** after an upgrade.
-It never includes hidden internal commands, but it does include public
-host-affecting commands such as service administration, config editing and
-container lifecycle operations. Treat it as an explicit high-trust choice.
+`full` includes the public commands classified for remote use. A newly added
+or otherwise unclassified command is refused until explicitly classified; do
+not assume that `full` automatically authorizes future commands. Host-reaching
+commands remain refused while `restrict_host` is on. `full` is the default
+command policy, bounded by the fail-closed classifier and independent host
+restrictions.
 
 Validation rejects all of these combinations:
 
@@ -2437,7 +2441,10 @@ The `allow` list may remain populated in `disabled` or `full` mode so a later
 switch back to `allowlist` does not discard policy. Listener address and port
 are fixed until `jb remote ssh restart`. Entry-point and command policy are
 loaded for each new SSH session; an already-running dashboard or console keeps
-the policy it started with.
+the policy snapshot it started with. Upgrading to a release with these defaults
+enables shell and one-shot command entry points on an already-enabled SSH
+service unless its host-global configuration explicitly disables them; review
+`global.yaml` and authorized client keys before upgrading.
 
 `jb remote ssh serve` accepts command-line flags that override any of the
 above for that one foreground run, for trying out a different policy without

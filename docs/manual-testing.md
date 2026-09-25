@@ -68,6 +68,7 @@ remote:
       mode: allowlist
       allow:
         - exec
+        - git merge
         - ls
         - new
         - shell
@@ -113,8 +114,9 @@ ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
 ```
 
 Expect the normal first-contact host-key prompt. Answer `yes`; the connection
-then prints `Available remote commands:` with `dashboard`, `shell [--repo
-PREFIX]`, and `--repo PREFIX COMMAND [ARGS...]`, and exits zero. It must not
+then prints `Available remote commands:` with all three enabled routes —
+`dashboard`, `shell [--repo PREFIX]`, and `--repo PREFIX COMMAND [ARGS...]` —
+and exits zero. It must not
 choose a repo or open a UI. Lines must render cleanly (no staircase effect) in
 all three of these forms — plain `ssh` and `-t` both negotiate a PTY (OpenSSH
 requests one automatically for a commandless, interactive login), so both use
@@ -189,6 +191,24 @@ ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
 Expect the repo's normal `jb ls` output and exit status. A path in place of
 the prefix, an unknown prefix, an omitted `--repo`, or `dashboard extra` must
 be rejected before JailBee starts.
+
+Exercise a permitted canonical leaf through its alias, then confirm a
+host-reaching option is rejected before any operation starts:
+
+```bash
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \\
+  -- --repo "$JB_SSH_PREFIX" merge --help
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \\
+  -- --repo "$JB_SSH_PREFIX" new feat/ssh-must-not-mount --mount
+```
+
+The `merge` alias must reach the public `git merge` command help because that
+exact leaf is allowlisted. `new --mount` must exit 2 with a host-restriction
+message and must not create a container or modify the host tree. Separately,
+use a disposable **clone-mode** container for the shell/tmux/exec checks below;
+on a host with a disposable mount-mode container, confirm restricted shell,
+tmux and exec attempts are refused. Do not create a mount-mode container just
+for this check: never run it against valuable host data.
 
 If the dashboard step did not create a disposable container, run the same
 creation path directly. Choose an existing branch/base combination which

@@ -86,16 +86,17 @@ log names any allowlisted command that stays refused this way, and every
 public command is classified one way or the other by the test suite, so a
 new one cannot land unclassified.
 
-`commands.mode: full` is a high-trust setting: it grants every current
-public JailBee command and automatically grants public commands added by
-future versions — the container-side ones while `restrict_host` is on,
-all of them once it is off. It also grants every hidden *alias* of a public command (`merge`,
+`commands.mode: full` is a high-trust setting: it grants the classified public
+JailBee commands. It does
+not automatically grant a newly added or unclassified command: classification
+is fail-closed, including in `full` mode. It also grants every hidden *alias* of a public command (`merge`,
 `pull`, `push`, and a few others — see [`remote.ssh`](config.md#remotessh)),
 since those are policy-checked against the public command they alias, not
 their own hidden spelling. Hidden internal commands with no public twin
 (`_remote-console`, the deprecated `jailbee claude ...`/`chrome-pool ...`
-groups, and the rest) are never included, but that exclusion does not make
-`full` a safe default. Prefer an exact-leaf allowlist such as `ls` or `git
+groups, and the rest) are never included. The default policy uses `full`,
+bounded by this classifier and `restrict_host`; operators needing narrower
+command access should prefer an exact-leaf allowlist such as `ls` or `git
 pull`; allowing `git pull` does not grant sibling `git` commands, though it
 does grant `git --help` (a public group's own help is always permitted once
 some command under it is).

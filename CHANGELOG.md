@@ -63,9 +63,9 @@ before editing `## Unreleased`.
   authorize client public keys, and explicitly enable the per-user service with
   `jb remote ssh enable` to reach the registered-repository dashboard, a
   restricted interactive JailBee console, or policy-controlled one-shot
-  commands. It defaults to dashboard-only on `127.0.0.1:8022`; console and
-  command execution require an exact-leaf allowlist or the explicit
-  high-trust `full` policy. Password login, host shells, file transfer,
+  commands. All three entry points are enabled by default on
+  `127.0.0.1:8022`; the shared command policy defaults to `full`, with
+  fail-closed classification and host restrictions enabled. Password login, host shells, file transfer,
   forwarding are not exposed, and client environment requests (`SendEnv`)
   are accepted but ignored — never passed to the child. The remote
   dashboard withholds what would reach the host itself: no config editor, no
