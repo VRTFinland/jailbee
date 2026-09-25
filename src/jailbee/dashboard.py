@@ -2163,9 +2163,7 @@ def run(
                     return  # an orphan group: no repo root to address a child at
                 try:
                     if verb == "merge":
-                        check_dashboard_command(
-                            ["merge", target], ssh_policy, over_ssh=over_ssh
-                        )
+                        check_dashboard_command(["merge", target], ssh_policy, over_ssh=over_ssh)
                 except RouteError as exc:
                     set_notice(str(exc))
                     return
