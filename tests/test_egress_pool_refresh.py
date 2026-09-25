@@ -1359,8 +1359,8 @@ def test_refresh_pool_reconciles_shared_acl_on_both_bridges_after_db_default_los
 ) -> None:
     """Instance markers retain work ACLs without a DB default; legacy stopped
     loose instances keep their existing incusbr0 ACL attachment too."""
-    from jailbee.egress_pool import refresh_pool
     from jailbee.egress import EgressEntry
+    from jailbee.egress_pool import refresh_pool
     from jailbee.egress_scope import extra_acl_name
     from jailbee.global_config import GlobalConfig
     from jailbee.lifecycle import ContainerInfo
