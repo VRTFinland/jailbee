@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from jailbee import table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -2073,10 +2073,20 @@ def current_network_mode(
     profile attached (e.g. brand-new container before init, or user-
     customised profiles).
     """
+    from jailbee.network_generation import generation_of
+
     names = profile_names(cfg)
     mode_by_profile = {v: k for k, v in names.net_by_mode.items()}
     for raw in incus.list_containers():
         if raw["name"] == name:
+            if generation_of(cfg, raw) == "work":
+                profiles = raw.get("profiles") or []
+                for profile in profiles:
+                    if isinstance(profile, str) and profile.endswith(
+                        ("-net-work-strict", "-net-work-loose")
+                    ):
+                        return profile.rsplit("-", 1)[-1]
+                return None
             for p in raw["profiles"]:
                 if p in mode_by_profile:
                     return mode_by_profile[p]
@@ -2102,6 +2112,21 @@ def switch_network(
     names = profile_names(cfg)
     if mode not in names.net_by_mode:
         raise ValueError(f"Unknown network mode: {mode}")
+
+    from jailbee.network_generation import generation_of
+
+    raw = next((item for item in incus.list_containers() if item.get("name") == name), None)
+    if raw is None:
+        raise ValueError(f"Container '{name}' not found")
+    if generation_of(cfg, raw) == "work":
+        from jailbee.work_mode import switch_work_network
+
+        if mode not in ("strict", "loose"):
+            raise ValueError(f"Unknown network mode: {mode}")
+        switch_work_network(
+            cfg, incus, name, cast(Literal["strict", "loose"], mode), mirror_endpoint=mirror_endpoint
+        )
+        return
 
     target_profile = names.net_by_mode[mode]
     own_net_profiles = set(names.net_by_mode.values())

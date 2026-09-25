@@ -5028,6 +5028,56 @@ def test_switch_network_calls_clear_hosts_when_switching_to_loose(
     apply.assert_not_called()
 
 
+def test_work_switch_loose_grants_before_removing_nic_acl(make_cfg, tmp_path, mocker):
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = MagicMock()
+    name = "myrepo-x"
+    incus.list_containers.return_value = [{
+        "name": name,
+        "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
+        "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-egress"])},
+    }]
+    calls = []
+    mocker.patch("jailbee.work_acl.grant_work_loose", side_effect=lambda *a: calls.append("grant"))
+    mocker.patch("jailbee.work_acl.revoke_work_loose", side_effect=lambda *a: calls.append("revoke"))
+    mocker.patch("jailbee.work_network.work_network_lock")
+    mocker.patch.object(incus, "config_device_set", side_effect=lambda *a: calls.append("nic"))
+    mocker.patch("jailbee.hosts.clear_hosts")
+
+    switch_network(cfg, incus, name, "loose")
+
+    assert calls.index("grant") < calls.index("nic")
+    assert incus.config_device_set.call_args.args == (name, "eth0", {"security.acls": ""})
+    incus.config_device_remove.assert_not_called()
+    assert "myrepo-net-work-loose" in incus.profile_assign.call_args.args[1]
+
+
+def test_work_switch_restores_strict_acl_when_marker_update_fails(make_cfg, tmp_path, mocker):
+    from jailbee.work_network import work_nic
+
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = MagicMock()
+    name = "myrepo-x"
+    incus.list_containers.return_value = [{
+        "name": name,
+        "profiles": ["default", "myrepo-base", "myrepo-net-work-strict"],
+        "devices": {"eth0": work_nic("10.42.0.2", ["myrepo-allowlist"])},
+    }]
+    mocker.patch("jailbee.work_acl.grant_work_loose")
+    mocker.patch("jailbee.work_network.work_network_lock")
+    incus.profile_assign.side_effect = RuntimeError("marker failed")
+
+    with pytest.raises(RuntimeError, match="marker failed"):
+        switch_network(cfg, incus, name, "loose")
+
+    assert incus.config_device_set.call_args_list == [
+        mocker.call(name, "eth0", {"security.acls": ""}),
+        mocker.call(name, "eth0", {"security.acls": "myrepo-allowlist"}),
+    ]
+
+
 # ---- resolve_container_name ----
 
 
