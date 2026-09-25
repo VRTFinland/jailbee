@@ -342,6 +342,17 @@ typing a command.
 
 ## Limitations
 
+### Work-network generation
+
+The optional `jailbee-work` network is IPv4-only. Loose mode on this bridge
+does not provide IPv6 egress, which may be narrower than loose mode on the
+legacy unrestricted bridge on hosts where IPv6 previously worked. Returning
+to strict removes the source-scoped loose exception and blocks new forbidden
+connections, but does not forcibly terminate an already-established
+loose-created flow (for example, a long-lived TCP session). Do not treat
+strict as immediate session revocation; stop the workload or container when
+immediate termination is required. See [work-network activation](installation.md#optional-work-network-activation-and-rollback).
+
 - Linux host only
 - One IDEA at a time across containers (shared JetBrains profile). Chrome,
   Firefox, Gradle and Maven run per-container from their own pool slot

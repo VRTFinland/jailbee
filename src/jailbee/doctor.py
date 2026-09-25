@@ -22,6 +22,7 @@ from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
 from jailbee.init_command import BRIDGE_NETWORK, LOOSE_BRIDGE
 from jailbee.network import acl_name, entries_from_acl_yaml
+from jailbee.network_generation import WORK_BRIDGE, default_generation, generation_of
 from jailbee.profiles import profile_names
 from jailbee.registry import (
     MIRROR_CONTAINER_NAME,
@@ -739,6 +740,133 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                 reachability = _check_bridge_reachability(cfg, incus, bridge, on_bridge)
                 if reachability is not None:
                     results.append(reachability)
+
+            # Work networking is opt-in and host-wide. Do not suggest it as a
+            # repair for a healthy legacy-only installation.
+            try:
+                with Session(get_engine()) as session:
+                    work_default = default_generation(session) == "work"
+            except Exception:
+                work_default = False
+            work_instances = [
+                c
+                for c in containers
+                if generation_of(cfg, c) == "work"
+                or any(
+                    isinstance(device, dict) and device.get("network") == WORK_BRIDGE
+                    for device in (c.get("devices") or c.get("expanded_devices") or {}).values()
+                )
+            ]
+            if work_default or work_instances:
+                try:
+                    work_present = incus.network_exists(WORK_BRIDGE)
+                except IncusError as e:
+                    results.append(CheckResult(f"network {WORK_BRIDGE}", False, str(e)))
+                    work_present = False
+                else:
+                    results.append(
+                        CheckResult(
+                            f"network {WORK_BRIDGE}",
+                            work_present,
+                            "present"
+                            if work_present
+                            else "missing after work networking activation — "
+                            "run `jailbee net migrate`",
+                        )
+                    )
+                occupants = [
+                    c
+                    for c in containers
+                    if any(
+                        isinstance(device, dict) and device.get("network") == WORK_BRIDGE
+                        for device in (c.get("devices") or c.get("expanded_devices") or {}).values()
+                    )
+                ]
+                problems: list[str] = []
+                addresses: dict[str, str] = {}
+                for container in occupants:
+                    name = str(container.get("name", "unknown"))
+                    profiles = container.get("profiles") or []
+                    work_nic = next(
+                        (
+                            item
+                            for key, item in (
+                                container.get("devices") or container.get("expanded_devices") or {}
+                            ).items()
+                            if key == "eth0"
+                            and isinstance(item, dict)
+                            and item.get("network") == WORK_BRIDGE
+                        ),
+                        {},
+                    )
+                    if generation_of(cfg, container) != "work":
+                        problems.append(f"foreign/unmarked occupant {name}")
+                    if work_nic.get("security.ipv4_filtering") != "true":
+                        problems.append(f"{name} lacks security.ipv4_filtering=true")
+                    address = work_nic.get("ipv4.address")
+                    if isinstance(address, str) and address:
+                        if address in addresses:
+                            problems.append(
+                                f"duplicate reservation {address}: {addresses[address]} and {name}"
+                            )
+                        addresses[address] = name
+                    if (
+                        len(
+                            [
+                                p
+                                for p in profiles
+                                if isinstance(p, str)
+                                and p.endswith(("-net-work-strict", "-net-work-loose"))
+                            ]
+                        )
+                        != 1
+                    ):
+                        problems.append(f"{name} has conflicting or missing work mode marker")
+                    marker = next(
+                        (
+                            p
+                            for p in profiles
+                            if isinstance(p, str)
+                            and p.endswith(("-net-work-strict", "-net-work-loose"))
+                        ),
+                        None,
+                    )
+                    if marker is not None:
+                        strict_marker = marker.endswith("-net-work-strict")
+                        owner = marker[
+                            : -len("-net-work-strict" if strict_marker else "-net-work-loose")
+                        ]
+                        nic_acls = str(work_nic.get("security.acls", "")).split(",")
+                        acl_enforced = f"{owner}-allowlist" in nic_acls
+                        if strict_marker != acl_enforced:
+                            problems.append(f"{name} mode marker disagrees with NIC ACL policy")
+                    ttl = (container.get("config") or {}).get("user.jailbee.loose_until")
+                    loose = any(
+                        isinstance(p, str) and p.endswith("-net-work-loose") for p in profiles
+                    )
+                    if bool(ttl) and not loose:
+                        problems.append(f"{name} has a loose TTL but its mode marker is strict")
+                if problems:
+                    results.append(
+                        CheckResult(f"network {WORK_BRIDGE} policy", False, "; ".join(problems))
+                    )
+                if not work_present:
+                    pass
+                elif not any(c.get("status") == "Running" for c in occupants):
+                    results.append(
+                        CheckResult(
+                            f"network {WORK_BRIDGE} reachability",
+                            True,
+                            "not verified — no running work container; "
+                            "DHCP, DNS and egress need a live probe",
+                            skipped=True,
+                        )
+                    )
+                else:
+                    running_work = [c for c in occupants if c.get("status") == "Running"]
+                    probe = _check_bridge_reachability(cfg, incus, WORK_BRIDGE, running_work)
+                    if probe is not None:
+                        results.append(probe)
 
     # 5. Shared dir tree
     assert cfg.shared_dir is not None  # set by load_config
@@ -1704,7 +1832,9 @@ def _check_bridge_reachability(
             f"silent DROP for DHCP, and /etc/ufw/before.rules "
             f"needs `-A ufw-before-input -i {bridge} -p udp --dport 67 -j "
             f"ACCEPT` (and the two --dport 53 lines), then `sudo ufw "
-            f"reload`. A rule naming a since-renamed interface leaves the "
+            f"reload`. With firewalld run `sudo firewall-cmd --permanent "
+            f"--zone=trusted --add-interface={bridge} && sudo firewall-cmd "
+            f"--reload`. A rule naming a since-renamed interface leaves the "
             f"same symptom. See docs/installation.md → 'Host networking'. A "
             f"container that just started may simply not have its lease yet.",
         )
@@ -1725,7 +1855,9 @@ def _check_bridge_reachability(
                 f"looks like — a refusal would answer instantly. With ufw, "
                 f"/etc/ufw/before.rules needs `-A ufw-before-input -i "
                 f"{bridge} -p udp --dport 53 -j ACCEPT` and the same line for "
-                f"tcp, then `sudo ufw reload`. Otherwise expect every name "
+                f"tcp, then `sudo ufw reload`; with firewalld run `sudo "
+                f"firewall-cmd --permanent --zone=trusted --add-interface="
+                f"{bridge} && sudo firewall-cmd --reload`. Otherwise expect every name "
                 f"lookup in the container to hang. See docs/installation.md → "
                 f"'Host networking'.",
             )
@@ -1744,7 +1876,10 @@ def _check_bridge_reachability(
                 f"host is reachable but nothing gets past it. Either this "
                 f"bridge is not being forwarded — `sudo ufw route allow in on "
                 f"{bridge}` — or that destination is unreachable from the "
-                f"host itself. See docs/installation.md → 'Host networking'.",
+                f"host itself. With firewalld, add it to trusted: `sudo "
+                f"firewall-cmd --permanent --zone=trusted --add-interface="
+                f"{bridge} && sudo firewall-cmd --reload`. See "
+                f"docs/installation.md → 'Host networking'.",
             )
         proven.append(f"egress to {ip}:{port} ok" if status == 0 else "egress not verified")
 

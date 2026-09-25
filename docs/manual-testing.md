@@ -4663,3 +4663,40 @@ jb restart apply-race-test   # the documented fix, either way
 jb pool ls gradle
 # expect: a slot allocated to apply-race-test
 ```
+
+## Work-network migration, isolation and continuity (real host)
+
+> Manual integration recipe only: unit tests mock Incus and do not establish
+> firewall reachability, packet filtering or TCP continuity. Run on a
+> disposable host with two registered repos and a reachable TCP service that
+> holds connections open (a test server you control is preferable).
+
+1. Apply the host firewall instructions in
+   [Installation](installation.md#host-networking-only-if-you-use-a-firewall),
+   then run `jb net migrate` in one repo and confirm. Create one work container
+   in each repo. Record each `incus config show --expanded <name>` NIC's bridge,
+   IPv4 reservation and `security.ipv4_filtering`; both should use
+   `jailbee-work`, with distinct addresses and filtering enabled.
+2. In repo A, start a long-lived TCP connection from a container to the
+   controlled service while loose, for example `nc <server> <port>`. Keep it
+   open; switch strict and back to loose, then strict again. Separately verify
+   a **new** connection forbidden by strict is denied after the final switch.
+   Existing loose-established flows may survive strict; this is intentional.
+3. Keep repo B strict throughout. Verify it cannot reach a destination allowed
+   only by repo A's loose exception. Attempt source spoofing from A by
+   configuring its NIC with B's reserved IPv4 and initiating a fresh request;
+   the request must not acquire B's broader access. Remove the temporary
+   address immediately and confirm the original address remains configured.
+4. Run `jb doctor` with work containers stopped and again with one running.
+   The stopped case must say reachability is **not verified**; the running case
+   should probe DHCP lease, gateway DNS and an allowlisted TCP destination.
+   On a disposable host, temporarily remove one bridge firewall opening to
+   verify the matching DHCP, DNS or egress instruction names `jailbee-work`.
+5. Start an unmanaged Incus instance on `incusbr0`; confirm it remains
+   unaffected. A foreign/unmarked instance attached to `jailbee-work` must be
+   diagnosed and must prevent policy widening; do not add one to a production
+   host. Finally run `jb net migrate --undo`, verify future containers default
+   to legacy and confirm existing work instances remain on `jailbee-work`.
+
+Record host, Incus version, firewall, commands and observed outcomes separately
+from mocked unit-test results. This recipe is not evidence that it has been run.

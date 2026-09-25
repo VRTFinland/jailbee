@@ -2539,6 +2539,67 @@ def test_doctor_diagnoses_the_strict_bridge_too(tmp_path, make_cfg, mocker):
     assert "incusbr0" in check.detail
 
 
+def test_unprobed_work_bridge_is_not_called_reachable(tmp_path, mocker):
+    """A bridge with no running work container provides no firewall evidence."""
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    rows = [r for r in results if r.name == "network jailbee-work reachability"]
+    assert len(rows) == 1
+    assert "not verified" in rows[0].detail
+    assert rows[0].skipped
+
+
+def test_legacy_only_host_does_not_get_migration_pressure(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.return_value = True
+    mocker.patch("jailbee.doctor.default_generation", return_value="legacy")
+
+    results = run_checks(cfg, incus)
+
+    assert not any("jailbee-work" in row.name for row in results)
+    assert not any("net migrate" in row.detail for row in results)
+
+
+def test_work_bridge_reports_foreign_unfiltered_and_duplicate_occupants(tmp_path, mocker):
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    profiles = [f"{cfg.container_prefix}-net-work-strict"]
+    nic = {
+        "network": "jailbee-work",
+        "ipv4.address": "10.20.0.8",
+        "security.acls": "",
+    }
+    incus.list_containers.return_value = [
+        {"name": "foreign", "status": "Stopped", "profiles": [], "devices": {"eth0": nic}},
+        {
+            "name": "app-second",
+            "status": "Stopped",
+            "profiles": profiles,
+            "devices": {"eth0": nic},
+            "config": {"user.jailbee.loose_until": "2099-01-01T00:00:00+00:00"},
+        },
+    ]
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    policy = next(row for row in results if row.name == "network jailbee-work policy")
+    assert not policy.ok
+    assert "foreign/unmarked occupant foreign" in policy.detail
+    assert "security.ipv4_filtering=true" in policy.detail
+    assert "duplicate reservation 10.20.0.8" in policy.detail
+    assert "mode marker disagrees with NIC ACL policy" in policy.detail
+    assert "loose TTL but its mode marker is strict" in policy.detail
+
+
 def test_doctor_reports_a_group_named_none(tmp_path, mocker):
     """`none` is the CLI's word for "no group", so a group of that name is unaddressable."""
     from jailbee import doctor
