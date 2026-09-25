@@ -1111,6 +1111,43 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     incus.start.assert_called_once_with("repo-feat-x")
 
 
+def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker):
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.db.models import HostNetworkDefault
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.network_get.return_value = "10.10.0.1/24"
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    mocker.patch("jailbee.network_generation.ensure_work_bridge")
+    mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    engine = get_engine()
+    with Session(engine) as session:
+        session.add(HostNetworkDefault(id=1, generation="work"))
+        session.commit()
+    try:
+        new_container(
+            cfg,
+            incus,
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True,
+                                autostart=False),
+        )
+    finally:
+        with Session(engine) as session:
+            session.delete(session.get(HostNetworkDefault, 1))
+            session.commit()
+    assert f"{cfg.container_prefix}-net-work-strict" in incus.profile_assign.call_args.args[1]
+    incus.config_device_override.assert_called_once_with(
+        "repo-feat-x", "eth0",
+        {"type": "nic", "network": "jailbee-work", "ipv4.address": "10.10.0.2",
+         "security.ipv4_filtering": "true", "security.acls": f"{cfg.container_prefix}-allowlist"},
+    )
+
+
 def test_new_container_relocates_legacy_claude_json(tmp_path, mocker):
     """`jailbee new` in a repo that hasn't been re-`apply`ed yet must still
     migrate a legacy `<shared_dir>/claude.json` — otherwise it's orphaned the

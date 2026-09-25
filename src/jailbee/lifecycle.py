@@ -1139,10 +1139,26 @@ def new_container(
     # cannot show (it selects on profile membership) yet which blocks the next
     # `jailbee new` with "already exists". Refusing up front leaves nothing
     # behind, and says what Incus's own "Profile not found" does not.
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.network_generation import default_generation
+
+    with Session(get_engine()) as session:
+        generation = default_generation(session)
+    if generation == "work":
+        from jailbee.profiles import work_profile_yamls
+
+        for profile_name, content in work_profile_yamls(cfg).items():
+            if not incus.profile_exists(profile_name):
+                incus.profile_create(profile_name)
+                incus.profile_set_yaml(profile_name, content)
     missing = [
         p
         for p in (names.base, names.binds, names.net_strict, names.net_loose)
         if not incus.profile_exists(p)
+    ] if generation == "legacy" else [
+        p for p in (names.base, names.binds) if not incus.profile_exists(p)
     ]
     if missing:
         raise ValueError(
@@ -1152,17 +1168,56 @@ def new_container(
         )
 
     _phase("creating")
-    incus.init(opts.from_base, name)
+    if generation == "work":
+        from jailbee.network import acl_name
+        from jailbee.network_generation import ensure_work_bridge
+        from jailbee.work_acl import ensure_work_repo_acl, grant_work_loose
+        from jailbee.work_network import reserve_work_ipv4, work_network_lock, work_nic
+
+        with work_network_lock():
+            fresh = False
+            try:
+                ensure_work_bridge(incus)
+                ensure_work_repo_acl(cfg, incus)
+                ip = reserve_work_ipv4(incus, name)
+                incus.init(opts.from_base, name)
+                fresh = True
+                incus.profile_assign(
+                    name,
+                    [
+                        "default",
+                        names.base,
+                        names.binds,
+                        f"{cfg.container_prefix}-net-work",
+                        f"{cfg.container_prefix}-net-work-{opts.network}",
+                    ],
+                )
+                acl_names = (
+                    [acl_name(cfg)] if opts.network == "strict" else []
+                )
+                incus.config_device_override(name, "eth0", work_nic(ip, acl_names))
+                if opts.network == "loose":
+                    grant_work_loose(cfg, incus, name)
+            except Exception:
+                if fresh:
+                    try:
+                        incus.delete(name, force=True)
+                    except Exception:
+                        pass
+                raise
+    else:
+        incus.init(opts.from_base, name)
     try:
-        incus.profile_assign(
-            name,
-            [
-                "default",
-                names.base,
-                names.binds,
-                names.net_by_mode[opts.network],
-            ],
-        )
+        if generation == "legacy":
+            incus.profile_assign(
+                name,
+                [
+                    "default",
+                    names.base,
+                    names.binds,
+                    names.net_by_mode[opts.network],
+                ],
+            )
     except IncusError:
         # The profiles exist (the pre-flight above said so) but Incus rejected
         # them anyway — a `host_mounts` entry whose source path is gone does
