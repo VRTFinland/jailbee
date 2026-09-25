@@ -102,13 +102,20 @@ def work_nic(ip: str, acl_names: list[str]) -> dict[str, str]:
 
 
 def verify_work_nic(incus: Incus, name: str, ip: str) -> None:
-    """Verify the effective local eth0 before starting a new work instance."""
+    """Verify the authoritative local and expanded eth0 before starting."""
     raw = next((item for item in incus.list_containers() if item.get("name") == name), None)
-    devices = (raw or {}).get("devices") or (raw or {}).get("expanded_devices") or {}
-    eth0 = devices.get("eth0")
-    if not isinstance(eth0, dict) or eth0.get("type") != "nic":
-        raise ValueError(f"{name} has no effective eth0 work NIC")
-    if eth0.get("network") != WORK_BRIDGE or eth0.get("ipv4.address") != ip:
-        raise ValueError(f"{name} has incompatible work NIC bridge or IPv4 reservation")
-    if eth0.get("security.ipv4_filtering") != "true":
-        raise ValueError(f"{name} work NIC requires security.ipv4_filtering=true")
+    if raw is None:
+        raise ValueError(f"{name} is missing after work NIC configuration")
+    local_devices = raw.get("devices") or {}
+    expanded_devices = raw.get("expanded_devices") or {}
+    local_eth0 = local_devices.get("eth0")
+    expanded_eth0 = expanded_devices.get("eth0") if expanded_devices else local_eth0
+    if not isinstance(local_eth0, dict) or local_eth0.get("type") != "nic":
+        raise ValueError(f"{name} has no authoritative local eth0 work NIC")
+    for eth0, scope in ((local_eth0, "local"), (expanded_eth0, "effective")):
+        if not isinstance(eth0, dict) or eth0.get("type") != "nic":
+            raise ValueError(f"{name} has no {scope} eth0 work NIC")
+        if eth0.get("network") != WORK_BRIDGE or eth0.get("ipv4.address") != ip:
+            raise ValueError(f"{name} has incompatible {scope} work NIC bridge or IPv4 reservation")
+        if eth0.get("security.ipv4_filtering") != "true":
+            raise ValueError(f"{name} {scope} work NIC requires security.ipv4_filtering=true")

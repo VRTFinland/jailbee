@@ -1135,7 +1135,8 @@ def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_se
                         "network": "jailbee-work",
                         "ipv4.address": "10.10.0.2",
                         "security.ipv4_filtering": "true",
-                    }
+                    },
+                    "host-source": {"type": "disk", "path": "/mnt/host-source"},
                 },
             }
         ],
@@ -1239,8 +1240,20 @@ def test_new_work_loose_grant_precedes_start(tmp_path, mocker, db_session):
     assert order == ["grant", "start"]
 
 
-def test_scratch_directory_creation_uses_work_profiles(tmp_path, mocker, db_session):
-    cfg = _cfg_for_new(tmp_path / "scratch")
+def test_scratch_directory_creation_uses_work_profiles(tmp_path, monkeypatch, mocker, db_session):
+    from jailbee.config import load_repo_config
+
+    xdg = tmp_path / "xdg"
+    global_dir = xdg / "jailbee"
+    global_dir.mkdir(parents=True)
+    (global_dir / "global.yaml").write_text("scratch:\n  enabled: true\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    repo = tmp_path / "scratch-project"
+    repo.mkdir()
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    cfg = load_repo_config(repo)
+    assert cfg.is_synthetic()
+    assert not (repo / ".git").exists()
     incus = MagicMock()
     incus.exists.return_value = False
     incus.profile_exists.return_value = True
@@ -1269,7 +1282,8 @@ def test_scratch_directory_creation_uses_work_profiles(tmp_path, mocker, db_sess
     new_container(
         cfg,
         incus,
-        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", True, autostart=False),
+        NewContainerOptions("", "scratch-test", "strict", "8GiB", 2, "base", False,
+                            autostart=False),
     )
 
     assert incus.profile_assign.call_args.args[1][-1] == f"{cfg.container_prefix}-net-work-strict"
@@ -1315,8 +1329,17 @@ def test_work_creation_rejects_unfiltered_nic_and_removes_fresh_instance(
                         "type": "nic",
                         "network": "jailbee-work",
                         "ipv4.address": "10.10.0.2",
-                        "security.ipv4_filtering": "false",
+                        "security.ipv4_filtering": "true",
                     }
+                },
+                "expanded_devices": {
+                    "eth0": {
+                        "type": "nic",
+                        "network": "jailbee-work",
+                        "ipv4.address": "10.10.0.2",
+                        "security.ipv4_filtering": "false",
+                    },
+                    "host-source": {"type": "disk", "path": "/mnt/host-source"},
                 },
             }
         ],
