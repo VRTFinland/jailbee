@@ -360,9 +360,7 @@ def test_help_says_commands_are_disabled_in_disabled_mode(
 ) -> None:
     config = GlobalConfig(
         remote=RemoteConfig(
-            ssh=RemoteSSHConfig(
-                dashboard=True, commands=RemoteCommandPolicy(mode="disabled")
-            )
+            ssh=RemoteSSHConfig(dashboard=True, commands=RemoteCommandPolicy(mode="disabled"))
         )
     )
     mocker.patch("jailbee.remote_ssh.console.load_global_config", return_value=(config, []))

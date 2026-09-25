@@ -245,9 +245,7 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
 
     config = default_global_config_path()
     config.parent.mkdir(parents=True)
-    config.write_text(
-        "remote:\n  ssh:\n    listen: localhost\n    shell: false\n    exec: false\n"
-    )
+    config.write_text("remote:\n  ssh:\n    listen: localhost\n    shell: false\n    exec: false\n")
     mocker.patch("jailbee.remote_ssh.service._ssh_dependency_available", return_value=False)
     mocker.patch(
         "subprocess.run",

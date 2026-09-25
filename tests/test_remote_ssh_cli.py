@@ -427,9 +427,7 @@ def test_remote_ssh_serve_empty_allowlist_override_is_a_clean_error(
     ensure = mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
     serve = mocker.patch("jailbee.remote_ssh.server.serve")
 
-    result = CliRunner().invoke(
-        app, ["remote", "ssh", "serve", "--commands", "allowlist"]
-    )
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--commands", "allowlist"])
 
     assert result.exit_code == 1
     assert "Traceback" not in result.stderr
