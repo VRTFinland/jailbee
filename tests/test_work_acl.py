@@ -26,8 +26,11 @@ def test_reconcile_work_nic_preserves_verified_bridge_and_reservation(make_cfg, 
         "ipv4.address": "10.42.0.2",
         "security.ipv4_filtering": "true",
     }
-    raw = {"name": name, "profiles": [f"{cfg.container_prefix}-net-work-strict"],
-           "devices": {"eth0": original}}
+    raw = {
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "devices": {"eth0": original},
+    }
     incus = MagicMock()
     incus.list_containers.return_value = [raw]
     incus.config_get.return_value = "[]"
