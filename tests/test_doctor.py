@@ -2632,8 +2632,7 @@ def test_work_default_finds_foreign_nic_from_expanded_config(tmp_path, mocker):
     incus.network_exists.side_effect = lambda name: name == "jailbee-work"
     incus.list_containers.return_value = [_running("foreign", ["default"], ipv4="10.20.0.8")]
     incus.config_show.return_value = (
-        "devices:\n  eth0:\n    type: nic\n    network: jailbee-work\n"
-        "    ipv4.address: 10.20.0.8\n"
+        "devices:\n  eth0:\n    type: nic\n    network: jailbee-work\n    ipv4.address: 10.20.0.8\n"
     )
     mocker.patch("jailbee.doctor.default_generation", return_value="work")
 
@@ -2654,7 +2653,9 @@ def test_uninspectable_marked_work_nic_is_not_reported_as_success(tmp_path, mock
     incus = _baseline_incus()
     incus.network_exists.side_effect = lambda name: name == "jailbee-work"
     name = f"{cfg.container_prefix}-marked"
-    incus.list_containers.return_value = [_running(name, [f"{cfg.container_prefix}-net-work-strict"])]
+    incus.list_containers.return_value = [
+        _running(name, [f"{cfg.container_prefix}-net-work-strict"])
+    ]
     incus.config_show.side_effect = IncusError("cannot inspect expanded config")
     mocker.patch("jailbee.doctor.default_generation", return_value="work")
 

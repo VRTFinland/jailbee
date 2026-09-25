@@ -774,11 +774,15 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                         if isinstance(raw_devices.get("eth0"), dict):
                             continue
                     try:
-                        expanded = yaml.safe_load(incus.config_show(instance_name, expanded=True)) or {}
+                        expanded = (
+                            yaml.safe_load(incus.config_show(instance_name, expanded=True)) or {}
+                        )
                     except (IncusError, yaml.YAMLError) as e:
                         inspection_errors.append(f"{instance_name}: {e}")
                         continue
-                    expanded_devices = expanded.get("devices") if isinstance(expanded, dict) else None
+                    expanded_devices = (
+                        expanded.get("devices") if isinstance(expanded, dict) else None
+                    )
                     if isinstance(expanded_devices, dict):
                         device_maps[instance_name] = expanded_devices
 
@@ -820,7 +824,9 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                     profiles = container.get("profiles") or []
                     work_nic = device_maps.get(name, {}).get("eth0")
                     if not isinstance(work_nic, dict) or work_nic.get("network") != WORK_BRIDGE:
-                        problems.append(f"{name} has a work marker but no confirmed eth0 NIC on {WORK_BRIDGE}")
+                        problems.append(
+                            f"{name} has a work marker but no confirmed eth0 NIC on {WORK_BRIDGE}"
+                        )
                         work_nic = {}
                     if generation_of(cfg, container) != "work":
                         problems.append(f"foreign/unmarked occupant {name}")
@@ -880,7 +886,8 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                         CheckResult(
                             f"network {WORK_BRIDGE} reachability",
                             True,
-                            "not verified — work-network occupants or NIC policy could not be confirmed",
+                            "not verified — work-network occupants or NIC policy "
+                            "could not be confirmed",
                             skipped=True,
                         )
                     )
