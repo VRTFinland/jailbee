@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
@@ -142,6 +142,37 @@ class ConfigEditPolicy(BaseModel):
     )
 
 
+class DashboardAutoHide(BaseModel):
+    """TUI-only priority overrides; omitted columns use the built-in order."""
+
+    model_config = ConfigDict(extra="forbid")
+    hide_first: list[str] = Field(
+        default_factory=list,
+        description="Columns to remove first, in order, when the terminal is too narrow.",
+    )
+
+
+class DashboardConfig(ColumnConfig):
+    """New layout preferences alongside the legacy one-time column seed."""
+
+    hide: list[str] = Field(
+        default_factory=lambda: list(DASHBOARD_DEFAULT_HIDE),
+        description="Legacy columns excluded from the one-time dashboard preference import.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_columns(cls, value: object) -> object:
+        if isinstance(value, ColumnConfig) and not isinstance(value, cls):
+            return value.model_dump(exclude_unset=True)
+        return value
+
+    auto_hide: DashboardAutoHide = Field(
+        default_factory=DashboardAutoHide,
+        description="Temporary terminal-width column hiding (TUI only).",
+    )
+
+
 class GlobalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # default_factory ensures DockerRegistryMirror's model_post_init re-runs
@@ -176,13 +207,12 @@ class GlobalConfig(BaseModel):
             "`fields` there replaces this list outright rather than appending to it."
         ),
     )
-    dashboard: ColumnConfig = Field(
-        default_factory=lambda: ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE)),
+    dashboard: DashboardConfig = Field(
+        default_factory=DashboardConfig,
         description=(
-            "Deprecated and ignored: imported once into each dashboard's own "
-            "remembered column settings the first time it's opened after upgrading, "
-            "then left alone. Use the dashboard's own settings instead — press F2 in "
-            "`jailbee dashboard`, or View ▸ Columns in the GUI."
+            "`auto_hide` controls temporary TUI column hiding. Legacy `fields`/`hide` "
+            "are imported once into each dashboard's remembered column settings; "
+            "use F2 in the TUI or View ▸ Columns in the GUI to change those."
         ),
     )
     credentials: Credentials = Field(
@@ -245,7 +275,27 @@ class GlobalConfig(BaseModel):
 
 
 _LS_DEFAULT = ColumnConfig()
-_DASHBOARD_DEFAULT = ColumnConfig(hide=list(DASHBOARD_DEFAULT_HIDE))
+_DASHBOARD_DEFAULT = DashboardConfig()
+
+
+def _auto_hide_names(names: list[str]) -> tuple[list[str], list[str]]:
+    """Canonicalize layout priorities, reporting cosmetic name mistakes."""
+    if not names:
+        return [], []
+    from jailbee.config.models_columns import _known_ls_field_names, canonical_ls_field
+
+    known = _known_ls_field_names()
+    cleaned: list[str] = []
+    issues: list[str] = []
+    for raw in names:
+        name = canonical_ls_field(raw)
+        if name not in known:
+            issues.append(f"global.dashboard.auto_hide.hide_first: unknown field {raw!r}")
+        elif name in cleaned:
+            issues.append(f"global.dashboard.auto_hide.hide_first: duplicate field {raw!r}")
+        else:
+            cleaned.append(name)
+    return cleaned, issues
 
 
 def validate_global_raw(
@@ -348,6 +398,16 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     """
     gcfg = _load_unsanitized(path)
 
+    priorities, priority_warnings = _auto_hide_names(gcfg.dashboard.auto_hide.hide_first)
+    if priorities != gcfg.dashboard.auto_hide.hide_first:
+        gcfg = gcfg.model_copy(
+            update={
+                "dashboard": gcfg.dashboard.model_copy(
+                    update={"auto_hide": gcfg.dashboard.auto_hide.model_copy(update={"hide_first": priorities})}
+                )
+            }
+        )
+
     # Early return: both blocks already look exactly like their defaults
     # (the common case — most repos never touch column config), so skip
     # building `lifecycle.ls_field_specs`'s full field list just to confirm
@@ -356,8 +416,9 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # saved work is not one-time — the global-layer twin of `load_config`'s
     # short-circuit for the repo layer; see `_columns_already_sanitized` for
     # why comparing by value here is safe.
-    if _columns_already_sanitized([(gcfg.ls, _LS_DEFAULT), (gcfg.dashboard, _DASHBOARD_DEFAULT)]):
-        return gcfg, []
+    dashboard_columns = gcfg.dashboard.model_copy(update={"auto_hide": DashboardAutoHide()})
+    if _columns_already_sanitized([(gcfg.ls, _LS_DEFAULT), (dashboard_columns, _DASHBOARD_DEFAULT)]):
+        return gcfg, priority_warnings
 
     # Local import: config.py imports names from this module, so a
     # module-level import would form a cycle.
@@ -371,7 +432,7 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # when it needed no fix, so this costs nothing in the common case.
     fixed, warnings = sanitize_column_blocks([("ls", gcfg.ls), ("dashboard", gcfg.dashboard)])
     gcfg = gcfg.model_copy(update=fixed)
-    return gcfg, warnings
+    return gcfg, priority_warnings + warnings
 
 
 def global_config_issues(path: Path) -> list[str]:
@@ -390,12 +451,13 @@ def global_config_issues(path: Path) -> list[str]:
 
     gcfg = _load_unsanitized(path)
     issues = validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
-    if "dashboard" in gcfg.model_fields_set:
+    _, priority_issues = _auto_hide_names(gcfg.dashboard.auto_hide.hide_first)
+    issues.extend(priority_issues)
+    if "dashboard" in gcfg.model_fields_set and {"fields", "hide"} & gcfg.dashboard.model_fields_set:
         issues.append(
-            "global.dashboard: deprecated and ignored — the dashboards remember "
+            "global.dashboard.fields/hide: deprecated — the dashboards remember "
             "their own columns now (press F2 in `jailbee dashboard`, or View ▸ "
-            "Columns in the GUI). This block is imported into each dashboard's own "
-            "settings the first time you open that dashboard after upgrading; it "
-            "can be deleted once you have opened both the TUI and the GUI."
+            "Columns in the GUI). These keys are imported once per frontend and "
+            "can then be removed; dashboard.auto_hide remains active."
         )
     return issues

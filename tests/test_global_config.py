@@ -241,6 +241,64 @@ def test_load_global_config_accepts_valid_column_blocks(tmp_path):
     assert warnings == []
 
 
+def test_dashboard_auto_hide_is_not_a_deprecated_column_preference(tmp_path):
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  auto_hide:\n    hide_first: [doing, ip]\n")
+
+    gcfg, warnings = load_global_config(path)
+
+    assert gcfg.dashboard.auto_hide.hide_first == ["doing", "ip"]
+    assert warnings == []
+    assert global_config_issues(path) == []
+
+
+def test_dashboard_auto_hide_keeps_legacy_seed_defaults(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  auto_hide:\n    hide_first: [doing]\n")
+
+    gcfg, _ = load_global_config(path)
+
+    assert gcfg.dashboard.hide == ["repo", "full_name", "git_status", "created", "ttl"]
+    assert gcfg.dashboard.fields is None
+
+
+def test_dashboard_explicit_empty_hide_still_overrides_seed_defaults(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  hide: []\n  auto_hide:\n    hide_first: [doing]\n")
+
+    gcfg, _ = load_global_config(path)
+
+    assert gcfg.dashboard.hide == []
+
+
+def test_default_global_config_does_not_rebuild_column_specs(tmp_path, mocker):
+    from jailbee.config import models_columns
+
+    path = tmp_path / "missing.yaml"
+    mocker.patch.object(models_columns, "_known_ls_field_names", side_effect=AssertionError("slow path"))
+
+    gcfg, warnings = load_global_config(path)
+
+    assert gcfg.dashboard.fields is None
+    assert warnings == []
+
+
+def test_dashboard_auto_hide_recovers_unknown_and_duplicate_columns(tmp_path):
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  auto_hide:\n    hide_first: [ip, bogus, ip, state]\n")
+
+    gcfg, warnings = load_global_config(path)
+
+    assert gcfg.dashboard.auto_hide.hide_first == ["ip", "state"]
+    assert any("bogus" in w for w in warnings)
+    assert any("duplicate" in w for w in warnings)
+    assert any("bogus" in issue for issue in global_config_issues(path))
+
+
 def test_global_config_issues_reports_an_unknown_column_name(tmp_path):
     """`gie config validate`'s check — the same typo `load_global_config`
     recovers from is still an error here, with the allowed names listed."""

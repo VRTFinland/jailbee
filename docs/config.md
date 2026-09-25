@@ -144,7 +144,7 @@ Three keys are exempt from this pipeline — see [Keys that bypass the deep-merg
 | `browsers.chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`). Firefox has no host default — it defaults to `source: image` instead. |
 | `browsers.default` | global | Personal — which browser `jailbee browser` opens when more than one is enabled |
 | `apps.<name>` | repo | A GUI app is part of the repo's tooling, like `agents:` |
-| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). `dashboard:` is deprecated — the dashboards keep their own view state instead, not a config block at either layer. |
+| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). Dashboard column *selection* is remembered by each front-end; `dashboard.auto_hide` in global config controls temporary TUI layout. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
@@ -2117,8 +2117,9 @@ remembered preference, not a lock.
 
 ### The dashboards remember their own columns
 
-`jailbee dashboard` and `jailbee gui` do **not** read a `dashboard:` block.
-Each remembers its own columns and its own folded repo groups, because a
+`jailbee dashboard` and `jailbee gui` do **not** read `dashboard.fields` or
+`dashboard.hide` as ongoing column preferences. Each remembers its own columns
+and its own folded repo groups, because a
 live view can own the state you are looking at:
 
 - In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
@@ -2136,14 +2137,34 @@ apply, and the overlay marks them so. This differs from `ls --fields`, where
 naming a column forces it on — there a name is a one-shot request, here it is
 a standing preference.
 
-**`dashboard:` is deprecated.** The key is still accepted, so an existing
-config keeps loading, but it is ignored: it is imported into each
+The terminal dashboard additionally hides low-priority columns temporarily
+when they cannot fit at readable widths. It recalculates on each redraw, so
+resizing the terminal restores them without changing the remembered selection.
+The built-in order starts with long/redundant fields (`full_name`,
+`git_status`, `loose_until`, `ip`, `doing`) and leaves `name` for last. To
+override the first columns to hide across all repos, set in
+`~/.config/jailbee/global.yaml`:
+
+```yaml
+dashboard:
+  auto_hide:
+    hide_first: [doing, ip, created]
+```
+
+Remaining columns follow the built-in order. `name` stays last even if listed;
+an enabled single column always remains visible. Unknown and repeated names
+are ignored with warnings; `jailbee config validate` reports them. This setting
+only affects the terminal dashboard, not the Qt dashboard or `jailbee ls`.
+
+**Only `dashboard.fields` and `dashboard.hide` are deprecated.** These keys
+remain accepted so an existing config keeps loading: they are imported into each
 front-end's own settings the first time you open that dashboard after
 upgrading, and can be deleted once both have been opened at least once.
 `jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` is
 imported this way — the setting is personal and applies in every repo, so a
 repo-level `dashboard:` block is reported and dropped rather than seeded.
-`ls:` is unaffected and still lives in config.
+`ls:` is unaffected and still lives in config; `dashboard.auto_hide` remains
+active even after the legacy column keys are removed.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a
 hardcoded selection — name, state, `mode`/`base`/`network`, a job badge and
