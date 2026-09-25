@@ -593,9 +593,7 @@ def test_sync_bridge_extras_keeps_work_generation_extras_off_legacy_bridge(
             ),
         },
     )
-    incus.list_containers.return_value[1]["profiles"] = [
-        f"{cfg.container_prefix}-net-work-strict"
-    ]
+    incus.list_containers.return_value[1]["profiles"] = [f"{cfg.container_prefix}-net-work-strict"]
 
     egress_scope.sync_bridge_extras(cfg, incus)
 

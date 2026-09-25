@@ -547,8 +547,16 @@ def test_run_apply_dispatches_all_network_generations_without_detaching_legacy_a
     run_apply(cfg, incus, GlobalConfig(), no_restart=True)
 
     assert _no_container_acl_apply.call_args_list == [
-        mocker.call(cfg, incus, f"{cfg.container_prefix}-legacy-strict", mode="strict", sync_bridge=False),
-        mocker.call(cfg, incus, f"{cfg.container_prefix}-legacy-loose-stopped", mode="loose", sync_bridge=False),
+        mocker.call(
+            cfg, incus, f"{cfg.container_prefix}-legacy-strict", mode="strict", sync_bridge=False
+        ),
+        mocker.call(
+            cfg,
+            incus,
+            f"{cfg.container_prefix}-legacy-loose-stopped",
+            mode="loose",
+            sync_bridge=False,
+        ),
     ]
     assert [call.args[2]["name"] for call in reconcile_nic.call_args_list] == [
         f"{cfg.container_prefix}-work-strict",
