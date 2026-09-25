@@ -116,11 +116,16 @@ expansion, aliases or executable lookup — the shell kind of alias, not to be
 confused with the JailBee command aliases below.
 
 Policy lives only in host-global `remote.ssh`. Defaults are
-`127.0.0.1:8022`, dashboard on, console/exec off and command mode disabled.
-An allowlist names exact public leaves (`git pull`, not `git`); `full` includes
-all current and future public leaves but never hidden internal commands. All
-authorized keys share the same policy and every registered repo. Treat `full`
-and the dashboard as host-capable access, not a read-only view.
+`127.0.0.1:8022`, with dashboard, console and one-shot execution enabled,
+`commands.mode: full`, and host restrictions on. Entry-point switches are
+separate from the shared command policy: `commands.mode` governs console and
+one-shot commands, not the dashboard. An allowlist names exact public leaves
+(`git pull`, not `git`); `full` admits classified public leaves but newly added
+or unclassified commands fail closed, and hidden internal commands are never
+included. `full` is high-trust and broad, but does not disable host restrictions;
+`restrict_host: false` lifts those restrictions. All authorized keys share the
+same policy and every registered repo. Treat the dashboard and broadly
+configured command access as host-capable access, not a read-only view.
 
 In every mode, `full` included, a remote command may not set a path-typed
 option or argument (`--config`, `net refresh --repo`, ...) nor `new --mount`;

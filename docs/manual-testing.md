@@ -196,9 +196,9 @@ Exercise a permitted canonical leaf through its alias, then confirm a
 host-reaching option is rejected before any operation starts:
 
 ```bash
-ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \\
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
   -- --repo "$JB_SSH_PREFIX" merge --help
-ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \\
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost \
   -- --repo "$JB_SSH_PREFIX" new feat/ssh-must-not-mount --mount
 ```
 

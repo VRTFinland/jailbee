@@ -778,9 +778,13 @@ of these at once.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered
-repos. Keep the default listener on `127.0.0.1`; prefer exact-leaf allowlists.
-`commands.mode: full` includes all current and future public commands and is a
-high-trust setting. See the full command behavior and security boundary in
+repos. By default, dashboard, console and one-shot execution are enabled on
+`127.0.0.1:8022`; the shared command policy defaults to `full`, while host
+restrictions remain on. Prefer exact-leaf allowlists for narrower command
+access. `commands.mode: full` is a high-trust, broad command policy: it admits
+classified public commands, but newly added or unclassified commands fail
+closed. It does not lift host restrictions; `remote.ssh.restrict_host: false`
+does that. See the full command behavior and security boundary in
 [`references/commands.md`](references/commands.md#remote-ssh).
 
 ## Other day-to-day commands
