@@ -403,7 +403,11 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
         gcfg = gcfg.model_copy(
             update={
                 "dashboard": gcfg.dashboard.model_copy(
-                    update={"auto_hide": gcfg.dashboard.auto_hide.model_copy(update={"hide_first": priorities})}
+                    update={
+                        "auto_hide": gcfg.dashboard.auto_hide.model_copy(
+                            update={"hide_first": priorities}
+                        )
+                    }
                 )
             }
         )
@@ -417,7 +421,9 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # short-circuit for the repo layer; see `_columns_already_sanitized` for
     # why comparing by value here is safe.
     dashboard_columns = gcfg.dashboard.model_copy(update={"auto_hide": DashboardAutoHide()})
-    if _columns_already_sanitized([(gcfg.ls, _LS_DEFAULT), (dashboard_columns, _DASHBOARD_DEFAULT)]):
+    if _columns_already_sanitized(
+        [(gcfg.ls, _LS_DEFAULT), (dashboard_columns, _DASHBOARD_DEFAULT)]
+    ):
         return gcfg, priority_warnings
 
     # Local import: config.py imports names from this module, so a
@@ -453,7 +459,10 @@ def global_config_issues(path: Path) -> list[str]:
     issues = validate_column_blocks([("global.ls", gcfg.ls), ("global.dashboard", gcfg.dashboard)])
     _, priority_issues = _auto_hide_names(gcfg.dashboard.auto_hide.hide_first)
     issues.extend(priority_issues)
-    if "dashboard" in gcfg.model_fields_set and {"fields", "hide"} & gcfg.dashboard.model_fields_set:
+    if (
+        "dashboard" in gcfg.model_fields_set
+        and {"fields", "hide"} & gcfg.dashboard.model_fields_set
+    ):
         issues.append(
             "global.dashboard.fields/hide: deprecated — the dashboards remember "
             "their own columns now (press F2 in `jailbee dashboard`, or View ▸ "

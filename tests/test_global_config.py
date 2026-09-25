@@ -277,7 +277,9 @@ def test_default_global_config_does_not_rebuild_column_specs(tmp_path, mocker):
     from jailbee.config import models_columns
 
     path = tmp_path / "missing.yaml"
-    mocker.patch.object(models_columns, "_known_ls_field_names", side_effect=AssertionError("slow path"))
+    mocker.patch.object(
+        models_columns, "_known_ls_field_names", side_effect=AssertionError("slow path")
+    )
 
     gcfg, warnings = load_global_config(path)
 

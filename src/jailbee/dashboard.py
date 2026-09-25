@@ -1287,22 +1287,46 @@ def _fit_dashboard_column_widths(widths: tuple[int, ...], available_width: int) 
 # First to go when space is tight. A personal hide_first list precedes this
 # order; NAME is the last resort even when listed there.
 _AUTO_HIDE_ORDER = (
-    "full_name", "git_status", "loose_until", "ip", "doing", "repo",
-    "created", "memory_limit", "local_diff", "local_count", "base",
-    "mem", "cpu", "ahead_diff", "group", "issues", "pr", "ttl",
-    "mode", "ahead_count", "wt", "conflict", "job", "network",
-    "state", "name",
+    "full_name",
+    "git_status",
+    "loose_until",
+    "ip",
+    "doing",
+    "repo",
+    "created",
+    "memory_limit",
+    "local_diff",
+    "local_count",
+    "base",
+    "mem",
+    "cpu",
+    "ahead_diff",
+    "group",
+    "issues",
+    "pr",
+    "ttl",
+    "mode",
+    "ahead_count",
+    "wt",
+    "conflict",
+    "job",
+    "network",
+    "state",
+    "name",
 )
 
 
 def _fit_dashboard_fields(
-    fields: list[FieldSpecCI], widths: tuple[int, ...], available_width: int,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    available_width: int,
     hide_first: Sequence[str],
 ) -> tuple[list[FieldSpecCI], tuple[int, ...]]:
     """Temporarily omit low-priority fields until their readable widths fit."""
     kept = list(range(len(fields)))
     priorities = tuple(dict.fromkeys((*hide_first, *_AUTO_HIDE_ORDER)))
     order = {name: index for index, name in enumerate(priorities)}
+
     def required_width() -> int:
         # The selection marker moves to the first *remaining* column.
         gutter = 2 if kept and kept[0] != 0 else 0
