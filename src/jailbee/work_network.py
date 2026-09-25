@@ -47,31 +47,59 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
     occupied: set[ipaddress.IPv4Address] = {interface.ip}
     existing: str | None = None
     for container in containers:
-        devices = container.get("devices") or container.get("expanded_devices") or {}
-        for device in devices.values():
-            if not isinstance(device, dict) or device.get("network") != WORK_BRIDGE:
-                continue
-            address = device.get("ipv4.address")
-            if not isinstance(address, str) or not address:
-                continue
-            try:
-                parsed = ipaddress.IPv4Address(address)
-            except ipaddress.AddressValueError:
-                continue
-            occupied.add(parsed)
-            if container.get("name") == name:
-                if device.get("security.ipv4_filtering") != "true":
-                    raise ValueError(f"{name} has a work NIC reservation without IPv4 filtering")
-                if (
-                    parsed not in interface.network
-                    or parsed == interface.ip
-                    or parsed
-                    in {interface.network.network_address, interface.network.broadcast_address}
-                ):
-                    raise ValueError(
-                        f"{name} has a work NIC address outside the bridge subnet: {parsed}"
-                    )
-                existing = str(parsed)
+        local_devices = container.get("devices") or {}
+        expanded_devices = container.get("expanded_devices") or {}
+        devices = [local_devices, expanded_devices]
+        name_matches = container.get("name") == name
+        work_markers = [
+            profile for profile in (container.get("profiles") or [])
+            if isinstance(profile, str)
+            and profile.endswith(("-net-work-strict", "-net-work-loose"))
+        ]
+        if name_matches and work_markers:
+            if len(work_markers) != 1:
+                raise ValueError(f"{name} has conflicting work mode markers")
+            local_eth0 = local_devices.get("eth0")
+            if (
+                not isinstance(local_eth0, dict)
+                or local_eth0.get("type") != "nic"
+                or local_eth0.get("network") != WORK_BRIDGE
+            ):
+                raise ValueError(f"{name} has no authoritative local eth0 work NIC")
+            if local_eth0.get("security.ipv4_filtering") != "true":
+                raise ValueError(f"{name} authoritative work eth0 requires IPv4 filtering")
+            effective_eth0 = expanded_devices.get("eth0") if expanded_devices else local_eth0
+            if not isinstance(effective_eth0, dict) or any(
+                effective_eth0.get(key) != local_eth0.get(key)
+                for key in ("network", "ipv4.address", "security.ipv4_filtering")
+            ):
+                raise ValueError(f"{name} local and effective work eth0 configuration disagree")
+        for device_map in devices:
+            for device in device_map.values():
+                if not isinstance(device, dict) or device.get("network") != WORK_BRIDGE:
+                    continue
+                address = device.get("ipv4.address")
+                if not isinstance(address, str) or not address:
+                    continue
+                try:
+                    parsed = ipaddress.IPv4Address(address)
+                except ipaddress.AddressValueError:
+                    continue
+                occupied.add(parsed)
+                if container.get("name") == name:
+                    if device.get("security.ipv4_filtering") != "true":
+                        raise ValueError(f"{name} has a work NIC reservation without IPv4 filtering")
+                    if (
+                        parsed not in interface.network
+                        or parsed == interface.ip
+                        or parsed
+                        in {interface.network.network_address, interface.network.broadcast_address}
+                    ):
+                        raise ValueError(
+                            f"{name} has a work NIC address outside the bridge subnet: {parsed}"
+                        )
+                    if device_map is local_devices:
+                        existing = str(parsed)
     if existing is not None:
         return existing
 

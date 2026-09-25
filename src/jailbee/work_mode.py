@@ -11,7 +11,9 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 
-def work_mode_state(cfg: Config, raw: dict[str, Any]) -> tuple[str | None, bool]:
+def work_mode_state(
+    cfg: Config, raw: dict[str, Any], incus: Incus | None = None
+) -> tuple[str | None, bool]:
     """Return conservative mode and whether marker and authoritative NIC agree."""
     profiles = raw.get("profiles") or []
     marker = next(
@@ -24,7 +26,9 @@ def work_mode_state(cfg: Config, raw: dict[str, Any]) -> tuple[str | None, bool]
         None,
     )
     devices = raw.get("devices") or {}
-    nic = devices.get("eth0") if isinstance(devices, dict) else None
+    expanded = raw.get("expanded_devices") or {}
+    effective_devices = {**expanded, **devices}
+    nic = effective_devices.get("eth0") if isinstance(effective_devices, dict) else None
     valid_nic = (
         isinstance(nic, dict)
         and nic.get("type") == "nic"
@@ -40,6 +44,14 @@ def work_mode_state(cfg: Config, raw: dict[str, Any]) -> tuple[str | None, bool]
         return None, False
     if not valid_nic:
         return "strict", False
+    if incus is not None:
+        from jailbee.work_acl import work_loose_policy_matches
+
+        try:
+            if not work_loose_policy_matches(cfg, incus):
+                return "strict", False
+        except Exception:
+            return "strict", False
     return (marker, True) if marker == nic_mode else ("strict", False)
 
 
@@ -88,7 +100,7 @@ def switch_work_network(
                 raise
             work_acl.revoke_work_loose(cfg, incus, name)
         else:
-            incus.config_device_set(name, "eth0", {"security.acls": strict_acl})
+            work_acl.apply_work_container_acl(cfg, incus, name, mode="strict")
             incus.profile_assign(name, profiles)
             work_acl.revoke_work_loose(cfg, incus, name)
 

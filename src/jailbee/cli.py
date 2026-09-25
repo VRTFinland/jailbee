@@ -8676,7 +8676,18 @@ def egress_add_cmd(
             return
         egress_scope.set_container_extras(incus, container, [*extras, entry])
         mode = _egress_container_mode(cfg, incus, container)
-        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+        from jailbee.network_generation import generation_of
+
+        raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+        if generation_of(cfg, raw) == "work":
+            from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+            from jailbee.work_network import work_network_lock
+
+            with work_network_lock():
+                apply_work_container_acl(cfg, incus, container)
+                reconcile_work_acl(cfg, incus)
+        else:
+            egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' may now reach {entry}.")
 
@@ -8757,7 +8768,18 @@ def egress_rm_cmd(
             raise typer.Exit(1)
         egress_scope.set_container_extras(incus, container, [e for e in extras if e != entry])
         mode = _egress_container_mode(cfg, incus, container)
-        egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
+        from jailbee.network_generation import generation_of
+
+        raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
+        if generation_of(cfg, raw) == "work":
+            from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
+            from jailbee.work_network import work_network_lock
+
+            with work_network_lock():
+                apply_work_container_acl(cfg, incus, container)
+                reconcile_work_acl(cfg, incus)
+        else:
+            egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
     success(f"'{container}' can no longer reach {entry}.")
 

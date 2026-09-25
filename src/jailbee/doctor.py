@@ -875,6 +875,16 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                     )
                     if bool(ttl) and not loose:
                         problems.append(f"{name} has a loose TTL but its mode marker is strict")
+                from jailbee.work_acl import work_loose_policy_matches
+
+                try:
+                    if not work_loose_policy_matches(cfg, incus):
+                        problems.append(
+                            f"{cfg.container_prefix} work loose source ACL or bridge attachment "
+                            "does not match verified loose NICs — run `jailbee apply`"
+                        )
+                except Exception as e:
+                    problems.append(f"work loose bridge policy cannot be verified: {e}")
                 if problems:
                     results.append(
                         CheckResult(f"network {WORK_BRIDGE} policy", False, "; ".join(problems))

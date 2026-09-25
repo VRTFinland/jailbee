@@ -2606,6 +2606,7 @@ def test_marker_recovers_work_nic_when_list_omits_device_fields(tmp_path, mocker
     incus.network_exists.side_effect = lambda name: name == "jailbee-work"
     incus.network_get.return_value = "10.20.0.1/24"
     incus.network_acl_show.return_value = ""
+    incus.network_acl_exists.side_effect = lambda name: name != f"{cfg.container_prefix}-work-loose"
     incus.exec.return_value = "0\n"
     name = f"{cfg.container_prefix}-marked"
     marker = f"{cfg.container_prefix}-net-work-strict"

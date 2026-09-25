@@ -5100,17 +5100,20 @@ def test_work_switch_strict_marker_failure_is_reported_as_strict_and_retryable(
     }
     incus.list_containers.return_value = [item]
     mocker.patch("jailbee.work_acl.revoke_work_loose")
+    apply_work = mocker.patch(
+        "jailbee.work_acl.apply_work_container_acl",
+        side_effect=lambda *_args, **_kwargs: item["devices"]["eth0"].update(
+            {"security.acls": "myrepo-allowlist"}
+        ),
+    )
     mocker.patch("jailbee.work_network.work_network_lock")
     incus.profile_assign.side_effect = RuntimeError("marker update failed")
 
     with pytest.raises(RuntimeError, match="marker update failed"):
         switch_network(cfg, incus, name, "strict")
 
-    item["devices"]["eth0"]["security.acls"] = "myrepo-allowlist"
     assert current_network_mode(cfg, incus, name) == "strict"
-    incus.config_device_set.assert_called_once_with(
-        name, "eth0", {"security.acls": "myrepo-allowlist"}
-    )
+    apply_work.assert_called_once_with(cfg, incus, name, mode="strict")
 
 
 def test_work_switch_strict_retry_finishes_pending_marker_and_revoke(make_cfg, tmp_path, mocker):
@@ -5128,6 +5131,12 @@ def test_work_switch_strict_retry_finishes_pending_marker_and_revoke(make_cfg, t
     ]
     incus.profile_assign.side_effect = [RuntimeError("transient"), None]
     revoke = mocker.patch("jailbee.work_acl.revoke_work_loose")
+    apply_work = mocker.patch(
+        "jailbee.work_acl.apply_work_container_acl",
+        side_effect=lambda *_args, **_kwargs: incus.list_containers.return_value[0][
+            "devices"
+        ]["eth0"].update({"security.acls": "myrepo-allowlist"}),
+    )
     mocker.patch("jailbee.work_network.work_network_lock")
     mocker.patch("jailbee.hosts.apply_hosts")
 
@@ -5136,7 +5145,8 @@ def test_work_switch_strict_retry_finishes_pending_marker_and_revoke(make_cfg, t
     switch_network(cfg, incus, name, "strict")
 
     assert incus.profile_assign.call_count == 2
-    assert incus.config_device_set.call_count == 2
+    assert apply_work.call_count == 2
+    assert all(call.kwargs == {"mode": "strict"} for call in apply_work.call_args_list)
     assert revoke.call_count == 1
 
 

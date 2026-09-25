@@ -183,6 +183,44 @@ def test_run_apply_noop_when_nothing_changed(
     assert incus.network_acl_set_yaml.call_count == 0
 
 
+def test_work_default_reconciles_work_profiles_without_attaching_legacy_acl(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.profiles import (
+        base_profile_yaml,
+        binds_profile_yaml,
+        net_profile_yaml,
+        profile_names,
+        work_profile_yamls,
+    )
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.network_generation.default_generation", return_value="work")
+    ensure_legacy = mocker.patch("jailbee.apply._ensure_acl_attached_to_bridge")
+    legacy_union = mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    names = profile_names(cfg)
+    yamls = {
+        names.base: base_profile_yaml(cfg), names.binds: binds_profile_yaml(cfg),
+        names.net_strict: net_profile_yaml(cfg, "strict"),
+        names.net_loose: net_profile_yaml(cfg, "loose"),
+        **work_profile_yamls(cfg),
+    }
+    incus.profile_show.side_effect = lambda name: yamls[name]
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+
+    result = run_apply(cfg, incus, GlobalConfig(), no_restart=True)
+
+    assert set(result.profiles_unchanged) == set(yamls)
+    ensure_legacy.assert_not_called()
+    legacy_union.assert_not_called()
+
+
 def test_run_apply_syncs_gie_skills_when_claude_enabled(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:
@@ -524,6 +562,7 @@ def test_run_apply_dispatches_all_network_generations_without_detaching_legacy_a
     ]
     incus = MagicMock(spec=Incus)
     incus.list_containers.return_value = raw
+    incus.config_get.return_value = None
     incus.network_acl_list.return_value = []
     incus.network_get.return_value = f"jailbee-work-baseline,{cfg.container_prefix}-allowlist"
     incus.profile_exists.return_value = True
@@ -540,8 +579,7 @@ def test_run_apply_dispatches_all_network_generations_without_detaching_legacy_a
         for suffix, mode, _profiles, _bridge in specs
     ]
     mocker.patch("jailbee.apply._list_containers", return_value=containers)
-    reconcile_nic = mocker.patch("jailbee.work_network.reconcile_work_nic")
-    ensure_work_acl = mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+    apply_work = mocker.patch("jailbee.work_acl.apply_work_container_acl")
     reconcile_work_acl = mocker.patch("jailbee.work_acl.reconcile_work_acl")
 
     run_apply(cfg, incus, GlobalConfig(), no_restart=True)
@@ -558,11 +596,11 @@ def test_run_apply_dispatches_all_network_generations_without_detaching_legacy_a
             sync_bridge=False,
         ),
     ]
-    assert [call.args[2]["name"] for call in reconcile_nic.call_args_list] == [
+    assert [call.args[2] for call in apply_work.call_args_list] == [
         f"{cfg.container_prefix}-work-strict",
         f"{cfg.container_prefix}-work-loose",
     ]
-    assert ensure_work_acl.call_count == reconcile_work_acl.call_count == 2
+    assert reconcile_work_acl.call_count == 2
     # The pre-existing repo attachment stays on incusbr0 even though its loose
     # occupant is stopped; apply must not detach a still-needed legacy ACL.
     assert not any(

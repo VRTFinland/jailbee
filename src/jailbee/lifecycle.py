@@ -2082,7 +2082,7 @@ def current_network_mode(
             if generation_of(cfg, raw) == "work":
                 from jailbee.work_mode import work_mode_state
 
-                mode, agrees = work_mode_state(cfg, raw)
+                mode, agrees = work_mode_state(cfg, raw, incus)
                 if not agrees:
                     warn_plain(
                         f"Network mode mismatch for '{name}' (work marker and eth0 ACL disagree); "

@@ -116,7 +116,7 @@ def check_and_revert_loose(
             if generation_of(cfg, raw) == "work":
                 from jailbee.work_mode import work_mode_state
 
-                state, agrees = work_mode_state(cfg, raw)
+                state, agrees = work_mode_state(cfg, raw, incus)
                 if not agrees:
                     # Reconcile interrupted work transitions to strict before
                     # discarding the retry labels. A stale loose marker must
