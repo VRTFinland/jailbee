@@ -25,7 +25,7 @@ deep-merges them:
 
 Precedence is **defaults < global < repo < host-local repo**. The effective `Config` Python object passed to every `jailbee` command is the merged result.
 
-## Host-local overrides (`repos/<prefix>.yaml`)
+## Host-local overrides
 
 Use the host-local file for a repo-specific choice that should not be shared
 with teammates. It lives under the JailBee config directory (normally
@@ -53,7 +53,7 @@ The local file containing `github.token` must be mode `0600`; JailBee rejects
 it if group or other permissions are present. `github.token` remains visible
 as a masked, disabled row in the interactive config editor; edit the YAML file
 directly to change it. `github.api_tokens` is deprecated and will be removed in 2.0.0;
-move entries with [`jailbee config migrate`](commands.md#configuration).
+move entries with [`jailbee config migrate`](#migrating-older-per-repo-settings).
 
 Credential-group membership is also host-specific. A local group overrides
 the global default; explicit `null` opts this repo out of sharing:
@@ -2264,7 +2264,7 @@ github:
 
 `enabled` is a host-wide integration switch and normally lives in
 `global.yaml`. Put each repo's token in its host-local file instead; see
-[Host-local overrides](#host-local-overrides-reposprefixyaml). A fine-grained
+[Host-local overrides](#host-local-overrides). A fine-grained
 PAT is scoped to its owner and selected repositories.
 
 **Placement constraint:** `github.enabled` belongs in `global.yaml`, while
@@ -2493,7 +2493,7 @@ credentials:
 
 `credentials.repos` is deprecated and will be removed in 2.0.0. Migrate
 entries to each repo's local `credentials.group` using
-[`jailbee config migrate`](commands.md#configuration); new per-repo choices
+[`jailbee config migrate`](#migrating-older-per-repo-settings); new per-repo choices
 should not be added to this map.
 
 A group name must match `[a-z0-9][a-z0-9-]*`: it becomes one directory name

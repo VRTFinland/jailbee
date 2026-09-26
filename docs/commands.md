@@ -72,7 +72,7 @@
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration. `show` accepts `--layer global\|repo\|local\|effective` (default `effective`); the effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
-| `jailbee config migrate [--apply]` | Preview migrations of deprecated config spellings and storage (default dry run); `--apply` writes changes, leaves `.bak` backups, and leaves conflicts in place for manual resolution. See [Host-local overrides](config.md#host-local-overrides-reposprefixyaml) |
+| `jailbee config migrate [--apply]` | Preview migrations of deprecated config spellings and storage (default dry run); `--apply` writes changes, leaves `.bak` backups, and leaves conflicts in place for manual resolution. See [Host-local overrides](config.md#host-local-overrides) |
 | `jailbee config edit [--global\|--local] [--write patch\|regenerate]` | Interactive editor for the repo, global, or host-local layer, with each field's own help text, its origin and a validated, backed-up save. `--global` edits `~/.config/jailbee/global.yaml`; `--local` edits `~/.config/jailbee/repos/<prefix>.yaml`; `--write` overrides [`config_edit.write_policy`](config.md#config_edit) for one run. Structured lists (`host_mounts`, `agents`, `autostart` steps, …) open a drill-down screen — `n` new, `x` delete, `J`/`K` reorder, `Enter` to open an entry. `github.token` is masked and read-only in the editor; edit the local YAML directly to change it. |
 | `jailbee version` / `jailbee --version` | Print the JailBee version |
 
