@@ -7128,29 +7128,47 @@ def test_cli_push_no_name_empty_pushable_errors(mocker):
 
     result = CliRunner().invoke(app, ["git", "push"])
 
-    assert result.exit_code == 1
-    assert "no pushable containers" in result.output.lower()
+    assert result.exit_code == 2
+    assert "no pushable containers" in panel_text(result.output).lower()
 
 
 def test_cli_push_no_name_no_tty_errors(mocker):
-    """No name + no TTY → exit 1 with name-required message."""
+    """No name + no TTY → exit 2, listing the pushable containers."""
     from typer.testing import CliRunner
 
     from jailbee.cli import app
+    from jailbee.lifecycle import ContainerInfo
 
     cfg = _push_cfg_factory(action="plain", source="default-branch")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    # CliRunner has no TTY by default.
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[
+            ContainerInfo(
+                name=name,
+                state="Running",
+                network=None,
+                ip=None,
+                memory_limit=None,
+                repo="fake",
+                mode="clone",
+            )
+            for name in ("fake-a", "fake-b")
+        ],
+    )
+    push = mocker.patch("jailbee.cli._do_single_push")
 
     result = CliRunner().invoke(app, ["git", "push"])
 
-    assert result.exit_code == 1
-    assert "no container" in result.output.lower() or "name required" in result.output.lower()
+    assert result.exit_code == 2
+    assert "Candidates:" in panel_text(result.output)
+    push.assert_not_called()
 
 
 def test_cli_push_no_name_picker_cancel_aborts(mocker):
-    """Picker cancelled → Abort (exit 1), nothing pushed.
+    """Picker cancelled → Cancelled (exit 1), nothing pushed.
 
     Two pushable containers, because one is auto-selected without the
     picker ever running: with a single container this test used to exit 1
@@ -7186,7 +7204,7 @@ def test_cli_push_no_name_picker_cancel_aborts(mocker):
     result = CliRunner().invoke(app, ["git", "push"])
 
     assert result.exit_code == 1
-    assert "Aborted" in result.output
+    assert "cancelled" in panel_text(result.output)
     pick.assert_called_once()
     push.assert_not_called()
 

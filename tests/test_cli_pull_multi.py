@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from jailbee.cli import _resolve_ff_policy, app
 from jailbee.lifecycle import ContainerInfo, ResolvedContainer
+from tests.conftest import panel_text
 
 
 def _info(name: str, mode: str = "clone", state: str = "Running") -> ContainerInfo:
@@ -115,9 +116,8 @@ def test_pull_multi_user_cancels(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "pull"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text(result.stdout + (result.stderr or ""))
     do_pull.assert_not_called()
 
 
@@ -181,8 +181,8 @@ def test_pull_multi_empty_pullable_list_errors(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "pull"])
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
     assert "No containers eligible for pull" in combined
     do_pull.assert_not_called()
 

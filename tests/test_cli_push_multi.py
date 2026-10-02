@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from jailbee.cli import app
 from jailbee.lifecycle import ContainerInfo
+from tests.conftest import panel_text
 
 
 def _info(name: str, mode: str = "clone", state: str = "Running") -> ContainerInfo:
@@ -291,9 +292,52 @@ def test_push_multi_user_cancels(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "push"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text(result.stdout + (result.stderr or ""))
+    do_push.assert_not_called()
+
+
+def test_push_without_name_off_a_tty_lists_the_candidates(mocker, tmp_path):
+    _wire(
+        mocker,
+        tmp_path,
+        containers=[_info("myrepo-feat-a"), _info("myrepo-feat-b"), _info("myrepo-mount", "mount")],
+        picked=None,
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    picker = mocker.patch("jailbee.tui.pick_containers_multi")
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "Candidates: feat-a, feat-b" in combined
+    assert "mount" not in combined.split("Candidates:")[1]
+    picker.assert_not_called()
+    do_push.assert_not_called()
+
+
+def test_push_without_name_off_a_tty_never_auto_takes_a_single_container(mocker, tmp_path):
+    _wire(mocker, tmp_path, containers=[_info("myrepo-feat-a")], picked=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    assert "Candidates: feat-a" in panel_text(result.stdout + (result.stderr or ""))
+    do_push.assert_not_called()
+
+
+def test_push_without_name_and_no_pushable_container_is_a_missing_value(mocker, tmp_path):
+    _wire(mocker, tmp_path, containers=[_info("myrepo-mount", "mount")], picked=None)
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    assert "No pushable containers" in panel_text(result.stdout + (result.stderr or ""))
     do_push.assert_not_called()
 
 

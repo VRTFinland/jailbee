@@ -2968,7 +2968,8 @@ jailbee destroy feat-x --all
 
 # 6. Non-TTY guard (run from a script or pipe)
 echo "" | jailbee destroy
-# expect: exit 1, "no container name given; pass a name, use --all, ..."
+# expect: exit 2, "missing container; pass it explicitly or use --all, or run in a
+#         terminal to choose. Candidates: ..."
 ```
 
 ## `jailbee ls` git-status columns + `jailbee git diff` smoke test
@@ -3672,10 +3673,9 @@ jailbee push
 
 # 7. Push off a TTY never reaches the confirmation at all (unlike pull/checkout).
 jailbee push < /dev/null
-# expect: exit 1, "No container name given. Pass a name, or run
-#         interactively in a TTY for the container picker." — no plan block,
-#         because push requires an explicit name before it ever lists
-#         containers when stdin isn't a TTY.
+# expect: exit 2, "missing container; pass it explicitly, or run in a terminal
+#         to choose. Candidates: ..." — no plan block, because off a TTY push
+#         lists the candidates and stops instead of choosing one.
 ```
 
 ## LOCAL diff and the destroy guard

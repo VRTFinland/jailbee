@@ -7,7 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from tests.conftest import make_cfg
+from tests.conftest import make_cfg, panel_text
 
 
 def _payload(name: str, status: str = "Running") -> dict:
@@ -357,9 +357,10 @@ def test_destroy_no_args_non_tty_errors(tmp_path, mocker):
 
     result = CliRunner().invoke(app, ["destroy"])
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
-    assert "no container name given" in combined
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "Candidates: feat-a" in combined
+    assert "--all" in combined
     picker.assert_not_called()
     destroy_mock.assert_not_called()
 
@@ -452,9 +453,22 @@ def test_destroy_no_args_tty_user_cancels_aborts(tmp_path, mocker):
 
     result = CliRunner().invoke(app, ["destroy"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "cancelled" in combined
+    destroy_mock.assert_not_called()
+
+
+def test_destroy_no_args_tty_single_container_is_still_asked(tmp_path, mocker):
+    """Destroy never takes a lone candidate unasked."""
+    _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    picker = mocker.patch("jailbee.tui.pick_containers_multi", return_value=None)
+
+    result = CliRunner().invoke(app, ["destroy"])
+
+    picker.assert_called_once()
+    assert result.exit_code == 1
     destroy_mock.assert_not_called()
 
 

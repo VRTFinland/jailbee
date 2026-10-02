@@ -3792,6 +3792,35 @@ def _resolve_existing(
     return incus, resolved
 
 
+def _pick_containers(
+    cfg: "Config",
+    containers: "list[ContainerInfo]",
+    *,
+    message: str,
+    alternative: str | None = None,
+) -> list[str]:
+    """Several containers, chosen per the missing-value policy (multi-select).
+
+    No single-candidate shortcut here: whether one candidate may be taken
+    unasked is each caller's decision (destroy: never). An empty selection
+    (`[]`, nothing ticked) is returned as is — its meaning is the caller's too.
+    """
+    from jailbee import prompting, tui
+
+    if not containers:
+        raise prompting.MissingValue(
+            "container", reason=f"no managed containers found for repo '{cfg.container_prefix}'"
+        )
+    if not prompting.is_interactive():
+        raise prompting.MissingValue(
+            "container", candidates=[c.display_name for c in containers], alternative=alternative
+        )
+    picked = tui.pick_containers_multi(containers, message=message)
+    if picked is None:
+        raise prompting.Cancelled()
+    return picked
+
+
 def _resolve_existing_detailed(
     cfg: "Config",
     name: str | None,
@@ -4884,14 +4913,11 @@ def destroy(
         _destroy_batch(cfg, incus, targets)
         return
 
-    from jailbee import prompting, tui
-
-    if not prompting.is_interactive():
-        error("no container name given; pass a name, use --all, or run interactively in a TTY")
-        raise typer.Exit(1)
-
-    chosen = tui.pick_containers_multi(containers)
-    if not chosen:  # None (cancel) or [] (no boxes ticked)
+    # Destroy is destructive: a lone candidate is still asked about, never taken.
+    chosen = _pick_containers(
+        cfg, containers, message="Select containers to destroy:", alternative="--all"
+    )
+    if not chosen:  # [] (no boxes ticked)
         raise typer.Abort()
     chosen_set = set(chosen)
     # Gated on `not force` like the single-name and `--all` paths: `--force`
@@ -5414,7 +5440,7 @@ def pull(
         into = resolved_current
 
     if name is None:
-        from jailbee import prompting, tui
+        from jailbee import prompting
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
 
@@ -5423,20 +5449,19 @@ def pull(
             all_containers = list_containers(cfg, incus, with_git_status=True)
             pullable = [c for c in all_containers if c.mode != "mount"]
             if not pullable:
-                error("No containers eligible for pull (all in mount mode).")
-                raise typer.Exit(1)
+                raise prompting.MissingValue(
+                    "container", reason="No containers eligible for pull (all in mount mode)."
+                )
             selected: list[str]
+            # Pull is non-destructive: one eligible container is taken unasked.
             if len(pullable) == 1:
                 only_full = pullable[0].name
                 info(f"Only one eligible container; pulling from '{short_name(cfg, only_full)}'.")
                 selected = [only_full]
             else:
-                picked = tui.pick_containers_multi(
-                    pullable,
-                    message="Select containers to pull into host:",
+                picked = _pick_containers(
+                    cfg, pullable, message="Select containers to pull into host:"
                 )
-                if picked is None:
-                    raise typer.Abort()
                 if not picked:
                     info("Nothing selected.")
                     return
@@ -6724,38 +6749,30 @@ def push(
     merge_confirm = default_confirm if prompting.is_interactive() else None
 
     if name is None and selected_pr is None:
-        from jailbee import tui
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
-
-        if not prompting.is_interactive():
-            error(
-                "No container name given. Pass a name, or run "
-                "interactively in a TTY for the container picker."
-            )
-            raise typer.Exit(1)
 
         incus = Incus()
         all_containers = list_containers(cfg, incus, with_git_status=True)
         pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
         if not pushable:
-            error(
-                "No pushable containers (none running, or all in mount "
-                "mode). Start one with 'jailbee start <name>'."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "No pushable containers (none running, or all in mount "
+                    "mode). Start one with 'jailbee start <name>'."
+                ),
             )
-            raise typer.Exit(1)
         selected: list[str]
-        if len(pushable) == 1:
+        # Push is non-destructive: one eligible container is taken unasked, but
+        # only where a person can see the line saying so — a script is told the
+        # candidates instead, as for every other missing container.
+        if len(pushable) == 1 and prompting.is_interactive():
             only_full = pushable[0].name
             info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
             selected = [only_full]
         else:
-            picked = tui.pick_containers_multi(
-                pushable,
-                message="Select containers to push to:",
-            )
-            if picked is None:
-                raise typer.Abort()
+            picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
             if not picked:
                 info("Nothing selected.")
                 return
@@ -7330,57 +7347,60 @@ def _prompt_merge_endpoints(
     the list even though candidates exist (every eligible container ticked as
     a source), which is reported rather than rendered as an empty picker.
 
-    Raises `typer.Exit(1)` off a TTY (naming both ends when both are missing),
-    when no container is eligible and when the filter leaves the end being
-    asked for nothing to offer, `typer.Abort` when the user cancels a prompt,
-    and `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
+    Raises `prompting.MissingValue` (exit 2) off a TTY — listing the candidates
+    for the first end still missing —, when no container is eligible and when
+    the filter leaves the end being asked for nothing to offer;
+    `prompting.Cancelled` (exit 1) when the user cancels a prompt; and
+    `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
     decision not to merge, not an error.
     """
     from jailbee import prompting, tui
     from jailbee.incus import Incus
     from jailbee.lifecycle import short_name
 
-    if not prompting.is_interactive():
-        missing = []
-        if sources is None:
-            missing.append("<source>...")
-        if into is None:
-            missing.append("--into <target>")
-        error(
-            f"missing {' and '.join(missing)}. Pass explicitly, or run in a TTY to select "
-            f"interactively."
-        )
-        raise typer.Exit(1)
-
     incus = Incus()
     candidates = _eligible_merge_containers(cfg, incus)
     if not candidates:
-        error(
-            "no running clone-mode containers to merge between. "
-            "A merge needs both ends running and not in mount mode."
+        raise prompting.MissingValue(
+            "container",
+            reason=(
+                "no running clone-mode containers to merge between. "
+                "A merge needs both ends running and not in mount mode."
+            ),
         )
-        raise typer.Exit(1)
 
     if sources is None:
         offer = _without_containers(cfg, candidates, into or [])
         if not offer:
-            error(
-                "no eligible container left to merge from: every running clone-mode "
-                "container is already named as a target."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "no eligible container left to merge from: every running clone-mode "
+                    "container is already named as a target."
+                ),
             )
-            raise typer.Exit(1)
         if branch is not None:
-            picked_one = tui.pick_container(offer, message="Select the container to merge FROM:")
-            if picked_one is None:
-                raise typer.Abort()
-            sources = [short_name(cfg, picked_one)]
+            # One branch cannot describe several sources, so this prompt is
+            # single-select. Merge never takes a lone candidate unasked.
+            sources = [
+                short_name(
+                    cfg,
+                    prompting.choose_one(
+                        "container",
+                        [prompting.Option(c.name, c.display_name, c.display_name) for c in offer],
+                        destructive=True,
+                        picker=lambda _opts: tui.pick_container(
+                            offer, message="Select the container to merge FROM:"
+                        ),
+                    ),
+                )
+            ]
         else:
-            picked = tui.pick_containers_multi(
+            picked = _pick_containers(
+                cfg,
                 offer,
                 message="Select containers to merge FROM (merged in listed order):",
             )
-            if picked is None:
-                raise typer.Abort()
             if not picked:
                 info("Nothing selected.")
                 raise typer.Exit(0)
@@ -7389,16 +7409,16 @@ def _prompt_merge_endpoints(
     if into is None:
         offer = _without_containers(cfg, candidates, sources)
         if not offer:
-            error(
-                "no eligible container left to merge into: every running clone-mode "
-                "container was chosen as a source."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "no eligible container left to merge into: every running clone-mode "
+                    "container was chosen as a source."
+                ),
             )
-            raise typer.Exit(1)
-        targets = tui.pick_containers_multi(
-            offer, message="Select containers to merge INTO (each takes every source):"
+        targets = _pick_containers(
+            cfg, offer, message="Select containers to merge INTO (each takes every source):"
         )
-        if targets is None:
-            raise typer.Abort()
         if not targets:
             info("Nothing selected.")
             raise typer.Exit(0)
