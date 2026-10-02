@@ -88,6 +88,19 @@ def flat_output(output: str) -> str:
     return " ".join(output.split())
 
 
+_BOX = str.maketrans("", "", "│╭╮╰╯─")
+
+
+def panel_text(output: str) -> str:
+    """`output` with Rich panel borders removed and whitespace collapsed.
+
+    A `prompting.MissingValue` / `Cancelled` is printed by Typer inside an
+    `Error` panel that wraps long lines and draws a border at each line end;
+    assertions on its message go through this.
+    """
+    return flat_output(output.translate(_BOX))
+
+
 def claude_row(
     account: str | None,
     *,
