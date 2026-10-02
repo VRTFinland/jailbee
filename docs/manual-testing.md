@@ -5261,9 +5261,12 @@ squid` need egress.
    - `curl -sI https://raw.githubusercontent.com` succeeds.
    - `curl -sI https://example.com` fails with a 403 / `CONNECT` refused.
    - `curl --noproxy '*' -sI https://raw.githubusercontent.com` fails: the
-     direct path is blocked by the NIC ACL. (Use a wildcard-only domain; a
-     host that is also a plain entry, such as the `api.github.com` auto-entry,
-     stays reachable directly.)
+     direct path is blocked by the NIC ACL. Use a wildcard-only host that
+     shares no IP address with any plain entry: the NIC ACL matches addresses,
+     so with `github.com:443` listed, `gist.github.com` still passes directly
+     because both resolve to the same IPs. The same goes for the
+     `api.github.com` auto-entry, which exists only when the GitHub
+     integration is enabled.
 3. With the work network (`jb net migrate`), add `jb egress add '*.example.org'
    <container-B>`. Expected: reachable from B, 403 from container A of the
    same repo. On a legacy-network container the same command exits 2.
@@ -5275,7 +5278,7 @@ squid` need egress.
 6. `incus exec jailbee-egress-proxy -- squid -v` shows the Squid version. With
    both `*.vendor.com` and `api.vendor.com` in `egress_allow`, the generated
    fragment in `/etc/squid/jailbee.d/` should list only `.vendor.com`, and
-   `squid -k parse` should report no subdomain-collision error.
+   `squid -k parse` should report no "already covered" warning.
 7. `jb egress ls` shows a `VIA` column; `jb doctor` shows `egress proxy:
    status: running`. Stop the proxy (`incus stop jailbee-egress-proxy`) and
    re-run both: `stopped`, with a `run 'jailbee apply'` hint.

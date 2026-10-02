@@ -14,11 +14,11 @@ Entries are grouped by ``(kind, ports)`` in first-seen order. ``kind`` is
 an explicit port. Every group becomes one destination ACL, an optional port
 ACL, and one ``http_access allow``.
 
-Squid refuses to load a ``dstdomain`` ACL holding both ``.vendor.com`` and
-``vendor.com`` (or ``api.vendor.com``): it reports a subdomain collision and
-may FATAL. Within one ACL a hostname that a wildcard in the same ACL covers
-is therefore dropped; it matches when it equals the domain or ends with
-``"." + domain``.
+A ``dstdomain`` ACL holding both ``.vendor.com`` and ``vendor.com`` (or
+``api.vendor.com``) makes Squid warn that the narrower name is already covered
+(Squid 7.2 only warns; other versions may refuse to load it). Within one ACL a
+hostname that a wildcard in the same ACL covers is therefore dropped; it matches
+when it equals the domain or ends with ``"." + domain``.
 """
 
 from __future__ import annotations
