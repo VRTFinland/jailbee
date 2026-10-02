@@ -21,8 +21,17 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from jailbee import tui
 from jailbee.bridge_ipv4 import free_ipv4
-from jailbee.egress_proxy_render import BASE_SQUID_CONF, FRAGMENT_DIR, PROXY_PORT
+from jailbee.egress import is_wildcard_entry
+from jailbee.egress_proxy_render import (
+    BASE_SQUID_CONF,
+    FRAGMENT_DIR,
+    PROXY_PORT,
+    ProxyScope,
+    proxy_env,
+    render_fragment,
+)
 from jailbee.incus import Incus, IncusError
 from jailbee.loose_bridge import loose_bridge_host_ip
 from jailbee.network_generation import WORK_BRIDGE
@@ -31,6 +40,10 @@ from jailbee.work_network import work_network_lock
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from sqlmodel import Session
+
+    from jailbee.config import Config
 
 PROXY_CONTAINER = "jailbee-egress-proxy"
 PROXY_PROFILE = "jailbee-egress-proxy-profile"
@@ -44,6 +57,15 @@ _PROVISION_PKG = "jailbee.provision"
 _PROVISION_SUBDIR = "egress-proxy"
 _NETPLAN_PATH = "/etc/netplan/60-jailbee-egress-proxy.yaml"
 _DEVICE_PREFIX = "cl-"
+
+PROXY_ENV_KEYS: tuple[str, ...] = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
 
 
 def _no_steps(_message: str) -> None:
@@ -344,3 +366,112 @@ squid -k reconfigure
 echo RECONFIGURED
 """
     return _run_fragment_script(incus, script) == "RECONFIGURED"
+
+
+# ---- per-repo rule collection and per-container environment ----------------
+
+
+def container_wants_proxy(repo_entries: list[str], extras: list[str], mode: str | None) -> bool:
+    """A strict container with at least one wildcard entry needs the proxy."""
+    return mode == "strict" and any(is_wildcard_entry(e) for e in [*repo_entries, *extras])
+
+
+def _eth0_device(raw: dict[str, Any]) -> dict[str, Any]:
+    """The container's effective ``eth0`` (local device over profile-merged)."""
+    local = (raw.get("devices") or {}).get("eth0")
+    expanded = (raw.get("expanded_devices") or {}).get("eth0")
+    merged: dict[str, Any] = {}
+    for device in (expanded, local):
+        if isinstance(device, dict):
+            merged.update(device)
+    return merged
+
+
+def _source_ipv4(cfg: Config, raw: dict[str, Any]) -> str | None:
+    """Work containers: the reserved eth0 address. Legacy: the live lease."""
+    from jailbee.network_generation import generation_of
+    from jailbee.registry import eth0_global_ipv4
+
+    if generation_of(cfg, raw) == "work":
+        address = (raw.get("devices") or {}).get("eth0", {}).get("ipv4.address")
+        return address if isinstance(address, str) else None
+    return eth0_global_ipv4(raw)
+
+
+def collect_scopes(cfg: Config, incus: Incus, session: Session) -> list[ProxyScope]:
+    """The repo scope first, then one scope per work container with its own wildcard extras."""
+    from jailbee.egress_scope import container_extras, effective_repo_entries
+    from jailbee.lifecycle import list_containers
+    from jailbee.network_generation import generation_of
+
+    repo_entries = effective_repo_entries(cfg, session)
+    raw_by_name = {r["name"]: r for r in incus.list_containers()}
+    repo_sources: list[str] = []
+    container_scopes: list[ProxyScope] = []
+    for info in list_containers(cfg, incus):
+        raw = raw_by_name.get(info.name)
+        if raw is None or info.state != "Running":
+            continue
+        extras = container_extras(incus, info.name)
+        if not container_wants_proxy(repo_entries, extras, info.network):
+            continue
+        ip = _source_ipv4(cfg, raw)
+        if ip is None:
+            continue  # no address yet; the next sync picks it up
+        repo_sources.append(ip)
+        if extras and generation_of(cfg, raw) == "work":
+            container_scopes.append(ProxyScope(info.name, (ip,), tuple(extras)))
+    repo_scope = ProxyScope(cfg.container_prefix, tuple(repo_sources), tuple(repo_entries))
+    return [repo_scope, *container_scopes]
+
+
+def sync_repo_rules(cfg: Config, incus: Incus, session: Session) -> bool:
+    """Push this repo's fragment, or drop it when no container needs the proxy."""
+    prefix = cfg.container_prefix
+    scopes = collect_scopes(cfg, incus, session)
+    if not any(scope.sources for scope in scopes):
+        return drop_fragment(incus, prefix)
+    return push_fragment(incus, prefix, render_fragment(prefix, scopes))
+
+
+def sync_container_env(
+    cfg: Config, incus: Incus, session: Session, name: str, mode: str | None
+) -> None:
+    """Point one container's proxy environment at its bridge's proxy, or clear it."""
+    from jailbee.egress_scope import container_extras, effective_repo_entries
+
+    entries = [*effective_repo_entries(cfg, session), *container_extras(incus, name)]
+    wanted: dict[str, str] = {}
+    if container_wants_proxy(entries, [], mode):
+        raw = next((r for r in incus.list_containers() if r.get("name") == name), {})
+        bridge = _eth0_device(raw).get("network")
+        endpoint = endpoint_for_bridge(incus, bridge) if isinstance(bridge, str) else None
+        if endpoint is None:
+            tui.warn(
+                "egress proxy is not running; wildcard egress entries are unavailable "
+                "— run `jailbee apply`"
+            )
+        else:
+            wanted = proxy_env(endpoint, entries)
+    for key in PROXY_ENV_KEYS:
+        current = incus.config_get(name, f"environment.{key}")
+        value = wanted.get(key)
+        if value is None:
+            if current:
+                incus.config_unset(name, f"environment.{key}")
+        elif current != value:
+            incus.config_set(name, f"environment.{key}", value)
+
+
+def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> None:
+    """Refresh one container's proxy env and its repo's rules. Never raises."""
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+
+    try:
+        with Session(get_engine()) as session:
+            sync_container_env(cfg, incus, session, name, mode)
+            sync_repo_rules(cfg, incus, session)
+    except (IncusError, RuntimeError) as e:
+        tui.warn(f"egress proxy sync for {name} failed: {e}")

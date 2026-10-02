@@ -498,3 +498,222 @@ def test_real_script_bad_v2_restores_v1_and_good_push_reconfigures(real_push):
     assert push("BAD v2\n").endswith("PARSE_FAILED|rc=1")
     assert (frag / "abc.conf").read_text() == "good v1\n"
     assert log.read_text().count("-k reconfigure") == 1
+
+
+# ---- per-repo rule collection and per-container environment ----------------
+
+
+@pytest.mark.parametrize("mode", ["strict", "loose", None])
+@pytest.mark.parametrize(
+    ("repo", "extras", "has_wildcard"),
+    [(["*.a.com"], [], True), ([], ["*.b.com"], True), (["a.com"], ["b.com"], False)],
+)
+def test_container_wants_proxy_truth_table(mode, repo, extras, has_wildcard):
+    expected = mode == "strict" and has_wildcard
+    assert egress_proxy.container_wants_proxy(repo, extras, mode) is expected
+
+
+def _legacy(name, status="Running", ip="10.1.0.5", prefix="myrepo", mode="strict"):
+    addresses = [{"family": "inet", "scope": "global", "address": ip}] if ip else []
+    return {
+        "name": name,
+        "status": status,
+        "profiles": ["default", f"{prefix}-base", f"{prefix}-net-{mode}"],
+        "devices": {},
+        "expanded_devices": {"eth0": {"type": "nic", "network": "incusbr0"}},
+        "state": {"network": {"eth0": {"addresses": addresses}}},
+    }
+
+
+def _work(cfg, name, ip="10.9.0.7", status="Running", mode="strict"):
+    from jailbee.network import acl_name
+
+    prefix = cfg.container_prefix
+    return {
+        "name": name,
+        "status": status,
+        "profiles": ["default", f"{prefix}-base", f"{prefix}-net-work-{mode}"],
+        "devices": {
+            "eth0": {
+                "type": "nic",
+                "network": WORK_BRIDGE,
+                "security.ipv4_filtering": "true",
+                "ipv4.address": ip,
+                "security.acls": acl_name(cfg) if mode == "strict" else "",
+            }
+        },
+        "state": {"network": {"eth0": {"addresses": []}}},
+    }
+
+
+def _patch_entries(mocker, repo_entries, extras_by_name):
+    mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=repo_entries)
+    mocker.patch(
+        "jailbee.egress_scope.container_extras",
+        side_effect=lambda _incus, name: extras_by_name.get(name, []),
+    )
+
+
+def test_collect_scopes(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _legacy("myrepo-old"),
+        _work(cfg, "myrepo-new"),
+        _legacy("myrepo-off", status="Stopped", ip=None),
+        _legacy("myrepo-loose", mode="loose", ip="10.1.0.9"),
+        _legacy("other-x", prefix="other", ip="10.1.0.8"),
+    ]
+    _patch_entries(mocker, ["*.repo.com"], {"myrepo-new": ["*.foo.com"]})
+
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+
+    assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
+    assert set(scopes[0].sources) == {"10.1.0.5", "10.9.0.7"}
+    assert scopes[0].entries == ("*.repo.com",)
+    assert scopes[1].sources == ("10.9.0.7",)
+    assert scopes[1].entries == ("*.foo.com",)
+
+
+def test_collect_scopes_skips_container_without_ipv4(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_legacy("myrepo-old", ip=None)]
+    _patch_entries(mocker, ["*.repo.com"], {})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert scopes[0].sources == ()
+
+
+def test_collect_scopes_wildcards_only_in_extras(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_legacy("myrepo-old"), _work(cfg, "myrepo-new")]
+    _patch_entries(mocker, ["plain.com"], {"myrepo-new": ["*.foo.com"]})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert scopes[0].sources == ("10.9.0.7",)
+    assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
+
+
+def test_sync_repo_rules_drops_when_no_sources(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    _patch_entries(mocker, ["plain.com"], {})
+    push = mocker.patch.object(egress_proxy, "push_fragment")
+    drop = mocker.patch.object(egress_proxy, "drop_fragment", return_value=True)
+    assert egress_proxy.sync_repo_rules(cfg, incus, MagicMock()) is True
+    drop.assert_called_once_with(incus, "myrepo")
+    push.assert_not_called()
+
+
+def test_sync_repo_rules_pushes_rendered_fragment(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_legacy("myrepo-old")]
+    _patch_entries(mocker, ["*.repo.com"], {})
+    push = mocker.patch.object(egress_proxy, "push_fragment", return_value=True)
+    assert egress_proxy.sync_repo_rules(cfg, incus, MagicMock()) is True
+    prefix, text = push.call_args.args[1:]
+    assert prefix == "myrepo"
+    assert "10.1.0.5/32" in text
+    assert ".repo.com" in text
+
+
+def _env_incus(current=None):
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": PROXY_CONTAINER,
+            "status": "Running",
+            "devices": {
+                "cl-incusbr0": {"ipv4.address": "10.0.0.2"},
+                "cl-work": {"ipv4.address": "10.9.0.2"},
+            },
+        },
+        {**_legacy("myrepo-old")},
+        {
+            "name": "myrepo-new",
+            "devices": {"eth0": {"network": WORK_BRIDGE}},
+        },
+    ]
+    store = dict(current or {})
+    incus.config_get.side_effect = lambda _n, key: store.get(key)
+    return incus, store
+
+
+@pytest.mark.parametrize(("name", "ip"), [("myrepo-old", "10.0.0.2"), ("myrepo-new", "10.9.0.2")])
+def test_sync_container_env_sets_per_bridge_ip(make_cfg, tmp_path, mocker, name, ip):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus()
+    _patch_entries(mocker, ["*.repo.com"], {})
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), name, "strict")
+    keys = {c.args[1] for c in incus.config_set.call_args_list}
+    assert keys == {f"environment.{k}" for k in egress_proxy.PROXY_ENV_KEYS}
+    http = next(c for c in incus.config_set.call_args_list if c.args[1] == "environment.HTTP_PROXY")
+    assert http.args[2] == f"http://{ip}:3128"
+
+
+def test_sync_container_env_unsets_for_loose(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus({"environment.HTTP_PROXY": "http://10.0.0.2:3128"})
+    _patch_entries(mocker, ["*.repo.com"], {})
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "loose")
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("myrepo-old", "environment.HTTP_PROXY")
+
+
+def test_sync_container_env_writes_nothing_when_equal(make_cfg, tmp_path, mocker):
+    from jailbee.egress_proxy_render import proxy_env
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    current = {f"environment.{k}": v for k, v in proxy_env("10.0.0.2", ["*.repo.com"]).items()}
+    incus, _ = _env_incus(current)
+    _patch_entries(mocker, ["*.repo.com"], {})
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict")
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+
+
+def test_sync_container_env_warns_and_unsets_without_endpoint(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus({"environment.HTTPS_PROXY": "http://10.0.0.2:3128"})
+    incus.list_containers.return_value = incus.list_containers.return_value[1:]  # no proxy
+    _patch_entries(mocker, ["*.repo.com"], {})
+    warn = mocker.patch("jailbee.tui.warn")
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict")
+    warn.assert_called_once()
+    assert "egress proxy is not running" in warn.call_args.args[0]
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("myrepo-old", "environment.HTTPS_PROXY")
+
+
+def test_sync_container_swallows_incus_error(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus()
+    _patch_entries(mocker, ["*.repo.com"], {})
+    mocker.patch.object(egress_proxy, "push_fragment", side_effect=IncusError("boom"))
+    mocker.patch.object(egress_proxy, "proxy_status", return_value=ProxyStatus.RUNNING)
+    warn = mocker.patch("jailbee.tui.warn")
+    egress_proxy.sync_container(cfg, incus, "myrepo-old", "strict")
+    warn.assert_called_once()
+    assert "boom" in warn.call_args.args[0]
