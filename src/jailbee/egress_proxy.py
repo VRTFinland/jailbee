@@ -13,6 +13,7 @@ helpers never provision anything.
 from __future__ import annotations
 
 import ipaddress
+import shlex
 import time
 from enum import StrEnum
 from importlib import resources
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from jailbee.bridge_ipv4 import free_ipv4
-from jailbee.egress_proxy_render import BASE_SQUID_CONF, PROXY_PORT
+from jailbee.egress_proxy_render import BASE_SQUID_CONF, FRAGMENT_DIR, PROXY_PORT
 from jailbee.incus import Incus, IncusError
 from jailbee.loose_bridge import loose_bridge_host_ip
 from jailbee.network_generation import WORK_BRIDGE
@@ -225,11 +226,13 @@ def _wait_for_service(incus: Incus, on_step: Callable[[str], None]) -> str | Non
         time.sleep(2)
 
 
-def _ensure_service(incus: Incus, on_step: Callable[[str], None]) -> None:
-    """Wait for squid; on failure reinstall once, then raise."""
+def _ensure_service(incus: Incus, *, provisioned: bool, on_step: Callable[[str], None]) -> None:
+    """Wait for squid; on failure reinstall once (unless just provisioned), then raise."""
     reason = _wait_for_service(incus, on_step)
     if reason is None:
         return
+    if provisioned:
+        raise RuntimeError(_service_failure(reason))
     on_step("squid did not come up; reinstalling it once")
     try:
         _provision(incus)
@@ -240,9 +243,11 @@ def _ensure_service(incus: Incus, on_step: Callable[[str], None]) -> None:
         if second is None:
             return
         reason = f"reinstalled once; {second}"
-    raise RuntimeError(
-        f"{reason}. Run `jailbee apply` to retry, or delete {PROXY_CONTAINER} and apply again."
-    )
+    raise RuntimeError(_service_failure(reason))
+
+
+def _service_failure(reason: str) -> str:
+    return f"{reason}. Run `jailbee apply` to retry, or delete {PROXY_CONTAINER} and apply again."
 
 
 def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> None:
@@ -251,6 +256,7 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
     _ensure_profile(incus)
 
     info = _container_present(incus)
+    provisioned = False
     if info is None:
         on_step(f"creating {PROXY_CONTAINER} from {_PROXY_IMAGE} (first run downloads it)")
         _create(incus)
@@ -265,6 +271,70 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
     if not _squid_installed(incus):
         on_step("installing squid in the container (apt, up to 10 min)")
         _provision(incus)
+        provisioned = True
 
-    _ensure_service(incus, on_step)
+    _ensure_service(incus, provisioned=provisioned, on_step=on_step)
     set_service(incus, EGRESS_PROXY_LABEL, (sorted(client_endpoints(incus).values()), [PROXY_PORT]))
+
+
+def _run_fragment_script(incus: Incus, script: str) -> str:
+    """Run a fragment script in the proxy; a parse failure becomes ``RuntimeError``."""
+    try:
+        return incus.exec_with_input(PROXY_CONTAINER, ["bash", "-s"], script, timeout=60).strip()
+    except IncusError as e:
+        raise RuntimeError(f"squid rejected the egress rules: {e}") from e
+
+
+def push_fragment(incus: Incus, prefix: str, text: str) -> bool:
+    """Install one repo's rule fragment; ``True`` if it changed and squid reloaded.
+
+    The new text is parsed before it replaces the live file and the old file is
+    restored on failure, so a bad fragment never reaches the running Squid.
+    Returns ``False`` without touching Incus beyond the status probe when the
+    proxy is not running: the periodic caller must never provision.
+    """
+    if proxy_status(incus) != ProxyStatus.RUNNING:
+        return False
+    live = shlex.quote(f"{FRAGMENT_DIR}/{prefix}.conf")
+    script = f"""\
+set -euo pipefail
+live={live}
+cat > "$live.new" <<'JAILBEE_FRAGMENT_EOF'
+{text.rstrip()}
+JAILBEE_FRAGMENT_EOF
+if [ -f "$live" ] && cmp -s "$live.new" "$live"; then
+  rm -f "$live.new"
+  echo UNCHANGED
+  exit 0
+fi
+if [ -f "$live" ]; then mv -f "$live" "$live.bak"; fi
+mv -f "$live.new" "$live"
+if ! squid -k parse; then
+  rm -f "$live"
+  if [ -f "$live.bak" ]; then mv -f "$live.bak" "$live"; fi
+  echo PARSE_FAILED
+  exit 1
+fi
+squid -k reconfigure
+echo RECONFIGURED
+"""
+    return _run_fragment_script(incus, script) == "RECONFIGURED"
+
+
+def drop_fragment(incus: Incus, prefix: str) -> bool:
+    """Remove one repo's fragment and reconfigure if it existed."""
+    if proxy_status(incus) != ProxyStatus.RUNNING:
+        return False
+    live = shlex.quote(f"{FRAGMENT_DIR}/{prefix}.conf")
+    script = f"""\
+set -euo pipefail
+live={live}
+if [ ! -f "$live" ]; then
+  echo UNCHANGED
+  exit 0
+fi
+rm -f "$live" "$live.bak" "$live.new"
+squid -k reconfigure
+echo RECONFIGURED
+"""
+    return _run_fragment_script(incus, script) == "RECONFIGURED"

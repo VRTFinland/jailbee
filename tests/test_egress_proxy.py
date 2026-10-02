@@ -13,9 +13,11 @@ from jailbee.egress_proxy import (
     PROXY_PROFILE,
     ProxyStatus,
     client_endpoints,
+    drop_fragment,
     endpoint_for_bridge,
     proxy_status,
     proxy_up,
+    push_fragment,
 )
 from jailbee.egress_proxy_render import BASE_SQUID_CONF
 from jailbee.incus import IncusError
@@ -327,8 +329,23 @@ def test_up_raises_naming_apply_when_service_never_active(set_service, mocker):
     with pytest.raises(RuntimeError, match="jailbee apply"):
         proxy_up(rig.incus)
     set_service.assert_not_called()
-    # first provision + one reinstall
-    assert len(rig.install_scripts) == 2
+    # just provisioned in this call: no redundant reinstall
+    assert len(rig.install_scripts) == 1
+
+
+def test_up_reinstalls_once_when_present_but_inactive(set_service, mocker):
+    mocker.patch.object(egress_proxy, "_SERVICE_WAIT_SECONDS", 0)
+    rig = Rig(exists=True)
+    rig.squid_installed = True
+    base = rig._exec
+    rig.incus.exec.side_effect = lambda n, c, **kw: (
+        (_ for _ in ()).throw(IncusError("failed"))
+        if c[:2] == ["systemctl", "is-active"]
+        else base(n, c, **kw)
+    )
+    with pytest.raises(RuntimeError, match="jailbee apply"):
+        proxy_up(rig.incus)
+    assert len(rig.install_scripts) == 1
 
 
 def test_endpoints_read_device_addresses():
@@ -353,3 +370,64 @@ def test_endpoints_empty_when_proxy_missing():
     incus.list_containers.return_value = []
     assert client_endpoints(incus) == {}
     assert endpoint_for_bridge(incus, "incusbr0") is None
+
+
+def _running_incus(output: str | Exception) -> MagicMock:
+    incus = _status_incus("Running")
+    if isinstance(output, Exception):
+        incus.exec_with_input.side_effect = output
+    else:
+        incus.exec_with_input.return_value = output
+    return incus
+
+
+def test_push_unchanged_returns_false():
+    incus = _running_incus("UNCHANGED\n")
+    assert push_fragment(incus, "abc", "acl x dstdomain a.com\n") is False
+    script = incus.exec_with_input.call_args.args[2]
+    assert "live=/etc/squid/jailbee.d/abc.conf\n" in script
+    assert '"$live.new"' in script
+    assert "acl x dstdomain a.com" in script
+    assert script.index("squid -k parse") < script.index("squid -k reconfigure")
+
+
+def test_push_reconfigured_returns_true():
+    assert push_fragment(_running_incus("RECONFIGURED\n"), "abc", "x\n") is True
+
+
+def test_push_parse_failed_raises_with_stderr():
+    err = IncusError("exit 1: PARSE_FAILED\nFATAL: bad acl line")
+    with pytest.raises(RuntimeError, match="bad acl line"):
+        push_fragment(_running_incus(err), "abc", "x\n")
+
+
+def test_push_script_restores_backup_on_parse_failure():
+    incus = _running_incus("UNCHANGED\n")
+    push_fragment(incus, "abc", "x\n")
+    script = incus.exec_with_input.call_args.args[2]
+    assert '"$live.bak"' in script and "PARSE_FAILED" in script and "exit 1" in script
+
+
+@pytest.mark.parametrize("state", [None, "Stopped"])
+def test_push_and_drop_noop_when_proxy_absent(state):
+    incus = _status_incus(state)
+    assert push_fragment(incus, "abc", "x\n") is False
+    assert drop_fragment(incus, "abc") is False
+    incus.exec_with_input.assert_not_called()
+
+
+def test_push_noop_when_degraded():
+    incus = _status_incus("Running", active=False)
+    assert push_fragment(incus, "abc", "x\n") is False
+    incus.exec_with_input.assert_not_called()
+
+
+def test_drop_removed_reconfigures():
+    incus = _running_incus("RECONFIGURED\n")
+    assert drop_fragment(incus, "abc") is True
+    script = incus.exec_with_input.call_args.args[2]
+    assert "rm" in script and "abc.conf" in script and "squid -k reconfigure" in script
+
+
+def test_drop_absent_file_returns_false():
+    assert drop_fragment(_running_incus("UNCHANGED\n"), "abc") is False
