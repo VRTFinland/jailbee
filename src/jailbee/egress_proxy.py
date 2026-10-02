@@ -445,13 +445,17 @@ def sync_container_env(
     if container_wants_proxy(entries, [], mode):
         raw = next((r for r in incus.list_containers() if r.get("name") == name), {})
         bridge = _eth0_device(raw).get("network")
-        endpoint = endpoint_for_bridge(incus, bridge) if isinstance(bridge, str) else None
-        if endpoint is None:
-            tui.warn(
-                "egress proxy is not running; wildcard egress entries are unavailable "
-                "— run `jailbee apply`"
-            )
+        if not isinstance(bridge, str):
+            tui.warn(f"cannot find the eth0 network of {name}; egress proxy env cleared")
+            endpoint = None
         else:
+            endpoint = endpoint_for_bridge(incus, bridge)
+            if endpoint is None:
+                tui.warn(
+                    "egress proxy is not running; wildcard egress entries are unavailable "
+                    "— run `jailbee apply`"
+                )
+        if endpoint is not None:
             wanted = proxy_env(endpoint, entries)
     for key in PROXY_ENV_KEYS:
         current = incus.config_get(name, f"environment.{key}")

@@ -563,12 +563,16 @@ def test_collect_scopes(make_cfg, tmp_path, mocker):
         _legacy("myrepo-old"),
         _work(cfg, "myrepo-new"),
         _legacy("myrepo-off", status="Stopped", ip=None),
+        _work(cfg, "myrepo-stopped", ip="10.9.0.9", status="Stopped"),
         _legacy("myrepo-loose", mode="loose", ip="10.1.0.9"),
         _legacy("other-x", prefix="other", ip="10.1.0.8"),
     ]
-    _patch_entries(mocker, ["*.repo.com"], {"myrepo-new": ["*.foo.com"]})
+    _patch_entries(
+        mocker, ["*.repo.com"], {"myrepo-new": ["*.foo.com"], "myrepo-stopped": ["*.bar.com"]}
+    )
 
     scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert "10.9.0.9" not in {ip for s in scopes for ip in s.sources}
 
     assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
     assert set(scopes[0].sources) == {"10.1.0.5", "10.9.0.7"}
@@ -712,7 +716,6 @@ def test_sync_container_swallows_incus_error(make_cfg, tmp_path, mocker):
     incus, _ = _env_incus()
     _patch_entries(mocker, ["*.repo.com"], {})
     mocker.patch.object(egress_proxy, "push_fragment", side_effect=IncusError("boom"))
-    mocker.patch.object(egress_proxy, "proxy_status", return_value=ProxyStatus.RUNNING)
     warn = mocker.patch("jailbee.tui.warn")
     egress_proxy.sync_container(cfg, incus, "myrepo-old", "strict")
     warn.assert_called_once()
