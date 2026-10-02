@@ -128,7 +128,7 @@ def _setup(mocker, tmp_path, *, files=None, rejected=(), warnings=()):
     # confirmation is impossible off a TTY — both patched so every test below
     # exercises the interactive path deliberately.
     mocker.patch("jailbee.pr.gh_login", return_value="octocat")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _mock_store(mocker, files or {}, rejected=rejected, warnings=warnings)
     import subprocess
 
@@ -379,7 +379,7 @@ def test_apply_omits_the_identity_clause_when_gh_login_is_unknown(mocker, tmp_pa
 
 def test_apply_refuses_off_a_tty_without_yes(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
@@ -394,7 +394,7 @@ def test_apply_publishes_without_a_prompt_off_a_tty_with_yes(mocker, tmp_path):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
     apply_mock = mocker.patch(
         "jailbee.pr_outbox.apply_manifest",
@@ -585,7 +585,7 @@ def test_apply_asks_which_container_when_several_may_be_pending(mocker, tmp_path
 def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path):
     """`tui.pick_container` renders unconditionally; a scripted run must not reach it."""
     _setup(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],

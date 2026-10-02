@@ -4,7 +4,8 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from jailbee.ports import PortError
+from jailbee.ports import Endpoint, Forward, PortError
+from tests.conftest import panel_text
 
 runner = CliRunner()
 
@@ -415,3 +416,137 @@ def test_ls_json_format(repo, mocker):
     result = runner.invoke(app, ["port", "ls", "feat-x", "--format", "json"])
     assert result.exit_code == 0, result.output
     assert '"device": "port-cfg-adb"' in result.output
+
+
+def _forward():
+    ep = Endpoint("tcp", "127.0.0.1", 5037, "tcp:127.0.0.1:5037")
+    return Forward(
+        device="jb-port-5037",
+        direction="to-container",
+        proto="tcp",
+        container=ep,
+        host=ep,
+        source="ad-hoc",
+    )
+
+
+def test_to_container_without_port_asks(repo, mocker):
+    add = mocker.patch("jailbee.ports.add_forward")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["99999", "5037"])
+    result = runner.invoke(app, ["port", "to-container"])
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2  # the first answer was out of range and re-asked
+    assert add.call_args.kwargs["container_port"] == 5037
+
+
+def test_to_host_without_port_asks(repo, mocker):
+    mocker.patch("jailbee.ports.check_host_port")
+    add = mocker.patch("jailbee.ports.add_forward")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", return_value="8080")
+    result = runner.invoke(app, ["port", "to-host"])
+    assert result.exit_code == 0, result.output
+    assert add.call_args.kwargs["container_port"] == 8080
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_missing_port_off_a_tty_exits_2(repo, mocker, command):
+    add = mocker.patch("jailbee.ports.add_forward")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["port", command])
+    assert result.exit_code == 2
+    assert "missing port" in panel_text(result.output)
+    add.assert_not_called()
+
+
+def test_rm_without_handle_asks_even_for_one_forward(repo, mocker):
+    _, incus = repo
+    fwd = _forward()
+    mocker.patch("jailbee.ports.forwards_for", return_value=[fwd])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="jb-port-5037")
+    remove = mocker.patch("jailbee.ports.remove_forward", return_value=fwd)
+    result = runner.invoke(app, ["port", "rm"])
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 1
+    remove.assert_called_once_with(incus, "app-feat-x", "jb-port-5037")
+
+
+def test_rm_cancel_at_the_picker_removes_nothing(repo, mocker):
+    mocker.patch("jailbee.ports.forwards_for", return_value=[_forward()])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    remove = mocker.patch("jailbee.ports.remove_forward")
+    result = runner.invoke(app, ["port", "rm"])
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text(result.output)
+    remove.assert_not_called()
+
+
+def test_rm_with_one_forward_off_a_tty_does_not_auto_take_it(repo, mocker):
+    mocker.patch("jailbee.ports.forwards_for", return_value=[_forward()])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    remove = mocker.patch("jailbee.ports.remove_forward")
+    result = runner.invoke(app, ["port", "rm"])
+    assert result.exit_code == 2
+    assert "Candidates: jb-port-5037" in panel_text(result.output)
+    remove.assert_not_called()
+
+
+def test_rm_without_forwards_exits_2(repo, mocker):
+    mocker.patch("jailbee.ports.forwards_for", return_value=[])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    remove = mocker.patch("jailbee.ports.remove_forward")
+    result = runner.invoke(app, ["port", "rm"])
+    assert result.exit_code == 2
+    assert "no port forwards" in panel_text(result.output)
+    remove.assert_not_called()
+
+
+def test_rm_container_choice_is_destructive_only_when_the_handle_is_missing(repo, mocker):
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "app-x")
+    )
+    mocker.patch("jailbee.ports.remove_forward", return_value=mocker.Mock(device="d"))
+    runner.invoke(app, ["port", "rm", "adb"])
+    assert resolve.call_args.kwargs == {"always_prompt": False}
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_port_is_not_asked_when_the_container_cannot_be_resolved(repo, mocker, command):
+    from jailbee.prompting import MissingValue
+
+    mocker.patch("jailbee.cli._resolve_existing", side_effect=MissingValue("container"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="5037")
+    add = mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command])
+    assert result.exit_code == 2
+    ask.assert_not_called()
+    add.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_port_is_asked_after_the_container_resolves(repo, mocker, command):
+    order = []
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        side_effect=lambda *a, **k: order.append("container") or (mocker.MagicMock(), "app-x"),
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", side_effect=lambda *a: order.append("port") or "5037")
+    mocker.patch("jailbee.ports.check_host_port")
+    mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command])
+    assert result.exit_code == 0, result.output
+    assert order == ["container", "port"]
+
+
+def test_port_prompt_rejects_unicode_digits(repo, mocker):
+    mocker.patch("jailbee.ports.add_forward")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["\u00b2", "5037"])
+    result = runner.invoke(app, ["port", "to-container"])
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2

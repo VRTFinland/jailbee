@@ -26,6 +26,7 @@ def test_empty_overrides_is_a_no_op_and_returns_the_same_object() -> None:
         ("shell", True),
         ("exec", True),
         ("restrict_host", False),
+        ("files", True),
     ],
 )
 def test_each_given_flag_overrides_its_field(field: str, value: object) -> None:
@@ -147,3 +148,10 @@ def test_restrict_host_override_is_named_in_the_startup_line() -> None:
         "overrides (not from global.yaml): restrict_host=off"
     )
     assert ServeOverrides(restrict_host=False).is_empty() is False
+
+
+def test_files_override_is_reported_in_the_summary() -> None:
+    assert describe_overrides(ServeOverrides(files=True)) == (
+        "overrides (not from global.yaml): files=on"
+    )
+    assert not ServeOverrides(files=False).is_empty()

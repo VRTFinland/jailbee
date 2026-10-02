@@ -8,14 +8,12 @@ persistent remote) and `git branch -r` is uncluttered.
 
 from __future__ import annotations
 
-import os
-import sys
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
-from jailbee import git, submodules
+from jailbee import git, prompting, submodules
 from jailbee.incus import IncusError
 from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
@@ -1780,11 +1778,6 @@ def checkout_submodules_in_container(
     return resolved, report
 
 
-def _stdin_is_interactive() -> bool:
-    """Return True if stdin is a TTY (and JAILBEE_NONINTERACTIVE is unset)."""
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
-
-
 def _with_anchors(cfg: Config, incus: Incus, result: MergeResult) -> MergeResult:
     """Re-anchor every container based on the branch the merge landed in."""
     if result.into_branch is None:
@@ -3340,7 +3333,7 @@ def _should_run_cleanup_step(
         return True
     if policy == "never":
         return False
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return False
     answer = input(prompt).strip().lower()
     return answer in ("y", "yes")

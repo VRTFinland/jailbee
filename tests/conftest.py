@@ -88,6 +88,19 @@ def flat_output(output: str) -> str:
     return " ".join(output.split())
 
 
+_BOX = str.maketrans("", "", "│╭╮╰╯─")
+
+
+def panel_text(output: str) -> str:
+    """`output` with Rich panel borders removed and whitespace collapsed.
+
+    A `prompting.MissingValue` / `Cancelled` is printed by Typer inside an
+    `Error` panel that wraps long lines and draws a border at each line end;
+    assertions on its message go through this.
+    """
+    return flat_output(output.translate(_BOX))
+
+
 def claude_row(
     account: str | None,
     *,
@@ -396,6 +409,17 @@ def _no_egress_proxy_wiring(
 
 
 @pytest.fixture(autouse=True)
+def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
+
+    `prompting.is_interactive` reads it, so with it exported in the shell every
+    test that expects a prompt would take the off-TTY branch instead. Tests
+    about the override set it themselves; this runs first.
+    """
+    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 
@@ -511,6 +535,7 @@ def _reset_deprecation_notices():
     """
     from jailbee import notices
     from jailbee.config.loader import (
+        _warn_insecure_perms,
         _warn_legacy_chrome_block,
         _warn_legacy_credentials_block,
         _warn_legacy_per_repo_entry,
@@ -518,6 +543,7 @@ def _reset_deprecation_notices():
     )
     from jailbee.paths import _warn_legacy_config_dir
 
+    _warn_insecure_perms.cache_clear()
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
@@ -525,6 +551,7 @@ def _reset_deprecation_notices():
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
+    _warn_insecure_perms.cache_clear()
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()

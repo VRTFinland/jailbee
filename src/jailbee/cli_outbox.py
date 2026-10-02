@@ -14,6 +14,8 @@ from typer.core import TyperGroup
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.outbox.models import ProposalId
+    from jailbee.outbox_io import JournalStore
 
 _COMMANDS = frozenset(("browse", "ls", "show", "drop", "apply"))
 
@@ -71,9 +73,14 @@ app = typer.Typer(
 ConfigOption = Annotated[
     Path | None, typer.Option("--config", "-c", help="Repository config file.")
 ]
-ContainerArgument = Annotated[str, typer.Argument(help="Full or short container name.")]
+ContainerArgument = Annotated[
+    str | None, typer.Argument(help="Full or short container name. Asked for when omitted.")
+]
 ProposalArgument = Annotated[
-    str, typer.Argument(help="Proposal: pr/<manifest>.json or issue/<manifest>.json.")
+    str | None,
+    typer.Argument(
+        help="Proposal: pr/<manifest>.json or issue/<manifest>.json. Asked for when omitted."
+    ),
 ]
 RevisionOption = Annotated[
     str | None,
@@ -123,6 +130,52 @@ def _run(
         raise typer.Exit(status)
 
 
+def _pick_target(
+    cfg: Config,
+    incus: Incus,
+    container: str | None,
+    proposal: str | None,
+    *,
+    journal_store: JournalStore,
+    destructive: bool,
+) -> tuple[str, ProposalId]:
+    """The container and proposal a command acts on, asking for what is missing."""
+    from jailbee import prompting
+    from jailbee.outbox.commands import discover
+    from jailbee.outbox.models import ProposalId
+
+    if container is not None and proposal is not None:
+        return container, ProposalId.parse(proposal)
+    discovered = discover(cfg, incus, container, all_repos=False, journal_store=journal_store)
+    views = [v for v in discovered if v.proposals]
+    if container is not None:
+        # Named, so nothing to ask: `discover` already resolved it to one container.
+        if not views:
+            # An unreadable container has no proposals either; say why, not "none".
+            named_error = discovered[0].error if discovered else None
+            raise prompting.MissingValue(
+                "proposal", reason=named_error or f"no pending proposals in {container}"
+            )
+        view = views[0]
+    else:
+        chosen = prompting.choose_one(
+            "container",
+            [prompting.Option(v.name, v.name, v.name) for v in views],
+            destructive=destructive,
+            empty_reason="no container has pending proposals",
+        )
+        view = next(v for v in views if v.name == chosen)
+    if proposal is not None:
+        return view.name, ProposalId.parse(proposal)
+    pid = prompting.choose_one(
+        "proposal",
+        [prompting.Option(p.id, f"{p.id}  {p.state}", str(p.id)) for p in view.proposals],
+        destructive=destructive,
+        empty_reason=f"no pending proposals in {view.name}",
+    )
+    return view.name, pid
+
+
 def browser_read_only() -> bool:
     """Browser policy for UI wiring: never supply mutation callbacks over SSH.
 
@@ -141,8 +194,7 @@ def browse(
     config: ConfigOption = None,
 ) -> None:
     """Overview (also off-TTY). Unambiguous spelling for subcommand-name containers."""
-    import sys
-
+    from jailbee import prompting
     from jailbee.outbox.browser import BrowserActions, run_browser
     from jailbee.outbox.commands import (
         apply_selected,
@@ -152,7 +204,7 @@ def browse(
     )
     from jailbee.outbox.delete import DeletePlan
     from jailbee.outbox.markdown_view import print_lines
-    from jailbee.outbox.models import OutboxChanged, ProposalId
+    from jailbee.outbox.models import OutboxChanged
     from jailbee.outbox.publish import PublishOptions
     from jailbee.outbox_io import JournalStore
 
@@ -166,7 +218,7 @@ def browse(
                     "outbox apply commands when permitted by the remote command policy.",
                 )
             )
-        if not sys.stdin.isatty():
+        if not prompting.is_interactive():
             return show_overview(
                 cfg, incus, container, all_repos=False, output="table", journal_store=journals
             )
@@ -260,35 +312,30 @@ def list_cmd(
 @app.command()
 def show(
     ctx: typer.Context,
-    container: ContainerArgument,
-    proposal: ProposalArgument,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
     output: OutputOption = Output.table,
     config: ConfigOption = None,
 ) -> None:
     """Inspect a complete proposal with zero-based action and comment indices."""
     from jailbee.outbox.commands import show_selected
-    from jailbee.outbox.models import ProposalId
     from jailbee.outbox_io import JournalStore
 
-    _run(
-        ctx,
-        config,
-        lambda cfg, incus: show_selected(
-            cfg,
-            incus,
-            container,
-            ProposalId.parse(proposal),
-            output=output.value,
-            journal_store=JournalStore(),
-        ),
-    )
+    def operation(cfg: Config, incus: Incus) -> int:
+        store = JournalStore()
+        name, pid = _pick_target(
+            cfg, incus, container, proposal, journal_store=store, destructive=False
+        )
+        return show_selected(cfg, incus, name, pid, output=output.value, journal_store=store)
+
+    _run(ctx, config, operation)
 
 
 @app.command()
 def drop(
     ctx: typer.Context,
-    container: ContainerArgument,
-    proposal: ProposalArgument,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
     action: Annotated[int | None, typer.Option("--action", help="Zero-based action index.")] = None,
     comment: Annotated[
         int | None,
@@ -309,7 +356,6 @@ def drop(
     from jailbee.outbox.commands import drop_selected
     from jailbee.outbox.delete import DeletePlan, DeleteSelection
     from jailbee.outbox.markdown_view import print_lines
-    from jailbee.outbox.models import ProposalId
     from jailbee.outbox_io import JournalStore
 
     def confirm(plan: DeletePlan) -> bool:
@@ -319,27 +365,30 @@ def drop(
             print_lines(("Nothing deleted.",))
         return accepted
 
-    _run(
-        ctx,
-        config,
-        lambda cfg, incus: drop_selected(
+    def operation(cfg: Config, incus: Incus) -> int:
+        store = JournalStore()
+        name, pid = _pick_target(
+            cfg, incus, container, proposal, journal_store=store, destructive=True
+        )
+        return drop_selected(
             cfg,
             incus,
-            container,
-            ProposalId.parse(proposal),
+            name,
+            pid,
             selection=DeleteSelection(action, comment, with_dependents, archive_journal),
-            journal_store=JournalStore(),
+            journal_store=store,
             confirm=confirm,
             expected_revision=revision,
-        ),
-    )
+        )
+
+    _run(ctx, config, operation)
 
 
 @app.command()
 def apply(
     ctx: typer.Context,
-    container: ContainerArgument,
-    proposal: ProposalArgument,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show plan without publishing.")
     ] = False,
@@ -352,23 +401,25 @@ def apply(
 ) -> None:
     """Publish one whole manifest through its existing domain gates."""
     from jailbee.outbox.commands import apply_selected
-    from jailbee.outbox.models import ProposalId
     from jailbee.outbox.publish import PublishOptions
     from jailbee.outbox_io import JournalStore
 
-    _run(
-        ctx,
-        config,
-        lambda cfg, incus: apply_selected(
+    def operation(cfg: Config, incus: Incus) -> int:
+        store = JournalStore()
+        name, pid = _pick_target(
+            cfg, incus, container, proposal, journal_store=store, destructive=True
+        )
+        return apply_selected(
             cfg,
             incus,
-            container,
-            ProposalId.parse(proposal),
+            name,
+            pid,
             options=PublishOptions(dry_run, force),
-            journal_store=JournalStore(),
+            journal_store=store,
             confirm=lambda total: (
                 yes or typer.confirm(f"Publish {total} pending actions?", default=False)
             ),
             expected_revision=revision,
-        ),
-    )
+        )
+
+    _run(ctx, config, operation)

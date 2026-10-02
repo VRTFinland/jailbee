@@ -17,14 +17,15 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from jailbee.lifecycle import ResolvedContainer
+from jailbee.lifecycle import ContainerInfo, ResolvedContainer
+from tests.conftest import panel_text
 
 # Every canonical `jailbee git` subcommand that has a top-level alias.
 ALIASES = ["fetch", "checkout", "pull", "retarget", "diff", "push", "merge"]
 
 
 @pytest.mark.parametrize("argv", [["git", "merge", "feat-foo"], ["merge", "feat-foo"]])
-def test_jailbee_git_merge_needs_an_explicit_target(argv):
+def test_jailbee_git_merge_needs_an_explicit_target(argv, mocker):
     """`jailbee [git] merge feat-foo` must fail — it never merges into a guess.
 
     Historically the top-level form failed with "no such command": the old
@@ -35,11 +36,27 @@ def test_jailbee_git_merge_needs_an_explicit_target(argv):
     bare one-argument form the old command accepted is an error either way,
     which is what makes the top-level alias safe to hand back.
     """
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch(
+        "jailbee.cli._eligible_merge_containers",
+        return_value=[
+            ContainerInfo(
+                name=f"repo-{short}",
+                state="Running",
+                network=None,
+                ip=None,
+                memory_limit=None,
+                repo="repo",
+                mode="clone",
+            )
+            for short in ("feat-foo", "feat-bar")
+        ],
+    )
+    mocker.patch("jailbee.incus.Incus")
     result = CliRunner().invoke(app, argv)
-    assert result.exit_code == 1
-    combined = (result.output or "") + (result.stderr or "")
-    assert "--into <target>" in combined
-    assert "TTY" in combined
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "Candidates:" in combined
 
 
 # --- aliases are hidden from `jailbee --help` but reachable ---------------------

@@ -153,10 +153,11 @@ def remote_ssh_key_add_cmd(
     stdin, or omitted: an omitted SOURCE prompts for one pasted line on a
     terminal, and reads piped stdin otherwise.
     """
+    from jailbee import prompting
     from jailbee.remote_ssh import keys
 
     if source is None or source == "-":
-        if source is None and _is_tty():
+        if source is None and prompting.is_interactive():
             # A single OpenSSH public key is always one line, so one
             # `readline()` is enough — no Ctrl-D needed. `typer.prompt`
             # is not used here: it retries forever on an empty answer,
@@ -200,14 +201,32 @@ def remote_ssh_key_list_cmd() -> None:
 @ssh_key_app.command("rm")
 def remote_ssh_key_remove_cmd(
     fingerprint: Annotated[
-        str,
-        typer.Argument(help="Full SHA256 fingerprint of the key to remove."),
-    ],
+        str | None,
+        typer.Argument(
+            help="Full SHA256 fingerprint of the key to remove. Asked for when omitted."
+        ),
+    ] = None,
 ) -> None:
     """Remove one authorized public key by full fingerprint."""
+    from jailbee import prompting
     from jailbee.remote_ssh import keys
 
-    if re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint) is None:
+    if fingerprint is None:
+        try:
+            authorized = keys.read_authorized_keys()
+        except (keys.SSHKeyError, OSError) as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
+        fingerprint = prompting.choose_one(
+            "SSH key",
+            [
+                prompting.Option(k.fingerprint, _remote_ssh_key_line(k), k.fingerprint)
+                for k in authorized
+            ],
+            destructive=True,
+            empty_reason="no authorized keys to remove",
+        )
+    elif re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint) is None:
         raise typer.BadParameter("expected a full SHA256 fingerprint")
     try:
         keys.remove_authorized_key(fingerprint)
@@ -263,6 +282,13 @@ def remote_ssh_serve_cmd(
             help="Override remote.ssh.restrict_host for this run only.",
         ),
     ] = None,
+    files: Annotated[
+        bool | None,
+        typer.Option(
+            "--files/--no-files",
+            help="Override remote.ssh.files for this run only.",
+        ),
+    ] = None,
 ) -> None:
     """Run the SSH server in the foreground, with optional one-off overrides.
 
@@ -283,6 +309,7 @@ def remote_ssh_serve_cmd(
         commands_mode=commands,
         allow=allow,
         restrict_host=restrict_host,
+        files=files,
     )
     global_config = _load_global()
     try:
@@ -408,6 +435,19 @@ ReviewContainerArg = Annotated[
 ]
 """The container positional shared by the `review` subcommands."""
 
+IssueContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            "Container whose issue outbox to act on, named in full or by its short "
+            "name. Omit it and jailbee picks from the running containers with issue "
+            "actions waiting, asking only when more than one has them."
+        ),
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional shared by `issue show`, `drop` and `resolve`."""
+
 TagsFlag = Annotated[
     bool,
     typer.Option("--tags", help="Transfer every tag (git's `--tags`). Overrides the config key."),
@@ -497,15 +537,6 @@ def _egress_config_source(cfg: "Config", config: Path | None) -> str:
 def _now() -> datetime:
     """Wallclock helper, factored for test mocking."""
     return datetime.now(UTC)
-
-
-def _is_tty() -> bool:
-    """Whether stdin is a terminal, factored for test mocking.
-
-    `CliRunner` replaces `sys.stdin` inside `invoke()`, so a test cannot patch
-    `sys.stdin.isatty` and have it reach the command — hence the indirection.
-    """
-    return sys.stdin.isatty()
 
 
 def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
@@ -629,7 +660,9 @@ def _setup_offer_allowed() -> bool:
     own output would otherwise land in whatever is reading `jailbee ls`'s
     table. Anything less interactive gets the one-shot hint instead.
     """
-    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
+    from jailbee import prompting
+
+    return prompting.is_interactive() and sys.stdout.isatty() and sys.stderr.isatty()
 
 
 def _advise_setup(*, offer: bool = False) -> None:
@@ -1139,13 +1172,15 @@ def config_migrate_cmd(
 def _is_full_screen_tty() -> bool:
     """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
 
-    `_is_tty` asks about stdin alone, which is right for the questions the CLI
+    `prompting.is_interactive` asks about stdin alone, which is right for the questions the CLI
     asks and is what its five other call sites want. An editor also *paints*:
     `jailbee config edit > out.txt` has a perfectly good stdin and would fill
     the file with escape codes, so this second gate exists rather than a change
     to that one.
     """
-    return _is_tty() and sys.stdout.isatty()
+    from jailbee import prompting
+
+    return prompting.is_interactive() and sys.stdout.isatty()
 
 
 def _refuse_synthesized_repo(cwd: Path) -> None:
@@ -1307,7 +1342,9 @@ def _offer_editor(*, global_layer: bool) -> None:
     stdin that nothing will answer would turn a working script into a hang or
     a silent "no".
     """
-    if not _is_tty():
+    from jailbee import prompting
+
+    if not prompting.is_interactive():
         return
     if not default_confirm("Open the config editor now?"):
         return
@@ -2002,6 +2039,7 @@ def new_cmd(
       jailbee new mysmoke --mount           # mount mode: positional is the container
                                         # name; host repo is bind-mounted RW
     """
+    from jailbee import prompting
     from jailbee.autostart import AutostartStepError
     from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
@@ -2231,14 +2269,26 @@ def new_cmd(
         else:
             base = resolved
     elif container_branch is None:
-        if mount:
-            error(
-                "Missing NAME argument. In --mount mode, provide a container "
-                "name (e.g. `jailbee new mysmoke --mount`)."
-            )
-        else:
-            error("Missing NAME argument. Provide a name to work on or use --current.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+        from jailbee.lifecycle import derive_container_name
+
+        def _name_problem(text: str) -> str | None:
+            text = text.strip()
+            if not text:
+                return "enter a name"
+            if mount and "/" in text:
+                return "in --mount mode the name is a container name; use e.g. 'feat-foo'"
+            try:
+                derive_container_name(cfg, text)
+            except ValueError as e:
+                return str(e)
+            return None
+
+        container_branch = prompting.ask_text(
+            "container name" if mount else "branch to work on",
+            validate=_name_problem,
+            alternative=None if mount else "--current",
+        ).strip()
 
     if mount:
         if base is not None:
@@ -2434,7 +2484,7 @@ def new_cmd(
         from jailbee.golden import build_golden_image
 
         _base_build_cmd = "jb base build"
-        if not _is_tty():
+        if not prompting.is_interactive():
             error(
                 f"The shared scratch base image '{cfg.golden.alias}' does not "
                 f"exist yet.\nBuild it once with:  {_base_build_cmd}"
@@ -2638,11 +2688,12 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     also why this runs in the *foreground* command, before the background
     fork — same reasoning as `_preflight_background_new`.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.pool import preflight_pools
     from jailbee.tui import default_confirm
 
-    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    confirm = default_confirm if prompting.is_interactive() else None
+    unresolved = preflight_pools(cfg, confirm=confirm)
     if not unresolved:
         return
     error(
@@ -2675,8 +2726,8 @@ def _preflight_background_new(
     """
     from dataclasses import replace
 
+    from jailbee import prompting
     from jailbee.lifecycle import (
-        _stdin_is_interactive,
         assess_branch_autostart,
         resolve_clone_ref,
     )
@@ -2700,7 +2751,7 @@ def _preflight_background_new(
             error(escalation_refusal(verdict.baseline_source))
             raise typer.Exit(2)
     if verdict is not None and verdict.prompts and not opts.assume_yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "The target branch's autostart config widens privileges beyond "
                 f"{verdict.baseline_source}, which needs confirmation — and there is "
@@ -3734,8 +3785,11 @@ def _resolve_existing(
     """Resolve a container name, prompting interactively if omitted.
 
     See lifecycle.resolve_container_for_interactive for the behavior
-    matrix. ValueError is translated to typer.Exit(1). ``always_prompt``
-    shows the picker on a TTY even for a single container.
+    matrix. A ValueError (unknown name) is translated to typer.Exit(1);
+    ``prompting.MissingValue`` / ``Cancelled`` are ClickExceptions and
+    propagate for Typer to render (exit 2 / 1). ``always_prompt`` marks the
+    choice destructive: the picker shows even for a single container, and
+    off a TTY it is a ``MissingValue``.
     """
     from jailbee.incus import Incus
     from jailbee.lifecycle import resolve_container_for_interactive
@@ -3747,6 +3801,39 @@ def _resolve_existing(
         error(str(e))
         raise typer.Exit(1) from e
     return incus, resolved
+
+
+def _pick_containers(
+    cfg: "Config",
+    containers: "list[ContainerInfo]",
+    *,
+    message: str,
+    alternative: str | None = None,
+    noun: str = "container",
+) -> list[str]:
+    """Several containers, chosen per the missing-value policy (multi-select).
+
+    `noun` names what is missing in the off-TTY error, for callers where
+    "container" alone would not say which argument to pass.
+
+    No single-candidate shortcut here: whether one candidate may be taken
+    unasked is each caller's decision (destroy: never). An empty selection
+    (`[]`, nothing ticked) is returned as is — its meaning is the caller's too.
+    """
+    from jailbee import prompting, tui
+
+    if not containers:
+        raise prompting.MissingValue(
+            "container", reason=f"no managed containers found for repo '{cfg.container_prefix}'"
+        )
+    if not prompting.is_interactive():
+        raise prompting.MissingValue(
+            noun, candidates=[c.display_name for c in containers], alternative=alternative
+        )
+    picked = tui.pick_containers_multi(containers, message=message)
+    if picked is None:
+        raise prompting.Cancelled()
+    return picked
 
 
 def _resolve_existing_detailed(
@@ -3782,7 +3869,9 @@ def _confirm_attach(*, force: bool) -> bool:
     same way, because :func:`typer.confirm` would read EOF there and abort an
     attach the caller explicitly requested.
     """
-    if force or not sys.stdin.isatty():
+    from jailbee import prompting
+
+    if force or not prompting.is_interactive():
         return True
     return typer.confirm("Continue anyway?", default=True)
 
@@ -3820,7 +3909,7 @@ def _resolve_attachable(
     yet (a create that died before ``incus init``), or a destroy is actively
     tearing this one down.
     """
-    from jailbee import background
+    from jailbee import background, prompting
     from jailbee.db.models import JOB_BOOT
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
@@ -3861,7 +3950,7 @@ def _resolve_attachable(
         # answers this one on the user's behalf: offer the unfinished
         # container only when someone is at the keyboard to accept it, and
         # default to no, since they just interrupted.
-        if not (sys.stdin.isatty() and typer.confirm("Attach anyway?", default=False)):
+        if not (prompting.is_interactive() and typer.confirm("Attach anyway?", default=False)):
             raise typer.Exit(1) from None
     except ValueError as e:
         # A dead job (terminal phase, or a worker that vanished) over a
@@ -4840,15 +4929,11 @@ def destroy(
         _destroy_batch(cfg, incus, targets)
         return
 
-    from jailbee import tui
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    if not _stdin_is_interactive():
-        error("no container name given; pass a name, use --all, or run interactively in a TTY")
-        raise typer.Exit(1)
-
-    chosen = tui.pick_containers_multi(containers)
-    if not chosen:  # None (cancel) or [] (no boxes ticked)
+    # Destroy is destructive: a lone candidate is still asked about, never taken.
+    chosen = _pick_containers(
+        cfg, containers, message="Select containers to destroy:", alternative="--all"
+    )
+    if not chosen:  # [] (no boxes ticked)
         raise typer.Abort()
     chosen_set = set(chosen)
     # Gated on `not force` like the single-name and `--all` paths: `--force`
@@ -5371,29 +5456,28 @@ def pull(
         into = resolved_current
 
     if name is None:
-        from jailbee import tui
+        from jailbee import prompting
         from jailbee.incus import Incus
-        from jailbee.lifecycle import _stdin_is_interactive, list_containers
+        from jailbee.lifecycle import list_containers
 
-        if _stdin_is_interactive():
+        if prompting.is_interactive():
             incus = Incus()
             all_containers = list_containers(cfg, incus, with_git_status=True)
             pullable = [c for c in all_containers if c.mode != "mount"]
             if not pullable:
-                error("No containers eligible for pull (all in mount mode).")
-                raise typer.Exit(1)
+                raise prompting.MissingValue(
+                    "container", reason="No containers eligible for pull (all in mount mode)."
+                )
             selected: list[str]
+            # Pull is non-destructive: one eligible container is taken unasked.
             if len(pullable) == 1:
                 only_full = pullable[0].name
                 info(f"Only one eligible container; pulling from '{short_name(cfg, only_full)}'.")
                 selected = [only_full]
             else:
-                picked = tui.pick_containers_multi(
-                    pullable,
-                    message="Select containers to pull into host:",
+                picked = _pick_containers(
+                    cfg, pullable, message="Select containers to pull into host:"
                 )
-                if picked is None:
-                    raise typer.Abort()
                 if not picked:
                     info("Nothing selected.")
                     return
@@ -5508,13 +5592,7 @@ def _pick_retarget_base(cfg: "Config", *, current_base: str | None) -> str | Non
 
 @git_app.command("retarget")
 def retarget(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container to re-point.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: ContainerArg = None,
     new_base: Annotated[
         str | None,
         typer.Argument(
@@ -5546,15 +5624,15 @@ def retarget(
       jailbee git retarget feat-b main --merge   # also merge main into the container
     """
     from jailbee import git as git_helpers
-    from jailbee import sync
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import prompting, sync
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
 
     if new_base is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "No base branch given and no TTY to ask on. Usage: jailbee git retarget NAME BASE"
             )
@@ -5585,7 +5663,7 @@ def retarget(
                 # commit and the ff-only path is not reachable here. `confirm`
                 # is passed anyway so a container that somehow is on the new
                 # base gets the prompt rather than a dead end.
-                confirm=default_confirm if _stdin_is_interactive() else None,
+                confirm=default_confirm if prompting.is_interactive() else None,
             )
         except (sync.SyncError, git_helpers.GitError) as exc:
             error(str(exc))
@@ -5726,11 +5804,11 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
     default must not break scripts or background jobs. Declining raises
     ``typer.Abort()`` — nothing has been mutated at that point.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.tui import console, render_bridge_plan
 
     console.print(render_bridge_plan(plan), markup=False, highlight=False)
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return
     if not typer.confirm("Continue?", default=True):
         raise typer.Abort()
@@ -5754,10 +5832,10 @@ def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
     unresolved commit count) are still reported by the command's own
     ``warn``/``info`` calls further down. Do not "fix" this back.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.tui import console, render_submodule_pr_plan
 
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return
     console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not typer.confirm("Continue?", default=True):
@@ -6629,8 +6707,8 @@ def push(
         )
         raise typer.Exit(2)
     from jailbee import git as git_helpers
-    from jailbee import sync
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import prompting, sync
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     selected_pr: tuple[IncusType, str] | None = None
@@ -6639,29 +6717,27 @@ def push(
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
 
-        if not _stdin_is_interactive():
-            error(
-                "No container name given. Pass a PR container name, or run in a TTY to select one."
-            )
-            raise typer.Exit(1)
-
         pr_incus = Incus()
         candidates = [
             c
             for c in list_containers(cfg, pr_incus, with_git_status=False)
             if c.state == "Running" and c.mode != "mount" and _pr_head_for(pr_incus, c.name)
         ]
-        if not candidates:
-            error("No running clone-mode PR containers to push to.")
-            raise typer.Exit(1)
-        if len(candidates) == 1:
+        if len(candidates) == 1 and prompting.is_interactive():
             full = candidates[0].name
             info(f"Only one eligible PR container; pushing to '{short_name(cfg, full)}'.")
         else:
-            picked_pr = tui.pick_container(candidates, message="Select a PR container to push to:")
-            if picked_pr is None:
-                raise typer.Abort()
-            full = picked_pr
+            # Destructive only in the sense that a lone candidate is not taken
+            # unasked here: off a TTY it must be named, as for the plain branch.
+            full = prompting.choose_one(
+                "PR container",
+                [prompting.Option(c.name, c.display_name, c.display_name) for c in candidates],
+                destructive=True,
+                empty_reason="No running clone-mode PR containers to push to.",
+                picker=lambda _opts: tui.pick_container(
+                    candidates, message="Select a PR container to push to:"
+                ),
+            )
         selected_pr = (pr_incus, full)
 
     ref_pref = _resolve_push_ref_pref(
@@ -6684,41 +6760,33 @@ def push(
     # redirected stdin gets the error naming --no-ff instead: `default_confirm`
     # would return its documented `False` on EOF, which reads as a decision
     # the user never made.
-    merge_confirm = default_confirm if _stdin_is_interactive() else None
+    merge_confirm = default_confirm if prompting.is_interactive() else None
 
     if name is None and selected_pr is None:
-        from jailbee import tui
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
-
-        if not _stdin_is_interactive():
-            error(
-                "No container name given. Pass a name, or run "
-                "interactively in a TTY for the container picker."
-            )
-            raise typer.Exit(1)
 
         incus = Incus()
         all_containers = list_containers(cfg, incus, with_git_status=True)
         pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
         if not pushable:
-            error(
-                "No pushable containers (none running, or all in mount "
-                "mode). Start one with 'jailbee start <name>'."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "No pushable containers (none running, or all in mount "
+                    "mode). Start one with 'jailbee start <name>'."
+                ),
             )
-            raise typer.Exit(1)
         selected: list[str]
-        if len(pushable) == 1:
+        # Push is non-destructive: one eligible container is taken unasked, but
+        # only where a person can see the line saying so — a script is told the
+        # candidates instead, as for every other missing container.
+        if len(pushable) == 1 and prompting.is_interactive():
             only_full = pushable[0].name
             info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
             selected = [only_full]
         else:
-            picked = tui.pick_containers_multi(
-                pushable,
-                message="Select containers to push to:",
-            )
-            if picked is None:
-                raise typer.Abort()
+            picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
             if not picked:
                 info("Nothing selected.")
                 return
@@ -6883,7 +6951,7 @@ def push(
     )
 
     if single_source is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "push.default_source is 'ask' but no TTY is available. "
                 "Pass --from <branch> or --current, or set "
@@ -6901,7 +6969,7 @@ def push(
             single_source = _source_pick
 
     if resolved_action is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "push.default_action is 'ask' but no TTY is available. "
                 "Pass --merge / --rebase / --plain, or set "
@@ -7293,57 +7361,67 @@ def _prompt_merge_endpoints(
     the list even though candidates exist (every eligible container ticked as
     a source), which is reported rather than rendered as an empty picker.
 
-    Raises `typer.Exit(1)` off a TTY (naming both ends when both are missing),
-    when no container is eligible and when the filter leaves the end being
-    asked for nothing to offer, `typer.Abort` when the user cancels a prompt,
-    and `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
+    Raises `prompting.MissingValue` (exit 2) off a TTY — listing the candidates
+    for the first end still missing —, when no container is eligible and when
+    the filter leaves the end being asked for nothing to offer;
+    `prompting.Cancelled` (exit 1) when the user cancels a prompt; and
+    `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
     decision not to merge, not an error.
     """
-    from jailbee import tui
+    from jailbee import prompting, tui
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
-
-    if not _stdin_is_interactive():
-        missing = []
-        if sources is None:
-            missing.append("<source>...")
-        if into is None:
-            missing.append("--into <target>")
-        error(
-            f"missing {' and '.join(missing)}. Pass explicitly, or run in a TTY to select "
-            f"interactively."
-        )
-        raise typer.Exit(1)
+    from jailbee.lifecycle import short_name
 
     incus = Incus()
     candidates = _eligible_merge_containers(cfg, incus)
     if not candidates:
-        error(
-            "no running clone-mode containers to merge between. "
-            "A merge needs both ends running and not in mount mode."
+        raise prompting.MissingValue(
+            "container",
+            reason=(
+                "no running clone-mode containers to merge between. "
+                "A merge needs both ends running and not in mount mode."
+            ),
         )
-        raise typer.Exit(1)
+
+    source_noun = "source container (the <source> argument)"
+    target_noun = "target container (--into)"
+    if sources is None and into is None:
+        # Off a TTY nothing else is asked, so say that both ends are needed.
+        source_noun = f"{source_noun} and {target_noun}"
 
     if sources is None:
         offer = _without_containers(cfg, candidates, into or [])
         if not offer:
-            error(
-                "no eligible container left to merge from: every running clone-mode "
-                "container is already named as a target."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "no eligible container left to merge from: every running clone-mode "
+                    "container is already named as a target."
+                ),
             )
-            raise typer.Exit(1)
         if branch is not None:
-            picked_one = tui.pick_container(offer, message="Select the container to merge FROM:")
-            if picked_one is None:
-                raise typer.Abort()
-            sources = [short_name(cfg, picked_one)]
+            # One branch cannot describe several sources, so this prompt is
+            # single-select. Merge never takes a lone candidate unasked.
+            sources = [
+                short_name(
+                    cfg,
+                    prompting.choose_one(
+                        source_noun,
+                        [prompting.Option(c.name, c.display_name, c.display_name) for c in offer],
+                        destructive=True,
+                        picker=lambda _opts: tui.pick_container(
+                            offer, message="Select the container to merge FROM:"
+                        ),
+                    ),
+                )
+            ]
         else:
-            picked = tui.pick_containers_multi(
+            picked = _pick_containers(
+                cfg,
                 offer,
                 message="Select containers to merge FROM (merged in listed order):",
+                noun=source_noun,
             )
-            if picked is None:
-                raise typer.Abort()
             if not picked:
                 info("Nothing selected.")
                 raise typer.Exit(0)
@@ -7352,16 +7430,19 @@ def _prompt_merge_endpoints(
     if into is None:
         offer = _without_containers(cfg, candidates, sources)
         if not offer:
-            error(
-                "no eligible container left to merge into: every running clone-mode "
-                "container was chosen as a source."
+            raise prompting.MissingValue(
+                "container",
+                reason=(
+                    "no eligible container left to merge into: every running clone-mode "
+                    "container was chosen as a source."
+                ),
             )
-            raise typer.Exit(1)
-        targets = tui.pick_containers_multi(
-            offer, message="Select containers to merge INTO (each takes every source):"
+        targets = _pick_containers(
+            cfg,
+            offer,
+            message="Select containers to merge INTO (each takes every source):",
+            noun=target_noun,
         )
-        if targets is None:
-            raise typer.Abort()
         if not targets:
             info("Nothing selected.")
             raise typer.Exit(0)
@@ -7535,12 +7616,11 @@ def _offer_outbox_comments(
     retract that.
 
     Off a TTY the offer degrades to a hint naming the count and the command.
-    The predicate is `lifecycle._stdin_is_interactive` — the one
+    The predicate is `prompting.is_interactive` — the one
     `pr_flow._can_prompt` already consults for this command's other prompts,
     not a new one of its own.
     """
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import pr_outbox, prompting
 
     def _confirm(count: int) -> bool:
         plural = "" if count == 1 else "s"
@@ -7553,7 +7633,7 @@ def _offer_outbox_comments(
         short,
         pr_number=number,
         confirm=_confirm,
-        can_prompt=_stdin_is_interactive(),
+        can_prompt=prompting.is_interactive(),
         management=management,
     )
 
@@ -8435,8 +8515,8 @@ def submodule_pr_cmd(
       jailbee submodule pr feat-foo --open       # just open it in the browser
     """
     from jailbee import pr as pr_mod
-    from jailbee import pr_flow, submodule_pr, submodules, sync
-    from jailbee.lifecycle import _stdin_is_interactive, container_repo_dir, short_name
+    from jailbee import pr_flow, prompting, submodule_pr, submodules, sync
+    from jailbee.lifecycle import container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
         error(
@@ -8447,9 +8527,15 @@ def submodule_pr_cmd(
 
     cfg = _load_or_exit(config)
     # --open mutates nothing, so it keeps the silent auto-selection; the
-    # publishing path always shows the user which container it will publish
-    # from, because `gh` is about to change a GitHub repository.
-    incus, full = _resolve_existing(cfg, name, always_prompt=name is None and not open_only)
+    # publishing path shows the user which container it will publish from on a
+    # terminal, because `gh` is about to change a GitHub repository. Off a TTY
+    # the prompt is withheld (a script must not hang) and a single container
+    # is still taken, as before.
+    incus, full = _resolve_existing(
+        cfg,
+        name,
+        always_prompt=name is None and not open_only and prompting.is_interactive(),
+    )
     short = short_name(cfg, full)
 
     # --open resolves from the recorded state alone: no preflight, no
@@ -8503,7 +8589,7 @@ def submodule_pr_cmd(
         info(f"Container '{short}' has no submodules.")
         return
 
-    if path is None and _stdin_is_interactive():
+    if path is None and prompting.is_interactive():
         # The picker replaces both the silent single-candidate auto-target and
         # the ambiguity error: it offers every submodule, ahead ones first, so
         # a submodule with nothing to publish no longer has to be typed from
@@ -8848,6 +8934,7 @@ def net_migrate_cmd(
     """Opt future containers into the work bridge, or undo that default."""
     from sqlmodel import Session
 
+    from jailbee import prompting
     from jailbee.db import get_engine
     from jailbee.network_generation import ensure_work_bridge, set_default_generation
 
@@ -8858,7 +8945,7 @@ def net_migrate_cmd(
             "Future containers will use the legacy network. Existing containers were not changed."
         )
         return
-    if not sys.stdin.isatty() and not yes:
+    if not prompting.is_interactive() and not yes:
         error_plain(
             "Non-interactive migration requires --yes; host firewall reachability "
             "remains unverified."
@@ -9010,9 +9097,9 @@ def egress_add_cmd(
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
-        from jailbee.lifecycle import _stdin_is_interactive
+        from jailbee import prompting
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error("ENTRY is required without an interactive terminal; pass ENTRY explicitly.")
             raise typer.Exit(2)
 
@@ -9158,9 +9245,9 @@ def egress_rm_cmd(
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
-        from jailbee.lifecycle import _stdin_is_interactive
+        from jailbee import prompting
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error("ENTRY is required without an interactive terminal; pass ENTRY explicitly.")
             raise typer.Exit(2)
 
@@ -9633,8 +9720,8 @@ def net_loose(
     ] = False,
 ) -> None:
     """Switch to loose (full NAT)."""
+    from jailbee import prompting
     from jailbee.config import format_loose_after, parse_loose_ttl
-    from jailbee.lifecycle import _stdin_is_interactive
 
     if for_ is not None and no_revert:
         error(
@@ -9682,7 +9769,7 @@ def net_loose(
                 raise typer.Exit(2) from e
         # A configured-off policy means there is no auto-revert to schedule,
         # so asking would be misleading.
-        if policy is not None and _stdin_is_interactive():
+        if policy is not None and prompting.is_interactive():
             ttl = _prompt_loose_ttl(format_loose_after(policy.after))
             if ttl is None:
                 raise typer.Abort()
@@ -10173,15 +10260,46 @@ def job_ls(
     )
 
 
+def _pick_job(
+    cfg: "Config",
+    *,
+    noun: str,
+    keep: "Callable[[BackgroundJob], bool]",
+    destructive: bool,
+    empty_reason: str,
+    alternative: str | None = None,
+) -> str:
+    """A background job's container (full name), for job/autostart commands."""
+    from jailbee import background, prompting
+    from jailbee.lifecycle import short_name
+
+    rows = {n: r for n, r in _jobs_for_repo(cfg, all_repos=False).items() if keep(r)}
+    return prompting.choose_one(
+        noun,
+        [
+            prompting.Option(
+                full,
+                f"{short_name(cfg, full)}  {row.op_kind}  "
+                f"{background.job_label(row.phase, row.pid, kind=row.op_kind)}",
+                short_name(cfg, full),
+            )
+            for full, row in sorted(rows.items())
+        ],
+        destructive=destructive,
+        empty_reason=empty_reason,
+        alternative=alternative,
+    )
+
+
 @job_app.command("log")
 def job_log(
     name: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Container whose job log to print.",
+            help="Container whose job log to print. Asked for when omitted.",
             autocompletion=completion.complete_container,
         ),
-    ],
+    ] = None,
     follow: Annotated[
         bool, typer.Option("--follow", "-f", help="Keep printing as the worker writes.")
     ] = False,
@@ -10195,6 +10313,14 @@ def job_log(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="background job",
+            keep=lambda r: True,
+            destructive=False,
+            empty_reason="no background jobs in this repo",
+        )
     row = lookup_background_job(cfg, name)
     if row is None:
         error(f"no background job for '{name}'")
@@ -10241,7 +10367,7 @@ def job_clear(
     name: Annotated[
         str | None,
         typer.Argument(
-            help="Container whose job record to clear.",
+            help="Container whose job record to clear. Asked for when omitted.",
             autocompletion=completion.complete_container,
         ),
     ] = None,
@@ -10260,7 +10386,7 @@ def job_clear(
 
     from jailbee import background
     from jailbee.db import get_engine
-    from jailbee.lifecycle import lookup_background_job, short_name
+    from jailbee.lifecycle import lookup_background_job
 
     if name is not None and all_:
         error("--all and a container name are mutually exclusive")
@@ -10268,10 +10394,10 @@ def job_clear(
 
     cfg = _load_or_exit(config)
 
-    if name is not None:
-        row = lookup_background_job(cfg, name)
+    def _clear_one(target: str) -> None:
+        row = lookup_background_job(cfg, target)
         if row is None:
-            error(f"no background job for '{name}'")
+            error(f"no background job for '{target}'")
             raise typer.Exit(1)
         full_name = row.container_name
         with Session(get_engine()) as session:
@@ -10279,18 +10405,21 @@ def job_clear(
         _report_clear(cfg, full_name, outcome)
         raise typer.Exit(0 if outcome.cleared else 1)
 
-    rows = _jobs_for_repo(cfg, all_repos=False)
+    if name is not None:
+        _clear_one(name)
     if not all_:
-        if not rows:
-            error("no background jobs in this repo")
-            raise typer.Exit(1)
-        error("no container name given; pass a name or --all. Known jobs:")
-        for full_name in sorted(rows):
-            row = rows[full_name]
-            label = background.job_label(row.phase, row.pid, kind=row.op_kind)
-            info(f"  {short_name(cfg, full_name)}  ({row.op_kind}, phase={label})")
-        raise typer.Exit(1)
+        _clear_one(
+            _pick_job(
+                cfg,
+                noun="background job",
+                keep=lambda r: background.clearable(r.phase, r.pid),
+                destructive=True,
+                empty_reason="no clearable background jobs in this repo",
+                alternative="--all",
+            )
+        )
 
+    rows = _jobs_for_repo(cfg, all_repos=False)
     if not rows:
         info("No background jobs to clear.")
         return
@@ -10310,10 +10439,11 @@ autostart_app = typer.Typer(
 app.add_typer(autostart_app)
 
 AutostartNameArg = Annotated[
-    str,
+    str | None,
     typer.Argument(
         help=(
-            "Container whose detached autostart run to act on, named in full or by its short name."
+            "Container whose detached autostart run to act on, named in full or by its "
+            "short name. Asked for when omitted."
         ),
         autocompletion=completion.complete_container,
     ),
@@ -10382,7 +10512,7 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 
 @autostart_app.command("status")
 def autostart_status_cmd(
-    name: AutostartNameArg,
+    name: AutostartNameArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Show how far a container's detached autostart stages have got.
@@ -10391,11 +10521,19 @@ def autostart_status_cmd(
     by the log alone: an interrupted run leaves such a step dangling forever,
     so it reads as ``running`` only while the worker is alive.
     """
-    from jailbee import autostart_progress, autostart_status
+    from jailbee import autostart_progress, autostart_status, background
     from jailbee.lifecycle import short_name
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="autostart job",
+            keep=lambda r: r.op_kind == background.JOB_AUTOSTART,
+            destructive=False,
+            empty_reason="no autostart jobs in this repo",
+        )
     row = autostart_status.autostart_row(cfg, name)
     if row is None:
         info(f"No autostart job for '{name}'.")
@@ -10421,7 +10559,7 @@ def autostart_status_cmd(
 
 @autostart_app.command("cancel")
 def autostart_cancel_cmd(
-    name: AutostartNameArg,
+    name: AutostartNameArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Stop the worker running a container's detached autostart stages.
@@ -10445,6 +10583,16 @@ def autostart_cancel_cmd(
     from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="autostart job",
+            keep=lambda r: (
+                r.op_kind == background.JOB_AUTOSTART and not background.clearable(r.phase, r.pid)
+            ),
+            destructive=True,
+            empty_reason="no running autostart jobs in this repo",
+        )
     row = autostart_status.autostart_row(cfg, name)
     if row is None:
         error(f"no autostart job for '{name}'")
@@ -10925,13 +11073,17 @@ def _litellm_context() -> tuple["IncusType", GlobalConfig]:
 
 
 def _account_arg(gcfg: GlobalConfig, account: str | None) -> str:
-    """The named account, or the only one; exit 2 before any side effect otherwise."""
+    """The named account, or one chosen per the missing-value policy.
+
+    Exits 2 before any side effect when it cannot be resolved.
+    """
     accounts = gcfg.litellm.accounts
     if account is None:
-        if len(accounts) == 1:
-            return accounts[0]
-        error(f"Several LiteLLM accounts are configured ({', '.join(accounts)}); name one.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+
+        return prompting.choose_one(
+            "LiteLLM account", [prompting.Option(a, a, a) for a in accounts]
+        )
     if account not in accounts:
         error(f"Unknown LiteLLM account '{account}'. Configured: {', '.join(accounts)}.")
         raise typer.Exit(2)
@@ -11317,6 +11469,7 @@ def registry_verify_cmd(
     stored under — a pull that needs one fails with `unexpected commit digest`
     — and offers to remove them. `--purge` removes without asking.
     """
+    from jailbee import prompting
     from jailbee.incus import Incus, IncusError
     from jailbee.registry import MirrorStatus, registry_status
     from jailbee.registry_cache import format_progress, purge_entries, verify_cache
@@ -11349,7 +11502,7 @@ def registry_verify_cmd(
     if purge:
         _report_removals(count, report)
         return
-    if not (_is_tty() and default_confirm(question)):
+    if not (prompting.is_interactive() and default_confirm(question)):
         hint([f"Remove {'it' if count == 1 else 'them'} with: jailbee registry verify --purge"])
         raise typer.Exit(1)
     try:
@@ -11363,18 +11516,38 @@ def registry_verify_cmd(
 # ---- Mount commands ----
 
 
+def _pick_mount_kind(cfg: "Config", incus: "IncusType", name: str, *, attached: bool) -> str:
+    """The optional mount to add (attached=False) or remove (attached=True)."""
+    from jailbee import prompting
+    from jailbee.lifecycle import short_name
+    from jailbee.mounts import attached_kinds
+
+    raw = next((r for r in incus.list_containers() if r.get("name") == name), {})
+    on = set(attached_kinds(raw.get("devices") or {}))
+    kinds = sorted(on) if attached else sorted(set(cfg.optional_mounts) - on)
+    short = short_name(cfg, name)
+    reason = (
+        f"nothing mounted in {short}"
+        if attached
+        else f"no optional mount left to add to {short} (`optional_mounts:` in the repo config)"
+    )
+    return prompting.choose_one(
+        "optional mount", [prompting.Option(k, k, k) for k in kinds], empty_reason=reason
+    )
+
+
 @app.command("mount")
 def mount_cmd(
     kind: Annotated[
-        str,
+        str | None,
         typer.Argument(
             help=(
                 "Name of an entry in the repo's `optional_mounts:` config "
                 "block (e.g. 'aws'). `jailbee config show` lists what this "
-                "repo defines."
+                "repo defines. Asked for when omitted."
             ),
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11384,6 +11557,8 @@ def mount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    if kind is None:
+        kind = _pick_mount_kind(cfg, incus, name, attached=False)
     try:
         add_optional_mount(cfg, incus, name, kind)
     except ValueError as e:
@@ -11395,15 +11570,15 @@ def mount_cmd(
 @app.command("unmount")
 def unmount_cmd(
     kind: Annotated[
-        str,
+        str | None,
         typer.Argument(
             help=(
                 "Name of an entry in the repo's `optional_mounts:` config "
                 "block (e.g. 'aws'). `jailbee config show` lists what this "
-                "repo defines."
+                "repo defines. Asked for when omitted."
             ),
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11413,6 +11588,8 @@ def unmount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    if kind is None:
+        kind = _pick_mount_kind(cfg, incus, name, attached=True)
     try:
         remove_optional_mount(cfg, incus, name, kind)
     except ValueError as e:
@@ -11454,25 +11631,38 @@ def snap_create_cmd(
     success(f"Snapshot '{actual}' created for {short_name(cfg, name)}")
 
 
+def _pick_snapshot(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """A snapshot of `name`, asked for even when there is one (restore/delete destroy state)."""
+    from jailbee import prompting
+    from jailbee.lifecycle import short_name
+    from jailbee.snapshots import list_snapshots
+
+    snaps = list_snapshots(incus, name)
+    return prompting.choose_one(
+        "snapshot",
+        [
+            prompting.Option(
+                str(s["name"]), f"{s['name']}  {s.get('created_at', '')}", str(s["name"])
+            )
+            for s in snaps
+        ],
+        destructive=True,
+        empty_reason=f"no snapshots in {short_name(cfg, name)}",
+    )
+
+
 @snapshot_app.command("restore")
 def snap_restore_cmd(
-    name: Annotated[
-        str,
+    name: ContainerArg = None,
+    tag: Annotated[
+        str | None,
         typer.Argument(
             help=(
-                "Container holding the snapshot, named in full or by its short "
-                "name. Required — this command never picks a container for you."
+                "Snapshot to restore, as listed by `jailbee snapshot ls`. Asked for when omitted."
             ),
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    tag: Annotated[
-        str,
-        typer.Argument(
-            help="Snapshot to restore, as listed by `jailbee snapshot ls`.",
             autocompletion=completion.complete_snapshot,
         ),
-    ],
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Restore a snapshot."""
@@ -11480,7 +11670,9 @@ def snap_restore_cmd(
     from jailbee.snapshots import restore_snapshot
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=True)
+    if tag is None:
+        tag = _pick_snapshot(cfg, incus, name)
     restore_snapshot(cfg, incus, name, tag)
     success(f"Snapshot '{tag}' restored on {short_name(cfg, name)}")
 
@@ -11547,23 +11739,16 @@ def snap_ls_cmd(
 
 @snapshot_app.command("delete")
 def snap_delete_cmd(
-    name: Annotated[
-        str,
+    name: ContainerArg = None,
+    tag: Annotated[
+        str | None,
         typer.Argument(
             help=(
-                "Container holding the snapshot, named in full or by its short "
-                "name. Required — this command never picks a container for you."
+                "Snapshot to delete, as listed by `jailbee snapshot ls`. Asked for when omitted."
             ),
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    tag: Annotated[
-        str,
-        typer.Argument(
-            help="Snapshot to delete, as listed by `jailbee snapshot ls`.",
             autocompletion=completion.complete_snapshot,
         ),
-    ],
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Delete a snapshot."""
@@ -11571,7 +11756,9 @@ def snap_delete_cmd(
     from jailbee.snapshots import delete_snapshot
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=True)
+    if tag is None:
+        tag = _pick_snapshot(cfg, incus, name)
     delete_snapshot(incus, name, tag)
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
@@ -11630,9 +11817,24 @@ def _parse_ip_literal(raw: str, *, option: str) -> str:
     return raw
 
 
+def _ask_port() -> int:
+    """A container-side port, asked for on a terminal and re-asked until valid."""
+    from jailbee import prompting
+
+    def problem(text: str) -> str | None:
+        digits = text.strip()
+        ok = digits.isascii() and digits.isdecimal() and 1 <= int(digits) <= 65535
+        return None if ok else "enter a port, 1-65535"
+
+    return int(prompting.ask_text("port", validate=problem))
+
+
 @port_app.command("to-container")
 def port_to_container_cmd(
-    port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
+    port: Annotated[
+        int | None,
+        typer.Argument(help="Container-side port to listen on. Asked for when omitted."),
+    ] = None,
     name: ContainerArg = None,
     host_port: Annotated[
         int | None,
@@ -11663,13 +11865,17 @@ def port_to_container_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
-    container_port = _parse_port(port)
-    resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    # Validation that needs no I/O runs first; a port left out is asked for only
+    # once the container is resolved, so a failure there wastes no typed answer.
+    explicit_port = _parse_port(port) if port is not None else None
+    checked_host_port = _parse_port(host_port) if host_port is not None else None
     proto = _parse_proto(proto)
     host_address = _parse_ip_literal(host_address, option="--host-address")
     container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    container_port = explicit_port if explicit_port is not None else _ask_port()
+    resolved_host_port = checked_host_port if checked_host_port is not None else container_port
     try:
         fwd = ports.add_forward(
             incus,
@@ -11696,7 +11902,10 @@ def port_to_container_cmd(
 
 @port_app.command("to-host")
 def port_to_host_cmd(
-    port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
+    port: Annotated[
+        int | None,
+        typer.Argument(help="Container-side port to connect to. Asked for when omitted."),
+    ] = None,
     name: ContainerArg = None,
     host_port: Annotated[
         str | None,
@@ -11731,12 +11940,15 @@ def port_to_host_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
-    container_port = _parse_port(port)
+    # Validation that needs no I/O runs first; a port left out is asked for only
+    # once the container is resolved, so a failure there wastes no typed answer.
+    explicit_port = _parse_port(port) if port is not None else None
     proto = _parse_proto(proto)
     host_address = _parse_ip_literal(host_address, option="--host-address")
     container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    container_port = explicit_port if explicit_port is not None else _ask_port()
 
     try:
         if host_port == "auto":
@@ -11781,15 +11993,35 @@ def port_to_host_cmd(
     )
 
 
+def _pick_forward(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """A forward of `name` to remove, asked for even when there is one."""
+    from jailbee import ports, prompting
+    from jailbee.lifecycle import short_name
+
+    return prompting.choose_one(
+        "port forward",
+        [
+            prompting.Option(
+                f.device,
+                f"{f.device}  {f.direction}  {f.container.display} ↔ {f.host.display}",
+                f.device,
+            )
+            for f in ports.forwards_for(incus, name)
+        ],
+        destructive=True,
+        empty_reason=f"no port forwards in {short_name(cfg, name)}",
+    )
+
+
 @port_app.command("rm")
 def port_rm_cmd(
     handle: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Device name, host_ports name, or container port.",
+            help="Device name, host_ports name, or container port. Asked for when omitted.",
             autocompletion=completion.complete_port_handle,
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11798,7 +12030,9 @@ def port_rm_cmd(
     from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=handle is None)
+    if handle is None:
+        handle = _pick_forward(cfg, incus, name)
     try:
         fwd = ports.remove_forward(incus, name, handle)
     except ports.PortError as e:
@@ -11977,8 +12211,9 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     probe could not say" is how a written review gets silently lost, which is
     the one thing this feature exists to prevent.
     """
+    from jailbee import prompting
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, list_containers
+    from jailbee.lifecycle import list_containers
     from jailbee.tui import pick_container
 
     if name is not None:
@@ -12001,7 +12236,7 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     # here rather than drop prompt_toolkit onto a pipe — the same rule
     # `lifecycle.resolve_container_for_interactive_detailed` follows, and the
     # same rule the confirmation below follows.
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         names = ", ".join(c.display_name for c in pending)
         error_plain(
             f"several containers may have PR actions waiting; name one explicitly "
@@ -12060,8 +12295,8 @@ def review_apply_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Show what a container wants to publish to GitHub, then publish it."""
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import pr_outbox, prompting
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_review_container(cfg, name)
@@ -12087,7 +12322,7 @@ def review_apply_cmd(
         """
         if yes:
             return True
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to publish to GitHub without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12346,8 +12581,8 @@ def review_drop_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Delete pending PR actions, unapplied — nothing is published."""
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import pr_outbox, prompting
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_review_container(cfg, name)
@@ -12363,7 +12598,7 @@ def review_drop_cmd(
         return
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to delete pending PR actions without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12433,9 +12668,9 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
     (`issue ls` is where a stopped container is instead named as
     unreadable).
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, list_containers
+    from jailbee.lifecycle import list_containers
     from jailbee.outbox_io import OutboxReadError
     from jailbee.tui import pick_container
 
@@ -12459,18 +12694,11 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
 
     if not pending:
         return incus, None
-    if len(pending) == 1:
-        return incus, pending[0].name
-    if not _stdin_is_interactive():
-        names = ", ".join(ci.display_name for ci in pending)
-        error_plain(
-            f"several containers may have issue actions waiting; name one "
-            f"explicitly (or run in a TTY): {names}"
-        )
-        raise typer.Exit(2)
-    picked = pick_container(pending)
-    if picked is None:
-        raise typer.Exit(1)
+    picked = prompting.choose_one(
+        "container",
+        [prompting.Option(ci.name, ci.display_name, ci.display_name) for ci in pending],
+        picker=lambda _options: pick_container(pending),
+    )
     return incus, picked
 
 
@@ -12768,13 +12996,7 @@ def issue_ls_cmd(
 
 @issue_app.command("show")
 def issue_show_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox to read.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: IssueContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -12794,7 +13016,10 @@ def issue_show_cmd(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
     names = _select_issue_manifests_or_exit(outbox, manifest, short)
@@ -12860,8 +13085,8 @@ def issue_apply_cmd(
     mutation. `--yes` skips only the confirmation: the stale recheck always
     runs.
     """
-    from jailbee import issue_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import issue_outbox, prompting
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox_io import JournalStore
 
@@ -12892,7 +13117,7 @@ def issue_apply_cmd(
         return
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to change GitHub issues without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12925,13 +13150,7 @@ def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -
 
 @issue_app.command("drop")
 def issue_drop_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox to drop from.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: IssueContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -12957,9 +13176,9 @@ def issue_drop_cmd(
     progress, but shows applied receipts and untouched pending actions and
     then keeps a record of the settled ones before removing the manifest.
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import IssueManifestError, parse_manifest
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.io import MutationExecutionError
     from jailbee.outbox.models import OutboxExecutionError
     from jailbee.outbox_io import (
@@ -12971,7 +13190,10 @@ def issue_drop_cmd(
     )
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     uid = cfg.container_user.uid
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
@@ -13025,7 +13247,7 @@ def issue_drop_cmd(
                     info_plain(f"{manifest_name} action {index}: pending")
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to delete pending issue actions without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -13071,17 +13293,14 @@ def issue_drop_cmd(
 
 @issue_app.command("resolve")
 def issue_resolve_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox holds the manifest.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    manifest: Annotated[str, typer.Argument(help="Manifest file name.")],
+    name: IssueContainerArg = None,
+    manifest: Annotated[
+        str | None, typer.Argument(help="Manifest file name. Asked for when omitted.")
+    ] = None,
     action: Annotated[
-        int, typer.Argument(help="Zero-based index of the uncertain action within the manifest.")
-    ],
+        int | None,
+        typer.Argument(help="Zero-based index of the uncertain action. Asked for when omitted."),
+    ] = None,
     applied: Annotated[
         bool,
         typer.Option("--applied", help="Confirm the mutation actually landed on GitHub."),
@@ -13103,38 +13322,65 @@ def issue_resolve_cmd(
     """Resolve one action whose GitHub outcome an earlier run left uncertain.
 
     Exactly one of `--applied` (with `--url`, and `--issue` for a create) or
-    `--retry` is required. `--retry` forgets the uncertain record so the
-    action is attempted again; `--applied` durably records the human's own
-    confirmation of what actually happened on GitHub.
+    `--retry` is required; whatever is left out is asked for on a terminal.
+    `--retry` forgets the uncertain record so the action is attempted again;
+    `--applied` durably records the human's own confirmation of what
+    actually happened on GitHub.
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox_io import (
         JournalError,
         JournalStore,
         container_identity,
+        journal_has_uncertainty,
         journal_key,
         proposal_digest,
     )
     from jailbee.tui import console
 
-    if applied == retry:
+    if applied and retry:
         error_plain("Exactly one of --applied or --retry is required.")
         raise typer.Exit(2)
-    if retry:
-        if url is not None or issue is not None:
-            error_plain("--retry accepts neither --url nor --issue.")
-            raise typer.Exit(2)
-    elif url is None:
-        error_plain("--applied requires --url.")
+    if retry and (url is not None or issue is not None):
+        error_plain("--retry accepts neither --url nor --issue.")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    try:
+        identity = container_identity(incus, container)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    journal_store = JournalStore()
+
+    def _journal(manifest_name: str) -> "IssueJournal | None":
+        try:
+            return journal_store.load(journal_key(identity, manifest_name))
+        except JournalError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+
+    if manifest is None:
+        uncertain = [
+            m
+            for m in outbox.manifest_names
+            if (j := _journal(m)) is not None and journal_has_uncertainty(j)
+        ]
+        manifest = prompting.choose_one(
+            "manifest",
+            [prompting.Option(m, m, m) for m in uncertain],
+            destructive=True,
+            empty_reason=f"nothing uncertain to resolve in {short}",
+        )
     text = outbox.files.get(manifest)
     if text is None:
         error_plain(f"{short} has no pending manifest named {manifest}")
@@ -13146,34 +13392,58 @@ def issue_resolve_cmd(
     except IssueManifestError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
+    journal = _journal(manifest)
+    if action is None:
+        open_actions = sorted(
+            a.index for a in (journal.actions if journal else ()) if a.state == "uncertain"
+        )
+        action = prompting.choose_one(
+            "action",
+            [prompting.Option(i, f"action {i}", str(i)) for i in open_actions],
+            destructive=True,
+            empty_reason=f"{manifest} has no uncertain action",
+        )
     if not 0 <= action < len(parsed.actions):
         error_plain(f"{manifest} has no action {action}")
         raise typer.Exit(2)
     resolved_action = parsed.actions[action]
+    if not applied and not retry:
+        mode = prompting.choose_one(
+            "resolution",
+            [
+                prompting.Option("applied", "applied: it did land on GitHub", "--applied"),
+                prompting.Option(
+                    "retry", "retry: forget the outcome and attempt it again", "--retry"
+                ),
+            ],
+        )
+        applied, retry = mode == "applied", mode == "retry"
+    if applied and not isinstance(resolved_action, CreateAction) and issue is not None:
+        error_plain("--issue is only valid for a create action.")
+        raise typer.Exit(2)
 
-    if applied:
-        if isinstance(resolved_action, CreateAction):
-            if issue is None:
-                error_plain("A create action's resolution requires --issue.")
-                raise typer.Exit(2)
-        elif issue is not None:
-            error_plain("--issue is only valid for a create action.")
-            raise typer.Exit(2)
+    if applied and url is None:
+        url = prompting.ask_text(
+            "GitHub URL the mutation produced",
+            validate=lambda s: None if s.startswith("https://") else "enter an https:// URL",
+            alternative="--url",
+        )
 
-    try:
-        identity = container_identity(incus, container)
-    except JournalError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
+    if applied and isinstance(resolved_action, CreateAction) and issue is None:
+
+        def _number_problem(s: str) -> str | None:
+            s = s.strip()
+            return None if s.isascii() and s.isdecimal() and int(s) > 0 else "enter a number"
+
+        issue = int(
+            prompting.ask_text(
+                "created issue number", validate=_number_problem, alternative="--issue"
+            )
+        )
+
     body_files = {body: outbox.files[body] for body in parsed.body_files if body in outbox.files}
     digest = proposal_digest(manifest, text, body_files)
     key = journal_key(identity, manifest)
-    journal_store = JournalStore()
-    try:
-        journal = journal_store.load(key)
-    except JournalError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
 
     console.print()
     print_lines(issue_outbox.show_lines(parsed, journal, short))
@@ -13186,7 +13456,7 @@ def issue_resolve_cmd(
         resolution = issue_outbox.AppliedResolution(url=url, issue=issue)
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to resolve without a confirmation. Re-run with -y, or from a terminal."
             )
@@ -13400,8 +13670,8 @@ def apps_run_cmd(
 ) -> None:
     """Launch a GUI app in the container.
 
-    APP_NAME is required and comes first — see `jailbee apps ls` for what is
-    available. The container is named with `--container`, not a second
+    APP_NAME comes first — see `jailbee apps ls` for what is available; it is
+    asked for when omitted. The container is named with `--container`, not a second
     positional (`-c` is already `--config`'s short flag on every command, so
     it is not reused here): with APP_NAME optional-in-form and ARGS variadic,
     a middle positional for the container could not be told apart from the
@@ -13412,8 +13682,14 @@ def apps_run_cmd(
 
     cfg = _load_or_exit(config)
     if app_name is None:
-        error("Which app? Run `jailbee apps ls` to see what is available.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+        from jailbee.apps import resolve_apps
+
+        app_name = prompting.choose_one(
+            "app",
+            [prompting.Option(s.name, s.name, s.name) for s in resolve_apps(cfg)],
+            empty_reason="no apps are configured; see `jailbee apps ls`",
+        )
     try:
         spec = get_app(cfg, app_name)
     except ValueError as e:
@@ -13683,6 +13959,7 @@ def _choose_account_choice(
     prompt, several are refused off a TTY naming the `-a` values — lives in
     `accounts.selection`.
     """
+    from jailbee import prompting
     from jailbee.accounts import selection
     from jailbee.tui import pick_account
 
@@ -13692,7 +13969,7 @@ def _choose_account_choice(
         nothing=nothing,
         message=message,
         picker=pick_account,
-        is_interactive=_is_tty,
+        is_interactive=prompting.is_interactive,
     )
 
 
@@ -14505,10 +14782,10 @@ def _resolve_group_container(
     """The container an `account group use`/`reset` acts on.
 
     One container in the repo → that one, named out loud. Several → a
-    picker. No TTY → an error listing the candidates, so a script author
-    learns the invocation from the failure. The same three-way shape
-    `accounts.engine.resolve_interactively` uses for slots.
+    picker. No TTY → `MissingValue` listing the candidates, so a script author
+    learns the invocation from the failure (`prompting.choose_one`).
     """
+    from jailbee import prompting
     from jailbee.lifecycle import resolve_container_for_interactive
     from jailbee.tui import pick_container_for_group
 
@@ -14526,21 +14803,15 @@ def _resolve_group_container(
         for r in incus.list_containers()
         if str(r.get("name", "")).startswith(f"{cfg.container_prefix}-")
     ]
-    if not rows:
-        error(f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one.")
-        raise typer.Exit(2)
-    if len(rows) == 1:
-        only = str(rows[0]["name"])
-        info(f"Only one container for this repo: {only}")
-        return only
     names = sorted(str(r["name"]) for r in rows)
-    if not _is_tty():
-        error("Name the container explicitly (or run in a TTY): " + ", ".join(names))
-        raise typer.Exit(2)
-    picked = pick_container_for_group(cfg, incus, names)
-    if picked is None:
-        raise typer.Abort()
-    return picked
+    return prompting.choose_one(
+        "container",
+        [prompting.Option(n, n, n) for n in names],
+        empty_reason=(
+            f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one."
+        ),
+        picker=lambda opts: pick_container_for_group(cfg, incus, [o.value for o in opts]),
+    )
 
 
 def _agent_command(cfg: "Config", adapter: "AccountAdapter") -> str:
@@ -14804,9 +15075,47 @@ def account_group_ls_cmd(
     info("Every login on this host, parked ones included: `jailbee account ls`.")
 
 
+def _pick_group(cfg: "Config", *, with_none: bool, destructive: bool) -> str:
+    """A credential group, from the ones on this host; `none` when `with_none`."""
+    from jailbee import prompting
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters import base
+
+    names = groups.list_groups([a.name for a in base.pooled_adapters(cfg)])
+    options = [prompting.Option(n, n, n) for n in names]
+    # `none` is not a group: with no group to choose, offering it alone would
+    # make `choose_one` take it silently, so the empty set is reported first.
+    if options and with_none:
+        options.append(prompting.Option("none", "none — no group", "none"))
+    return prompting.choose_one(
+        "credential group",
+        options,
+        destructive=destructive,
+        empty_reason="no credential groups exist yet; `jailbee account group create` makes one",
+    )
+
+
+def _ask_group_name() -> str:
+    """A valid name for a new credential group, asked for until it is one."""
+    from jailbee import prompting
+    from jailbee.accounts import groups
+
+    def problem(text: str) -> str | None:
+        try:
+            groups.validate_group_name(text)
+        except groups.GroupError as e:
+            return str(e)
+        return None
+
+    return prompting.ask_text("name for the new group", validate=problem)
+
+
 @group_app.command("create")
 def account_group_create_cmd(
-    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    group: Annotated[
+        str | None,
+        typer.Argument(help="Name for the new credential group. Asked for when omitted."),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Create an empty credential group, before anything is assigned to it.
@@ -14820,6 +15129,8 @@ def account_group_create_cmd(
     from jailbee.accounts.adapters import base
     from jailbee.paths import display_path
 
+    if group is None:
+        group = _ask_group_name()
     try:
         group = groups.validate_group_name(group)
     except groups.GroupError as e:
@@ -14854,12 +15165,12 @@ def account_group_create_cmd(
 @group_app.command("rm")
 def account_group_rm_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Credential group to remove.",
+            help="Credential group to remove. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
@@ -14879,6 +15190,7 @@ def account_group_rm_cmd(
     One group name is one directory per enabled agent, so every adapter's
     directory is parked and removed, and a failure names the adapter.
     """
+    from jailbee import prompting
     from jailbee.accounts import engine, groups, selection
     from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
@@ -14887,6 +15199,8 @@ def account_group_rm_cmd(
     from jailbee.paths import display_path
 
     cfg, gcfg = _account_ctx(config)
+    if group is None:
+        group = _pick_group(cfg, with_none=False, destructive=True)
     try:
         group = groups.validate_group_name(group)
     except groups.GroupError as e:
@@ -14970,7 +15284,7 @@ def account_group_rm_cmd(
         held = "; ".join(
             f"`{adapter.name}` holds {_named(adapter, holder)}" for adapter, holder in live
         )
-        if not _is_tty():
+        if not prompting.is_interactive():
             error(
                 f"`{group}` still holds: {held}. Re-run with --yes to park every "
                 "login into the host-wide store and remove the group."
@@ -15030,12 +15344,14 @@ def account_group_rm_cmd(
 @group_app.command("set")
 def account_group_set_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` to keep this repo on its own login.",
+            help=(
+                "Group name, or `none` to keep this repo on its own login. Asked for when omitted."
+            ),
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -15058,6 +15374,8 @@ def account_group_set_cmd(
     cfg = _load_or_exit(config)
     incus = Incus()
     _refuse_if_agent_running_in_repo(cfg, incus, force)
+    if group is None:
+        group = _pick_group(cfg, with_none=True, destructive=False)
 
     value: object
     if group == "none":
@@ -15133,12 +15451,12 @@ def account_group_unset_cmd(
 @group_app.command("use")
 def account_group_use_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` for no group.",
+            help="Group name, or `none` for no group. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     container: Annotated[
         str | None,
         typer.Argument(
@@ -15167,6 +15485,8 @@ def account_group_use_cmd(
     from jailbee.accounts import groups
 
     cfg = _load_or_exit(config)
+    if group is None:
+        group = _pick_group(cfg, with_none=True, destructive=False)
     target: str | None
     try:
         target = None if group == "none" else groups.validate_group_name(group)
@@ -15313,7 +15633,10 @@ def claude_group_ls_cmd(
 
 @claude_group_app.command("create")
 def claude_group_create_cmd(
-    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    group: Annotated[
+        str | None,
+        typer.Argument(help="Name for the new credential group. Asked for when omitted."),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Deprecated: use `jailbee account group create`."""
@@ -15324,12 +15647,12 @@ def claude_group_create_cmd(
 @claude_group_app.command("rm")
 def claude_group_rm_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Credential group to remove.",
+            help="Credential group to remove. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
@@ -15344,12 +15667,14 @@ def claude_group_rm_cmd(
 @claude_group_app.command("set")
 def claude_group_set_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` to keep this repo on its own login.",
+            help=(
+                "Group name, or `none` to keep this repo on its own login. Asked for when omitted."
+            ),
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -15383,12 +15708,12 @@ def claude_group_unset_cmd(
 @claude_group_app.command("use")
 def claude_group_use_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` for no group.",
+            help="Group name, or `none` for no group. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     container: Annotated[
         str | None,
         typer.Argument(
@@ -15646,17 +15971,11 @@ def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
 
 @app.command("exec")
 def exec_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container name (short or full).",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: ContainerArg = None,
     cmd: Annotated[
-        list[str],
-        typer.Argument(help="Command and args to run as the dev user."),
-    ],
+        list[str] | None,
+        typer.Argument(help="Command and args to run as the dev user. Asked for when omitted."),
+    ] = None,
     cwd: Annotated[
         str,
         typer.Option(
@@ -15697,21 +16016,26 @@ def exec_cmd(
     import shlex
 
     from jailbee.config import CONTAINER_USERNAME
-    from jailbee.incus import Incus
-    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+    from jailbee.lifecycle import container_repo_dir
 
     if gui and not detach:
         error("--gui only applies to a detached launch; add --detach (-d).")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus = Incus()
-    try:
-        resolved = resolve_container_name(cfg, incus, name)
-    except ValueError as e:
-        error(str(e))
-        raise typer.Exit(1) from e
-    _refuse_remote_mount_container(incus, resolved, name)
+    incus, resolved = _resolve_existing(cfg, name)
+    _refuse_remote_mount_container(incus, resolved, name or resolved)
+
+    if not cmd:
+        from jailbee import prompting
+
+        def _command_problem(text: str) -> str | None:
+            try:
+                return None if shlex.split(text) else "enter a command to run"
+            except ValueError as e:
+                return f"cannot parse that command: {e}"
+
+        cmd = shlex.split(prompting.ask_text("command", validate=_command_problem))
 
     if cwd == "home":
         target = f"/home/{CONTAINER_USERNAME}"

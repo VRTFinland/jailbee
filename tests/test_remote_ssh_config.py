@@ -171,3 +171,10 @@ def test_gui_can_be_turned_on():
     from jailbee.config.models_remote import RemoteSSHConfig
 
     assert RemoteSSHConfig(gui=True).gui is True
+
+
+def test_files_defaults_off_and_accepts_true() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    assert RemoteSSHConfig().files is False
+    assert RemoteSSHConfig(files=True).files is True

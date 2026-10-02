@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import string
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -269,7 +268,9 @@ def choose_shared_credential(
     `container_prefix` is there only to make that note copy-pasteable — it is
     the prefix makes the suggested file path copy-pasteable.
     """
-    if not sys.stdin.isatty():
+    from jailbee import prompting
+
+    if not prompting.is_interactive():
         return None
 
     import questionary

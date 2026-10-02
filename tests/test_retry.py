@@ -117,7 +117,7 @@ def test_catch_accepts_a_tuple_of_types(mocker):
 def test_confirm_retry_is_false_off_tty_and_does_not_prompt(mocker):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     assert retry.confirm_retry("pushing", RuntimeError("boom")) is False
@@ -139,7 +139,7 @@ def test_confirm_retry_is_false_off_tty_and_does_not_prompt(mocker):
 def test_confirm_retry_reads_the_answer(mocker, answer, expected):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value=answer)
 
     assert retry.confirm_retry("pushing", RuntimeError("boom")) is expected
@@ -148,7 +148,7 @@ def test_confirm_retry_reads_the_answer(mocker, answer, expected):
 def test_confirm_retry_reports_the_failure_with_a_capitalised_label(mocker):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="n")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -163,7 +163,7 @@ def test_confirm_retry_reports_stderr_when_the_exception_carries_one(mocker):
     <path>")."""
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="n")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -183,7 +183,7 @@ def test_confirm_retry_reports_stderr_when_the_exception_carries_one(mocker):
 def test_confirm_retry_falls_back_to_str_when_stderr_is_blank(mocker, blank_stderr):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="n")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -205,7 +205,7 @@ def test_confirm_retry_falls_back_to_str_when_stderr_is_not_a_string(mocker):
     """A non-string `.stderr` must not crash confirm_retry."""
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="n")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -220,7 +220,7 @@ def test_confirm_retry_falls_back_to_str_when_stderr_is_not_a_string(mocker):
 def test_confirm_retry_quiet_prompts_without_reporting(mocker):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch("builtins.input", return_value="y")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -233,23 +233,8 @@ def test_confirm_retry_quiet_prompts_without_reporting(mocker):
 def test_confirm_retry_quiet_is_false_off_tty_and_does_not_prompt(mocker):
     from jailbee import retry
 
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     assert retry.confirm_retry_quiet("pushing", RuntimeError("boom")) is False
     prompt.assert_not_called()
-
-
-def test_stdin_is_interactive_respects_env_and_tty(monkeypatch):
-    from jailbee.retry import _stdin_is_interactive
-
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    assert _stdin_is_interactive() is True
-
-    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
-    assert _stdin_is_interactive() is False
-
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    assert _stdin_is_interactive() is False

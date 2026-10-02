@@ -477,9 +477,10 @@ ssh "${JB_SSH_COMMON[@]}" jailbee@localhost
 Expect active sessions to close, the unit to return active, the reconnect to
 succeed, and no new host-key prompt because restart preserved the host key.
 
-### Rejected SSH features
+### Rejected SSH features (`files: false`)
 
-SFTP and both modern and legacy SCP must fail rather than expose files:
+With `remote.ssh.files` off (the default), SFTP and both modern and legacy SCP
+must fail rather than expose files:
 
 ```bash
 sftp -o IdentitiesOnly=yes \
@@ -548,6 +549,30 @@ Expect the repo's normal `jb ls` output, exit status 0 (the same as the
 plain one-shot command run earlier), `OK: JAILBEE_SMOKE is absent from the
 child`, and no `SSH environment requests are not supported` message. Check
 the journal for the session's allowed audit row.
+
+### File transfer (`files: true`)
+
+Host only; needs a real running container with a clone. Reuse the client key
+and known-hosts file from above (add `-o IdentitiesOnly=yes -o
+UserKnownHostsFile=... -i ...` to each command).
+
+1. `jb remote ssh serve --files` (or set `remote.ssh.files: true` and run `jb
+   remote ssh restart`).
+2. `sftp -P 8022 jailbee@127.0.0.1`: `ls` lists container names; `cd
+   <container>`; `put`/`get` a file; `mkdir`, `rename`, `rm`.
+3. `scp -P 8022 file jailbee@127.0.0.1:<container>/dest` and the reverse; then
+   the legacy protocol `scp -O ...` and record whether it works (the server
+   reports a file type in every attribute set, so it should).
+4. Escape attempts, all of which must fail: create `ln -s /etc/passwd evil`
+   and `ln -s ../.. up` in the container's repo, then `get evil`, `cd up`,
+   `put x evil`, and `ls ..` from the container root.
+5. `ls /` never shows a stopped container or an `excluded_repos` repo; the
+   audit log (`journalctl --user -u jailbee-ssh`) has one `SFTP ...` line per
+   operation, refusals included.
+6. Confirm `dd`, `find -printf`, `stat -c`, `realpath -e`, `truncate` and
+   `touch -d @N` exist in a golden-image container:
+   `incus exec <c> -- sh -c 'dd --version | head -1; find --version | head -1;
+   realpath --version | head -1'`.
 
 After the smoke run, destroy the disposable container if it was created,
 remove the client key, and disable the service. The host key deliberately
@@ -1253,9 +1278,9 @@ cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline 
 
 # 4. Neither end is inferred off a TTY.
 jailbee git merge feat-merge-a < /dev/null
-# expect: exit 1, names "--into <target>" and says to run in a TTY
+# expect: exit 2, "missing target container (--into)" with its candidates
 jailbee git merge < /dev/null
-# expect: exit 1, names BOTH "<source>..." and "--into <target>"
+# expect: exit 2, names BOTH the source container and "--into", with candidates
 
 # 4a. Interactive selection (needs a real terminal — pickers only render on a
 #     TTY, so this step cannot be piped or run under `script -c`'s stdin).
@@ -2968,7 +2993,8 @@ jailbee destroy feat-x --all
 
 # 6. Non-TTY guard (run from a script or pipe)
 echo "" | jailbee destroy
-# expect: exit 1, "no container name given; pass a name, use --all, ..."
+# expect: exit 2, "missing container; pass it explicitly or use --all, or run in a
+#         terminal to choose. Candidates: ..."
 ```
 
 ## `jailbee ls` git-status columns + `jailbee git diff` smoke test
@@ -3672,10 +3698,9 @@ jailbee push
 
 # 7. Push off a TTY never reaches the confirmation at all (unlike pull/checkout).
 jailbee push < /dev/null
-# expect: exit 1, "No container name given. Pass a name, or run
-#         interactively in a TTY for the container picker." — no plan block,
-#         because push requires an explicit name before it ever lists
-#         containers when stdin isn't a TTY.
+# expect: exit 2, "missing container; pass it explicitly, or run in a terminal
+#         to choose. Candidates: ..." — no plan block, because off a TTY push
+#         lists the candidates and stops instead of choosing one.
 ```
 
 ## LOCAL diff and the destroy guard

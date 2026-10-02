@@ -5,6 +5,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from tests.conftest import panel_text
 
 runner = CliRunner()
 
@@ -190,3 +191,51 @@ def test_exec_detach_gui_on_the_host_uses_the_host_environment(
     assert result.exit_code == 0, result.output
     prepare.assert_not_called()
     assert detached.call_args.args[2]["WAYLAND_DISPLAY"] == "wayland-1"
+
+
+def test_exec_without_arguments_asks_for_both(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    resolve = mocker.patch("jailbee.cli._resolve_existing", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", return_value="ls -la 'my dir'")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    run = mocker.patch.object(Incus, "exec_interactive", return_value=0)
+
+    assert runner.invoke(app, ["exec"]).exit_code == 0
+    assert resolve.call_args.args[1] is None
+    assert run.call_args.args[1] == [
+        "bash",
+        "-lc",
+        "cd /home/dev/repo && exec ls -la 'my dir'",
+    ]
+
+
+def test_exec_unbalanced_quotes_re_ask(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["echo 'oops", "true"])
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch.object(Incus, "exec_interactive", return_value=0)
+
+    result = runner.invoke(app, ["exec", "c1"])
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2
+
+
+def test_exec_without_command_off_a_tty_exits_2(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["exec", "c1"])
+    assert result.exit_code == 2
+    assert "missing command" in panel_text(result.output)

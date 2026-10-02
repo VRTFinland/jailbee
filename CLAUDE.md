@@ -156,6 +156,23 @@ The wrapper method is named `list_containers()` to avoid shadowing Python's
 builtin `list` in type annotations (mypy strict catches this). The original
 plan called it `list()`; we deviated.
 
+### Missing required values are asked for, never usage errors
+Every command runs with no arguments. A value the command needs but was not
+given is resolved through `jailbee.prompting`: on an interactive terminal it
+is picked from the candidates (`choose_one`) or typed (`ask_text`);
+otherwise the command exits 2 naming the missing value and its candidates. A
+single candidate is taken with an info line on stderr, except for destructive
+actions (`destructive=True`; for a container, `_resolve_existing(...,
+always_prompt=True)`), which always show the picker. Listing commands (`ls`,
+`export`, …) treat an omitted value as "all" and never prompt. Positional
+order is unchanged — only trailing omitted values are asked. Declare such a
+positional `= None` and resolve it in the body, container first.
+`prompting.is_interactive()` is the only TTY test for prompts (it honours
+`JAILBEE_NONINTERACTIVE`); tests patch `jailbee.prompting.is_interactive`,
+`jailbee.prompting._select` and `jailbee.prompting._ask`.
+`tests/test_cli_prompt_policy.py` fails on any required positional and on any
+`stdin.isatty` outside `prompting.py` (bar the few non-prompt uses it names).
+
 ### Follow the existing import style
 - Lazy imports inside command functions in `cli.py` keep `jailbee --help` fast.
 - Type-only imports go under `if TYPE_CHECKING:` at module top.

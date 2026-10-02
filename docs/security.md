@@ -147,10 +147,13 @@ The SSH protocol surface is also fail-closed:
 
 - public-key authentication is the only authentication method; password,
   keyboard-interactive, host-based and GSS authentication are disabled;
-- SFTP, SCP, agent forwarding, X11 forwarding, Unix-socket forwarding and
-  remote listeners are disabled, and so is TCP forwarding, with one exception:
+- agent forwarding, X11 forwarding, Unix-socket forwarding and remote
+  listeners are disabled, and so is TCP forwarding, with one exception:
   while `remote.ssh.gui` is on, `127.0.0.1:13389` (the shared display, see
   [Remote GUI](#remote-gui)), for any authorized key;
+- SFTP and SCP are disabled unless `remote.ssh.files` is on. When it is, they
+  serve one thing only (see [File transfer](#file-transfer)) and every other
+  subsystem is still refused;
 - client environment requests, including `SendEnv`, are accepted by the
   protocol but ignored: the client's environment never reaches the child
   process, which is built from the service's own environment;
@@ -222,6 +225,42 @@ route/repository/command identifiers, decision and exit status. It does not
 record key material, complete argv, environment values, terminal contents or
 user input. See [Installation](installation.md#optional-ssh-service) for key
 rotation, service status, journal inspection and recovery operations.
+
+#### File transfer
+
+`remote.ssh.files: true` lets an authorized key use `sftp` and `scp` against a
+container's repository directory, in both directions. It is a single switch for
+reading and writing together, and it is off by default. Changing it needs `jb
+remote ssh restart`.
+
+The server is not a stock SFTP server, which would expose the host's
+filesystem. It presents a virtual tree: `/` lists the running containers of
+non-excluded repositories, and `/<container>/...` is that container's
+repository directory. The host filesystem is never read or written by it, and
+the rest of the container (home directory, credentials, agent state) is out of
+reach:
+
+- every operation is one `incus exec` of a fixed script; names and offsets
+  reach it as arguments, never as script text;
+- the target is resolved inside the container and refused when it leaves the
+  repository, so a symlink to `/etc` or `../..` is seen but never followed,
+  read, written or removed through (`lstat` shows the link itself);
+- links cannot be created, file names must be UTF-8, the top of the tree is
+  read-only, and files cannot be moved between containers;
+- files are written as the user who owns the repository (never root), a file
+  cannot grow past 2 GiB, and at most eight `incus exec` calls run at once
+  across all sessions;
+- containers that are stopped, belong to an `excluded_repos` repo, or are not
+  JailBee-managed are not listed and cannot be entered; neither are containers
+  created with `--mount`, since their repository directory is the host's own
+  checkout;
+- every operation that touches a container, and every one that is refused,
+  writes exactly one audit line with the key fingerprint, container, path
+  (and the new path of a rename), operation and outcome; path canonicalisation,
+  `close` and `fsync` touch nothing and are not audited.
+
+Submodules and anything mounted inside the repository directory are part of it
+and are reachable. Rsync is not supported.
 
 ### Remote GUI
 

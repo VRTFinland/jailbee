@@ -7,7 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from tests.conftest import make_cfg
+from tests.conftest import make_cfg, panel_text
 
 
 def _payload(name: str, status: str = "Running") -> dict:
@@ -352,21 +352,22 @@ def test_destroy_all_with_name_argument_is_mutex_error(tmp_path, mocker):
 
 def test_destroy_no_args_non_tty_errors(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     picker = mocker.patch("jailbee.tui.pick_containers_multi")
 
     result = CliRunner().invoke(app, ["destroy"])
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
-    assert "no container name given" in combined
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "Candidates: feat-a" in combined
+    assert "--all" in combined
     picker.assert_not_called()
     destroy_mock.assert_not_called()
 
 
 def test_destroy_no_args_tty_destroys_ticked_containers(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a", "myrepo-feat-b", "myrepo-feat-c"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=["myrepo-feat-a", "myrepo-feat-c"],
@@ -389,7 +390,7 @@ def test_destroy_no_args_tty_warns_about_the_ticked_containers_risk(tmp_path, mo
         _clone_payload("myrepo-feat-a"),
         _clone_payload("myrepo-feat-b"),
     ]
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=["myrepo-feat-a"],
@@ -413,7 +414,7 @@ def test_destroy_no_args_tty_force_skips_the_risk_prompt(tmp_path, mocker):
     included: the risk summary sat outside the `if not force:` gate there."""
     incus, destroy_mock = _setup(tmp_path, mocker, [])
     incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=["myrepo-feat-a"],
@@ -434,7 +435,7 @@ def test_destroy_no_args_tty_force_skips_the_risk_prompt(tmp_path, mocker):
 
 def test_destroy_no_args_tty_empty_selection_aborts(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_containers_multi", return_value=[])
 
     result = CliRunner().invoke(app, ["destroy"])
@@ -447,21 +448,34 @@ def test_destroy_no_args_tty_empty_selection_aborts(tmp_path, mocker):
 
 def test_destroy_no_args_tty_user_cancels_aborts(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_containers_multi", return_value=None)
 
     result = CliRunner().invoke(app, ["destroy"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "cancelled" in combined
+    destroy_mock.assert_not_called()
+
+
+def test_destroy_no_args_tty_single_container_is_still_asked(tmp_path, mocker):
+    """Destroy never takes a lone candidate unasked."""
+    _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    picker = mocker.patch("jailbee.tui.pick_containers_multi", return_value=None)
+
+    result = CliRunner().invoke(app, ["destroy"])
+
+    picker.assert_called_once()
+    assert result.exit_code == 1
     destroy_mock.assert_not_called()
 
 
 def test_destroy_no_args_zero_containers_exits_clean(tmp_path, mocker):
     _, destroy_mock = _setup(tmp_path, mocker, [])
     # Even in non-TTY, zero containers takes the early exit before the TTY check.
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     picker = mocker.patch("jailbee.tui.pick_containers_multi")
 
     result = CliRunner().invoke(app, ["destroy"])

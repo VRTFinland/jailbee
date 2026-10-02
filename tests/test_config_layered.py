@@ -252,7 +252,7 @@ def test_load_config_rejects_github_block_in_repo_yaml(repo_and_global):
         load_config(repo_path)
 
 
-def test_load_config_rejects_insecure_global_yaml_with_tokens(repo_and_global):
+def test_load_config_warns_on_insecure_global_yaml_with_tokens(repo_and_global, capsys):
     _, repo_path, global_path = repo_and_global
     _write(
         global_path,
@@ -266,8 +266,10 @@ def test_load_config_rejects_insecure_global_yaml_with_tokens(repo_and_global):
     global_path.chmod(0o644)
     _write(repo_path, {"container_prefix": "sampleapp"})
 
-    with pytest.raises(ConfigError, match=r"insecure perms"):
-        load_config(repo_path)
+    cfg = load_config(repo_path)
+
+    assert cfg.container_prefix == "sampleapp"
+    assert "insecure perms" in capsys.readouterr().err
 
 
 def test_load_config_accepts_secure_global_yaml_with_tokens(repo_and_global):
@@ -518,7 +520,7 @@ def test_local_container_prefix_is_refused_naming_the_local_file(repo_and_global
         load_config(repo_path)
 
 
-def test_local_token_is_used_and_needs_0600(repo_and_global):
+def test_local_token_is_used_and_warns_unless_0600(repo_and_global, capsys):
     _, repo_path, global_path = repo_and_global
     _write(global_path, {"github": {"enabled": True}})
     _write(repo_path, {"container_prefix": "myrepo"})
@@ -527,9 +529,12 @@ def test_local_token_is_used_and_needs_0600(repo_and_global):
     secret = cfg.github.token_for("myrepo")
     assert secret is not None and secret.get_secret_value() == "ghp_local"
 
+    assert "chmod 600" not in capsys.readouterr().err
+
     local_config_path("myrepo").chmod(0o644)
-    with pytest.raises(ConfigError, match=r"chmod 600"):
-        load_config(repo_path)
+    cfg = load_config(repo_path)
+    assert cfg.github.token_for("myrepo") is not None
+    assert "chmod 600" in capsys.readouterr().err
 
 
 def test_runtime_validation_uses_local_token_over_empty_legacy_entry(repo_and_global):

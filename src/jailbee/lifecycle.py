@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -305,7 +303,7 @@ def list_containers(
     completion) use it.
     """
     from jailbee.accounts import groups
-    from jailbee.mounts import DEVICE_NAME_PREFIX
+    from jailbee.mounts import attached_kinds
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
 
@@ -423,14 +421,7 @@ def list_containers(
                 # clean the corrupt label on its next pass.
                 loose_until = None
 
-        devices = raw.get("devices") or {}
-        attached = tuple(
-            sorted(
-                device.removeprefix(DEVICE_NAME_PREFIX)
-                for device in devices
-                if device.startswith(DEVICE_NAME_PREFIX)
-            )
-        )
+        attached = attached_kinds(raw.get("devices") or {})
 
         out.append(
             ContainerInfo(
@@ -2463,10 +2454,6 @@ def switch_network(
     egress_proxy.sync_container(cfg, incus, name, mode)
 
 
-def _stdin_is_interactive() -> bool:
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
-
-
 def _default_picker(containers: list[ContainerInfo]) -> str | None:
     from jailbee.tui import pick_container
 
@@ -2494,7 +2481,7 @@ def resolve_container_for_interactive_detailed(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> ResolvedContainer:
@@ -2508,12 +2495,20 @@ def resolve_container_for_interactive_detailed(
     container falls back to an in-flight ``jailbee new --background`` op of the
     same name, and the picker includes in-flight-only rows.
 
-    ``always_prompt`` suppresses the single-container short-circuit on a TTY,
-    so the picker runs even when there is only one candidate. Off a TTY it is
-    inert — a script must not be made to hang for a choice it cannot make.
-    Used by ``jailbee submodule pr``, which mutates a GitHub repository and
-    therefore shows the user its target rather than settling on one silently.
+    No containers, or several off a TTY, raise ``prompting.MissingValue``
+    (exit 2); a cancelled picker raises ``prompting.Cancelled``. A single
+    container is taken with a ``Using container <short>`` note on stderr.
+
+    ``always_prompt`` marks the choice destructive: the picker runs even for
+    a single candidate, and off a TTY that single candidate is a
+    ``MissingValue`` too — a script must name the target of a destructive
+    action. Used by commands that mutate something and therefore show the
+    user their target rather than settling on one silently.
     """
+    from jailbee import prompting
+
+    interactive = is_interactive if is_interactive is not None else prompting.is_interactive
+
     if name is not None:
         try:
             return ResolvedContainer(
@@ -2527,19 +2522,25 @@ def resolve_container_for_interactive_detailed(
             raise
 
     containers = list_containers(cfg, incus, with_git_status=True, with_background=with_background)
-    if not containers:
-        raise ValueError(f"no managed containers found for repo '{cfg.container_prefix}'")
-    if len(containers) == 1 and not (always_prompt and is_interactive()):
-        return ResolvedContainer(name=containers[0].name, auto_selected=True)
-    if is_interactive():
-        chosen = picker(containers)
-        if chosen is None:
-            raise ValueError("cancelled")
-        return ResolvedContainer(name=chosen, auto_selected=False)
-    names = ", ".join(c.display_name for c in containers)
-    raise ValueError(
-        f"multiple containers exist; specify <name> explicitly (or run in a TTY): {names}"
+    by_name = {c.name: c for c in containers}
+    answers: list[bool] = []
+
+    def tty() -> bool:
+        # Asked at most once, and only when a choice may need a terminal.
+        if not answers:
+            answers.append(interactive())
+        return answers[0]
+
+    asks = always_prompt and tty()
+    chosen = prompting.choose_one(
+        "container",
+        [prompting.Option(c.name, c.display_name, c.display_name) for c in containers],
+        destructive=always_prompt,
+        empty_reason=f"no managed containers found for repo '{cfg.container_prefix}'",
+        picker=lambda _opts: picker(list(by_name.values())),
+        is_interactive=tty,
     )
+    return ResolvedContainer(name=chosen, auto_selected=len(containers) == 1 and not asks)
 
 
 def resolve_container_for_interactive(
@@ -2548,7 +2549,7 @@ def resolve_container_for_interactive(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> str:

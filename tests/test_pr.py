@@ -445,7 +445,7 @@ def test_fetch_pr_head_retries_a_transient_failure_when_accepted(tmp_path, mocke
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
 
     result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"), remote="origin")
@@ -470,7 +470,7 @@ def test_fetch_pr_head_retry_is_not_offered_off_tty(tmp_path, mocker):
         raise AssertionError(f"unexpected command: {cmd}")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     with pytest.raises(PrFetchError, match="Could not read"):

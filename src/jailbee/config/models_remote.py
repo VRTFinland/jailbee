@@ -92,6 +92,14 @@ class RemoteSSHConfig(BaseModel):
             "Off by default."
         ),
     )
+    files: bool = Field(
+        default=False,
+        description=(
+            "Let remote sessions use `sftp` and `scp` on a container's repo "
+            "directory (and nothing else: never the host, never the rest of the "
+            "container). Off by default; changing it needs a restart."
+        ),
+    )
     excluded_repos: list[str] = Field(
         default_factory=list,
         description="Registered repository prefixes unavailable through remote SSH.",

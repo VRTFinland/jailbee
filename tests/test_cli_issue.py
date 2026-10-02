@@ -26,6 +26,7 @@ from jailbee.issue_outbox import (
     ResolvedIssue,
 )
 from jailbee.outbox_io import ContainerIdentity, IssueJournal, JournalAction
+from tests.conftest import panel_text
 
 runner = CliRunner()
 
@@ -73,7 +74,7 @@ def _setup(mocker, tmp_path, *, files=None):
     incus = mocker.MagicMock()
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "acme-feat-foo"))
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.issue_outbox.read_issue_outbox",
         return_value=OutboxSnapshot(files=files or {}),
@@ -219,7 +220,7 @@ def test_apply_asks_which_container_when_several_may_be_pending(mocker, tmp_path
 
 def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],
@@ -293,7 +294,7 @@ def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):
 
 def test_apply_refuses_off_a_tty_without_yes(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path))
     mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
     revalidate = mocker.patch("jailbee.issue_outbox.revalidate_batch")
@@ -961,13 +962,17 @@ def _setup_resolve(mocker, tmp_path, *, manifest_text=None, journal_actions=()):
     )
 
 
-def test_resolve_requires_exactly_one_of_applied_or_retry(mocker, tmp_path):
+def test_resolve_neither_flag_off_a_tty_exits_2(mocker, tmp_path):
+    """Off a terminal the missing resolution is an error naming both flags."""
     _setup_resolve(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
     result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "0"])
 
     assert result.exit_code == 2
-    assert "--applied" in result.output or "--retry" in result.output
+    assert "--applied" in panel_text(result.output) and "--retry" in panel_text(result.output)
+    reconcile.assert_not_called()
 
 
 def test_resolve_rejects_both_applied_and_retry(mocker, tmp_path):
@@ -980,6 +985,7 @@ def test_resolve_rejects_both_applied_and_retry(mocker, tmp_path):
     )
 
     assert result.exit_code == 2
+    assert "Exactly one of" in panel_text(result.output)
     reconcile.assert_not_called()
 
 
@@ -1008,7 +1014,7 @@ def test_resolve_validates_create_only_issue_option(mocker, tmp_path):
     assert "--issue" in result.output
 
 
-def test_resolve_create_action_requires_issue(mocker, tmp_path):
+def test_resolve_create_action_requires_issue_off_a_tty(mocker, tmp_path):
     text = json.dumps(
         {
             "version": 1,
@@ -1025,6 +1031,7 @@ def test_resolve_create_action_requires_issue(mocker, tmp_path):
         }
     )
     _setup_resolve(mocker, tmp_path, manifest_text=text)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = runner.invoke(
         app,
@@ -1041,7 +1048,7 @@ def test_resolve_create_action_requires_issue(mocker, tmp_path):
     )
 
     assert result.exit_code == 2
-    assert "--issue" in result.output
+    assert "issue number" in panel_text(result.output)
 
 
 def test_resolve_renders_the_action_before_confirming(mocker, tmp_path):
@@ -1118,7 +1125,7 @@ def test_resolve_requires_a_prompt_or_yes_off_tty(mocker, tmp_path):
             JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="unclear"),
         ),
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
     result = runner.invoke(
@@ -1173,3 +1180,301 @@ def test_resolve_reports_a_journal_error_and_exits_1(mocker, tmp_path):
 
     assert result.exit_code == 1
     assert "does not match" in result.output
+
+
+# ---- interactive missing values ---------------------------------------------
+
+
+def _uncertain_setup(mocker, tmp_path, *, name_resolver=True):
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "b"}])
+    _setup_resolve(
+        mocker,
+        tmp_path,
+        manifest_text=text,
+        journal_actions=(
+            JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="?"),
+        ),
+    )
+    if name_resolver:
+        mocker.patch(
+            "jailbee.cli._resolve_issue_container",
+            return_value=(mocker.MagicMock(), "acme-feat-foo"),
+        )
+    return mocker.patch("jailbee.issue_outbox.reconcile_action")
+
+
+def test_show_without_name_uses_the_issue_resolver(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
+    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    res = mocker.patch(
+        "jailbee.cli._resolve_issue_container",
+        return_value=(mocker.MagicMock(), "acme-feat-foo"),
+    )
+
+    result = runner.invoke(app, ["issue", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert res.call_args.args[1] is None
+
+
+def test_drop_without_name_and_nothing_pending_says_so(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.cli._resolve_issue_container", return_value=(mocker.MagicMock(), None))
+    drop = mocker.patch("jailbee.issue_outbox.drop_manifest")
+
+    result = runner.invoke(app, ["issue", "drop", "-y"])
+
+    assert result.exit_code == 0
+    assert "Nothing pending" in result.output
+    drop.assert_not_called()
+
+
+def test_show_without_name_and_nothing_pending_says_so(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.cli._resolve_issue_container", return_value=(mocker.MagicMock(), None))
+
+    result = runner.invoke(app, ["issue", "show"])
+
+    assert result.exit_code == 0
+    assert "Nothing pending" in result.output
+
+
+def test_resolve_asks_manifest_action_mode_and_url(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    select = mocker.patch("jailbee.prompting._select", side_effect=["001.json", 0, "applied"])
+    mocker.patch(
+        "jailbee.prompting._ask", return_value="https://github.com/acme/widgets/issues/42#c1"
+    )
+
+    result = runner.invoke(app, ["issue", "resolve", "-y"])
+
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 3  # manifest, action (one each, destructive), mode
+    from jailbee.issue_outbox import AppliedResolution
+
+    assert reconcile.call_args.kwargs["resolution"] == AppliedResolution(
+        url="https://github.com/acme/widgets/issues/42#c1", issue=None
+    )
+
+
+def test_resolve_asks_for_the_created_issue_number(mocker, tmp_path):
+    text = json.dumps(
+        {
+            "version": 1,
+            "actions": [
+                {
+                    "type": "create",
+                    "repo": ".",
+                    "ref": "r1",
+                    "title": "t",
+                    "body": "b",
+                    "labels": [],
+                }
+            ],
+        }
+    )
+    _setup_resolve(
+        mocker,
+        tmp_path,
+        manifest_text=text,
+        journal_actions=(
+            JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="?"),
+        ),
+    )
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+    mocker.patch("jailbee.prompting._ask", side_effect=["99"])
+
+    result = runner.invoke(
+        app,
+        [
+            "issue", "resolve", "feat-foo", "001.json", "0", "--applied",
+            "--url", "https://github.com/acme/widgets/issues/99", "-y",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    assert reconcile.call_args.kwargs["resolution"].issue == 99
+
+
+def test_resolve_without_uncertain_manifests_exits_2(mocker, tmp_path):
+    _setup_resolve(mocker, tmp_path)  # no journal actions: nothing uncertain
+    mocker.patch(
+        "jailbee.cli._resolve_issue_container",
+        return_value=(mocker.MagicMock(), "acme-feat-foo"),
+    )
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+
+    result = runner.invoke(app, ["issue", "resolve"])
+
+    assert result.exit_code == 2
+    assert "nothing uncertain" in panel_text(result.output).lower()
+    reconcile.assert_not_called()
+
+
+def test_resolve_without_an_uncertain_action_exits_2(mocker, tmp_path):
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "b"}])
+    _setup_resolve(
+        mocker,
+        tmp_path,
+        manifest_text=text,
+        journal_actions=(JournalAction(index=0, state="applied", repo="acme/widgets", detail=""),),
+    )
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "--retry", "-y"])
+
+    assert result.exit_code == 2
+    assert "no uncertain action" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+def test_resolve_cancel_at_the_manifest_picker_exits_1(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+
+    result = runner.invoke(app, ["issue", "resolve", "-y"])
+
+    assert result.exit_code == 1
+    reconcile.assert_not_called()
+
+
+def test_resolve_cancel_at_the_action_picker_exits_1(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting._select", side_effect=["001.json", None])
+
+    result = runner.invoke(app, ["issue", "resolve", "-y"])
+
+    assert result.exit_code == 1
+    reconcile.assert_not_called()
+
+
+def test_resolve_cancel_at_the_mode_picker_exits_1(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting._select", side_effect=["001.json", 0, None])
+
+    result = runner.invoke(app, ["issue", "resolve", "-y"])
+
+    assert result.exit_code == 1
+    reconcile.assert_not_called()
+
+
+def test_resolve_manifest_off_a_tty_exits_2_without_side_effect(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "--retry", "-y"])
+
+    assert result.exit_code == 2
+    assert "001.json" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+def test_resolve_mode_off_a_tty_still_requires_a_flag(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "0"])
+
+    assert result.exit_code == 2
+    assert "--applied" in panel_text(result.output) and "--retry" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+def test_resolve_retry_still_rejects_url(mocker, tmp_path):
+    reconcile = _uncertain_setup(mocker, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["issue", "resolve", "feat-foo", "001.json", "0", "--retry", "--url", "https://x", "-y"],
+    )
+
+    assert result.exit_code == 2
+    assert "--retry accepts neither" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+_CREATE_TEXT = json.dumps(
+    {
+        "version": 1,
+        "actions": [
+            {
+                "type": "create",
+                "repo": ".",
+                "ref": "r1",
+                "title": "t",
+                "body": "b",
+                "labels": [],
+            }
+        ],
+    }
+)
+
+
+def test_resolve_applied_without_url_off_a_tty_names_the_flag(mocker, tmp_path):
+    _setup_resolve(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "0", "--applied"])
+
+    assert result.exit_code == 2
+    assert "--url" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+def test_resolve_create_without_issue_off_a_tty_names_the_flag(mocker, tmp_path):
+    _setup_resolve(mocker, tmp_path, manifest_text=_CREATE_TEXT)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "issue", "resolve", "feat-foo", "001.json", "0", "--applied",
+            "--url", "https://github.com/acme/widgets/issues/99",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 2
+    assert "--issue" in panel_text(result.output)
+
+
+@pytest.mark.parametrize("bad", ["²", "0", "-3", "x"])
+def test_resolve_created_issue_number_rejects_non_positive_and_non_ascii(mocker, tmp_path, bad):
+    _setup_resolve(
+        mocker,
+        tmp_path,
+        manifest_text=_CREATE_TEXT,
+        journal_actions=(
+            JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="?"),
+        ),
+    )
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=[bad, "7"])
+
+    result = runner.invoke(
+        app,
+        [
+            "issue", "resolve", "feat-foo", "001.json", "0", "--applied",
+            "--url", "https://github.com/acme/widgets/issues/7", "-y",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2
+    assert reconcile.call_args.kwargs["resolution"].issue == 7
+
+
+def test_resolve_rejects_issue_on_a_non_create_before_asking_for_the_url(mocker, tmp_path):
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "hello"}])
+    _setup_resolve(mocker, tmp_path, manifest_text=text)
+    ask = mocker.patch("jailbee.prompting._ask")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = runner.invoke(
+        app, ["issue", "resolve", "feat-foo", "001.json", "0", "--applied", "--issue", "42"]
+    )
+
+    assert result.exit_code == 2
+    assert "--issue is only valid" in panel_text(result.output)
+    ask.assert_not_called()

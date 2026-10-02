@@ -352,16 +352,10 @@ def complete_credential_group(ctx: typer.Context, incomplete: str) -> list[str]:
     adapters = _adapters_for_completion(_agent_param(ctx))
     if not adapters:
         return []
-    names = {"none"}
-    for adapter in adapters:
-        root = groups.group_dir(adapter.name, "x").parent
-        try:
-            entries = sorted(root.iterdir())
-        except FileNotFoundError:
-            continue
-        except OSError:
-            return []
-        names.update(p.name for p in entries if p.is_dir() and not p.name.startswith("_"))
+    try:
+        names = ["none", *groups.list_groups([a.name for a in adapters])]
+    except OSError:
+        return []
     return sorted(n for n in names if n.startswith(incomplete))
 
 

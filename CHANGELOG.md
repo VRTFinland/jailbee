@@ -8,6 +8,21 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Changed
+
+- **Every command runs without arguments.** A value left out — a container,
+  snapshot, port forward, job, manifest, group, key, or a free-text value such
+  as `jailbee new`'s name or `jailbee exec`'s command — is asked for on a
+  terminal. Off a terminal (or with `JAILBEE_NONINTERACTIVE` set) the command
+  exits 2 naming the missing value and its candidates; the "which container?"
+  error that exited 1 now exits 2 like any other missing argument.
+  Destructive commands (`snapshot restore/delete`, `port rm`, `job clear`,
+  `autostart cancel`, `issue resolve`, `outbox drop/apply`,
+  `account group rm`, `remote ssh key rm`) ask even when there is only one
+  candidate.
+
+## 1.6.0 - 2026-10-02
+
 ### Added
 
 - **Wildcard `egress_allow` entries.** `*.example.com` allows the domain and
@@ -19,7 +34,13 @@ before editing `## Unreleased`.
   them up. Other tools stay blocked. Container-scope wildcards need the work
   network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net status`
   and `jailbee doctor` report the proxy.
-
+- **`sftp` and `scp` into a container's repo, over the remote SSH service.**
+  `remote.ssh.files: true` (or `jb remote ssh serve --files` for one run) lets
+  an authorized key browse the running containers and read and write files
+  under each one's repository directory with stock `sftp` and `scp`. It is off
+  by default and one switch covers both directions. Nothing outside the repo is
+  reachable: not the host, not the rest of the container, and a symlink that
+  leaves the repo is refused rather than followed. Rsync is not supported.
 - **`jailbee pr` can use any agent, not just Claude.** A new `pr:` block
   (`agent`, `ai_description`, `ai_branch`, `model`, `prompt`, `timeout`) says
   how the PR title, body and branch name are written. `pr.agent: auto`, the
