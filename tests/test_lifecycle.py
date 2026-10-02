@@ -23,6 +23,7 @@ from jailbee.lifecycle import (
     resolve_container_name,
     switch_network,
 )
+from jailbee.prompting import Cancelled, MissingValue
 from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1206,8 +1207,8 @@ def test_resolve_container_for_interactive_uses_with_git_status(make_cfg, tmp_pa
 
     try:
         resolve_container_for_interactive(cfg, incus, None)
-    except ValueError:
-        # We expect a ValueError ("no managed containers found"). We
+    except MissingValue:
+        # We expect a MissingValue ("no managed containers found"). We
         # care about how list_containers was called, not the resolution.
         pass
 
@@ -5810,7 +5811,7 @@ def test_resolver_errors_when_no_containers(make_cfg, tmp_path):
     incus.list_containers.return_value = []  # zero
     picker = MagicMock()
 
-    with pytest.raises(ValueError, match="no managed containers"):
+    with pytest.raises(MissingValue, match="no managed containers"):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5880,7 +5881,7 @@ def test_resolver_errors_when_multiple_and_non_interactive(make_cfg, tmp_path):
     picker = MagicMock()
     is_interactive = MagicMock(return_value=False)
 
-    with pytest.raises(ValueError, match=r"multiple containers.*specify <name>"):
+    with pytest.raises(MissingValue, match="Candidates: feat-a, feat-b"):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5902,7 +5903,7 @@ def test_resolver_raises_when_picker_cancelled(make_cfg, tmp_path):
     ]
     picker = MagicMock(return_value=None)  # Ctrl+C
 
-    with pytest.raises(ValueError, match="cancelled"):
+    with pytest.raises(Cancelled):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5982,21 +5983,20 @@ def test_resolver_always_prompt_shows_picker_for_a_single_container(make_cfg, tm
     assert result.auto_selected is False  # the user saw it and chose it
 
 
-def test_resolver_always_prompt_is_inert_off_a_tty(make_cfg, tmp_path):
-    """Scripts must not hang: off a TTY a single container is still auto-picked."""
+def test_resolver_always_prompt_off_a_tty_is_missing_value(make_cfg, tmp_path):
+    """A destructive choice is never settled silently: off a TTY it is exit 2."""
     cfg = make_cfg(tmp_path / "myrepo")
     cfg.repo_root.mkdir()
     incus = MagicMock()
     incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
     picker = MagicMock()
 
-    result = resolve_container_for_interactive_detailed(
-        cfg, incus, None, picker=picker, is_interactive=lambda: False, always_prompt=True
-    )
+    with pytest.raises(MissingValue):
+        resolve_container_for_interactive_detailed(
+            cfg, incus, None, picker=picker, is_interactive=lambda: False, always_prompt=True
+        )
 
     picker.assert_not_called()
-    assert result.name == "myrepo-feat-only"
-    assert result.auto_selected is True
 
 
 def test_resolver_always_prompt_does_not_affect_a_named_container(make_cfg, tmp_path):
@@ -6020,7 +6020,7 @@ def test_resolver_always_prompt_cancel_raises(make_cfg, tmp_path):
     incus = MagicMock()
     incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
 
-    with pytest.raises(ValueError, match="cancelled"):
+    with pytest.raises(Cancelled):
         resolve_container_for_interactive_detailed(
             cfg,
             incus,
@@ -10013,3 +10013,55 @@ def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg,
         outbox_io.ensure_directories(cfg, incus, "repo-x")
         assert manifest.read_text() == "existing"
         assert (parent / "issue-outbox").is_dir()
+
+
+def _ci(name):
+    from jailbee.lifecycle import ContainerInfo
+
+    return ContainerInfo(
+        name=name, state="Running", network=None, ip=None, memory_limit=None, repo="app"
+    )
+
+
+def test_resolver_several_off_a_tty_is_missing_value(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    with pytest.raises(MissingValue) as exc:
+        resolve_container_for_interactive(
+            cfg, mocker.MagicMock(), None, is_interactive=lambda: False
+        )
+    assert exc.value.candidates == ("a", "b")
+
+
+def test_resolver_patch_on_prompting_reaches_the_default(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    got = resolve_container_for_interactive(
+        cfg, mocker.MagicMock(), None, picker=lambda cs: cs[1].name
+    )
+    assert got == "app-b"
+
+
+def test_resolver_always_prompt_shows_the_picker_for_one(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a")])
+    seen = []
+    r = resolve_container_for_interactive_detailed(
+        cfg,
+        mocker.MagicMock(),
+        None,
+        always_prompt=True,
+        picker=lambda cs: seen.append(cs) or cs[0].name,
+        is_interactive=lambda: True,
+    )
+    assert r.name == "app-a" and r.auto_selected is False and len(seen) == 1
+
+
+def test_resolver_cancel_raises_cancelled(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    with pytest.raises(Cancelled):
+        resolve_container_for_interactive(
+            cfg, mocker.MagicMock(), None, picker=lambda cs: None, is_interactive=lambda: True
+        )

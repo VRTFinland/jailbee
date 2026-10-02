@@ -3734,8 +3734,11 @@ def _resolve_existing(
     """Resolve a container name, prompting interactively if omitted.
 
     See lifecycle.resolve_container_for_interactive for the behavior
-    matrix. ValueError is translated to typer.Exit(1). ``always_prompt``
-    shows the picker on a TTY even for a single container.
+    matrix. A ValueError (unknown name) is translated to typer.Exit(1);
+    ``prompting.MissingValue`` / ``Cancelled`` are ClickExceptions and
+    propagate for Typer to render (exit 2 / 1). ``always_prompt`` marks the
+    choice destructive: the picker shows even for a single container, and
+    off a TTY it is a ``MissingValue``.
     """
     from jailbee.incus import Incus
     from jailbee.lifecycle import resolve_container_for_interactive
@@ -14413,9 +14416,8 @@ def _resolve_group_container(
     """The container an `account group use`/`reset` acts on.
 
     One container in the repo → that one, named out loud. Several → a
-    picker. No TTY → an error listing the candidates, so a script author
-    learns the invocation from the failure. The same three-way shape
-    `accounts.engine.resolve_interactively` uses for slots.
+    picker. No TTY → `MissingValue` listing the candidates, so a script author
+    learns the invocation from the failure (`prompting.choose_one`).
     """
     from jailbee import prompting
     from jailbee.lifecycle import resolve_container_for_interactive
@@ -14435,21 +14437,15 @@ def _resolve_group_container(
         for r in incus.list_containers()
         if str(r.get("name", "")).startswith(f"{cfg.container_prefix}-")
     ]
-    if not rows:
-        error(f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one.")
-        raise typer.Exit(2)
-    if len(rows) == 1:
-        only = str(rows[0]["name"])
-        info(f"Only one container for this repo: {only}")
-        return only
     names = sorted(str(r["name"]) for r in rows)
-    if not prompting.is_interactive():
-        error("Name the container explicitly (or run in a TTY): " + ", ".join(names))
-        raise typer.Exit(2)
-    picked = pick_container_for_group(cfg, incus, names)
-    if picked is None:
-        raise typer.Abort()
-    return picked
+    return prompting.choose_one(
+        "container",
+        [prompting.Option(n, n, n) for n in names],
+        empty_reason=(
+            f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one."
+        ),
+        picker=lambda opts: pick_container_for_group(cfg, incus, [o.value for o in opts]),
+    )
 
 
 def _agent_command(cfg: "Config", adapter: "AccountAdapter") -> str:
