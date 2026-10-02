@@ -1243,7 +1243,9 @@ def test_show_without_name_and_nothing_pending_says_so(mocker, tmp_path):
 def test_resolve_asks_manifest_action_mode_and_url(mocker, tmp_path):
     reconcile = _uncertain_setup(mocker, tmp_path)
     select = mocker.patch("jailbee.prompting._select", side_effect=["001.json", 0, "applied"])
-    mocker.patch("jailbee.prompting._ask", return_value="https://github.com/acme/widgets/issues/42#c1")
+    mocker.patch(
+        "jailbee.prompting._ask", return_value="https://github.com/acme/widgets/issues/42#c1"
+    )
 
     result = runner.invoke(app, ["issue", "resolve", "-y"])
 
