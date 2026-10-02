@@ -10005,6 +10005,11 @@ def _print_egress_proxy_status(scope: "RemoteRepoScope | None" = None) -> None:
 
     Silent unless a registered repo in scope has a wildcard entry; a failure
     to gather it prints a one-line stderr note, like the override section.
+
+    Known limit: only the cwd repo's effective config and the other registered
+    repos' host-local/legacy entries are inspected. Another repo's committed
+    config cannot be loaded from here, so a wildcard that lives only there does
+    not make this line appear.
     """
     from sqlmodel import Session, select
 

@@ -4020,3 +4020,15 @@ def test_egress_proxy_flags_a_bridge_without_the_services_acl(mocker, tmp_path):
 def test_egress_proxy_ignores_the_services_acl_when_not_needed(mocker, tmp_path):
     rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"], missing=["incusbr0"])
     assert len(rows) == 1
+
+
+def test_egress_proxy_unexpected_probe_failure_is_not_reported_as_not_needed(mocker, tmp_path):
+    _proxy_rows(mocker, tmp_path, entries=["github.com"])
+    mocker.patch("jailbee.lifecycle.list_containers", side_effect=RuntimeError("boom"))
+    from jailbee.doctor import _check_egress_proxy
+
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=["github.com"])
+    out = _check_egress_proxy(cfg, _baseline_incus())
+    assert out[0].ok is False
+    assert out[0].detail == "error querying: boom"

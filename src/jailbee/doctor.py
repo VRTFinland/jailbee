@@ -257,16 +257,11 @@ def _egress_proxy_needed(cfg: Config, incus: Incus) -> bool:
     with Session(get_engine()) as session:
         if any(is_wildcard_entry(e) for e in egress_scope.effective_repo_entries(cfg, session)):
             return True
-    try:
-        return any(
-            is_wildcard_entry(entry)
-            for info in list_containers(cfg, incus)
-            for entry in egress_scope.container_extras(incus, info.name)
-        )
-    except IncusError:
-        raise
-    except Exception:  # a malformed extras label must not abort doctor
-        return False
+    return any(
+        is_wildcard_entry(entry)
+        for info in list_containers(cfg, incus)
+        for entry in egress_scope.container_extras(incus, info.name)
+    )
 
 
 def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
@@ -279,7 +274,9 @@ def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
             return [CheckResult(name, True, "not needed — no wildcard egress entries")]
         status = egress_proxy.proxy_status(incus)
         missing = litellm.bridges_missing_services_acl(incus)
-    except IncusError as e:
+    except Exception as e:  # doctor reports a failed probe, never crashes on it
+        # IncusError, but also the state DB or a listing that cannot be read: a
+        # probe that failed must never read as "not needed".
         return [CheckResult(name, False, f"error querying: {e}")]
     if status == egress_proxy.ProxyStatus.RUNNING:
         rows = [CheckResult(name, True, "status: running")]

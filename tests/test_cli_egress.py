@@ -1074,7 +1074,10 @@ def test_ls_with_a_wildcard_shows_the_via_column(tmp_path, mocker):
     assert result.exit_code == 0, result.output
     assert "VIA" in result.stdout
     assert "acl+proxy" in result.stdout
-    assert "proxy" in result.stdout
+    cells = [line.replace("│", " ").split() for line in result.stdout.splitlines()]
+    rows = {c[0]: c for c in cells if c}
+    assert rows["*.example.com"][-1] == "proxy"
+    assert rows["github.com"][-1] == "acl+proxy"
 
 
 def test_ls_json_always_carries_via(tmp_path, mocker):
@@ -1144,3 +1147,27 @@ def test_net_status_proxy_line_other_states_point_at_apply(tmp_path, mocker, cap
     out = capsys.readouterr().out
     assert f"Egress proxy: {status}" in out
     assert "— run 'jailbee apply'" in out
+
+
+def test_net_status_proxy_line_failure_is_reported_not_silent(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+    mocker.patch("jailbee.egress_proxy.proxy_status", side_effect=RuntimeError("boom"))
+
+    _print_egress_proxy_status()
+
+    captured = capsys.readouterr()
+    assert "Egress proxy:" not in captured.out
+    assert "Could not gather egress-proxy status" in captured.err
+
+
+def test_net_status_proxy_line_honours_the_remote_scope(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+
+    _print_egress_proxy_status(RemoteRepoScope(frozenset({"myrepo"})))
+
+    assert capsys.readouterr().out == ""
