@@ -235,6 +235,7 @@ def test_exec_without_command_off_a_tty_exits_2(tmp_path, mocker):
 
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.cli._resolve_existing", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["exec", "c1"])
     assert result.exit_code == 2
     assert "missing command" in panel_text(result.output)

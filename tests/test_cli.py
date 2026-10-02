@@ -2576,7 +2576,10 @@ def test_new_without_name_off_a_tty_exits_2(tmp_path, mocker):
     result = runner.invoke(app, ["new", "--no-clone", "--no-autostart"])
 
     assert result.exit_code == 2
-    assert "missing" in panel_text(result.output).lower()
+    text = panel_text(result.output)
+    assert "pass it explicitly" in text
+    assert "terminal" in text
+    assert "NAME argument" not in text
 
 
 def test_new_cmd_default_does_not_attach(tmp_path, mocker):
