@@ -1498,3 +1498,71 @@ def test_refresh_pool_reconciles_shared_acl_on_both_bridges_after_db_default_los
             "security.acls": f"{acl_name(cfg)},{work_extra_acl},jailbee-services",
         },
     )
+
+
+def test_refresh_pool_keeps_wildcards_out_of_the_resolver(
+    db_session: Session,
+    cfg: Any,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool
+
+    cfg.effective_egress_allow.return_value = ["*.vendor.com", "github.com:443"]
+    rws = mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch.object(egress_pool, "_write_acl", autospec=True)
+    mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
+    mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
+
+    result = egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"
+    assert rws.call_args_list[0].args == (["github.com"],)
+
+
+def test_refresh_container_extras_keeps_wildcards_out_of_dns_and_acl(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from jailbee.egress_pool import _refresh_container_extras
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=[])
+    rws = mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"b.com": ["2.2.2.2"]}, {}),
+    )
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["*.foo.com", "b.com"])
+    mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat", state="Running", network="strict", ip=None, memory_limit=None
+            )
+        ],
+    )
+    acl = mocker.patch("jailbee.egress_pool._apply_acl_with_nft_quirk")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+
+    _refresh_container_extras(
+        cfg, incus, db_session, now=frozen_now, ttl=timedelta(hours=1), max_per_host=8
+    )
+
+    rws.assert_called_once_with(["b.com"])
+    yaml_text = acl.call_args.args[2]
+    assert "*" not in yaml_text
+    assert "2.2.2.2" in yaml_text
+
+
+def test_entries_from_pool_drops_wildcards(db_session: Session) -> None:
+    from jailbee.egress_pool import _entries_from_pool
+
+    entries = _entries_from_pool(db_session, "X", ["*.vendor.com", "10.0.0.0/8"])
+
+    assert [e.description for e in entries] == ["10.0.0.0/8"]

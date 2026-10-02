@@ -388,9 +388,15 @@ def _resolve_entries_tolerant(name: str, entries: list[str]) -> list[EgressEntry
     whole container (and, via `jailbee apply`'s per-container loop, every
     later container in the repo) on the first failing host.
     """
-    from jailbee.egress import EgressEntry, parse_egress_entry, resolve_with_status
+    from jailbee.egress import (
+        EgressEntry,
+        acl_raw_entries,
+        parse_egress_entry,
+        resolve_with_status,
+    )
     from jailbee.tui import warn
 
+    entries = acl_raw_entries(entries)
     specs = [parse_egress_entry(raw) for raw in entries]
     hostnames = sorted({s.target for s in specs if not s.is_literal})
     resolved, failed = resolve_with_status(hostnames)

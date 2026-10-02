@@ -9005,7 +9005,7 @@ def egress_add_cmd(
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
     from jailbee import egress_scope
-    from jailbee.egress import NetworkResolveError, validate_allow_entry
+    from jailbee.egress import NetworkResolveError, is_wildcard_entry, validate_allow_entry
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
@@ -9037,11 +9037,13 @@ def egress_add_cmd(
 
     # Resolve before storing: an unresolvable host is the user's typo, and
     # they can fix it now.
-    try:
-        egress_scope.resolve_entries([entry])
-    except NetworkResolveError as e:
-        error(f"{e}\nNothing was stored.")
-        raise typer.Exit(1) from e
+    # A wildcard names no address, so there is nothing to resolve.
+    if not is_wildcard_entry(entry):
+        try:
+            egress_scope.resolve_entries([entry])
+        except NetworkResolveError as e:
+            error(f"{e}\nNothing was stored.")
+            raise typer.Exit(1) from e
 
     incus, container = _egress_target(name, repo, cfg)
     if repo:
@@ -9063,12 +9065,19 @@ def egress_add_cmd(
     if entry in extras:
         info(f"'{entry}' is already an override on '{container}' — nothing to do.")
         return
-    egress_scope.set_container_extras(incus, container, [*extras, entry])
-    mode = _egress_container_mode(cfg, incus, container)
     from jailbee.network_generation import generation_of
 
     raw = next((item for item in incus.list_containers() if item.get("name") == container), {})
-    if generation_of(cfg, raw) == "work":
+    is_work = generation_of(cfg, raw) == "work"
+    if is_wildcard_entry(entry) and not is_work:
+        error(
+            "container-scope wildcards need the work network "
+            "(run `jailbee net migrate`), or add it with --repo"
+        )
+        raise typer.Exit(2)
+    egress_scope.set_container_extras(incus, container, [*extras, entry])
+    mode = _egress_container_mode(cfg, incus, container)
+    if is_work:
         from jailbee.work_acl import apply_work_container_acl, reconcile_work_acl
         from jailbee.work_network import work_network_lock
 

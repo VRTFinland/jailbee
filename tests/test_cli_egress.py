@@ -902,3 +902,28 @@ def test_export_for_a_configured_repo_still_names_the_repo_file(tmp_path, mocker
 
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(result.stdout) == {"egress_allow": ["github.com", "nexus.corp:443"]}
+
+
+def test_egress_add_wildcard_skips_dns(tmp_path, mocker, monkeypatch):
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.vendor.com", "--repo"])
+
+    assert result.exit_code == 0, result.output
+    resolve.assert_not_called()
+
+
+def test_egress_add_container_wildcard_refused_on_legacy(tmp_path, mocker):
+    _cfg, incus = _repo(tmp_path, mocker)
+    incus.list_containers.return_value = [{"name": "myrepo-feat", "profiles": []}]
+    resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
+    set_extras = mocker.patch("jailbee.egress_scope.set_container_extras")
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.vendor.com", "myrepo-feat"])
+
+    assert result.exit_code == 2
+    assert "jailbee net migrate" in result.output
+    resolve.assert_not_called()
+    set_extras.assert_not_called()

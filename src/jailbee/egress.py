@@ -228,6 +228,7 @@ def build_egress_entries(raw_entries: list[str]) -> list[EgressEntry]:
     Hostnames are deduplicated before resolution so each name hits DNS at
     most once per call. Input order is preserved in the output.
     """
+    raw_entries = acl_raw_entries(raw_entries)
     specs = [parse_egress_entry(raw) for raw in raw_entries]
 
     hostnames_to_resolve = sorted({spec.target for spec in specs if not spec.is_literal})

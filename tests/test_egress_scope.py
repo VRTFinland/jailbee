@@ -931,3 +931,12 @@ def test_apply_container_acl_can_skip_the_bridge_sync(make_cfg, tmp_path, mocker
     egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict", sync_bridge=False)
 
     sync.assert_not_called()
+
+
+def test_resolve_entries_tolerant_skips_wildcards(mocker):
+    rws = mocker.patch(
+        "jailbee.egress.resolve_with_status", return_value=({"a.com": ["1.1.1.1"]}, {})
+    )
+    out = egress_scope._resolve_entries_tolerant("ct", ["*.vendor.com", "a.com"])
+    rws.assert_called_once_with(["a.com"])
+    assert [e.description for e in out] == ["a.com"]

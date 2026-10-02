@@ -261,3 +261,10 @@ def test_is_wildcard_and_acl_raw_entries():
     raw = ["github.com", "*.vendor.com", "10.0.0.0/8", "*.x.org:443"]
     assert [is_wildcard_entry(r) for r in raw] == [False, True, False, True]
     assert acl_raw_entries(raw) == ["github.com", "10.0.0.0/8"]
+
+
+def test_build_egress_entries_skips_wildcards(mocker):
+    gai = mocker.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("1.1.1.1", 0))])
+    entries = build_egress_entries(["*.vendor.com", "github.com:443"])
+    assert [e.description for e in entries] == ["github.com:443"]
+    assert [c.args[0] for c in gai.call_args_list] == ["github.com"]
