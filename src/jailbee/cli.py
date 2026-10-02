@@ -3798,8 +3798,12 @@ def _pick_containers(
     *,
     message: str,
     alternative: str | None = None,
+    noun: str = "container",
 ) -> list[str]:
     """Several containers, chosen per the missing-value policy (multi-select).
+
+    `noun` names what is missing in the off-TTY error, for callers where
+    "container" alone would not say which argument to pass.
 
     No single-candidate shortcut here: whether one candidate may be taken
     unasked is each caller's decision (destroy: never). An empty selection
@@ -3813,7 +3817,7 @@ def _pick_containers(
         )
     if not prompting.is_interactive():
         raise prompting.MissingValue(
-            "container", candidates=[c.display_name for c in containers], alternative=alternative
+            noun, candidates=[c.display_name for c in containers], alternative=alternative
         )
     picked = tui.pick_containers_multi(containers, message=message)
     if picked is None:
@@ -7369,6 +7373,12 @@ def _prompt_merge_endpoints(
             ),
         )
 
+    source_noun = "source container (the <source> argument)"
+    target_noun = "target container (--into)"
+    if sources is None and into is None:
+        # Off a TTY nothing else is asked, so say that both ends are needed.
+        source_noun = f"{source_noun} and {target_noun}"
+
     if sources is None:
         offer = _without_containers(cfg, candidates, into or [])
         if not offer:
@@ -7386,7 +7396,7 @@ def _prompt_merge_endpoints(
                 short_name(
                     cfg,
                     prompting.choose_one(
-                        "container",
+                        source_noun,
                         [prompting.Option(c.name, c.display_name, c.display_name) for c in offer],
                         destructive=True,
                         picker=lambda _opts: tui.pick_container(
@@ -7400,6 +7410,7 @@ def _prompt_merge_endpoints(
                 cfg,
                 offer,
                 message="Select containers to merge FROM (merged in listed order):",
+                noun=source_noun,
             )
             if not picked:
                 info("Nothing selected.")
@@ -7417,7 +7428,10 @@ def _prompt_merge_endpoints(
                 ),
             )
         targets = _pick_containers(
-            cfg, offer, message="Select containers to merge INTO (each takes every source):"
+            cfg,
+            offer,
+            message="Select containers to merge INTO (each takes every source):",
+            noun=target_noun,
         )
         if not targets:
             info("Nothing selected.")

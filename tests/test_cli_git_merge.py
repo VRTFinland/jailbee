@@ -646,6 +646,8 @@ def test_git_merge_off_a_tty_requires_the_target_explicitly(merge_repo, mocker):
 
     assert result.exit_code == 2
     combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "--into" in combined
+    assert "<source>" not in combined
     assert "Candidates: c4, c5" in combined
     called.assert_not_called()
 
@@ -657,6 +659,8 @@ def test_git_merge_off_a_tty_requires_the_sources_explicitly(merge_repo, mocker)
 
     assert result.exit_code == 2
     combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "<source>" in combined
+    assert "--into" not in combined
     assert "Candidates: c1" in combined
     called.assert_not_called()
 
@@ -668,7 +672,10 @@ def test_git_merge_off_a_tty_asks_for_the_sources_first_when_both_are_missing(me
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 2
-    assert "Candidates: c1, c4" in panel_text((result.output or "") + (result.stderr or ""))
+    combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "<source>" in combined
+    assert "--into" in combined
+    assert "Candidates: c1, c4" in combined
     called.assert_not_called()
 
 
@@ -679,7 +686,9 @@ def test_git_merge_off_a_tty_with_a_branch_override_lists_the_candidates(merge_r
     result = runner.invoke(app, ["git", "merge", "--into", "c4", "-b", "feat/x"])
 
     assert result.exit_code == 2
-    assert "Candidates: c1" in panel_text((result.output or "") + (result.stderr or ""))
+    combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "<source>" in combined
+    assert "Candidates: c1" in combined
     called.assert_not_called()
 
 
