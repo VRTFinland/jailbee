@@ -1253,9 +1253,9 @@ cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline 
 
 # 4. Neither end is inferred off a TTY.
 jailbee git merge feat-merge-a < /dev/null
-# expect: exit 1, names "--into <target>" and says to run in a TTY
+# expect: exit 2, "missing target container (--into)" with its candidates
 jailbee git merge < /dev/null
-# expect: exit 1, names BOTH "<source>..." and "--into <target>"
+# expect: exit 2, names BOTH the source container and "--into", with candidates
 
 # 4a. Interactive selection (needs a real terminal — pickers only render on a
 #     TTY, so this step cannot be piped or run under `script -c`'s stdin).

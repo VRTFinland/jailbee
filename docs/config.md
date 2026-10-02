@@ -2775,7 +2775,7 @@ repo's host-local file and shared by every container of that repo. A single cont
 carry a **temporary** override, stored in its own
 `user.jailbee.credential_group` instance label rather than in any file:
 
-* `jailbee account group use <name>|none [<container>]` sets it — `<name>`
+* `jailbee account group use [<name>|none] [<container>]` sets it — `<name>`
   moves that one container into another group (creating the group directory
   if needed), `none` opts it out of grouping entirely, for as long as the
   container lives.
@@ -2813,8 +2813,8 @@ runs — `jailbee account group` names them.
 the host-wide picture is `jailbee account ls`, per-container labels are
 `jailbee ls`'s `GROUP` column, and `jailbee doctor` reports an override that
 only repeats this repo's group. `jailbee account group ls` lists the groups
-themselves and what each holds, `jailbee account group create <name>` creates
-an empty group, and `jailbee account group rm <name>` removes one nothing uses
+themselves and what each holds, `jailbee account group create [<name>]` creates
+an empty group, and `jailbee account group rm [<name>]` removes one nothing uses
 (parking any login it holds rather than deleting it). `jailbee account
 group set <name>|none` and `jailbee account group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `credentials.group` in

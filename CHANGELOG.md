@@ -240,6 +240,17 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **Every command runs without arguments.** A value left out — a container,
+  snapshot, port forward, job, manifest, group, key, or a free-text value such
+  as `jailbee new`'s name or `jailbee exec`'s command — is asked for on a
+  terminal. Off a terminal (or with `JAILBEE_NONINTERACTIVE` set) the command
+  exits 2 naming the missing value and its candidates; the "which container?"
+  error that exited 1 now exits 2 like any other missing argument.
+  Destructive commands (`snapshot restore/delete`, `port rm`, `job clear`,
+  `autostart cancel`, `issue resolve`, `outbox drop/apply`,
+  `account group rm`, `remote ssh key rm`) ask even when there is only one
+  candidate.
+
 - **The host's own agent skills are now opt-in.** `jailbee setup`'s skills
   step used to copy JailBee's bundled skills into `~/.claude/skills` on
   every run. It installs nothing now unless `install_host_skills: true` is

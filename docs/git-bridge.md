@@ -1136,10 +1136,10 @@ the paths it does recognize.
 
 ```bash
 jailbee issue ls [<name>] [-o table|json] [--fields …]
-jailbee issue show <name> [<manifest>]
+jailbee issue show [<name>] [<manifest>]
 jailbee issue apply [<name>] [--manifest <name>] [--yes] [--dry-run]
-jailbee issue drop <name> [<manifest>] [--archive-journal] [--yes]
-jailbee issue resolve <name> <manifest> <action> (--applied --url <url> [--issue <n>] | --retry) [--yes]
+jailbee issue drop [<name>] [<manifest>] [--archive-journal] [--yes]
+jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
 ```
 
 `jailbee issue ls` lists every pending manifest across this repo's
@@ -1213,8 +1213,10 @@ the run actually stopped.
 A GitHub mutation whose outcome could not be determined for certain — a
 dropped connection, a timeout — is journaled `uncertain` rather than
 `applied` or left `pending`, and **`jailbee issue apply` refuses to touch
-that manifest again until it is resolved.** `jailbee issue resolve <name>
-<manifest> <action>` takes exactly one of:
+that manifest again until it is resolved.** `jailbee issue resolve [<name>]
+[<manifest>] [<action>]` takes exactly one of (on a terminal, whatever you leave out —
+container, manifest, action, mode, URL — is asked for; off one it must be given
+as arguments and flags, or the command exits 2):
 
 - `--applied --url <github-issue-url> [--issue <n>]` — the human's own
   confirmation, read off GitHub's UI, of what the mutation actually did.
