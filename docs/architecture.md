@@ -204,7 +204,26 @@ flowchart TB
     NIC -->|"allow rule matches"| OK
     NIC -->|"implicit default"| NO
     APP <-->|"proxy device, never eth0"| SVC
+    PROXY["jailbee-egress-proxy<br>Squid, domain rules per source IP"]
+    APP -->|"HTTP(S)_PROXY"| PROXY
 ```
+
+The third path serves wildcard `egress_allow` entries, which an ACL cannot
+express. The client reaches Squid on port 3128 through a rule in the
+`jailbee-services` ACL, and Squid fetches upstream from `jailbee-loose`.
+
+#### Per-bridge client NICs
+
+The proxy container has `eth0` on `jailbee-loose` (DHCP, the only default
+route) and one further NIC per client bridge: `eth1` on `incusbr0`, `eth2` on
+`jailbee-work` when that network exists. Each has a static address and no
+route. Clients on a bridge talk to the proxy on its address on that same
+bridge, so the traffic never crosses a router and keeps the client's real
+source address, which is what the per-source rules match; a packet routed
+through a masquerading gateway would arrive as the gateway. `security.ipv4_filtering`
+is on for these NICs. Each repo's rules are one file in `/etc/squid/jailbee.d/`,
+checked with `squid -k parse` before a `squid -k reconfigure`, and restored
+if the check fails.
 
 ### Two filters, not one
 

@@ -867,7 +867,7 @@ with `jailbee net migrate`, not in this file. See
 #### `egress_allow`
 
 List of allowed egress destinations for **strict** mode. `loose` ignores
-this list. Each entry takes one of six forms:
+this list. Each entry takes one of eight forms:
 
 | Form | Meaning | Example |
 |---|---|---|
@@ -877,6 +877,8 @@ this list. Each entry takes one of six forms:
 | `<ipv4>:<port>` | Allow only TCP/`<port>` | `192.168.1.5:5432` |
 | `<cidr>` | Allow any protocol and port | `10.0.0.0/8` |
 | `<cidr>:<port>` | Allow only TCP/`<port>` | `10.0.0.0/8:5432` |
+| `*.<domain>` | The domain **and every subdomain**, on ports 80 and 443, through the [egress proxy](#wildcards-go-through-the-egress-proxy) | `*.github.com` |
+| `*.<domain>:<port>` | Same, on TCP/`<port>` only | `*.example.org:8443` |
 
 The port-less forms emit an ACL rule with **no `protocol` field at all**,
 which Incus reads as "any protocol" — UDP and ICMP to that destination
@@ -907,6 +909,47 @@ separator, which would clash with IPv6 syntax). The `host:port` form is
 TCP-only — there is no way to allow a *specific* UDP port, so UDP to a
 destination is all-or-nothing via the port-less form (DNS and DHCP are
 allowed unconditionally, independent of this list).
+
+##### Wildcards go through the egress proxy
+
+A `*.<domain>` entry cannot be an ACL rule, because an ACL names addresses and
+a wildcard names none. It is enforced by a small Squid proxy instead, in a
+`jailbee-egress-proxy` container that `jailbee apply` (and `jailbee new`,
+`jailbee net egress add`) brings up on demand, and only once some entry is a
+wildcard. Things to know:
+
+- **The apex is included.** `*.github.com` matches `github.com` itself as well
+  as `api.github.com` and every deeper subdomain. It needs at least two labels
+  after `*.`; a `*` anywhere but the leading label is rejected.
+- **Ports 80 and 443 by default.** A wildcard without `:<port>` allows exactly
+  those two, not "any port" as a port-less hostname does. `*.example.org:8443`
+  allows only 8443.
+- **Only proxy-honouring tools.** A strict container gets `HTTP_PROXY`,
+  `HTTPS_PROXY` (and lower-case twins) pointing at the proxy. `curl`, `git`
+  over HTTPS, `pip`, `npm`, `apt` and most language runtimes honour them. A
+  tool that ignores them connects directly and the NIC ACL rejects it, so it
+  fails closed rather than escaping the allowlist. TLS is not intercepted: the
+  proxy sees the host in the `CONNECT` request, never the traffic.
+- **Open a new shell.** The variables are container environment, so only
+  processes started after the change see them. A running shell, tmux window or
+  agent needs to be restarted (a new `jailbee shell` is enough).
+- **Plain entries still work.** Hostname, IP and CIDR entries keep their ACL
+  rules; the proxy also lets a container reach them through the proxy, and IP
+  literals are added to `NO_PROXY` so they go direct.
+- **Strict mode only.** `jailbee net loose <container>` clears the proxy
+  variables again.
+- **Container scope needs the work network.** `jailbee net egress add
+  '*.example.org' <container>` is refused (exit 2) on a legacy-network
+  container, because the proxy tells containers apart by source address and
+  only the work network gives each one a fixed address. Use `--repo` there
+  (it covers every container of the repo, whose addresses are read at sync
+  time). See [Egress proxy](security.md#egress-proxy) for the security trade-offs.
+
+`jailbee net egress ls` adds a `VIA` column (`proxy` for a wildcard,
+`acl+proxy` for the rest) once any entry is a wildcard; `jailbee net status`
+and `jailbee doctor` report the proxy's state only when a wildcard is in use.
+`jailbee net egress add` does not DNS-resolve a wildcard (there is nothing to
+resolve).
 
 **`github.com` and strict-mode push:** `github.com` is
 intentionally **not** in the base `egress_allow`. Only HTTPS is added

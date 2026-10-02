@@ -201,6 +201,8 @@ The default network mode is `strict`, which blocks everything except what's list
 - `registry.npmjs.org:443`, `pypi.org:443`, `files.pythonhosted.org:443` — package installers
 - The repo's own dependency hosts (Sonatype Nexus, GitHub Packages, internal registries)
 
+Wildcards work too: `*.example.com` (apex included, ports 80/443) or `*.example.com:8443`. They are enforced by a Squid proxy container that `jailbee apply` starts on demand, so they only work for tools that honour `HTTP_PROXY`/`HTTPS_PROXY` (curl, git over HTTPS, pip, npm, apt do; the container gets the variables in its environment, so a **fresh shell** is needed after a change). A tool that ignores the proxy is blocked, not let through. Prefer an exact `host:443` when you know the host.
+
 **Do NOT auto-add `github.com`.** That's a deliberate design choice — strict mode keeps `git push` blocked so unattended agents can't surprise-push. The user switches to loose mode (`jailbee net loose <name>`) when they actually want to push or fetch.
 
 If the user installs deps with `pnpm/uv/cargo` at *autostart* time (not at

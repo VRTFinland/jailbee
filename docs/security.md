@@ -461,6 +461,40 @@ the `branch_config` escalation gate, which weighs what a branch's
 `jailbee new`; `jailbee net egress` is the operator, at a host shell,
 typing a command.
 
+## Egress proxy
+
+Wildcard `egress_allow` entries (`*.example.com`) are enforced by Squid in a
+`jailbee-egress-proxy` container rather than by the NIC ACL. See
+[`egress_allow`](config.md#wildcards-go-through-the-egress-proxy) for the
+user-facing behaviour. The security properties:
+
+- **The proxy is trusted infrastructure.** It sits on `jailbee-loose`, which has
+  no egress ACL, so its own upstream traffic is unrestricted. Anyone who can
+  run code inside it, or change its Squid configuration, can reach anything.
+  Containers cannot: they hold no Incus access and reach the proxy only on
+  port 3128.
+- **Identity is the source IP.** Squid decides per client address. The proxy has
+  one NIC on each client bridge (`incusbr0`, and `jailbee-work` when it
+  exists) so it sees each container's own address; a single leg on another
+  network would show every client as the router's masqueraded gateway address
+  and make the per-container rules meaningless. The client NICs carry an
+  address and no route, so upstream traffic can only leave through `eth0`.
+- **Legacy network: repo scope only.** Container-scope wildcards are refused
+  there, since a legacy container's address is a DHCP lease that can change.
+  Repo-scope rules are rebuilt from the live addresses on each sync, and the
+  window between a lease change and the next sync is a limitation of that
+  generation. The work network reserves a fixed address per container.
+- **Proxy-bypassing tools fail closed.** The environment variables are advice;
+  the NIC ACL is the enforcement. A tool that ignores them connects directly
+  and is rejected unless the destination is in the ACL.
+- **The services rule is host-wide.** Reaching the proxy needs a rule in the
+  host-global `jailbee-services` ACL, so every strict container on the host can
+  open a connection to port 3128. Squid then denies any source that no repo
+  fragment lists (`http_access deny all`), so an unknown client gets a 403.
+- **No TLS interception.** HTTPS is tunnelled with `CONNECT`; the match is on
+  the requested host name and port. Squid keeps no cache and logs requests to
+  `/var/log/squid/access.log` in the proxy container.
+
 ## Limitations
 
 ### Work-network generation

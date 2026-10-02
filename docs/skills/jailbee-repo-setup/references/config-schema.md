@@ -233,7 +233,7 @@ mount until it next restarts.
 
 ## `egress_allow` — strict-mode allowlist
 
-Entry forms (six variants):
+Entry forms (eight variants):
 
 | Form | Meaning |
 |---|---|
@@ -243,6 +243,10 @@ Entry forms (six variants):
 | `<ipv4>:<port>` | Single TCP port to that IPv4 |
 | `<cidr>` | All TCP ports to that CIDR |
 | `<cidr>:<port>` | Single TCP port to that CIDR |
+| `*.<domain>` | The domain and all subdomains (apex included), ports 80 and 443, via the egress proxy |
+| `*.<domain>:<port>` | Same, single TCP port |
+
+Wildcards are enforced by a Squid proxy container (`jailbee-egress-proxy`), not an ACL: they apply only to tools honouring `HTTP_PROXY`/`HTTPS_PROXY` (set in strict containers' environment; a **new shell** is needed to see them), there is no TLS interception, and `*` is only allowed as the leading label with at least two labels after it. Loose mode clears the variables.
 
 Resolution: hostname entries are DNS-resolved to IPv4 at `jailbee init` / `jailbee apply` time. All A records returned are inserted. If a CDN rotates, `jailbee apply --no-restart` re-resolves and updates the ACL live.
 

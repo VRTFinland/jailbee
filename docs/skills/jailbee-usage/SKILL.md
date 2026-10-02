@@ -581,6 +581,15 @@ Three facts that matter when explaining this:
   be needed permanently, `jailbee net egress export` prints a paste-over
   replacement for the config's `egress_allow:` key.
 
+Wildcard entries (`*.example.com`, apex included, ports 80/443; `*.example.com:8443`
+for one port) go through an on-demand Squid proxy container instead of the ACL.
+They only reach tools that honour `HTTP_PROXY`/`HTTPS_PROXY`, so tell the user to
+open a **new shell** (or tmux window) after adding one. Container scope
+(`jailbee net egress add '*.x.org' <name>`) needs the work network and is
+refused (exit 2) on a legacy container; use `--repo` there. `jailbee net
+egress ls` shows a `VIA` column, and `jailbee net status` / `jailbee doctor`
+report the proxy.
+
 Also available as the short root alias `jailbee egress add|rm|ls|export`.
 Full flag reference: [references/commands.md](references/commands.md#egress-overrides--jailbee-net-egress).
 

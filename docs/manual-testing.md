@@ -5244,3 +5244,38 @@ mounted by Incus before systemd puts a fresh tmpfs over `/run`, which hides it.
 The display container therefore mounts the shared directory at
 `/srv/jailbee-display` (not under `/run`); client containers get theirs
 attached after boot and keep `/run/jailbee-display`.
+
+## Wildcard egress through the proxy
+
+Needs a real Incus host (host-unverified until run). Image pull and `apt install
+squid` need egress.
+
+1. In a repo with `egress_allow: ["*.githubusercontent.com"]`, run `jb apply`.
+   Expected: the `jailbee-egress-proxy` container comes up, `jb net status`
+   prints `Egress proxy: running (incusbr0 <ip>, ...)`, and
+   `incus network acl show jailbee-services` has a `jailbee egress proxy` rule
+   per proxy address on port 3128.
+2. In a **new** strict container shell:
+   - `env | grep -i proxy` shows `HTTP_PROXY`/`HTTPS_PROXY` pointing at the
+     proxy.
+   - `curl -sI https://raw.githubusercontent.com` succeeds.
+   - `curl -sI https://example.com` fails with a 403 / `CONNECT` refused.
+   - `curl --noproxy '*' -sI https://raw.githubusercontent.com` fails: the
+     direct path is blocked by the NIC ACL. (Use a wildcard-only domain; a
+     host that is also a plain entry, such as the `api.github.com` auto-entry,
+     stays reachable directly.)
+3. With the work network (`jb net migrate`), add `jb egress add '*.example.org'
+   <container-B>`. Expected: reachable from B, 403 from container A of the
+   same repo. On a legacy-network container the same command exits 2.
+4. `jb net loose <container>`, then a new shell. Expected: `env | grep -i
+   proxy` is empty.
+5. `incus exec jailbee-egress-proxy -- tail /var/log/squid/access.log`.
+   Expected: the source addresses are the containers' own, not a bridge
+   gateway.
+6. `incus exec jailbee-egress-proxy -- squid -v`. Confirm the Squid version
+   accepts a `dstdomain` ACL where a wildcard (`.vendor.com`) and a plain host
+   in the same ACL were de-duplicated by the renderer (`squid -k parse` is
+   clean on the generated fragment in `/etc/squid/jailbee.d/`).
+7. `jb egress ls` shows a `VIA` column; `jb doctor` shows `egress proxy:
+   status: running`. Stop the proxy (`incus stop jailbee-egress-proxy`) and
+   re-run both: `stopped`, with a `run 'jailbee apply'` hint.

@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Wildcard `egress_allow` entries.** `*.example.com` allows the domain and
+  every subdomain, on ports 80 and 443 (`*.example.com:8443` for one port), in
+  strict mode, in `egress_allow` and with `jailbee net egress add`. They go
+  through a Squid proxy container that `jailbee apply` starts only when a
+  wildcard is in use, so they reach tools that honour `HTTP_PROXY` and
+  `HTTPS_PROXY`; strict containers get those variables, and a new shell picks
+  them up. Other tools stay blocked. Container-scope wildcards need the work
+  network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net status`
+  and `jailbee doctor` report the proxy.
+
 - **`jailbee pr` can use any agent, not just Claude.** A new `pr:` block
   (`agent`, `ai_description`, `ai_branch`, `model`, `prompt`, `timeout`) says
   how the PR title, body and branch name are written. `pr.agent: auto`, the
