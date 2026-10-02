@@ -427,6 +427,19 @@ ReviewContainerArg = Annotated[
 ]
 """The container positional shared by the `review` subcommands."""
 
+IssueContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            "Container whose issue outbox to act on, named in full or by its short "
+            "name. Omit it and jailbee picks from the running containers with issue "
+            "actions waiting, asking only when more than one has them."
+        ),
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional shared by `issue show`, `drop` and `resolve`."""
+
 TagsFlag = Annotated[
     bool,
     typer.Option("--tags", help="Transfer every tag (git's `--tags`). Overrides the config key."),
@@ -12542,18 +12555,11 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
 
     if not pending:
         return incus, None
-    if len(pending) == 1:
-        return incus, pending[0].name
-    if not prompting.is_interactive():
-        names = ", ".join(ci.display_name for ci in pending)
-        error_plain(
-            f"several containers may have issue actions waiting; name one "
-            f"explicitly (or run in a TTY): {names}"
-        )
-        raise typer.Exit(2)
-    picked = pick_container(pending)
-    if picked is None:
-        raise typer.Exit(1)
+    picked = prompting.choose_one(
+        "container",
+        [prompting.Option(ci.name, ci.display_name, ci.display_name) for ci in pending],
+        picker=lambda _options: pick_container(pending),
+    )
     return incus, picked
 
 
@@ -12851,13 +12857,7 @@ def issue_ls_cmd(
 
 @issue_app.command("show")
 def issue_show_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox to read.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: IssueContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -12877,7 +12877,10 @@ def issue_show_cmd(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
     names = _select_issue_manifests_or_exit(outbox, manifest, short)
@@ -13008,13 +13011,7 @@ def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -
 
 @issue_app.command("drop")
 def issue_drop_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox to drop from.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: IssueContainerArg = None,
     manifest: Annotated[
         str | None,
         typer.Argument(help="One manifest file name. Default: every pending manifest."),
@@ -13054,7 +13051,10 @@ def issue_drop_cmd(
     )
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     uid = cfg.container_user.uid
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
@@ -13154,17 +13154,14 @@ def issue_drop_cmd(
 
 @issue_app.command("resolve")
 def issue_resolve_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container whose issue outbox holds the manifest.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    manifest: Annotated[str, typer.Argument(help="Manifest file name.")],
+    name: IssueContainerArg = None,
+    manifest: Annotated[
+        str | None, typer.Argument(help="Manifest file name. Asked for when omitted.")
+    ] = None,
     action: Annotated[
-        int, typer.Argument(help="Zero-based index of the uncertain action within the manifest.")
-    ],
+        int | None,
+        typer.Argument(help="Zero-based index of the uncertain action. Asked for when omitted."),
+    ] = None,
     applied: Annotated[
         bool,
         typer.Option("--applied", help="Confirm the mutation actually landed on GitHub."),
@@ -13186,9 +13183,10 @@ def issue_resolve_cmd(
     """Resolve one action whose GitHub outcome an earlier run left uncertain.
 
     Exactly one of `--applied` (with `--url`, and `--issue` for a create) or
-    `--retry` is required. `--retry` forgets the uncertain record so the
-    action is attempted again; `--applied` durably records the human's own
-    confirmation of what actually happened on GitHub.
+    `--retry` is required; whatever is left out is asked for on a terminal.
+    `--retry` forgets the uncertain record so the action is attempted again;
+    `--applied` durably records the human's own confirmation of what
+    actually happened on GitHub.
     """
     from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
@@ -13198,26 +13196,52 @@ def issue_resolve_cmd(
         JournalError,
         JournalStore,
         container_identity,
+        journal_has_uncertainty,
         journal_key,
         proposal_digest,
     )
     from jailbee.tui import console
 
-    if applied == retry:
+    if applied and retry:
         error_plain("Exactly one of --applied or --retry is required.")
         raise typer.Exit(2)
-    if retry:
-        if url is not None or issue is not None:
-            error_plain("--retry accepts neither --url nor --issue.")
-            raise typer.Exit(2)
-    elif url is None:
-        error_plain("--applied requires --url.")
+    if retry and (url is not None or issue is not None):
+        error_plain("--retry accepts neither --url nor --issue.")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_existing(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has issue actions waiting.")
+        return
     short = short_name(cfg, container)
     outbox = _read_issue_outbox_or_exit(cfg, incus, container, short)
+    try:
+        identity = container_identity(incus, container)
+    except JournalError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    journal_store = JournalStore()
+
+    def _journal(manifest_name: str) -> "IssueJournal | None":
+        try:
+            return journal_store.load(journal_key(identity, manifest_name))
+        except JournalError as e:
+            error_plain(str(e))
+            raise typer.Exit(1) from e
+
+    if manifest is None:
+        uncertain = [
+            m
+            for m in outbox.manifest_names
+            if (j := _journal(m)) is not None and journal_has_uncertainty(j)
+        ]
+        manifest = prompting.choose_one(
+            "manifest",
+            [prompting.Option(m, m, m) for m in uncertain],
+            destructive=True,
+            empty_reason=f"nothing uncertain to resolve in {short}",
+        )
     text = outbox.files.get(manifest)
     if text is None:
         error_plain(f"{short} has no pending manifest named {manifest}")
@@ -13229,34 +13253,54 @@ def issue_resolve_cmd(
     except IssueManifestError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
+    journal = _journal(manifest)
+    if action is None:
+        open_actions = sorted(
+            a.index for a in (journal.actions if journal else ()) if a.state == "uncertain"
+        )
+        action = prompting.choose_one(
+            "action",
+            [prompting.Option(i, f"action {i}", str(i)) for i in open_actions],
+            destructive=True,
+            empty_reason=f"{manifest} has no uncertain action",
+        )
     if not 0 <= action < len(parsed.actions):
         error_plain(f"{manifest} has no action {action}")
         raise typer.Exit(2)
     resolved_action = parsed.actions[action]
+    if not applied and not retry:
+        mode = prompting.choose_one(
+            "resolution",
+            [
+                prompting.Option("applied", "applied: it did land on GitHub", "--applied"),
+                prompting.Option(
+                    "retry", "retry: forget the outcome and attempt it again", "--retry"
+                ),
+            ],
+        )
+        applied, retry = mode == "applied", mode == "retry"
+    if applied and url is None:
+        url = prompting.ask_text(
+            "GitHub URL the mutation produced",
+            validate=lambda s: None if s.startswith("https://") else "enter an https:// URL",
+        )
 
     if applied:
         if isinstance(resolved_action, CreateAction):
             if issue is None:
-                error_plain("A create action's resolution requires --issue.")
-                raise typer.Exit(2)
+                issue = int(
+                    prompting.ask_text(
+                        "created issue number",
+                        validate=lambda s: None if s.strip().isdigit() else "enter a number",
+                    )
+                )
         elif issue is not None:
             error_plain("--issue is only valid for a create action.")
             raise typer.Exit(2)
 
-    try:
-        identity = container_identity(incus, container)
-    except JournalError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
     body_files = {body: outbox.files[body] for body in parsed.body_files if body in outbox.files}
     digest = proposal_digest(manifest, text, body_files)
     key = journal_key(identity, manifest)
-    journal_store = JournalStore()
-    try:
-        journal = journal_store.load(key)
-    except JournalError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
 
     console.print()
     print_lines(issue_outbox.show_lines(parsed, journal, short))
