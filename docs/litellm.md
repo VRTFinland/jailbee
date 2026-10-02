@@ -529,7 +529,7 @@ On the host, `jailbee litellm up`, `login` and `jailbee apply` can report:
 |---|---|
 | `... does not define NAME`, `... does not exist` or `... has insecure permissions` (about `secrets.env`) | Add `NAME=value` to `~/.config/jailbee/litellm/secrets.env`, `chmod 600` it, run `jailbee litellm up`. When a repo override adds a route or changes a route's `api_key` to the missing secret, the message adds `(named by .../repos/<prefix>.yaml)`; a secret named only in `global.yaml` is not attributed to any repo file. A missing secret there still blocks `up` and the proxy update in `apply` for every repo, since the proxy is shared. |
 | `cannot read ...` (about `secrets.env` or the `extra` file) | Make the file readable by your user and plain UTF-8 text, then run `jailbee litellm up`. |
-| `Several LiteLLM accounts are configured` | Name the account: `jailbee litellm login work`. |
+| `missing LiteLLM account; pass it explicitly, or run in a terminal to choose. Candidates: ...` | Several accounts are configured and there is no terminal to choose from: pass the account name, e.g. `jailbee litellm login work`. |
 | `Cannot listen on 127.0.0.1:56121` (from `login --provider xai`) | Another program on the host uses the port; stop it and retry. |
 | `No route of account ... uses an xAI subscription` | Mark a route of that account's profiles `oauth: true`, run `jailbee litellm up`, then log in. |
 | `profile(s) ... have no proxy instance yet` (from `jailbee apply` or `jailbee new`) | Run `jailbee litellm up`, then `jailbee apply`. |

@@ -6,7 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
-from tests.conftest import claude_overview_of, claude_row
+from tests.conftest import claude_overview_of, claude_row, panel_text
 from tests.conftest import flat_output as _flat
 
 runner = CliRunner()
@@ -1431,6 +1431,7 @@ def test_create_without_name_off_a_tty_exits_2_and_makes_nothing(group_env, mock
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["account", "group", "create"])
     assert result.exit_code == 2
+    assert "missing name for the new group" in panel_text(result.output)
     assert groups.list_groups(["claude"]) == []
 
 

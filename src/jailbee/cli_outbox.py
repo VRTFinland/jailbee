@@ -146,15 +146,16 @@ def _pick_target(
 
     if container is not None and proposal is not None:
         return container, ProposalId.parse(proposal)
-    views = [
-        v
-        for v in discover(cfg, incus, container, all_repos=False, journal_store=journal_store)
-        if v.proposals
-    ]
+    discovered = discover(cfg, incus, container, all_repos=False, journal_store=journal_store)
+    views = [v for v in discovered if v.proposals]
     if container is not None:
         # Named, so nothing to ask: `discover` already resolved it to one container.
         if not views:
-            raise prompting.MissingValue("proposal", reason=f"no pending proposals in {container}")
+            # An unreadable container has no proposals either; say why, not "none".
+            named_error = discovered[0].error if discovered else None
+            raise prompting.MissingValue(
+                "proposal", reason=named_error or f"no pending proposals in {container}"
+            )
         view = views[0]
     else:
         chosen = prompting.choose_one(

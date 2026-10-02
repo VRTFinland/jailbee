@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from jailbee.cli import app
 from jailbee.incus import Incus
 from jailbee.outbox import service
-from jailbee.outbox.models import ProposalId
+from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox_io import JournalStore
 from tests.conftest import panel_text
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
@@ -932,3 +932,30 @@ def test_drop_named_container_without_proposals_is_a_reason(env, mocker):
     assert "no pending proposals in feature" in panel_text(result.output)
     select.assert_not_called()
     env[4].assert_not_called()
+
+
+def test_drop_named_unavailable_container_reports_the_error_not_none(env, mocker):
+    _on_tty(mocker)
+    broken = ContainerView(
+        None, "acme-feature", False, "container acme-feature is not running", (), ()
+    )
+    mocker.patch("jailbee.outbox.commands.discover", return_value=(broken,))
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("asked"))
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 2, result.output
+    text = panel_text(result.output)
+    assert "acme-feature is not running" in text
+    assert "no pending proposals" not in text
+    select.assert_not_called()
+    env[4].assert_not_called()
+
+
+def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
+    """`destructive=True` must hold on the named path: a lone proposal is not auto-taken."""
+    _on_tty(mocker)
+    _only_issue(env)
+    select = mocker.patch("jailbee.prompting._select", return_value=_ISSUE)
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 1
+    env[4].assert_called_once()

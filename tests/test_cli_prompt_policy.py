@@ -23,22 +23,44 @@ _NOT_A_PROMPT = {
 }
 
 
+def _tty_probes(source: str) -> list[int]:
+    """Line numbers of terminal-ness probes on stdin: `<x>.stdin.isatty()`,
+    `os.isatty(...)`, and any use of `<x>.__stdin__` (the original stdin,
+    which is how one would sidestep a patched `sys.stdin`)."""
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Attribute):
+            continue
+        stdin_isatty = (
+            node.attr == "isatty"
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "stdin"
+        )
+        os_isatty = (
+            node.attr == "isatty" and isinstance(node.value, ast.Name) and node.value.id == "os"
+        )
+        if stdin_isatty or os_isatty or node.attr == "__stdin__":
+            lines.append(node.lineno)
+    return lines
+
+
 def test_stdin_isatty_only_in_prompting() -> None:
     offenders = []
     for path in sorted(SRC.rglob("*.py")):
         if path.name in _NOT_A_PROMPT and path.parent == SRC:
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr == "isatty"
-                and isinstance(node.value, ast.Attribute)
-                and node.value.attr == "stdin"
-            ):
-                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+        offenders += [f"{path.relative_to(SRC)}:{line}" for line in _tty_probes(path.read_text())]
     assert offenders == [], (
         "use jailbee.prompting.is_interactive() to decide whether to ask: " + ", ".join(offenders)
     )
+
+
+def test_the_tty_probe_checker_flags_what_it_should() -> None:
+    assert _tty_probes("import os\nos.isatty(0)\n") == [2]
+    assert _tty_probes("import sys\nsys.__stdin__.isatty()\n") == [2]
+    assert _tty_probes("import sys\nsys.stdin.isatty()\n") == [2]
+    assert _tty_probes("import sys\nsys.stdout.isatty()\n") == []
+    assert _tty_probes("import sys\nsys.stderr.isatty()\n") == []
 
 
 def _walk(cmd: Any, path: str) -> Iterator[tuple[str, Any]]:
