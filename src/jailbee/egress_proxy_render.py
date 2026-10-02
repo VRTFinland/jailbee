@@ -79,10 +79,12 @@ def _group_entries(entries: Iterable[str]) -> dict[_Group, list[str]]:
 
 def _drop_covered(names: list[str]) -> list[str]:
     wildcards = [n[1:] for n in names if n.startswith(".")]
+
+    def covered(domain: str, *, strict: bool) -> bool:
+        return any(domain.endswith(f".{w}") or (not strict and domain == w) for w in wildcards)
+
     return [
-        n
-        for n in names
-        if n.startswith(".") or not any(n == w or n.endswith(f".{w}") for w in wildcards)
+        n for n in names if not covered(n[1:] if n.startswith(".") else n, strict=n.startswith("."))
     ]
 
 

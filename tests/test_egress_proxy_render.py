@@ -51,6 +51,8 @@ def test_sources_never_leak_between_scopes():
             _scope(key="r-ct", sources=("10.1.0.9",), entries=("*.secret.com",)),
         ],
     )
+    assert "acl jb_r_src src 10.1.0.5/32" in out
+    assert "acl jb_r-ct_src src 10.1.0.9/32" in out
     for line in out.splitlines():
         if ".secret.com" in line:
             assert line.startswith("acl jb_r-ct_")
@@ -63,6 +65,12 @@ def test_hostname_covered_by_wildcard_in_same_acl_is_dropped():
         "r",
         [_scope(key="r", entries=("*.vendor.com:443", "api.vendor.com:443", "vendor.com:443"))],
     )
+    dst_line = next(ln for ln in out.splitlines() if "dstdomain" in ln)
+    assert dst_line.split("-n ", 1)[1] == ".vendor.com"
+
+
+def test_nested_wildcards_in_same_acl_keep_only_the_broader():
+    out = render_fragment("r", [_scope(key="r", entries=("*.api.vendor.com", "*.vendor.com"))])
     dst_line = next(ln for ln in out.splitlines() if "dstdomain" in ln)
     assert dst_line.split("-n ", 1)[1] == ".vendor.com"
 
