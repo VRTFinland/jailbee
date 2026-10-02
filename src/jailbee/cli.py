@@ -15204,8 +15204,7 @@ def account_group_set_cmd(
         str | None,
         typer.Argument(
             help=(
-                "Group name, or `none` to keep this repo on its own login. "
-                "Asked for when omitted."
+                "Group name, or `none` to keep this repo on its own login. Asked for when omitted."
             ),
             autocompletion=completion.complete_credential_group,
         ),
