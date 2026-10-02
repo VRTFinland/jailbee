@@ -8966,6 +8966,17 @@ def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
     return current_network_mode(cfg, incus, name) or "strict"
 
 
+def _ensure_egress_proxy_or_warn(incus: "IncusType") -> None:
+    """Start the Squid proxy a wildcard entry needs; a failure is only a warning."""
+    from jailbee import egress_proxy
+    from jailbee.incus import IncusError
+
+    try:
+        egress_proxy.proxy_up(incus, on_step=lambda message: info(f"  {message}"))
+    except (IncusError, RuntimeError) as e:
+        warn(f"Could not start the egress proxy: {e}")
+
+
 @egress_app.command("add")
 def egress_add_cmd(
     entry: Annotated[
@@ -9055,6 +9066,8 @@ def egress_add_cmd(
         except ValueError as exc:
             error_plain(str(exc))
             raise typer.Exit(1) from exc
+        if is_wildcard_entry(entry):
+            _ensure_egress_proxy_or_warn(incus)
         success(
             f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
             "Run `jailbee apply` to push it."
@@ -9088,6 +9101,13 @@ def egress_add_cmd(
     else:
         egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
+    if is_wildcard_entry(entry):
+        from jailbee import egress_proxy
+
+        # Squid first, so the sync finds an endpoint to point the environment at.
+        _ensure_egress_proxy_or_warn(incus)
+        egress_proxy.sync_container(cfg, incus, container, mode)
+        info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' may now reach {entry}.")
 
 
@@ -9227,6 +9247,9 @@ def egress_rm_cmd(
         else:
             egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, container, mode)
     success(f"'{container}' can no longer reach {entry}.")
 
 

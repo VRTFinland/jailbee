@@ -317,6 +317,16 @@ def refresh_pool(
     except Exception as e:
         log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
 
+    # Independent of `resolved`: a wildcard-only repo resolves nothing but its
+    # Squid rules still follow container IPs. Never starts the proxy (that is
+    # apply's job) and never changes the status above.
+    try:
+        from jailbee import egress_proxy
+
+        egress_proxy.sync_repo_rules(cfg, incus, session)
+    except Exception as e:
+        log.warning("refresh_pool: proxy rule sync failed for %s: %s", prefix, e)
+
     if resolved:
         # Only when something resolved: don't push an ACL/hosts derived from
         # an empty resolve — what's already in Incus stays; the next
@@ -679,6 +689,16 @@ def _list_containers(cfg: Config, incus: Incus) -> list[Any]:
     return list(impl(cfg, incus))
 
 
+def _drop_proxy_fragment(incus: Incus, prefix: str) -> None:
+    """Remove a pruned repo's Squid rules; the timer must survive a failure."""
+    from jailbee import egress_proxy
+
+    try:
+        egress_proxy.drop_fragment(incus, prefix)
+    except Exception as e:
+        log.warning("refresh_all: dropping the proxy fragment of %s failed: %s", prefix, e)
+
+
 def refresh_all(
     session: Session,
     gcfg: GlobalConfig,
@@ -713,6 +733,7 @@ def refresh_all(
             )
             session.delete(repo)
             session.commit()
+            _drop_proxy_fragment(incus, repo.container_prefix)
             continue
 
         # "No config file" means two different things now. For a registration
@@ -727,6 +748,7 @@ def refresh_all(
             )
             session.delete(repo)
             session.commit()
+            _drop_proxy_fragment(incus, repo.container_prefix)
             continue
 
         try:

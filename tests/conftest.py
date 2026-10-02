@@ -373,7 +373,15 @@ def _no_egress_proxy_wiring(
     container config; `proxy_up` creates a container. The callers (apply, new,
     switch, start) only need to be asserted on, so the two entry points become
     mocks. The `test_egress_proxy*` modules test the real functions and keep
-    them. A test that asserts on a call re-patches the attribute itself.
+    them.
+
+    Global rather than per-module on purpose: the callers are spread over a
+    dozen unrelated modules (apply, lifecycle, work mode, the start/restart
+    CLI, the pool refresh and the egress commands), and each would need the
+    same four-line fixture or it silently opens the real state database.
+    Every test that asserts on one of these calls overrides the attribute
+    itself with `mocker.patch.object(egress_proxy, "<name>")`, which wins over
+    this default and is the only place the assertion is made.
     """
     if request.module.__name__.rsplit(".", 1)[-1].startswith("test_egress_proxy"):
         return
@@ -383,6 +391,8 @@ def _no_egress_proxy_wiring(
 
     monkeypatch.setattr(egress_proxy, "sync_container", MagicMock())
     monkeypatch.setattr(egress_proxy, "proxy_up", MagicMock())
+    monkeypatch.setattr(egress_proxy, "sync_repo_rules", MagicMock())
+    monkeypatch.setattr(egress_proxy, "drop_fragment", MagicMock())
 
 
 @pytest.fixture(autouse=True)
