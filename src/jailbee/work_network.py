@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from jailbee.bridge_ipv4 import free_ipv4
 from jailbee.db import state_dir
 from jailbee.network_generation import WORK_BRIDGE
 
@@ -44,7 +45,6 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
         raise ValueError(f"{WORK_BRIDGE} has no valid effective IPv4 CIDR: {raw_cidr!r}")
 
     containers = incus.list_containers()
-    occupied: set[ipaddress.IPv4Address] = {interface.ip}
     existing: str | None = None
     for container in containers:
         local_devices = container.get("devices") or {}
@@ -86,7 +86,6 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
                     parsed = ipaddress.IPv4Address(address)
                 except ipaddress.AddressValueError:
                     continue
-                occupied.add(parsed)
                 if container.get("name") == name:
                     if device.get("security.ipv4_filtering") != "true":
                         raise ValueError(
@@ -106,18 +105,7 @@ def reserve_work_ipv4(incus: Incus, name: str) -> str:
     if existing is not None:
         return existing
 
-    for lease in incus.network_leases(WORK_BRIDGE):
-        address = lease.get("address")
-        if isinstance(address, str):
-            try:
-                occupied.add(ipaddress.IPv4Address(address))
-            except ipaddress.AddressValueError:
-                pass
-
-    for address in interface.network.hosts():
-        if address not in occupied:
-            return str(address)
-    raise ValueError(f"No free IPv4 addresses remain on {WORK_BRIDGE}; expand its subnet")
+    return free_ipv4(incus, WORK_BRIDGE)
 
 
 def work_nic(ip: str, acl_names: list[str]) -> dict[str, str]:
