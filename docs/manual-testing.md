@@ -5272,10 +5272,10 @@ squid` need egress.
 5. `incus exec jailbee-egress-proxy -- tail /var/log/squid/access.log`.
    Expected: the source addresses are the containers' own, not a bridge
    gateway.
-6. `incus exec jailbee-egress-proxy -- squid -v`. Confirm the Squid version
-   accepts a `dstdomain` ACL where a wildcard (`.vendor.com`) and a plain host
-   in the same ACL were de-duplicated by the renderer (`squid -k parse` is
-   clean on the generated fragment in `/etc/squid/jailbee.d/`).
+6. `incus exec jailbee-egress-proxy -- squid -v` shows the Squid version. With
+   both `*.vendor.com` and `api.vendor.com` in `egress_allow`, the generated
+   fragment in `/etc/squid/jailbee.d/` should list only `.vendor.com`, and
+   `squid -k parse` should report no subdomain-collision error.
 7. `jb egress ls` shows a `VIA` column; `jb doctor` shows `egress proxy:
    status: running`. Stop the proxy (`incus stop jailbee-egress-proxy`) and
    re-run both: `stopped`, with a `run 'jailbee apply'` hint.

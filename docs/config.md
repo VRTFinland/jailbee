@@ -914,9 +914,10 @@ allowed unconditionally, independent of this list).
 
 A `*.<domain>` entry cannot be an ACL rule, because an ACL names addresses and
 a wildcard names none. It is enforced by a small Squid proxy instead, in a
-`jailbee-egress-proxy` container that `jailbee apply` (and `jailbee new`,
-`jailbee net egress add`) brings up on demand, and only once some entry is a
-wildcard. Things to know:
+`jailbee-egress-proxy` container that `jailbee apply` and `jailbee net egress add`
+bring up on demand, and only once some entry is a wildcard. `jailbee new` and
+`jailbee restart` only point the container at a proxy that is already running,
+and warn to run `jailbee apply` if it is not. Things to know:
 
 - **The apex is included.** `*.github.com` matches `github.com` itself as well
   as `api.github.com` and every deeper subdomain. It needs at least two labels
@@ -949,7 +950,8 @@ wildcard. Things to know:
 `acl+proxy` for the rest) once any entry is a wildcard; `jailbee net status`
 and `jailbee doctor` report the proxy's state only when a wildcard is in use.
 `jailbee net egress add` does not DNS-resolve a wildcard (there is nothing to
-resolve).
+resolve). The LiteLLM gateway's own per-route `egress` list (under `litellm:`
+routes) does **not** accept wildcards: config validation rejects them.
 
 **`github.com` and strict-mode push:** `github.com` is
 intentionally **not** in the base `egress_allow`. Only HTTPS is added
