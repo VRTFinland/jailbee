@@ -2230,14 +2230,23 @@ def new_cmd(
         else:
             base = resolved
     elif container_branch is None:
-        if mount:
-            error(
-                "Missing NAME argument. In --mount mode, provide a container "
-                "name (e.g. `jailbee new mysmoke --mount`)."
-            )
-        else:
-            error("Missing NAME argument. Provide a name to work on or use --current.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+        from jailbee.lifecycle import derive_container_name
+
+        def _name_problem(text: str) -> str | None:
+            text = text.strip()
+            if not text:
+                return "enter a name"
+            if mount and "/" in text:
+                return "in --mount mode the name is a container name; use e.g. 'feat-foo'"
+            try:
+                derive_container_name(cfg, text)
+            except ValueError as e:
+                return str(e)
+            return None
+
+        noun = "container name" if mount else "branch to work on (or use --current)"
+        container_branch = prompting.ask_text(noun, validate=_name_problem).strip()
 
     if mount:
         if base is not None:
@@ -5511,13 +5520,7 @@ def _pick_retarget_base(cfg: "Config", *, current_base: str | None) -> str | Non
 
 @git_app.command("retarget")
 def retarget(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container to re-point.",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: ContainerArg = None,
     new_base: Annotated[
         str | None,
         typer.Argument(
@@ -15558,17 +15561,13 @@ def chrome_pool_prune_cmd(config: ConfigOption = None) -> None:
 
 @app.command("exec")
 def exec_cmd(
-    name: Annotated[
-        str,
-        typer.Argument(
-            help="Container name (short or full).",
-            autocompletion=completion.complete_container,
-        ),
-    ],
+    name: ContainerArg = None,
     cmd: Annotated[
-        list[str],
-        typer.Argument(help="Command and args to run as the dev user."),
-    ],
+        list[str] | None,
+        typer.Argument(
+            help="Command and args to run as the dev user. Asked for when omitted."
+        ),
+    ] = None,
     cwd: Annotated[
         str,
         typer.Option(
@@ -15609,21 +15608,26 @@ def exec_cmd(
     import shlex
 
     from jailbee.config import CONTAINER_USERNAME
-    from jailbee.incus import Incus
-    from jailbee.lifecycle import container_repo_dir, resolve_container_name
+    from jailbee.lifecycle import container_repo_dir
 
     if gui and not detach:
         error("--gui only applies to a detached launch; add --detach (-d).")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus = Incus()
-    try:
-        resolved = resolve_container_name(cfg, incus, name)
-    except ValueError as e:
-        error(str(e))
-        raise typer.Exit(1) from e
-    _refuse_remote_mount_container(incus, resolved, name)
+    incus, resolved = _resolve_existing(cfg, name)
+    _refuse_remote_mount_container(incus, resolved, name or resolved)
+
+    if not cmd:
+        from jailbee import prompting
+
+        def _command_problem(text: str) -> str | None:
+            try:
+                return None if shlex.split(text) else "enter a command to run"
+            except ValueError as e:
+                return f"cannot parse that command: {e}"
+
+        cmd = shlex.split(prompting.ask_text("command", validate=_command_problem))
 
     if cwd == "home":
         target = f"/home/{CONTAINER_USERNAME}"

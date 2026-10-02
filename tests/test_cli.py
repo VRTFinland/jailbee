@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from jailbee.cli import app
 from jailbee.config import load_config
 from jailbee.lifecycle import ResolvedContainer
-from tests.conftest import make_config
+from tests.conftest import make_config, panel_text
 
 FIXTURES = Path(__file__).parent / "fixtures"
 runner = CliRunner()
@@ -2558,6 +2558,27 @@ def test_new_cmd_warns_about_profiles_without_a_proxy_instance(tmp_path, mocker,
     assert new_container.call_args.args[2].litellm_payload == payload
 
 
+def test_new_without_name_asks_for_one(tmp_path, mocker):
+    _, new_container = _setup_new_cmd_env(tmp_path, mocker)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", side_effect=["!!!", "feat-x"])
+
+    result = runner.invoke(app, ["new", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 0, result.output
+    assert new_container.call_args.args[2].container_branch == "feat-x"
+
+
+def test_new_without_name_off_a_tty_exits_2(tmp_path, mocker):
+    _setup_new_cmd_env(tmp_path, mocker)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = runner.invoke(app, ["new", "--no-clone", "--no-autostart"])
+
+    assert result.exit_code == 2
+    assert "missing" in panel_text(result.output).lower()
+
+
 def test_new_cmd_default_does_not_attach(tmp_path, mocker):
     """`after_new` defaults to 'none' — `gie new` returns to host prompt."""
     from typer.testing import CliRunner
@@ -4576,6 +4597,15 @@ def _retarget_cli_mocks(mocker, tmp_path):
         "jailbee.sync.retarget_container",
         return_value=RetargetResult(old_base="feat/a", new_base="main", base_oid="abc1234"),
     )
+
+
+def test_git_retarget_without_name_uses_the_resolver(mocker, tmp_path):
+    runner = CliRunner()
+    _retarget_cli_mocks(mocker, tmp_path)
+    runner.invoke(app, ["git", "retarget"], input="")
+    from jailbee import cli
+
+    assert cli._resolve_existing.call_args.args[1] is None
 
 
 def test_git_retarget_happy_path_prints_hint(mocker, tmp_path):
