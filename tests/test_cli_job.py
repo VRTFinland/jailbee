@@ -252,18 +252,109 @@ def test_job_clear_name_and_all_are_mutually_exclusive(tmp_path, mocker) -> None
     assert "mutually exclusive" in _out(result)
 
 
-def test_job_clear_without_name_or_all_lists_candidates(tmp_path, mocker) -> None:
+def test_job_clear_without_name_off_a_tty_mentions_all(tmp_path, mocker) -> None:
     from jailbee import background
 
     _cfg(tmp_path, mocker)
     _seed("myrepo-feat-x", phase=background.PHASE_FAILED)
-
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = CliRunner().invoke(app, ["job", "clear"])
-
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     combined = _out(result)
     assert "--all" in combined
     assert "feat-x" in combined
+    assert _row_exists("myrepo-feat-x")
+
+
+def test_job_clear_without_name_asks_even_for_one(tmp_path, mocker) -> None:
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    _seed("myrepo-feat-x", phase=background.PHASE_FAILED)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="myrepo-feat-x")
+    result = CliRunner().invoke(app, ["job", "clear"])
+    assert result.exit_code == 0, _out(result)
+    assert select.call_count == 1
+    assert not _row_exists("myrepo-feat-x")
+
+
+def test_job_clear_without_name_cancelled_clears_nothing(tmp_path, mocker) -> None:
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    _seed("myrepo-feat-x", phase=background.PHASE_FAILED)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    result = CliRunner().invoke(app, ["job", "clear"])
+    assert result.exit_code == 1
+    assert _row_exists("myrepo-feat-x")
+
+
+def test_job_clear_without_name_offers_only_clearable_jobs(tmp_path, mocker) -> None:
+    import os
+
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    _seed("myrepo-feat-x", phase=background.PHASE_FAILED)
+    _seed("myrepo-feat-live", phase=background.PHASE_STARTING, pid=os.getpid())
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["job", "clear"])
+    assert result.exit_code == 2
+    assert "feat-x" in _out(result)
+    assert "feat-live" not in _out(result)
+
+
+def test_job_clear_without_name_and_nothing_clearable_exits_2(tmp_path, mocker) -> None:
+    import os
+
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    _seed("myrepo-feat-live", phase=background.PHASE_STARTING, pid=os.getpid())
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select")
+    result = CliRunner().invoke(app, ["job", "clear"])
+    assert result.exit_code == 2
+    assert "no clearable background jobs" in _out(result)
+    select.assert_not_called()
+    assert _row_exists("myrepo-feat-live")
+
+
+def test_job_log_without_name_takes_the_only_job(tmp_path, mocker) -> None:
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    log = tmp_path / "worker.log"
+    log.write_text("cloning repo\n")
+    _seed("myrepo-feat-x", phase=background.PHASE_FAILED, log_path=str(log))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["job", "log"])
+    assert result.exit_code == 0, _out(result)
+    assert result.stdout == "cloning repo\n"  # the Using-line is not in the data stream
+    assert "Using background job" in result.stderr
+    assert "feat-x" in result.stderr
+
+
+def test_job_log_without_name_off_a_tty_names_the_jobs(tmp_path, mocker) -> None:
+    from jailbee import background
+
+    _cfg(tmp_path, mocker)
+    _seed("myrepo-feat-x", phase=background.PHASE_FAILED)
+    _seed("myrepo-feat-y", phase=background.PHASE_FAILED)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["job", "log"])
+    assert result.exit_code == 2
+    assert "Candidates: feat-x, feat-y" in _out(result)
+
+
+def test_job_log_without_name_and_no_jobs_exits_2(tmp_path, mocker) -> None:
+    _cfg(tmp_path, mocker)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = CliRunner().invoke(app, ["job", "log"])
+    assert result.exit_code == 2
+    assert "no background jobs in this repo" in _out(result)
 
 
 def test_job_log_prints_the_workers_log(tmp_path, mocker) -> None:

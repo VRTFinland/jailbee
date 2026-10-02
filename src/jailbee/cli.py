@@ -10090,15 +10090,46 @@ def job_ls(
     )
 
 
+def _pick_job(
+    cfg: "Config",
+    *,
+    noun: str,
+    keep: "Callable[[BackgroundJob], bool]",
+    destructive: bool,
+    empty_reason: str,
+    alternative: str | None = None,
+) -> str:
+    """A background job's container (full name), for job/autostart commands."""
+    from jailbee import background, prompting
+    from jailbee.lifecycle import short_name
+
+    rows = {n: r for n, r in _jobs_for_repo(cfg, all_repos=False).items() if keep(r)}
+    return prompting.choose_one(
+        noun,
+        [
+            prompting.Option(
+                full,
+                f"{short_name(cfg, full)}  {row.op_kind}  "
+                f"{background.job_label(row.phase, row.pid, kind=row.op_kind)}",
+                short_name(cfg, full),
+            )
+            for full, row in sorted(rows.items())
+        ],
+        destructive=destructive,
+        empty_reason=empty_reason,
+        alternative=alternative,
+    )
+
+
 @job_app.command("log")
 def job_log(
     name: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Container whose job log to print.",
+            help="Container whose job log to print. Asked for when omitted.",
             autocompletion=completion.complete_container,
         ),
-    ],
+    ] = None,
     follow: Annotated[
         bool, typer.Option("--follow", "-f", help="Keep printing as the worker writes.")
     ] = False,
@@ -10112,6 +10143,14 @@ def job_log(
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="background job",
+            keep=lambda r: True,
+            destructive=False,
+            empty_reason="no background jobs in this repo",
+        )
     row = lookup_background_job(cfg, name)
     if row is None:
         error(f"no background job for '{name}'")
@@ -10158,7 +10197,7 @@ def job_clear(
     name: Annotated[
         str | None,
         typer.Argument(
-            help="Container whose job record to clear.",
+            help="Container whose job record to clear. Asked for when omitted.",
             autocompletion=completion.complete_container,
         ),
     ] = None,
@@ -10177,7 +10216,7 @@ def job_clear(
 
     from jailbee import background
     from jailbee.db import get_engine
-    from jailbee.lifecycle import lookup_background_job, short_name
+    from jailbee.lifecycle import lookup_background_job
 
     if name is not None and all_:
         error("--all and a container name are mutually exclusive")
@@ -10185,10 +10224,10 @@ def job_clear(
 
     cfg = _load_or_exit(config)
 
-    if name is not None:
-        row = lookup_background_job(cfg, name)
+    def _clear_one(target: str) -> None:
+        row = lookup_background_job(cfg, target)
         if row is None:
-            error(f"no background job for '{name}'")
+            error(f"no background job for '{target}'")
             raise typer.Exit(1)
         full_name = row.container_name
         with Session(get_engine()) as session:
@@ -10196,18 +10235,21 @@ def job_clear(
         _report_clear(cfg, full_name, outcome)
         raise typer.Exit(0 if outcome.cleared else 1)
 
-    rows = _jobs_for_repo(cfg, all_repos=False)
+    if name is not None:
+        _clear_one(name)
     if not all_:
-        if not rows:
-            error("no background jobs in this repo")
-            raise typer.Exit(1)
-        error("no container name given; pass a name or --all. Known jobs:")
-        for full_name in sorted(rows):
-            row = rows[full_name]
-            label = background.job_label(row.phase, row.pid, kind=row.op_kind)
-            info(f"  {short_name(cfg, full_name)}  ({row.op_kind}, phase={label})")
-        raise typer.Exit(1)
+        _clear_one(
+            _pick_job(
+                cfg,
+                noun="background job",
+                keep=lambda r: background.clearable(r.phase, r.pid),
+                destructive=True,
+                empty_reason="no clearable background jobs in this repo",
+                alternative="--all",
+            )
+        )
 
+    rows = _jobs_for_repo(cfg, all_repos=False)
     if not rows:
         info("No background jobs to clear.")
         return
@@ -10227,10 +10269,11 @@ autostart_app = typer.Typer(
 app.add_typer(autostart_app)
 
 AutostartNameArg = Annotated[
-    str,
+    str | None,
     typer.Argument(
         help=(
-            "Container whose detached autostart run to act on, named in full or by its short name."
+            "Container whose detached autostart run to act on, named in full or by its "
+            "short name. Asked for when omitted."
         ),
         autocompletion=completion.complete_container,
     ),
@@ -10299,7 +10342,7 @@ def _warn_if_autostart_runs(cfg: "Config", full_name: str) -> None:
 
 @autostart_app.command("status")
 def autostart_status_cmd(
-    name: AutostartNameArg,
+    name: AutostartNameArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Show how far a container's detached autostart stages have got.
@@ -10308,11 +10351,19 @@ def autostart_status_cmd(
     by the log alone: an interrupted run leaves such a step dangling forever,
     so it reads as ``running`` only while the worker is alive.
     """
-    from jailbee import autostart_progress, autostart_status
+    from jailbee import autostart_progress, autostart_status, background
     from jailbee.lifecycle import short_name
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="autostart job",
+            keep=lambda r: r.op_kind == background.JOB_AUTOSTART,
+            destructive=False,
+            empty_reason="no autostart jobs in this repo",
+        )
     row = autostart_status.autostart_row(cfg, name)
     if row is None:
         info(f"No autostart job for '{name}'.")
@@ -10338,7 +10389,7 @@ def autostart_status_cmd(
 
 @autostart_app.command("cancel")
 def autostart_cancel_cmd(
-    name: AutostartNameArg,
+    name: AutostartNameArg = None,
     config: ConfigOption = None,
 ) -> None:
     """Stop the worker running a container's detached autostart stages.
@@ -10362,6 +10413,15 @@ def autostart_cancel_cmd(
     from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
+    if name is None:
+        name = _pick_job(
+            cfg,
+            noun="autostart job",
+            keep=lambda r: r.op_kind == background.JOB_AUTOSTART
+            and not background.clearable(r.phase, r.pid),
+            destructive=True,
+            empty_reason="no running autostart jobs in this repo",
+        )
     row = autostart_status.autostart_row(cfg, name)
     if row is None:
         error(f"no autostart job for '{name}'")
