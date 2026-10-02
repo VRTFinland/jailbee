@@ -513,7 +513,11 @@ def _materialise_container_acl(
     if mode != "loose":
         ensure_services_acl(incus)
 
-    extras = container_extras(incus, name)
+    # Wildcards live in the Squid fragment, not in an ACL: all-wildcard extras
+    # mean "no ACL extras", which tears down an ACL left by earlier plain entries.
+    from jailbee.egress import acl_raw_entries
+
+    extras = acl_raw_entries(container_extras(incus, name))
     extra_name = extra_acl_name(name)
 
     if mode != "strict" or not extras:
