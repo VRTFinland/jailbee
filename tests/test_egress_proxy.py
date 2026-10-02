@@ -1,5 +1,7 @@
 """Tests for the Squid egress-proxy container lifecycle (Incus mocked)."""
 
+import os
+import subprocess
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -143,7 +145,6 @@ def set_service(mocker):
 
 def test_up_fresh_order_and_service_rule(set_service):
     rig = Rig()
-    rig.incus.set_service = None
     set_service_calls = set_service
 
     def rec(*a):
@@ -177,7 +178,7 @@ def test_up_profile_yaml_and_autostart(set_service):
     body = yaml.safe_load(rig.incus.profile_set_yaml.call_args.args[1])
     assert body["devices"]["eth0"]["network"] == "jailbee-loose"
     assert body["devices"]["eth0"]["ipv4.address"] == "10.79.1.4"
-    assert "security.nesting" not in body["config"] if body.get("config") else True
+    assert body["config"] == {}
     rig.incus.config_set.assert_any_call(PROXY_CONTAINER, "boot.autostart", "true")
 
 
@@ -235,7 +236,9 @@ def test_up_adds_missing_work_device_later(set_service):
     rig = Rig(devices=devices, exists=True)
     proxy_up(rig.incus)
     assert [c.args[1] for c in rig.incus.config_device_add.call_args_list] == ["cl-work"]
-    assert "10.9.0.2" in rig.netplans[0] or "cl-work" in rig.devices
+    work_ip = rig.devices["cl-work"]["ipv4.address"]
+    assert f"{work_ip}/16" in rig.netplans[0]
+    assert "10.0.0.50/24" in rig.netplans[0]
 
 
 def test_up_work_allocation_under_lock(set_service, mocker):
@@ -431,3 +434,67 @@ def test_drop_removed_reconfigures():
 
 def test_drop_absent_file_returns_false():
     assert drop_fragment(_running_incus("UNCHANGED\n"), "abc") is False
+
+
+def test_push_ignores_noise_before_marker():
+    assert push_fragment(_running_incus("squid: warning\nRECONFIGURED\n"), "abc", "x\n") is True
+    assert (
+        push_fragment(_running_incus("RECONFIGURED-ish noise\nUNCHANGED\n"), "abc", "x\n") is False
+    )
+
+
+def test_push_empty_output_is_false():
+    assert push_fragment(_running_incus(""), "abc", "x\n") is False
+
+
+@pytest.fixture
+def real_push(tmp_path, monkeypatch):
+    """Run the generated push script under real bash with a fake `squid`."""
+    frag = tmp_path / "jailbee.d"
+    frag.mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "squid.log"
+    fake = bindir / "squid"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'echo "$*" >> "{log}"\n'
+        f'if [ "$1 $2" = "-k parse" ] && grep -rq BAD "{frag}"; then exit 1; fi\n'
+        "exit 0\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(egress_proxy, "FRAGMENT_DIR", str(frag))
+
+    def push(text: str) -> str | Exception:
+        incus = _running_incus("")
+        try:
+            push_fragment(incus, "abc", text)
+        except RuntimeError as e:
+            return e
+        script = incus.exec_with_input.call_args.args[2]
+        result = subprocess.run(
+            ["bash", "-s"],
+            input=script,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+        )
+        return result.stdout.strip() + f"|rc={result.returncode}"
+
+    return push, frag, log
+
+
+def test_real_script_bad_first_fragment_leaves_directory_empty(real_push):
+    push, frag, _ = real_push
+    assert push("BAD rule\n").endswith("PARSE_FAILED|rc=1")
+    assert list(frag.iterdir()) == []
+
+
+def test_real_script_bad_v2_restores_v1_and_good_push_reconfigures(real_push):
+    push, frag, log = real_push
+    assert push("good v1\n").endswith("RECONFIGURED|rc=0")
+    assert (frag / "abc.conf").read_text() == "good v1\n"
+    assert push("good v1\n").endswith("UNCHANGED|rc=0")
+    assert push("BAD v2\n").endswith("PARSE_FAILED|rc=1")
+    assert (frag / "abc.conf").read_text() == "good v1\n"
+    assert log.read_text().count("-k reconfigure") == 1

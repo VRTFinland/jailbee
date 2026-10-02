@@ -278,11 +278,17 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
 
 
 def _run_fragment_script(incus: Incus, script: str) -> str:
-    """Run a fragment script in the proxy; a parse failure becomes ``RuntimeError``."""
+    """Run a fragment script in the proxy; return its last stdout line (the marker).
+
+    A parse failure becomes ``RuntimeError``. Only the last line counts, so stray
+    squid output before the marker cannot flip the verdict.
+    """
     try:
-        return incus.exec_with_input(PROXY_CONTAINER, ["bash", "-s"], script, timeout=60).strip()
+        out = incus.exec_with_input(PROXY_CONTAINER, ["bash", "-s"], script, timeout=60)
     except IncusError as e:
         raise RuntimeError(f"squid rejected the egress rules: {e}") from e
+    lines = out.strip().splitlines()
+    return lines[-1].strip() if lines else ""
 
 
 def push_fragment(incus: Incus, prefix: str, text: str) -> bool:
