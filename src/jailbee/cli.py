@@ -10417,8 +10417,9 @@ def autostart_cancel_cmd(
         name = _pick_job(
             cfg,
             noun="autostart job",
-            keep=lambda r: r.op_kind == background.JOB_AUTOSTART
-            and not background.clearable(r.phase, r.pid),
+            keep=lambda r: (
+                r.op_kind == background.JOB_AUTOSTART and not background.clearable(r.phase, r.pid)
+            ),
             destructive=True,
             empty_reason="no running autostart jobs in this repo",
         )
