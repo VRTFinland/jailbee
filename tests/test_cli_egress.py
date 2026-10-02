@@ -1016,18 +1016,21 @@ def test_add_warns_and_continues_when_the_proxy_cannot_start(tmp_path, mocker):
     sync.assert_called_once()
 
 
-def test_add_non_wildcard_on_a_container_does_not_start_the_proxy(tmp_path, mocker):
+def test_add_non_wildcard_on_a_container_syncs_but_does_not_start_the_proxy(tmp_path, mocker):
     from jailbee import egress_proxy
 
     _repo(tmp_path, mocker)
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     mocker.patch("jailbee.egress_scope.set_container_extras")
     up = mocker.patch.object(egress_proxy, "proxy_up")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
 
-    result = runner.invoke(app, ["net", "egress", "add", "nexus.corp:443"])
+    result = runner.invoke(app, ["net", "egress", "add", "10.0.0.0/8:443"])
 
     assert result.exit_code == 0, result.output
     up.assert_not_called()
+    sync.assert_called_once()
+    assert "Open a new shell" not in result.output
 
 
 def test_rm_on_a_container_syncs_the_proxy_after_the_removal(tmp_path, mocker):

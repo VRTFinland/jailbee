@@ -53,6 +53,7 @@ _PROXY_BRIDGE = "jailbee-loose"
 _PROXY_IMAGE = "images:ubuntu/26.04/cloud"
 _SERVICE = "squid"
 _SERVICE_WAIT_SECONDS = 60
+_BOOT_WAIT_SECONDS = 60
 _PROVISION_PKG = "jailbee.provision"
 _PROVISION_SUBDIR = "egress-proxy"
 _NETPLAN_PATH = "/etc/netplan/60-jailbee-egress-proxy.yaml"
@@ -193,6 +194,32 @@ def _add_nic(incus: Incus, bridge: str, props: dict[str, str]) -> str:
     return address
 
 
+def _wait_for_boot(incus: Incus, on_step: Callable[[str], None]) -> None:
+    """Block until the container's systemd has finished booting.
+
+    ``netplan apply`` talks to systemd over D-Bus, which does not exist for the
+    first seconds after ``incus start``. ``running`` and ``degraded`` both mean
+    boot is over (``is-system-running`` exits non-zero for ``degraded``).
+    """
+    deadline = time.monotonic() + _BOOT_WAIT_SECONDS
+    while True:
+        try:
+            state = incus.exec(
+                PROXY_CONTAINER, ["systemctl", "is-system-running"], timeout=10
+            ).strip()
+        except IncusError as e:
+            state = "degraded" if "degraded" in str(e) else str(e)
+        if state in ("running", "degraded"):
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{PROXY_CONTAINER} did not finish booting within {_BOOT_WAIT_SECONDS}s "
+                f"(last state: {state}). Run `jailbee apply` to retry."
+            )
+        on_step(f"waiting for {PROXY_CONTAINER} to boot")
+        time.sleep(2)
+
+
 def _write_netplan(incus: Incus, addresses: dict[str, str]) -> None:
     """Static, route-less client NICs; only ``eth0`` (dhcp4) gets a default route."""
     ethernets: dict[str, Any] = {"eth0": {"dhcp4": True}}
@@ -202,13 +229,29 @@ def _write_netplan(incus: Incus, addresses: dict[str, str]) -> None:
         ).network.prefixlen
         ethernets[_nic_name(bridge)] = {"dhcp4": False, "addresses": [f"{address}/{prefix}"]}
     body = yaml.safe_dump({"network": {"version": 2, "ethernets": ethernets}}, sort_keys=False)
+    # Write beside the live file, apply only when the content differs, and put the
+    # previous file back when `netplan apply` fails so the next run retries.
     script = f"""\
 set -euo pipefail
-cat > {_NETPLAN_PATH} <<'JAILBEE_NETPLAN_EOF'
+live={_NETPLAN_PATH}
+cat > "$live.new" <<'JAILBEE_NETPLAN_EOF'
 {body.rstrip()}
 JAILBEE_NETPLAN_EOF
-chmod 0600 {_NETPLAN_PATH}
-netplan apply
+if [ -f "$live" ] && cmp -s "$live.new" "$live"; then
+  rm -f "$live.new"
+  echo UNCHANGED
+  exit 0
+fi
+chmod 0600 "$live.new"
+if [ -f "$live" ]; then mv -f "$live" "$live.bak"; fi
+mv -f "$live.new" "$live"
+if ! netplan apply; then
+  rm -f "$live"
+  if [ -f "$live.bak" ]; then mv -f "$live.bak" "$live"; fi
+  exit 1
+fi
+rm -f "$live.bak"
+echo APPLIED
 """
     incus.exec_with_input(PROXY_CONTAINER, ["bash", "-s"], script, timeout=120)
 
@@ -288,6 +331,7 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
 
     on_step("attaching the client networks")
     addresses = _ensure_client_nics(incus)
+    _wait_for_boot(incus, on_step)
     _write_netplan(incus, addresses)
 
     if not _squid_installed(incus):
@@ -297,6 +341,18 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
 
     _ensure_service(incus, provisioned=provisioned, on_step=on_step)
     set_service(incus, EGRESS_PROXY_LABEL, (sorted(client_endpoints(incus).values()), [PROXY_PORT]))
+
+
+def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None) -> None:
+    """``proxy_up`` for callers that have more to finish: a failure is only a warning.
+
+    The reason is printed with ``warn_plain`` because it can embed square
+    brackets (a failed command's argv), which ``warn`` would read as markup.
+    """
+    try:
+        proxy_up(incus, on_step=on_step or (lambda message: tui.info(f"  {message}")))
+    except (IncusError, RuntimeError) as e:
+        tui.warn_plain(f"Could not start the egress proxy: {e}")
 
 
 def _run_fragment_script(incus: Incus, script: str) -> str:
@@ -344,6 +400,7 @@ if ! squid -k parse; then
   exit 1
 fi
 squid -k reconfigure
+rm -f "$live.bak"
 echo RECONFIGURED
 """
     return _run_fragment_script(incus, script) == "RECONFIGURED"

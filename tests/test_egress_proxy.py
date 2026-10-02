@@ -131,6 +131,8 @@ class Rig:
         return ""
 
     def _exec(self, name, cmd, **kw):
+        if cmd[:2] == ["systemctl", "is-system-running"]:
+            return "running\n"
         if cmd[:2] == ["test", "-x"]:
             if not self.squid_installed:
                 raise IncusError("missing")
@@ -498,6 +500,14 @@ def test_real_script_bad_v2_restores_v1_and_good_push_reconfigures(real_push):
     assert push("BAD v2\n").endswith("PARSE_FAILED|rc=1")
     assert (frag / "abc.conf").read_text() == "good v1\n"
     assert log.read_text().count("-k reconfigure") == 1
+    assert sorted(p.name for p in frag.iterdir()) == ["abc.conf"]
+
+
+def test_real_script_leaves_no_bak_after_a_successful_change(real_push):
+    push, frag, _ = real_push
+    push("good v1\n")
+    assert push("good v2\n").endswith("RECONFIGURED|rc=0")
+    assert sorted(p.name for p in frag.iterdir()) == ["abc.conf"]
 
 
 # ---- per-repo rule collection and per-container environment ----------------
@@ -720,3 +730,133 @@ def test_sync_container_swallows_incus_error(make_cfg, tmp_path, mocker):
     egress_proxy.sync_container(cfg, incus, "myrepo-old", "strict")
     warn.assert_called_once()
     assert "boom" in warn.call_args.args[0]
+
+
+# --- boot wait and netplan idempotence ---------------------------------------
+
+
+def _booting_exec(rig, states):
+    base = rig._exec
+    seq = iter(states)
+
+    def fn(n, c, **kw):
+        if c[:2] == ["systemctl", "is-system-running"]:
+            state = next(seq, "running")
+            if state in ("running", "degraded"):
+                if state == "degraded":
+                    raise IncusError("exit 1: degraded")
+                return "running\n"
+            raise IncusError(f"Failed to connect to bus ({state})")
+        return base(n, c, **kw)
+
+    rig.incus.exec.side_effect = fn
+
+
+def test_up_waits_for_boot_before_netplan(set_service, mocker):
+    sleep = mocker.patch("jailbee.egress_proxy.time.sleep")
+    rig = Rig()
+    _booting_exec(rig, ["starting", "starting", "running"])
+    proxy_up(rig.incus)
+    assert sleep.call_count == 2
+    assert rig.calls.index("netplan") > rig.calls.index("start")
+
+
+def test_up_accepts_degraded_boot(set_service, mocker):
+    mocker.patch("jailbee.egress_proxy.time.sleep")
+    rig = Rig()
+    _booting_exec(rig, ["degraded"])
+    proxy_up(rig.incus)
+    assert "netplan" in rig.calls
+
+
+def test_up_boot_timeout_raises_before_netplan(set_service, mocker):
+    mocker.patch("jailbee.egress_proxy.time.sleep")
+    mocker.patch.object(egress_proxy, "_BOOT_WAIT_SECONDS", 0)
+    rig = Rig()
+    _booting_exec(rig, ["starting"] * 50)
+    with pytest.raises(RuntimeError, match="did not finish booting"):
+        proxy_up(rig.incus)
+    assert "netplan" not in rig.calls
+    set_service.assert_not_called()
+
+
+@pytest.fixture
+def real_netplan(tmp_path, monkeypatch):
+    """Run the generated netplan script under real bash with a fake `netplan`."""
+    target = tmp_path / "60-jailbee-egress-proxy.yaml"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "netplan.log"
+    fake = bindir / "netplan"
+    fake.write_text(f'#!/bin/sh\necho "$*" >> "{log}"\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(egress_proxy, "_NETPLAN_PATH", str(target))
+
+    def write(addresses: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        incus = MagicMock()
+        incus.network_get.return_value = "10.0.0.1/24"
+        egress_proxy._write_netplan(incus, addresses)
+        script = incus.exec_with_input.call_args.args[2]
+        return subprocess.run(
+            ["bash", "-s"],
+            input=script,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+        )
+
+    return write, target, log
+
+
+def test_netplan_applies_when_new_then_skips_when_unchanged(real_netplan):
+    write, target, log = real_netplan
+    assert write({"incusbr0": "10.0.0.5"}).returncode == 0
+    assert "10.0.0.5/24" in target.read_text()
+    assert log.read_text().count("apply") == 1
+    assert write({"incusbr0": "10.0.0.5"}).returncode == 0
+    assert log.read_text().count("apply") == 1
+
+
+def test_netplan_applies_again_when_changed(real_netplan):
+    write, target, log = real_netplan
+    write({"incusbr0": "10.0.0.5"})
+    write({"incusbr0": "10.0.0.6"})
+    assert "10.0.0.6/24" in target.read_text()
+    assert log.read_text().count("apply") == 2
+
+
+def test_netplan_failed_apply_restores_previous(real_netplan, tmp_path):
+    write, target, _log = real_netplan
+    write({"incusbr0": "10.0.0.5"})
+    (tmp_path / "bin" / "netplan").write_text("#!/bin/sh\nexit 1\n")
+    assert write({"incusbr0": "10.0.0.6"}).returncode != 0
+    assert "10.0.0.5/24" in target.read_text()
+
+
+# --- install.sh -------------------------------------------------------------
+
+
+def test_install_sh_pins_ip_forward_off():
+    text = egress_proxy._read_provision_text("install.sh")
+    assert "/etc/sysctl.d/60-jailbee-egress-proxy.conf" in text
+    assert "net.ipv4.ip_forward=0" in text
+
+
+# --- proxy_up_or_warn --------------------------------------------------------
+
+
+def test_proxy_up_or_warn_warns_plain_with_bracketed_reason(mocker):
+    mocker.patch.object(
+        egress_proxy, "proxy_up", side_effect=RuntimeError("failed ['systemctl', 'x']")
+    )
+    warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
+    egress_proxy.proxy_up_or_warn(MagicMock())
+    assert "['systemctl', 'x']" in warn.call_args.args[0]
+
+
+def test_proxy_up_or_warn_quiet_on_success(mocker):
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+    warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
+    egress_proxy.proxy_up_or_warn(MagicMock())
+    up.assert_called_once()
+    warn.assert_not_called()

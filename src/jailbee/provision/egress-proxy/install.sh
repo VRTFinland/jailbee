@@ -15,3 +15,11 @@ install -d -m 0755 /etc/squid/jailbee.d
 cat > /etc/squid/jailbee.d/00-empty.conf <<'JAILBEE_EMPTY_EOF'
 # placeholder so the include glob always matches
 JAILBEE_EMPTY_EOF
+
+# Hardening: the proxy never routes. Client NICs carry no route out and
+# upstream traffic leaves only through eth0, so forwarding stays off even if
+# the host or image would turn it on. Rewriting the drop-in is idempotent.
+cat > /etc/sysctl.d/60-jailbee-egress-proxy.conf <<'JAILBEE_SYSCTL_EOF'
+net.ipv4.ip_forward=0
+JAILBEE_SYSCTL_EOF
+sysctl -q -w net.ipv4.ip_forward=0 || echo "warning: could not set net.ipv4.ip_forward=0 now" >&2

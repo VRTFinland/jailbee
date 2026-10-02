@@ -810,7 +810,6 @@ def _ensure_egress_proxy_or_warn(
     from jailbee import egress_proxy
     from jailbee.egress import is_wildcard_entry
     from jailbee.egress_scope import container_extras, effective_repo_entries
-    from jailbee.tui import info, warn
 
     with Session(get_engine()) as session:
         entries = effective_repo_entries(cfg, session)
@@ -819,10 +818,7 @@ def _ensure_egress_proxy_or_warn(
     )
     if not wanted:
         return
-    try:
-        egress_proxy.proxy_up(incus, on_step=lambda message: info(f"  {message}"))
-    except (IncusError, RuntimeError) as e:
-        warn(f"Could not start the egress proxy: {e}")
+    egress_proxy.proxy_up_or_warn(incus)
 
 
 def _list_containers(cfg: Config, incus: Incus) -> list[ContainerInfo]:

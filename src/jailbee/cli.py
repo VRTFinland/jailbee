@@ -8966,17 +8966,6 @@ def _egress_container_mode(cfg: "Config", incus: "IncusType", name: str) -> str:
     return current_network_mode(cfg, incus, name) or "strict"
 
 
-def _ensure_egress_proxy_or_warn(incus: "IncusType") -> None:
-    """Start the Squid proxy a wildcard entry needs; a failure is only a warning."""
-    from jailbee import egress_proxy
-    from jailbee.incus import IncusError
-
-    try:
-        egress_proxy.proxy_up(incus, on_step=lambda message: info(f"  {message}"))
-    except (IncusError, RuntimeError) as e:
-        warn(f"Could not start the egress proxy: {e}")
-
-
 @egress_app.command("add")
 def egress_add_cmd(
     entry: Annotated[
@@ -9057,6 +9046,8 @@ def egress_add_cmd(
             error(f"{e}\nNothing was stored.")
             raise typer.Exit(1) from e
 
+    from jailbee import egress_proxy
+
     incus, container = _egress_target(name, repo, cfg)
     if repo:
         from jailbee.config.local_layer import local_config_path
@@ -9067,7 +9058,7 @@ def egress_add_cmd(
             error_plain(str(exc))
             raise typer.Exit(1) from exc
         if is_wildcard_entry(entry):
-            _ensure_egress_proxy_or_warn(incus)
+            egress_proxy.proxy_up_or_warn(incus)
         success(
             f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
             "Run `jailbee apply` to push it."
@@ -9101,12 +9092,13 @@ def egress_add_cmd(
     else:
         egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
+    # Any entry can change the container's NO_PROXY (a literal IP or CIDR does),
+    # so the sync is unconditional; only a wildcard needs Squid itself.
     if is_wildcard_entry(entry):
-        from jailbee import egress_proxy
-
         # Squid first, so the sync finds an endpoint to point the environment at.
-        _ensure_egress_proxy_or_warn(incus)
-        egress_proxy.sync_container(cfg, incus, container, mode)
+        egress_proxy.proxy_up_or_warn(incus)
+    egress_proxy.sync_container(cfg, incus, container, mode)
+    if is_wildcard_entry(entry):
         info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' may now reach {entry}.")
 

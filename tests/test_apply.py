@@ -3111,7 +3111,7 @@ def test_run_apply_continues_when_the_proxy_cannot_start(
     cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["*.example.com"])
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=error)
     sync = mocker.patch.object(egress_proxy, "sync_container")
-    warn = mocker.patch("jailbee.tui.warn")
+    warn = mocker.patch("jailbee.tui.warn_plain")
 
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
 
