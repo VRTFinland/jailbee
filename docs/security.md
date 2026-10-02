@@ -484,6 +484,15 @@ user-facing behaviour. The security properties:
   Repo-scope rules are rebuilt from the live addresses on each sync, and the
   window between a lease change and the next sync is a limitation of that
   generation. The work network reserves a fixed address per container.
+  The legacy network has a second, sharper limit: its NICs carry no
+  `security.ipv4_filtering`, and port 3128 is reachable from every strict
+  container (see the services rule below). A process with root in one strict
+  container can therefore assign itself another container's address and
+  inherit that repo's whole Squid allowlist, wildcards and hostname entries
+  alike. The address can be a stopped container's (it stays in the fragment for
+  up to the 60 s refresh interval) or a live one's, if the impostor wins the
+  ARP race. Repos that use wildcards should run `jailbee net migrate`: the work
+  network filters spoofed source addresses at the NIC.
 - **Proxy-bypassing tools fail closed.** The environment variables are advice;
   the NIC ACL is the enforcement. A tool that ignores them connects directly
   and is rejected unless the destination is in the ACL.

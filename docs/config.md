@@ -945,6 +945,9 @@ and warn to run `jailbee apply` if it is not. Things to know:
   only the work network gives each one a fixed address. Use `--repo` there
   (it covers every container of the repo, whose addresses are read at sync
   time). See [Egress proxy](security.md#egress-proxy) for the security trade-offs.
+  On the legacy network a root process in one strict container can impersonate
+  another container's address and borrow its allowlist, so repos that use
+  wildcards should run `jailbee net migrate`.
 
 `jailbee net egress ls` adds a `VIA` column (`proxy` for a wildcard,
 `acl+proxy` for the rest) once any entry is a wildcard; `jailbee net status`
