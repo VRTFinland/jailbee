@@ -11396,25 +11396,39 @@ def snap_create_cmd(
     success(f"Snapshot '{actual}' created for {short_name(cfg, name)}")
 
 
+def _pick_snapshot(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """A snapshot of `name`, asked for even when there is one (restore/delete destroy state)."""
+    from jailbee import prompting
+    from jailbee.lifecycle import short_name
+    from jailbee.snapshots import list_snapshots
+
+    snaps = list_snapshots(incus, name)
+    return prompting.choose_one(
+        "snapshot",
+        [
+            prompting.Option(
+                str(s["name"]), f"{s['name']}  {s.get('created_at', '')}", str(s["name"])
+            )
+            for s in snaps
+        ],
+        destructive=True,
+        empty_reason=f"no snapshots in {short_name(cfg, name)}",
+    )
+
+
 @snapshot_app.command("restore")
 def snap_restore_cmd(
-    name: Annotated[
-        str,
+    name: ContainerArg = None,
+    tag: Annotated[
+        str | None,
         typer.Argument(
             help=(
-                "Container holding the snapshot, named in full or by its short "
-                "name. Required — this command never picks a container for you."
+                "Snapshot to restore, as listed by `jailbee snapshot ls`. "
+                "Asked for when omitted."
             ),
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    tag: Annotated[
-        str,
-        typer.Argument(
-            help="Snapshot to restore, as listed by `jailbee snapshot ls`.",
             autocompletion=completion.complete_snapshot,
         ),
-    ],
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Restore a snapshot."""
@@ -11422,7 +11436,9 @@ def snap_restore_cmd(
     from jailbee.snapshots import restore_snapshot
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=True)
+    if tag is None:
+        tag = _pick_snapshot(cfg, incus, name)
     restore_snapshot(cfg, incus, name, tag)
     success(f"Snapshot '{tag}' restored on {short_name(cfg, name)}")
 
@@ -11489,23 +11505,17 @@ def snap_ls_cmd(
 
 @snapshot_app.command("delete")
 def snap_delete_cmd(
-    name: Annotated[
-        str,
+    name: ContainerArg = None,
+    tag: Annotated[
+        str | None,
         typer.Argument(
             help=(
-                "Container holding the snapshot, named in full or by its short "
-                "name. Required — this command never picks a container for you."
+                "Snapshot to delete, as listed by `jailbee snapshot ls`. "
+                "Asked for when omitted."
             ),
-            autocompletion=completion.complete_container,
-        ),
-    ],
-    tag: Annotated[
-        str,
-        typer.Argument(
-            help="Snapshot to delete, as listed by `jailbee snapshot ls`.",
             autocompletion=completion.complete_snapshot,
         ),
-    ],
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Delete a snapshot."""
@@ -11513,7 +11523,9 @@ def snap_delete_cmd(
     from jailbee.snapshots import delete_snapshot
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=True)
+    if tag is None:
+        tag = _pick_snapshot(cfg, incus, name)
     delete_snapshot(incus, name, tag)
     success(f"Snapshot '{tag}' deleted from {short_name(cfg, name)}")
 
@@ -11572,9 +11584,23 @@ def _parse_ip_literal(raw: str, *, option: str) -> str:
     return raw
 
 
+def _ask_port() -> int:
+    """A container-side port, asked for on a terminal and re-asked until valid."""
+    from jailbee import prompting
+
+    def problem(text: str) -> str | None:
+        ok = text.strip().isdigit() and 1 <= int(text) <= 65535
+        return None if ok else "enter a port, 1-65535"
+
+    return int(prompting.ask_text("port", validate=problem))
+
+
 @port_app.command("to-container")
 def port_to_container_cmd(
-    port: Annotated[int, typer.Argument(help="Container-side port to listen on.")],
+    port: Annotated[
+        int | None,
+        typer.Argument(help="Container-side port to listen on. Asked for when omitted."),
+    ] = None,
     name: ContainerArg = None,
     host_port: Annotated[
         int | None,
@@ -11605,6 +11631,8 @@ def port_to_container_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
+    if port is None:
+        port = _ask_port()
     container_port = _parse_port(port)
     resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
     proto = _parse_proto(proto)
@@ -11638,7 +11666,10 @@ def port_to_container_cmd(
 
 @port_app.command("to-host")
 def port_to_host_cmd(
-    port: Annotated[int, typer.Argument(help="Container-side port to connect to.")],
+    port: Annotated[
+        int | None,
+        typer.Argument(help="Container-side port to connect to. Asked for when omitted."),
+    ] = None,
     name: ContainerArg = None,
     host_port: Annotated[
         str | None,
@@ -11673,6 +11704,8 @@ def port_to_host_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
+    if port is None:
+        port = _ask_port()
     container_port = _parse_port(port)
     proto = _parse_proto(proto)
     host_address = _parse_ip_literal(host_address, option="--host-address")
@@ -11723,15 +11756,35 @@ def port_to_host_cmd(
     )
 
 
+def _pick_forward(cfg: "Config", incus: "IncusType", name: str) -> str:
+    """A forward of `name` to remove, asked for even when there is one."""
+    from jailbee import ports, prompting
+    from jailbee.lifecycle import short_name
+
+    return prompting.choose_one(
+        "port forward",
+        [
+            prompting.Option(
+                f.device,
+                f"{f.device}  {f.direction}  {f.container.display} ↔ {f.host.display}",
+                f.device,
+            )
+            for f in ports.forwards_for(incus, name)
+        ],
+        destructive=True,
+        empty_reason=f"no port forwards in {short_name(cfg, name)}",
+    )
+
+
 @port_app.command("rm")
 def port_rm_cmd(
     handle: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Device name, host_ports name, or container port.",
+            help="Device name, host_ports name, or container port. Asked for when omitted.",
             autocompletion=completion.complete_port_handle,
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11740,7 +11793,9 @@ def port_rm_cmd(
     from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
-    incus, name = _resolve_existing(cfg, name)
+    incus, name = _resolve_existing(cfg, name, always_prompt=handle is None)
+    if handle is None:
+        handle = _pick_forward(cfg, incus, name)
     try:
         fwd = ports.remove_forward(incus, name, handle)
     except ports.PortError as e:
