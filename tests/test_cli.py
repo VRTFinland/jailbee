@@ -4627,7 +4627,7 @@ def test_git_retarget_merge_failure_keeps_retarget_and_hints_retry(mocker, tmp_p
 def test_git_retarget_without_base_picks_one_on_a_tty(mocker, tmp_path):
     runner = CliRunner()
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.cli._pick_retarget_base", return_value="develop")
 
     result = runner.invoke(app, ["git", "retarget", "feat-b"])
@@ -4640,7 +4640,7 @@ def test_git_retarget_without_base_picks_one_on_a_tty(mocker, tmp_path):
 def test_git_retarget_without_base_and_no_tty_exits_1(mocker, tmp_path):
     runner = CliRunner()
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.cli._pick_retarget_base")
 
     result = runner.invoke(app, ["git", "retarget", "feat-b"])
@@ -4654,7 +4654,7 @@ def test_git_retarget_without_base_and_no_tty_exits_1(mocker, tmp_path):
 def test_git_retarget_cancelled_pick_changes_nothing(mocker, tmp_path):
     runner = CliRunner()
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli._pick_retarget_base", return_value=None)
 
     result = runner.invoke(app, ["git", "retarget", "feat-b"])
@@ -6020,7 +6020,7 @@ def test_net_loose_unparseable_policy_is_never_offered_as_a_prompt_default(tmp_p
         cfg_overrides={"loose_auto_revert": {"after": "30min"}},
         pre_mode="strict",
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6102,7 +6102,7 @@ def test_net_loose_prompts_when_interactive(tmp_path, mocker):
     from jailbee.cli import _LooseTtl
 
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch(
         "jailbee.cli._prompt_loose_ttl",
         return_value=_LooseTtl(duration=timedelta(hours=3)),
@@ -6118,7 +6118,7 @@ def test_net_loose_prompts_when_interactive(tmp_path, mocker):
 
 def test_net_loose_prompt_cancel_aborts_without_switching(tmp_path, mocker):
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli._prompt_loose_ttl", return_value=None)
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6129,7 +6129,7 @@ def test_net_loose_prompt_cancel_aborts_without_switching(tmp_path, mocker):
 
 def test_net_loose_does_not_prompt_with_for_flag(tmp_path, mocker):
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x", "--for", "1h"])
@@ -6140,7 +6140,7 @@ def test_net_loose_does_not_prompt_with_for_flag(tmp_path, mocker):
 
 def test_net_loose_does_not_prompt_with_no_revert(tmp_path, mocker):
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x", "--no-revert"])
@@ -6161,7 +6161,7 @@ def test_net_loose_does_not_prompt_when_policy_disabled(tmp_path, mocker):
         gcfg=GlobalConfig(loose_auto_revert=LooseAutoRevert(enabled=False)),
         pre_mode="strict",
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6173,7 +6173,7 @@ def test_net_loose_does_not_prompt_when_policy_disabled(tmp_path, mocker):
 def test_net_loose_does_not_prompt_without_a_tty(tmp_path, mocker):
     """The Qt dashboard's detached Popen and any script land here."""
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("jailbee.cli._prompt_loose_ttl")
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6215,7 +6215,7 @@ def test_net_loose_reads_the_global_config_once_when_prompting(tmp_path, mocker)
     from jailbee.cli import _LooseTtl
 
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.cli._prompt_loose_ttl",
         return_value=_LooseTtl(duration=timedelta(hours=3)),
@@ -6231,7 +6231,7 @@ def test_net_loose_reads_the_global_config_once_without_a_tty(tmp_path, mocker):
     from jailbee import cli
 
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
 
@@ -6730,7 +6730,7 @@ def test_cli_push_config_ask_no_tty_action_errors(mocker):
         return_value=(mocker.MagicMock(), "full-name"),
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
-    # CliRunner has no TTY by default — _stdin_is_interactive returns False.
+    # CliRunner has no TTY by default — prompting.is_interactive returns False.
 
     result = CliRunner().invoke(app, ["git", "push", "feat-x"])
 
@@ -6775,7 +6775,7 @@ def test_cli_push_picker_action_invoked_when_tty_and_ask(mocker):
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.cli._pick_push_action", return_value="merge")
     push_result = PushResult(
         source="main",
@@ -6814,7 +6814,7 @@ def test_cli_push_picker_source_invoked_when_tty_and_ask(mocker):
         return_value=(mocker.MagicMock(), "full-name"),
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.cli._pick_push_source", return_value="feat/picked")
     mock_push = mocker.patch(
         "jailbee.sync.push_to_container",
@@ -6848,7 +6848,7 @@ def test_cli_push_picker_cancel_aborts(mocker):
     )
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-x")
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli._pick_push_action", return_value=None)
 
     result = CliRunner().invoke(app, ["git", "push", "feat-x"])
@@ -6944,7 +6944,7 @@ def test_cli_push_no_name_with_pushable_opens_picker(mocker):
     cfg = _push_cfg_factory(action="plain", source="default-branch")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[
@@ -7001,7 +7001,7 @@ def test_cli_push_no_name_filters_out_mount_and_stopped(mocker):
     cfg = _push_cfg_factory(action="plain", source="default-branch")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[
@@ -7077,7 +7077,7 @@ def test_cli_push_no_name_empty_pushable_errors(mocker):
     cfg = _push_cfg_factory(action="plain", source="default-branch")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[
@@ -7131,7 +7131,7 @@ def test_cli_push_no_name_picker_cancel_aborts(mocker):
     cfg = _push_cfg_factory(action="plain", source="default-branch")
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[
@@ -8113,7 +8113,7 @@ def test_cli_push_noarg_single_pr_container_offers_pr_head(mocker):
     incus = _pr_incus_mock(mocker, pr="55", branch="feat/pr-x")
 
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     # One pushable PR container.
     container = mocker.MagicMock()
@@ -8741,7 +8741,7 @@ def test_new_background_asks_about_an_escalation_before_detaching(
 
     cfg, popen_mock = _background_new_env(make_cfg, tmp_path, monkeypatch, mocker)
     _stub_preflight(mocker, cfg, branch_autostart=_mount_step_autostart())
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("jailbee.tui.default_confirm", return_value=True)
 
     result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
@@ -8764,7 +8764,7 @@ def test_new_background_declining_creates_nothing(make_cfg, tmp_path, monkeypatc
 
     cfg, popen_mock = _background_new_env(make_cfg, tmp_path, monkeypatch, mocker)
     _stub_preflight(mocker, cfg, branch_autostart=_mount_step_autostart())
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.default_confirm", return_value=False)
 
     result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
@@ -8786,7 +8786,7 @@ def test_new_background_without_a_terminal_says_how_to_accept(
 
     cfg, popen_mock = _background_new_env(make_cfg, tmp_path, monkeypatch, mocker)
     _stub_preflight(mocker, cfg, branch_autostart=_mount_step_autostart())
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(app, ["new", "feat/foo", "--background"])
 
@@ -10453,7 +10453,7 @@ def test_cli_push_passes_a_confirm_callable_for_the_divergence_prompt(mocker):
 
     from jailbee.cli import app
 
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mock_merge = _ff_flag_rig(mocker)
 
     result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge"])
@@ -10467,7 +10467,7 @@ def test_cli_push_passes_no_confirm_without_a_tty(mocker):
 
     from jailbee.cli import app
 
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mock_merge = _ff_flag_rig(mocker)
 
     result = CliRunner().invoke(app, ["git", "push", "feat-x", "--pr", "--merge"])

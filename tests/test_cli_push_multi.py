@@ -34,7 +34,7 @@ def _wire(mocker, tmp_path, *, containers, picked, action="plain", source="defau
         "jailbee.lifecycle.list_containers",
         return_value=containers,
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=picked,

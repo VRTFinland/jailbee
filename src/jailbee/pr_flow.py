@@ -17,7 +17,6 @@ PR and a submodule PR:
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -143,13 +142,13 @@ def confirm_foreign_force_push(
     someone else may own, so it takes its own confirmation on top of the
     one-time adoption. `--yes` skips it; without a TTY it is an error.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
 
     target = scope.noun(pr_label)
     head_desc = f"'{head}'" if head else "head branch"
     if yes:
         return
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         error(
             f"--force on '{short}' would overwrite {target}'s head {head_desc}, "
             f"a PR jailbee did not create. That needs confirmation — re-run with --yes "
@@ -172,8 +171,9 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
     commits came from (nothing to review) or when stdin is not a TTY.
     """
     from jailbee import git as git_mod
+    from jailbee import prompting
 
-    if proposed == source_branch or not sys.stdin.isatty():
+    if proposed == source_branch or not prompting.is_interactive():
         return proposed
     while True:
         chosen: str = typer.prompt("PR head branch name", default=proposed).strip()
@@ -185,15 +185,15 @@ def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
 def _can_prompt() -> bool:
     """Whether this run may ask an interactive question at all.
 
-    One predicate for every prompt in this module. A bare `sys.stdin.isatty()`
+    One predicate for every prompt in this module. A bare stdin TTY test
     is not it: it misses `JAILBEE_NONINTERACTIVE`, so a scripted run on a pty
     that sets the variable would still be handed a blocking
     `questionary.select` — and on the outbox paths that block lands *after* the
     branch has been pushed.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
 
-    return _stdin_is_interactive()
+    return prompting.is_interactive()
 
 
 def _pick_outbox_manifest(names: list[str]) -> str | None:
@@ -873,7 +873,7 @@ def resolve_review_target(
     PR, on a `gh` failure, and on a declined or unavailable choice.
     """
     from jailbee import pr as pr_module
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
 
     if record.number is None:
         if stacked:
@@ -924,7 +924,7 @@ def resolve_review_target(
     )
 
     if action is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 f"Container '{short}' was created from PR #{number}. Publishing needs "
                 f"a choice: --yes pushes its commits to that PR's head, --stacked opens "
@@ -1036,8 +1036,7 @@ def maybe_retarget_to_parent(
     otherwise skips with the command printed. Never raises — the PR is already
     published by the time this runs, so a transport failure is a warning.
     """
-    from jailbee import sync
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting, sync
 
     if retarget is False:
         return
@@ -1046,7 +1045,7 @@ def maybe_retarget_to_parent(
         return
     old_desc = f"'{old_base}'" if old_base else "unset"
     if retarget is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             info(
                 f"Base branch left at {old_desc}; AHEAD still counts PR "
                 f"#{target.parent_number}'s own commits. To move it: "
@@ -1103,7 +1102,7 @@ def adopt_existing_pr_for_branch(
     look, not just a generic "could not record" with no way to fix it by hand.
     """
     from jailbee import pr as pr_module
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
 
     if not branch:
         return None
@@ -1134,7 +1133,7 @@ def adopt_existing_pr_for_branch(
     )
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 f"{scope.prefix}Branch '{branch}' already has PR #{found.number}. "
                 f"Pushing this container's commits to it needs confirmation — "
@@ -1194,7 +1193,7 @@ def bind_pr_by_number(
     declined or unavailable confirmation.
     """
     from jailbee import pr as pr_module
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
 
     if record.number == number and record.head:
         return record
@@ -1242,7 +1241,7 @@ def bind_pr_by_number(
         )
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(refusal)
             raise typer.Exit(1)
         if not typer.confirm(question, default=True):

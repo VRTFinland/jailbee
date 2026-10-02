@@ -2638,11 +2638,12 @@ def _preflight_cache_pools(cfg: "Config") -> None:
     also why this runs in the *foreground* command, before the background
     fork — same reasoning as `_preflight_background_new`.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.pool import preflight_pools
     from jailbee.tui import default_confirm
 
-    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    confirm = default_confirm if prompting.is_interactive() else None
+    unresolved = preflight_pools(cfg, confirm=confirm)
     if not unresolved:
         return
     error(
@@ -2675,8 +2676,8 @@ def _preflight_background_new(
     """
     from dataclasses import replace
 
+    from jailbee import prompting
     from jailbee.lifecycle import (
-        _stdin_is_interactive,
         assess_branch_autostart,
         resolve_clone_ref,
     )
@@ -2700,7 +2701,7 @@ def _preflight_background_new(
             error(escalation_refusal(verdict.baseline_source))
             raise typer.Exit(2)
     if verdict is not None and verdict.prompts and not opts.assume_yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "The target branch's autostart config widens privileges beyond "
                 f"{verdict.baseline_source}, which needs confirmation — and there is "
@@ -4839,10 +4840,9 @@ def destroy(
         _destroy_batch(cfg, incus, targets)
         return
 
-    from jailbee import tui
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting, tui
 
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         error("no container name given; pass a name, use --all, or run interactively in a TTY")
         raise typer.Exit(1)
 
@@ -5370,11 +5370,11 @@ def pull(
         into = resolved_current
 
     if name is None:
-        from jailbee import tui
+        from jailbee import prompting, tui
         from jailbee.incus import Incus
-        from jailbee.lifecycle import _stdin_is_interactive, list_containers
+        from jailbee.lifecycle import list_containers
 
-        if _stdin_is_interactive():
+        if prompting.is_interactive():
             incus = Incus()
             all_containers = list_containers(cfg, incus, with_git_status=True)
             pullable = [c for c in all_containers if c.mode != "mount"]
@@ -5545,15 +5545,15 @@ def retarget(
       jailbee git retarget feat-b main --merge   # also merge main into the container
     """
     from jailbee import git as git_helpers
-    from jailbee import sync
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import prompting, sync
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, full = _resolve_existing(cfg, name)
     short = short_name(cfg, full)
 
     if new_base is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "No base branch given and no TTY to ask on. Usage: jailbee git retarget NAME BASE"
             )
@@ -5584,7 +5584,7 @@ def retarget(
                 # commit and the ff-only path is not reachable here. `confirm`
                 # is passed anyway so a container that somehow is on the new
                 # base gets the prompt rather than a dead end.
-                confirm=default_confirm if _stdin_is_interactive() else None,
+                confirm=default_confirm if prompting.is_interactive() else None,
             )
         except (sync.SyncError, git_helpers.GitError) as exc:
             error(str(exc))
@@ -5725,11 +5725,11 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
     default must not break scripts or background jobs. Declining raises
     ``typer.Abort()`` — nothing has been mutated at that point.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.tui import console, render_bridge_plan
 
     console.print(render_bridge_plan(plan), markup=False, highlight=False)
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return
     if not typer.confirm("Continue?", default=True):
         raise typer.Abort()
@@ -5753,10 +5753,10 @@ def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
     unresolved commit count) are still reported by the command's own
     ``warn``/``info`` calls further down. Do not "fix" this back.
     """
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.tui import console, render_submodule_pr_plan
 
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return
     console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
     if not typer.confirm("Continue?", default=True):
@@ -6628,8 +6628,8 @@ def push(
         )
         raise typer.Exit(2)
     from jailbee import git as git_helpers
-    from jailbee import sync
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import prompting, sync
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     selected_pr: tuple[IncusType, str] | None = None
@@ -6638,7 +6638,7 @@ def push(
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "No container name given. Pass a PR container name, or run in a TTY to select one."
             )
@@ -6683,14 +6683,14 @@ def push(
     # redirected stdin gets the error naming --no-ff instead: `default_confirm`
     # would return its documented `False` on EOF, which reads as a decision
     # the user never made.
-    merge_confirm = default_confirm if _stdin_is_interactive() else None
+    merge_confirm = default_confirm if prompting.is_interactive() else None
 
     if name is None and selected_pr is None:
         from jailbee import tui
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "No container name given. Pass a name, or run "
                 "interactively in a TTY for the container picker."
@@ -6882,7 +6882,7 @@ def push(
     )
 
     if single_source is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "push.default_source is 'ask' but no TTY is available. "
                 "Pass --from <branch> or --current, or set "
@@ -6900,7 +6900,7 @@ def push(
             single_source = _source_pick
 
     if resolved_action is None:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error(
                 "push.default_action is 'ask' but no TTY is available. "
                 "Pass --merge / --rebase / --plain, or set "
@@ -7298,11 +7298,11 @@ def _prompt_merge_endpoints(
     and `typer.Exit(0)` when a checkbox comes back empty — ticking nothing is a
     decision not to merge, not an error.
     """
-    from jailbee import tui
+    from jailbee import prompting, tui
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.lifecycle import short_name
 
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         missing = []
         if sources is None:
             missing.append("<source>...")
@@ -7534,12 +7534,11 @@ def _offer_outbox_comments(
     retract that.
 
     Off a TTY the offer degrades to a hint naming the count and the command.
-    The predicate is `lifecycle._stdin_is_interactive` — the one
+    The predicate is `prompting.is_interactive` — the one
     `pr_flow._can_prompt` already consults for this command's other prompts,
     not a new one of its own.
     """
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import pr_outbox, prompting
 
     def _confirm(count: int) -> bool:
         plural = "" if count == 1 else "s"
@@ -7552,7 +7551,7 @@ def _offer_outbox_comments(
         short,
         pr_number=number,
         confirm=_confirm,
-        can_prompt=_stdin_is_interactive(),
+        can_prompt=prompting.is_interactive(),
         management=management,
     )
 
@@ -8434,8 +8433,8 @@ def submodule_pr_cmd(
       jailbee submodule pr feat-foo --open       # just open it in the browser
     """
     from jailbee import pr as pr_mod
-    from jailbee import pr_flow, submodule_pr, submodules, sync
-    from jailbee.lifecycle import _stdin_is_interactive, container_repo_dir, short_name
+    from jailbee import pr_flow, prompting, submodule_pr, submodules, sync
+    from jailbee.lifecycle import container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
         error(
@@ -8502,7 +8501,7 @@ def submodule_pr_cmd(
         info(f"Container '{short}' has no submodules.")
         return
 
-    if path is None and _stdin_is_interactive():
+    if path is None and prompting.is_interactive():
         # The picker replaces both the silent single-candidate auto-target and
         # the ambiguity error: it offers every submodule, ahead ones first, so
         # a submodule with nothing to publish no longer has to be typed from
@@ -9009,9 +9008,9 @@ def egress_add_cmd(
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
-        from jailbee.lifecycle import _stdin_is_interactive
+        from jailbee import prompting
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error("ENTRY is required without an interactive terminal; pass ENTRY explicitly.")
             raise typer.Exit(2)
 
@@ -9136,9 +9135,9 @@ def egress_rm_cmd(
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
-        from jailbee.lifecycle import _stdin_is_interactive
+        from jailbee import prompting
 
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error("ENTRY is required without an interactive terminal; pass ENTRY explicitly.")
             raise typer.Exit(2)
 
@@ -9598,8 +9597,8 @@ def net_loose(
     ] = False,
 ) -> None:
     """Switch to loose (full NAT)."""
+    from jailbee import prompting
     from jailbee.config import format_loose_after, parse_loose_ttl
-    from jailbee.lifecycle import _stdin_is_interactive
 
     if for_ is not None and no_revert:
         error(
@@ -9647,7 +9646,7 @@ def net_loose(
                 raise typer.Exit(2) from e
         # A configured-off policy means there is no auto-revert to schedule,
         # so asking would be misleading.
-        if policy is not None and _stdin_is_interactive():
+        if policy is not None and prompting.is_interactive():
             ttl = _prompt_loose_ttl(format_loose_after(policy.after))
             if ttl is None:
                 raise typer.Abort()
@@ -11881,8 +11880,9 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     probe could not say" is how a written review gets silently lost, which is
     the one thing this feature exists to prevent.
     """
+    from jailbee import prompting
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, list_containers
+    from jailbee.lifecycle import list_containers
     from jailbee.tui import pick_container
 
     if name is not None:
@@ -11905,7 +11905,7 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     # here rather than drop prompt_toolkit onto a pipe — the same rule
     # `lifecycle.resolve_container_for_interactive_detailed` follows, and the
     # same rule the confirmation below follows.
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         names = ", ".join(c.display_name for c in pending)
         error_plain(
             f"several containers may have PR actions waiting; name one explicitly "
@@ -11964,8 +11964,8 @@ def review_apply_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Show what a container wants to publish to GitHub, then publish it."""
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import pr_outbox, prompting
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_review_container(cfg, name)
@@ -11991,7 +11991,7 @@ def review_apply_cmd(
         """
         if yes:
             return True
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to publish to GitHub without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12250,8 +12250,8 @@ def review_drop_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Delete pending PR actions, unapplied — nothing is published."""
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import pr_outbox, prompting
+    from jailbee.lifecycle import short_name
 
     cfg = _load_or_exit(config)
     incus, container = _resolve_review_container(cfg, name)
@@ -12267,7 +12267,7 @@ def review_drop_cmd(
         return
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to delete pending PR actions without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12337,9 +12337,9 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
     (`issue ls` is where a stopped container is instead named as
     unreadable).
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.incus import Incus
-    from jailbee.lifecycle import _stdin_is_interactive, list_containers
+    from jailbee.lifecycle import list_containers
     from jailbee.outbox_io import OutboxReadError
     from jailbee.tui import pick_container
 
@@ -12365,7 +12365,7 @@ def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusTyp
         return incus, None
     if len(pending) == 1:
         return incus, pending[0].name
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         names = ", ".join(ci.display_name for ci in pending)
         error_plain(
             f"several containers may have issue actions waiting; name one "
@@ -12764,8 +12764,8 @@ def issue_apply_cmd(
     mutation. `--yes` skips only the confirmation: the stale recheck always
     runs.
     """
-    from jailbee import issue_outbox
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee import issue_outbox, prompting
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox_io import JournalStore
 
@@ -12796,7 +12796,7 @@ def issue_apply_cmd(
         return
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to change GitHub issues without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -12861,9 +12861,9 @@ def issue_drop_cmd(
     progress, but shows applied receipts and untouched pending actions and
     then keeps a record of the settled ones before removing the manifest.
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import IssueManifestError, parse_manifest
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.io import MutationExecutionError
     from jailbee.outbox.models import OutboxExecutionError
     from jailbee.outbox_io import (
@@ -12929,7 +12929,7 @@ def issue_drop_cmd(
                     info_plain(f"{manifest_name} action {index}: pending")
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to delete pending issue actions without a confirmation. "
                 "Re-run with -y, or from a terminal."
@@ -13011,9 +13011,9 @@ def issue_resolve_cmd(
     action is attempted again; `--applied` durably records the human's own
     confirmation of what actually happened on GitHub.
     """
-    from jailbee import issue_outbox
+    from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
-    from jailbee.lifecycle import _stdin_is_interactive, short_name
+    from jailbee.lifecycle import short_name
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox_io import (
         JournalError,
@@ -13090,7 +13090,7 @@ def issue_resolve_cmd(
         resolution = issue_outbox.AppliedResolution(url=url, issue=issue)
 
     if not yes:
-        if not _stdin_is_interactive():
+        if not prompting.is_interactive():
             error_plain(
                 "Refusing to resolve without a confirmation. Re-run with -y, or from a terminal."
             )

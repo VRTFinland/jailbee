@@ -39,7 +39,7 @@ def _wire(mocker, tmp_path, *, auto_selected: bool, auto_target: bool = True):
         "jailbee.lifecycle.short_name",
         side_effect=lambda _cfg, full: full.removeprefix("myrepo-"),
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     # checkout_from_container is mocked per test, so its result is a MagicMock;
     # keep the post-operation summary out of the way rather than feeding mock
     # attributes into the fetch-summary formatter.
@@ -147,7 +147,7 @@ def test_checkout_off_tty_prints_the_plan_and_proceeds(mocker, tmp_path):
     No prompt is possible off a TTY; the block still lands in the log.
     """
     _wire(mocker, tmp_path, auto_selected=True)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.sync.plan_checkout", return_value=_fake_checkout_plan())
     checkout = mocker.patch("jailbee.sync.checkout_from_container")
 

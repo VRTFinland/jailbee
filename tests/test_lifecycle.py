@@ -3045,7 +3045,7 @@ def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
         side_effect=[GitFetchError("fetch failed", stderr="fatal: connection refused"), None],
     )
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -3188,7 +3188,7 @@ def test_new_container_autofetch_retry_is_not_offered_off_tty(tmp_path, mocker):
         "jailbee.lifecycle.fetch_remote_ref",
         side_effect=GitFetchError("fetch failed", stderr="fatal: connection refused"),
     )
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     opts = NewContainerOptions(
@@ -5964,21 +5964,6 @@ def test_resolver_with_background_raises_when_neither_exists(make_cfg, tmp_path,
 
     with pytest.raises(ValueError, match="no such container"):
         resolve_container_for_interactive(cfg, incus, "nonexistent", with_background=True)
-
-
-def test_stdin_is_interactive_respects_env_and_tty(monkeypatch):
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    assert _stdin_is_interactive() is True
-
-    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
-    assert _stdin_is_interactive() is False
-
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    assert _stdin_is_interactive() is False
 
 
 def test_resolver_always_prompt_shows_picker_for_a_single_container(make_cfg, tmp_path):

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -2453,10 +2451,6 @@ def switch_network(
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
 
 
-def _stdin_is_interactive() -> bool:
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
-
-
 def _default_picker(containers: list[ContainerInfo]) -> str | None:
     from jailbee.tui import pick_container
 
@@ -2484,7 +2478,7 @@ def resolve_container_for_interactive_detailed(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> ResolvedContainer:
@@ -2504,6 +2498,10 @@ def resolve_container_for_interactive_detailed(
     Used by ``jailbee submodule pr``, which mutates a GitHub repository and
     therefore shows the user its target rather than settling on one silently.
     """
+    from jailbee import prompting
+
+    interactive = is_interactive if is_interactive is not None else prompting.is_interactive
+
     if name is not None:
         try:
             return ResolvedContainer(
@@ -2519,9 +2517,9 @@ def resolve_container_for_interactive_detailed(
     containers = list_containers(cfg, incus, with_git_status=True, with_background=with_background)
     if not containers:
         raise ValueError(f"no managed containers found for repo '{cfg.container_prefix}'")
-    if len(containers) == 1 and not (always_prompt and is_interactive()):
+    if len(containers) == 1 and not (always_prompt and interactive()):
         return ResolvedContainer(name=containers[0].name, auto_selected=True)
-    if is_interactive():
+    if interactive():
         chosen = picker(containers)
         if chosen is None:
             raise ValueError("cancelled")
@@ -2538,7 +2536,7 @@ def resolve_container_for_interactive(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> str:

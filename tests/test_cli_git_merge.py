@@ -631,7 +631,7 @@ def test_git_merge_off_a_tty_requires_the_target_explicitly(merge_repo, mocker):
     A script must be told what is missing rather than made to hang for a
     choice it cannot make.
     """
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge", "c1"])
@@ -644,7 +644,7 @@ def test_git_merge_off_a_tty_requires_the_target_explicitly(merge_repo, mocker):
 
 
 def test_git_merge_off_a_tty_requires_the_sources_explicitly(merge_repo, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge", "--into", "c4"])
@@ -658,7 +658,7 @@ def test_git_merge_off_a_tty_requires_the_sources_explicitly(merge_repo, mocker)
 
 def test_git_merge_off_a_tty_names_both_missing_ends(merge_repo, mocker):
     """A bare `jailbee git merge` off a TTY names both halves, not just one."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
     result = runner.invoke(app, ["git", "merge"])
@@ -740,12 +740,12 @@ class _Pickers:
 def merge_pickers(merge_repo, mocker):
     """Wire the interactive path: a TTY, a stubbed listing and both pickers.
 
-    `list_containers` and `_stdin_is_interactive` are patched on
+    `list_containers` and `prompting.is_interactive` are patched on
     `jailbee.lifecycle`, where the command imports them from lazily.
     """
     _cfg, incus = merge_repo
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     return _Pickers(mocker)
 
 

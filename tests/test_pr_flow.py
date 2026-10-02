@@ -108,7 +108,7 @@ def test_foreign_force_push_is_silent_with_yes(tmp_path, mocker):
 
 
 def test_foreign_force_push_exits_1_without_a_tty(tmp_path, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     with pytest.raises(typer.Exit) as excinfo:
         pr_flow.confirm_foreign_force_push(
             _super_scope(tmp_path), "feat-foo", "12", "user/x", yes=False
@@ -117,7 +117,7 @@ def test_foreign_force_push_exits_1_without_a_tty(tmp_path, mocker):
 
 
 def test_foreign_force_push_aborts_on_decline(tmp_path, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.confirm_foreign_force_push(
@@ -170,7 +170,7 @@ def test_description_update_explicit_fields_win(tmp_path, mocker):
 
 
 def test_description_update_skips_without_a_request(tmp_path, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = pr_flow.resolve_pr_description_update(
         _cfg(tmp_path),
         mocker.MagicMock(),
@@ -210,7 +210,7 @@ def test_description_update_passes_the_scope_subpath_to_the_ai(tmp_path, mocker)
 
 
 def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
     result = pr_flow.resolve_pr_description_update(
         _cfg(tmp_path),
@@ -399,7 +399,7 @@ def test_adopt_records_the_pr_and_returns_it(tmp_path, mocker):
 
 def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     with pytest.raises(typer.Exit) as excinfo:
         pr_flow.adopt_existing_pr_for_branch(
             _super_scope(tmp_path),
@@ -413,7 +413,7 @@ def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
 
 def test_adopt_aborts_on_decline(tmp_path, mocker):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.adopt_existing_pr_for_branch(
@@ -764,7 +764,7 @@ def _update_edit(tmp_path, mocker, *, scope=None, **kwargs):
 def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
     confirm = mocker.patch("typer.confirm")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
     edit = _update_edit(tmp_path, mocker, use_outbox=True)
@@ -779,7 +779,7 @@ def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
 def test_update_outbox_lookup_forwards_the_scope_and_source_branch(tmp_path, mocker):
     scope = _sub_scope(tmp_path)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     _update_edit(
         tmp_path,
@@ -806,7 +806,7 @@ def test_explicit_title_and_body_still_outrank_the_outbox(tmp_path, mocker):
 
 def test_the_update_path_ignores_the_outbox_when_not_asked(tmp_path, mocker):
     """`jailbee submodule pr` shares this function and keeps the default."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
     assert _update_edit(tmp_path, mocker) is None
@@ -817,7 +817,7 @@ def test_a_foreign_pr_takes_a_description_that_names_it_after_confirming(tmp_pat
     """A PR jailbee did not open is still often the user's own, adopted with
     `jailbee pr --pr N`. Dropping the description its agent wrote for that very
     number was the bug; the guard is a narrowed lookup plus one question."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
@@ -833,7 +833,7 @@ def test_a_declined_foreign_description_consumes_nothing(tmp_path, mocker):
     """Declining refuses *this text*, not the run: nothing is returned to
     `edit_pr`, so `record_outbox_consumption` is never reached and the manifest
     stays pending for `jailbee review apply`."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
@@ -847,7 +847,7 @@ def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_pa
     not refuse that too."""
     from jailbee.pr_ai import PrText
 
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("typer.confirm", return_value=False)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     mocker.patch(
@@ -870,7 +870,7 @@ def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_pa
 def test_a_foreign_description_is_never_applied_off_a_tty(tmp_path, mocker):
     """The question has no answer when there is nobody to ask, and an
     unattended run may not decide it on the user's behalf."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     confirm = mocker.patch("typer.confirm")
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
@@ -883,7 +883,7 @@ def test_a_foreign_description_is_never_applied_off_a_tty(tmp_path, mocker):
 def test_an_authored_pr_asks_nothing_before_using_the_outbox(tmp_path, mocker):
     """The confirmation belongs to the foreign head alone: jailbee's own PR
     carries the description its own container wrote, as it always did."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm")
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
@@ -946,7 +946,7 @@ def test_an_empty_outbox_leaves_the_regeneration_offer_in_place(tmp_path, mocker
     from jailbee.pr_ai import PrText
 
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mocker.patch("typer.confirm", return_value=True)
     mocker.patch(
         "jailbee.pr_ai.generate_pr_text",
@@ -1233,7 +1233,7 @@ def test_outbox_updates_refuse_mutations_without_a_repository(tmp_path, mocker, 
 
     mocker.patch("jailbee.git.get_remote_url", return_value=None)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     run = mocker.patch("subprocess.run", return_value=CompletedProcess([], 0, "", ""))
     warn = mocker.patch("jailbee.pr_flow.warn")
 
@@ -1312,7 +1312,7 @@ def test_a_failed_edit_leaves_the_manifest_pending(tmp_path, mocker):
 def test_apply_pr_updates_asks_the_outbox_about_its_own_pr(tmp_path, mocker):
     """Without its own number the lookup would accept only `pr: null` manifests
     and never find the description written for the PR being updated."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
 
     _apply_updates(tmp_path, mocker, use_outbox=True)
@@ -1701,7 +1701,7 @@ def test_yes_still_adopts_the_parent_head(tmp_path, mocker):
 
 def test_no_tty_without_a_flag_exits_and_names_stacked(tmp_path, mocker):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     err = mocker.patch("jailbee.pr_flow.error")
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1713,7 +1713,7 @@ def test_no_tty_without_a_flag_exits_and_names_stacked(tmp_path, mocker):
 
 def test_menu_choice_stacked_opens_a_new_pr(tmp_path, mocker):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value="stacked")
     state = mocker.MagicMock()
 
@@ -1725,7 +1725,7 @@ def test_menu_choice_stacked_opens_a_new_pr(tmp_path, mocker):
 
 def test_menu_choice_adopt_records_the_decision(tmp_path, mocker):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value="adopt")
     state = mocker.MagicMock()
 
@@ -1737,7 +1737,7 @@ def test_menu_choice_adopt_records_the_decision(tmp_path, mocker):
 
 def test_menu_cancel_aborts(tmp_path, mocker):
     mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7, head="feat/x"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_flow._pick_review_action", return_value=None)
 
     with pytest.raises(typer.Abort):
@@ -1881,7 +1881,7 @@ def test_standalone_updates_guard_and_revalidate_after_prompt(mocker, tmp_path, 
     mocker.patch.object(manager, "lock", side_effect=lock)
     source = _outbox_source()
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     def confirm(*args, **kwargs):
         events.append("prompt")

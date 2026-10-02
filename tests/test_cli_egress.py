@@ -42,7 +42,7 @@ def test_add_without_entry_prompts_and_stores_for_repo_scope(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
 
@@ -61,7 +61,7 @@ def test_rm_without_entry_noninteractive_fails_before_prompt(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch.object(interaction, "pick_remove_entry")
 
     result = runner.invoke(app, ["net", "egress", "rm"])
@@ -73,7 +73,7 @@ def test_rm_without_entry_noninteractive_fails_before_prompt(tmp_path, mocker):
 
 def test_add_without_entry_noninteractive_fails_before_loading_config(mocker):
     load = mocker.patch("jailbee.cli._load_or_exit", side_effect=AssertionError("config loaded"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = runner.invoke(app, ["net", "egress", "add"])
 
@@ -84,7 +84,7 @@ def test_add_without_entry_noninteractive_fails_before_loading_config(mocker):
 
 def test_rm_without_entry_noninteractive_fails_before_loading_config(mocker):
     load = mocker.patch("jailbee.cli._load_or_exit", side_effect=AssertionError("config loaded"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = runner.invoke(app, ["net", "egress", "rm"])
 
@@ -97,7 +97,7 @@ def test_add_without_entry_prompts_for_container_scope(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -115,7 +115,7 @@ def test_add_without_entry_accepts_explicit_container_option(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -134,7 +134,7 @@ def test_rm_without_entry_accepts_explicit_container_option(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["stored.example"])
     pick = mocker.patch.object(interaction, "pick_remove_entry", return_value="stored.example")
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -164,7 +164,7 @@ def test_rm_without_entry_picks_only_container_overrides(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker, egress_allow=["config.example"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["stored.example"])
     pick = mocker.patch.object(interaction, "pick_remove_entry", return_value="stored.example")
     mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -179,7 +179,7 @@ def test_add_without_entry_cancelled_does_not_mutate(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch.object(interaction, "prompt_add_entry", return_value=None)
     resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
 

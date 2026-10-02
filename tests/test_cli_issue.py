@@ -73,7 +73,7 @@ def _setup(mocker, tmp_path, *, files=None):
     incus = mocker.MagicMock()
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "acme-feat-foo"))
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.issue_outbox.read_issue_outbox",
         return_value=OutboxSnapshot(files=files or {}),
@@ -219,7 +219,7 @@ def test_apply_asks_which_container_when_several_may_be_pending(mocker, tmp_path
 
 def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],
@@ -293,7 +293,7 @@ def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):
 
 def test_apply_refuses_off_a_tty_without_yes(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path))
     mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
     revalidate = mocker.patch("jailbee.issue_outbox.revalidate_batch")
@@ -1118,7 +1118,7 @@ def test_resolve_requires_a_prompt_or_yes_off_tty(mocker, tmp_path):
             JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="unclear"),
         ),
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
     result = runner.invoke(

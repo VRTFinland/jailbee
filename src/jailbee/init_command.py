@@ -68,11 +68,12 @@ def run_init(
     # command — but keeps its strict semantics: a fresh repo whose pool root
     # is polluted and stays that way is a situation to stop on, not to warn
     # past. `cli.init` renders the `PoolError` as a plain error line.
-    from jailbee.lifecycle import _stdin_is_interactive
+    from jailbee import prompting
     from jailbee.pool import PoolError, preflight_pools
     from jailbee.tui import default_confirm
 
-    unresolved = preflight_pools(cfg, confirm=default_confirm if _stdin_is_interactive() else None)
+    confirm = default_confirm if prompting.is_interactive() else None
+    unresolved = preflight_pools(cfg, confirm=confirm)
     if unresolved:
         raise PoolError(
             f"cache pool {', '.join(unresolved)} holds both pool slots and loose "
