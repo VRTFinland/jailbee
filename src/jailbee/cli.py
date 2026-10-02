@@ -11281,18 +11281,38 @@ def registry_verify_cmd(
 # ---- Mount commands ----
 
 
+def _pick_mount_kind(cfg: "Config", incus: "IncusType", name: str, *, attached: bool) -> str:
+    """The optional mount to add (attached=False) or remove (attached=True)."""
+    from jailbee import prompting
+    from jailbee.lifecycle import short_name
+    from jailbee.mounts import attached_kinds
+
+    raw = next((r for r in incus.list_containers() if r.get("name") == name), {})
+    on = set(attached_kinds(raw.get("devices") or {}))
+    kinds = sorted(on) if attached else sorted(set(cfg.optional_mounts) - on)
+    short = short_name(cfg, name)
+    reason = (
+        f"nothing mounted in {short}"
+        if attached
+        else f"no optional mount left to add to {short} (`optional_mounts:` in the repo config)"
+    )
+    return prompting.choose_one(
+        "optional mount", [prompting.Option(k, k, k) for k in kinds], empty_reason=reason
+    )
+
+
 @app.command("mount")
 def mount_cmd(
     kind: Annotated[
-        str,
+        str | None,
         typer.Argument(
             help=(
                 "Name of an entry in the repo's `optional_mounts:` config "
                 "block (e.g. 'aws'). `jailbee config show` lists what this "
-                "repo defines."
+                "repo defines. Asked for when omitted."
             ),
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11302,6 +11322,8 @@ def mount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    if kind is None:
+        kind = _pick_mount_kind(cfg, incus, name, attached=False)
     try:
         add_optional_mount(cfg, incus, name, kind)
     except ValueError as e:
@@ -11313,15 +11335,15 @@ def mount_cmd(
 @app.command("unmount")
 def unmount_cmd(
     kind: Annotated[
-        str,
+        str | None,
         typer.Argument(
             help=(
                 "Name of an entry in the repo's `optional_mounts:` config "
                 "block (e.g. 'aws'). `jailbee config show` lists what this "
-                "repo defines."
+                "repo defines. Asked for when omitted."
             ),
         ),
-    ],
+    ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
 ) -> None:
@@ -11331,6 +11353,8 @@ def unmount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    if kind is None:
+        kind = _pick_mount_kind(cfg, incus, name, attached=True)
     try:
         remove_optional_mount(cfg, incus, name, kind)
     except ValueError as e:
@@ -13319,8 +13343,8 @@ def apps_run_cmd(
 ) -> None:
     """Launch a GUI app in the container.
 
-    APP_NAME is required and comes first — see `jailbee apps ls` for what is
-    available. The container is named with `--container`, not a second
+    APP_NAME comes first — see `jailbee apps ls` for what is available; it is
+    asked for when omitted. The container is named with `--container`, not a second
     positional (`-c` is already `--config`'s short flag on every command, so
     it is not reused here): with APP_NAME optional-in-form and ARGS variadic,
     a middle positional for the container could not be told apart from the
@@ -13331,8 +13355,14 @@ def apps_run_cmd(
 
     cfg = _load_or_exit(config)
     if app_name is None:
-        error("Which app? Run `jailbee apps ls` to see what is available.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+        from jailbee.apps import resolve_apps
+
+        app_name = prompting.choose_one(
+            "app",
+            [prompting.Option(s.name, s.name, s.name) for s in resolve_apps(cfg)],
+            empty_reason="no apps are configured; see `jailbee apps ls`",
+        )
     try:
         spec = get_app(cfg, app_name)
     except ValueError as e:

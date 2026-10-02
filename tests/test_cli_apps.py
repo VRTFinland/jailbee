@@ -5,6 +5,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from jailbee.cli import app
+from tests.conftest import panel_text
 
 runner = CliRunner()
 
@@ -595,3 +596,33 @@ def test_apps_run_reports_a_display_error_instead_of_a_traceback(tmp_path, mocke
     assert result.exit_code == 1
     assert "no client" in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_apps_run_without_name_picks_an_app(tmp_path, mocker):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path, apps={"figma": {"command": "/opt/f/f"}, "gimp": {"command": "/opt/g/g"}}
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    launch = mocker.patch("jailbee.apps.launch", autospec=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="figma")
+    result = runner.invoke(app, ["apps", "run"])
+    assert result.exit_code == 0, result.output
+    assert launch.call_args.args[3].name == "figma"
+
+
+def test_apps_run_without_name_off_a_tty_lists_apps(tmp_path, mocker):
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path, apps={"figma": {"command": "/opt/f/f"}, "gimp": {"command": "/opt/g/g"}}
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["apps", "run"])
+    assert result.exit_code == 2
+    assert "Candidates: figma, gimp" in panel_text(result.output)

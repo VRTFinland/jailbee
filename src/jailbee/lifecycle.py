@@ -303,7 +303,7 @@ def list_containers(
     completion) use it.
     """
     from jailbee.accounts import groups
-    from jailbee.mounts import DEVICE_NAME_PREFIX
+    from jailbee.mounts import attached_kinds
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
 
@@ -421,14 +421,7 @@ def list_containers(
                 # clean the corrupt label on its next pass.
                 loose_until = None
 
-        devices = raw.get("devices") or {}
-        attached = tuple(
-            sorted(
-                device.removeprefix(DEVICE_NAME_PREFIX)
-                for device in devices
-                if device.startswith(DEVICE_NAME_PREFIX)
-            )
-        )
+        attached = attached_kinds(raw.get("devices") or {})
 
         out.append(
             ContainerInfo(

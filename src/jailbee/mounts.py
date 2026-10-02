@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from jailbee.config import Config
 from jailbee.incus import Incus
 
@@ -27,3 +29,14 @@ def remove_optional_mount(cfg: Config, incus: Incus, container: str, kind: str) 
     if kind not in cfg.optional_mounts:
         raise ValueError(f"Unknown optional mount '{kind}'")
     incus.config_device_remove(container, f"{DEVICE_NAME_PREFIX}{kind}")
+
+
+def attached_kinds(devices: Mapping[str, object]) -> tuple[str, ...]:
+    """The optional-mount kinds among a container's devices."""
+    return tuple(
+        sorted(
+            device.removeprefix(DEVICE_NAME_PREFIX)
+            for device in devices
+            if device.startswith(DEVICE_NAME_PREFIX)
+        )
+    )

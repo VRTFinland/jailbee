@@ -45,3 +45,10 @@ def test_remove_optional_mount_calls_device_remove():
     incus = MagicMock()
     remove_optional_mount(cfg, incus, "feat-foo", "aws")
     incus.config_device_remove.assert_called_once_with("feat-foo", "optional-aws")
+
+
+def test_attached_kinds_strips_the_prefix_and_sorts():
+    from jailbee.mounts import attached_kinds
+
+    devices = {f"{DEVICE_NAME_PREFIX}gcp": {}, "eth0": {}, f"{DEVICE_NAME_PREFIX}aws": {}}
+    assert attached_kinds(devices) == ("aws", "gcp")
