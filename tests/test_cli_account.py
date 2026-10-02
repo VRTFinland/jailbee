@@ -414,7 +414,7 @@ def test_use_without_an_account_picks_from_a_menu(repo, mocker):
             Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     switch = mocker.patch(
         "jailbee.accounts.engine.switch",
@@ -439,7 +439,7 @@ def test_use_without_an_account_auto_selects_a_lone_candidate(repo, mocker):
             Slot("only@corp.com", Path("/s/only.json"), live=False),
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.tui.pick_account")
     switch = mocker.patch(
         "jailbee.accounts.engine.switch",
@@ -460,7 +460,7 @@ def test_use_without_an_account_aborts_when_the_menu_is_cancelled(repo, mocker):
             Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_account", return_value=None)
     switch = mocker.patch("jailbee.accounts.engine.switch")
     result = runner.invoke(app, ["account", "use"])
@@ -478,7 +478,7 @@ def test_cancelling_the_picker_leaves_the_store_untouched(repo, mocker):
             Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_account", return_value=None)
     switch = mocker.patch("jailbee.accounts.engine.switch")
     park = mocker.patch("jailbee.accounts.engine.park")
@@ -500,7 +500,7 @@ def test_use_without_an_account_and_without_a_tty_names_the_candidates(repo, moc
             Slot("two@corp.com", Path("/s/two.json"), live=False),
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     switch = mocker.patch("jailbee.accounts.engine.switch")
     result = runner.invoke(app, ["account", "use"])
     assert result.exit_code == 2
@@ -534,7 +534,7 @@ def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
             parked,
         ],
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_account", return_value=("claude", "two@corp.com"))
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")
     result = runner.invoke(app, ["account", "rm"], input="y\n")
@@ -813,7 +813,7 @@ def test_park_with_several_live_adapters_picks_one(repo, mocker):
             "fakea": [Slot("a@x.com", Path("/h/a.json"), live=True)],
         },
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_account", return_value=("fakea", "a@x.com"))
     park = mocker.patch(
         "jailbee.accounts.engine.park",
@@ -841,7 +841,7 @@ def test_choose_account_choice_wires_this_process_terminal_in(repo, mocker):
         (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
         (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
     ]
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_account", return_value=("fakeb", "me@x.com"))
 
     choice = _choose_account_choice(choices, ref="me@x.com", nothing="none", message="Switch:")
@@ -852,7 +852,7 @@ def test_choose_account_choice_wires_this_process_terminal_in(repo, mocker):
 
 
 def test_choose_account_choice_refuses_off_a_tty(repo, mocker):
-    """The other half of the wiring: `_is_tty` really is what gates the
+    """The other half of the wiring: `prompting.is_interactive` really is what gates the
     picker, not a constant."""
     from jailbee.cli import _choose_account_choice
 
@@ -862,7 +862,7 @@ def test_choose_account_choice_refuses_off_a_tty(repo, mocker):
         (fakea, Slot("me@x.com", Path("/s/a.json"), live=False)),
         (fakeb, Slot("me@x.com", Path("/s/b.json"), live=False)),
     ]
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.tui.pick_account")
 
     with pytest.raises(PoolError, match="-a fakea"):

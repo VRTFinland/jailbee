@@ -167,7 +167,7 @@ def test_use_rejects_a_bad_group_name(group_env, mocker):
 
 
 def test_use_without_a_container_errors_without_a_tty(group_env, mocker):
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     result = runner.invoke(app, ["account", "group", "use", "personal"])
     assert result.exit_code != 0
     assert "myrepo-a" in result.output
@@ -879,7 +879,7 @@ def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
     from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
     (holder / CREDENTIAL_FILE).write_text("{}")
@@ -919,7 +919,7 @@ def test_rm_leaves_the_login_alone_when_the_confirmation_is_declined(group_env, 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
     # Without this the command refuses for want of a TTY, and the test would
     # pass without ever reaching the prompt it is about.
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
     (holder / CREDENTIAL_FILE).write_text("{}")
@@ -939,7 +939,7 @@ def test_rm_will_not_park_a_login_without_a_tty(group_env, mocker):
     from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     holder = groups.group_dir(CLAUDE.name, "demo")
     holder.mkdir(parents=True)
     (holder / CREDENTIAL_FILE).write_text("{}")
@@ -1164,7 +1164,7 @@ def test_rm_parks_and_removes_the_group_for_every_adapter(two_agents, mocker):
     from jailbee.accounts.models import PoolChange
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     holders: dict[str, object] = {}
     for agent in ("claude", "fakea"):
         holder = groups.group_dir(agent, "demo")
@@ -1194,7 +1194,7 @@ def test_rm_reports_the_adapter_that_failed_and_keeps_earlier_parks(two_agents, 
     from jailbee.accounts.models import PoolChange, PoolError
 
     mocker.patch("jailbee.accounts.engine.registered_repos", return_value=[])
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     holders: dict[str, object] = {}
     for agent in ("claude", "fakea"):
         holder = groups.group_dir(agent, "demo")

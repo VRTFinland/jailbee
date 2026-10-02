@@ -370,7 +370,7 @@ def test_remote_ssh_key_add_dash_reads_stdin(mocker: MockerFixture) -> None:
 def test_remote_ssh_key_add_no_argument_reads_piped_stdin(mocker: MockerFixture) -> None:
     added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(
         app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
@@ -384,7 +384,7 @@ def test_remote_ssh_key_add_no_argument_reads_piped_stdin(mocker: MockerFixture)
 def test_remote_ssh_key_add_no_argument_prompts_on_a_tty(mocker: MockerFixture) -> None:
     added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = CliRunner().invoke(
         app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
@@ -398,7 +398,7 @@ def test_remote_ssh_key_add_no_argument_prompts_on_a_tty(mocker: MockerFixture) 
 
 def test_remote_ssh_key_add_no_argument_empty_paste_is_an_error(mocker: MockerFixture) -> None:
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="\n")
 
@@ -409,7 +409,7 @@ def test_remote_ssh_key_add_no_argument_empty_paste_is_an_error(mocker: MockerFi
 
 def test_remote_ssh_key_add_no_argument_empty_pipe_is_an_error(mocker: MockerFixture) -> None:
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="")
 

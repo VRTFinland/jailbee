@@ -153,10 +153,11 @@ def remote_ssh_key_add_cmd(
     stdin, or omitted: an omitted SOURCE prompts for one pasted line on a
     terminal, and reads piped stdin otherwise.
     """
+    from jailbee import prompting
     from jailbee.remote_ssh import keys
 
     if source is None or source == "-":
-        if source is None and _is_tty():
+        if source is None and prompting.is_interactive():
             # A single OpenSSH public key is always one line, so one
             # `readline()` is enough — no Ctrl-D needed. `typer.prompt`
             # is not used here: it retries forever on an empty answer,
@@ -499,15 +500,6 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _is_tty() -> bool:
-    """Whether stdin is a terminal, factored for test mocking.
-
-    `CliRunner` replaces `sys.stdin` inside `invoke()`, so a test cannot patch
-    `sys.stdin.isatty` and have it reach the command — hence the indirection.
-    """
-    return sys.stdin.isatty()
-
-
 def _record_upgrade_action(cfg: "Config", action: Literal["base_build", "apply"]) -> None:
     """Record that `action` just ran successfully in this repo.
 
@@ -629,7 +621,9 @@ def _setup_offer_allowed() -> bool:
     own output would otherwise land in whatever is reading `jailbee ls`'s
     table. Anything less interactive gets the one-shot hint instead.
     """
-    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
+    from jailbee import prompting
+
+    return prompting.is_interactive() and sys.stdout.isatty() and sys.stderr.isatty()
 
 
 def _advise_setup(*, offer: bool = False) -> None:
@@ -1139,13 +1133,15 @@ def config_migrate_cmd(
 def _is_full_screen_tty() -> bool:
     """Whether a full-screen TUI can run: both stdin *and* stdout are terminals.
 
-    `_is_tty` asks about stdin alone, which is right for the questions the CLI
+    `prompting.is_interactive` asks about stdin alone, which is right for the questions the CLI
     asks and is what its five other call sites want. An editor also *paints*:
     `jailbee config edit > out.txt` has a perfectly good stdin and would fill
     the file with escape codes, so this second gate exists rather than a change
     to that one.
     """
-    return _is_tty() and sys.stdout.isatty()
+    from jailbee import prompting
+
+    return prompting.is_interactive() and sys.stdout.isatty()
 
 
 def _refuse_synthesized_repo(cwd: Path) -> None:
@@ -1307,7 +1303,9 @@ def _offer_editor(*, global_layer: bool) -> None:
     stdin that nothing will answer would turn a working script into a hang or
     a silent "no".
     """
-    if not _is_tty():
+    from jailbee import prompting
+
+    if not prompting.is_interactive():
         return
     if not default_confirm("Open the config editor now?"):
         return
@@ -2002,6 +2000,7 @@ def new_cmd(
       jailbee new mysmoke --mount           # mount mode: positional is the container
                                         # name; host repo is bind-mounted RW
     """
+    from jailbee import prompting
     from jailbee.autostart import AutostartStepError
     from jailbee.docker_daemon import mirror_wanted
     from jailbee.git import get_current_branch
@@ -2434,7 +2433,7 @@ def new_cmd(
         from jailbee.golden import build_golden_image
 
         _base_build_cmd = "jb base build"
-        if not _is_tty():
+        if not prompting.is_interactive():
             error(
                 f"The shared scratch base image '{cfg.golden.alias}' does not "
                 f"exist yet.\nBuild it once with:  {_base_build_cmd}"
@@ -3783,7 +3782,9 @@ def _confirm_attach(*, force: bool) -> bool:
     same way, because :func:`typer.confirm` would read EOF there and abort an
     attach the caller explicitly requested.
     """
-    if force or not sys.stdin.isatty():
+    from jailbee import prompting
+
+    if force or not prompting.is_interactive():
         return True
     return typer.confirm("Continue anyway?", default=True)
 
@@ -3821,7 +3822,7 @@ def _resolve_attachable(
     yet (a create that died before ``incus init``), or a destroy is actively
     tearing this one down.
     """
-    from jailbee import background
+    from jailbee import background, prompting
     from jailbee.db.models import JOB_BOOT
     from jailbee.incus import Incus
     from jailbee.lifecycle import (
@@ -3862,7 +3863,7 @@ def _resolve_attachable(
         # answers this one on the user's behalf: offer the unfinished
         # container only when someone is at the keyboard to accept it, and
         # default to no, since they just interrupted.
-        if not (sys.stdin.isatty() and typer.confirm("Attach anyway?", default=False)):
+        if not (prompting.is_interactive() and typer.confirm("Attach anyway?", default=False)):
             raise typer.Exit(1) from None
     except ValueError as e:
         # A dead job (terminal phase, or a worker that vanished) over a
@@ -8846,6 +8847,7 @@ def net_migrate_cmd(
     """Opt future containers into the work bridge, or undo that default."""
     from sqlmodel import Session
 
+    from jailbee import prompting
     from jailbee.db import get_engine
     from jailbee.network_generation import ensure_work_bridge, set_default_generation
 
@@ -8856,7 +8858,7 @@ def net_migrate_cmd(
             "Future containers will use the legacy network. Existing containers were not changed."
         )
         return
-    if not sys.stdin.isatty() and not yes:
+    if not prompting.is_interactive() and not yes:
         error_plain(
             "Non-interactive migration requires --yes; host firewall reachability "
             "remains unverified."
@@ -11220,6 +11222,7 @@ def registry_verify_cmd(
     stored under — a pull that needs one fails with `unexpected commit digest`
     — and offers to remove them. `--purge` removes without asking.
     """
+    from jailbee import prompting
     from jailbee.incus import Incus, IncusError
     from jailbee.registry import MirrorStatus, registry_status
     from jailbee.registry_cache import format_progress, purge_entries, verify_cache
@@ -11252,7 +11255,7 @@ def registry_verify_cmd(
     if purge:
         _report_removals(count, report)
         return
-    if not (_is_tty() and default_confirm(question)):
+    if not (prompting.is_interactive() and default_confirm(question)):
         hint([f"Remove {'it' if count == 1 else 'them'} with: jailbee registry verify --purge"])
         raise typer.Exit(1)
     try:
@@ -13587,6 +13590,7 @@ def _choose_account_choice(
     prompt, several are refused off a TTY naming the `-a` values — lives in
     `accounts.selection`.
     """
+    from jailbee import prompting
     from jailbee.accounts import selection
     from jailbee.tui import pick_account
 
@@ -13596,7 +13600,7 @@ def _choose_account_choice(
         nothing=nothing,
         message=message,
         picker=pick_account,
-        is_interactive=_is_tty,
+        is_interactive=prompting.is_interactive,
     )
 
 
@@ -14413,6 +14417,7 @@ def _resolve_group_container(
     learns the invocation from the failure. The same three-way shape
     `accounts.engine.resolve_interactively` uses for slots.
     """
+    from jailbee import prompting
     from jailbee.lifecycle import resolve_container_for_interactive
     from jailbee.tui import pick_container_for_group
 
@@ -14438,7 +14443,7 @@ def _resolve_group_container(
         info(f"Only one container for this repo: {only}")
         return only
     names = sorted(str(r["name"]) for r in rows)
-    if not _is_tty():
+    if not prompting.is_interactive():
         error("Name the container explicitly (or run in a TTY): " + ", ".join(names))
         raise typer.Exit(2)
     picked = pick_container_for_group(cfg, incus, names)
@@ -14783,6 +14788,7 @@ def account_group_rm_cmd(
     One group name is one directory per enabled agent, so every adapter's
     directory is parked and removed, and a failure names the adapter.
     """
+    from jailbee import prompting
     from jailbee.accounts import engine, groups, selection
     from jailbee.accounts.adapters import base
     from jailbee.accounts.models import PoolError
@@ -14874,7 +14880,7 @@ def account_group_rm_cmd(
         held = "; ".join(
             f"`{adapter.name}` holds {_named(adapter, holder)}" for adapter, holder in live
         )
-        if not _is_tty():
+        if not prompting.is_interactive():
             error(
                 f"`{group}` still holds: {held}. Re-run with --yes to park every "
                 "login into the host-wide store and remove the group."

@@ -1720,7 +1720,7 @@ def _mock_attach_guard(mocker, *, exists=True, wait_error=None, row=None, tty=Tr
     mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=row)
     mocker.patch("jailbee.tui.console")
     mocker.patch("jailbee.lifecycle.wait_for_background_ready", side_effect=wait_error)
-    mocker.patch("jailbee.cli.sys.stdin.isatty", return_value=tty)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=tty)
     return incus
 
 
@@ -10059,7 +10059,7 @@ def test_new_builds_the_scratch_base_image_after_confirming(tmp_path, monkeypatc
     new_container, _incus = _scratch_new_cmd_env(
         tmp_path, monkeypatch, mocker, git=True, image_exists=False
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli.default_confirm", return_value=True)
     build = mocker.patch("jailbee.golden.build_golden_image")
 
@@ -10078,7 +10078,7 @@ def test_new_aborts_when_the_image_build_is_declined(tmp_path, monkeypatch, mock
     new_container, _incus = _scratch_new_cmd_env(
         tmp_path, monkeypatch, mocker, git=True, image_exists=False
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli.default_confirm", return_value=False)
     build = mocker.patch("jailbee.golden.build_golden_image")
 
@@ -10097,7 +10097,7 @@ def test_new_without_a_tty_names_the_build_command(tmp_path, monkeypatch, mocker
     new_container, _incus = _scratch_new_cmd_env(
         tmp_path, monkeypatch, mocker, git=True, image_exists=False
     )
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     build = mocker.patch("jailbee.golden.build_golden_image")
 
     result = CliRunner().invoke(app, ["new", "work", "--no-clone", "--no-autostart"])

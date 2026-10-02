@@ -141,8 +141,7 @@ def browse(
     config: ConfigOption = None,
 ) -> None:
     """Overview (also off-TTY). Unambiguous spelling for subcommand-name containers."""
-    import sys
-
+    from jailbee import prompting
     from jailbee.outbox.browser import BrowserActions, run_browser
     from jailbee.outbox.commands import (
         apply_selected,
@@ -166,7 +165,7 @@ def browse(
                     "outbox apply commands when permitted by the remote command policy.",
                 )
             )
-        if not sys.stdin.isatty():
+        if not prompting.is_interactive():
             return show_overview(
                 cfg, incus, container, all_repos=False, output="table", journal_store=journals
             )

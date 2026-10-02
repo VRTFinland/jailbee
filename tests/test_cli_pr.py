@@ -1155,7 +1155,7 @@ def test_ai_branch_used_non_tty(mocker, tmp_path):
         return_value=_publish_result(publish_name="user/nice"),
     )
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
-    mocker.patch("jailbee.cli.sys.stdin.isatty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
@@ -1280,7 +1280,7 @@ def test_branch_ai_only_desc_off(mocker, tmp_path):
     )
     mocker.patch("jailbee.git.commit_subject", return_value="feat: from commit")
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
-    mocker.patch("jailbee.cli.sys.stdin.isatty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])
@@ -1397,7 +1397,7 @@ def test_create_stores_labels_in_safe_order(mocker, tmp_path):
         return_value=_publish_result(publish_name="user/ai"),
     )
     mocker.patch("jailbee.git.local_branch_exists", return_value=False)
-    mocker.patch("jailbee.cli.sys.stdin.isatty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
 
     result = CliRunner().invoke(app, ["pr", "feat-foo"])

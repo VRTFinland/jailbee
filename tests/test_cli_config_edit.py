@@ -177,10 +177,10 @@ def test_the_global_layer_is_editable_from_a_synthesized_directory(tmp_path, moc
 
 def test_it_refuses_when_stdout_is_not_a_terminal(tmp_path, mocker):
     """`jailbee config edit > out.txt` has a usable stdin and would still paint
-    a full-screen application into the file. `_is_tty` alone cannot see that.
+    a full-screen application into the file. `prompting.is_interactive` alone cannot see that.
     """
     cfg = _repo(tmp_path)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     # `CliRunner` redirects stdout to a buffer whose `isatty()` is False —
     # exactly the shape a shell redirect produces, and the reason this needs
     # no patch of its own.
@@ -194,7 +194,7 @@ def test_it_refuses_when_stdout_is_not_a_terminal(tmp_path, mocker):
 
 def test_config_init_offers_the_editor(tmp_path, mocker, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)
     mocker.patch("jailbee.cli.default_confirm", return_value=True)
     run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
@@ -208,7 +208,7 @@ def test_config_init_offers_the_editor(tmp_path, mocker, monkeypatch):
 
 def test_config_init_global_offers_the_editor(tmp_path, mocker, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.cli._is_full_screen_tty", return_value=True)
     mocker.patch("jailbee.cli.default_confirm", return_value=True)
     run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
@@ -221,7 +221,7 @@ def test_config_init_global_offers_the_editor(tmp_path, mocker, monkeypatch):
 
 
 def test_config_init_does_not_offer_the_editor_without_a_terminal(tmp_path, mocker, monkeypatch):
-    """The `_is_tty` gate is what stops `echo y | jailbee config init` from
+    """The `prompting.is_interactive` gate is what stops `echo y | jailbee config init` from
     launching a full-screen application on a pipe.
 
     The question must not even be *asked* there, which is what this asserts.
@@ -232,7 +232,7 @@ def test_config_init_does_not_offer_the_editor_without_a_terminal(tmp_path, mock
     patched to say yes *and* asserted against.
     """
     monkeypatch.chdir(tmp_path)
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     confirm = mocker.patch("jailbee.cli.default_confirm", return_value=True)
     run = mocker.patch("jailbee.config_edit.app.run_editor", return_value=0)
 
