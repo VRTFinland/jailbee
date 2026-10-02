@@ -218,12 +218,48 @@ def test_an_unknown_account_is_rejected_before_side_effects(mocker, context, com
 
 
 @pytest.mark.parametrize("command", ["login", "logout", "logs"])
-def test_several_accounts_need_a_name(mocker, context, command):
-    mocker.patch("jailbee.litellm.login_providers", return_value=())
+def test_several_accounts_off_a_tty_name_the_candidates(mocker, context, command):
     _accounts(context, **_TWO)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.litellm.login_providers", return_value=())
+    target = {"login": "litellm_login", "logout": "litellm_logout", "logs": "litellm_logs"}[command]
+    called = mocker.patch(f"jailbee.litellm.{target}")
     result = runner.invoke(app, ["litellm", command])
     assert result.exit_code == 2
-    assert "personal, work" in " ".join(result.output.split())
+    assert "Candidates: personal, work" in " ".join(result.output.split())
+    called.assert_not_called()
+
+
+def test_several_accounts_on_a_tty_pick_one(mocker, context):
+    _accounts(context, **_TWO)
+    mocker.patch("jailbee.litellm.login_providers", return_value=())
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="work")
+    logs = mocker.patch("jailbee.litellm.litellm_logs", return_value=0)
+    result = runner.invoke(app, ["litellm", "logs"])
+    assert result.exit_code == 0, result.output
+    logs.assert_called_once_with(context.return_value[0], "work", follow=False)
+
+
+def test_a_single_account_is_taken_and_announced(mocker, context):
+    _accounts(context, accounts=["only"], profiles={"codex": {"account": "only"}})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    logs = mocker.patch("jailbee.litellm.litellm_logs", return_value=0)
+    result = runner.invoke(app, ["litellm", "logs"])
+    assert result.exit_code == 0, result.output
+    assert "Using LiteLLM account only" in " ".join(result.output.split())
+    logs.assert_called_once_with(context.return_value[0], "only", follow=False)
+
+
+def test_cancelling_the_account_pick_exits_1_without_side_effects(mocker, context):
+    _accounts(context, **_TWO)
+    mocker.patch("jailbee.litellm.login_providers", return_value=())
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    called = mocker.patch("jailbee.litellm.litellm_logout")
+    result = runner.invoke(app, ["litellm", "logout"])
+    assert result.exit_code == 1
+    called.assert_not_called()
 
 
 def test_a_named_account_is_passed_through(mocker, context):

@@ -777,3 +777,57 @@ def test_remote_ssh_serve_no_restrict_host_is_passed_through(mocker: MockerFixtu
     assert result.exit_code == 0, result.stdout
     serve.assert_called_once_with(mocker.ANY, ServeOverrides(restrict_host=False))
     assert serve.call_args.args[0].restrict_host is False
+
+
+def _key(fp: str, comment: str = "laptop"):
+    from jailbee.remote_ssh.keys import AuthorizedKey
+
+    return AuthorizedKey(
+        algorithm="ssh-ed25519", public_text="AAAA", comment=comment, fingerprint=fp
+    )
+
+
+def test_remote_ssh_key_remove_without_fingerprint_asks_even_for_one(
+    mocker: MockerFixture,
+) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value=fp)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 0, result.stdout
+    assert select.call_count == 1
+    remove.assert_called_once_with(fp)
+
+
+def test_remote_ssh_key_remove_off_a_tty_names_the_candidates(mocker: MockerFixture) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 2
+    assert "Candidates:" in flat_output(result.output)
+    assert not remove.called
+
+
+def test_remote_ssh_key_remove_cancel_exits_1_and_removes_nothing(mocker: MockerFixture) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 1
+    assert not remove.called
+
+
+def test_remote_ssh_key_remove_without_keys_exits_2(mocker: MockerFixture) -> None:
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 2
+    assert "no authorized keys to remove" in flat_output(result.output)
+    assert not remove.called

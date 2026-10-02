@@ -201,14 +201,32 @@ def remote_ssh_key_list_cmd() -> None:
 @ssh_key_app.command("rm")
 def remote_ssh_key_remove_cmd(
     fingerprint: Annotated[
-        str,
-        typer.Argument(help="Full SHA256 fingerprint of the key to remove."),
-    ],
+        str | None,
+        typer.Argument(
+            help="Full SHA256 fingerprint of the key to remove. Asked for when omitted."
+        ),
+    ] = None,
 ) -> None:
     """Remove one authorized public key by full fingerprint."""
+    from jailbee import prompting
     from jailbee.remote_ssh import keys
 
-    if re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint) is None:
+    if fingerprint is None:
+        try:
+            authorized = keys.read_authorized_keys()
+        except (keys.SSHKeyError, OSError) as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
+        fingerprint = prompting.choose_one(
+            "SSH key",
+            [
+                prompting.Option(k.fingerprint, _remote_ssh_key_line(k), k.fingerprint)
+                for k in authorized
+            ],
+            destructive=True,
+            empty_reason="no authorized keys to remove",
+        )
+    elif re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint) is None:
         raise typer.BadParameter("expected a full SHA256 fingerprint")
     try:
         keys.remove_authorized_key(fingerprint)
@@ -10903,13 +10921,17 @@ def _litellm_context() -> tuple["IncusType", GlobalConfig]:
 
 
 def _account_arg(gcfg: GlobalConfig, account: str | None) -> str:
-    """The named account, or the only one; exit 2 before any side effect otherwise."""
+    """The named account, or one chosen per the missing-value policy.
+
+    Exits 2 before any side effect when it cannot be resolved.
+    """
     accounts = gcfg.litellm.accounts
     if account is None:
-        if len(accounts) == 1:
-            return accounts[0]
-        error(f"Several LiteLLM accounts are configured ({', '.join(accounts)}); name one.")
-        raise typer.Exit(2)
+        from jailbee import prompting
+
+        return prompting.choose_one(
+            "LiteLLM account", [prompting.Option(a, a, a) for a in accounts]
+        )
     if account not in accounts:
         error(f"Unknown LiteLLM account '{account}'. Configured: {', '.join(accounts)}.")
         raise typer.Exit(2)
