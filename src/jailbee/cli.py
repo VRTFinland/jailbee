@@ -11587,7 +11587,8 @@ def _ask_port() -> int:
     from jailbee import prompting
 
     def problem(text: str) -> str | None:
-        ok = text.strip().isdigit() and 1 <= int(text) <= 65535
+        digits = text.strip()
+        ok = digits.isascii() and digits.isdecimal() and 1 <= int(digits) <= 65535
         return None if ok else "enter a port, 1-65535"
 
     return int(prompting.ask_text("port", validate=problem))
@@ -11629,15 +11630,17 @@ def port_to_container_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
-    if port is None:
-        port = _ask_port()
-    container_port = _parse_port(port)
-    resolved_host_port = _parse_port(host_port) if host_port is not None else container_port
+    # Validation that needs no I/O runs first; a port left out is asked for only
+    # once the container is resolved, so a failure there wastes no typed answer.
+    explicit_port = _parse_port(port) if port is not None else None
+    checked_host_port = _parse_port(host_port) if host_port is not None else None
     proto = _parse_proto(proto)
     host_address = _parse_ip_literal(host_address, option="--host-address")
     container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    container_port = explicit_port if explicit_port is not None else _ask_port()
+    resolved_host_port = checked_host_port if checked_host_port is not None else container_port
     try:
         fwd = ports.add_forward(
             incus,
@@ -11702,14 +11705,15 @@ def port_to_host_cmd(
     from jailbee import ports
     from jailbee.lifecycle import short_name
 
-    if port is None:
-        port = _ask_port()
-    container_port = _parse_port(port)
+    # Validation that needs no I/O runs first; a port left out is asked for only
+    # once the container is resolved, so a failure there wastes no typed answer.
+    explicit_port = _parse_port(port) if port is not None else None
     proto = _parse_proto(proto)
     host_address = _parse_ip_literal(host_address, option="--host-address")
     container_address = _parse_ip_literal(container_address, option="--container-address")
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    container_port = explicit_port if explicit_port is not None else _ask_port()
 
     try:
         if host_port == "auto":

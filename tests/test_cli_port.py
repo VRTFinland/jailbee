@@ -511,3 +511,42 @@ def test_rm_container_choice_is_destructive_only_when_the_handle_is_missing(repo
     mocker.patch("jailbee.ports.remove_forward", return_value=mocker.Mock(device="d"))
     runner.invoke(app, ["port", "rm", "adb"])
     assert resolve.call_args.kwargs == {"always_prompt": False}
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_port_is_not_asked_when_the_container_cannot_be_resolved(repo, mocker, command):
+    from jailbee.prompting import MissingValue
+
+    mocker.patch("jailbee.cli._resolve_existing", side_effect=MissingValue("container"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="5037")
+    add = mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command])
+    assert result.exit_code == 2
+    ask.assert_not_called()
+    add.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["to-container", "to-host"])
+def test_port_is_asked_after_the_container_resolves(repo, mocker, command):
+    order = []
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        side_effect=lambda *a, **k: order.append("container") or (mocker.MagicMock(), "app-x"),
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", side_effect=lambda *a: order.append("port") or "5037")
+    mocker.patch("jailbee.ports.check_host_port")
+    mocker.patch("jailbee.ports.add_forward")
+    result = runner.invoke(app, ["port", command])
+    assert result.exit_code == 0, result.output
+    assert order == ["container", "port"]
+
+
+def test_port_prompt_rejects_unicode_digits(repo, mocker):
+    mocker.patch("jailbee.ports.add_forward")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["\u00b2", "5037"])
+    result = runner.invoke(app, ["port", "to-container"])
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2

@@ -84,3 +84,23 @@ def test_restore_named_container_without_tag_off_a_tty_names_tags(mocker, tmp_pa
     result = runner.invoke(app, ["snapshot", "restore", "x"])
     assert result.exit_code == 2
     assert "Candidates: s1, s2" in panel_text(result.output)
+
+
+def test_delete_picks_the_container_destructively_then_the_tag(mocker, tmp_path, make_cfg):
+    """Unmocked resolver: one container is still picked (not auto-taken), then the tag."""
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
+    info = mocker.MagicMock()
+    info.name = "app-x"
+    info.display_name = "x"
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[info])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    pick_container = mocker.patch("jailbee.tui.pick_container", return_value="app-x")
+    select = mocker.patch("jailbee.prompting._select", return_value="s1")
+    mocker.patch("jailbee.snapshots.list_snapshots", return_value=[{"name": "s1"}])
+    delete = mocker.patch("jailbee.snapshots.delete_snapshot")
+    result = runner.invoke(app, ["snapshot", "delete"])
+    assert result.exit_code == 0, result.output
+    pick_container.assert_called_once()
+    assert select.call_count == 1  # the tag; the container went through pick_container
+    delete.assert_called_once_with(mocker.ANY, "app-x", "s1")
