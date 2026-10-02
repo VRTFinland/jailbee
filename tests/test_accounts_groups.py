@@ -785,3 +785,23 @@ def test_redundant_overrides_ignores_a_garbage_label(mocker, tmp_path: Path):
     cfg = _enabled_cfg(tmp_path, "work")
 
     assert groups.redundant_overrides(cfg, incus) == []
+
+
+def test_list_groups_unions_adapters_and_skips_private(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    for agent, name in [("claude", "work"), ("codex", "personal"), ("claude", "_trash")]:
+        groups.group_dir(agent, name).mkdir(parents=True)
+    (groups.group_dir("claude", "x").parent / "a-file").write_text("")
+
+    assert groups.list_groups(["claude", "codex"]) == ["personal", "work"]
+
+
+def test_list_groups_skips_a_missing_root_but_propagates_other_errors(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert groups.list_groups(["claude"]) == []
+
+    mocker.patch("pathlib.Path.iterdir", side_effect=PermissionError("denied"))
+    with pytest.raises(PermissionError):
+        groups.list_groups(["claude"])

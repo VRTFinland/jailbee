@@ -14932,9 +14932,47 @@ def account_group_ls_cmd(
     info("Every login on this host, parked ones included: `jailbee account ls`.")
 
 
+def _pick_group(cfg: "Config", *, with_none: bool, destructive: bool) -> str:
+    """A credential group, from the ones on this host; `none` when `with_none`."""
+    from jailbee import prompting
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters import base
+
+    names = groups.list_groups([a.name for a in base.pooled_adapters(cfg)])
+    options = [prompting.Option(n, n, n) for n in names]
+    # `none` is not a group: with no group to choose, offering it alone would
+    # make `choose_one` take it silently, so the empty set is reported first.
+    if options and with_none:
+        options.append(prompting.Option("none", "none — no group", "none"))
+    return prompting.choose_one(
+        "credential group",
+        options,
+        destructive=destructive,
+        empty_reason="no credential groups exist yet; `jailbee account group create` makes one",
+    )
+
+
+def _ask_group_name() -> str:
+    """A valid name for a new credential group, asked for until it is one."""
+    from jailbee import prompting
+    from jailbee.accounts import groups
+
+    def problem(text: str) -> str | None:
+        try:
+            groups.validate_group_name(text)
+        except groups.GroupError as e:
+            return str(e)
+        return None
+
+    return prompting.ask_text("name for the new group", validate=problem)
+
+
 @group_app.command("create")
 def account_group_create_cmd(
-    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    group: Annotated[
+        str | None,
+        typer.Argument(help="Name for the new credential group. Asked for when omitted."),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Create an empty credential group, before anything is assigned to it.
@@ -14948,6 +14986,8 @@ def account_group_create_cmd(
     from jailbee.accounts.adapters import base
     from jailbee.paths import display_path
 
+    if group is None:
+        group = _ask_group_name()
     try:
         group = groups.validate_group_name(group)
     except groups.GroupError as e:
@@ -14982,12 +15022,12 @@ def account_group_create_cmd(
 @group_app.command("rm")
 def account_group_rm_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Credential group to remove.",
+            help="Credential group to remove. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
@@ -15016,6 +15056,8 @@ def account_group_rm_cmd(
     from jailbee.paths import display_path
 
     cfg, gcfg = _account_ctx(config)
+    if group is None:
+        group = _pick_group(cfg, with_none=False, destructive=True)
     try:
         group = groups.validate_group_name(group)
     except groups.GroupError as e:
@@ -15159,12 +15201,15 @@ def account_group_rm_cmd(
 @group_app.command("set")
 def account_group_set_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` to keep this repo on its own login.",
+            help=(
+                "Group name, or `none` to keep this repo on its own login. "
+                "Asked for when omitted."
+            ),
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -15187,6 +15232,8 @@ def account_group_set_cmd(
     cfg = _load_or_exit(config)
     incus = Incus()
     _refuse_if_agent_running_in_repo(cfg, incus, force)
+    if group is None:
+        group = _pick_group(cfg, with_none=True, destructive=False)
 
     value: object
     if group == "none":
@@ -15262,12 +15309,12 @@ def account_group_unset_cmd(
 @group_app.command("use")
 def account_group_use_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` for no group.",
+            help="Group name, or `none` for no group. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     container: Annotated[
         str | None,
         typer.Argument(
@@ -15296,6 +15343,8 @@ def account_group_use_cmd(
     from jailbee.accounts import groups
 
     cfg = _load_or_exit(config)
+    if group is None:
+        group = _pick_group(cfg, with_none=True, destructive=False)
     target: str | None
     try:
         target = None if group == "none" else groups.validate_group_name(group)

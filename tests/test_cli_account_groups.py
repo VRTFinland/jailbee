@@ -1400,3 +1400,224 @@ def test_every_claude_alias_warns_once_and_forwards(mocker, argv, canonical, for
     assert result.stderr.lower().count("deprecated") == 1
     patched.assert_called_once()
     assert patched.call_args.args[: len(forwarded)] == forwarded
+
+
+# ---- missing group: ask for it ---------------------------------------------
+
+
+def _claude_group(name: str) -> None:
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    groups.group_dir(CLAUDE.name, name).mkdir(parents=True, exist_ok=True)
+
+
+def test_create_without_name_asks_and_validates(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["Bad Name", "fresh"])
+    result = runner.invoke(app, ["account", "group", "create"])
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2
+    assert groups.group_dir(CLAUDE.name, "fresh").is_dir()
+    assert not groups.group_dir(CLAUDE.name, "Bad Name").exists()
+
+
+def test_create_without_name_off_a_tty_exits_2_and_makes_nothing(group_env, mocker):
+    from jailbee.accounts import groups
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["account", "group", "create"])
+    assert result.exit_code == 2
+    assert groups.list_groups(["claude"]) == []
+
+
+def test_create_prompt_cancel_exits_1(group_env, mocker):
+    from jailbee.accounts import groups
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", return_value=None)
+    result = runner.invoke(app, ["account", "group", "create"])
+    assert result.exit_code == 1
+    assert groups.list_groups(["claude"]) == []
+
+
+def test_rm_without_name_offers_groups_but_not_none(group_env, mocker):
+    _claude_group("demo")
+    _claude_group("other")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value=None)
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 1
+    labels = [o.label for o in select.call_args.args[1]]
+    assert labels == ["demo", "other"]
+
+
+def test_rm_asks_even_for_one_group_and_removes_only_the_chosen(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="demo")
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 0, result.output
+    select.assert_called_once()
+    assert not groups.group_dir(CLAUDE.name, "demo").exists()
+
+
+def test_rm_removes_only_the_group_picked_of_several(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    _claude_group("demo")
+    _claude_group("other")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="other")
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 0, result.output
+    assert groups.group_dir(CLAUDE.name, "demo").exists()
+    assert not groups.group_dir(CLAUDE.name, "other").exists()
+
+
+def test_rm_cancel_removes_nothing(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 1
+    assert groups.group_dir(CLAUDE.name, "demo").exists()
+
+
+def test_rm_without_name_and_no_groups_exits_2_with_the_reason(group_env, mocker):
+    from tests.conftest import panel_text
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select")
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 2
+    assert "account group create" in panel_text(result.output)
+    select.assert_not_called()
+
+
+def test_rm_without_name_off_a_tty_names_candidates_but_not_none(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+    from tests.conftest import panel_text
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["account", "group", "rm"])
+    assert result.exit_code == 2
+    text = panel_text(result.output)
+    assert "demo" in text
+    assert "none" not in text
+    assert groups.group_dir(CLAUDE.name, "demo").exists()
+
+
+def test_set_without_name_off_a_tty_lists_none_too(group_env, mocker):
+    from tests.conftest import panel_text
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    result = runner.invoke(app, ["account", "group", "set"])
+    assert result.exit_code == 2
+    assert "none" in panel_text(result.output)
+
+
+def test_set_without_name_offers_groups_plus_none_and_applies_the_pick(group_env, mocker, tmp_path):
+    global_yaml = tmp_path / "global.yaml"
+    global_yaml.write_text("claude_credentials:\n  group: work\n")
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    mocker.patch("jailbee.cli._reapply_binds_profile")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="none")
+    result = runner.invoke(app, ["account", "group", "set"])
+    assert result.exit_code == 0, result.output
+    assert [o.value for o in select.call_args.args[1]] == ["demo", "none"]
+
+    import yaml
+
+    from jailbee.config.local_layer import local_config_path
+
+    local = yaml.safe_load(local_config_path("myrepo").read_text())
+    assert local["credentials"]["group"] is None
+
+
+def test_set_refuses_a_running_agent_before_asking(group_env, mocker):
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select")
+    result = runner.invoke(app, ["account", "group", "set"])
+    assert result.exit_code != 0
+    assert "--force" in result.output
+    select.assert_not_called()
+
+
+def test_use_without_group_picks_one_and_applies_it(group_env, mocker):
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.cli._resolve_group_container", return_value="myrepo-a")
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="demo")
+    result = runner.invoke(app, ["account", "group", "use"])
+    assert result.exit_code == 0, result.output
+    assert [o.value for o in select.call_args.args[1]] == ["demo", "none"]
+    assert setter.call_args.args[3] == "demo"
+
+
+def test_use_group_pick_none_sets_no_group(group_env, mocker):
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.cli._resolve_group_container", return_value="myrepo-a")
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="none")
+    result = runner.invoke(app, ["account", "group", "use"])
+    assert result.exit_code == 0, result.output
+    assert setter.call_args.args[3] is None
+
+
+def test_use_without_group_off_a_tty_lists_none_too(group_env, mocker):
+    from tests.conftest import panel_text
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["account", "group", "use"])
+    assert result.exit_code == 2
+    assert "none" in panel_text(result.output)
+
+
+def test_set_without_name_and_no_groups_exits_2_and_writes_nothing(group_env, mocker, tmp_path):
+    """`none` alone must not be auto-taken: that would silently detach the repo."""
+    from tests.conftest import panel_text
+
+    global_yaml = tmp_path / "global.yaml"
+    mocker.patch("jailbee.cli._global_config_path_for_write", return_value=global_yaml)
+    write = mocker.patch("jailbee.cli._write_repo_group")
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    result = runner.invoke(app, ["account", "group", "set"])
+    assert result.exit_code == 2
+    assert "account group create" in panel_text(result.output)
+    write.assert_not_called()
+
+
+def test_use_without_group_and_no_groups_exits_2_and_changes_nothing(group_env, mocker):
+    from tests.conftest import panel_text
+
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    result = runner.invoke(app, ["account", "group", "use"])
+    assert result.exit_code == 2
+    assert "account group create" in panel_text(result.output)
+    setter.assert_not_called()
