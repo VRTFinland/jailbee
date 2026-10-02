@@ -9288,6 +9288,8 @@ def egress_ls_cmd(
 
     from jailbee import egress_scope
     from jailbee.db import get_engine
+    from jailbee.egress import entry_path as egress_entry_path
+    from jailbee.egress import is_wildcard_entry
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
@@ -9326,6 +9328,14 @@ def egress_ls_cmd(
             json=lambda r: "redundant" if r.redundant else "",
             # Only worth a column when at least one row has something to say.
             show_if=lambda rs: any(r.redundant for r in rs),
+        ),
+        table_format.FieldSpec(
+            name="via",
+            header="VIA",
+            cell=lambda r: egress_entry_path(r.entry),
+            json=lambda r: egress_entry_path(r.entry),
+            # Only worth a column once a wildcard makes the proxy path visible.
+            show_if=lambda rs: any(is_wildcard_entry(r.entry) for r in rs),
         ),
     ]
 
@@ -9809,6 +9819,7 @@ def net_status_cmd() -> None:
     _print_loose_status(scope)
     _print_port_forward_status(scope)
     _print_egress_override_status(scope)
+    _print_egress_proxy_status(scope)
 
 
 def _print_loose_status(scope: "RemoteRepoScope | None" = None) -> None:
@@ -9987,6 +9998,61 @@ def _print_egress_override_status(scope: "RemoteRepoScope | None" = None) -> Non
         typer.echo(f"  repo {cfg.container_prefix}: {entry}")
     for name, entries in sorted(per_container.items()):
         typer.echo(f"  {name}: {', '.join(entries)}")
+
+
+def _print_egress_proxy_status(scope: "RemoteRepoScope | None" = None) -> None:
+    """Render the wildcard-egress proxy line of `jailbee net status`.
+
+    Silent unless a registered repo in scope has a wildcard entry; a failure
+    to gather it prints a one-line stderr note, like the override section.
+    """
+    from sqlmodel import Session, select
+
+    from jailbee import egress_proxy
+    from jailbee.db import get_engine
+    from jailbee.db.models import RegisteredRepo
+    from jailbee.egress import is_wildcard_entry
+    from jailbee.egress_scope import legacy_repo_extras, local_entries
+    from jailbee.incus import Incus
+    from jailbee.tui import hint
+
+    try:
+        with Session(get_engine()) as session:
+            prefixes = [
+                repo.container_prefix
+                for repo in session.exec(select(RegisteredRepo)).all()
+                if scope is None or scope.allows(repo.container_prefix)
+            ]
+            wildcard = False
+            for prefix in prefixes:
+                entries = [*local_entries(prefix), *legacy_repo_extras(session, prefix)]
+                if any(is_wildcard_entry(e) for e in entries):
+                    wildcard = True
+                    break
+        if not wildcard:
+            try:
+                cfg = load_config(find_repo_config())
+            except Exception:
+                cfg = None
+            if cfg is not None and (scope is None or scope.allows(cfg.container_prefix)):
+                wildcard = any(is_wildcard_entry(e) for e in cfg.effective_egress_allow())
+        if not wildcard:
+            return
+        incus = Incus()
+        status = egress_proxy.proxy_status(incus)
+        endpoints = egress_proxy.client_endpoints(incus)
+    except Exception:
+        hint(["Could not gather egress-proxy status for `jailbee net status`."])
+        return
+
+    detail = ", ".join(f"{bridge} {ip}" for bridge, ip in endpoints.items())
+    line = f"Egress proxy: {status.value}"
+    if detail:
+        line += f" ({detail})"
+    if status != egress_proxy.ProxyStatus.RUNNING:
+        line += " — run 'jailbee apply'"
+    typer.echo("")
+    typer.echo(line)
 
 
 @net_app.command("unregister")

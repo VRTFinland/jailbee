@@ -11,6 +11,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
+from jailbee.egress import is_wildcard_entry
 from jailbee.egress_scope import EntryRow
 
 if TYPE_CHECKING:
@@ -104,6 +105,8 @@ def render_egress(state: EgressState, *, can_add: bool, can_rm: bool) -> Rendera
                 else f"[{row.source}]"
             )
             line.append(f"  {source_note}")
+            if is_wildcard_entry(row.entry):
+                line.append("  [proxy]")
             if row.redundant:
                 line.append("  (redundant)", style="dim")
             lines.append(line)

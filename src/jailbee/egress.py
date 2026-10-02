@@ -105,6 +105,11 @@ def is_wildcard_entry(raw: str) -> bool:
     return raw.startswith("*")
 
 
+def entry_path(raw: str) -> str:
+    """Where an entry can apply: ``proxy`` for a wildcard, ``acl+proxy`` for anything else."""
+    return "proxy" if is_wildcard_entry(raw) else "acl+proxy"
+
+
 def parse_wildcard_entry(raw: str) -> WildcardSpec:
     """Parse one `*.domain[:port]` entry. Raises ValueError on malformed input."""
     if not raw.startswith("*."):

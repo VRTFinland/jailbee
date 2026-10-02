@@ -104,3 +104,17 @@ def test_duplicate_repo_copies_explain_both_are_removed():
     with console.capture() as captured:
         console.print(render_egress(state, can_add=True, can_rm=True))
     assert "removes both repo copies" in captured.get()
+
+
+def test_proxy_tag_only_on_wildcard_rows():
+    state = EgressState(
+        "repo", None, (EntryRow("github.com", "config"), EntryRow("*.example.com", "local"))
+    )
+    console = Console(width=100)
+    with console.capture() as captured:
+        console.print(render_egress(state, can_add=True, can_rm=True))
+    lines = captured.get().splitlines()
+    plain = next(line for line in lines if "github.com" in line)
+    wild = next(line for line in lines if "*.example.com" in line)
+    assert "[proxy]" not in plain
+    assert "[local]  [proxy]" in wild

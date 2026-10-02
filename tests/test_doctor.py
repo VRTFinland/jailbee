@@ -3947,3 +3947,76 @@ def test_run_checks_includes_agent_instructions_without_incus(
     with patch("jailbee.doctor.shutil.which", return_value=None):
         results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
     assert any(r.name == "agent instructions" and r.ok for r in results)
+
+
+def _proxy_rows(mocker, tmp_path, *, entries=(), extras=(), status=None, missing=()):
+    from jailbee import egress_proxy
+    from jailbee.doctor import _check_egress_proxy
+
+    cfg = _cfg(tmp_path).model_copy(update={"egress_allow": list(entries)})
+    mocker.patch.object(type(cfg), "effective_egress_allow", return_value=list(entries))
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
+    info = MagicMock()
+    info.name = "c1"
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[info])
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=list(extras))
+    if isinstance(status, Exception):
+        mocker.patch("jailbee.egress_proxy.proxy_status", side_effect=status)
+    elif status is not None:
+        mocker.patch("jailbee.egress_proxy.proxy_status", return_value=status)
+    mocker.patch("jailbee.litellm.bridges_missing_services_acl", return_value=list(missing))
+    return _check_egress_proxy(cfg, _baseline_incus()), egress_proxy
+
+
+def test_egress_proxy_not_needed_without_wildcards(mocker, tmp_path):
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"])
+    assert [(r.name, r.ok, r.detail) for r in rows] == [
+        ("egress proxy", True, "not needed — no wildcard egress entries")
+    ]
+
+
+@pytest.mark.parametrize("kwargs", [{"entries": ["*.example.com"]}, {"extras": ["*.example.com"]}])
+def test_egress_proxy_running(mocker, tmp_path, kwargs):
+    from jailbee.egress_proxy import ProxyStatus
+
+    rows, _ = _proxy_rows(mocker, tmp_path, status=ProxyStatus.RUNNING, **kwargs)
+    assert [(r.name, r.ok, r.detail) for r in rows] == [("egress proxy", True, "status: running")]
+
+
+@pytest.mark.parametrize("name", ["DEGRADED", "STOPPED", "MISSING"])
+def test_egress_proxy_not_running_is_a_failure(mocker, tmp_path, name):
+    from jailbee.egress_proxy import ProxyStatus
+
+    status = ProxyStatus[name]
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["*.example.com"], status=status)
+    assert rows[0].ok is False
+    assert rows[0].detail == f"status: {status.value} — run 'jailbee apply'"
+
+
+def test_egress_proxy_query_error(mocker, tmp_path):
+    from jailbee.incus import IncusError
+
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["*.example.com"], status=IncusError("boom"))
+    assert rows[0].ok is False
+    assert rows[0].detail.startswith("error querying: ")
+
+
+def test_egress_proxy_flags_a_bridge_without_the_services_acl(mocker, tmp_path):
+    from jailbee.egress_proxy import ProxyStatus
+
+    rows, _ = _proxy_rows(
+        mocker,
+        tmp_path,
+        entries=["*.example.com"],
+        status=ProxyStatus.RUNNING,
+        missing=["incusbr0"],
+    )
+    assert rows[0].ok is True
+    assert rows[1].ok is False
+    assert "incusbr0" in rows[1].detail
+    assert "services ACL" in rows[1].detail
+
+
+def test_egress_proxy_ignores_the_services_acl_when_not_needed(mocker, tmp_path):
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"], missing=["incusbr0"])
+    assert len(rows) == 1

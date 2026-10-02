@@ -245,6 +245,58 @@ def _check_litellm(incus: Incus, gcfg: GlobalConfig) -> list[CheckResult]:
     return rows
 
 
+def _egress_proxy_needed(cfg: Config, incus: Incus) -> bool:
+    """True when the repo's effective list or any of its containers' extras has a wildcard."""
+    from sqlmodel import Session
+
+    from jailbee import egress_scope
+    from jailbee.db import get_engine
+    from jailbee.egress import is_wildcard_entry
+    from jailbee.lifecycle import list_containers
+
+    with Session(get_engine()) as session:
+        if any(is_wildcard_entry(e) for e in egress_scope.effective_repo_entries(cfg, session)):
+            return True
+    try:
+        return any(
+            is_wildcard_entry(entry)
+            for info in list_containers(cfg, incus)
+            for entry in egress_scope.container_extras(incus, info.name)
+        )
+    except IncusError:
+        raise
+    except Exception:  # a malformed extras label must not abort doctor
+        return False
+
+
+def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
+    """The wildcard-egress proxy: needed only with wildcard entries, then it must be up."""
+    from jailbee import egress_proxy, litellm
+
+    name = "egress proxy"
+    try:
+        if not _egress_proxy_needed(cfg, incus):
+            return [CheckResult(name, True, "not needed — no wildcard egress entries")]
+        status = egress_proxy.proxy_status(incus)
+        missing = litellm.bridges_missing_services_acl(incus)
+    except IncusError as e:
+        return [CheckResult(name, False, f"error querying: {e}")]
+    if status == egress_proxy.ProxyStatus.RUNNING:
+        rows = [CheckResult(name, True, "status: running")]
+    else:
+        rows = [CheckResult(name, False, f"status: {status} — run 'jailbee apply'")]
+    if missing:
+        rows.append(
+            CheckResult(
+                "egress proxy reachability",
+                False,
+                f"the services ACL is not attached to {', '.join(missing)}, so strict "
+                "containers cannot reach the proxy — run 'jailbee apply'",
+            )
+        )
+    return rows
+
+
 def _upstream_remote_check(cfg: Config) -> CheckResult:
     """Report which remote jailbee resolved as the upstream, and which branch.
 
@@ -1226,6 +1278,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     if incus_available:
         results.extend(_check_litellm(incus, gcfg))
+        results.extend(_check_egress_proxy(cfg, incus))
 
     # 7b. Legacy host-Docker mirror left over from installs that predate
     # the Incus-hosted registry mirror.

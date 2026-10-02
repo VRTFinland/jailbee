@@ -2966,7 +2966,7 @@ def run(
                 return TextPrompt(
                     "egress-add",
                     "Add egress override",
-                    "Destination (host, host:port, IPv4 or CIDR)",
+                    "Destination (host, host:port, *.domain, IPv4, or CIDR)",
                     target=state.prefix,
                     back=state,
                 )

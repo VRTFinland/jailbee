@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -1049,3 +1050,97 @@ def test_rm_on_a_container_syncs_the_proxy_after_the_removal(tmp_path, mocker):
     assert result.exit_code == 0, result.output
     assert order == ["store", "sync"]
     sync.assert_called_once_with(cfg, incus, "myrepo-feat", "loose")
+
+
+# --- the proxy path in `ls` and `net status` ---------------------------------
+
+
+def test_ls_without_a_wildcard_has_no_via_column(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls"])
+
+    assert result.exit_code == 0, result.output
+    assert "VIA" not in result.stdout
+    assert "ENTRY" in result.stdout
+    assert "SOURCE" in result.stdout
+
+
+def test_ls_with_a_wildcard_shows_the_via_column(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com", "*.example.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls"])
+
+    assert result.exit_code == 0, result.output
+    assert "VIA" in result.stdout
+    assert "acl+proxy" in result.stdout
+    assert "proxy" in result.stdout
+
+
+def test_ls_json_always_carries_via(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com", "*.example.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    via = {row["entry"]: row["via"] for row in json.loads(result.stdout)}
+    assert via == {"github.com": "acl+proxy", "*.example.com": "proxy"}
+
+
+def test_ls_json_without_a_wildcard_still_carries_via(tmp_path, mocker):
+    """`emit` JSON includes hidden (show_if) columns, so `via` is always present."""
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls", "--format", "json"])
+
+    assert [row["via"] for row in json.loads(result.stdout)] == ["acl+proxy"]
+
+
+def _proxy_status_rig(tmp_path, mocker, *, entries, status="running", endpoints=None):
+    from jailbee import egress_proxy
+
+    cfg, _incus = _repo(tmp_path, mocker, egress_allow=entries)
+    mocker.patch("jailbee.cli.load_config", return_value=cfg)
+    mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
+    mocker.patch("jailbee.egress_scope.local_entries", return_value=[])
+    mocker.patch("jailbee.egress_proxy.proxy_status", return_value=egress_proxy.ProxyStatus(status))
+    mocker.patch(
+        "jailbee.egress_proxy.client_endpoints",
+        return_value=endpoints if endpoints is not None else {"incusbr0": "10.0.0.5"},
+    )
+
+
+def test_net_status_proxy_line_is_silent_without_wildcards(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["github.com"])
+
+    _print_egress_proxy_status()
+
+    assert capsys.readouterr().out == ""
+
+
+def test_net_status_proxy_line_running(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+
+    _print_egress_proxy_status()
+
+    out = capsys.readouterr().out
+    assert "Egress proxy: running (incusbr0 10.0.0.5)" in out
+    assert "jailbee apply" not in out
+
+
+@pytest.mark.parametrize("status", ["degraded", "stopped", "missing"])
+def test_net_status_proxy_line_other_states_point_at_apply(tmp_path, mocker, capsys, status):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"], status=status, endpoints={})
+
+    _print_egress_proxy_status()
+
+    out = capsys.readouterr().out
+    assert f"Egress proxy: {status}" in out
+    assert "— run 'jailbee apply'" in out

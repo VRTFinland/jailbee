@@ -1507,7 +1507,7 @@ def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
         and call.kwargs["overlay"].error is not None
     ]
     assert [(p.purpose, p.error) for p in rejected] == [
-        ("egress-add", "Destination (host, host:port, IPv4 or CIDR) cannot be empty")
+        ("egress-add", "Destination (host, host:port, *.domain, IPv4, or CIDR) cannot be empty")
     ]
 
 
