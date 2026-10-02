@@ -15564,9 +15564,7 @@ def exec_cmd(
     name: ContainerArg = None,
     cmd: Annotated[
         list[str] | None,
-        typer.Argument(
-            help="Command and args to run as the dev user. Asked for when omitted."
-        ),
+        typer.Argument(help="Command and args to run as the dev user. Asked for when omitted."),
     ] = None,
     cwd: Annotated[
         str,
