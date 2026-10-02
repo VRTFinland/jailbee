@@ -2560,6 +2560,7 @@ remote:
       allow: []
     restrict_host: true
     gui: false
+    files: false
     excluded_repos: [private-app]
 ```
 
@@ -2610,6 +2611,7 @@ remote:
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
+| `files` | bool | `false` | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
 | `excluded_repos` | list[string] | `[]` | Host-controlled exact registered `container_prefix` values unavailable through SSH. Filters repo routes, dashboard/console listings and supported aggregate views. Requires `restrict_host: true`; see [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
 

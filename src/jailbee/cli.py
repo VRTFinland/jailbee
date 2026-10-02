@@ -282,6 +282,13 @@ def remote_ssh_serve_cmd(
             help="Override remote.ssh.restrict_host for this run only.",
         ),
     ] = None,
+    files: Annotated[
+        bool | None,
+        typer.Option(
+            "--files/--no-files",
+            help="Override remote.ssh.files for this run only.",
+        ),
+    ] = None,
 ) -> None:
     """Run the SSH server in the foreground, with optional one-off overrides.
 
@@ -302,6 +309,7 @@ def remote_ssh_serve_cmd(
         commands_mode=commands,
         allow=allow,
         restrict_host=restrict_host,
+        files=files,
     )
     global_config = _load_global()
     try:

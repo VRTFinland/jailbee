@@ -8,7 +8,7 @@ English-language Markdown article at `website/news/posts/YYYY-MM-DD-slug.md`:
 title: JailBee 1.6 is here
 date: 2026-10-01
 summary: A short, plain-text description for the archive, RSS, and link previews.
-image: /assets/news/jailbee-1-6.png
+image: /assets/news/jailbee-1-6.jpg
 image_alt: The JailBee logo beside the 1.6 release notes
 ---
 
@@ -30,9 +30,10 @@ post: merging it to `main` makes it public on the next Pages deployment.
 
 The feature image is optional. If present, store the file under
 `website/assets/news/` and set `image` to its site-root-relative `/assets/...`
-URL and `image_alt` to meaningful alternative text. Prefer a landscape image
-around 1200×630 pixels for large social previews; the same image appears in
-the article and archive. Without one, the site's default sharing card is used.
+URL and `image_alt` to meaningful alternative text. Use a landscape image of
+exactly 1200×630 pixels, saved as a JPEG under ~300 KB: some social
+crawlers silently drop a larger file and fall back to a text-only preview. The
+same image appears in the article and archive. Without one, the site's default sharing card is used.
 Inline Markdown images also use local, existing `/assets/...` paths; never
 embed images from a third-party CDN. Do not use raw HTML, and start section
 headings with `##`: the page supplies its own title. Normal external links

@@ -827,9 +827,11 @@ without a restart. `disable` preserves keys and config; `restart` is needed
 after changing `listen` or `port`; `serve` is the foreground diagnostic path.
 `serve` also takes one-off `--listen`/`--port`/`--dashboard`(`/--no-dashboard`)
 /`--shell`(`/--no-shell`)/`--exec`(`/--no-exec`)/`--commands`/`--allow`
-/`--restrict-host`(`/--no-restrict-host`) overrides of `remote.ssh`, for
-trying a policy without editing `global.yaml` (never written there, and the
-systemd unit never passes them); `--allow`,
+/`--restrict-host`(`/--no-restrict-host`)/`--files`(`/--no-files`) overrides of
+`remote.ssh`, for trying a policy without editing `global.yaml` (never written
+there, and the systemd unit never passes them); the persistent setting for
+`sftp`/`scp` into a container's repo dir is `remote.ssh.files: true` in
+`global.yaml`, and changing it needs `jb remote ssh restart`; `--allow`,
 given at least once, replaces the configured `commands.allow` list rather
 than appending to it, e.g. `jb remote ssh serve --port 18022 --shell
 --commands allowlist --allow ls --allow new`.

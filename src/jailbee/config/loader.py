@@ -27,11 +27,11 @@ from jailbee.config.common import (
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.legacy_pr import fold_legacy_pr_keys
 from jailbee.config.local_layer import (
-    check_token_perms,
     local_config_path,
     local_litellm_overlay,
     repo_litellm_view,
     split_local_raw,
+    token_perms_warning,
 )
 from jailbee.config.models_agents import AutostartStage
 from jailbee.config.models_columns import (
@@ -298,6 +298,19 @@ def _warn_legacy_chrome_layers(layers: Sequence[tuple[str, dict[str, object]]]) 
     for label, raw in layers:
         if isinstance(raw.get("chrome"), dict):
             _warn_legacy_chrome_block(label)
+
+
+@functools.cache
+def _warn_insecure_perms(message: str) -> None:
+    """Print a token-file permission warning once per process, per message.
+
+    Cached for the same reason as `_warn_legacy_chrome_block`: one command loads
+    the config several times. The message names the file, so it is the key.
+    `tests/conftest.py` clears the cache between tests.
+    """
+    from jailbee.tui import hint
+
+    hint([message])
 
 
 @functools.cache
@@ -802,19 +815,21 @@ def load_config_from_layers(
 
     _validate_pooled_caches(cfg)
 
-    # Token security: each file holding a token must be private.
-    if cfg.github.api_tokens:
-        gy = default_global_config_path()
-        if gy.exists():
-            mode = gy.stat().st_mode & 0o777
-            if mode & 0o077 != 0:
-                raise ConfigError(
-                    f"{gy} contains github.api_tokens but has insecure perms "
-                    f"(0{mode:03o}). Run `chmod 600 {gy}`."
-                )
-
-    if local_path is not None and local_origin is None:
-        check_token_perms(local_path, local_overlay)
+    # Token security: a file holding a token should be private. Advisory only.
+    if emit_hint:
+        if cfg.github.api_tokens:
+            gy = default_global_config_path()
+            if gy.exists():
+                mode = gy.stat().st_mode & 0o777
+                if mode & 0o077 != 0:
+                    _warn_insecure_perms(
+                        f"{gy} contains github.api_tokens but has insecure perms "
+                        f"(0{mode:03o}). Run `chmod 600 {gy}`."
+                    )
+        if local_path is not None and local_origin is None:
+            local_warning = token_perms_warning(local_path, local_overlay)
+            if local_warning is not None:
+                _warn_insecure_perms(local_warning)
 
     if (
         cfg.github.enabled

@@ -215,17 +215,22 @@ def scope_files(scopes: dict[str, LiteLLMConfig]) -> list[str]:
     return [str(local_config_path(prefix)) for prefix in scopes]
 
 
-def check_token_perms(path: Path, overlay: dict[str, object]) -> None:
-    """Require a local config file carrying `github.token` to be private."""
+def token_perms_warning(path: Path, overlay: dict[str, object]) -> str | None:
+    """A warning when a local config file carrying `github.token` is not private.
+
+    A warning, not an error: an error here made `load_repo_config` fail, and the
+    dashboard then listed the repo's containers as orphans.
+    """
     github = overlay.get("github")
     if not (isinstance(github, dict) and github.get("token")) or not path.exists():
-        return
+        return None
     mode = stat.S_IMODE(path.stat().st_mode)
     if mode & 0o077:
-        raise ConfigError(
+        return (
             f"{path} contains github.token but has insecure perms (0{mode:03o}). "
             f"Run `chmod 600 {path}`."
         )
+    return None
 
 
 def local_credentials(prefix: str) -> LocalCredentials | None:

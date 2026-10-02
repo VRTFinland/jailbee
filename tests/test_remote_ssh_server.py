@@ -1616,3 +1616,74 @@ def test_server_factory_hands_the_live_gui_flag_to_the_server(listener, mocker, 
     assert instance._gui_enabled is not None
     assert instance._gui_enabled() is enabled
     seen.assert_called_once_with(None)
+
+
+def test_files_on_hands_asyncssh_the_sftp_factory_and_enables_scp(listener):
+    _, listen = listener
+    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123, files=True)))
+    kwargs = listen.call_args.kwargs
+    assert callable(kwargs["sftp_factory"])
+    assert kwargs["allow_scp"] is True
+    # Everything else stays as locked down as before.
+    assert kwargs["agent_forwarding"] is False and kwargs["x11_forwarding"] is False
+
+
+def test_files_off_leaves_sftp_and_scp_refused(listener):
+    _, listen = listener
+    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123)))
+    kwargs = listen.call_args.kwargs
+    assert kwargs["sftp_factory"] is None and kwargs["allow_scp"] is False
+
+
+def _reloaded(excluded=(), files=True):
+    return (
+        GlobalConfig(
+            remote=RemoteConfig(ssh=RemoteSSHConfig(files=files, excluded_repos=excluded))
+        ),
+        None,
+    )
+
+
+def _sftp_factory(listener, mocker, **kwargs):
+    _, listen = listener
+    mocker.patch.object(server, "load_global_config", return_value=_reloaded(**kwargs))
+    asyncio.run(server.serve_async(RemoteSSHConfig(listen="127.0.0.2", port=8123, files=True)))
+    return listen.call_args.kwargs["sftp_factory"]
+
+
+def test_the_sftp_factory_builds_a_server_that_shares_one_gate(listener, mocker):
+    from jailbee.remote_ssh.sftp import JailbeeSFTPServer
+
+    factory = _sftp_factory(listener, mocker, excluded=["priv"])
+    first, second = factory(Mock()), factory(Mock())
+    assert isinstance(first, JailbeeSFTPServer)
+    assert first._service is second._service
+    assert first._catalog._scope.excluded == frozenset({"priv"})
+
+
+def test_an_exclusion_added_after_start_reaches_a_new_channel(listener, mocker):
+    factory = _sftp_factory(listener, mocker)
+    assert factory(Mock())._catalog._scope.excluded == frozenset()
+    mocker.patch.object(server, "load_global_config", return_value=_reloaded(excluded=["later"]))
+    assert factory(Mock())._catalog._scope.excluded == frozenset({"later"})
+
+
+def test_a_policy_reload_error_gives_a_session_that_sees_nothing(listener, mocker):
+    factory = _sftp_factory(listener, mocker)
+    mocker.patch.object(server, "load_global_config", side_effect=ConfigError("broken"))
+    assert factory(Mock())._catalog._scope is None
+
+
+def test_files_turned_off_after_start_refuses_new_channels(listener, mocker):
+    factory = _sftp_factory(listener, mocker)
+    mocker.patch.object(server, "load_global_config", return_value=_reloaded(files=False))
+    assert factory(Mock())._catalog._scope is None
+
+
+def test_startup_summary_names_the_file_transfer_scope_only_when_on():
+    on = server._startup_summary(
+        RemoteSSHConfig(files=True), SimpleNamespace(get_port=lambda: 8022), None
+    )
+    off = server._startup_summary(RemoteSSHConfig(), SimpleNamespace(get_port=lambda: 8022), None)
+    assert "sftp/scp: on (container repo directories only)" in on
+    assert "sftp/scp" not in off

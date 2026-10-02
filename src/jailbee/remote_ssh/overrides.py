@@ -43,6 +43,7 @@ class ServeOverrides:
     commands_mode: CommandMode | None = None
     allow: list[str] | None = None
     restrict_host: bool | None = None
+    files: bool | None = None
 
     def is_empty(self) -> bool:
         """True when no flag was given at all; overrides are then a no-op."""
@@ -55,6 +56,7 @@ class ServeOverrides:
             and self.commands_mode is None
             and self.allow is None
             and self.restrict_host is None
+            and self.files is None
         )
 
 
@@ -89,6 +91,8 @@ def apply_ssh_overrides(config: RemoteSSHConfig, overrides: ServeOverrides) -> R
         merged["exec"] = overrides.exec
     if overrides.restrict_host is not None:
         merged["restrict_host"] = overrides.restrict_host
+    if overrides.files is not None:
+        merged["files"] = overrides.files
     if overrides.commands_mode is not None or overrides.allow is not None:
         commands = dict(merged["commands"])
         if overrides.commands_mode is not None:
@@ -136,6 +140,8 @@ def describe_overrides(overrides: ServeOverrides) -> str | None:
         parts.append(f"exec={'on' if overrides.exec else 'off'}")
     if overrides.restrict_host is not None:
         parts.append(f"restrict_host={'on' if overrides.restrict_host else 'off'}")
+    if overrides.files is not None:
+        parts.append(f"files={'on' if overrides.files else 'off'}")
     if overrides.commands_mode is not None and overrides.allow is not None:
         parts.append(f"commands={overrides.commands_mode} [{', '.join(overrides.allow)}]")
     elif overrides.commands_mode is not None:

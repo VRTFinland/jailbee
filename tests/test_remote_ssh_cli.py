@@ -831,3 +831,20 @@ def test_remote_ssh_key_remove_without_keys_exits_2(mocker: MockerFixture) -> No
     assert result.exit_code == 2
     assert "no authorized keys to remove" in flat_output(result.output)
     assert not remove.called
+
+
+def test_remote_ssh_serve_files_is_passed_through(mocker: MockerFixture) -> None:
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", "--files"])
+
+    assert result.exit_code == 0, result.stdout
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(files=True))
+    assert serve.call_args.args[0].files is True

@@ -1274,3 +1274,83 @@ def test_storage_volume_create_and_delete(incus, mocker):
         "default",
         "jailbee-litellm-state",
     ]
+
+
+def _mock_run_bytes(mocker, stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0):
+    return mocker.patch(
+        "jailbee.incus.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+
+def test_exec_bytes_returns_raw_bytes_and_the_exit_status(incus, mocker):
+    payload = b"\x00\xff\xfe\r\n\x00"
+    run = _mock_run_bytes(mocker, stdout=payload, returncode=4)
+
+    result = incus.exec_bytes("feat-foo", ["sh", "-c", "x"], uid=1000, gid=1000, timeout=30)
+
+    assert (result.returncode, result.stdout, result.stderr) == (4, payload, b"")
+    assert run.call_args.args[0] == [
+        "incus",
+        "exec",
+        "feat-foo",
+        "--user",
+        "1000",
+        "--group",
+        "1000",
+        "--",
+        "sh",
+        "-c",
+        "x",
+    ]
+    assert run.call_args.kwargs["capture_output"] is True
+    assert "text" not in run.call_args.kwargs  # bytes, never decoded
+    assert run.call_args.kwargs["timeout"] == 30
+
+
+def test_exec_bytes_feeds_stdin_through_a_private_pipe(incus, mocker):
+    run = _mock_run_bytes(mocker)
+
+    incus.exec_bytes("c", ["dd"], input_bytes=b"\x00data\xff")
+
+    assert run.call_args.kwargs["input"] == b"\x00data\xff"
+    assert "stdin" not in run.call_args.kwargs
+    assert b"data" not in b" ".join(a.encode() for a in run.call_args.args[0])
+
+
+def test_exec_bytes_without_input_uses_devnull(incus, mocker):
+    run = _mock_run_bytes(mocker)
+
+    incus.exec_bytes("c", ["true"])
+
+    assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
+
+
+def test_exec_bytes_refuses_output_over_the_cap(incus, mocker):
+    _mock_run_bytes(mocker, stdout=b"x" * 11)
+
+    with pytest.raises(IncusError, match="exceeded 10 bytes"):
+        incus.exec_bytes("c", ["cat"], max_bytes=10)
+
+
+def test_exec_bytes_timeout_is_an_incus_timeout_error(incus, mocker):
+    from jailbee.incus import IncusTimeoutError
+
+    mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["incus"], timeout=5),
+    )
+
+    with pytest.raises(IncusTimeoutError):
+        incus.exec_bytes("c", ["sleep", "9"], timeout=5)
+
+
+def test_exec_bytes_dry_run_runs_nothing(mocker):
+    run = mocker.patch("jailbee.incus.subprocess.run")
+
+    result = Incus(dry_run=True).exec_bytes("c", ["true"])
+
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+    run.assert_not_called()

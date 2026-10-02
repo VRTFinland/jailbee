@@ -149,8 +149,11 @@ without touching `global.yaml`:
 jb remote ssh serve [--listen ADDR] [--port N] \
                      [--dashboard/--no-dashboard] [--shell/--no-shell] [--exec/--no-exec] \
                      [--commands disabled|allowlist|full] [--allow CMD]... \
-                     [--restrict-host/--no-restrict-host]
+                     [--restrict-host/--no-restrict-host] [--files/--no-files]
 ```
+
+`--files` turns on `sftp`/`scp` into a container's repo directory for this run
+(see Security → File transfer).
 
 Every flag defaults to unset, in which case `global.yaml` decides as usual;
 only a flag actually given overrides its field, for this run alone. The

@@ -10,7 +10,6 @@ from jailbee.config import ConfigError
 from jailbee.config.local_layer import (
     all_local_credential_groups,
     all_local_litellm_views,
-    check_token_perms,
     local_config_dir,
     local_config_path,
     local_credentials,
@@ -20,6 +19,7 @@ from jailbee.config.local_layer import (
     repo_litellm_view,
     scope_files,
     split_local_raw,
+    token_perms_warning,
     validate_local_raw,
 )
 from jailbee.config.models_agents import GithubConfig
@@ -144,19 +144,19 @@ def test_map_is_used_without_a_token():
     assert gh.token_for("other") is None
 
 
-def test_token_file_must_be_private():
+def test_token_file_should_be_private():
     path = _write_local("myapp", {"github": {"token": "ghp_x"}})
     path.chmod(0o644)
-    with pytest.raises(ConfigError, match=r"chmod 600"):
-        check_token_perms(path, {"github": {"token": "ghp_x"}})
+    warning = token_perms_warning(path, {"github": {"token": "ghp_x"}})
+    assert warning is not None and "chmod 600" in warning
     path.chmod(0o600)
-    check_token_perms(path, {"github": {"token": "ghp_x"}})
+    assert token_perms_warning(path, {"github": {"token": "ghp_x"}}) is None
 
 
 def test_perms_do_not_matter_without_a_token():
     path = _write_local("myapp", {"egress_allow": ["x.org"]})
     path.chmod(0o644)
-    check_token_perms(path, {"egress_allow": ["x.org"]})
+    assert token_perms_warning(path, {"egress_allow": ["x.org"]}) is None
 
 
 def test_validate_local_raw_runs_the_model_over_the_overlay():

@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Generator
+from dataclasses import dataclass
 from typing import Any
 
 import yaml
@@ -30,6 +31,15 @@ class IncusTimeoutError(IncusError):
     catch this first; `pr_ai` does, to point at the transcript the timed-out
     Claude run left behind in the container.
     """
+
+
+@dataclass(frozen=True)
+class ExecResult:
+    """Outcome of `Incus.exec_bytes`: the command's own exit status and raw output."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
 
 
 # An argument longer than this, or one spanning lines, is summarised rather
@@ -441,6 +451,51 @@ class Incus:
             name, cmd, uid=uid, gid=gid, cwd=cwd, env=env, init_groups=init_groups
         )
         return self._run(args, timeout=timeout, input_text=input_text).stdout
+
+    def exec_bytes(
+        self,
+        name: str,
+        cmd: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        uid: int | None = None,
+        gid: int | None = None,
+        cwd: str | None = None,
+        timeout: int | None = None,
+        max_bytes: int | None = None,
+    ) -> ExecResult:
+        """Run a command in the container with binary stdin/stdout; never raise on its exit.
+
+        ``exec`` decodes stdout as text and raises on a non-zero exit; file
+        contents are bytes, and the file-transfer scripts report their result
+        as an exit status, so this returns both untouched. ``input_bytes`` goes
+        through a private pipe (never argv, never the terminal). ``max_bytes``
+        is checked only after the whole output has been captured, so it limits
+        what is returned (exceeding it is an ``IncusError``), not memory use.
+        """
+        args = self._exec_args(name, cmd, uid=uid, gid=gid, cwd=cwd, env=None, init_groups=False)
+        if self.dry_run:
+            return ExecResult(0, b"", b"")
+        stdin_kwargs: dict[str, Any] = (
+            {"stdin": subprocess.DEVNULL} if input_bytes is None else {"input": input_bytes}
+        )
+        try:
+            result = subprocess.run(
+                [self.binary, *args],
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                **stdin_kwargs,
+            )
+        except FileNotFoundError as e:
+            raise _missing_binary_error(self.binary) from e
+        except subprocess.TimeoutExpired as e:
+            raise IncusTimeoutError(
+                f"`incus {_render_args(args)}` timed out after {timeout}s"
+            ) from e
+        if max_bytes is not None and len(result.stdout) > max_bytes:
+            raise IncusError(f"`incus {_render_args(args)}` output exceeded {max_bytes} bytes")
+        return ExecResult(result.returncode, result.stdout, result.stderr)
 
     # How long `exec_lines` lets an abandoned command act on SIGTERM before
     # killing it.

@@ -503,6 +503,7 @@ def _reset_deprecation_notices():
     """
     from jailbee import notices
     from jailbee.config.loader import (
+        _warn_insecure_perms,
         _warn_legacy_chrome_block,
         _warn_legacy_credentials_block,
         _warn_legacy_per_repo_entry,
@@ -510,6 +511,7 @@ def _reset_deprecation_notices():
     )
     from jailbee.paths import _warn_legacy_config_dir
 
+    _warn_insecure_perms.cache_clear()
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
@@ -517,6 +519,7 @@ def _reset_deprecation_notices():
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
+    _warn_insecure_perms.cache_clear()
     _warn_legacy_chrome_block.cache_clear()
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
