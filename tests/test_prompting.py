@@ -209,3 +209,15 @@ def test_ask_keeps_acronyms_in_the_prompt(mocker):
     text.return_value.ask.return_value = "x"
     prompting._ask("GitHub URL", None)
     assert text.call_args.args[0] == "GitHub URL:"
+def test_ask_text_off_a_tty_names_the_flag_and_says_type():
+    with pytest.raises(MissingValue) as exc:
+        ask_text("GitHub URL", validate=lambda s: None, alternative="--url", is_interactive=_no)
+    assert exc.value.message == (
+        "missing GitHub URL; pass it explicitly or use --url, or run in a terminal to type it"
+    )
+
+
+def test_ask_text_without_an_alternative_still_says_type():
+    with pytest.raises(MissingValue) as exc:
+        ask_text("port", validate=lambda s: None, is_interactive=_no)
+    assert exc.value.message == "missing port; pass it explicitly, or run in a terminal to type it"

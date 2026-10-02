@@ -1392,3 +1392,89 @@ def test_resolve_retry_still_rejects_url(mocker, tmp_path):
     assert result.exit_code == 2
     assert "--retry accepts neither" in panel_text(result.output)
     reconcile.assert_not_called()
+
+
+_CREATE_TEXT = json.dumps(
+    {
+        "version": 1,
+        "actions": [
+            {
+                "type": "create",
+                "repo": ".",
+                "ref": "r1",
+                "title": "t",
+                "body": "b",
+                "labels": [],
+            }
+        ],
+    }
+)
+
+
+def test_resolve_applied_without_url_off_a_tty_names_the_flag(mocker, tmp_path):
+    _setup_resolve(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+
+    result = runner.invoke(app, ["issue", "resolve", "feat-foo", "001.json", "0", "--applied"])
+
+    assert result.exit_code == 2
+    assert "--url" in panel_text(result.output)
+    reconcile.assert_not_called()
+
+
+def test_resolve_create_without_issue_off_a_tty_names_the_flag(mocker, tmp_path):
+    _setup_resolve(mocker, tmp_path, manifest_text=_CREATE_TEXT)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "issue", "resolve", "feat-foo", "001.json", "0", "--applied",
+            "--url", "https://github.com/acme/widgets/issues/99",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 2
+    assert "--issue" in panel_text(result.output)
+
+
+@pytest.mark.parametrize("bad", ["²", "0", "-3", "x"])
+def test_resolve_created_issue_number_rejects_non_positive_and_non_ascii(mocker, tmp_path, bad):
+    _setup_resolve(
+        mocker,
+        tmp_path,
+        manifest_text=_CREATE_TEXT,
+        journal_actions=(
+            JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="?"),
+        ),
+    )
+    reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=[bad, "7"])
+
+    result = runner.invoke(
+        app,
+        [
+            "issue", "resolve", "feat-foo", "001.json", "0", "--applied",
+            "--url", "https://github.com/acme/widgets/issues/7", "-y",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    assert ask.call_count == 2
+    assert reconcile.call_args.kwargs["resolution"].issue == 7
+
+
+def test_resolve_rejects_issue_on_a_non_create_before_asking_for_the_url(mocker, tmp_path):
+    text = _manifest_text(actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "hello"}])
+    _setup_resolve(mocker, tmp_path, manifest_text=text)
+    ask = mocker.patch("jailbee.prompting._ask")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = runner.invoke(
+        app, ["issue", "resolve", "feat-foo", "001.json", "0", "--applied", "--issue", "42"]
+    )
+
+    assert result.exit_code == 2
+    assert "--issue is only valid" in panel_text(result.output)
+    ask.assert_not_called()

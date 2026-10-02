@@ -2276,8 +2276,11 @@ def new_cmd(
                 return str(e)
             return None
 
-        noun = "container name" if mount else "branch to work on (or use --current)"
-        container_branch = prompting.ask_text(noun, validate=_name_problem).strip()
+        container_branch = prompting.ask_text(
+            "container name" if mount else "branch to work on",
+            validate=_name_problem,
+            alternative=None if mount else "--current",
+        ).strip()
 
     if mount:
         if base is not None:
@@ -13311,24 +13314,28 @@ def issue_resolve_cmd(
             ],
         )
         applied, retry = mode == "applied", mode == "retry"
+    if applied and not isinstance(resolved_action, CreateAction) and issue is not None:
+        error_plain("--issue is only valid for a create action.")
+        raise typer.Exit(2)
+
     if applied and url is None:
         url = prompting.ask_text(
             "GitHub URL the mutation produced",
             validate=lambda s: None if s.startswith("https://") else "enter an https:// URL",
+            alternative="--url",
         )
 
-    if applied:
-        if isinstance(resolved_action, CreateAction):
-            if issue is None:
-                issue = int(
-                    prompting.ask_text(
-                        "created issue number",
-                        validate=lambda s: None if s.strip().isdigit() else "enter a number",
-                    )
-                )
-        elif issue is not None:
-            error_plain("--issue is only valid for a create action.")
-            raise typer.Exit(2)
+    if applied and isinstance(resolved_action, CreateAction) and issue is None:
+
+        def _number_problem(s: str) -> str | None:
+            s = s.strip()
+            return None if s.isascii() and s.isdecimal() and int(s) > 0 else "enter a number"
+
+        issue = int(
+            prompting.ask_text(
+                "created issue number", validate=_number_problem, alternative="--issue"
+            )
+        )
 
     body_files = {body: outbox.files[body] for body in parsed.body_files if body in outbox.files}
     digest = proposal_digest(manifest, text, body_files)

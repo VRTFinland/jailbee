@@ -5370,6 +5370,26 @@ def test_new_mount_rejects_no_clone(tmp_path, mocker):
     new_container.assert_not_called()
 
 
+def test_new_without_a_name_off_a_tty_names_current(tmp_path, mocker):
+    """Off a terminal `jb new` says --current is the way out, and asks nothing."""
+    repo = _setup_repo(tmp_path, "myrepo")
+    mocker.patch(
+        "jailbee.cli._resolve_config_path",
+        return_value=repo / ".jailbee" / "config.yaml",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.cli._load_global")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    new_container = mocker.patch("jailbee.lifecycle.new_container")
+    result = CliRunner().invoke(app, ["new"])
+
+    assert result.exit_code == 2
+    text = panel_text(result.output)
+    assert "missing branch to work on; pass it explicitly or use --current" in text
+    new_container.assert_not_called()
+
+
 def test_new_mount_rejects_slash_in_name(tmp_path, mocker):
     """`gie new feat/x --mount` exits 2 — positional is a name, not a branch."""
     repo = _setup_repo(tmp_path, "myrepo")

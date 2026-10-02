@@ -58,6 +58,7 @@ class MissingValue(ClickException):
         candidates: Sequence[str] = (),
         reason: str | None = None,
         alternative: str | None = None,
+        free_text: bool = False,
     ) -> None:
         self.noun = noun
         self.candidates = tuple(candidates)
@@ -65,7 +66,8 @@ class MissingValue(ClickException):
             message = reason
         else:
             how = f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
-            message = f"missing {noun}; {how}, or run in a terminal to choose"
+            verb = "type it" if free_text else "choose"
+            message = f"missing {noun}; {how}, or run in a terminal to {verb}"
             if self.candidates:
                 message += ". Candidates: " + ", ".join(self.candidates)
         super().__init__(message)
@@ -148,6 +150,7 @@ def ask_text(
     *,
     validate: Callable[[str], str | None],
     default: str | None = None,
+    alternative: str | None = None,
     is_interactive: Callable[[], bool] | None = None,
 ) -> str:
     """Resolve a missing free-text value; re-ask while `validate` objects.
@@ -156,7 +159,7 @@ def ask_text(
     """
     interactive = is_interactive if is_interactive is not None else globals()["is_interactive"]
     if not interactive():
-        raise MissingValue(noun)
+        raise MissingValue(noun, alternative=alternative, free_text=True)
     while True:
         answer = _ask(noun, default)
         if answer is None:
