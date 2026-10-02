@@ -1079,6 +1079,22 @@ def test_the_container_picker_runs_when_no_name_is_given(mocker, tmp_path):
     assert resolve.call_args.kwargs["always_prompt"] is True
 
 
+def test_the_container_prompt_is_withheld_off_a_tty(mocker, tmp_path):
+    """A script must not be made to hang, or fail, for a choice of one container."""
+    _, incus, _ = _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
+    _happy(mocker)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(incus, "sampleapp-feat-foo")
+    )
+    mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
+    mocker.patch("typer.confirm", return_value=True)
+
+    runner.invoke(app, ["submodule", "pr"])
+
+    assert resolve.call_args.kwargs["always_prompt"] is False
+
+
 def test_an_explicit_container_name_does_not_prompt(mocker, tmp_path):
     _, incus, _ = _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
     _happy(mocker)

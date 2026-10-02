@@ -2520,14 +2520,22 @@ def resolve_container_for_interactive_detailed(
 
     containers = list_containers(cfg, incus, with_git_status=True, with_background=with_background)
     by_name = {c.name: c for c in containers}
-    asks = always_prompt and interactive()
+    answers: list[bool] = []
+
+    def tty() -> bool:
+        # Asked at most once, and only when a choice may need a terminal.
+        if not answers:
+            answers.append(interactive())
+        return answers[0]
+
+    asks = always_prompt and tty()
     chosen = prompting.choose_one(
         "container",
         [prompting.Option(c.name, c.display_name, c.display_name) for c in containers],
         destructive=always_prompt,
         empty_reason=f"no managed containers found for repo '{cfg.container_prefix}'",
         picker=lambda _opts: picker(list(by_name.values())),
-        is_interactive=interactive,
+        is_interactive=tty,
     )
     return ResolvedContainer(name=chosen, auto_selected=len(containers) == 1 and not asks)
 

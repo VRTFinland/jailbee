@@ -8449,9 +8449,15 @@ def submodule_pr_cmd(
 
     cfg = _load_or_exit(config)
     # --open mutates nothing, so it keeps the silent auto-selection; the
-    # publishing path always shows the user which container it will publish
-    # from, because `gh` is about to change a GitHub repository.
-    incus, full = _resolve_existing(cfg, name, always_prompt=name is None and not open_only)
+    # publishing path shows the user which container it will publish from on a
+    # terminal, because `gh` is about to change a GitHub repository. Off a TTY
+    # the prompt is withheld (a script must not hang) and a single container
+    # is still taken, as before.
+    incus, full = _resolve_existing(
+        cfg,
+        name,
+        always_prompt=name is None and not open_only and prompting.is_interactive(),
+    )
     short = short_name(cfg, full)
 
     # --open resolves from the recorded state alone: no preflight, no

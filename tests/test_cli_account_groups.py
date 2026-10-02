@@ -174,6 +174,60 @@ def test_use_without_a_container_errors_without_a_tty(group_env, mocker):
     assert "myrepo-b" in result.output
 
 
+def _resolve_group(cfg, incus, rows, mocker, *, tty, picker=None):
+    from jailbee.cli import _resolve_group_container
+
+    incus.list_containers.return_value = rows
+    mocker.patch("jailbee.prompting.is_interactive", return_value=tty)
+    if picker is not None:
+        mocker.patch("jailbee.tui.pick_container_for_group", side_effect=picker)
+    return _resolve_group_container(cfg, incus, None)
+
+
+def _rows(*names):
+    return [{"name": n, "status": "Running", "profiles": [], "config": {}} for n in names]
+
+
+def test_group_container_none_exist_is_missing_value(group_env, mocker):
+    from jailbee.prompting import MissingValue
+
+    cfg, incus = group_env
+    with pytest.raises(MissingValue) as exc:
+        _resolve_group(cfg, incus, [], mocker, tty=False)
+    assert exc.value.exit_code == 2
+    assert "No containers for" in exc.value.message
+
+
+def test_group_container_one_is_taken_and_named_on_stderr(group_env, mocker, capsys):
+    cfg, incus = group_env
+    got = _resolve_group(cfg, incus, _rows("myrepo-a"), mocker, tty=False)
+    out, err = capsys.readouterr()
+    assert got == "myrepo-a"
+    assert "Using container myrepo-a" in err
+    assert out == ""
+
+
+def test_group_container_several_off_a_tty_lists_candidates(group_env, mocker):
+    from jailbee.prompting import MissingValue
+
+    cfg, incus = group_env
+    with pytest.raises(MissingValue) as exc:
+        _resolve_group(cfg, incus, _rows("myrepo-b", "myrepo-a"), mocker, tty=False)
+    assert exc.value.exit_code == 2
+    assert "Candidates: myrepo-a, myrepo-b" in exc.value.message
+
+
+def test_group_container_picker_cancel_is_cancelled(group_env, mocker):
+    from jailbee.prompting import Cancelled
+
+    cfg, incus = group_env
+    with pytest.raises(Cancelled) as exc:
+        _resolve_group(
+            cfg, incus, _rows("myrepo-a", "myrepo-b"), mocker, tty=True, picker=lambda *a: None
+        )
+    assert exc.value.exit_code == 1
+
+
 def test_reset_clears_the_override(group_env, mocker):
     mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
     clearer = mocker.patch("jailbee.accounts.groups.clear_container_group")

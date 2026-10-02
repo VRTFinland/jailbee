@@ -10065,3 +10065,17 @@ def test_resolver_cancel_raises_cancelled(make_cfg, tmp_path, mocker):
         resolve_container_for_interactive(
             cfg, mocker.MagicMock(), None, picker=lambda cs: None, is_interactive=lambda: True
         )
+
+
+def test_resolver_single_auto_pick_notes_the_container_on_stderr(
+    make_cfg, tmp_path, mocker, capsys
+):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a")])
+    got = resolve_container_for_interactive(
+        cfg, mocker.MagicMock(), None, is_interactive=lambda: False
+    )
+    out, err = capsys.readouterr()
+    assert got == "app-a"
+    assert "Using container a" in err
+    assert out == ""
