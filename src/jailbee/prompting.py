@@ -92,7 +92,10 @@ def _select(noun: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
 
     choices = [questionary.Choice(title=o.title, value=o.value) for o in options]
     choices.append(questionary.Choice(title="cancel", value=_CANCEL))
-    result = questionary.select(f"Select {noun}:", choices=choices, use_shortcuts=True).ask()
+    # questionary has 36 shortcut keys (0-9, a-z); more rows than that raise.
+    result = questionary.select(
+        f"Select {noun}:", choices=choices, use_shortcuts=len(choices) <= 36
+    ).ask()
     if result is None or result is _CANCEL:
         return None
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
@@ -102,7 +105,9 @@ def _ask(noun: str, default: str | None) -> str | None:
     """The default text prompt. None on Ctrl-C / Esc."""
     import questionary
 
-    result = questionary.text(f"{noun.capitalize()}:", default=default or "").ask()
+    # Not str.capitalize(): it lowercases the rest ("GitHub" -> "Github").
+    label = noun[:1].upper() + noun[1:]
+    result = questionary.text(f"{label}:", default=default or "").ask()
     return None if result is None else str(result)
 
 

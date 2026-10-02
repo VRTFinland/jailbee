@@ -377,6 +377,17 @@ def _block_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
+
+    `prompting.is_interactive` reads it, so with it exported in the shell every
+    test that expects a prompt would take the off-TTY branch instead. Tests
+    about the override set it themselves; this runs first.
+    """
+    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 

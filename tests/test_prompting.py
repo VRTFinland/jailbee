@@ -146,3 +146,66 @@ def test_ask_text_ctrl_c_is_cancelled(mocker):
     mocker.patch("jailbee.prompting._ask", return_value=None)
     with pytest.raises(Cancelled):
         ask_text("port", validate=lambda s: None, is_interactive=_yes)
+
+
+def _fake_select(mocker, pick):
+    """Patch questionary.select; `pick(choices)` is what .ask() answers."""
+    seen: dict[str, object] = {}
+
+    def select(message, choices, **kwargs):
+        seen["choices"] = choices
+        seen["kwargs"] = kwargs
+        return mocker.Mock(ask=lambda: pick(choices))
+
+    mocker.patch("questionary.select", side_effect=select)
+    return seen
+
+
+def test_select_cancel_row_returns_none_and_choose_one_cancels(mocker):
+    seen = _fake_select(mocker, lambda choices: choices[-1].value)
+    assert prompting._select("container", [A, B]) is None
+    cancel = seen["choices"][-1]
+    assert cancel.title == "cancel"
+    assert cancel.value is not None  # questionary answers value=None with the title
+    with pytest.raises(Cancelled):
+        choose_one("container", [A, B], is_interactive=_yes)
+
+
+def test_select_returns_the_chosen_options_value(mocker):
+    _fake_select(mocker, lambda choices: choices[1].value)
+    assert prompting._select("container", [A, B]) == "b-full"
+
+
+def test_select_escape_is_none(mocker):
+    _fake_select(mocker, lambda choices: None)
+    assert prompting._select("container", [A, B]) is None
+
+
+def test_select_with_many_options_does_not_use_shortcuts(mocker):
+    options = [Option(i, f"t{i}", f"l{i}") for i in range(40)]
+    seen = _fake_select(mocker, lambda choices: choices[0].value)
+    assert prompting._select("thing", options) == 0
+    assert len(seen["choices"]) == 41
+    assert seen["kwargs"]["use_shortcuts"] is False
+
+
+def test_select_real_questionary_accepts_36_options_without_shortcuts():
+    import questionary
+
+    choices = [questionary.Choice(title=str(i), value=i) for i in range(37)]
+    questionary.select("x", choices=choices, use_shortcuts=False)  # must not raise
+
+
+def test_ask_returns_the_typed_text_or_none(mocker):
+    text = mocker.patch("questionary.text")
+    text.return_value.ask.return_value = "hello"
+    assert prompting._ask("port", None) == "hello"
+    text.return_value.ask.return_value = None
+    assert prompting._ask("port", None) is None
+
+
+def test_ask_keeps_acronyms_in_the_prompt(mocker):
+    text = mocker.patch("questionary.text")
+    text.return_value.ask.return_value = "x"
+    prompting._ask("GitHub URL", None)
+    assert text.call_args.args[0] == "GitHub URL:"
