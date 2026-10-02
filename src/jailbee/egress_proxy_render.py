@@ -137,9 +137,15 @@ def render_fragment(prefix: str, scopes: Sequence[ProxyScope]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def proxy_env(proxy_ip: str, raw_entries: Iterable[str]) -> dict[str, str]:
+def proxy_env(
+    proxy_ip: str, raw_entries: Iterable[str], direct_hosts: Iterable[str] = ()
+) -> dict[str, str]:
+    """The proxy variables. ``direct_hosts`` (other jailbee services) bypass the proxy."""
     url = f"http://{proxy_ip}:{PROXY_PORT}"
     no_proxy = ["localhost", "127.0.0.1", ".incus"]
+    for host in direct_hosts:
+        if host not in no_proxy:
+            no_proxy.append(host)
     for raw in raw_entries:
         spec = validate_allow_entry(raw)
         if isinstance(spec, EgressSpec) and spec.is_literal and spec.target not in no_proxy:

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from sqlalchemy.exc import OperationalError
 
 from jailbee import egress_proxy
 from jailbee.egress_proxy import (
@@ -391,7 +392,9 @@ def test_push_unchanged_returns_false():
     assert push_fragment(incus, "abc", "acl x dstdomain a.com\n") is False
     script = incus.exec_with_input.call_args.args[2]
     assert "live=/etc/squid/jailbee.d/abc.conf\n" in script
-    assert '"$live.new"' in script
+    assert "mktemp" in script
+    assert "flock 9" in script
+    assert "/etc/squid/.jailbee-fragments.lock" in script
     assert "acl x dstdomain a.com" in script
     assert script.index("squid -k parse") < script.index("squid -k reconfigure")
 
@@ -614,12 +617,34 @@ def test_collect_scopes_wildcards_only_in_extras(make_cfg, tmp_path, mocker):
     assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
 
 
+def _running_proxy_raw():
+    return {"name": PROXY_CONTAINER, "status": "Running", "devices": {}}
+
+
+def test_sync_repo_rules_does_nothing_but_one_list_without_a_running_proxy(
+    make_cfg, tmp_path, mocker
+):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_legacy("myrepo-old")]
+    collect = mocker.patch.object(egress_proxy, "collect_scopes")
+    push = mocker.patch.object(egress_proxy, "push_fragment")
+    drop = mocker.patch.object(egress_proxy, "drop_fragment")
+    assert egress_proxy.sync_repo_rules(cfg, incus, MagicMock()) is False
+    assert incus.list_containers.call_count == 1
+    collect.assert_not_called()
+    push.assert_not_called()
+    drop.assert_not_called()
+
+
 def test_sync_repo_rules_drops_when_no_sources(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
-    incus.list_containers.return_value = []
+    incus.list_containers.return_value = [_running_proxy_raw()]
     _patch_entries(mocker, ["plain.com"], {})
     push = mocker.patch.object(egress_proxy, "push_fragment")
     drop = mocker.patch.object(egress_proxy, "drop_fragment", return_value=True)
@@ -633,7 +658,7 @@ def test_sync_repo_rules_pushes_rendered_fragment(make_cfg, tmp_path, mocker):
     repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
-    incus.list_containers.return_value = [_legacy("myrepo-old")]
+    incus.list_containers.return_value = [_running_proxy_raw(), _legacy("myrepo-old")]
     _patch_entries(mocker, ["*.repo.com"], {})
     push = mocker.patch.object(egress_proxy, "push_fragment", return_value=True)
     assert egress_proxy.sync_repo_rules(cfg, incus, MagicMock()) is True
@@ -725,8 +750,8 @@ def test_sync_container_swallows_incus_error(make_cfg, tmp_path, mocker):
     cfg = make_cfg(repo)
     incus, _ = _env_incus()
     _patch_entries(mocker, ["*.repo.com"], {})
-    mocker.patch.object(egress_proxy, "push_fragment", side_effect=IncusError("boom"))
-    warn = mocker.patch("jailbee.tui.warn")
+    mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=IncusError("boom"))
+    warn = mocker.patch("jailbee.tui.warn_plain")
     egress_proxy.sync_container(cfg, incus, "myrepo-old", "strict")
     warn.assert_called_once()
     assert "boom" in warn.call_args.args[0]
@@ -860,3 +885,128 @@ def test_proxy_up_or_warn_quiet_on_success(mocker):
     egress_proxy.proxy_up_or_warn(MagicMock())
     up.assert_called_once()
     warn.assert_not_called()
+
+
+# --- final-review wave -------------------------------------------------------
+
+
+def test_proxy_up_or_warn_also_catches_value_error(mocker):
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=ValueError("no free ip"))
+    warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
+    egress_proxy.proxy_up_or_warn(MagicMock())
+    assert "no free ip" in warn.call_args.args[0]
+
+
+@pytest.mark.parametrize(
+    "error", [ValueError("bad cidr"), OperationalError("stmt", {}, Exception("db locked"))]
+)
+def test_sync_container_never_raises_for_value_or_db_errors(make_cfg, tmp_path, mocker, error):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=error)
+    warn = mocker.patch("jailbee.tui.warn_plain")
+    egress_proxy.sync_container(cfg, MagicMock(), "myrepo-old", "strict")
+    warn.assert_called_once()
+
+
+def test_sync_container_pushes_rules_before_setting_the_env(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    order: list[str] = []
+    mocker.patch.object(
+        egress_proxy, "sync_repo_rules", side_effect=lambda *_a: order.append("rules")
+    )
+    mocker.patch.object(
+        egress_proxy, "sync_container_env", side_effect=lambda *_a, **_k: order.append("env")
+    )
+    egress_proxy.sync_container(cfg, MagicMock(), "myrepo-old", "strict")
+    assert order == ["rules", "env"]
+
+
+def test_env_only_never_raises_and_does_not_push_rules(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch.object(egress_proxy, "sync_container_env", side_effect=ValueError("x"))
+    rules = mocker.patch.object(egress_proxy, "sync_repo_rules")
+    warn = mocker.patch("jailbee.tui.warn_plain")
+    egress_proxy.sync_container_env_only(cfg, MagicMock(), "myrepo-old", "strict")
+    rules.assert_not_called()
+    warn.assert_called_once()
+
+
+def test_sync_repo_never_raises(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=IncusError("down"))
+    warn = mocker.patch("jailbee.tui.warn_plain")
+    egress_proxy.sync_repo(cfg, MagicMock())
+    warn.assert_called_once()
+
+
+def test_env_with_a_snapshot_reads_config_from_it_and_lists_nothing(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus()
+    raws = incus.list_containers.return_value
+    raws[1] = {**raws[1], "config": {"environment.HTTP_PROXY": "http://stale:1"}}
+    incus.list_containers.reset_mock()
+    incus.network_acl_exists.return_value = False
+    _patch_entries(mocker, ["plain.com"], {})
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict", raws=raws)
+    incus.list_containers.assert_not_called()
+    incus.config_get.assert_not_called()
+    incus.config_unset.assert_called_once_with("myrepo-old", "environment.HTTP_PROXY")
+
+
+def test_env_no_proxy_lists_the_other_jailbee_services(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus()
+    _patch_entries(mocker, ["*.repo.com"], {})
+    mocker.patch.object(egress_proxy, "other_service_ips", return_value=["10.79.1.5"])
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict")
+    no_proxy = next(
+        c.args[2] for c in incus.config_set.call_args_list if c.args[1] == "environment.NO_PROXY"
+    )
+    assert "10.79.1.5" in no_proxy.split(",")
+
+
+def test_proxy_env_direct_hosts_are_pure_input():
+    from jailbee.egress_proxy_render import proxy_env
+
+    env = proxy_env("10.0.0.2", [], ["10.79.1.5", "10.79.1.5"])
+    assert env["NO_PROXY"].split(",").count("10.79.1.5") == 1
+    assert "10.79.1.5" not in proxy_env("10.0.0.2", [])["NO_PROXY"]
+
+
+def test_other_service_ips_excludes_the_proxy_rules():
+    from jailbee.network import services_acl_yaml
+    from jailbee.services_acl import LITELLM_LABEL, other_service_ips
+
+    incus = MagicMock()
+    incus.network_acl_exists.return_value = True
+    incus.network_acl_show.return_value = services_acl_yaml(
+        {LITELLM_LABEL: (["10.79.1.5"], [4000, 4001]), EGRESS_PROXY_LABEL: (["10.0.0.2"], [3128])}
+    )
+    assert other_service_ips(incus, EGRESS_PROXY_LABEL) == ["10.79.1.5"]
+
+
+def test_other_service_ips_without_the_acl():
+    from jailbee.services_acl import other_service_ips
+
+    incus = MagicMock()
+    incus.network_acl_exists.return_value = False
+    assert other_service_ips(incus, EGRESS_PROXY_LABEL) == []
+
+
+def test_push_takes_a_lock_and_leaves_no_staging_files(real_push):
+    push, frag, _ = real_push
+    assert push("good v1\n").endswith("RECONFIGURED|rc=0")
+    assert not list(frag.glob("*.new"))
+    assert (frag.parent / ".jailbee-fragments.lock").exists()

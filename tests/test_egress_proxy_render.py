@@ -39,7 +39,9 @@ def test_ip_and_cidr_entries_render_as_dst():
 
 
 def test_scope_without_sources_or_entries_is_omitted():
-    out = render_fragment("r", [_scope(key="r", sources=()), _scope(key="r-ct", entries=(), kind="c")])
+    out = render_fragment(
+        "r", [_scope(key="r", sources=()), _scope(key="r-ct", entries=(), kind="c")]
+    )
     assert "acl " not in out and "http_access" not in out
 
 

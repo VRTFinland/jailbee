@@ -3053,16 +3053,23 @@ def test_run_apply_starts_the_proxy_for_a_repo_wildcard(
     cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["*.example.com"])
     order: list[str] = []
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=lambda *a, **k: order.append("up"))
-    sync = mocker.patch.object(
-        egress_proxy, "sync_container", side_effect=lambda *a, **k: order.append("sync")
+    env = mocker.patch.object(
+        egress_proxy, "sync_container_env_only", side_effect=lambda *a, **k: order.append("env")
     )
+    rules = mocker.patch.object(
+        egress_proxy, "sync_repo", side_effect=lambda *a, **k: order.append("rules")
+    )
+    sync = mocker.patch.object(egress_proxy, "sync_container")
 
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
 
-    assert order == ["up", "sync"]
+    # Proxy first, the environment per container, the repo's rules once at the end.
+    assert order == ["up", "env", "rules"]
     assert egress_proxy.proxy_up.call_args.args == (incus,)
     assert callable(egress_proxy.proxy_up.call_args.kwargs["on_step"])
-    sync.assert_called_once_with(cfg, incus, "a", "strict")
+    assert env.call_args.args == (cfg, incus, "a", "strict")
+    rules.assert_called_once_with(cfg, incus)
+    sync.assert_not_called()
 
 
 def test_run_apply_starts_the_proxy_for_a_container_extras_wildcard(
@@ -3092,12 +3099,15 @@ def test_run_apply_without_a_wildcard_skips_the_proxy_but_still_syncs(
 
     cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["example.com"])
     up = mocker.patch.object(egress_proxy, "proxy_up")
-    sync = mocker.patch.object(egress_proxy, "sync_container")
+    env = mocker.patch.object(egress_proxy, "sync_container_env_only")
+    rules = mocker.patch.object(egress_proxy, "sync_repo")
 
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
 
     up.assert_not_called()
-    sync.assert_called_once_with(cfg, incus, "a", "strict")
+    env.assert_called_once()
+    assert env.call_args.args == (cfg, incus, "a", "strict")
+    rules.assert_called_once_with(cfg, incus)
 
 
 @pytest.mark.parametrize("error", [RuntimeError("squid down"), IncusError("boom")])
@@ -3110,13 +3120,14 @@ def test_run_apply_continues_when_the_proxy_cannot_start(
 
     cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["*.example.com"])
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=error)
-    sync = mocker.patch.object(egress_proxy, "sync_container")
+    env = mocker.patch.object(egress_proxy, "sync_container_env_only")
+    mocker.patch.object(egress_proxy, "sync_repo")
     warn = mocker.patch("jailbee.tui.warn_plain")
 
     run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
 
     assert any("egress proxy" in c.args[0] for c in warn.call_args_list)
-    sync.assert_called_once()
+    env.assert_called_once()
 
 
 def test_restart_one_syncs_the_proxy_with_the_current_mode(

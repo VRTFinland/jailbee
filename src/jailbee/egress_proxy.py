@@ -13,6 +13,7 @@ helpers never provision anything.
 from __future__ import annotations
 
 import ipaddress
+import posixpath
 import shlex
 import time
 from enum import StrEnum
@@ -20,6 +21,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from sqlalchemy.exc import SQLAlchemyError
 
 from jailbee import tui
 from jailbee.bridge_ipv4 import free_ipv4
@@ -35,7 +37,7 @@ from jailbee.egress_proxy_render import (
 from jailbee.incus import Incus, IncusError
 from jailbee.loose_bridge import loose_bridge_host_ip
 from jailbee.network_generation import WORK_BRIDGE
-from jailbee.services_acl import EGRESS_PROXY_LABEL, set_service
+from jailbee.services_acl import EGRESS_PROXY_LABEL, other_service_ips, set_service
 from jailbee.work_network import work_network_lock
 
 if TYPE_CHECKING:
@@ -351,7 +353,7 @@ def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None)
     """
     try:
         proxy_up(incus, on_step=on_step or (lambda message: tui.info(f"  {message}")))
-    except (IncusError, RuntimeError) as e:
+    except (IncusError, RuntimeError, ValueError) as e:
         tui.warn_plain(f"Could not start the egress proxy: {e}")
 
 
@@ -369,30 +371,50 @@ def _run_fragment_script(incus: Incus, script: str) -> str:
     return lines[-1].strip() if lines else ""
 
 
+def _locked_preamble(live: str) -> str:
+    """Shell prologue: serialise fragment writers (timer, apply, background ``new``).
+
+    The lock file sits beside the fragment directory so no ``*.conf`` glob sees it.
+    Without ``flock`` (not expected in the Ubuntu image) the script runs unlocked.
+    """
+    lock = shlex.quote(f"{posixpath.dirname(FRAGMENT_DIR)}/.jailbee-fragments.lock")
+    return f"""\
+set -euo pipefail
+live={live}
+if command -v flock >/dev/null 2>&1; then
+  exec 9>{lock}
+  flock 9
+fi
+"""
+
+
 def push_fragment(incus: Incus, prefix: str, text: str) -> bool:
     """Install one repo's rule fragment; ``True`` if it changed and squid reloaded.
 
     The new text is parsed before it replaces the live file and the old file is
     restored on failure, so a bad fragment never reaches the running Squid.
     Returns ``False`` without touching Incus beyond the status probe when the
-    proxy is not running: the periodic caller must never provision.
+    proxy is not running: the periodic caller must never provision. Concurrent
+    writers are serialised with ``flock`` and each stages into its own temp file.
     """
     if proxy_status(incus) != ProxyStatus.RUNNING:
         return False
     live = shlex.quote(f"{FRAGMENT_DIR}/{prefix}.conf")
-    script = f"""\
-set -euo pipefail
-live={live}
-cat > "$live.new" <<'JAILBEE_FRAGMENT_EOF'
+    script = (
+        _locked_preamble(live)
+        + f"""\
+new=$(mktemp "$live.XXXXXX")
+trap 'rm -f "$new"' EXIT
+cat > "$new" <<'JAILBEE_FRAGMENT_EOF'
 {text.rstrip()}
 JAILBEE_FRAGMENT_EOF
-if [ -f "$live" ] && cmp -s "$live.new" "$live"; then
-  rm -f "$live.new"
+if [ -f "$live" ] && cmp -s "$new" "$live"; then
   echo UNCHANGED
   exit 0
 fi
+chmod 0644 "$new"
 if [ -f "$live" ]; then mv -f "$live" "$live.bak"; fi
-mv -f "$live.new" "$live"
+mv -f "$new" "$live"
 if ! squid -k parse; then
   rm -f "$live"
   if [ -f "$live.bak" ]; then mv -f "$live.bak" "$live"; fi
@@ -403,6 +425,7 @@ squid -k reconfigure
 rm -f "$live.bak"
 echo RECONFIGURED
 """
+    )
     return _run_fragment_script(incus, script) == "RECONFIGURED"
 
 
@@ -411,17 +434,18 @@ def drop_fragment(incus: Incus, prefix: str) -> bool:
     if proxy_status(incus) != ProxyStatus.RUNNING:
         return False
     live = shlex.quote(f"{FRAGMENT_DIR}/{prefix}.conf")
-    script = f"""\
-set -euo pipefail
-live={live}
+    script = (
+        _locked_preamble(live)
+        + """\
 if [ ! -f "$live" ]; then
   echo UNCHANGED
   exit 0
 fi
-rm -f "$live" "$live.bak" "$live.new"
+rm -f "$live" "$live.bak"
 squid -k reconfigure
 echo RECONFIGURED
 """
+    )
     return _run_fragment_script(incus, script) == "RECONFIGURED"
 
 
@@ -455,14 +479,16 @@ def _source_ipv4(cfg: Config, raw: dict[str, Any]) -> str | None:
     return eth0_global_ipv4(raw)
 
 
-def collect_scopes(cfg: Config, incus: Incus, session: Session) -> list[ProxyScope]:
+def collect_scopes(
+    cfg: Config, incus: Incus, session: Session, raws: list[dict[str, Any]] | None = None
+) -> list[ProxyScope]:
     """The repo scope first, then one scope per work container with its own wildcard extras."""
     from jailbee.egress_scope import container_extras, effective_repo_entries
     from jailbee.lifecycle import list_containers
     from jailbee.network_generation import generation_of
 
     repo_entries = effective_repo_entries(cfg, session)
-    raw_by_name = {r["name"]: r for r in incus.list_containers()}
+    raw_by_name = {r["name"]: r for r in (raws if raws is not None else incus.list_containers())}
     repo_sources: list[str] = []
     container_scopes: list[ProxyScope] = []
     for info in list_containers(cfg, incus):
@@ -483,39 +509,70 @@ def collect_scopes(cfg: Config, incus: Incus, session: Session) -> list[ProxySco
 
 
 def sync_repo_rules(cfg: Config, incus: Incus, session: Session) -> bool:
-    """Push this repo's fragment, or drop it when no container needs the proxy."""
+    """Push this repo's fragment, or drop it when no container needs the proxy.
+
+    One ``incus list`` decides first whether there is a running proxy at all.
+    Without one, push and drop are no-ops, so nothing else is read: a host that
+    never used a wildcard pays for a single list per call.
+    """
+    raws = incus.list_containers()
+    if not any(r.get("name") == PROXY_CONTAINER and r.get("status") == "Running" for r in raws):
+        return False
     prefix = cfg.container_prefix
-    scopes = collect_scopes(cfg, incus, session)
+    scopes = collect_scopes(cfg, incus, session, raws)
     if not any(scope.sources for scope in scopes):
         return drop_fragment(incus, prefix)
     return push_fragment(incus, prefix, render_fragment(prefix, scopes))
 
 
+def _current_env(incus: Incus, name: str, raw: dict[str, Any] | None) -> dict[str, str | None]:
+    """The container's proxy environment keys, from its listed config when possible."""
+    config = raw.get("config") if raw is not None else None
+    if isinstance(config, dict):
+        return {k: config.get(f"environment.{k}") or None for k in PROXY_ENV_KEYS}
+    return {k: incus.config_get(name, f"environment.{k}") or None for k in PROXY_ENV_KEYS}
+
+
 def sync_container_env(
-    cfg: Config, incus: Incus, session: Session, name: str, mode: str | None
+    cfg: Config,
+    incus: Incus,
+    session: Session,
+    name: str,
+    mode: str | None,
+    *,
+    raws: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Point one container's proxy environment at its bridge's proxy, or clear it."""
+    """Point one container's proxy environment at its bridge's proxy, or clear it.
+
+    ``raws`` is an ``incus list`` the caller already holds; with it this reads
+    the container, the proxy's addresses and the current variables from that
+    snapshot instead of asking Incus again.
+    """
     from jailbee.egress_scope import container_extras, effective_repo_entries
 
     entries = [*effective_repo_entries(cfg, session), *container_extras(incus, name)]
+    raw = None
     wanted: dict[str, str] = {}
     if container_wants_proxy(entries, [], mode):
-        raw = next((r for r in incus.list_containers() if r.get("name") == name), {})
+        listed = raws if raws is not None else incus.list_containers()
+        raw = next((r for r in listed if r.get("name") == name), {})
         bridge = _eth0_device(raw).get("network")
         if not isinstance(bridge, str):
             tui.warn(f"cannot find the eth0 network of {name}; egress proxy env cleared")
             endpoint = None
         else:
-            endpoint = endpoint_for_bridge(incus, bridge)
+            proxy = next((r for r in listed if r.get("name") == PROXY_CONTAINER), None)
+            endpoint = _client_devices(proxy).get(bridge)
             if endpoint is None:
                 tui.warn(
                     "egress proxy is not running; wildcard egress entries are unavailable "
                     "— run `jailbee apply`"
                 )
         if endpoint is not None:
-            wanted = proxy_env(endpoint, entries)
-    for key in PROXY_ENV_KEYS:
-        current = incus.config_get(name, f"environment.{key}")
+            wanted = proxy_env(endpoint, entries, other_service_ips(incus, EGRESS_PROXY_LABEL))
+    elif raws is not None:
+        raw = next((r for r in raws if r.get("name") == name), None)
+    for key, current in _current_env(incus, name, raw).items():
         value = wanted.get(key)
         if value is None:
             if current:
@@ -524,15 +581,59 @@ def sync_container_env(
             incus.config_set(name, f"environment.{key}", value)
 
 
-def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> None:
-    """Refresh one container's proxy env and its repo's rules. Never raises."""
+_SYNC_ERRORS = (IncusError, RuntimeError, ValueError, SQLAlchemyError)
+
+
+def sync_container_env_only(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    mode: str | None,
+    *,
+    raws: list[dict[str, Any]] | None = None,
+) -> None:
+    """Refresh one container's proxy environment alone. Never raises.
+
+    For loops over many containers (``jailbee apply``): the repo's rules are
+    pushed once afterwards with ``sync_repo``, not once per container.
+    """
     from sqlmodel import Session
 
     from jailbee.db import get_engine
 
     try:
         with Session(get_engine()) as session:
-            sync_container_env(cfg, incus, session, name, mode)
+            sync_container_env(cfg, incus, session, name, mode, raws=raws)
+    except _SYNC_ERRORS as e:
+        tui.warn_plain(f"egress proxy environment for {name} failed: {e}")
+
+
+def sync_repo(cfg: Config, incus: Incus) -> None:
+    """Refresh this repo's Squid rules alone. Never raises."""
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+
+    try:
+        with Session(get_engine()) as session:
             sync_repo_rules(cfg, incus, session)
-    except (IncusError, RuntimeError) as e:
-        tui.warn(f"egress proxy sync for {name} failed: {e}")
+    except _SYNC_ERRORS as e:
+        tui.warn_plain(f"egress proxy rules for {cfg.container_prefix} failed: {e}")
+
+
+def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> None:
+    """Refresh one container's proxy env and its repo's rules. Never raises.
+
+    Rules first, then the environment: a container that is told to use the proxy
+    must find its source address already allowed, or its first requests get a 403.
+    """
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+
+    try:
+        with Session(get_engine()) as session:
+            sync_repo_rules(cfg, incus, session)
+            sync_container_env(cfg, incus, session, name, mode)
+    except _SYNC_ERRORS as e:
+        tui.warn_plain(f"egress proxy sync for {name} failed: {e}")

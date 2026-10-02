@@ -485,7 +485,9 @@ def run_apply(
             hosts_repinned.append(ci.name)
         # Every running container, whatever its mode or wildcards: with none
         # left, this unsets a proxy environment an earlier wildcard installed.
-        egress_proxy.sync_container(cfg, incus, ci.name, ci.network)
+        egress_proxy.sync_container_env_only(
+            cfg, incus, ci.name, ci.network, raws=list(raw_by_name.values())
+        )
         if mirror_endpoint is not None and mirror_ca_pem is not None and mirror_port is not None:
             from jailbee.docker_daemon import apply_docker_proxy
 
@@ -505,6 +507,10 @@ def run_apply(
             warn(
                 f"Could not update LiteLLM settings on {short}: {e}; run `jailbee apply` to retry."
             )
+
+    # The repo's Squid rules once, after every container's environment is set,
+    # instead of a full rebuild per container.
+    egress_proxy.sync_repo(cfg, incus)
 
     orphans = _sweep_orphan_extra_acls(cfg, incus)
     if orphans:
