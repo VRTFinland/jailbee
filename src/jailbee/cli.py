@@ -11423,8 +11423,7 @@ def snap_restore_cmd(
         str | None,
         typer.Argument(
             help=(
-                "Snapshot to restore, as listed by `jailbee snapshot ls`. "
-                "Asked for when omitted."
+                "Snapshot to restore, as listed by `jailbee snapshot ls`. Asked for when omitted."
             ),
             autocompletion=completion.complete_snapshot,
         ),
@@ -11510,8 +11509,7 @@ def snap_delete_cmd(
         str | None,
         typer.Argument(
             help=(
-                "Snapshot to delete, as listed by `jailbee snapshot ls`. "
-                "Asked for when omitted."
+                "Snapshot to delete, as listed by `jailbee snapshot ls`. Asked for when omitted."
             ),
             autocompletion=completion.complete_snapshot,
         ),

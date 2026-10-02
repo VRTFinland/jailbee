@@ -505,7 +505,9 @@ def test_rm_without_forwards_exits_2(repo, mocker):
 
 
 def test_rm_container_choice_is_destructive_only_when_the_handle_is_missing(repo, mocker):
-    resolve = mocker.patch("jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "app-x"))
+    resolve = mocker.patch(
+        "jailbee.cli._resolve_existing", return_value=(mocker.MagicMock(), "app-x")
+    )
     mocker.patch("jailbee.ports.remove_forward", return_value=mocker.Mock(device="d"))
     runner.invoke(app, ["port", "rm", "adb"])
     assert resolve.call_args.kwargs == {"always_prompt": False}
