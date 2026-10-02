@@ -9005,7 +9005,7 @@ def egress_add_cmd(
 ) -> None:
     """Allow one host. Scoped to one container unless --repo is given."""
     from jailbee import egress_scope
-    from jailbee.egress import NetworkResolveError, parse_egress_entry
+    from jailbee.egress import NetworkResolveError, validate_allow_entry
 
     name = _egress_container_name(name, container_option, repo=repo)
     if entry is None:
@@ -9023,7 +9023,7 @@ def egress_add_cmd(
         if entry is None:
             return
     try:
-        parse_egress_entry(entry)
+        validate_allow_entry(entry)
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e

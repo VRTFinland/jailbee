@@ -497,10 +497,10 @@ class Config(BaseModel):
     def _validate_egress_allow(cls, v: list[str]) -> list[str]:
         # Validate each entry parses cleanly. Local import avoids
         # config <-> egress circular dependency at module load.
-        from jailbee.egress import parse_egress_entry
+        from jailbee.egress import validate_allow_entry
 
         for raw in v:
-            parse_egress_entry(raw)  # raises ValueError on bad input
+            validate_allow_entry(raw)  # raises ValueError on bad input
         return v
 
     @field_validator("host_ports")

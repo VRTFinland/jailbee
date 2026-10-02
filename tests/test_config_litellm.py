@@ -334,6 +334,14 @@ def test_egress_entries_are_parsed(where):
         LiteLLMConfig.model_validate(raw)
 
 
+@pytest.mark.parametrize("where", ["route", "top"])
+def test_egress_wildcards_stay_an_error(where):
+    bad = ["*.x.com"]
+    raw = {"routes": {"kimi": {**_KIMI, "egress": bad}}} if where == "route" else {"egress": bad}
+    with pytest.raises(ValidationError, match="proxy-only"):
+        LiteLLMConfig.model_validate(raw)
+
+
 def test_extra_is_an_optional_path():
     assert LiteLLMConfig().extra is None
     cfg = LiteLLMConfig.model_validate({"extra": "~/.config/jailbee/litellm/extra.yaml"})

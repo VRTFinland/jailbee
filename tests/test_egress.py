@@ -7,7 +7,12 @@ import pytest
 from jailbee.egress import (
     EgressSpec,
     NetworkResolveError,
+    WildcardSpec,
+    acl_raw_entries,
+    is_wildcard_entry,
     parse_egress_entry,
+    parse_wildcard_entry,
+    validate_allow_entry,
 )
 
 
@@ -205,3 +210,54 @@ def test_build_entries_propagates_resolve_error(mocker):
 def test_build_entries_propagates_parse_error():
     with pytest.raises(ValueError, match="port"):
         build_egress_entries(["github.com:99999"])
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("*.vendor.com", WildcardSpec(domain="vendor.com", port=None)),
+        ("*.a.vendor.co.uk:8443", WildcardSpec(domain="a.vendor.co.uk", port=8443)),
+        ("*.Vendor.COM", WildcardSpec(domain="vendor.com", port=None)),
+    ],
+)
+def test_parse_wildcard_accepts(raw, expected):
+    assert parse_wildcard_entry(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "*",
+        "*.",
+        "*.com",
+        "*vendor.com",
+        "foo*.vendor.com",
+        "a.*.vendor.com",
+        "*.*.vendor.com",
+        "*.10.0.0.0/8",
+        "*.1.2.3.4",
+        "*.vendor.com:0",
+        "*.vendor.com:70000",
+        "*.vendor.com:x",
+        "*.-bad.com",
+    ],
+)
+def test_parse_wildcard_rejects(raw):
+    with pytest.raises(ValueError):
+        parse_wildcard_entry(raw)
+
+
+def test_parse_egress_entry_still_rejects_wildcards_with_a_specific_message():
+    with pytest.raises(ValueError, match="proxy-only"):
+        parse_egress_entry("*.vendor.com")
+
+
+def test_validate_allow_entry_dispatches():
+    assert validate_allow_entry("*.vendor.com") == WildcardSpec("vendor.com", None)
+    assert validate_allow_entry("github.com:22") == EgressSpec("github.com", 22, False)
+
+
+def test_is_wildcard_and_acl_raw_entries():
+    raw = ["github.com", "*.vendor.com", "10.0.0.0/8", "*.x.org:443"]
+    assert [is_wildcard_entry(r) for r in raw] == [False, True, False, True]
+    assert acl_raw_entries(raw) == ["github.com", "10.0.0.0/8"]

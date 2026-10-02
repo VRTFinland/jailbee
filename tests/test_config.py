@@ -857,6 +857,18 @@ def test_egress_allow_accepts_valid_entries():
     assert len(cfg.egress_allow) == 6
 
 
+def test_egress_allow_accepts_wildcards():
+    cfg = Config.model_validate({"egress_allow": ["*.vendor.com", "*.x.org:8443"]})
+    assert cfg.egress_allow == ["*.vendor.com", "*.x.org:8443"]
+
+
+def test_egress_allow_rejects_bare_star():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config.model_validate({"egress_allow": ["*"]})
+
+
 def test_egress_allow_rejects_bad_port():
     from pydantic import ValidationError
 

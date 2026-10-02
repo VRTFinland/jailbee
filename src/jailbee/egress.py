@@ -1,12 +1,14 @@
 """Egress allowlist parsing and DNS resolution.
 
-`egress_allow` entries support six forms:
+`egress_allow` entries support eight forms:
     <hostname>             → resolve, any protocol/port
     <hostname>:<port>      → resolve, TCP/<port> only
     <ipv4>                 → literal, any protocol/port
     <ipv4>:<port>          → literal, TCP/<port> only
     <cidr>                 → literal, any protocol/port
     <cidr>:<port>          → literal, TCP/<port> only
+    *.<domain>             → proxy-only wildcard: domain and subdomains, default ports
+    *.<domain>:<port>      → proxy-only wildcard, TCP/<port> only
 
 The port-less forms emit an ACL rule with no `protocol` field, which
 Incus reads as "any protocol" (see `network.allowlist_acl_yaml` and
@@ -22,6 +24,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 # RFC 1123-ish hostname: labels of [a-z0-9-], not starting/ending with -,
@@ -44,6 +47,18 @@ class EgressSpec:
     target: str
     port: int | None
     is_literal: bool
+
+
+@dataclass(frozen=True)
+class WildcardSpec:
+    """A `*.domain[:port]` entry: the domain and all its subdomains, proxy-only.
+
+    `domain` is lower-cased and carries no leading `*.`. `port` None means the
+    proxy's default ports (80 and 443), not "any port".
+    """
+
+    domain: str
+    port: int | None
 
 
 @dataclass(frozen=True)
@@ -71,6 +86,8 @@ def parse_egress_entry(raw: str) -> EgressSpec:
     """Parse one `egress_allow` entry. Raises ValueError on malformed input."""
     if not raw:
         raise ValueError("empty egress_allow entry")
+    if is_wildcard_entry(raw):
+        raise ValueError(f"wildcard entry {raw!r} is proxy-only and cannot be resolved")
 
     target, port = _split_target_port(raw)
     is_literal = _is_ip_or_cidr(target)
@@ -82,6 +99,38 @@ def parse_egress_entry(raw: str) -> EgressSpec:
         )
 
     return EgressSpec(target=target, port=port, is_literal=is_literal)
+
+
+def is_wildcard_entry(raw: str) -> bool:
+    return raw.startswith("*")
+
+
+def parse_wildcard_entry(raw: str) -> WildcardSpec:
+    """Parse one `*.domain[:port]` entry. Raises ValueError on malformed input."""
+    if not raw.startswith("*."):
+        raise ValueError(f"invalid wildcard entry {raw!r}: only a leading '*.' label is allowed")
+    target, port = _split_target_port(raw)
+    domain = target[2:].lower()
+    if "*" in domain or _is_ip_or_cidr(domain) or not _HOSTNAME_RE.match(domain):
+        raise ValueError(f"invalid wildcard entry {raw!r}: {domain!r} is not a hostname")
+    if domain.count(".") < 1:
+        raise ValueError(
+            f"invalid wildcard entry {raw!r}: "
+            "needs at least two labels after '*.' (e.g. *.example.com)"
+        )
+    return WildcardSpec(domain=domain, port=port)
+
+
+def validate_allow_entry(raw: str) -> EgressSpec | WildcardSpec:
+    """Parse an `egress_allow` entry of either kind."""
+    if is_wildcard_entry(raw):
+        return parse_wildcard_entry(raw)
+    return parse_egress_entry(raw)
+
+
+def acl_raw_entries(raw_entries: Iterable[str]) -> list[str]:
+    """`raw_entries` without wildcards: the subset the ACL, IP pool and /etc/hosts may see."""
+    return [raw for raw in raw_entries if not is_wildcard_entry(raw)]
 
 
 def _split_target_port(raw: str) -> tuple[str, int | None]:

@@ -173,11 +173,11 @@ def parse_list(spec: FieldSpec, text: str) -> tuple[list[str] | None, str | None
     """
     entries = [line.strip() for line in text.splitlines() if line.strip()]
     if spec.path == ("egress_allow",):
-        from jailbee.egress import parse_egress_entry
+        from jailbee.egress import validate_allow_entry
 
         for lineno, entry in enumerate(entries, start=1):
             try:
-                parse_egress_entry(entry)
+                validate_allow_entry(entry)
             except ValueError as exc:
                 return None, f"Line {lineno}: {exc}"
     return entries, None
