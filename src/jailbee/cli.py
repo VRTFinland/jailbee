@@ -4047,6 +4047,7 @@ def _post_start_actions(
     `_boot_worker` passes `_inline_autostart_handler`, which runs the same
     algorithm in its own process, because it is already the detached one.
     """
+    from jailbee import egress_proxy
     from jailbee.autostart import (
         AutostartStepError,
         AutostartTrigger,
@@ -4057,9 +4058,9 @@ def _post_start_actions(
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
-    sync_hosts(
-        cfg, incus, name, current_network_mode(cfg, incus, name), mirror_endpoint=mirror_endpoint
-    )
+    mode = current_network_mode(cfg, incus, name)
+    sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
+    egress_proxy.sync_container(cfg, incus, name, mode)
 
     repo_dir = container_repo_dir(cfg, incus, name)
 

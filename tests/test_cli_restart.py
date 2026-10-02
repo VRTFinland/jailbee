@@ -90,6 +90,32 @@ def test_restart_pins_hosts_for_strict_container(mocker):
     apply.assert_called_once()
 
 
+def test_restart_syncs_the_proxy_with_the_current_mode(mocker):
+    """Restart re-syncs the proxy env and rules next to the /etc/hosts pin."""
+    from jailbee import egress_proxy
+
+    _common_mocks(mocker)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.autostart.run_autostart")
+    mocker.patch("jailbee.hosts.apply_hosts")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    result = runner.invoke(
+        app,
+        [
+            "restart",
+            "myrepo-feat-x",
+            "--no-autostart",
+            "--config",
+            str(FIXTURES / "full_config.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    sync.assert_called_once()
+    assert sync.call_args.args[2:] == ("myrepo-feat-x", "strict")
+
+
 def test_restart_launches_chrome_and_ide_when_gui_available(mocker):
     _common_mocks(mocker)
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=True)

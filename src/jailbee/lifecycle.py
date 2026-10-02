@@ -1635,6 +1635,10 @@ def new_container(
 
     sync_hosts(cfg, incus, name, opts.network, mirror_endpoint=opts.mirror_endpoint)
 
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, name, opts.network)
+
     # Wire dockerd to the registry mirror via HTTPS_PROXY. Strict
     # mode needs the proxy to reach upstreams under its ACL; loose mode
     # gets it too for caching. None endpoint OR None CA path means caller
@@ -2451,6 +2455,12 @@ def switch_network(
     from jailbee.hosts import sync_hosts
 
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
+
+    # Last, with the new mode: the profile and ACL switch above have landed,
+    # so the proxy rules and environment now match the container's real mode.
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, name, mode)
 
 
 def _stdin_is_interactive() -> bool:

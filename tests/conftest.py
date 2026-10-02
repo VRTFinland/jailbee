@@ -364,6 +364,28 @@ def _block_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_egress_proxy_wiring(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the egress proxy out of every test that is not about it.
+
+    `egress_proxy.sync_container` opens the real state database and reads
+    container config; `proxy_up` creates a container. The callers (apply, new,
+    switch, start) only need to be asserted on, so the two entry points become
+    mocks. The `test_egress_proxy*` modules test the real functions and keep
+    them. A test that asserts on a call re-patches the attribute itself.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1].startswith("test_egress_proxy"):
+        return
+    from unittest.mock import MagicMock
+
+    from jailbee import egress_proxy
+
+    monkeypatch.setattr(egress_proxy, "sync_container", MagicMock())
+    monkeypatch.setattr(egress_proxy, "proxy_up", MagicMock())
+
+
+@pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 

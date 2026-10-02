@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
-from jailbee.incus import Incus
+from jailbee.incus import Incus, IncusError
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +63,18 @@ def _no_container_acl_apply(mocker: MockerFixture) -> Any:
     tests), which call it directly rather than through `run_apply`.
     """
     return mocker.patch("jailbee.egress_scope.apply_container_acl")
+
+
+@pytest.fixture(autouse=True)
+def _no_wildcard_entries(mocker: MockerFixture) -> None:
+    """Default: no wildcard egress entries anywhere, so the proxy is not wanted.
+
+    `run_apply` reads the repo's effective allowlist and each container's
+    extras label to decide whether to start the proxy; most tests here don't
+    configure either. The gating itself is tested at the end of the file.
+    """
+    mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=[])
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=[])
 
 
 @pytest.fixture(autouse=True)
@@ -2996,3 +3008,132 @@ def test_apply_survives_a_failing_reconcile_and_reports_needs_up(make_cfg, tmp_p
     messages = [c.args[0] for c in warn_plain.call_args_list]
     assert any("jailbee litellm up" in m and "work" in m for m in messages)
     assert "bad.yaml" in messages
+
+
+# ---- egress proxy wiring ----------------------------------------------------
+
+
+def _proxy_apply_setup(make_cfg, tmp_path: Path, mocker: MockerFixture, *, entries, extras=()):
+    """A run_apply with one running strict container `a` and a chosen allowlist."""
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="a",
+                state="Running",
+                network="strict",
+                ip="10.0.0.1",
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            )
+        ],
+    )
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=list(entries))
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=list(extras))
+    return cfg, incus
+
+
+def test_run_apply_starts_the_proxy_for_a_repo_wildcard(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee import egress_proxy
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["*.example.com"])
+    order: list[str] = []
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=lambda *a, **k: order.append("up"))
+    sync = mocker.patch.object(
+        egress_proxy, "sync_container", side_effect=lambda *a, **k: order.append("sync")
+    )
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    assert order == ["up", "sync"]
+    assert egress_proxy.proxy_up.call_args.args == (incus,)
+    assert callable(egress_proxy.proxy_up.call_args.kwargs["on_step"])
+    sync.assert_called_once_with(cfg, incus, "a", "strict")
+
+
+def test_run_apply_starts_the_proxy_for_a_container_extras_wildcard(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee import egress_proxy
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg, incus = _proxy_apply_setup(
+        make_cfg, tmp_path, mocker, entries=["example.com"], extras=["*.corp.test"]
+    )
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    up.assert_called_once()
+
+
+def test_run_apply_without_a_wildcard_skips_the_proxy_but_still_syncs(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The sync is what unsets a stale proxy env after the last wildcard goes."""
+    from jailbee import egress_proxy
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["example.com"])
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    up.assert_not_called()
+    sync.assert_called_once_with(cfg, incus, "a", "strict")
+
+
+@pytest.mark.parametrize("error", [RuntimeError("squid down"), IncusError("boom")])
+def test_run_apply_continues_when_the_proxy_cannot_start(
+    make_cfg, tmp_path: Path, mocker: MockerFixture, error: Exception
+) -> None:
+    from jailbee import egress_proxy
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg, incus = _proxy_apply_setup(make_cfg, tmp_path, mocker, entries=["*.example.com"])
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=error)
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+    warn = mocker.patch("jailbee.tui.warn")
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    assert any("egress proxy" in c.args[0] for c in warn.call_args_list)
+    sync.assert_called_once()
+
+
+def test_restart_one_syncs_the_proxy_with_the_current_mode(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee import egress_proxy
+    from jailbee.apply import _restart_one
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.autostart.run_autostart")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    _restart_one(cfg, incus, "a")
+
+    sync.assert_called_once_with(cfg, incus, "a", "strict")

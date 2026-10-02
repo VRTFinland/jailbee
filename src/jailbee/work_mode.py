@@ -109,3 +109,9 @@ def switch_work_network(
     from jailbee.hosts import sync_hosts
 
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
+
+    # After the mode change has landed: the proxy fragment lists strict
+    # containers only, so syncing earlier would leave this one's IP in it.
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, name, mode)

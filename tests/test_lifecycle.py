@@ -1373,6 +1373,30 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     incus.start.assert_called_once_with("repo-feat-x")
 
 
+def test_new_container_syncs_the_proxy_with_the_requested_mode(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    sync.assert_called_once_with(cfg, incus, "repo-feat-x", "strict")
+
+
 @pytest.mark.parametrize("with_payload", [True, False])
 def test_new_container_syncs_litellm_only_when_payload_supplied(tmp_path, mocker, with_payload):
     cfg = _cfg_for_new(tmp_path)
@@ -5443,6 +5467,63 @@ def test_switch_network_to_loose_keeps_the_mirror_row(make_cfg, tmp_path, mocker
         cfg, incus, "myrepo-x", entries=[], mirror_endpoint=("10.42.0.7", 3128)
     )
     clear.assert_not_called()
+
+
+def test_switch_network_to_loose_syncs_the_proxy_after_the_switch(make_cfg, tmp_path, mocker):
+    """The container's IP must leave the strict-only Squid fragment, so the sync
+    runs with the NEW mode and after the profile and ACL switch have landed."""
+    from jailbee import egress_proxy
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    order: list[str] = []
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch(
+        "jailbee.egress_scope.apply_container_acl",
+        side_effect=lambda *_a, **_k: order.append("acl"),
+    )
+    sync = mocker.patch.object(
+        egress_proxy, "sync_container", side_effect=lambda *_a, **_k: order.append("proxy")
+    )
+    incus = MagicMock()
+    incus.profile_assign.side_effect = lambda *_a: order.append("profile")
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+        }
+    ]
+
+    switch_network(cfg, incus, "myrepo-x", "loose")
+
+    sync.assert_called_once_with(cfg, incus, "myrepo-x", "loose")
+    assert order == ["profile", "acl", "proxy"]
+
+
+def test_switch_network_to_strict_syncs_the_proxy_with_strict(make_cfg, tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-loose"],
+        }
+    ]
+
+    switch_network(cfg, incus, "myrepo-x", "strict")
+
+    sync.assert_called_once_with(cfg, incus, "myrepo-x", "strict")
 
 
 def test_work_switch_loose_grants_before_removing_nic_acl(make_cfg, tmp_path, mocker):
