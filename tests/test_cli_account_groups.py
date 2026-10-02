@@ -1621,3 +1621,40 @@ def test_use_without_group_and_no_groups_exits_2_and_changes_nothing(group_env, 
     assert result.exit_code == 2
     assert "account group create" in panel_text(result.output)
     setter.assert_not_called()
+
+
+@pytest.mark.parametrize("verb", ["create", "rm", "set", "use"])
+def test_deprecated_claude_group_alias_asks_off_a_tty_like_account_group(group_env, mocker, verb):
+    """The `claude group` wrappers once spelled a required positional of their own."""
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    result = runner.invoke(app, ["claude", "group", verb])
+    assert result.exit_code == 2, result.output
+    assert "Usage" not in result.output
+    setter.assert_not_called()
+
+
+def test_deprecated_claude_group_rm_cancel_removes_nothing(group_env, mocker):
+    from jailbee.accounts import groups
+    from jailbee.accounts.adapters.claude import CLAUDE
+
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    result = runner.invoke(app, ["claude", "group", "rm"])
+    assert result.exit_code == 1
+    assert groups.group_dir(CLAUDE.name, "demo").exists()
+
+
+def test_deprecated_claude_group_use_picks_a_group_and_applies_it(group_env, mocker):
+    mocker.patch("jailbee.accounts.groups.agent_running", return_value=False)
+    mocker.patch("jailbee.cli._resolve_group_container", return_value="myrepo-a")
+    setter = mocker.patch("jailbee.accounts.groups.set_container_group")
+    _claude_group("demo")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="demo")
+    result = runner.invoke(app, ["claude", "group", "use"])
+    assert result.exit_code == 0, result.output
+    assert setter.call_args.args[3] == "demo"

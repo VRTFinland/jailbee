@@ -148,8 +148,8 @@ def test_push_pr_without_name_reports_when_no_eligible_pr_containers(mocker, tmp
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code == 1
-    assert "No running clone-mode PR containers" in result.output
+    assert result.exit_code == 2
+    assert "No running clone-mode PR containers" in panel_text(result.output)
     refresh.assert_not_called()
 
 
@@ -165,8 +165,8 @@ def test_push_pr_without_name_excludes_nonpositive_pr_numbers(mocker, tmp_path, 
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code == 1
-    assert "No running clone-mode PR containers" in result.output
+    assert result.exit_code == 2
+    assert "No running clone-mode PR containers" in panel_text(result.output)
     refresh.assert_not_called()
 
 
@@ -187,8 +187,31 @@ def test_push_pr_without_name_cancel_does_not_fetch_or_push(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code != 0
-    assert "Aborted" in result.output
+    assert result.exit_code == 1
+    assert "cancelled" in result.output
+    refresh.assert_not_called()
+
+
+@pytest.mark.parametrize("several", [False, True])
+def test_push_pr_without_name_off_a_tty_exits_2_naming_candidates(mocker, tmp_path, several):
+    names = ["myrepo-pr-one", "myrepo-pr-two"][: 2 if several else 1]
+    _wire(mocker, tmp_path, containers=[_info(n) for n in names], picked=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.pr": "21",
+        "user.jailbee.branch": "feat/x",
+    }.get(key)
+    pick = mocker.patch("jailbee.tui.pick_container")
+    refresh = mocker.patch("jailbee.cli._refresh_pr_source")
+
+    result = CliRunner().invoke(app, ["push", "--pr"])
+
+    assert result.exit_code == 2
+    text = panel_text(result.output)
+    assert "PR container" in text
+    assert "pr-one" in text
+    pick.assert_not_called()
     refresh.assert_not_called()
 
 

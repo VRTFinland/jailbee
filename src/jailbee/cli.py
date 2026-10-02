@@ -6705,29 +6705,27 @@ def push(
         from jailbee.incus import Incus
         from jailbee.lifecycle import list_containers
 
-        if not prompting.is_interactive():
-            error(
-                "No container name given. Pass a PR container name, or run in a TTY to select one."
-            )
-            raise typer.Exit(1)
-
         pr_incus = Incus()
         candidates = [
             c
             for c in list_containers(cfg, pr_incus, with_git_status=False)
             if c.state == "Running" and c.mode != "mount" and _pr_head_for(pr_incus, c.name)
         ]
-        if not candidates:
-            error("No running clone-mode PR containers to push to.")
-            raise typer.Exit(1)
-        if len(candidates) == 1:
+        if len(candidates) == 1 and prompting.is_interactive():
             full = candidates[0].name
             info(f"Only one eligible PR container; pushing to '{short_name(cfg, full)}'.")
         else:
-            picked_pr = tui.pick_container(candidates, message="Select a PR container to push to:")
-            if picked_pr is None:
-                raise typer.Abort()
-            full = picked_pr
+            # Destructive only in the sense that a lone candidate is not taken
+            # unasked here: off a TTY it must be named, as for the plain branch.
+            full = prompting.choose_one(
+                "PR container",
+                [prompting.Option(c.name, c.display_name, c.display_name) for c in candidates],
+                destructive=True,
+                empty_reason="No running clone-mode PR containers to push to.",
+                picker=lambda _opts: tui.pick_container(
+                    candidates, message="Select a PR container to push to:"
+                ),
+            )
         selected_pr = (pr_incus, full)
 
     ref_pref = _resolve_push_ref_pref(
@@ -15524,7 +15522,10 @@ def claude_group_ls_cmd(
 
 @claude_group_app.command("create")
 def claude_group_create_cmd(
-    group: Annotated[str, typer.Argument(help="Name for the new credential group.")],
+    group: Annotated[
+        str | None,
+        typer.Argument(help="Name for the new credential group. Asked for when omitted."),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Deprecated: use `jailbee account group create`."""
@@ -15535,12 +15536,12 @@ def claude_group_create_cmd(
 @claude_group_app.command("rm")
 def claude_group_rm_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Credential group to remove.",
+            help="Credential group to remove. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Park a login the group still holds without asking."),
@@ -15555,12 +15556,14 @@ def claude_group_rm_cmd(
 @claude_group_app.command("set")
 def claude_group_set_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` to keep this repo on its own login.",
+            help=(
+                "Group name, or `none` to keep this repo on its own login. Asked for when omitted."
+            ),
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     force: Annotated[
         bool,
         typer.Option(
@@ -15594,12 +15597,12 @@ def claude_group_unset_cmd(
 @claude_group_app.command("use")
 def claude_group_use_cmd(
     group: Annotated[
-        str,
+        str | None,
         typer.Argument(
-            help="Group name, or `none` for no group.",
+            help="Group name, or `none` for no group. Asked for when omitted.",
             autocompletion=completion.complete_credential_group,
         ),
-    ],
+    ] = None,
     container: Annotated[
         str | None,
         typer.Argument(

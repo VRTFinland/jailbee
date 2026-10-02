@@ -8080,21 +8080,37 @@ def test_cli_push_pr_and_current_are_mutex(mocker):
     assert "mutually exclusive" in result.output.lower()
 
 
-def test_cli_push_pr_without_name_requires_tty(mocker):
+def test_cli_push_pr_without_name_off_a_tty_is_a_missing_value(mocker):
     from typer.testing import CliRunner
 
     from jailbee.cli import app
+    from jailbee.lifecycle import ContainerInfo
+    from tests.conftest import panel_text
 
     mocker.patch("jailbee.cli._load_or_exit", return_value=mocker.MagicMock())
-    incus = mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.config_get.return_value = "21"
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-pr-one",
+                state="Running",
+                network=None,
+                ip=None,
+                memory_limit=None,
+                repo="myrepo",
+                mode="clone",
+            )
+        ],
+    )
     picker = mocker.patch("jailbee.tui.pick_container")
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code == 1
-    assert "Pass a PR container name" in result.output
-    assert "TTY" in result.output
-    incus.assert_not_called()
+    assert result.exit_code == 2
+    assert "pr-one" in panel_text(result.output)
     picker.assert_not_called()
 
 
