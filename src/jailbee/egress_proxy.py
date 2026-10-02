@@ -477,7 +477,7 @@ def collect_scopes(cfg: Config, incus: Incus, session: Session) -> list[ProxySco
             continue  # no address yet; the next sync picks it up
         repo_sources.append(ip)
         if extras and generation_of(cfg, raw) == "work":
-            container_scopes.append(ProxyScope(info.name, (ip,), tuple(extras)))
+            container_scopes.append(ProxyScope(info.name, (ip,), tuple(extras), kind="c"))
     repo_scope = ProxyScope(cfg.container_prefix, tuple(repo_sources), tuple(repo_entries))
     return [repo_scope, *container_scopes]
 

@@ -23,8 +23,10 @@ when it equals the domain or ends with ``"." + domain``.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from jailbee.egress import EgressSpec, WildcardSpec, validate_allow_entry
 
@@ -50,6 +52,11 @@ class ProxyScope:
     key: str  # squid-safe id, e.g. "myrepo" or "myrepo-feat-x"
     sources: tuple[str, ...]  # client IPv4 addresses, no prefix length
     entries: tuple[str, ...]  # raw egress entries, any kind
+    # "r" = a repo prefix, "c" = a container name. Both are [a-z0-9-]+ (no "_"), so
+    # ``jb_<kind>_<key>_...`` cannot collide across kinds: a repo ``web-api`` and the
+    # container ``web-api`` of repo ``web`` would otherwise share ACL names, which
+    # Squid merges when the types match.
+    kind: Literal["r", "c"] = "r"
 
 
 def _group_entries(entries: Iterable[str]) -> dict[_Group, list[str]]:
@@ -88,18 +95,34 @@ def _drop_covered(names: list[str]) -> list[str]:
     ]
 
 
+# Squid's ACL names are limited (63 characters in older versions); the longest
+# suffix this module appends is "_src" / "_d<n>" / "_p<n>" with a small n.
+_ACL_NAME_MAX = 63
+_ACL_SUFFIX_ROOM = 8
+
+
+def _acl_base(scope: ProxyScope) -> str:
+    """The ACL-name stem of a scope, hashed down when the key would not fit."""
+    base = f"jb_{scope.kind}_{scope.key}"
+    if len(base) + _ACL_SUFFIX_ROOM <= _ACL_NAME_MAX:
+        return base
+    digest = hashlib.sha1(scope.key.encode()).hexdigest()[:16]
+    return f"jb_{scope.kind}_h{digest}"
+
+
 def _render_scope(scope: ProxyScope) -> list[str]:
-    src = f"jb_{scope.key}_src"
+    base = _acl_base(scope)
+    src = f"{base}_src"
     lines = [f"acl {src} src " + " ".join(f"{ip}/32" for ip in scope.sources)]
     for g, ((kind, ports), names) in enumerate(_group_entries(scope.entries).items()):
-        dst = f"jb_{scope.key}_d{g}"
+        dst = f"{base}_d{g}"
         if kind == "domain":
             lines.append(f"acl {dst} dstdomain -n " + " ".join(names))
         else:
             lines.append(f"acl {dst} dst " + " ".join(names))
         rule = f"http_access allow {src} {dst}"
         if ports is not None:
-            port_acl = f"jb_{scope.key}_p{g}"
+            port_acl = f"{base}_p{g}"
             lines.append(f"acl {port_acl} port " + " ".join(str(p) for p in ports))
             rule += f" {port_acl}"
         lines.append(rule)

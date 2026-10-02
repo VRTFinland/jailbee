@@ -6,23 +6,23 @@ from jailbee.egress_proxy_render import (
 )
 
 
-def _scope(key="myrepo", sources=("10.1.0.5",), entries=("*.vendor.com",)):
-    return ProxyScope(key=key, sources=tuple(sources), entries=tuple(entries))
+def _scope(key="myrepo", sources=("10.1.0.5",), entries=("*.vendor.com",), kind="r"):
+    return ProxyScope(key=key, sources=tuple(sources), entries=tuple(entries), kind=kind)
 
 
 def test_wildcard_defaults_to_80_and_443():
     out = render_fragment("myrepo", [_scope()])
-    assert "acl jb_myrepo_src src 10.1.0.5/32" in out
-    assert "acl jb_myrepo_d0 dstdomain -n .vendor.com" in out
-    assert "acl jb_myrepo_p0 port 80 443" in out
-    assert "http_access allow jb_myrepo_src jb_myrepo_d0 jb_myrepo_p0" in out
+    assert "acl jb_r_myrepo_src src 10.1.0.5/32" in out
+    assert "acl jb_r_myrepo_d0 dstdomain -n .vendor.com" in out
+    assert "acl jb_r_myrepo_p0 port 80 443" in out
+    assert "http_access allow jb_r_myrepo_src jb_r_myrepo_d0 jb_r_myrepo_p0" in out
 
 
 def test_hostname_without_port_allows_all_ports():
     out = render_fragment("myrepo", [_scope(entries=("github.com",))])
     assert "dstdomain -n github.com" in out
     assert " port " not in out
-    assert "http_access allow jb_myrepo_src jb_myrepo_d0\n" in out
+    assert "http_access allow jb_r_myrepo_src jb_r_myrepo_d0\n" in out
 
 
 def test_explicit_ports_get_their_own_groups():
@@ -39,7 +39,7 @@ def test_ip_and_cidr_entries_render_as_dst():
 
 
 def test_scope_without_sources_or_entries_is_omitted():
-    out = render_fragment("r", [_scope(key="r", sources=()), _scope(key="r-ct", entries=())])
+    out = render_fragment("r", [_scope(key="r", sources=()), _scope(key="r-ct", entries=(), kind="c")])
     assert "acl " not in out and "http_access" not in out
 
 
@@ -48,16 +48,16 @@ def test_sources_never_leak_between_scopes():
         "r",
         [
             _scope(key="r", sources=("10.1.0.5",), entries=("*.a.com",)),
-            _scope(key="r-ct", sources=("10.1.0.9",), entries=("*.secret.com",)),
+            _scope(key="r-ct", sources=("10.1.0.9",), entries=("*.secret.com",), kind="c"),
         ],
     )
-    assert "acl jb_r_src src 10.1.0.5/32" in out
-    assert "acl jb_r-ct_src src 10.1.0.9/32" in out
+    assert "acl jb_r_r_src src 10.1.0.5/32" in out
+    assert "acl jb_c_r-ct_src src 10.1.0.9/32" in out
     for line in out.splitlines():
         if ".secret.com" in line:
-            assert line.startswith("acl jb_r-ct_")
-        if line.startswith("http_access") and "jb_r-ct_d" in line:
-            assert "jb_r-ct_src" in line and "jb_r_src" not in line
+            assert line.startswith("acl jb_c_r-ct_")
+        if line.startswith("http_access") and "jb_c_r-ct_d" in line:
+            assert "jb_c_r-ct_src" in line and "jb_r_r_src" not in line
 
 
 def test_hostname_covered_by_wildcard_in_same_acl_is_dropped():
@@ -106,3 +106,24 @@ def test_proxy_env():
     assert env["HTTPS_PROXY"] == env["https_proxy"] == "http://10.1.0.2:3128"
     assert env["HTTP_PROXY"] == env["http_proxy"] == "http://10.1.0.2:3128"
     assert env["NO_PROXY"] == env["no_proxy"] == "localhost,127.0.0.1,.incus,10.0.0.0/8,1.2.3.4"
+
+
+def test_repo_and_container_with_the_same_key_do_not_share_acl_names():
+    out = render_fragment(
+        "web-api",
+        [
+            _scope(key="web-api", sources=("10.1.0.5",), entries=("*.a.com",)),
+            _scope(key="web-api", sources=("10.1.0.9",), entries=("b.com",), kind="c"),
+        ],
+    )
+    names = [line.split()[1] for line in out.splitlines() if line.startswith("acl ")]
+    assert len(names) == len(set(names))
+    assert "jb_r_web-api_src" in names and "jb_c_web-api_src" in names
+
+
+def test_long_keys_are_hashed_to_keep_acl_names_short():
+    key = "a" * 60
+    out = render_fragment("r", [_scope(key=key, kind="c", entries=("*.a.com",))])
+    names = [line.split()[1] for line in out.splitlines() if line.startswith("acl ")]
+    assert all(len(n) <= 63 for n in names)
+    assert key not in out
