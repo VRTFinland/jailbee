@@ -540,16 +540,26 @@ def test_strict_nic_acls_order(make_cfg, tmp_path):
 
 
 def test_services_acl_empty_without_endpoint():
-    acl = yaml.safe_load(services_acl_yaml(None))
+    acl = yaml.safe_load(services_acl_yaml({}))
     assert acl["name"] == SERVICES_ACL
     assert acl["egress"] == [] and acl["ingress"] == []
 
 
 def test_services_acl_allows_each_port():
-    acl = yaml.safe_load(services_acl_yaml(("10.9.0.3", [4100, 4101])))
+    acl = yaml.safe_load(services_acl_yaml({"svc": (["10.9.0.3"], [4100, 4101])}))
     assert [(r["destination"], r["destination_port"], r["protocol"]) for r in acl["egress"]] == [
         ("10.9.0.3/32", "4100", "tcp"),
         ("10.9.0.3/32", "4101", "tcp"),
+    ]
+
+
+def test_services_acl_renders_services_in_sorted_label_order_with_label_description():
+    acl = yaml.safe_load(
+        services_acl_yaml({"b svc": (["10.1.0.2"], [3128]), "a svc": (["10.9.0.3"], [4000])})
+    )
+    assert [(r["description"], r["destination"]) for r in acl["egress"]] == [
+        ("a svc", "10.9.0.3/32"),
+        ("b svc", "10.1.0.2/32"),
     ]
 
 

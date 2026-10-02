@@ -45,7 +45,7 @@ from jailbee.loose_bridge import (
     loose_bridge_host_ip,
 )
 from jailbee.network import SERVICES_ACL, service_container_acl_yaml
-from jailbee.services_acl import set_services_endpoint
+from jailbee.services_acl import LITELLM_LABEL, set_service
 
 if TYPE_CHECKING:
     from jailbee.config.models_litellm import LiteLLMConfig, LiteLLMRepoView
@@ -697,7 +697,7 @@ def litellm_up(
         on_step=on_step,
     )
 
-    set_services_endpoint(incus, (ip, listen))
+    set_service(incus, LITELLM_LABEL, ([ip], listen))
     return UpResult(
         ip=ip,
         ports=ports,
@@ -714,7 +714,7 @@ def litellm_up(
 
 def litellm_down(incus: Incus, *, purge: bool = False) -> None:
     """Delete the proxy container; with `purge`, also every login and secret it held."""
-    set_services_endpoint(incus, None)
+    set_service(incus, LITELLM_LABEL, None)
     if _container(incus) is not None:
         incus.delete(LITELLM_CONTAINER, force=True)
     if purge:
@@ -1116,9 +1116,10 @@ def reconcile_services_acl(incus: Incus) -> bool:
         return False
     raw = incus.network_acl_show(SERVICES_ACL)
     parsed = yaml.safe_load(raw) if isinstance(raw, str) else None
-    if not isinstance(parsed, dict) or not parsed.get("egress"):
+    rules = parsed.get("egress") if isinstance(parsed, dict) else None
+    if not any(isinstance(r, dict) and r.get("description") == LITELLM_LABEL for r in rules or []):
         return False
-    set_services_endpoint(incus, None)
+    set_service(incus, LITELLM_LABEL, None)
     return True
 
 
