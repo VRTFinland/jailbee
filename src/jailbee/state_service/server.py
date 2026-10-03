@@ -49,6 +49,17 @@ DRAIN_TIMEOUT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 2.0
 
 
+def _abort(writer: asyncio.StreamWriter) -> None:
+    """Drop a connection now, without flushing.
+
+    `close()` only completes once the write buffer is empty, so a client that
+    stopped reading would stay open and block `Server.wait_closed()` forever.
+    """
+    transport = writer.transport
+    if transport is not None and not transport.is_closing():
+        transport.abort()
+
+
 @dataclass(eq=False)
 class _Client:
     writer: asyncio.StreamWriter
@@ -91,7 +102,7 @@ class StateServer:
                 self._drop(client)
             # `wait_closed` blocks on open connections (3.12+), so close them all.
             for writer in list(self._writers):
-                writer.close()
+                _abort(writer)
             await server.wait_closed()
 
     async def _schedule(self) -> None:
@@ -100,6 +111,9 @@ class StateServer:
                 log.info("no clients for %.0fs; exiting", self._idle_timeout)
                 return
             refresh, self._refresh = self._refresh, False
+            # Cleared before the tick, not after: a Refresh or Shutdown that
+            # arrives mid-tick must cut the next wait short, not be erased.
+            self._wake.clear()
             result = await asyncio.to_thread(
                 self._gatherer.tick,
                 active=any(c.active for c in self._clients),
@@ -110,7 +124,6 @@ class StateServer:
                 if isinstance(result, Snapshot):
                     self._latest = result
                 await self._broadcast(encode(result))
-            self._wake.clear()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), TICK_SECONDS)
 
@@ -168,7 +181,7 @@ class StateServer:
             self._clients.discard(client)
             if not self._clients:
                 self._idle_since = self._clock()
-        client.writer.close()
+        _abort(client.writer)
 
 
 def _take_lifetime_lock(path: Path) -> int | None:

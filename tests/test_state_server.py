@@ -34,7 +34,8 @@ T0 = datetime(2026, 10, 4, tzinfo=UTC)
 class FakeGatherer:
     """Gathers whenever asked to: on every tick with an active client or a refresh."""
 
-    def __init__(self, fail_on: int | None = None):
+    def __init__(self, fail_on: int | None = None, once: bool = False):
+        self.once = once  # only the first gather yields a snapshot
         self.calls: list[tuple[bool, bool, tuple[Path, ...]]] = []
         self.seq = 0
         self.fail_on = fail_on
@@ -42,6 +43,8 @@ class FakeGatherer:
     def tick(self, *, active, refresh, roots):
         self.calls.append((active, refresh, tuple(roots)))
         if not (active or refresh):
+            return None
+        if self.once and self.seq:
             return None
         self.seq += 1
         if self.seq == self.fail_on:
@@ -100,21 +103,45 @@ def test_hello_is_answered_with_the_server_version(sock_path):
     assert conn.hello == Hello(PROTOCOL, "v1")
 
 
-def test_snapshots_reach_every_client_and_late_joiners_get_the_latest(sock_path):
+def test_snapshots_reach_every_client(sock_path):
     Running(FakeGatherer(), sock_path)
     a = Conn(sock_path)
-    first = a.recv()
     b = Conn(sock_path)
-    got = b.recv()
-    assert isinstance(got, Snapshot)
-    assert got.seq >= first.seq  # the cached latest, not a replay from the start
-    # From here on both clients see the same snapshots.
-    while (nxt := a.recv()).seq <= got.seq:
+    seq = a.recv().seq
+    while (nxt := a.recv()).seq <= seq:
         pass
     seen = b.recv()
     while seen.seq < nxt.seq:
         seen = b.recv()
     assert seen == nxt
+
+
+def test_a_late_joiner_gets_the_cached_latest_snapshot(sock_path):
+    Running(FakeGatherer(once=True), sock_path)  # gathers exactly once
+    a = Conn(sock_path)
+    first = a.recv()
+    b = Conn(sock_path)
+    assert b.recv() == first  # no further broadcast will ever come: only the cache
+
+
+def test_a_client_that_never_reads_cannot_keep_the_server_alive(sock_path, mocker):
+    mocker.patch("jailbee.state_service.server.DRAIN_TIMEOUT_SECONDS", 0.3)
+
+    class Big(FakeGatherer):
+        def tick(self, *, active, refresh, roots):
+            snap = super().tick(active=active, refresh=refresh, roots=roots)
+            if isinstance(snap, Snapshot):
+                snap.groups[0].prefix = "x" * 200_000
+            return snap
+
+    running = Running(Big(), sock_path, idle_timeout=0.5)
+    stuck = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stuck.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    stuck.connect(str(sock_path))
+    stuck.sendall(encode(Hello(PROTOCOL, "v1")))  # hello done, then never read
+    running.thread.join(timeout=8)
+    assert not running.thread.is_alive()
+    stuck.close()
 
 
 def test_server_gathers_only_for_active_clients(sock_path):
