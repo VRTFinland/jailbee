@@ -48,6 +48,7 @@ def _spec(kind, *, secret=False):
         (bool, Classified(FieldKind.BOOL)),
         (str, Classified(FieldKind.STR)),
         (int, Classified(FieldKind.INT)),
+        (float, Classified(FieldKind.FLOAT)),
         (Path, Classified(FieldKind.PATH)),
         (str | None, Classified(FieldKind.STR, optional=True)),
         (Path | None, Classified(FieldKind.PATH, optional=True)),

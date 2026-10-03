@@ -134,6 +134,11 @@ def parse_value(spec: FieldSpec, text: str) -> tuple[object, str | None]:
             return int(raw), None
         except ValueError:
             return None, f"Expected a whole number, got {raw!r}."
+    if spec.kind is FieldKind.FLOAT:
+        try:
+            return float(raw), None
+        except ValueError:
+            return None, f"Expected a number, got {raw!r}."
     if spec.kind is FieldKind.CHOICE:
         for choice in spec.choices:
             if raw == str(choice):
