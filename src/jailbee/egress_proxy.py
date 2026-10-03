@@ -345,16 +345,20 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
     set_service(incus, EGRESS_PROXY_LABEL, (sorted(client_endpoints(incus).values()), [PROXY_PORT]))
 
 
-def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None) -> None:
+def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None) -> bool:
     """``proxy_up`` for callers that have more to finish: a failure is only a warning.
 
-    The reason is printed with ``warn_plain`` because it can embed square
-    brackets (a failed command's argv), which ``warn`` would read as markup.
+    Returns ``False`` on failure so a caller whose own outcome depends on the
+    proxy can withhold its success line. The reason is printed with
+    ``warn_plain`` because it can embed square brackets (a failed command's
+    argv), which ``warn`` would read as markup.
     """
     try:
         proxy_up(incus, on_step=on_step or (lambda message: tui.info(f"  {message}")))
     except (IncusError, RuntimeError, ValueError) as e:
         tui.warn_plain(f"Could not start the egress proxy: {e}")
+        return False
+    return True
 
 
 def _run_fragment_script(incus: Incus, script: str) -> str:

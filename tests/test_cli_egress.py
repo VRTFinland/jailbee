@@ -999,21 +999,44 @@ def test_add_wildcard_on_a_work_container_starts_proxy_then_syncs_after_storing(
     assert "Open a new shell (or tmux window) to pick up the proxy settings." in result.output
 
 
-def test_add_warns_and_continues_when_the_proxy_cannot_start(tmp_path, mocker):
+def test_add_keeps_the_entry_but_fails_when_the_proxy_cannot_start(tmp_path, mocker):
     from jailbee import egress_proxy
 
     cfg, incus = _repo(tmp_path, mocker)
     for target in _work_container(cfg, incus):
         mocker.patch(target)
-    mocker.patch("jailbee.egress_scope.set_container_extras")
+    store = mocker.patch("jailbee.egress_scope.set_container_extras")
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=RuntimeError("squid down"))
     sync = mocker.patch.object(egress_proxy, "sync_container")
 
-    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"])
+    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"], env={"COLUMNS": "250"})
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert "squid down" in result.output
+    store.assert_called_once()
     sync.assert_called_once()
+    assert "may now reach" not in result.output
+    assert "Open a new shell" not in result.output
+    assert "not reachable until the egress proxy runs" in result.output
+
+
+def test_add_repo_wildcard_has_no_success_line_when_the_proxy_cannot_start(
+    tmp_path, mocker, monkeypatch
+):
+    from jailbee import egress_proxy
+
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=RuntimeError("squid down"))
+
+    result = runner.invoke(
+        app, ["net", "egress", "add", "--repo", "*.example.com"], env={"COLUMNS": "250"}
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "squid down" in result.output
+    assert "✓" not in result.output
+    assert "not reachable until the egress proxy runs: run `jailbee apply`" in result.output
 
 
 def test_add_non_wildcard_on_a_container_syncs_but_does_not_start_the_proxy(tmp_path, mocker):

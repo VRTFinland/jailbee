@@ -9185,12 +9185,11 @@ def egress_add_cmd(
         except ValueError as exc:
             error_plain(str(exc))
             raise typer.Exit(1) from exc
-        if is_wildcard_entry(entry):
-            egress_proxy.proxy_up_or_warn(incus)
-        success(
-            f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}. "
-            "Run `jailbee apply` to push it."
-        )
+        added = f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}."
+        if is_wildcard_entry(entry) and not egress_proxy.proxy_up_or_warn(incus):
+            error(f"{added} It is not reachable until the egress proxy runs: run `jailbee apply`.")
+            raise typer.Exit(1)
+        success(f"{added} Run `jailbee apply` to push it.")
         return
 
     assert container is not None
@@ -9222,10 +9221,17 @@ def egress_add_cmd(
     _repin_hosts_quietly(cfg, incus, container)
     # Any entry can change the container's NO_PROXY (a literal IP or CIDR does),
     # so the sync is unconditional; only a wildcard needs Squid itself.
+    proxy_ok = True
     if is_wildcard_entry(entry):
         # Squid first, so the sync finds an endpoint to point the environment at.
-        egress_proxy.proxy_up_or_warn(incus)
+        proxy_ok = egress_proxy.proxy_up_or_warn(incus)
     egress_proxy.sync_container(cfg, incus, container, mode)
+    if not proxy_ok:
+        error(
+            f"Stored '{entry}' on '{container}', but it is not reachable until the "
+            "egress proxy runs: run `jailbee apply`."
+        )
+        raise typer.Exit(1)
     if is_wildcard_entry(entry):
         info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' may now reach {entry}.")

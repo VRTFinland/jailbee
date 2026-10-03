@@ -875,14 +875,14 @@ def test_proxy_up_or_warn_warns_plain_with_bracketed_reason(mocker):
         egress_proxy, "proxy_up", side_effect=RuntimeError("failed ['systemctl', 'x']")
     )
     warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
-    egress_proxy.proxy_up_or_warn(MagicMock())
+    assert egress_proxy.proxy_up_or_warn(MagicMock()) is False
     assert "['systemctl', 'x']" in warn.call_args.args[0]
 
 
 def test_proxy_up_or_warn_quiet_on_success(mocker):
     up = mocker.patch.object(egress_proxy, "proxy_up")
     warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
-    egress_proxy.proxy_up_or_warn(MagicMock())
+    assert egress_proxy.proxy_up_or_warn(MagicMock()) is True
     up.assert_called_once()
     warn.assert_not_called()
 
@@ -893,7 +893,7 @@ def test_proxy_up_or_warn_quiet_on_success(mocker):
 def test_proxy_up_or_warn_also_catches_value_error(mocker):
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=ValueError("no free ip"))
     warn = mocker.patch("jailbee.egress_proxy.tui.warn_plain")
-    egress_proxy.proxy_up_or_warn(MagicMock())
+    assert egress_proxy.proxy_up_or_warn(MagicMock()) is False
     assert "no free ip" in warn.call_args.args[0]
 
 
