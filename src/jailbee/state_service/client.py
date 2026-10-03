@@ -170,8 +170,17 @@ class StateClient:
         with self._lock:
             changed = self._status != text
             self._status = text
-        if changed and self._on_update is not None:
+        if changed:
+            self._notify()
+
+    def _notify(self) -> None:
+        """Call ``on_update``; a failing callback must not kill the reader."""
+        if self._on_update is None:
+            return
+        try:
             self._on_update()
+        except Exception:
+            log.exception("state client on_update callback failed")
 
     def _run(self) -> None:
         attempt = 0
@@ -184,15 +193,24 @@ class StateClient:
                 self._closed.wait(self._backoff[min(attempt, len(self._backoff) - 1)])
                 attempt += 1
                 continue
-            attempt = 0
             with self._lock:
+                if self._closed.is_set():
+                    # close() ran while we were connecting: it saw no socket
+                    # to shut down, so this connection is ours to drop.
+                    reader.close()
+                    sock.close()
+                    return
                 self._sock = sock
-                active = self._active
-            if not active:
-                self._send(Active(False))
+                # Replayed under the lock, so a concurrent `set_active` lands
+                # wholly before this send (and is what we replay) or after it.
+                if not self._active:
+                    with contextlib.suppress(OSError):
+                        sock.sendall(encode(Active(False)))
+            got_snapshot = False
             try:
                 for line in reader:
-                    self._dispatch(decode(line))
+                    if self._dispatch(decode(line)):
+                        got_snapshot = True
             except (OSError, ProtocolError):
                 log.debug("state service connection lost", exc_info=True)
             finally:
@@ -200,19 +218,29 @@ class StateClient:
                     self._sock = None
                 reader.close()
                 sock.close()
-            if not self._closed.is_set():
-                self._set_status(DISCONNECTED)
+            if self._closed.is_set():
+                return
+            self._set_status(DISCONNECTED)
+            if got_snapshot:
+                attempt = 0
+            else:
+                # The server answered but never delivered: back off rather
+                # than hammer a server that drops us straight away.
+                self._closed.wait(self._backoff[min(attempt, len(self._backoff) - 1)])
+                attempt += 1
 
-    def _dispatch(self, message: Message) -> None:
+    def _dispatch(self, message: Message) -> bool:
+        """Apply ``message``; True when it was a snapshot."""
         if isinstance(message, Snapshot):
             with self._lock:
                 self._latest = message
                 self._status = None
             self._first.set()
-            if self._on_update is not None:
-                self._on_update()
-        elif isinstance(message, GatherError):
+            self._notify()
+            return True
+        if isinstance(message, GatherError):
             self._set_status(f"refresh failed: {message.message}")
+        return False
 
     def _connect(self) -> tuple[socket.socket, IO[bytes]]:
         ensure_runtime_dir()

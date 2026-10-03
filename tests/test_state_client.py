@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import itertools
+import socket
+import subprocess
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -12,8 +17,9 @@ import pytest
 from jailbee.dashboard import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.state_service import StateServiceUnavailable, paths
+from jailbee.state_service import client as client_module
 from jailbee.state_service.client import DISCONNECTED, StateClient
-from jailbee.state_service.protocol import Snapshot
+from jailbee.state_service.protocol import PROTOCOL, Hello, Snapshot, encode
 from jailbee.state_service.server import StateServer
 from tests.test_state_server import T0, FakeGatherer
 
@@ -121,15 +127,46 @@ def test_a_gather_error_becomes_the_status_and_keeps_the_snapshot(runtime_dir):
         client.close()
 
 
-def test_client_reconnects_after_the_server_goes_away(runtime_dir):
+def test_client_survives_a_server_killed_with_a_stale_socket_left_behind(runtime_dir, monkeypatch):
     spawner = Spawner()
-    client = _client(spawner)
+    gate = threading.Event()
+    attempts: list[int] = []
+    real_ensure = client_module.ensure_runtime_dir
+
+    def gated_ensure():
+        # Every connect attempt after the first is held until the stale
+        # socket is in place, so the client is certain to meet it.
+        attempts.append(1)
+        if len(attempts) > 1:
+            gate.wait(5)
+        return real_ensure()
+
+    monkeypatch.setattr(client_module, "ensure_runtime_dir", gated_ensure)
+
+    def spawn():
+        # What `run_service` does: the lifetime-lock holder removes a stale socket.
+        paths.socket_path().unlink(missing_ok=True)
+        spawner()
+
+    client = _client(spawner, spawn=spawn)
     try:
-        client.wait_first_snapshot(3)
-        spawner.servers[0]._stopping = True  # what a crash looks like from outside
-        _until(lambda: client.status() == DISCONNECTED or len(spawner.servers) == 2)
-        _until(lambda: len(spawner.servers) == 2 and client.status() is None)
+        first = client.wait_first_snapshot(3)
+        spawner.servers[0]._stopping = True  # the server is gone...
+        spawner.threads[0].join(timeout=3)
+        assert not spawner.threads[0].is_alive()
+        # ...and, as after a SIGKILL, its socket file is still there, unanswered.
+        stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stale.bind(str(paths.socket_path()))
+        stale.close()
+        assert paths.socket_path().exists()
+        _until(lambda: client.status() == DISCONNECTED)
+        assert client.latest() is not None
+        assert client.latest().seq >= first.seq
+        assert len(spawner.servers) == 1
+        gate.set()
+        _until(lambda: len(spawner.servers) == 2 and client.status() is None, timeout=5)
     finally:
+        gate.set()
         client.close()
 
 
@@ -199,3 +236,155 @@ def test_the_cwd_root_is_sent_in_hello(runtime_dir):
         assert [c.cwd_root for c in spawner.servers[0]._clients] == [Path("/repos/a")]
     finally:
         client.close()
+
+
+def test_close_during_a_connection_attempt_leaves_no_connected_client(runtime_dir):
+    spawner = Spawner()
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_spawn():
+        entered.set()
+        release.wait(5)
+        spawner()
+
+    client = _client(spawner, spawn=slow_spawn)
+    closer = threading.Thread(target=client.close)
+    try:
+        assert entered.wait(3)
+        closer.start()
+        _until(client._closed.is_set)
+        release.set()
+        closer.join(timeout=5)
+        client._thread.join(timeout=3)
+        assert not client._thread.is_alive()
+        _until(lambda: not spawner.servers[0]._clients)
+    finally:
+        release.set()
+        client.close()
+
+
+def test_a_failing_on_update_does_not_stop_the_reader(runtime_dir):
+    calls: list[int] = []
+
+    def on_update():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("callback bug")
+
+    client = _client(Spawner(), on_update=on_update)
+    try:
+        first = client.wait_first_snapshot(3)
+        client.refresh()
+        _until(lambda: client.latest().seq > first.seq)
+        assert client._thread.is_alive()
+    finally:
+        client.close()
+
+
+class _HookedLock:
+    """A lock that runs ``hook`` once, right after the first release that follows a connect."""
+
+    def __init__(self, client_ref, hook):
+        self._lock = threading.Lock()
+        self._client_ref = client_ref
+        self._hook = hook
+
+    def __enter__(self):
+        self._lock.acquire()
+
+    def __exit__(self, *exc):
+        self._lock.release()
+        hook = self._hook
+        if hook is not None and self._client_ref[0]._sock is not None:
+            self._hook = None
+            hook()
+
+
+def test_a_set_active_between_reading_and_replaying_the_flag_is_not_overwritten(runtime_dir):
+    spawner = Spawner()
+    ref: list[StateClient] = []
+    fired = threading.Event()
+
+    def hook():
+        ref[0].set_active(True)  # the user's newer choice, racing the replay
+        fired.set()
+
+    client = StateClient(None, spawn=spawner, version="v1", backoff=(0.05,))
+    ref.append(client)
+    client._lock = _HookedLock(ref, hook)  # type: ignore[assignment]  # test double
+    client.set_active(False)
+    client.start()
+    try:
+        client.wait_first_snapshot(3)
+        assert fired.is_set()
+        client.refresh()
+        gatherer = spawner.servers[0]._gatherer
+        # The refresh is processed after every Active message sent before it.
+        _until(lambda: any(call[1] for call in gatherer.calls))
+        assert any(c.active for c in spawner.servers[0]._clients)
+    finally:
+        client.close()
+
+
+def test_a_server_that_handshakes_then_drops_us_is_retried_with_backoff(runtime_dir):
+    paths.ensure_runtime_dir()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(paths.socket_path()))
+    listener.listen()
+    accepted: list[float] = []
+
+    def serve():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            accepted.append(time.monotonic())
+            with conn, conn.makefile("rb") as reader:
+                reader.readline()
+                conn.sendall(encode(Hello(PROTOCOL, "v1")) + b"this is not a message\n")
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    client = _client(Spawner(), spawn=lambda: None, backoff=(0.2,))
+    try:
+        _until(lambda: len(accepted) >= 3, timeout=5)
+        gaps = [b - a for a, b in itertools.pairwise(accepted)]
+        assert min(gaps) >= 0.15, gaps
+    finally:
+        client.close()
+        with contextlib.suppress(OSError):
+            listener.shutdown(socket.SHUT_RDWR)  # wakes the blocked accept
+        listener.close()
+        thread.join(timeout=2)
+
+
+def test_spawn_server_logs_to_the_state_dir_and_detaches(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    popens: list[tuple[list[str], dict]] = []
+    files: list = []
+
+    def fake_popen(argv, **kw):
+        popens.append((argv, kw))
+        files.append(kw["stdout"])
+        return None
+
+    monkeypatch.setattr(
+        client_module,
+        "subprocess",
+        types.SimpleNamespace(Popen=fake_popen, DEVNULL=subprocess.DEVNULL),
+    )
+    client_module.spawn_server()
+    client_module.spawn_server()
+
+    log = tmp_path / "state" / "jailbee" / "state-service.log"
+    assert log.parent.is_dir()
+    assert len(popens) == 2
+    argv, kw = popens[0]
+    assert argv[1:] == ["-m", "jailbee", "_state-service"]
+    assert kw["start_new_session"] is True
+    assert kw["stdin"] == subprocess.DEVNULL
+    assert kw["stdout"] is kw["stderr"]
+    assert files[0].mode == "ab"
+    assert all(f.closed for f in files)  # the parent keeps no handle
+    assert log.exists()
