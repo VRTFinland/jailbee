@@ -52,10 +52,13 @@ def test_callbacks_run_only_on_the_polling_thread(tmp_path: Path) -> None:
 
     seen: list[threading.Thread] = []
     runner = JobRunner()
-    runner.start("k", "doing", _py("pass"), tmp_path, lambda _r: seen.append(threading.current_thread()))
+    runner.start(
+        "k", "doing", _py("pass"), tmp_path, lambda _r: seen.append(threading.current_thread())
+    )
     deadline = time.monotonic() + 10
-    while runner.active() and time.monotonic() < deadline:
+    while not runner._finished and time.monotonic() < deadline:  # finished, not yet polled
         time.sleep(0.01)
+    assert runner._finished
     assert seen == []  # finished, but nothing delivered until poll()
     runner.poll()
     assert seen == [threading.current_thread()]

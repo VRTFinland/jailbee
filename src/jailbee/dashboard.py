@@ -3216,7 +3216,9 @@ def run(
                     force.set()
 
                 try:
-                    jobs.start(f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish)
+                    jobs.start(
+                        f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish
+                    )
                 except ValueError:
                     set_notice("That container is already being created")
                 except OSError:
