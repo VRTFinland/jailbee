@@ -10127,10 +10127,13 @@ def _print_egress_override_status(scope: "RemoteRepoScope | None" = None) -> Non
 
 
 def _print_egress_proxy_status(scope: "RemoteRepoScope | None" = None) -> None:
-    """Render the wildcard-egress proxy line of `jailbee net status`.
+    """Render the egress proxy line of `jailbee net status`.
 
-    Silent unless a registered repo in scope has a wildcard entry; a failure
-    to gather it prints a one-line stderr note, like the override section.
+    Shown when a registered repo in scope has a wildcard entry, or (unscoped)
+    when the proxy container exists. Always-on work containers bring it up
+    without any wildcard. A remote-scoped caller sees it only for a wildcard in
+    scope, since the proxy itself is host-level. A failure to gather it prints
+    a one-line stderr note, like the override section.
 
     Known limit: only the cwd repo's effective config and the other registered
     repos' host-local/legacy entries are inspected. Another repo's committed
@@ -10167,10 +10170,12 @@ def _print_egress_proxy_status(scope: "RemoteRepoScope | None" = None) -> None:
                 cfg = None
             if cfg is not None and (scope is None or scope.allows(cfg.container_prefix)):
                 wildcard = any(is_wildcard_entry(e) for e in cfg.effective_egress_allow())
-        if not wildcard:
+        if not wildcard and scope is not None:
             return
         incus = Incus()
         status = egress_proxy.proxy_status(incus)
+        if not wildcard and status == egress_proxy.ProxyStatus.MISSING:
+            return
         endpoints = egress_proxy.client_endpoints(incus)
     except Exception:
         hint(["Could not gather egress-proxy status for `jailbee net status`."])

@@ -4004,8 +4004,17 @@ def _proxy_rows(mocker, tmp_path, *, entries=(), extras=(), status=None, missing
 def test_egress_proxy_not_needed_without_wildcards(mocker, tmp_path):
     rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"])
     assert [(r.name, r.ok, r.detail) for r in rows] == [
-        ("egress proxy", True, "not needed — no wildcard egress entries")
+        ("egress proxy", True, "not needed — no wildcard entries or always-on containers")
     ]
+
+
+def test_egress_proxy_needed_for_an_always_on_container_alone(mocker, tmp_path):
+    from jailbee.egress_proxy import ProxyStatus
+
+    mocker.patch("jailbee.egress_proxy.proxy_needed", return_value=True)
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"], status=ProxyStatus.STOPPED)
+    assert rows[0].ok is False
+    assert rows[0].detail == "status: stopped — run 'jailbee apply'"
 
 
 @pytest.mark.parametrize("kwargs", [{"entries": ["*.example.com"]}, {"extras": ["*.example.com"]}])

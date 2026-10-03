@@ -1292,3 +1292,33 @@ def test_push_takes_a_lock_and_leaves_no_staging_files(real_push):
     assert push("good v1\n").endswith("RECONFIGURED|rc=0")
     assert not list(frag.glob("*.new"))
     assert (frag.parent / ".jailbee-fragments.lock").exists()
+
+
+def test_proxy_needed_for_a_repo_wildcard_without_listing(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = MagicMock()
+    _patch_entries(mocker, ["*.repo.com"], {})
+    assert egress_proxy.proxy_needed(cfg, incus, MagicMock()) is True
+    incus.list_containers.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("always", "raws", "extras", "expected"),
+    [
+        (True, "work_stopped", [], True),
+        (False, "work_stopped", [], False),
+        (True, "legacy", [], False),
+        (True, "legacy", ["*.foo.com"], True),
+    ],
+)
+def test_proxy_needed(make_cfg, tmp_path, mocker, always, raws, extras, expected):
+    cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=always)
+    incus = MagicMock()
+    raw = (
+        _work(cfg, "myrepo-new", status="Stopped")
+        if raws == "work_stopped"
+        else _legacy("myrepo-new")
+    )
+    incus.list_containers.return_value = [raw]
+    _patch_entries(mocker, ["plain.com"], {"myrepo-new": extras})
+    assert egress_proxy.proxy_needed(cfg, incus, MagicMock()) is expected

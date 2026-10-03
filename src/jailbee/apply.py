@@ -392,7 +392,7 @@ def run_apply(
 
     from jailbee import egress_proxy
 
-    _ensure_egress_proxy_or_warn(cfg, incus, containers)
+    _ensure_egress_proxy_or_warn(cfg, incus)
 
     from jailbee.ports import PortError, list_forwards, reconcile_config_ports
 
@@ -802,29 +802,19 @@ def _read_mirror_ca_or_warn(gcfg: GlobalConfig) -> str | None:
     return None
 
 
-def _ensure_egress_proxy_or_warn(
-    cfg: Config, incus: Incus, containers: list[ContainerInfo]
-) -> None:
-    """Start the Squid proxy when a wildcard egress entry needs it.
+def _ensure_egress_proxy_or_warn(cfg: Config, incus: Incus) -> None:
+    """Start the Squid proxy when this repo needs it (``egress_proxy.proxy_needed``).
 
-    Wanted when the repo's effective list, or any repo container's own extras,
-    holds a wildcard. Otherwise the proxy is left alone (never created for a
-    repo that does not use wildcards). A failure is a warning: apply has
-    profiles, ACLs and ports to finish, and ``sync_container`` reports the
-    missing proxy per container.
+    Otherwise the proxy is left alone (never created for a repo that does not
+    use it). A failure is a warning: apply has profiles, ACLs and ports to
+    finish, and ``sync_container`` reports the missing proxy per container.
     """
     from jailbee import egress_proxy
-    from jailbee.egress import is_wildcard_entry
-    from jailbee.egress_scope import container_extras, effective_repo_entries
 
     with Session(get_engine()) as session:
-        entries = effective_repo_entries(cfg, session)
-    wanted = any(is_wildcard_entry(e) for e in entries) or any(
-        is_wildcard_entry(e) for ci in containers for e in container_extras(incus, ci.name)
-    )
-    if not wanted:
-        return
-    egress_proxy.proxy_up_or_warn(incus)
+        needed = egress_proxy.proxy_needed(cfg, incus, session)
+    if needed:
+        egress_proxy.proxy_up_or_warn(incus)
 
 
 def _list_containers(cfg: Config, incus: Incus) -> list[ContainerInfo]:

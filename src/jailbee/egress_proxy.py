@@ -555,6 +555,27 @@ def collect_scopes(
     ]
 
 
+def proxy_needed(cfg: Config, incus: Incus, session: Session) -> bool:
+    """Whether this repo needs the proxy running.
+
+    Yes for a wildcard in the repo's effective entries or in a container's own
+    extras, and for any always-on (work-network) container of the repo, stopped
+    ones included: they get the environment on their next start.
+    """
+    from jailbee.egress_scope import container_extras, effective_repo_entries
+    from jailbee.lifecycle import list_containers
+
+    if any(is_wildcard_entry(e) for e in effective_repo_entries(cfg, session)):
+        return True
+    raw_by_name = {r.get("name"): r for r in incus.list_containers()}
+    for info in list_containers(cfg, incus):
+        if always_on(cfg, raw_by_name.get(info.name) or {}):
+            return True
+        if any(is_wildcard_entry(e) for e in container_extras(incus, info.name)):
+            return True
+    return False
+
+
 def sync_repo_rules(cfg: Config, incus: Incus, session: Session) -> bool:
     """Push this repo's fragment, or drop it when no container needs the proxy.
 

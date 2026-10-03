@@ -1143,11 +1143,23 @@ def _proxy_status_rig(tmp_path, mocker, *, entries, status="running", endpoints=
 def test_net_status_proxy_line_is_silent_without_wildcards(tmp_path, mocker, capsys):
     from jailbee.cli import _print_egress_proxy_status
 
-    _proxy_status_rig(tmp_path, mocker, entries=["github.com"])
+    _proxy_status_rig(tmp_path, mocker, entries=["github.com"], status="missing")
 
     _print_egress_proxy_status()
 
     assert capsys.readouterr().out == ""
+
+
+def test_net_status_proxy_line_shows_an_existing_proxy_without_wildcards(
+    tmp_path, mocker, capsys
+):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["github.com"])
+
+    _print_egress_proxy_status()
+
+    assert "Egress proxy: running (incusbr0 10.0.0.5)" in capsys.readouterr().out
 
 
 def test_net_status_proxy_line_running(tmp_path, mocker, capsys):

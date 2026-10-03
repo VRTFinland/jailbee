@@ -246,33 +246,24 @@ def _check_litellm(incus: Incus, gcfg: GlobalConfig) -> list[CheckResult]:
     return rows
 
 
-def _egress_proxy_needed(cfg: Config, incus: Incus) -> bool:
-    """True when the repo's effective list or any of its containers' extras has a wildcard."""
-    from sqlmodel import Session
-
-    from jailbee import egress_scope
-    from jailbee.db import get_engine
-    from jailbee.egress import is_wildcard_entry
-    from jailbee.lifecycle import list_containers
-
-    with Session(get_engine()) as session:
-        if any(is_wildcard_entry(e) for e in egress_scope.effective_repo_entries(cfg, session)):
-            return True
-    return any(
-        is_wildcard_entry(entry)
-        for info in list_containers(cfg, incus)
-        for entry in egress_scope.container_extras(incus, info.name)
-    )
-
-
 def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
-    """The wildcard-egress proxy: needed only with wildcard entries, then it must be up."""
+    """The egress proxy: needed for wildcards or always-on work containers, then it must be up."""
     from jailbee import egress_proxy, litellm
 
     name = "egress proxy"
     try:
-        if not _egress_proxy_needed(cfg, incus):
-            return [CheckResult(name, True, "not needed — no wildcard egress entries")]
+        from sqlmodel import Session
+
+        from jailbee.db import get_engine
+
+        with Session(get_engine()) as session:
+            needed = egress_proxy.proxy_needed(cfg, incus, session)
+        if not needed:
+            return [
+                CheckResult(
+                    name, True, "not needed — no wildcard entries or always-on containers"
+                )
+            ]
         status = egress_proxy.proxy_status(incus)
         missing = litellm.bridges_missing_services_acl(incus)
     except Exception as e:  # doctor reports a failed probe, never crashes on it

@@ -3024,19 +3024,19 @@ def _proxy_apply_setup(make_cfg, tmp_path: Path, mocker: MockerFixture, *, entri
     incus.network_get.return_value = ""
     mocker.patch("jailbee.apply._profile_differs", return_value=False)
     mocker.patch("jailbee.apply._acl_differs", return_value=False)
-    mocker.patch(
-        "jailbee.apply._list_containers",
-        return_value=[
-            ContainerInfo(
-                name="a",
-                state="Running",
-                network="strict",
-                ip="10.0.0.1",
-                memory_limit="16GiB",
-                repo=tmp_path.name,
-            )
-        ],
-    )
+    listed = [
+        ContainerInfo(
+            name="a",
+            state="Running",
+            network="strict",
+            ip="10.0.0.1",
+            memory_limit="16GiB",
+            repo=tmp_path.name,
+        )
+    ]
+    mocker.patch("jailbee.apply._list_containers", return_value=listed)
+    # ``proxy_needed`` lists through lifecycle itself.
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=listed)
     mocker.patch("jailbee.hosts.apply_hosts")
     mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=list(entries))
     mocker.patch("jailbee.egress_scope.container_extras", return_value=list(extras))
@@ -3148,3 +3148,15 @@ def test_restart_one_syncs_the_proxy_with_the_current_mode(
     _restart_one(cfg, incus, "a")
 
     sync.assert_called_once_with(cfg, incus, "a", "strict")
+
+
+@pytest.mark.parametrize("needed", [True, False])
+def test_ensure_egress_proxy_follows_proxy_needed(make_cfg, tmp_path, mocker, needed):
+    from jailbee import apply, egress_proxy
+
+    mocker.patch.object(egress_proxy, "proxy_needed", return_value=needed)
+    mocker.patch.object(apply, "get_engine")
+    mocker.patch.object(apply, "Session")
+    up = mocker.patch.object(egress_proxy, "proxy_up_or_warn")
+    apply._ensure_egress_proxy_or_warn(make_cfg(tmp_path), MagicMock())
+    assert up.called is needed
