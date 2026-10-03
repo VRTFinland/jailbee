@@ -63,6 +63,7 @@ from jailbee.dashboard_egress import (
     replace_egress_rows,
 )
 from jailbee.dashboard_egress_data import load_egress_rows
+from jailbee.dashboard_jobs import JobResult, JobRunner, needs_terminal
 from jailbee.dashboard_overlays import (
     MIN_LIST_ROWS,
     PICKER_HINT,
@@ -2345,8 +2346,9 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     column.
 
     No `--yes`: `jailbee new` asks about reusing an existing branch and about
-    the branch-autostart escalation, and both front-ends give it a terminal to
-    ask in rather than answering for the user. Those questions are asked by the
+    the branch-autostart escalation, and the TUI gives it a terminal to ask in
+    rather than answering for the user — by re-running it in the foreground
+    when a detached attempt stopped to ask. Those questions are asked by the
     foreground parent before it detaches.
 
     Both answers are typed free text, so they follow `--`: a branch named
@@ -2453,6 +2455,24 @@ def pager_argv() -> list[str] | None:
         if shutil.which(candidate[0]):
             return candidate
     return None
+
+
+def _egress_panel(overlay: Overlay | None) -> EgressState | None:
+    """The Egress panel on screen: itself, or the one behind its question."""
+    if isinstance(overlay, EgressState):
+        return overlay
+    if isinstance(overlay, (TextPrompt, Picker)) and isinstance(overlay.back, EgressState):
+        return overlay.back
+    return None
+
+
+def _with_egress_panel(overlay: Overlay | None, panel: EgressState) -> Overlay | None:
+    """``overlay`` with the Egress panel it shows (or sits over) swapped for ``panel``."""
+    if isinstance(overlay, EgressState):
+        return panel
+    if isinstance(overlay, (TextPrompt, Picker)):
+        return replace(overlay, back=panel)
+    return overlay
 
 
 def _wait_for_return() -> None:
@@ -2755,6 +2775,7 @@ def run(
     seeded_at = time.monotonic()
 
     lock = threading.Lock()
+    jobs = JobRunner()
     stop = threading.Event()
     force = threading.Event()
     shared_groups: list[RepoGroup] = seeded
@@ -3069,41 +3090,64 @@ def run(
                     set_notice(str(exc))
                     return state
 
-                def run_scoped() -> int:
-                    rc = subprocess.run(
-                        ["jailbee", *argv], check=False, cwd=target.cwd()
-                    ).returncode
-                    _wait_for_return()
-                    return rc
+                key = f"egress:{state.prefix}:{state.container or ''}"
+                if jobs.busy(key):
+                    set_notice("An egress change is still running here")
+                    return state
+
+                def finish(result: JobResult) -> None:
+                    """Report the change and refresh the panel, if it is still open."""
+                    nonlocal overlay
+                    if result.returncode != 0:
+                        reason = result.failure_line() or f"exited {result.returncode}"
+                        set_notice(
+                            f"net egress {action} {entry} failed: {reason}",
+                            seconds=_FAILURE_NOTICE_SECONDS,
+                        )
+                    else:
+                        force.set()
+                        set_notice(f"net egress {action} {entry}: done")
+                    panel = _egress_panel(overlay)
+                    if panel is None or (panel.prefix, panel.container) != (
+                        state.prefix,
+                        state.container,
+                    ):
+                        return
+                    try:
+                        rows = load_egress_rows(target.repo_root, incus, state.container)
+                    except Exception as exc:
+                        set_notice(f"could not refresh egress entries: {exc}")
+                        return
+                    overlay = _with_egress_panel(overlay, replace_egress_rows(panel, rows))
 
                 try:
-                    rc = foreground(run_scoped)
+                    jobs.start(
+                        key,
+                        f"egress {action} {entry}…",
+                        ["jailbee", *argv],
+                        target.cwd(),
+                        finish,
+                    )
                 except OSError:
                     _report_vanished_repo(target)
                     return None
-                if rc != 0:
-                    set_notice(f"'jailbee net egress {action}' exited {rc}")
-                else:
-                    force.set()
-                try:
-                    rows = load_egress_rows(target.repo_root, incus, state.container)
-                except Exception as exc:
-                    set_notice(f"could not refresh egress entries: {exc}")
-                    return state
-                return replace_egress_rows(state, rows)
+                return state
 
             def start_new_container(*, from_pr: bool = False) -> TextPrompt | None:
                 """Open the first question of `jailbee new`, or explain why not.
 
-                The questions are inline overlays; only the final `jailbee new`
-                gets the real terminal, via `foreground` — it asks its own
-                questions: confirming reuse of an existing branch, and the
-                branch-autostart escalation gate. The argv carries
-                `--background`, which does not avoid those questions — the
-                escalation question is asked by the foreground parent before it
-                detaches (`lifecycle._autostart_approved`). The only other
-                option is `--yes`, i.e. accepting a network-widening branch
-                config unseen.
+                The questions are inline overlays. The final `jailbee new` runs
+                detached (`JobRunner`), so the dashboard stays usable through
+                its foreground pre-flight (egress DNS, fetch, ref resolution).
+                `jailbee new` asks its own questions: confirming reuse of an
+                existing branch, and the branch-autostart escalation gate.
+                The argv carries `--background`, which does not avoid those
+                questions — the escalation question is asked by the foreground
+                parent before it detaches (`lifecycle._autostart_approved`) —
+                and a detached run has no terminal to ask on. When it stops
+                for that reason the command is re-run through `foreground`
+                (`needs_terminal`). The only other option is `--yes`, i.e.
+                accepting a network-widening branch config unseen.
                 """
                 try:
                     check_dashboard_command(["new"], ssh_policy, over_ssh=over_ssh)
@@ -3130,7 +3174,7 @@ def run(
                 )
 
             def run_new_container(
-                prefix: str, build_argv: Callable[[RepoTarget], list[str]]
+                prefix: str, what: str, build_argv: Callable[[RepoTarget], list[str]]
             ) -> None:
                 """Re-resolve the repo (it may have vanished while the prompt was open) and run."""
                 group = next((g for g in groups if g.prefix == prefix), None)
@@ -3150,14 +3194,33 @@ def run(
                     _wait_for_return()
                     return rc
 
+                def run_in_foreground() -> None:
+                    try:
+                        rc = foreground(spawn)
+                    except OSError:
+                        _report_vanished_repo(repo)
+                        return
+                    if rc != 0:
+                        set_notice(f"'jailbee new' exited {rc}")
+                    force.set()  # the new container should appear on the next frame
+
+                def finish(result: JobResult) -> None:
+                    if needs_terminal(result):
+                        # It stopped to ask something; the question needs the
+                        # real terminal, so ask it there, as before.
+                        run_in_foreground()
+                        return
+                    if result.returncode != 0:
+                        reason = result.failure_line() or f"exited {result.returncode}"
+                        set_notice(f"jailbee new failed: {reason}", seconds=_FAILURE_NOTICE_SECONDS)
+                    force.set()
+
                 try:
-                    rc = foreground(spawn)
+                    jobs.start(f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish)
+                except ValueError:
+                    set_notice("That container is already being created")
                 except OSError:
                     _report_vanished_repo(repo)
-                    return
-                if rc != 0:
-                    set_notice(f"'jailbee new' exited {rc}")
-                force.set()  # the new container should appear on the next frame
 
             def run_dashboard_command(
                 target: str,
@@ -3583,7 +3646,7 @@ def run(
                             return ["jailbee", "new", "--background", "--pr", str(number)]
                         return new_pr_container_argv(repo, number)
 
-                    run_new_container(prompt.target, pr_argv)
+                    run_new_container(prompt.target, f"PR #{number}", pr_argv)
                     return None
                 if prompt.purpose == "new-branch":
                     return TextPrompt(
@@ -3602,7 +3665,7 @@ def run(
                             return ["jailbee", "new", "--background", "--", branch, answer]
                         return new_container_argv(repo, branch, answer)
 
-                    run_new_container(prompt.target, branch_argv)
+                    run_new_container(prompt.target, branch, branch_argv)
                     return None
                 if prompt.purpose == "egress-add":
                     # begin_egress_add always sets it
@@ -3779,6 +3842,7 @@ def run(
                 all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
             )
             while not stop.is_set():
+                jobs.poll()
                 with lock:
                     all_groups = shared_groups
                 groups = visible_repo_groups(
@@ -3893,7 +3957,9 @@ def run(
                         git_enabled=git_enabled,
                         enabled=enabled,
                         overlay=overlay,
-                        notice=notice or ("; ".join(tracking) if tracking else None),
+                        notice=notice
+                        or "; ".join(jobs.active())
+                        or ("; ".join(tracking) if tracking else None),
                         folded=folded,
                         hide_first=hide_first,
                         hidden_by_preferences=bool(all_groups) and not groups,

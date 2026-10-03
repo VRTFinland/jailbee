@@ -17,6 +17,7 @@ from rich.console import Console, RenderableType
 
 from jailbee import dashboard
 from jailbee.config.loader import _scratch_prefix
+from jailbee.dashboard_jobs import JobResult, JobRunner
 from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
@@ -5044,6 +5045,24 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+class _SyncJobs(JobRunner):
+    """`JobRunner` that runs the child through the (mocked) `subprocess.run`.
+
+    The real runner spawns a `Popen` and waits on a thread; patching `Popen`
+    is process-wide and breaks every other `subprocess.run`, so these tests
+    keep asserting on the one `subprocess.run` mock and get the result on the
+    next `poll()`, exactly as the real runner delivers it. The mock's
+    `returncode` is the child's exit code; stderr is the mock's `stderr` when it
+    is a string, else empty.
+    """
+
+    def start(self, key, label, argv, cwd, on_done):
+        proc = dashboard.subprocess.run(argv, check=False, cwd=cwd)
+        self._labels[key] = label
+        stderr = proc.stderr if isinstance(proc.stderr, str) else ""
+        self._finished.append((key, on_done, JobResult(proc.returncode, stderr)))
+
+
 def _mock_terminal(mocker):
     """Patch everything ``run()`` touches on a real terminal and the state DB.
 
@@ -5055,6 +5074,7 @@ def _mock_terminal(mocker):
     mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+    mocker.patch.object(dashboard, "JobRunner", _SyncJobs)
 
     mock_stdin = mocker.Mock()
     mock_stdin.isatty.return_value = True
@@ -5651,6 +5671,88 @@ def test_run_new_from_pr_prompts_for_a_number_and_dispatches(mocker, tmp_path):
     child.assert_called_once_with(
         ["jailbee", "new", "--background", "--pr", "123"], check=False, cwd=tmp_path
     )
+
+
+_NEW_PR_KEYS = [_ENTER, b"\x1b[B", _ENTER, *_keys("123"), _ENTER]
+
+
+def test_new_container_runs_detached_without_taking_the_terminal(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    child.assert_called_once()
+    wait.assert_not_called()  # `foreground` always ends in the "press Enter" stop
+
+
+def test_new_container_that_wants_an_answer_is_rerun_in_the_foreground(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
+    attended = mocker.Mock(returncode=0, stderr=None)
+    child = mocker.patch.object(dashboard.subprocess, "run", side_effect=[detached, attended])
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    argv = ["jailbee", "new", "--background", "--pr", "123"]
+    assert child.call_args_list == [
+        mocker.call(argv, check=False, cwd=tmp_path),
+        mocker.call(argv, check=False, cwd=tmp_path),
+    ]
+    wait.assert_called_once()  # the second run is the attended one
+
+
+def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(
+        dashboard.subprocess,
+        "run",
+        return_value=mocker.Mock(returncode=1, stderr="warning\nerror: git fetch failed\n"),
+    )
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    child.assert_called_once()
+    wait.assert_not_called()
+    assert any(
+        "jailbee new failed: error: git fetch failed" in str(call.kwargs.get("notice", ""))
+        for call in render.call_args_list
+    )
+
+
+class _PendingJobs(JobRunner):
+    """A runner whose job never finishes, to look at the in-flight state."""
+
+    def start(self, key, label, argv, cwd, on_done):
+        if key in self._labels:
+            raise ValueError(key)
+        self._labels[key] = label
+
+
+def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard, "new_container_base_default", return_value="main")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    typed = [b"n", *_keys("work"), _ENTER, _ENTER, b"n", *_keys("work"), _ENTER, _ENTER]
+    mocker.patch.object(dashboard, "_wait_for_return")
+    mocker.patch.object(dashboard.subprocess, "run")
+
+    _mock_terminal(mocker)  # installs the synchronous fake; swap in the pending one
+    mocker.patch.object(dashboard, "JobRunner", _PendingJobs)
+    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    padded = itertools.chain(typed, [b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
+    dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+
+    notices = [str(call.kwargs.get("notice", "")) for call in render.call_args_list]
+    assert any("creating work…" in n for n in notices)
+    assert any("already being created" in n for n in notices)
 
 
 def test_run_new_prompt_whose_repo_vanishes_dispatches_nothing(mocker, tmp_path):
