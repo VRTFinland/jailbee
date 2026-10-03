@@ -4008,7 +4008,7 @@ def test_egress_proxy_not_needed_without_wildcards(mocker, tmp_path):
     ]
 
 
-def test_egress_proxy_needed_for_an_always_on_container_alone(mocker, tmp_path):
+def test_proxy_needed_for_an_always_on_container_alone(mocker, tmp_path):
     from jailbee.egress_proxy import ProxyStatus
 
     mocker.patch("jailbee.egress_proxy.proxy_needed", return_value=True)
