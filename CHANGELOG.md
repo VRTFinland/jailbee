@@ -43,6 +43,14 @@ before editing `## Unreleased`.
   Code reports `shell` when it is idle but a background shell job it started is
   still running; the compact column showed it as `? shell`. It is now `◐`,
   ranked between busy and idle.
+- **Submodule branch placement uses the superproject's gitlink.** After
+  `jailbee git checkout`, `pull` or a container-side update, each submodule is
+  now compared against the commit its superproject records, not against the
+  submodule's own HEAD. When `git submodule update` had skipped a submodule
+  (for example `submodule.<name>.update = none`), jailbee used to call that
+  stale HEAD "the gitlink" and warn that it needed a bump; it now places the
+  branch at the real gitlink, or leaves the submodule as is with a warning when
+  that commit is not present there.
 
 ## 1.6.0 - 2026-10-02
 
