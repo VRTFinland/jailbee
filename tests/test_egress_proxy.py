@@ -999,9 +999,7 @@ def test_env_always_on_keeps_the_environment_when_the_mode_is_unknown(make_cfg, 
     push.assert_not_called()
 
 
-def test_env_always_off_clears_the_environment_when_the_mode_is_unknown(
-    make_cfg, tmp_path, mocker
-):
+def test_env_always_off_clears_the_environment_when_the_mode_is_unknown(make_cfg, tmp_path, mocker):
     cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=False)
     incus = _work_env_incus(cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"})
     _patch_entries(mocker, [], {})
