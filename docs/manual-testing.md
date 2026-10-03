@@ -5396,8 +5396,10 @@ Needs the work network (`jb net migrate --yes`) and a repo with
    back the 403, environment still unchanged.
 6. Claude Code started in step 2 keeps working across steps 3-5.
 7. `incus stop jailbee-egress-proxy`. Expected: `jb doctor` and `jb net status`
-   report `stopped`; `jb restart t1` warns but leaves the environment set;
-   `jb apply` restores the proxy.
+   report `stopped` (check this before restarting anything). Then
+   `jb restart t1`. Expected: the proxy is running again, `env | grep -i proxy`
+   in a fresh `jb shell t1` is unchanged, and `curl -sI https://example.com`
+   works. `jb apply` also restores a stopped proxy.
 8. `jb net egress rm '*.iana.org' t1`, set `egress_proxy_always: false` and run
    `jb apply`. Expected: t1's proxy variables are cleared.
 

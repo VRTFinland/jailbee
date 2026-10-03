@@ -537,11 +537,14 @@ user-facing behaviour. The security properties:
   work-network container is a proxy client. Strict sources get their repo's and
   their own entries as rules; loose sources get an unconditional allow,
   matching the loose NIC rule. A source is in exactly one of the two at a time,
-  and the mode switch moves it.
+  and the mode switch moves it. If a loose-to-strict switch's proxy-rule sync fails,
+  the container stays in the open proxy scope until the next 60 s refresh.
 - **Blast radius.** A stopped or broken proxy now fails every proxy-honouring
   HTTP(S) client of every always-on container, Claude Code's API traffic
-  included, not only wildcard destinations. `jailbee doctor` and `jailbee net
-  status` report it and `jailbee apply` repairs it. The environment is
+  included, not only wildcard destinations. `jailbee doctor` reports it
+  (`jailbee net status` too when the proxy is stopped or a wildcard is
+  configured) and `jailbee apply` repairs it; starting or restarting an
+  always-on container also restarts a stopped proxy. The environment is
   deliberately not cleared on failure: an always-on container whose proxy
   cannot be found, or whose network mode is unknown, keeps its variables.
 - **Proxy-bypassing tools fail closed.** The environment variables are advice

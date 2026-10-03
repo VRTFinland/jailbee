@@ -917,9 +917,12 @@ a wildcard names none. It is enforced by a small Squid proxy instead, in a
 `jailbee-egress-proxy` container that `jailbee apply` and `jailbee net egress add`
 bring up on demand, once some entry is a wildcard **or** the repo has a
 work-network container with [`egress_proxy_always`](#egress_proxy_always) on.
-`jailbee new` also starts it for such an always-on container; `jailbee restart`
-only points the container at a proxy that is already running, and warns to run
-`jailbee apply` if it is not. Things to know:
+Every start, restart, network-mode switch and egress change of such an
+always-on container (one whose network mode is known) also starts the proxy if
+it is stopped, or adds the missing NIC if it was created on another network;
+`jailbee new` and `jailbee restart` therefore bring it back on their own. If it
+cannot be started, they warn to run `jailbee apply` and leave the container's
+environment as it is. Things to know:
 
 - **The apex is included.** `*.github.com` matches `github.com` itself as well
   as `api.github.com` and every deeper subdomain. It needs at least two labels
