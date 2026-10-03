@@ -7513,9 +7513,7 @@ def test_accounts_questions_keep_the_cursor_where_the_key_was_pressed(mocker, tm
 
 
 def test_accounts_park_runs_the_scoped_command_and_closes(mocker, tmp_path):
-    run = _fake_accounts_cli(
-        mocker, change=dashboard.da.CliResult(True, "Parked a@x.io#org12345.")
-    )
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Parked a@x.io#org12345."))
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7640,9 +7638,7 @@ _OPEN_GROUP_RM_CONFIRM = [b"A", b"j", b"j", _ENTER, b"j", _ENTER]
     ],
     ids=["delete-login", "remove-group"],
 )
-def test_accounts_confirmation_yes_runs_the_removal_and_closes(
-    mocker, tmp_path, keys, title, argv
-):
+def test_accounts_confirmation_yes_runs_the_removal_and_closes(mocker, tmp_path, keys, title, argv):
     run = _fake_accounts_cli(mocker)
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7685,9 +7681,7 @@ def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, key
 
 
 def test_accounts_new_group_prompt_creates_the_typed_group_and_closes(mocker, tmp_path):
-    run = _fake_accounts_cli(
-        mocker, change=dashboard.da.CliResult(True, "Created group spare2.")
-    )
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Created group spare2."))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     assert _drive_run(mocker, [b"A", b"n", *_keys("spare2"), _ENTER], [_alpha(tmp_path)]) == 0
