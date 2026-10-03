@@ -92,10 +92,16 @@ def _short_sha(run: GitRun, sub: str, rev: str) -> str:
     return short if ok and short else rev
 
 
-def _place_one(run: GitRun, sub: str, branch: str) -> None:
-    """Best-effort: put submodule `sub` on `branch` near its current gitlink (HEAD).
+def _place_one(run: GitRun, sub: str, branch: str, gitlink: str) -> None:
+    """Best-effort: put submodule `sub` on `branch` near the superproject's `gitlink`.
 
-    Guards: refuse on a dirty working tree. For the gitlink-vs-branch relationship:
+    `gitlink` comes from the superproject's tree, never from the submodule's
+    own HEAD: `git submodule update` may have skipped the submodule (e.g.
+    `submodule.<name>.update = none`), leaving HEAD on an unrelated commit.
+
+    Guards: refuse on a dirty working tree, and leave the submodule alone when
+    the gitlink commit is not in its object store. For the gitlink-vs-branch
+    relationship:
 
     - branch absent, or gitlink at/ahead of branch -> (re)point `branch` at the
       gitlink and check it out (fast-forward; never rewinds the branch).
@@ -110,9 +116,13 @@ def _place_one(run: GitRun, sub: str, branch: str) -> None:
     if _is_dirty(run, sub):
         _warn(f"submodule '{sub}': working tree dirty — left on detached HEAD")
         return
-    ok, sha_out = run(sub, ["rev-parse", "HEAD"])
-    sha = sha_out.strip()
-    if not ok or not sha:
+    sha = gitlink
+    ok, _ = run(sub, ["cat-file", "-e", f"{sha}^{{commit}}"])
+    if not ok:
+        _warn(
+            f"submodule '{sub}': superproject gitlink {sha[:7]} is not in the "
+            f"submodule — left as is. Run 'git submodule update' there."
+        )
         return
     # New branch, or gitlink at/ahead of the branch: point branch at the gitlink
     # and check it out. This is always a fast-forward — it never rewinds branch.
@@ -281,12 +291,14 @@ def _place_submodule_branches(run: GitRun, top_dir: str, branch: str | None = No
     """
     for name, path in _gitmodules_paths(run, top_dir):
         sub = f"{top_dir}/{path}"
-        if branch is not None:
-            _place_one(run, sub, branch)
-        else:
-            declared = _gitmodules_branch(run, top_dir, name)
-            if declared and declared != ".":
-                _place_one(run, sub, declared)
+        gitlink = _gitlink_at(run, top_dir, "HEAD", path)
+        if gitlink is not None:
+            if branch is not None:
+                _place_one(run, sub, branch, gitlink)
+            else:
+                declared = _gitmodules_branch(run, top_dir, name)
+                if declared and declared != ".":
+                    _place_one(run, sub, declared, gitlink)
         _place_submodule_branches(run, sub, branch)
 
 
