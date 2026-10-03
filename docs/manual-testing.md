@@ -5270,6 +5270,71 @@ The display container therefore mounts the shared directory at
 `/srv/jailbee-display` (not under `/run`); client containers get theirs
 attached after boot and keep `/run/jailbee-display`.
 
+## macOS client
+
+Needs a real Mac with Windows App, and a Linux host for setup A or Colima for
+setup B. Background: [Using JailBee from a Mac](macos.md). Record each
+deviation; the setup B results decide whether its "experimental" banner goes.
+
+### Setup A: Linux host, Mac as client
+
+1. On the host: `uv tool install 'jailbee[ssh]'`, `jb remote ssh key add`
+   (paste the Mac's public key), `jb remote ssh enable`, set
+   `remote.ssh.gui: true` and `files: true`, `jb remote ssh restart`,
+   `jb display up`. Expected: `jb remote ssh status` shows the service active.
+2. On the Mac, add the `Host jb` entry from the guide (with `ProxyJump` and
+   `LocalForward 3389 127.0.0.1:13389`), then `ssh jb help`. Expected: a
+   host-key prompt naming `jailbee-devbox`, then the enabled entry points.
+3. `ssh -t jb dashboard`. Expected: the remote dashboard, registered repos
+   only; arrow keys and quit work from the macOS terminal.
+4. `ssh -t jb shell`, pick a repo, run `ls`. Then `ssh -t jb -- --repo
+   PREFIX shell <container>`. Expected: a shell inside the container.
+5. With an `ssh jb` session open, Windows App → Add PC `localhost:3389`,
+   connect, accept the certificate. Expected: the empty weston desktop.
+6. `ssh jb -- --repo PREFIX chrome <container> https://example.com`.
+   Expected: a Chrome window on the Windows App desktop.
+7. `ssh jb -- --repo PREFIX ide <container>`. Expected: the JetBrains IDE
+   opens on the display and is usable (typing, menus, scrolling).
+8. Copy text in macOS and paste it into the container's Chrome; copy from the
+   container and paste in macOS. Expected: both directions work.
+9. Close every SSH session, reopen one, run step 6 before connecting Windows
+   App. Expected: the recipe is printed and the launch waits; connecting
+   Windows App lets it proceed.
+10. Open two `ssh jb` sessions. Expected: the second warns that local port
+    3389 is in use and otherwise works; Windows App stays connected.
+11. `sftp jb`, `ls`, `cd <container>`, `put` a file, `get` it back; then
+    `scp ./x jb:/<container>/x`. Expected: the top level lists running
+    containers; the file lands in the container's repo directory, owned by
+    the dev user.
+12. Windows App display settings: try Retina / scaled resolution and a full
+    screen window. Note what looks sharp and what is slow.
+
+### Setup B: Colima VM on the Mac
+
+1. `jailbee version` on macOS with the VM stopped → prints the "VM not running"
+   remediation and exits non-zero.
+2. `colima start …` (as in the guide), then `jailbee mac bootstrap` → installs
+   JailBee in the VM.
+3. `jailbee version` → prints the in-VM version (delegated).
+4. `jailbee mac doctor` → all checks OK.
+5. In a repo under `$HOME`: `jailbee doctor`, then `jailbee new feat/smoke`, then
+   `jailbee shell feat-smoke` → interactive shell works (a pty is requested by
+   default, i.e. `tty_flag: ['-t']`; if your colima/ssh version rejects `-t`,
+   disable it with `tty_flag: []` in `~/.config/jailbee/macos.yaml`).
+6. From a directory OUTSIDE `$HOME` → `jailbee` prints the "must live under" error.
+7. In the container, create a file in the repo; on macOS, `ls -ln` it.
+   Expected: owned by your macOS user. Record any `jailbee doctor` idmap
+   warning.
+8. `jailbee chrome feat-smoke` through the bridge. Expected (documented gap):
+   no window anywhere. Record the actual output.
+9. Inside the VM (`colima ssh`): `uv tool install --force 'jailbee[ssh]'`,
+   then setup A step 1. Record whether `jb remote ssh enable` works there and
+   whether `loginctl enable-linger` was needed.
+10. On the Mac, `ssh -p 8022 jailbee@127.0.0.1 help` with no `ProxyJump`.
+    Record whether Lima's port forwarding makes it reachable. If not, try the
+    `ProxyJump colima` route from the guide.
+11. Repeat setup A steps 5–8 against the VM.
+
 ## Wildcard egress through the proxy
 
 Needs a real Incus host (host-unverified until run). Image pull and `apt install
