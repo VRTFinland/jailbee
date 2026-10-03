@@ -580,6 +580,22 @@ def _current_env(incus: Incus, name: str, raw: dict[str, Any] | None) -> dict[st
     return {k: incus.config_get(name, f"environment.{k}") or None for k in PROXY_ENV_KEYS}
 
 
+def _endpoint_or_warn(name: str, raw: dict[str, Any], listed: list[dict[str, Any]]) -> str | None:
+    """The proxy's address on the container's own bridge, or ``None`` with a warning."""
+    bridge = _eth0_device(raw).get("network")
+    if not isinstance(bridge, str):
+        tui.warn(f"cannot find the eth0 network of {name}; egress proxy environment not set")
+        return None
+    proxy = next((r for r in listed if r.get("name") == PROXY_CONTAINER), None)
+    endpoint = _client_devices(proxy).get(bridge)
+    if endpoint is None:
+        tui.warn(
+            "egress proxy is not running; wildcard egress entries are unavailable "
+            "— run `jailbee apply`"
+        )
+    return endpoint
+
+
 def sync_container_env(
     cfg: Config,
     incus: Incus,
@@ -588,34 +604,33 @@ def sync_container_env(
     mode: str | None,
     *,
     raws: list[dict[str, Any]] | None = None,
-) -> None:
+) -> dict[str, str | None]:
     """Point one container's proxy environment at its bridge's proxy, or clear it.
 
-    ``raws`` is an ``incus list`` the caller already holds; with it this reads
-    the container, the proxy's addresses and the current variables from that
-    snapshot instead of asking Incus again.
+    Returns the keys it changed (``None`` = unset). ``raws`` is an ``incus
+    list`` the caller already holds; with it this reads the container, the
+    proxy's addresses and the current variables from that snapshot instead of
+    asking Incus again.
+
+    An always-on container's environment does not follow its entries (no
+    literal entries in ``NO_PROXY``; Squid's ``dst`` rules carry them) and is
+    left untouched when the proxy cannot be found: clearing it would bring back
+    the new-shell problem that always-on exists to remove.
     """
     from jailbee.egress_scope import container_extras, effective_repo_entries
 
     entries = [*effective_repo_entries(cfg, session), *container_extras(incus, name)]
     listed = raws if raws is not None else incus.list_containers()
     raw = next((r for r in listed if r.get("name") == name), {})
+    keep = always_on(cfg, raw)
     wanted: dict[str, str] = {}
-    if proxy_use(cfg, raw or {}, mode, entries) is ProxyUse.FILTERED:
-        bridge = _eth0_device(raw).get("network")
-        if not isinstance(bridge, str):
-            tui.warn(f"cannot find the eth0 network of {name}; egress proxy env cleared")
-            endpoint = None
-        else:
-            proxy = next((r for r in listed if r.get("name") == PROXY_CONTAINER), None)
-            endpoint = _client_devices(proxy).get(bridge)
-            if endpoint is None:
-                tui.warn(
-                    "egress proxy is not running; wildcard egress entries are unavailable "
-                    "— run `jailbee apply`"
-                )
+    if proxy_use(cfg, raw, mode, entries) is not ProxyUse.NONE:
+        endpoint = _endpoint_or_warn(name, raw, listed)
+        if endpoint is None and keep:
+            return {}
         if endpoint is not None:
-            wanted = proxy_env(endpoint, entries, other_service_ips(incus, EGRESS_PROXY_LABEL))
+            direct = other_service_ips(incus, EGRESS_PROXY_LABEL)
+            wanted = proxy_env(endpoint, () if keep else entries, direct)
     changed: dict[str, str | None] = {}
     for key, current in _current_env(incus, name, raw).items():
         value = wanted.get(key)
@@ -630,6 +645,7 @@ def sync_container_env(
     # on; a tmux server already running would hand its new windows the old set.
     if changed:
         tmux.set_server_environment(incus, name, changed)
+    return changed
 
 
 _SYNC_ERRORS = (IncusError, RuntimeError, ValueError, SQLAlchemyError)
@@ -672,19 +688,39 @@ def sync_repo(cfg: Config, incus: Incus) -> None:
         tui.warn_plain(f"egress proxy rules for {cfg.container_prefix} failed: {e}")
 
 
-def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> None:
+def _ensure_proxy_for(cfg: Config, incus: Incus, name: str, mode: str | None) -> None:
+    """Start the proxy when an always-on container it serves finds none running.
+
+    Only always-on containers: a legacy or opted-out one keeps today's rule
+    (``jailbee apply`` and ``egress add`` start the proxy for wildcards).
+    """
+    raws = incus.list_containers()
+    raw = next((r for r in raws if r.get("name") == name), {})
+    if not always_on(cfg, raw) or proxy_use(cfg, raw, mode, ()) is ProxyUse.NONE:
+        return
+    if any(r.get("name") == PROXY_CONTAINER and r.get("status") == "Running" for r in raws):
+        return
+    proxy_up_or_warn(incus)
+
+
+def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> bool:
     """Refresh one container's proxy env and its repo's rules. Never raises.
 
-    Rules first, then the environment: a container that is told to use the proxy
-    must find its source address already allowed, or its first requests get a 403.
+    Starts the proxy first if an always-on container needs it. Rules before
+    the environment: a container told to use the proxy must find its source
+    address already allowed, or its first requests get a 403. Returns whether
+    the environment changed, so a caller says "open a new shell" only when one
+    is needed.
     """
     from sqlmodel import Session
 
     from jailbee.db import get_engine
 
     try:
+        _ensure_proxy_for(cfg, incus, name, mode)
         with Session(get_engine()) as session:
             sync_repo_rules(cfg, incus, session)
-            sync_container_env(cfg, incus, session, name, mode)
+            return bool(sync_container_env(cfg, incus, session, name, mode))
     except _SYNC_ERRORS as e:
         tui.warn_plain(f"egress proxy sync for {name} failed: {e}")
+        return False

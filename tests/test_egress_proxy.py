@@ -914,6 +914,115 @@ def test_sync_container_swallows_incus_error(make_cfg, tmp_path, mocker):
     assert "boom" in warn.call_args.args[0]
 
 
+def _work_env_incus(cfg, *, mode="strict", current=None, proxy=True):
+    incus = MagicMock()
+    listed = [_work(cfg, "myrepo-new", mode=mode)]
+    if proxy:
+        listed.insert(
+            0,
+            {"name": PROXY_CONTAINER, "status": "Running", "devices": {"cl-work": {"ipv4.address": "10.9.0.2"}}},
+        )
+    incus.list_containers.return_value = listed
+    incus.network_acl_exists.return_value = False
+    store = dict(current or {})
+    incus.config_get.side_effect = lambda _n, key: store.get(key)
+    return incus
+
+
+def _as_config(env):
+    return {f"environment.{k}": v for k, v in env.items()}
+
+
+def test_env_always_on_strict_work_container_without_wildcards(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    mocker.patch("jailbee.tmux.set_server_environment")
+    _patch_entries(mocker, ["github.com:443", "10.0.0.0/8"], {})
+    changed = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    assert changed["HTTPS_PROXY"] == "http://10.9.0.2:3128"
+    assert changed["NO_PROXY"] == "localhost,127.0.0.1,.incus"
+
+
+@pytest.mark.parametrize("entries", [["a.com"], ["10.0.0.0/8"], ["1.2.3.4:5"], ["*.a.com:8443"]])
+def test_env_always_on_does_not_change_when_entries_do(make_cfg, tmp_path, mocker, entries):
+    cfg = _cfg(make_cfg, tmp_path)
+    mocker.patch("jailbee.tmux.set_server_environment")
+    _patch_entries(mocker, [], {})
+    first = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    incus = _work_env_incus(cfg, current=_as_config(first))
+    _patch_entries(mocker, entries, {})
+    assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "strict") == {}
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+
+
+def test_env_always_on_survives_a_mode_switch(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    mocker.patch("jailbee.tmux.set_server_environment")
+    _patch_entries(mocker, ["*.repo.com"], {})
+    first = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    incus = _work_env_incus(cfg, mode="loose", current=_as_config(first))
+    assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "loose") == {}
+    incus.config_unset.assert_not_called()
+
+
+def test_env_always_on_keeps_the_environment_when_the_proxy_is_down(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = _work_env_incus(cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"}, proxy=False)
+    _patch_entries(mocker, [], {})
+    warn = mocker.patch("jailbee.tui.warn")
+    assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "strict") == {}
+    warn.assert_called_once()
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+
+
+def test_env_always_off_work_container_without_wildcards_gets_nothing(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=False)
+    incus = _work_env_incus(cfg)
+    _patch_entries(mocker, ["a.com"], {})
+    assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "strict") == {}
+    incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize(("changed", "expected"), [({"HTTPS_PROXY": "x"}, True), ({}, False)])
+def test_sync_container_reports_whether_the_env_changed(make_cfg, tmp_path, mocker, changed, expected):
+    cfg = _cfg(make_cfg, tmp_path)
+    mocker.patch.object(egress_proxy, "sync_repo_rules")
+    mocker.patch.object(egress_proxy, "sync_container_env", return_value=changed)
+    assert egress_proxy.sync_container(cfg, _work_env_incus(cfg), "myrepo-new", "strict") is expected
+
+
+def test_sync_container_returns_false_on_a_swallowed_error(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=IncusError("boom"))
+    mocker.patch("jailbee.tui.warn_plain")
+    assert egress_proxy.sync_container(cfg, _work_env_incus(cfg), "myrepo-new", "strict") is False
+
+
+def test_sync_container_starts_the_proxy_for_an_always_on_container(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = _work_env_incus(cfg, proxy=False)
+    up = mocker.patch.object(egress_proxy, "proxy_up_or_warn", return_value=True)
+    mocker.patch.object(egress_proxy, "sync_repo_rules")
+    mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
+    egress_proxy.sync_container(cfg, incus, "myrepo-new", "loose")
+    up.assert_called_once_with(incus)
+
+
+@pytest.mark.parametrize("case", ["running", "always_off", "legacy", "no_mode"])
+def test_sync_container_leaves_the_proxy_alone(make_cfg, tmp_path, mocker, case):
+    cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=case != "always_off")
+    incus = _work_env_incus(cfg, proxy=case == "running")
+    mode = None if case == "no_mode" else "strict"
+    if case == "legacy":
+        incus.list_containers.return_value = [_legacy("myrepo-new")]
+    up = mocker.patch.object(egress_proxy, "proxy_up_or_warn")
+    mocker.patch.object(egress_proxy, "sync_repo_rules")
+    mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
+    egress_proxy.sync_container(cfg, incus, "myrepo-new", mode)
+    up.assert_not_called()
+
+
 # --- boot wait and netplan idempotence ---------------------------------------
 
 
