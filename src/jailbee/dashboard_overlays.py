@@ -179,7 +179,40 @@ def picked(picker: Picker) -> PickerEntry | None:
     return picker.entries[picker.index] if 0 <= picker.index < len(picker.entries) else None
 
 
-def render_picker(picker: Picker) -> RenderableType:
+# A scrolled list never shrinks below this many rows: the cursor plus a
+# marker for each hidden end.
+MIN_LIST_ROWS = 3
+
+
+def window_lines(lines: list[str], index: int, max_rows: int | None) -> list[str]:
+    """``lines`` cut to ``max_rows`` rows that keep ``index`` in view.
+
+    Each hidden end is replaced by a dim "↑/↓ N more" row, so a list taller
+    than the terminal scrolls with its cursor instead of being clipped below
+    the screen. The window is derived from the cursor alone — no scroll
+    offset is stored — so it re-centres on every frame. ``None`` keeps all.
+    """
+    count = len(lines)
+    if max_rows is None or count <= max(max_rows, MIN_LIST_ROWS):
+        return lines
+    budget = max(max_rows, MIN_LIST_ROWS)
+
+    def more(n: int, arrow: str) -> str:
+        return f"[dim]  {arrow} {n} more[/dim]"
+
+    # One end hidden: the cursor fits with a single marker.
+    size = budget - 1
+    if index < size:
+        return [*lines[:size], more(count - size, "↓")]
+    if index >= count - size:
+        return [more(count - size, "↑"), *lines[count - size :]]
+    size = budget - 2
+    start = max(1, min(index - size // 2, count - size - 1))
+    return [more(start, "↑"), *lines[start : start + size], more(count - start - size, "↓")]
+
+
+def render_picker(picker: Picker, max_rows: int | None = None) -> RenderableType:
+    """The picker as a bordered panel, its entries windowed to ``max_rows``."""
     lines = [
         f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(entry.label)}[/]"
         if i == picker.index
@@ -187,7 +220,7 @@ def render_picker(picker: Picker) -> RenderableType:
         for i, entry in enumerate(picker.entries)
     ] or ["[dim](nothing to choose)[/dim]"]
     return Panel(
-        "\n".join(lines),
+        "\n".join(window_lines(lines, picker.index, max_rows)),
         title=f"[bold]{escape(picker.title)}[/]",
         title_align="left",
         box=box.ROUNDED,

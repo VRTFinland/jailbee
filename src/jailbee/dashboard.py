@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 
@@ -63,6 +64,7 @@ from jailbee.dashboard_egress import (
 )
 from jailbee.dashboard_egress_data import load_egress_rows
 from jailbee.dashboard_overlays import (
+    MIN_LIST_ROWS,
     PICKER_HINT,
     PROMPT_HINT,
     Picker,
@@ -75,6 +77,7 @@ from jailbee.dashboard_overlays import (
     picked,
     render_picker,
     render_prompt,
+    window_lines,
 )
 from jailbee.dashboard_settings import (
     CURSOR_STYLE,
@@ -1492,9 +1495,9 @@ def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
     return None if isinstance(entry, MenuGroup) else entry[1]
 
 
-def _render_menu(menu: MenuState | RepoMenuState) -> RenderableType:
+def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
     """The action menu as a bordered panel: one row per action, cursor on the
-    highlighted one."""
+    highlighted one, windowed to ``max_rows`` around the cursor."""
     lines = [
         f"[bold cyan]▸[/] [{CURSOR_STYLE}]{label}[/]" if i == menu.index else f"  {label}"
         for i, item in enumerate(_menu_entries(menu))
@@ -1511,7 +1514,7 @@ def _render_menu(menu: MenuState | RepoMenuState) -> RenderableType:
     else:
         title = f"{menu.container} →"
     return Panel(
-        "\n".join(lines),
+        "\n".join(window_lines(lines, menu.index, max_rows)),
         title=f"[bold]{title}[/]",
         title_align="left",
         box=box.ROUNDED,
@@ -1857,6 +1860,83 @@ class _RepoSections:
         yield Group(*sections)
 
 
+def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
+    """The overlay's panel; ``max_rows`` windows the scrollable list overlays."""
+    if isinstance(overlay, EgressState):
+        return render_egress(
+            overlay,
+            can_add=overlay.can_add,
+            can_rm=overlay.can_rm and removable_entry(overlay) is not None,
+        )
+    if isinstance(overlay, (MenuState, RepoMenuState)):
+        return _render_menu(overlay, max_rows)
+    if isinstance(overlay, CommandState):
+        lines = [f"> {overlay.text}▏"]
+        if overlay.suggestions:
+            lines.append("  " + "   ".join(overlay.suggestions))
+        return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
+    if isinstance(overlay, SettingsState):
+        return render_settings(overlay, dynamic=dynamic_column_names())
+    if isinstance(overlay, TextPrompt):
+        return render_prompt(overlay)
+    if isinstance(overlay, Picker):
+        return render_picker(overlay, max_rows)
+    if isinstance(overlay, da.AccountsState):
+        return da.render_accounts(overlay)
+    return _render_help()
+
+
+# Panel border rows: around a windowed overlay's list, and around the frame.
+_OVERLAY_BORDER_ROWS = 2
+_FRAME_BORDER_ROWS = 2
+
+
+@dataclass(frozen=True)
+class _FrameBody:
+    """The dashboard body: the table, then the overlay, fitted to the screen.
+
+    Without ``max_height`` (a plain ``console.print``) everything is drawn
+    whole. Under the full-screen ``Live`` anything past the terminal's height
+    would be clipped by the screen — so a menu longer than the space below
+    the table would hide its own cursor, and a table filling the screen would
+    hide the overlay entirely. Instead a menu or picker is windowed to the
+    rows left under the table (never fewer than :data:`MIN_LIST_ROWS`), and
+    when the overlay still does not fit the table is cut from below.
+
+    ``max_height`` is passed in rather than read from ``options.height``:
+    Rich's ``Screen`` wraps its renderable in a ``Group``, which resets the
+    height before anything below it renders.
+    """
+
+    head: tuple[RenderableType, ...]
+    overlay: Overlay | None
+    max_height: int | None = None
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        if self.overlay is None:
+            yield Group(*self.head)
+            return
+        hint = _hint_line(self.overlay)
+        if self.max_height is None:
+            yield Group(*self.head, "", _render_overlay(self.overlay), hint)
+            return
+        free = options.update(height=None)
+        head = console.render_lines(Group(*self.head), free, pad=False)
+        # A blank separator row, then the hint, which may wrap.
+        gap = console.render_lines(Text(""), free, pad=False)
+        hint_lines = console.render_lines(hint, free, pad=False)
+        tail_rows = len(gap) + len(hint_lines)
+        list_rows = self.max_height - len(head) - tail_rows - _OVERLAY_BORDER_ROWS
+        panel = console.render_lines(
+            _render_overlay(self.overlay, max(list_rows, MIN_LIST_ROWS)), free, pad=False
+        )
+        keep = max(0, self.max_height - len(panel) - tail_rows)
+        for i, line in enumerate([*head[:keep], *gap, *panel, *hint_lines]):
+            if i:
+                yield Segment.line()
+            yield from line
+
+
 def render(
     groups: list[RepoGroup],
     selected: Row | None,
@@ -1869,6 +1949,7 @@ def render(
     folded: frozenset[str] = frozenset(),
     hide_first: Sequence[str] = (),
     hidden_by_preferences: bool = False,
+    height: int | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -1879,9 +1960,14 @@ def render(
     a short transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
-    the table so the dashboard it acts on stays on screen. ``notice`` is a
-    transient message (a rejected key, a view-only row) shown in the subtitle,
-    or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped right below the table.
+    the table so the dashboard it acts on stays on screen. When the frame is
+    taller than the terminal the overlay wins: a menu or picker scrolls with
+    its cursor, and the table is cut from below (see :class:`_FrameBody`).
+    ``height`` is the terminal's height; None draws everything whole.
+
+    ``notice`` is a transient message (a rejected key, a view-only row) shown
+    in the subtitle, or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped
+    right below the table.
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
@@ -1909,31 +1995,6 @@ def render(
     inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
     if inline_notice is not None:
         body.append(Text(inline_notice, style="yellow"))
-    if overlay is not None:
-        if isinstance(overlay, EgressState):
-            panel = render_egress(
-                overlay,
-                can_add=overlay.can_add,
-                can_rm=overlay.can_rm and removable_entry(overlay) is not None,
-            )
-        elif isinstance(overlay, (MenuState, RepoMenuState)):
-            panel = _render_menu(overlay)
-        elif isinstance(overlay, CommandState):
-            lines = [f"> {overlay.text}▏"]
-            if overlay.suggestions:
-                lines.append("  " + "   ".join(overlay.suggestions))
-            panel = Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
-        elif isinstance(overlay, SettingsState):
-            panel = render_settings(overlay, dynamic=dynamic_column_names())
-        elif isinstance(overlay, TextPrompt):
-            panel = render_prompt(overlay)
-        elif isinstance(overlay, Picker):
-            panel = render_picker(overlay)
-        elif isinstance(overlay, da.AccountsState):
-            panel = da.render_accounts(overlay)
-        else:
-            panel = _render_help()
-        body += ["", panel, _hint_line(overlay)]
 
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
@@ -1953,7 +2014,11 @@ def render(
         else None
     )
     return Panel(
-        Group(*body),
+        _FrameBody(
+            tuple(body),
+            overlay,
+            None if height is None else max(0, height - _FRAME_BORDER_ROWS),
+        ),
         title=title,
         title_align="left",
         subtitle=subtitle,
@@ -3832,6 +3897,7 @@ def run(
                         folded=folded,
                         hide_first=hide_first,
                         hidden_by_preferences=bool(all_groups) and not groups,
+                        height=console.height,
                     ),
                     refresh=True,
                 )

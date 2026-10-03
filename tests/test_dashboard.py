@@ -3161,6 +3161,67 @@ def _cursor_lines(lines: list[str]) -> list[str]:
     return [ln for ln in lines if sgr in ln]
 
 
+def _screen_lines(groups, overlay, height: int) -> list[str]:
+    """One frame as the full-screen dashboard draws it at ``height`` rows."""
+    frame = dashboard.render(
+        groups,
+        dashboard.Row("container", groups[0].containers[0].name),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        overlay=overlay,
+        height=height,
+    )
+    return _render_text(frame, width=100).splitlines()
+
+
+def _tall_group(tmp_path, n: int) -> dashboard.RepoGroup:
+    return dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci(f"alpha-{i}", "alpha") for i in range(n)]
+    )
+
+
+def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
+    lines = _screen_lines([_tall_group(tmp_path, 3)], menu, height=20)
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert "▸ Action 25" in text
+    assert "Action 0 " not in text
+    assert "more" in text
+    assert lines[-1].startswith("╰")  # the frame's bottom border is on screen
+
+
+def test_render_scrolls_a_picker_taller_than_the_screen_to_its_cursor(tmp_path):
+    entries = tuple(dashboard.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
+    picker = dashboard.Picker("x", "Pick one", entries, index=29)
+    lines = _screen_lines([_tall_group(tmp_path, 3)], picker, height=20)
+    assert len(lines) <= 20
+    assert "▸ Entry 29" in "\n".join(lines)
+
+
+def test_render_cuts_a_table_taller_than_the_screen_to_keep_the_menu_visible(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=12)
+    lines = _screen_lines([_tall_group(tmp_path, 40)], menu, height=20)
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert "NAME" in text  # the table is cut from below, keeping its header
+    assert "▸ Action 12" in text
+    assert "Enter" in lines[-2]  # the hint line, right above the bottom border
+
+
+def test_render_without_height_draws_a_long_menu_whole(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
+    frame = dashboard.render(
+        [_tall_group(tmp_path, 3)],
+        None,
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        overlay=menu,
+    )
+    text = _render_text(frame, width=100)
+    assert "Action 0 " in text and "Action 29" in text and "more" not in text
+
+
 def test_render_hides_job_column_until_a_job_exists(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
