@@ -14,7 +14,7 @@ New here? [Installation](installation.md) sets up the host, then
 |---|---|
 | [Installation](installation.md) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
 | [Getting started](getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
-| [Running on macOS](macos.md) | Using JailBee from an Apple Silicon Mac via a Linux VM (Colima/Lima) with the repo shared from macOS (experimental) |
+| [Using JailBee from a Mac](macos.md) | A Mac as client of a Linux host, or of a Linux VM on the Mac (experimental): SSH service plus Windows App for GUI apps |
 
 ## Daily use
 

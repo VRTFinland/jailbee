@@ -44,6 +44,9 @@ display speaks TLS without Network Level Authentication and checks no
 credentials (see [Security](security.md#remote-gui)). Accept the self-signed
 certificate the client warns about.
 
+From a Mac, [Using JailBee from a Mac](macos.md) has a ready `~/.ssh/config`
+entry and the Windows App steps.
+
 Already in an SSH session? Add the forward to it with `~C`, then
 `-L 3389:127.0.0.1:13389`. To have every session carry it, put
 `LocalForward 3389 127.0.0.1:13389` in the host's entry in `~/.ssh/config`.
