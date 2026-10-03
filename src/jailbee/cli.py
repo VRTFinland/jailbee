@@ -1626,6 +1626,47 @@ def apply(
         raise typer.Exit(1)
 
 
+@app.command("upgrade")
+def upgrade_cmd(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Run `base build` and `apply` in every repo, not only where a note owes them",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show what would run, change nothing")
+    ] = False,
+) -> None:
+    """Run `base build` and `apply` in every registered repo, restarting nothing.
+
+    For after upgrading jailbee. By default each repo runs only what the
+    release's upgrade notes owe it; `--force` runs both everywhere. Containers,
+    their dockerd and LiteLLM instances are never restarted: those that need it
+    are named, and `jailbee apply` in the repo offers the restart.
+    """
+    from jailbee.dashboard import registered_repo_roots
+    from jailbee.incus import Incus
+    from jailbee.upgrade_all import run_upgrade_all
+
+    roots = registered_repo_roots()
+    if not roots:
+        info("No registered repositories; run `jailbee apply` in a repo first.")
+        return
+    results = run_upgrade_all(
+        roots,
+        Incus(),
+        _load_global(),
+        force=force,
+        dry_run=dry_run,
+        version=__version__,
+        now=_now(),
+    )
+    if not all(r.ok for r in results):
+        raise typer.Exit(1)
+
+
 # ---- Lifecycle commands ----
 
 

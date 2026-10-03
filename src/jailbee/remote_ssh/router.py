@@ -241,7 +241,7 @@ def command_path(argv: Sequence[str]) -> str:
 #   - host configuration and the SSH service itself: `config edit`/`init`
 #     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
-#     `apply`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
+#     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
 #     `net migrate`, `registry up`/`down`, `display up`/`down`, `litellm up`/`down`/`login`/
 #     `logout`/`logs`;
 #   - persistent network policy: `net egress add`/`rm` accept any address,
@@ -262,6 +262,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "setup",
         "init",
         "apply",
+        "upgrade",
         "base build",
         "base prune",
         "net install",

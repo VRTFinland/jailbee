@@ -925,6 +925,11 @@ available inside a container); `display status` works over SSH.
   first, so the command must follow it (`jailbee exec NAME -- cmd`); with the name omitted
   and no terminal it exits 2 — always pass both. If `<name>` is omitted where a
   TTY exists, you get a picker.
+- **After upgrading jailbee:** `jailbee upgrade [--force] [--dry-run]` runs
+  `base build` and `apply` in every registered repo and restarts nothing (`apply`
+  names what needs a restart). By default a repo runs only what the release's
+  upgrade notes owe it; `--force` runs both everywhere; `--dry-run` lists what
+  would run. Exit 1 if any repo failed.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
   autostart, and both take `--background`/`-b` to detach that run and
   `--wait`/`--no-wait` to override a `detach: true` autostart stage for this

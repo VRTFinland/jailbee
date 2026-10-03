@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **`jailbee upgrade`.** After upgrading jailbee, runs `base build` and `apply`
+  in every registered repo without restarting any container, dockerd or LiteLLM
+  instance. A repo runs only what the release's upgrade notes owe it; `--force`
+  runs both everywhere and `--dry-run` shows what would run.
 - **Wildcard `egress_allow` entries.** `*.example.com` allows the domain and
   every subdomain, on ports 80 and 443 (`*.example.com:8443` for one port), in
   strict mode, in `egress_allow` and with `jailbee net egress add`. They go
