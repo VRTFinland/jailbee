@@ -135,11 +135,8 @@ class RefreshWorker(QObject):
                 git_enabled=self._git_enabled,
                 first=first,
                 forced=forced,
+                paused=self._paused,
             )
-            if self._paused and not forced and not first:
-                # Manual mode: suppress periodic gathers, but a `force()`
-                # (forced=True) or the initial gather must still go through.
-                do_base = False
             if do_base:
                 self._force = False
                 try:

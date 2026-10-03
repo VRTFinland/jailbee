@@ -6885,6 +6885,28 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
+def test_run_does_not_gather_while_a_child_owns_the_terminal(mocker, tmp_path):
+    """A dashboard that launched `jb tmux` must not keep polling incus for as
+    long as that session lives — nothing of it is on screen meanwhile. The
+    child outlasts several refresh intervals (0.5 s in `_drive_run`), so a
+    refresher that ignored the handover would gather during it."""
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    during: list[int] = []
+
+    def child(*args, **kwargs):
+        before = dashboard.gather_live.call_count
+        time.sleep(1.6)
+        during.append(dashboard.gather_live.call_count - before)
+        return mocker.Mock(returncode=0)
+
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=child)
+
+    rc = _drive_run(mocker, [b"j", b"t"], groups=[group])
+
+    assert rc == 0
+    assert during == [0]
+
+
 def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = mocker.patch.object(dashboard.subprocess, "run")

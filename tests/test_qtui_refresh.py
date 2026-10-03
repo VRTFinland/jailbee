@@ -183,45 +183,23 @@ def test_set_paused_then_force_still_gathers(qtbot, mocker):
 
 
 def test_refresh_due_paused_gating_unit():
-    """Unit-level equivalent of the paused-gating decision made in
-    ``run_loop`` (``if self._paused and not forced and not first: do_base
-    = False``), isolated from thread timing so it can't flake."""
+    """Unit-level equivalent of the paused gating ``run_loop`` relies on,
+    isolated from thread timing so it can't flake: a paused schedule skips a
+    gather that is due, but ``forced`` and ``first`` still go through."""
     from jailbee.dashboard import _refresh_due
 
-    do_base, _do_git = _refresh_due(
-        now=100.0,
-        last_base=99.9,
-        last_full=0.0,
-        interval=0.2,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    )
-    # _refresh_due alone says "not due yet"; paused only needs to force
-    # do_base False when it *would* have been True and it's not forced/first.
-    paused = True
-    forced = False
-    first = False
-    if paused and not forced and not first:
-        do_base = False
-    assert do_base is False
-
-    # forced always wins even while paused.
-    do_base2, _ = _refresh_due(
-        now=100.0,
-        last_base=99.9,
-        last_full=0.0,
-        interval=0.2,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=True,
-    )
-    forced = True
-    if paused and not forced and not first:
-        do_base2 = False
-    assert do_base2 is True
+    due = {
+        "now": 100.0,
+        "last_base": 0.0,
+        "last_full": 0.0,
+        "interval": 0.2,
+        "git_interval": 10.0,
+        "git_enabled": True,
+    }
+    assert _refresh_due(**due, first=False, forced=False) == (True, True)
+    assert _refresh_due(**due, first=False, forced=False, paused=True) == (False, False)
+    assert _refresh_due(**due, first=False, forced=True, paused=True) == (True, True)
+    assert _refresh_due(**due, first=True, forced=False, paused=True) == (True, True)
 
 
 def test_gather_once_picks_up_a_repo_registered_after_launch(mocker):

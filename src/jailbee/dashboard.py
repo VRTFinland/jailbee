@@ -2882,14 +2882,18 @@ def _refresh_due(
     git_enabled: bool,
     first: bool,
     forced: bool,
+    paused: bool = False,
 ) -> tuple[bool, bool]:
     """Decide whether to gather now and whether to include git status.
 
     Returns ``(do_base, do_git)``. ``do_base`` is whether to gather at all;
     ``do_git`` is whether this gather should include the (expensive) git tier.
     ``now`` is a monotonic timestamp. ``first``/``forced`` force an immediate
-    git-inclusive gather.
+    git-inclusive gather. ``paused`` suppresses the periodic gathers only —
+    ``first`` and ``forced`` still go through.
     """
+    if paused and not (first or forced):
+        return False, False
     do_git = git_enabled and (first or forced or now >= last_full + git_interval)
     do_base = first or forced or do_git or now >= last_base + interval
     return do_base, do_git
@@ -2997,6 +3001,11 @@ def run(
     jobs = JobRunner()
     stop = threading.Event()
     force = threading.Event()
+    # Set while `foreground` has handed the terminal to another command
+    # (`tmux`, `shell`, …). Nothing is on screen then, and a dashboard that
+    # launched a long tmux session would otherwise keep polling incus for as
+    # long as that session lives.
+    paused = threading.Event()
     shared_groups: list[RepoGroup] = seeded
     worker_error: list[BaseException] = []
 
@@ -3022,6 +3031,7 @@ def run(
                 git_enabled=git_enabled,
                 first=first,
                 forced=forced,
+                paused=paused.is_set(),
             )
             if do_base:
                 if forced:
@@ -3130,6 +3140,7 @@ def run(
                 dashboard on screen behind it.
                 """
                 nonlocal last_title
+                paused.set()
                 live.stop()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
                 try:
@@ -3137,6 +3148,9 @@ def run(
                 finally:
                     tty.setcbreak(fd)
                     live.start(refresh=True)
+                    # The snapshot is as old as the command was long: refresh now.
+                    paused.clear()
+                    force.set()
                     # `fn` (jailbee shell / tmux) may have set its own OSC 2
                     # title; forget the last one we wrote so the next frame's
                     # title-changed check doesn't compare against it and skip
