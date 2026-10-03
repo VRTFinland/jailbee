@@ -3060,10 +3060,14 @@ def run(
             def mutate_egress(
                 state: EgressState, action: Literal["add", "rm"], entry: str | None = None
             ) -> EgressState | None:
-                """Reauthorize and run one scoped mutation; reload rows.
+                """Reauthorize and start one scoped mutation, detached.
 
                 ``add`` takes its destination from the inline prompt
                 (:func:`begin_egress_add`); ``rm`` acts on the selected row.
+                The panel stays up while the change runs. When it ends,
+                ``finish`` closes the panel *and* the menu it was opened from
+                after a success; a failure keeps the panel up, reloaded, for
+                a retry.
                 """
                 target = egress_target(state)
                 if target is None:
@@ -3112,6 +3116,11 @@ def run(
                         state.prefix,
                         state.container,
                     ):
+                        return
+                    if result.returncode == 0:
+                        # Done is done: the panel and the menu it was opened
+                        # from close, as every other menu action does.
+                        overlay = None
                         return
                     try:
                         rows = load_egress_rows(target.repo_root, incus, state.container)
@@ -3509,8 +3518,8 @@ def run(
                     return prefix
                 return next((g.prefix for g in groups if RepoTarget.of(g) is not None), None)
 
-            def load_accounts(prefix: str, index: int = 0) -> da.AccountsState | None:
-                """The Accounts panel for ``prefix``'s repo, the cursor clamped to ``index``."""
+            def load_accounts(prefix: str) -> da.AccountsState | None:
+                """The Accounts panel for ``prefix``'s repo."""
                 repo = repo_for(prefix)
                 if repo is None:
                     set_notice(f"'{prefix}' is gone", seconds=_FAILURE_NOTICE_SECONDS)
@@ -3518,7 +3527,7 @@ def run(
                 rows = load_listing(repo, da.account_ls_argv(), "accounts")
                 if rows is None:
                     return None
-                return da.AccountsState(rows, max(0, min(index, len(rows) - 1)), prefix)
+                return da.AccountsState(rows, 0, prefix)
 
             def open_accounts() -> da.AccountsState | None:
                 """Open the Accounts panel, or notice why not."""
@@ -3550,25 +3559,23 @@ def run(
                 )
 
             def run_account_change(state: da.AccountsState, argv: list[str]) -> Overlay | None:
-                """Run one change from the panel, then show the listing reloaded.
+                """Run one change from the panel; a change that worked closes it.
 
-                The repo is re-resolved first — it may have vanished while a
-                picker was open. A refused change keeps the old listing up
-                under its notice; a listing that fails after a change that
-                worked keeps the old rows too, under the listing's notice.
+                Done is done: the CLI's own message stays up as the notice, so
+                there is nothing left to Esc out of. The repo is re-resolved
+                first — it may have vanished while a picker was open. A refused
+                change keeps the listing up under its notice, for a retry.
                 """
                 repo = repo_for(state.prefix)
                 if repo is None:
                     set_notice(f"'{state.prefix}' is gone", seconds=_FAILURE_NOTICE_SECONDS)
                     return None
-                if not run_quiet_cli(repo, argv):
-                    return state
-                return load_accounts(state.prefix, state.index) or state
+                return None if run_quiet_cli(repo, argv) else state
 
             def submit_account_picker(
                 picker: Picker, entry: PickerEntry, state: da.AccountsState
             ) -> Overlay | None:
-                """The `acct-*` steps: every one lands back on the panel ``state``."""
+                """The `acct-*` steps: a cancel or a refusal lands back on the panel ``state``."""
                 if picker.purpose == "acct-action":
                     agent, group, ref = picker.carry
                     if entry.value == "use":

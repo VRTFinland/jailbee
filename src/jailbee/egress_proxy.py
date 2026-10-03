@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from sqlalchemy.exc import SQLAlchemyError
 
-from jailbee import tui
+from jailbee import tmux, tui
 from jailbee.bridge_ipv4 import free_ipv4
 from jailbee.egress import is_wildcard_entry
 from jailbee.egress_proxy_render import (
@@ -583,13 +583,20 @@ def sync_container_env(
             wanted = proxy_env(endpoint, entries, other_service_ips(incus, EGRESS_PROXY_LABEL))
     elif raws is not None:
         raw = next((r for r in raws if r.get("name") == name), None)
+    changed: dict[str, str | None] = {}
     for key, current in _current_env(incus, name, raw).items():
         value = wanted.get(key)
         if value is None:
             if current:
                 incus.config_unset(name, f"environment.{key}")
+                changed[key] = None
         elif current != value:
             incus.config_set(name, f"environment.{key}", value)
+            changed[key] = value
+    # The container config only reaches processes `incus exec` starts from now
+    # on; a tmux server already running would hand its new windows the old set.
+    if changed:
+        tmux.set_server_environment(incus, name, changed)
 
 
 _SYNC_ERRORS = (IncusError, RuntimeError, ValueError, SQLAlchemyError)

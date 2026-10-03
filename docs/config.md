@@ -932,8 +932,9 @@ and warn to run `jailbee apply` if it is not. Things to know:
   fails closed rather than escaping the allowlist. TLS is not intercepted: the
   proxy sees the host in the `CONNECT` request, never the traffic.
 - **Open a new shell.** The variables are container environment, so only
-  processes started after the change see them. A running shell, tmux window or
-  agent needs to be restarted (a new `jailbee shell` is enough).
+  processes started after the change see them. The change is also copied into
+  a tmux server already running in the container, so a new tmux window picks
+  it up; a shell, window or agent that is already open needs to be restarted.
 - **Plain entries still work.** Hostname, IP and CIDR entries keep their ACL
   rules; the proxy also lets a container reach them through the proxy, and IP
   literals are added to `NO_PROXY` so they go direct.

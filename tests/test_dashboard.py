@@ -1236,7 +1236,7 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     keys = [*_container_egress_keys(group), b"a", *_keys("example.com:8443"), _ENTER, b"\x03"]
     assert _drive_run(mocker, keys, groups=[group]) == 0
 
-    assert rows.call_count == 2  # initial load and post-mutation reload
+    assert rows.call_count == 1  # a change that worked closes the panel: no reload
     assert rows.call_args_list[0].args[0::2] == (tmp_path, "alpha-x")
     prompt.assert_not_called()
     child.assert_called_once_with(
@@ -1255,8 +1255,9 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     # While the question is open the cursor stays on the container the panel
     # is about, not the repo header.
     assert calls[asked[0]].args[1] == dashboard.Row("container", "alpha-x")
-    # After the submit the panel is back, with the reloaded rows.
-    assert isinstance(calls[-1].kwargs.get("overlay"), dashboard.EgressState)
+    # After the submit the whole stack is gone — panel and the menu behind it —
+    # so the next key acts on the table, not on a stale Esc chain.
+    assert calls[-1].kwargs.get("overlay") is None
 
 
 def test_ssh_egress_read_view_is_read_only_even_with_full_policy(mocker, tmp_path):
@@ -1351,12 +1352,13 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
         b"\r",
         b"j",
         b"r",
-        b"\x1b",
         b"\x03",
     ]
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     assert _drive_run(mocker, keys, groups=[group]) == 0
 
-    assert load.call_count == 2
+    assert load.call_count == 1  # a removal that worked closes the panel: no reload
+    assert render.call_args_list[-1].kwargs["overlay"] is None
     child.assert_called_once_with(
         ["jailbee", "net", "egress", "rm", "container-only.example", "alpha-x"],
         check=False,
@@ -7411,19 +7413,17 @@ _ACCOUNT_ROWS = (
 _ACCOUNT_LS = dashboard.da.account_ls_argv()
 
 
-def _fake_accounts_cli(mocker, *, listings=None, change=None):
+def _fake_accounts_cli(mocker, *, listing=None, change=None):
     """Patch the quiet CLI runner for the Accounts panel.
 
-    Each `account ls` answers the next of ``listings`` (the last one repeats);
-    anything else is a change and answers ``change``.
+    Every `account ls` answers ``listing``; anything else is a change and
+    answers ``change``.
     """
-    answers = list(listings or [_groups_listing(_ACCOUNT_ROWS)])
+    listing = listing or _groups_listing(_ACCOUNT_ROWS)
     change = change or dashboard.da.CliResult(True, "Done.")
 
     def fake(argv, **_kwargs):
-        if argv[:2] == ["account", "ls"]:
-            return answers.pop(0) if len(answers) > 1 else answers[0]
-        return change
+        return listing if argv[:2] == ["account", "ls"] else change
 
     return mocker.patch.object(dashboard.da, "run_cli_quiet", side_effect=fake)
 
@@ -7543,7 +7543,7 @@ def test_key_a_with_no_real_repo_is_a_notice(mocker):
     ids=["command-failed", "garbled-output"],
 )
 def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, reason):
-    run = _fake_accounts_cli(mocker, listings=[listing])
+    run = _fake_accounts_cli(mocker, listing=listing)
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     # j after the failure: the dashboard is still reading keys, not crashed
@@ -7559,7 +7559,7 @@ def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, re
 
 
 def test_accounts_panel_with_an_empty_pool_says_so(mocker, tmp_path):
-    run = _fake_accounts_cli(mocker, listings=[_groups_listing("[]")])
+    run = _fake_accounts_cli(mocker, listing=_groups_listing("[]"))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     assert _drive_run(mocker, [b"A", _ENTER, b"j"], [_alpha(tmp_path)]) == 0
@@ -7614,16 +7614,8 @@ def test_accounts_questions_keep_the_cursor_where_the_key_was_pressed(mocker, tm
     assert frames[-1].args[1] == dashboard.Row("container", "alpha-x")
 
 
-def test_accounts_park_runs_the_scoped_command_and_reloads(mocker, tmp_path):
-    after = _groups_listing(
-        '[{"agent": "claude", "group": "team", "account": null, "state": "empty",'
-        ' "repos": ["alpha"], "containers": []}]'
-    )
-    run = _fake_accounts_cli(
-        mocker,
-        listings=[_groups_listing(_ACCOUNT_ROWS), after],
-        change=dashboard.da.CliResult(True, "Parked a@x.io#org12345."),
-    )
+def test_accounts_park_runs_the_scoped_command_and_closes(mocker, tmp_path):
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Parked a@x.io#org12345."))
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7633,12 +7625,11 @@ def test_accounts_park_runs_the_scoped_command_and_reloads(mocker, tmp_path):
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "park", "-a", "claude", "-g", "team"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
     child.assert_not_called()
     last = render.call_args_list[-1].kwargs
-    assert isinstance(last["overlay"], dashboard.da.AccountsState)
-    assert [r.state for r in last["overlay"].rows] == ["empty"]  # the reloaded listing
+    # Done is done: the panel closes, the CLI's own message stays as the notice.
+    assert last["overlay"] is None
     assert last["notice"] == "Parked a@x.io#org12345."
 
 
@@ -7674,9 +7665,8 @@ def test_accounts_use_stored_login_two_step(mocker, tmp_path):
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "use", "b@x.io~2", "-a", "claude", "-g", "team"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    assert isinstance(render.call_args_list[-1].kwargs["overlay"], dashboard.da.AccountsState)
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 @pytest.mark.parametrize(("downs", "group"), [(0, "spare"), (1, "team")])
@@ -7693,11 +7683,8 @@ def test_accounts_use_a_parked_login_in_a_chosen_group(mocker, tmp_path, downs, 
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "use", "b@x.io~2", "-a", "claude", "-g", group], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    last = render.call_args_list[-1].kwargs["overlay"]
-    assert isinstance(last, dashboard.da.AccountsState)
-    assert last.index == 1  # the reload keeps the cursor on the row acted on
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 def test_accounts_panel_closes_when_its_repo_vanishes(mocker, tmp_path):
@@ -7753,9 +7740,7 @@ _OPEN_GROUP_RM_CONFIRM = [b"A", b"j", b"j", _ENTER, b"j", _ENTER]
     ],
     ids=["delete-login", "remove-group"],
 )
-def test_accounts_confirmation_yes_runs_the_removal_and_reloads(
-    mocker, tmp_path, keys, title, argv
-):
+def test_accounts_confirmation_yes_runs_the_removal_and_closes(mocker, tmp_path, keys, title, argv):
     run = _fake_accounts_cli(mocker)
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7771,9 +7756,8 @@ def test_accounts_confirmation_yes_runs_the_removal_and_reloads(
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(argv, cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    assert isinstance(render.call_args_list[-1].kwargs["overlay"], dashboard.da.AccountsState)
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 @pytest.mark.parametrize(
@@ -7798,16 +7782,8 @@ def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, key
     assert back is calls[confirm_at].kwargs["overlay"].back  # the same panel, not reloaded
 
 
-def test_accounts_new_group_prompt_creates_the_typed_group_and_reloads(mocker, tmp_path):
-    after = _groups_listing(
-        '[{"agent": "claude", "group": "spare2", "account": null, "state": "empty",'
-        ' "repos": [], "containers": []}]'
-    )
-    run = _fake_accounts_cli(
-        mocker,
-        listings=[_groups_listing(_ACCOUNT_ROWS), after],
-        change=dashboard.da.CliResult(True, "Created group spare2."),
-    )
+def test_accounts_new_group_prompt_creates_the_typed_group_and_closes(mocker, tmp_path):
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Created group spare2."))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     assert _drive_run(mocker, [b"A", b"n", *_keys("spare2"), _ENTER], [_alpha(tmp_path)]) == 0
@@ -7822,10 +7798,9 @@ def test_accounts_new_group_prompt_creates_the_typed_group_and_reloads(mocker, t
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "group", "create", "spare2"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
     last = render.call_args_list[-1].kwargs
-    assert [r.group for r in last["overlay"].rows] == ["spare2"]
+    assert last["overlay"] is None
     assert last["notice"] == "Created group spare2."
 
 

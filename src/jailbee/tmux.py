@@ -180,6 +180,29 @@ def ever_attached(incus: Incus, container: str) -> bool:
     return bool(stamp) and stamp != "0"
 
 
+def set_server_environment(incus: Incus, container: str, env: dict[str, str | None]) -> None:
+    """Copy ``env`` into the global environment of a running tmux server.
+
+    A tmux window inherits the server's environment, and the server keeps the
+    one it was started with, so a change to the container's ``environment.*``
+    config never reaches a window opened afterwards. ``None`` removes the key.
+    Best-effort and one ``incus exec``: no server (or no running container)
+    leaves nothing stale to fix. Shells already open keep their old values.
+    """
+    if not env:
+        return
+    commands = ["tmux list-sessions >/dev/null 2>&1 || exit 0"]
+    for key, value in env.items():
+        if value is None:
+            commands.append(f"tmux set-environment -gu {key}")
+        else:
+            commands.append(f"tmux set-environment -g {key} {shlex.quote(value)}")
+    try:
+        incus.exec(container, _runuser("; ".join(commands)))
+    except IncusError:
+        pass
+
+
 def _sanitize_window_name(name: str) -> str:
     """Replace tmux-unsafe characters in a window name with underscores."""
     return _WINDOW_NAME_SAFE.sub("_", name)

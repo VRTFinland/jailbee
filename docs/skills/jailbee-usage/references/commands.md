@@ -657,8 +657,9 @@ override; config entries and inherited repo entries in a container panel are
 not removable. Repo-level removal removes all stored copies of an entry, so a
 duplicate local/legacy entry is not presented as a single-source deletion.
 Changes run through the CLI from the selected repo, preserving DNS validation,
-ACL updates and repo `jailbee apply` advice. Over SSH, the read panel requires
-`net egress ls`; add/remove require their own permitted command leaves, and
+ACL updates and repo `jailbee apply` advice. A change that works closes the
+panel and the menu behind it; a failed one keeps the panel open for a retry.
+Over SSH, the read panel requires `net egress ls`; add/remove require their own permitted command leaves, and
 `restrict_host: true` keeps them unavailable even under a full command policy.
 
 `A` (or `Accounts…` in the repo menu) opens the credential-group overlay — every credential group and stored
@@ -670,8 +671,9 @@ group. The repo and container menus carry `Credential group…` to change which
 group a repo (`account group set`/`unset`) or a single container (`account
 group use`/`reset`) follows. Changes run the real `jailbee account …` commands
 in the selected row's repo; a refusal (for example a running agent) is shown
-as a notice — use `!` with `--force` to override. `Esc` backs out of each
-question to the overlay, and closes the overlay itself.
+as a notice — use `!` with `--force` to override, while a change that works
+closes the overlay. `Esc` backs out of each question to the overlay, and
+closes the overlay itself.
 
 The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mount…`/`Unmount…` for the repo's `optional_mounts` (only kinds not attached / attached), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
 
