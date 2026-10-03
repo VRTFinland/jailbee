@@ -144,6 +144,16 @@ def test_an_undated_session_ranks_after_a_dated_one_of_the_same_state():
     assert out["a"][0].since == T0
 
 
+def test_shell_ranks_between_busy_and_idle():
+    sessions = [_s(1, 11, "idle"), _s(2, 12, "shell")]
+    out = _match({"a": sessions}, {"a": {101: 11, 102: 12}}, {101: 1, 102: 2})
+    assert out["a"][0].state == "shell"
+
+    sessions = [_s(1, 11, "shell"), _s(2, 12, "busy")]
+    out = _match({"a": sessions}, {"a": {101: 11, 102: 12}}, {101: 1, 102: 2})
+    assert out["a"][0].state == "busy"
+
+
 def test_an_unknown_state_ranks_after_idle():
     sessions = [_s(1, 11, "compacting"), _s(2, 12, "idle")]
     out = _match({"a": sessions}, {"a": {101: 11, 102: 12}}, {101: 1, 102: 2})

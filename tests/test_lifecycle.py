@@ -9608,6 +9608,7 @@ def test_agent_cell_is_a_dash_without_a_live_session():
     [
         ("waiting", 4 * 60, "◆ 4m"),
         ("busy", 12, "● 12s"),
+        ("shell", 20 * 60, "◐ 20m"),
         ("idle", 3 * 3600 + 59 * 60, "○ 3h"),
         ("idle", 30 * 3600, "○ 30h"),
     ],
@@ -9646,6 +9647,7 @@ def test_agent_compact_cell_colours_the_glyph_by_state():
 
     assert "[yellow]" in cell("waiting")
     assert "[green]" in cell("busy")
+    assert "[cyan]" in cell("shell")
     assert "[dim]" in cell("idle")
 
 

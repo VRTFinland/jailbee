@@ -2616,6 +2616,7 @@ def format_duration_coarse(delta: timedelta) -> str:
 _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "waiting": ("◆", "yellow"),
     "busy": ("●", "green"),
+    "shell": ("◐", "cyan"),
     "idle": ("○", "dim"),
 }
 """The `agent_compact` mark and Rich style per known state."""

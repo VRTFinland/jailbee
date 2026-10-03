@@ -558,10 +558,11 @@ so they cost no command inside the container.
 
 **AGENT** says whether an agent session inside the container needs you:
 `claude: waiting 4m` (it is waiting for input, and has been for four
-minutes), `claude: busy 12s`, `claude: idle 2h`; `·2` counts several
+minutes), `claude: busy 12s`, `claude: shell 20m` (idle, but a background
+shell job it started is still running), `claude: idle 2h`; `·2` counts several
 sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
-(waiting), `● 12s` (busy), `○ 2h` (idle). It names no agent and counts no
+(waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and counts no
 sessions; several agents in one state share one mark. A long idle time says
 how cold the agent's prompt cache is. These columns read the session files and trust a file only
 while a process of *that* container still matches it, so a crashed session

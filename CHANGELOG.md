@@ -37,6 +37,13 @@ before editing `## Unreleased`.
   `account group rm`, `remote ssh key rm`) ask even when there is only one
   candidate.
 
+### Fixed
+
+- **The `AGENT` column understands Claude Code's `shell` state.** Newer Claude
+  Code reports `shell` when it is idle but a background shell job it started is
+  still running; the compact column showed it as `? shell`. It is now `◐`,
+  ranked between busy and idle.
+
 ## 1.6.0 - 2026-10-02
 
 ### Added
