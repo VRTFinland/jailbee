@@ -611,7 +611,7 @@ def _endpoint_or_warn(name: str, raw: dict[str, Any], listed: list[dict[str, Any
     endpoint = _client_devices(proxy).get(bridge)
     if endpoint is None:
         tui.warn(
-            "egress proxy is not running; wildcard egress entries are unavailable "
+            "egress proxy is not running or not attached to this container's network "
             "— run `jailbee apply`"
         )
     return endpoint
@@ -723,8 +723,15 @@ def _ensure_proxy_for(cfg: Config, incus: Incus, name: str, mode: str | None) ->
     raw = next((r for r in raws if r.get("name") == name), {})
     if not always_on(cfg, raw) or proxy_use(cfg, raw, mode, ()) is ProxyUse.NONE:
         return
-    if any(r.get("name") == PROXY_CONTAINER and r.get("status") == "Running" for r in raws):
-        return
+    proxy = next(
+        (r for r in raws if r.get("name") == PROXY_CONTAINER and r.get("status") == "Running"),
+        None,
+    )
+    if proxy is not None:
+        bridge = _eth0_device(raw).get("network")
+        # A proxy made on another network has no NIC here; proxy_up adds it.
+        if not isinstance(bridge, str) or bridge in _client_devices(proxy):
+            return
     proxy_up_or_warn(incus)
 
 
