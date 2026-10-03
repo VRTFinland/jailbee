@@ -63,6 +63,20 @@ def test_build_container_name_uses_prefix(make_cfg, tmp_path, mocker):
     assert launched_name == f"{cfg.container_prefix}-base-build"
 
 
+def test_build_announces_the_image_it_publishes(make_cfg, tmp_path, mocker, capsys):
+    # A synthesized (scratch) config names its build container per directory but
+    # publishes one shared alias; the opening line must say which image is built.
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    build_golden_image(cfg, incus)
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert f"Building {cfg.golden.alias} from" in text
+    assert f"{cfg.container_prefix}-base-build" in text
+
+
 def test_build_uses_config_versions():
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = MagicMock()
