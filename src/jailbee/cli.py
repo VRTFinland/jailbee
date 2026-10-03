@@ -9219,8 +9219,9 @@ def egress_add_cmd(
     else:
         egress_scope.apply_container_acl(cfg, incus, container, mode=mode)
     _repin_hosts_quietly(cfg, incus, container)
-    # Any entry can change the container's NO_PROXY (a literal IP or CIDR does),
-    # so the sync is unconditional; only a wildcard needs Squid itself.
+    # A literal IP or CIDR can change a non-always-on container's NO_PROXY (an
+    # always-on one's never moves), so the sync is unconditional; only a
+    # wildcard needs Squid itself.
     proxy_ok = True
     if is_wildcard_entry(entry):
         # Squid first, so the sync finds an endpoint to point the environment at.
