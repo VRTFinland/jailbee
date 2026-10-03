@@ -2793,6 +2793,14 @@ def test_share_local_defaults_true(make_cfg, tmp_path):
     assert cfg.share_local is True
 
 
+def test_egress_proxy_always_defaults_true(make_cfg, tmp_path):
+    assert make_cfg(tmp_path).egress_proxy_always is True
+
+
+def test_egress_proxy_always_can_be_disabled(make_cfg, tmp_path):
+    assert make_cfg(tmp_path, egress_proxy_always=False).egress_proxy_always is False
+
+
 def test_share_local_override_false(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path, share_local=False)
     assert cfg.share_local is False

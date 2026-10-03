@@ -516,14 +516,42 @@ def test_real_script_leaves_no_bak_after_a_successful_change(real_push):
 # ---- per-repo rule collection and per-container environment ----------------
 
 
-@pytest.mark.parametrize("mode", ["strict", "loose", None])
+def _gen_raw(generation):
+    marker = "myrepo-net-work-strict" if generation == "work" else "myrepo-net-strict"
+    return {"name": "c", "profiles": ["default", marker]}
+
+
 @pytest.mark.parametrize(
-    ("repo", "extras", "has_wildcard"),
-    [(["*.a.com"], [], True), ([], ["*.b.com"], True), (["a.com"], ["b.com"], False)],
+    ("generation", "always", "mode", "entries", "expected"),
+    [
+        ("work", True, "strict", [], egress_proxy.ProxyUse.FILTERED),
+        ("work", True, "strict", ["*.a.com"], egress_proxy.ProxyUse.FILTERED),
+        ("work", True, "loose", [], egress_proxy.ProxyUse.OPEN),
+        ("work", True, None, ["*.a.com"], egress_proxy.ProxyUse.NONE),
+        ("work", False, "strict", ["*.a.com"], egress_proxy.ProxyUse.FILTERED),
+        ("work", False, "strict", ["a.com"], egress_proxy.ProxyUse.NONE),
+        ("work", False, "loose", ["*.a.com"], egress_proxy.ProxyUse.NONE),
+        ("legacy", True, "strict", ["a.com"], egress_proxy.ProxyUse.NONE),
+        ("legacy", True, "strict", ["*.a.com"], egress_proxy.ProxyUse.FILTERED),
+        ("legacy", True, "loose", ["*.a.com"], egress_proxy.ProxyUse.NONE),
+    ],
 )
-def test_container_wants_proxy_truth_table(mode, repo, extras, has_wildcard):
-    expected = mode == "strict" and has_wildcard
-    assert egress_proxy.container_wants_proxy(repo, extras, mode) is expected
+def test_proxy_use_table(make_cfg, tmp_path, generation, always, mode, entries, expected):
+    cfg = make_cfg(tmp_path, egress_proxy_always=always)
+    assert egress_proxy.proxy_use(cfg, _gen_raw(generation), mode, entries) is expected
+
+
+@pytest.mark.parametrize(
+    ("generation", "always", "expected"),
+    [
+        ("work", True, True),
+        ("work", False, False),
+        ("legacy", True, False),
+    ],
+)
+def test_always_on(make_cfg, tmp_path, generation, always, expected):
+    cfg = make_cfg(tmp_path, egress_proxy_always=always)
+    assert egress_proxy.always_on(cfg, _gen_raw(generation)) is expected
 
 
 def _legacy(name, status="Running", ip="10.1.0.5", prefix="myrepo", mode="strict"):

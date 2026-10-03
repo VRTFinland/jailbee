@@ -277,10 +277,12 @@ def test_build_specs_covers_every_config_leaf():
     `timeout`) adds six repo-level leaves: 95 + 6 = 101. The Claude agent's
     old `ai_pr_*` fields were not counted, since `agents` is a map the editor
     does not recurse into.
+    The `egress_proxy_always` bool (always-on egress proxy control) adds one:
+    101 + 1 = 102.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 101
+    assert len(build_specs(Config)) == 102
     assert len(build_specs(GlobalConfig)) == 40
 
 

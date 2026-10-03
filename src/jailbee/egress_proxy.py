@@ -36,12 +36,12 @@ from jailbee.egress_proxy_render import (
 )
 from jailbee.incus import Incus, IncusError
 from jailbee.loose_bridge import loose_bridge_host_ip
-from jailbee.network_generation import WORK_BRIDGE
+from jailbee.network_generation import WORK_BRIDGE, generation_of
 from jailbee.services_acl import EGRESS_PROXY_LABEL, other_service_ips, set_service
 from jailbee.work_network import work_network_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sqlmodel import Session
 
@@ -463,9 +463,32 @@ echo RECONFIGURED
 # ---- per-repo rule collection and per-container environment ----------------
 
 
-def container_wants_proxy(repo_entries: list[str], extras: list[str], mode: str | None) -> bool:
-    """A strict container with at least one wildcard entry needs the proxy."""
-    return mode == "strict" and any(is_wildcard_entry(e) for e in [*repo_entries, *extras])
+class ProxyUse(StrEnum):
+    """How one container uses the proxy."""
+
+    NONE = "none"  # no proxy environment, no Squid rule
+    FILTERED = "filtered"  # its egress entries, as Squid rules for its address
+    OPEN = "open"  # every destination: a loose container that keeps the proxy
+
+
+def always_on(cfg: Config, raw: dict[str, Any]) -> bool:
+    """The container keeps the proxy environment whatever its entries or mode."""
+    return cfg.egress_proxy_always and generation_of(cfg, raw) == "work"
+
+
+def proxy_use(
+    cfg: Config, raw: dict[str, Any], mode: str | None, entries: Sequence[str]
+) -> ProxyUse:
+    """Always-on work containers by mode; everything else only for a strict wildcard."""
+    if always_on(cfg, raw):
+        if mode == "strict":
+            return ProxyUse.FILTERED
+        if mode == "loose":
+            return ProxyUse.OPEN
+        return ProxyUse.NONE
+    if mode == "strict" and any(is_wildcard_entry(e) for e in entries):
+        return ProxyUse.FILTERED
+    return ProxyUse.NONE
 
 
 def _eth0_device(raw: dict[str, Any]) -> dict[str, Any]:
@@ -481,7 +504,6 @@ def _eth0_device(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _source_ipv4(cfg: Config, raw: dict[str, Any]) -> str | None:
     """Work containers: the reserved eth0 address. Legacy: the live lease."""
-    from jailbee.network_generation import generation_of
     from jailbee.registry import eth0_global_ipv4
 
     if generation_of(cfg, raw) == "work":
@@ -496,7 +518,6 @@ def collect_scopes(
     """The repo scope first, then one scope per work container with its own wildcard extras."""
     from jailbee.egress_scope import container_extras, effective_repo_entries
     from jailbee.lifecycle import list_containers
-    from jailbee.network_generation import generation_of
 
     repo_entries = effective_repo_entries(cfg, session)
     raw_by_name = {r["name"]: r for r in (raws if raws is not None else incus.list_containers())}
@@ -507,7 +528,7 @@ def collect_scopes(
         if raw is None or info.state != "Running":
             continue
         extras = container_extras(incus, info.name)
-        if not container_wants_proxy(repo_entries, extras, info.network):
+        if proxy_use(cfg, raw, info.network, [*repo_entries, *extras]) is not ProxyUse.FILTERED:
             continue
         ip = _source_ipv4(cfg, raw)
         if ip is None:
@@ -562,11 +583,10 @@ def sync_container_env(
     from jailbee.egress_scope import container_extras, effective_repo_entries
 
     entries = [*effective_repo_entries(cfg, session), *container_extras(incus, name)]
-    raw = None
+    listed = raws if raws is not None else incus.list_containers()
+    raw = next((r for r in listed if r.get("name") == name), {})
     wanted: dict[str, str] = {}
-    if container_wants_proxy(entries, [], mode):
-        listed = raws if raws is not None else incus.list_containers()
-        raw = next((r for r in listed if r.get("name") == name), {})
+    if proxy_use(cfg, raw or {}, mode, entries) is ProxyUse.FILTERED:
         bridge = _eth0_device(raw).get("network")
         if not isinstance(bridge, str):
             tui.warn(f"cannot find the eth0 network of {name}; egress proxy env cleared")
@@ -581,8 +601,6 @@ def sync_container_env(
                 )
         if endpoint is not None:
             wanted = proxy_env(endpoint, entries, other_service_ips(incus, EGRESS_PROXY_LABEL))
-    elif raws is not None:
-        raw = next((r for r in raws if r.get("name") == name), None)
     changed: dict[str, str | None] = {}
     for key, current in _current_env(incus, name, raw).items():
         value = wanted.get(key)
