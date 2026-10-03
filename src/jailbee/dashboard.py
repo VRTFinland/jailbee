@@ -20,7 +20,7 @@ import termios
 import threading
 import time
 import tty
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -309,23 +309,26 @@ def registered_repo_roots(*, scope: RemoteRepoScope | None = None) -> list[Path]
     return out
 
 
-def collect_repo_roots(
-    cwd_root: Path | None, *, scope: RemoteRepoScope | None = None
-) -> list[Path]:
-    """Registered repo roots plus the cwd's, deduped, cwd first."""
-    registered = registered_repo_roots() if scope is None else registered_repo_roots(scope=scope)
-    candidates = ([cwd_root] if cwd_root is not None else []) + registered
+def _dedupe_roots(candidates: Iterable[Path]) -> list[Path]:
+    """Dedupe by resolved path (symlinks, relative forms), keeping the caller's
+    original Path objects and their order."""
     seen: set[Path] = set()
     ordered: list[Path] = []
     for p in candidates:
         rp = p.resolve()
-        # Dedupe by resolved path (handles symlinks / relative forms) but
-        # return the caller's original Path object.
         if rp in seen:
             continue
         seen.add(rp)
         ordered.append(p)
     return ordered
+
+
+def collect_repo_roots(
+    cwd_root: Path | None, *, scope: RemoteRepoScope | None = None
+) -> list[Path]:
+    """Registered repo roots plus the cwd's, deduped, cwd first."""
+    registered = registered_repo_roots() if scope is None else registered_repo_roots(scope=scope)
+    return _dedupe_roots(([cwd_root] if cwd_root is not None else []) + registered)
 
 
 def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
@@ -334,7 +337,7 @@ def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
     return format_loose_after(policy.after) if policy is not None else None
 
 
-def _global_config_or_defaults() -> GlobalConfig:
+def global_config_or_defaults() -> GlobalConfig:
     """Load the global config, falling back to defaults on any error.
 
     The dashboard is a read-only viewer refreshed on a timer; an unreadable
@@ -440,7 +443,7 @@ def seed_view_state(
             )
         )
         return replace(state, columns=filtered or default_columns())
-    gcfg = _global_config_or_defaults()
+    gcfg = global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
     save_view_state(engine, frontend, seeded)
     return seeded
@@ -459,11 +462,12 @@ def gather_rows(
     incus: Incus,
     repo_roots: list[Path],
     *,
-    cwd_root: Path | None,
     with_git: bool,
-    scope: RemoteRepoScope | None = None,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
+
+    Unscoped and unpinned: named repos first, alphabetically, orphans last.
+    `present` applies a client's scope and cwd pin.
 
     Each root's own config drives accurate git-status/base/background-jobs.
     Repos are identified by their root, not by their config file, so a repo
@@ -479,33 +483,16 @@ def gather_rows(
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
-    gcfg = _global_config_or_defaults()
+    gcfg = global_config_or_defaults()
     # One `incus list` per gather, shared by every repo and the orphan scan:
     # each listing makes the daemon build every instance's full state, and
     # the dashboards gather every few seconds. Fetched on first use, so a
     # gather with no loadable repo still never calls Incus.
     instances: list[dict[str, Any]] | None = None
-    excluded_roots: set[Path] = set()
-    if scope is not None and scope.excluded:
-        from sqlmodel import Session, select
-
-        from jailbee.db import get_engine
-        from jailbee.db.models import RegisteredRepo
-
-        with Session(get_engine()) as session:
-            excluded_roots = {
-                Path(repo.repo_root).resolve()
-                for repo in session.exec(select(RegisteredRepo)).all()
-                if not scope.allows(repo.container_prefix)
-            }
     for root in repo_roots:
-        if root.resolve() in excluded_roots:
-            continue
         try:
             cfg = load_repo_config(root)
         except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
-            continue
-        if scope is not None and not scope.allows(cfg.container_prefix):
             continue
         if base_cfg is None:
             base_cfg = cfg
@@ -555,34 +542,23 @@ def gather_rows(
         for c in all_rows:
             # `c.repo is None` is defensive AND narrows str|None -> str for
             # the dict key below (list_containers in practice always sets it).
-            if (
-                c.repo is None
-                or c.repo in covered
-                or (scope is not None and not scope.allows(c.repo))
-            ):
+            if c.repo is None or c.repo in covered:
                 continue
             orphans.setdefault(c.repo, []).append(c)
         for prefix in sorted(orphans):
             groups.append(RepoGroup(prefix, None, None, orphans[prefix]))
 
-    def _sort_key(g: RepoGroup) -> tuple[bool, bool, str]:
+    def _sort_key(g: RepoGroup) -> tuple[bool, str]:
         # Orphan groups are the ones with no repo root — `config_path` is no
         # longer the discriminator, since a scratch repo has a root but no file.
-        is_cwd = cwd_root is not None and g.repo_root == str(cwd_root)
-        return (not is_cwd, g.repo_root is None, g.prefix)
+        return (g.repo_root is None, g.prefix)
 
     groups.sort(key=_sort_key)
     return groups
 
 
-def gather_live(
-    incus: Incus,
-    cwd_root: Path | None,
-    *,
-    with_git: bool,
-    scope: RemoteRepoScope | None = None,
-) -> list[RepoGroup]:
-    """One snapshot for a *live* dashboard: repo roots re-resolved per gather.
+def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) -> list[RepoGroup]:
+    """One snapshot for the state service: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
     underneath them: `jailbee new` registers a repo the first time it is used
@@ -598,15 +574,32 @@ def gather_live(
     The registry read is a single indexed SQLite select against a WAL
     database — cheap next to the `incus list` (and git probes) in the gather
     it precedes.
+
+    ``extra_roots`` are the connected dashboards' cwd repos, which may not be
+    registered. The result is unscoped and unpinned; each dashboard applies
+    its own `present`.
     """
-    kwargs = {} if scope is None else {"scope": scope}
     return gather_rows(
-        incus,
-        collect_repo_roots(cwd_root, scope=scope),
-        cwd_root=cwd_root,
-        with_git=with_git,
-        **kwargs,
+        incus, _dedupe_roots([*extra_roots, *registered_repo_roots()]), with_git=with_git
     )
+
+
+def present(
+    groups: Sequence[RepoGroup],
+    cwd_root: Path | None,
+    scope: RemoteRepoScope | None = None,
+) -> list[RepoGroup]:
+    """A snapshot as one dashboard shows it: its scope applied, its cwd repo first.
+
+    The state service gathers for every dashboard at once, so neither can be
+    baked into the snapshot. Filtering by prefix matches what `gather_rows`
+    used to do with a scope: excluded registered repos and orphan groups are
+    both keyed by their container prefix.
+    """
+    shown = [g for g in groups if scope is None or scope.allows(g.prefix)]
+    if cwd_root is not None:
+        shown.sort(key=lambda g: g.repo_root != str(cwd_root))
+    return shown
 
 
 def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[RepoGroup]) -> None:
@@ -2964,7 +2957,7 @@ def run(
     show_empty_repos = view_state.show_empty_repos
     hidden_repos = view_state.hidden_repos
     show_details = view_state.show_details
-    hide_first = tuple(_global_config_or_defaults().dashboard.auto_hide.hide_first)
+    hide_first = tuple(global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     interval = max(0.5, interval)
     git_interval = max(git_interval, interval)
@@ -2991,10 +2984,10 @@ def run(
 
     try:
         with console.status("⏳ Surveying containers…"):
-            seeded = (
-                gather_live(incus, cwd_root, with_git=False)
-                if scope is None
-                else gather_live(incus, cwd_root, with_git=False, scope=scope)
+            seeded = present(
+                gather_live(incus, [cwd_root] if cwd_root else [], with_git=False),
+                cwd_root,
+                scope,
             )
             # Twice: the first call primes the sampler, the second turns it
             # into a rate. Only the /proc read repeats — never the gather.
@@ -3046,10 +3039,10 @@ def run(
                 if forced:
                     force.clear()
                 try:
-                    groups = (
-                        gather_live(incus, cwd_root, with_git=do_git)
-                        if scope is None
-                        else gather_live(incus, cwd_root, with_git=do_git, scope=scope)
+                    groups = present(
+                        gather_live(incus, [cwd_root] if cwd_root else [], with_git=do_git),
+                        cwd_root,
+                        scope,
                     )
                 except Exception as exc:  # surface any gather failure to the main thread
                     worker_error.append(exc)

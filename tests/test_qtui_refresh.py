@@ -245,7 +245,7 @@ def test_gather_once_delegates_to_gather_live(mocker):
     )
     assert worker.gather_once(do_git=True) == groups
     # git disabled at the worker level wins over a git-tier tick
-    gl.assert_called_once_with(incus, cwd, with_git=False)
+    gl.assert_called_once_with(incus, [cwd], with_git=False)
 
 
 def test_seeded_worker_skips_the_redundant_base_gather_when_git_is_disabled(qtbot, mocker):

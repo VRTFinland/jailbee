@@ -18,6 +18,7 @@ from jailbee.dashboard import (
     _refresh_due,
     carry_forward_git_status,
     gather_live,
+    present,
     sample_activity,
 )
 from jailbee.procstat import ActivitySampler
@@ -64,10 +65,13 @@ class RefreshWorker(QObject):
         """Gather one snapshot (blocking). Wraps ``gather_live``, so each
         gather sees the repos registered *now* — see its docstring for why a
         launch-time root list leaves new repos menu-less."""
-        return gather_live(
-            self._incus,
+        return present(
+            gather_live(
+                self._incus,
+                [self._cwd_root] if self._cwd_root else [],
+                with_git=do_git and self._git_enabled,
+            ),
             self._cwd_root,
-            with_git=do_git and self._git_enabled,
         )
 
     @Slot()

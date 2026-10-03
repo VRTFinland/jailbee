@@ -458,7 +458,7 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     cosmetic typo is the wrong trade — the same principle that keeps a
     column preference from narrowing `--format json`. `cli._load_global()`
     is the one place ``warnings`` gets surfaced (via `tui.warn`); the
-    dashboards (`dashboard._global_config_or_defaults`) get the sanitized
+    dashboards (`dashboard.global_config_or_defaults`) get the sanitized
     config and otherwise ignore the list.
 
     Genuine host-level schema problems (bad YAML, a malformed

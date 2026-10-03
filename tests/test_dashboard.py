@@ -214,46 +214,6 @@ def test_registered_repo_roots_filters_excluded_prefix_before_loading(db_session
     assert dashboard.registered_repo_roots(scope=scope) == [roots[0]]
 
 
-def test_gather_rows_filters_excluded_orphan_prefix_and_keeps_allowed(tmp_path, mocker, make_cfg):
-    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-
-    root = _repo_dir(tmp_path, "allowed")
-    cfg = make_cfg(root)
-    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
-    mocker.patch.object(
-        dashboard,
-        "list_containers",
-        side_effect=lambda c, i, **kw: (
-            [_ci("hidden-one", "secret"), _ci("allowed-one", "allowed")]
-            if kw["all_repos"]
-            else [_ci("allowed-one", "allowed")]
-        ),
-    )
-
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(),
-        [root],
-        cwd_root=root,
-        with_git=False,
-        scope=RemoteRepoScope(frozenset({"secret"})),
-    )
-
-    assert [group.prefix for group in groups] == ["allowed"]
-
-
-def test_gather_live_threads_scope_into_roots_and_rows(mocker):
-    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-
-    scope = RemoteRepoScope(frozenset({"secret"}))
-    roots = mocker.patch.object(dashboard, "collect_repo_roots", return_value=[])
-    gather = mocker.patch.object(dashboard, "gather_rows", return_value=[])
-
-    dashboard.gather_live(mocker.MagicMock(), None, with_git=False, scope=scope)
-
-    assert roots.call_args.kwargs["scope"] is scope
-    assert gather.call_args.kwargs["scope"] is scope
-
-
 def _ci(
     name: str,
     repo: str,
@@ -327,9 +287,7 @@ def _dirty(**kw: str) -> GitStatus:
     return GitStatus(**fields)
 
 
-def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_cfg):
-    # cwd is "beta" on purpose: pinning has to beat the alphabetical order,
-    # so a broken cwd match would sort "alpha" first and fail this test.
+def test_gather_rows_sorts_named_repos_alphabetically(tmp_path, mocker, make_cfg):
     cwd_root = _repo_dir(tmp_path, "beta")  # container_prefix == "beta"
     other_root = _repo_dir(tmp_path, "alpha")  # container_prefix == "alpha"
     cwd_cfg = make_cfg(cwd_root)
@@ -348,13 +306,10 @@ def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_c
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [other_root, cwd_root], cwd_root=cwd_root, with_git=False
-    )
-    # cwd group ("beta") pinned first despite sorting last alphabetically
-    assert [g.prefix for g in groups] == ["beta", "alpha"]
-    assert groups[0].config_path == cwd_root / ".jailbee" / "config.yaml"
-    assert [c.name for c in groups[0].containers] == ["beta-one"]
+    groups = dashboard.gather_rows(mocker.MagicMock(), [other_root, cwd_root], with_git=False)
+    assert [g.prefix for g in groups] == ["alpha", "beta"]
+    assert groups[1].config_path == cwd_root / ".jailbee" / "config.yaml"
+    assert [c.name for c in groups[1].containers] == ["beta-one"]
 
 
 def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, mocker):
@@ -376,7 +331,7 @@ def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, 
 
     mocker.patch.object(dashboard, "list_containers", return_value=[])
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [repo], cwd_root=repo, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [repo], with_git=False)
 
     assert [g.prefix for g in groups] == [prefix]
     assert groups[0].repo_root == str(repo)
@@ -400,7 +355,7 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default == "45m"
 
@@ -421,7 +376,7 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].optional_mounts == ("aws", "gcloud")
 
@@ -441,7 +396,7 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default is None
 
@@ -460,7 +415,7 @@ def test_gather_rows_carries_the_repos_agent_homes(tmp_path, mocker, make_cfg):
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     by_prefix = {g.prefix: g for g in groups}
     assert by_prefix[cfg.container_prefix].agent_homes == (
@@ -484,7 +439,7 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].push_action_default == "rebase"
     assert groups[0].push_source_default == "current"
@@ -501,7 +456,7 @@ def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mo
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].push_action_default == "ask"
     assert groups[0].push_source_default == "base"
@@ -517,7 +472,7 @@ def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg)
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default == "20m"
 
@@ -534,7 +489,7 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.loose_ttl_default is None
@@ -551,7 +506,7 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.config_path is None
     assert orphan.repo_root is None
@@ -582,9 +537,7 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [beta_root, alpha_root], cwd_root=None, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [beta_root, alpha_root], with_git=False)
     # named repos alpha-sorted first, orphan group ('zeta') last
     assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]
     # A missing repo root — not a missing config file — is what makes a group
@@ -612,9 +565,7 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [empty_root, populated_root], cwd_root=None, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [empty_root, populated_root], with_git=False)
     assert [g.prefix for g in groups] == ["alpha", "beta"]
     alpha = groups[0]
     assert alpha.containers == []
@@ -625,7 +576,7 @@ def test_gather_rows_empty_repo_roots_returns_empty(mocker):
     # No repos -> no base_cfg -> no orphan scan -> empty result, no calls.
     lc = mocker.patch.object(dashboard, "list_containers")
     incus = mocker.MagicMock()
-    result = dashboard.gather_rows(incus, [], cwd_root=None, with_git=False)
+    result = dashboard.gather_rows(incus, [], with_git=False)
     assert result == []
     lc.assert_not_called()
     incus.list_containers.assert_not_called()
@@ -643,7 +594,7 @@ def test_gather_rows_lists_incus_once_for_every_repo_and_the_orphan_scan(
     lc = mocker.patch.object(dashboard, "list_containers", return_value=[])
     incus = mocker.MagicMock()
 
-    dashboard.gather_rows(incus, [alpha_root, beta_root], cwd_root=None, with_git=False)
+    dashboard.gather_rows(incus, [alpha_root, beta_root], with_git=False)
 
     incus.list_containers.assert_called_once_with()
     assert lc.call_count == 3  # two repos and the orphan scan
@@ -667,9 +618,7 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
 
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [good_root, bad_root], cwd_root=good_root, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [good_root, bad_root], with_git=False)
     assert [g.prefix for g in groups] == ["alpha"]
 
 
@@ -788,13 +737,13 @@ def test_gather_live_reresolves_repo_roots_on_every_gather(mocker):
     gr = mocker.patch.object(dashboard, "gather_rows", return_value=[])
     incus = mocker.MagicMock()
 
-    dashboard.gather_live(incus, None, with_git=False)
+    dashboard.gather_live(incus, [], with_git=False)
     assert gr.call_args.args[1] == [a]
 
     registered.append(b)  # a `jailbee new` in repo b just registered it
-    dashboard.gather_live(incus, None, with_git=True)
+    dashboard.gather_live(incus, [], with_git=True)
     assert gr.call_args.args[1] == [a, b]
-    assert gr.call_args.kwargs == {"cwd_root": None, "with_git": True}
+    assert gr.call_args.kwargs == {"with_git": True}
 
 
 def test_carry_forward_git_status_fills_in_from_previous_snapshot():
@@ -2615,7 +2564,7 @@ def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     group = next(g for g in groups if g.prefix == "alpha")
     assert group.apps == [
         dashboard.AppMenuEntry("ide", "JetBrains idea"),
@@ -2634,7 +2583,7 @@ def test_gather_rows_orphan_groups_have_no_apps(tmp_path, mocker, make_cfg):
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.apps == []
 
@@ -2912,7 +2861,7 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
     assert network.cell(loose) == "loose (2h)"
 
 
-def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
+def testglobal_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
     """A typo in the global `dashboard:` block must not lose the whole block —
     the dashboard used to swallow `load_global_config`'s `ConfigError` and
     degrade to `GlobalConfig()` entirely. Now `load_global_config` recovers
@@ -2923,7 +2872,7 @@ def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_
     (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, nosuchfield]\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
 
-    gcfg = dashboard._global_config_or_defaults()
+    gcfg = dashboard.global_config_or_defaults()
 
     assert gcfg.dashboard.fields == ["name"]
 
@@ -5163,9 +5112,12 @@ def _drive_run_with_reader(mocker, read, groups: list[dashboard.RepoGroup]) -> i
 
     ``gather_live`` returns the ``groups`` list object itself, so a reader
     that mutates it changes what the key loop sees on its next iteration.
+    ``present`` is made the identity for the same reason: the real one returns
+    a new list, which would sever that aliasing.
     """
     _mock_terminal(mocker)
     mocker.patch.object(dashboard, "gather_live", return_value=groups)
+    mocker.patch.object(dashboard, "present", side_effect=lambda gs, *_a, **_k: gs)
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", side_effect=read)
     return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
@@ -9994,3 +9946,39 @@ def test_a_cursor_row_taller_than_the_window_is_not_cut_away(tmp_path, mocker):
         text = "\n".join("".join(seg.text for seg in line) for line in lines)
         assert "alpha-row06" in text, budget
         assert len(lines) <= budget, budget
+
+
+def test_gather_live_adds_extra_roots_to_the_registered_ones(mocker, tmp_path):
+    registered = tmp_path / "reg"
+    extra = tmp_path / "extra"
+    mocker.patch.object(dashboard, "registered_repo_roots", return_value=[registered, extra])
+    rows = mocker.patch.object(dashboard, "gather_rows", return_value=[])
+    incus = mocker.Mock()
+
+    dashboard.gather_live(incus, [extra], with_git=True)
+
+    rows.assert_called_once_with(incus, [extra, registered], with_git=True)
+
+
+def _group(prefix, root=None):
+    return dashboard.RepoGroup(prefix, root, None, [])
+
+
+def test_present_pins_the_cwd_group_first(tmp_path):
+    groups = [_group("alpha", "/a"), _group("beta", "/b"), _group("zeta")]
+    shown = dashboard.present(groups, Path("/b"))
+    assert [g.prefix for g in shown] == ["beta", "alpha", "zeta"]
+    assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]  # input untouched
+
+
+def test_present_without_cwd_keeps_the_order():
+    groups = [_group("alpha", "/a"), _group("beta", "/b")]
+    assert dashboard.present(groups, None) == groups
+
+
+def test_present_drops_groups_the_scope_excludes():
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    groups = [_group("alpha", "/a"), _group("secret", "/s"), _group("gamma")]
+    shown = dashboard.present(groups, None, RemoteRepoScope(frozenset({"secret"})))
+    assert [g.prefix for g in shown] == ["alpha", "gamma"]
