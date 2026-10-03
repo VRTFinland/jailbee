@@ -31,14 +31,15 @@ from jailbee.global_config import GlobalConfig
 class FieldKind(StrEnum):
     """How the editor renders and edits one field.
 
-    Twelve kinds cover every leaf `build_specs` produces — 95 of them under
-    `repo_specs()`, 121 under `global_specs()`. `OPAQUE` is the honest
-    thirteenth: a field whose schema cannot generate a form.
+    Thirteen kinds cover every leaf `build_specs` produces — 95 of them under
+    `repo_specs()`, 124 under `global_specs()`. `OPAQUE` is the honest
+    fourteenth: a field whose schema cannot generate a form.
     """
 
     BOOL = "bool"
     STR = "str"
     INT = "int"
+    FLOAT = "float"
     PATH = "path"
     CHOICE = "choice"
     STR_LIST = "str_list"
@@ -236,6 +237,8 @@ def classify(annotation: object) -> Classified:
         return Classified(FieldKind.BOOL)
     if ann is int:
         return Classified(FieldKind.INT)
+    if ann is float:
+        return Classified(FieldKind.FLOAT)
     if isinstance(ann, type) and issubclass(ann, Path):
         return Classified(FieldKind.PATH)
     if ann is str:
