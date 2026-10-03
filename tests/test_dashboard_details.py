@@ -175,12 +175,20 @@ def test_orphan_and_synthesized_repo_summaries() -> None:
 def test_details_for_resolves_rows_and_tolerates_a_vanished_container() -> None:
     g = dashboard.RepoGroup("alpha", "/repos/alpha", None, [_c()])
     view = dd.details_for([g], dashboard.Row("container", "alpha-feat"), NOW)
-    assert view is not None and view.title == "alpha-feat"
+    assert view is not None and view.title == "feat"
     repo_view = dd.details_for([g], dashboard.Row("repo", "alpha"), NOW)
     assert repo_view is not None and repo_view.title == "alpha"
     assert dd.details_for([g], dashboard.Row("container", "alpha-gone"), NOW) is None
     assert dd.details_for([g], dashboard.Row("repo", "gone"), NOW) is None
     assert dd.details_for([g], None, NOW) is None
+
+
+def test_orphan_container_title_is_the_full_name() -> None:
+    """A container with no repo or mismatched prefix shows its full name."""
+    orphan = _c(name="orphan-container", repo=None)
+    g = dashboard.RepoGroup("ghost", None, None, [orphan])
+    view = dd.details_for([g], dashboard.Row("container", "orphan-container"), NOW)
+    assert view is not None and view.title == "orphan-container"
 
 
 def test_render_flows_pairs_by_width_and_caps_rows() -> None:

@@ -9714,7 +9714,7 @@ def _frame(groups, selected, *, overlay=None, height=None, width=100, show_detai
 def test_details_panel_shows_under_the_table_for_the_highlighted_container(tmp_path):
     lines = _frame([_named_rows_group(tmp_path, 3)], dashboard.Row("container", "alpha-row01"))
     header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
-    title = next(i for i, ln in enumerate(lines) if "alpha-row01" in ln)
+    title = next(i for i, ln in enumerate(lines) if "╭─ row01" in ln)
     assert title > header + 3  # under the heading and three container rows
     text = "\n".join(lines[title:])
     assert "network" in text and "git" in text and "state" in text
@@ -9726,7 +9726,7 @@ def test_details_toggled_off_draws_no_panel(tmp_path):
         dashboard.Row("container", "alpha-row01"),
         show_details=False,
     )
-    assert "alpha-row01" not in "\n".join(lines)
+    assert "╭─ row01" not in "\n".join(lines)
 
 
 def test_menu_sits_to_the_right_of_the_details(tmp_path):
@@ -9738,7 +9738,7 @@ def test_menu_sits_to_the_right_of_the_details(tmp_path):
         height=30,
     )
     shared = next(ln for ln in lines if "alpha-row01 →" in ln)
-    details_at = shared.find("alpha-row01")  # the details title comes first
+    details_at = shared.find("╭─ row01")  # the details title comes first
     menu_at = shared.find("alpha-row01 →")
     assert details_at < menu_at
 
@@ -9753,7 +9753,7 @@ def test_other_overlays_hide_the_details(tmp_path):
     )
     text = "\n".join(lines)
     assert "Pick one" in text
-    assert "alpha-row01" not in text
+    assert "╭─ row01" not in text
 
 
 def test_repo_heading_shows_the_repo_summary(tmp_path):
@@ -9771,7 +9771,7 @@ def test_long_table_keeps_min_rows_and_the_cursor_with_details(tmp_path):
     text = "\n".join(lines)
     assert "row39" in text and "↑" in text
     header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
-    panel_top = next(i for i, ln in enumerate(lines) if "alpha-row39" in ln)
+    panel_top = next(i for i, ln in enumerate(lines) if "╭─ row39" in ln)
     assert panel_top - header - 1 >= dashboard.MIN_TABLE_ROWS
     assert lines[-1].startswith("╰")
 

@@ -142,6 +142,10 @@ def details_for(
 ) -> DetailsView | None:
     """The panel for ``selected``, or None when there is nothing to describe.
 
+    Panel title is:
+    - For a container: the display name (repo prefix stripped; full name for orphans).
+    - For a repo heading: the repo prefix.
+
     A container destroyed since the cursor landed on it simply has no panel
     until the selection is reconciled on the next frame.
     """
@@ -153,7 +157,7 @@ def details_for(
     for g in groups:
         for c in g.containers:
             if c.name == selected.key:
-                return DetailsView(c.name, tuple(container_details(c, now)))
+                return DetailsView(c.display_name, tuple(container_details(c, now)))
     return None
 
 
