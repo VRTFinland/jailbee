@@ -151,7 +151,18 @@ def test_a_snapshot_decodes_to_the_real_types():
 
 @pytest.mark.parametrize(
     "line",
-    [b"", b"not json\n", b"[1]\n", b"{}\n", b'{"type":"nope"}\n', b'{"type":"active"}\n'],
+    [
+        b"",
+        b"not json\n",
+        b"[1]\n",
+        b"{}\n",
+        b'{"type":"nope"}\n',
+        b'{"type":"active"}\n',
+        b'{"type":["a"]}\n',
+        b'{"type":{}}\n',
+        b"\xff\xfe\n",
+        b'{"type":"active","value":"maybe"}\n',
+    ],
 )
 def test_garbage_is_a_protocol_error(line):
     with pytest.raises(ProtocolError):

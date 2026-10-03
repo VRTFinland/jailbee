@@ -113,6 +113,7 @@ def _adapter(cls: type[Any]) -> TypeAdapter[Any]:
 
 def encode(message: Message) -> bytes:
     """``message`` as one wire line, newline included."""
+    # type(message) is one of the Message union types, but mypy sees it as type[Any]
     body = _adapter(type(message)).dump_python(message, mode="json")  # type: ignore[arg-type]
     msg_dict = {"type": _NAMES[type(message)], **body}
     return json.dumps(msg_dict, separators=(",", ":")).encode() + b"\n"
@@ -124,10 +125,14 @@ def decode(line: bytes) -> Message:
         raw = json.loads(line)
     except ValueError as exc:
         raise ProtocolError(f"not a JSON line: {line[:80]!r}") from exc
-    if not isinstance(raw, dict) or raw.get("type") not in _TYPES:
+    if not isinstance(raw, dict):
+        raise ProtocolError(f"unknown message: {line[:80]!r}")
+    msg_type = raw.get("type")
+    if not isinstance(msg_type, str) or msg_type not in _TYPES:
         raise ProtocolError(f"unknown message: {line[:80]!r}")
     cls = _TYPES[raw.pop("type")]
     try:
+        # cls is one of the Message union types, but mypy sees it as type[Any]
         message: Message = _adapter(cls).validate_python(raw)  # type: ignore[arg-type]
     except ValidationError as exc:
         raise ProtocolError(f"invalid {_NAMES[cls]} message: {exc}") from exc
