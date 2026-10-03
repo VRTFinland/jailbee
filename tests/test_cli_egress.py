@@ -988,7 +988,9 @@ def test_add_wildcard_on_a_work_container_starts_proxy_then_syncs_after_storing(
     )
     mocker.patch.object(egress_proxy, "proxy_up", side_effect=lambda *_a, **_k: order.append("up"))
     sync = mocker.patch.object(
-        egress_proxy, "sync_container", side_effect=lambda *_a, **_k: order.append("sync")
+        egress_proxy,
+        "sync_container",
+        side_effect=lambda *_a, **_k: order.append("sync") or True,
     )
 
     result = runner.invoke(app, ["net", "egress", "add", "*.example.com"])
@@ -1046,7 +1048,7 @@ def test_add_non_wildcard_on_a_container_syncs_but_does_not_start_the_proxy(tmp_
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     mocker.patch("jailbee.egress_scope.set_container_extras")
     up = mocker.patch.object(egress_proxy, "proxy_up")
-    sync = mocker.patch.object(egress_proxy, "sync_container")
+    sync = mocker.patch.object(egress_proxy, "sync_container", return_value=False)
 
     result = runner.invoke(app, ["net", "egress", "add", "10.0.0.0/8:443"])
 
@@ -1076,6 +1078,41 @@ def test_rm_on_a_container_syncs_the_proxy_after_the_removal(tmp_path, mocker):
     assert result.exit_code == 0, result.output
     assert order == ["store", "sync"]
     sync.assert_called_once_with(cfg, incus, "myrepo-feat", "loose")
+
+
+def test_add_says_nothing_about_a_new_shell_when_the_env_did_not_change(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker)
+    for target in _work_container(cfg, incus):
+        mocker.patch(target)
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    mocker.patch.object(egress_proxy, "proxy_up")
+    mocker.patch.object(egress_proxy, "sync_container", return_value=False)
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert "Open a new shell" not in result.output
+    assert "may now reach *.example.com" in result.output
+
+
+@pytest.mark.parametrize(("changed", "shown"), [(True, True), (False, False)])
+def test_rm_says_open_a_new_shell_only_when_the_env_changed(tmp_path, mocker, changed, shown):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker, extras=["*.example.com"])
+    for target in _work_container(cfg, incus, "loose"):
+        mocker.patch(target)
+    mocker.patch("jailbee.cli._egress_container_mode", return_value="loose")
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    mocker.patch.object(egress_proxy, "sync_container", return_value=changed)
+
+    result = runner.invoke(app, ["net", "egress", "rm", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert ("Open a new shell" in result.output) is shown
+    assert "can no longer reach *.example.com" in result.output
 
 
 # --- the proxy path in `ls` and `net status` ---------------------------------

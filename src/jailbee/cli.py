@@ -9225,14 +9225,14 @@ def egress_add_cmd(
     if is_wildcard_entry(entry):
         # Squid first, so the sync finds an endpoint to point the environment at.
         proxy_ok = egress_proxy.proxy_up_or_warn(incus)
-    egress_proxy.sync_container(cfg, incus, container, mode)
+    env_changed = egress_proxy.sync_container(cfg, incus, container, mode)
     if not proxy_ok:
         error(
             f"Stored '{entry}' on '{container}', but it is not reachable until the "
             "egress proxy runs: run `jailbee apply`."
         )
         raise typer.Exit(1)
-    if is_wildcard_entry(entry):
+    if env_changed:
         info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' may now reach {entry}.")
 
@@ -9375,7 +9375,8 @@ def egress_rm_cmd(
     _repin_hosts_quietly(cfg, incus, container)
     from jailbee import egress_proxy
 
-    egress_proxy.sync_container(cfg, incus, container, mode)
+    if egress_proxy.sync_container(cfg, incus, container, mode):
+        info("Open a new shell (or tmux window) to pick up the proxy settings.")
     success(f"'{container}' can no longer reach {entry}.")
 
 
