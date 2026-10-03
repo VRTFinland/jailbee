@@ -212,6 +212,9 @@ class ViewPrefs(SQLModel, table=True):
         default=True, sa_column=Column(Boolean, nullable=False, server_default="1")
     )
     hidden_repos: str | None = None
+    show_details: bool = Field(
+        default=True, sa_column=Column(Boolean, nullable=False, server_default="1")
+    )
 
 
 class RepoUpgradeState(SQLModel, table=True):

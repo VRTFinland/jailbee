@@ -166,3 +166,14 @@ def test_decode_deeply_nested_json_degrades_instead_of_raising() -> None:
     state = load_view_state(engine, FRONTEND_TUI)
     assert state.columns is None
     assert state.folded == frozenset()
+
+
+def test_show_details_defaults_true_and_round_trips() -> None:
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    assert load_view_state(engine, FRONTEND_TUI).show_details is True
+    save_view_state(engine, FRONTEND_TUI, ViewState(show_details=False))
+    assert load_view_state(engine, FRONTEND_TUI).show_details is False
+    save_view_state(engine, FRONTEND_TUI, ViewState(show_details=True))
+    assert load_view_state(engine, FRONTEND_TUI).show_details is True
