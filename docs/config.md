@@ -915,9 +915,11 @@ allowed unconditionally, independent of this list).
 A `*.<domain>` entry cannot be an ACL rule, because an ACL names addresses and
 a wildcard names none. It is enforced by a small Squid proxy instead, in a
 `jailbee-egress-proxy` container that `jailbee apply` and `jailbee net egress add`
-bring up on demand, and only once some entry is a wildcard. `jailbee new` and
-`jailbee restart` only point the container at a proxy that is already running,
-and warn to run `jailbee apply` if it is not. Things to know:
+bring up on demand, once some entry is a wildcard **or** the repo has a
+work-network container with [`egress_proxy_always`](#egress_proxy_always) on.
+`jailbee new` also starts it for such an always-on container; `jailbee restart`
+only points the container at a proxy that is already running, and warns to run
+`jailbee apply` if it is not. Things to know:
 
 - **The apex is included.** `*.github.com` matches `github.com` itself as well
   as `api.github.com` and every deeper subdomain. It needs at least two labels
@@ -931,15 +933,20 @@ and warn to run `jailbee apply` if it is not. Things to know:
   tool that ignores them connects directly and the NIC ACL rejects it, so it
   fails closed rather than escaping the allowlist. TLS is not intercepted: the
   proxy sees the host in the `CONNECT` request, never the traffic.
-- **Open a new shell.** The variables are container environment, so only
-  processes started after the change see them. The change is also copied into
-  a tmux server already running in the container, so a new tmux window picks
-  it up; a shell, window or agent that is already open needs to be restarted.
+- **Open a new shell.** On the work network with `egress_proxy_always` (the
+  default) the variables are already set and no new shell is needed. Otherwise
+  they are container environment, so only processes started after the change
+  see them. The change is also copied into a tmux server already running in
+  the container, so a new tmux window picks it up; a shell, window or agent
+  that is already open needs to be restarted.
 - **Plain entries still work.** Hostname, IP and CIDR entries keep their ACL
-  rules; the proxy also lets a container reach them through the proxy, and IP
-  literals are added to `NO_PROXY` so they go direct.
-- **Strict mode only.** `jailbee net loose <container>` clears the proxy
-  variables again.
+  rules; the proxy also lets a container reach them through the proxy. IP literals
+  are added to `NO_PROXY` so they go direct only on legacy containers or with
+  `egress_proxy_always: false`; always-on containers send them through the
+  proxy, which allows them by address.
+- **Loose mode.** On the work network with `egress_proxy_always`, a loose
+  container keeps the variables and the proxy passes it through unfiltered.
+  Elsewhere `jailbee net loose <container>` clears them.
 - **Container scope needs the work network.** `jailbee net egress add
   '*.example.org' <container>` is refused (exit 2) on a legacy-network
   container, because the proxy tells containers apart by source address and
@@ -952,7 +959,8 @@ and warn to run `jailbee apply` if it is not. Things to know:
 
 `jailbee net egress ls` adds a `VIA` column (`proxy` for a wildcard,
 `acl+proxy` for the rest) once any entry is a wildcard; `jailbee net status`
-and `jailbee doctor` report the proxy's state only when a wildcard is in use.
+and `jailbee doctor` report the proxy's state when a wildcard is in use, or when
+the proxy container exists.
 `jailbee net egress add` does not DNS-resolve a wildcard (there is nothing to
 resolve). The LiteLLM gateway's own per-route `egress` list (under `litellm:`
 routes) does **not** accept wildcards: config validation rejects them.
@@ -986,6 +994,16 @@ report. `jailbee net egress export` prints the whole key back with the
 promotable overrides folded in, for when a temporary entry has earned its
 place here. See [Egress overrides](security.md#egress-overrides) for the
 security posture and [Commands](commands.md) for the flags.
+
+#### `egress_proxy_always`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `egress_proxy_always` | bool | `true` | On the work network (`jailbee net migrate`), every container gets `HTTP_PROXY`/`HTTPS_PROXY` (and lower-case twins) from its first boot, in strict and loose mode alike, and the values never change with `egress_allow`. Adding or removing an entry therefore takes effect in shells and agents that are already running. A strict container's proxy rules are its egress entries (hostnames, IPs, CIDRs and wildcards); a loose container is not filtered by the proxy. The NIC ACL still filters every direct connection, as before. `jailbee new` starts the proxy if it is not running yet (the first time downloads an image and installs Squid). Legacy-network containers ignore this key. Set `false` to give the variables only to strict containers with a wildcard entry. |
+
+If an always-on container's network mode is unknown, or its proxy cannot be
+found, its proxy environment is left as it is rather than cleared; clearing it
+would bring back the new-shell problem this key removes.
 
 #### `loose_auto_revert`
 

@@ -210,7 +210,10 @@ flowchart TB
 
 The third path serves wildcard `egress_allow` entries, which an ACL cannot
 express. The client reaches Squid on port 3128 through a rule in the
-`jailbee-services` ACL, and Squid fetches upstream from `jailbee-loose`.
+`jailbee-services` ACL, and Squid fetches upstream from `jailbee-loose`. On the
+work network every container takes this path by default (`egress_proxy_always`):
+the variables are set from the first boot and never change, so an allowlist
+change reaches running processes. Loose containers pass the proxy unfiltered.
 
 #### Per-bridge client NICs
 

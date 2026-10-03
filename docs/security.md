@@ -532,9 +532,22 @@ user-facing behaviour. The security properties:
   up to the 60 s refresh interval) or a live one's, if the impostor wins the
   ARP race. Repos that use wildcards should run `jailbee net migrate`: the work
   network filters spoofed source addresses at the NIC.
-- **Proxy-bypassing tools fail closed.** The environment variables are advice;
-  the NIC ACL is the enforcement. A tool that ignores them connects directly
-  and is rejected unless the destination is in the ACL.
+- **Always-on on the work network.** With
+  [`egress_proxy_always`](config.md#egress_proxy_always) (default), every
+  work-network container is a proxy client. Strict sources get their repo's and
+  their own entries as rules; loose sources get an unconditional allow,
+  matching the loose NIC rule. A source is in exactly one of the two at a time,
+  and the mode switch moves it.
+- **Blast radius.** A stopped or broken proxy now fails every proxy-honouring
+  HTTP(S) client of every always-on container, Claude Code's API traffic
+  included, not only wildcard destinations. `jailbee doctor` and `jailbee net
+  status` report it and `jailbee apply` repairs it. The environment is
+  deliberately not cleared on failure: an always-on container whose proxy
+  cannot be found, or whose network mode is unknown, keeps its variables.
+- **Proxy-bypassing tools fail closed.** The environment variables are advice
+  (set on every always-on container even without wildcards); the NIC ACL is the
+  enforcement. A tool that ignores them connects directly and is rejected
+  unless the destination is in the ACL.
 - **The services rule is host-wide.** Reaching the proxy needs a rule in the
   host-global `jailbee-services` ACL, so every strict container on the host can
   open a connection to port 3128. Squid then denies any source that no repo

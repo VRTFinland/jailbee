@@ -5360,8 +5360,9 @@ squid` need egress.
 3. With the work network (`jb net migrate`), add `jb egress add '*.example.org'
    <container-B>`. Expected: reachable from B, 403 from container A of the
    same repo. On a legacy-network container the same command exits 2.
-4. `jb net loose <container>`, then a new shell. Expected: `env | grep -i
-   proxy` is empty.
+4. On a legacy-network container (or with `egress_proxy_always: false`),
+   `jb net loose <container>`, then a new shell. Expected: `env | grep -i
+   proxy` is empty. On the work network the variables stay (see below).
 5. `incus exec jailbee-egress-proxy -- tail /var/log/squid/access.log`.
    Expected: the source addresses are the containers' own, not a bridge
    gateway.
@@ -5372,3 +5373,31 @@ squid` need egress.
 7. `jb egress ls` shows a `VIA` column; `jb doctor` shows `egress proxy:
    status: running`. Stop the proxy (`incus stop jailbee-egress-proxy`) and
    re-run both: `stopped`, with a `run 'jailbee apply'` hint.
+
+### Always-on (work network)
+
+Needs the work network (`jb net migrate --yes`) and a repo with
+`egress_allow: ["example.com:443"]` and no wildcards.
+
+1. `jb apply`. Expected: `jailbee-egress-proxy` is created although no entry
+   is a wildcard.
+2. `jb new t1` (strict), then in `jb shell t1`: `env | grep -i proxy` shows the
+   variables; `curl -sI https://example.com` succeeds through Squid;
+   `curl -sI https://www.iana.org` gets a Squid 403;
+   `curl --noproxy '*' -sI https://www.iana.org` is rejected by the NIC ACL.
+3. In the same shell, run `jb net egress add '*.iana.org' t1` on the host, then
+   `curl -sI https://www.iana.org`. Expected: it succeeds with no new shell,
+   and the `add` output has no "open a new shell" line.
+4. `jb net egress add 1.1.1.1:443 t1`. Expected: `env | grep -i no_proxy` is
+   unchanged and `curl -sI https://1.1.1.1` succeeds through the proxy
+   (a `dst` rule; check `access.log`).
+5. `jb net loose t1`. Expected: the same shell reaches an arbitrary host
+   through Squid and the environment is unchanged. `jb net strict t1` brings
+   back the 403, environment still unchanged.
+6. Claude Code started in step 2 keeps working across steps 3-5.
+7. `incus stop jailbee-egress-proxy`. Expected: `jb doctor` and `jb net status`
+   report `stopped`; `jb restart t1` warns but leaves the environment set;
+   `jb apply` restores the proxy.
+8. `jb net egress rm '*.iana.org' t1`, set `egress_proxy_always: false` and run
+   `jb apply`. Expected: t1's proxy variables are cleared.
+

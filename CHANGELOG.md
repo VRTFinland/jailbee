@@ -14,15 +14,17 @@ before editing `## Unreleased`.
   in every registered repo without restarting any container, dockerd or LiteLLM
   instance. A repo runs only what the release's upgrade notes owe it; `--force`
   runs both everywhere and `--dry-run` shows what would run.
-- **Wildcard `egress_allow` entries.** `*.example.com` allows the domain and
-  every subdomain, on ports 80 and 443 (`*.example.com:8443` for one port), in
-  strict mode, in `egress_allow` and with `jailbee net egress add`. They go
-  through a Squid proxy container that `jailbee apply` starts only when a
-  wildcard is in use, so they reach tools that honour `HTTP_PROXY` and
-  `HTTPS_PROXY`; strict containers get those variables, and a new shell picks
-  them up. Other tools stay blocked. Container-scope wildcards need the work
-  network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net status`
-  and `jailbee doctor` report the proxy.
+- **Wildcard `egress_allow` entries and an always-on egress proxy.** `*.example.com`
+  allows the domain and every subdomain, on ports 80 and 443
+  (`*.example.com:8443` for one port), in strict mode, in `egress_allow` and with
+  `jailbee net egress add`. They go through a Squid proxy container, so they reach
+  tools that honour `HTTP_PROXY` and `HTTPS_PROXY`; other tools stay blocked. On
+  the work network every container gets those variables from its first boot,
+  in strict and loose mode, so adding or removing an entry works in shells and
+  agents that are already running; `egress_proxy_always: false` limits the
+  proxy to containers with a wildcard. Container-scope wildcards need the work
+  network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net
+  status` and `jailbee doctor` report the proxy.
 
 ### Changed
 

@@ -594,8 +594,7 @@ Three facts that matter when explaining this:
 
 Wildcard entries (`*.example.com`, apex included, ports 80/443; `*.example.com:8443`
 for one port) go through an on-demand Squid proxy container instead of the ACL.
-They only reach tools that honour `HTTP_PROXY`/`HTTPS_PROXY`, so tell the user to
-open a **new shell** (or tmux window) after adding one. Container scope
+They only reach tools that honour `HTTP_PROXY`/`HTTPS_PROXY`, and on the work network with `egress_proxy_always` (the default) the variables are always set and no new shell is needed; on a legacy container, or with the key off, a new shell is needed after the first wildcard. Container scope
 (`jailbee net egress add '*.x.org' <name>`) needs the work network and is
 refused (exit 2) on a legacy container; use `--repo` there. `jailbee net
 egress ls` shows a `VIA` column, and `jailbee net status` / `jailbee doctor`
