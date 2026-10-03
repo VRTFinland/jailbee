@@ -1,8 +1,9 @@
 """QApplication bootstrap and wiring for the Qt dashboard.
 
-``run`` has the same signature as ``dashboard.run`` so ``cli.py`` can dispatch
-to either. The GUI opens no new Incus paths — it reuses the dashboard data
-layer and executes actions as ``jailbee`` subprocesses.
+Container state comes from the shared state service, like the TUI's: the
+GUI opens no Incus paths of its own — it renders the service's snapshots
+through the dashboard data layer and executes actions as ``jailbee``
+subprocesses.
 """
 
 from __future__ import annotations
@@ -11,16 +12,16 @@ import logging
 import os
 import shutil
 import subprocess
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThread, Slot
+from PySide6.QtCore import QObject, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from jailbee.dashboard import (
     NOTHING_TO_SHOW,
+    STARTUP_TIMEOUT_SECONDS,
     RepoTarget,
     collect_repo_roots,
     config_edit_reject_note_for_prefix,
@@ -30,11 +31,11 @@ from jailbee.dashboard import (
     new_container_base_default,
     new_container_reject_note_for_prefix,
     new_pr_container_argv,
+    present,
     seed_view_state,
 )
 from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.lifecycle import tracking_notices
-from jailbee.procstat import PRIME_INTERVAL_SECONDS
 from jailbee.qtui.actions import (
     ActionCommand,
     TerminalNotFoundError,
@@ -54,16 +55,18 @@ from jailbee.qtui.prompts import (
     push_flags,
     push_questions,
 )
-from jailbee.qtui.refresh import RefreshWorker
+from jailbee.qtui.refresh import StateBridge
 from jailbee.qtui.terminal import detect_terminal
 from jailbee.qtui.window import MainWindow
 from jailbee.remote_ssh.session import is_ssh_session
+from jailbee.state_service import StateServiceUnavailable
+from jailbee.state_service.client import StateClient
 from jailbee.tui import error
 
 if TYPE_CHECKING:
     from jailbee.dashboard import RepoGroup
-    from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.state_service.protocol import Snapshot
 
 log = logging.getLogger(__name__)
 
@@ -72,9 +75,9 @@ def preflight(cwd_root: Path | None) -> list[Path] | None:
     """Resolve the repo roots the dashboard would show, or None if there are none.
 
     A launch-time guard only ("nothing to show, don't open a window") — the
-    returned list is deliberately not handed to the worker, which re-resolves
-    it per gather via ``dashboard.gather_live`` so a repo registered while the
-    window is open stops rendering as a menu-less orphan.
+    returned list is deliberately not handed on: the state service re-resolves
+    it per gather, so a repo registered while the window is open stops
+    rendering as a menu-less orphan.
     """
     repo_roots = collect_repo_roots(cwd_root)
     return repo_roots or None
@@ -93,46 +96,67 @@ def _env() -> dict[str, str]:
 
 
 class AppController(QObject):
-    """Routes worker/window signals to GUI-thread slots.
+    """Routes bridge/window signals to GUI-thread slots.
 
     Constructed with default (main-thread) affinity and never moved to
-    another thread. Because its handlers are ``@Slot``-decorated bound
-    methods of a ``QObject`` living on the GUI thread, Qt resolves
-    cross-thread signal connections (e.g. from the background
-    ``RefreshWorker``) as *queued* rather than direct — so the handlers
-    always run on the GUI thread, never on the worker thread.
+    another thread. The ``StateBridge`` emits from the ``StateClient``'s
+    reader thread; because these handlers are ``@Slot``-decorated bound
+    methods of a ``QObject`` living on the GUI thread, Qt delivers those
+    emissions as *queued* calls — so the handlers always run on the GUI
+    thread, never on the reader thread.
+
+    ``bridge_client`` is the state service connection: ``None`` only in
+    tests that exercise the controller alone.
     """
 
     def __init__(
         self,
         window: MainWindow,
-        worker: RefreshWorker,
+        bridge_client: StateClient | None = None,
         *,
-        interval: float,
+        cwd_root: Path | None = None,
         engine: object | None = None,
-        paused: bool = False,
     ) -> None:
         super().__init__()
         self._window = window
-        self._worker = worker
-        self._interval = interval
+        self._client = bridge_client
+        self._cwd_root = cwd_root
         self._engine = engine
-        self._paused = paused
-        # Timestamp of the last successful refresh, so a cadence change (a
-        # menu action, not a refresh) can still update the status line
-        # immediately instead of waiting for the next gather.
-        self._last_refresh_at: datetime | None = None
+        # The latest snapshot's setting, shown as `(no-git)` in the status bar.
+        self._git_enabled = True
+        # What the client was last told; a new window starts active.
+        self._active = True
         # Latest snapshot, kept for resolving a clicked action's config path.
         self._latest: list[RepoGroup] = []
         self._outboxes: dict[tuple[RepoTarget, str], OutboxDialog] = {}
 
     @Slot(object)
+    def on_snapshot(self, snapshot: Snapshot) -> None:
+        """A snapshot from the state service, shown as this window's own view."""
+        self._git_enabled = snapshot.git_enabled
+        self.on_groups(present(snapshot.groups, self._cwd_root))
+
+    @Slot(bool)
+    def on_window_active(self, active: bool) -> None:
+        """The window was minimised (inactive) or restored (active).
+
+        A restored window also asks for a refresh: what it shows was not
+        kept current while nobody could see it. Repeats are dropped — the
+        window reports every state change (maximise, fullscreen) as active.
+        """
+        if self._client is None or active == self._active:
+            return
+        self._active = active
+        self._client.set_active(active)
+        if active:
+            self._client.refresh()
+
+    @Slot(object)
     def on_groups(self, groups: list[RepoGroup]) -> None:
         self._latest = groups
         now = datetime.now().astimezone()
-        self._last_refresh_at = now
         self._window.set_groups(groups, now=now)
-        self._window.set_refresh_ok(at=now, interval=self._interval, paused=self._paused)
+        self._window.set_refresh_ok(at=now, git_enabled=self._git_enabled)
         notices = tracking_notices([c for group in groups for c in group.containers])
         notices.extend(dashboard_group_notices(groups))
         if notices:
@@ -140,39 +164,20 @@ class AppController(QObject):
 
     @Slot(str)
     def on_failed(self, msg: str) -> None:
-        # Non-modal: FIX 1 makes the worker keep retrying on failure, so a
-        # QMessageBox here would pop up once per interval and spam the user.
+        # Non-modal: the state service keeps gathering and the client keeps
+        # reconnecting, so a QMessageBox here would pop up once per failure
+        # and spam the user.
         self._window.set_refresh_failed(msg)
-
-    @Slot(float)
-    def on_interval_changed(self, value: float) -> None:
-        """A numeric cadence preset was picked in the Refresh menu."""
-        self._interval = value
-        self._paused = False
-        self._worker.set_interval(value)
-        self._update_cadence_status()
-        self._persist()
-
-    @Slot()
-    def on_auto_refresh_disabled(self) -> None:
-        """The "Off (manual)" option was picked in the Refresh menu."""
-        self._paused = True
-        self._worker.set_paused(True)
-        self._update_cadence_status()
-        self._persist()
 
     @Slot()
     def on_refresh_requested(self) -> None:
         """The "Refresh now" menu action was triggered."""
-        self._worker.force()
+        self._request_refresh()
 
-    def _update_cadence_status(self) -> None:
-        """Reflect the current cadence/pause state in the status bar right
-        away, rather than waiting for the next scheduled refresh."""
-        if self._last_refresh_at is not None:
-            self._window.set_refresh_ok(
-                at=self._last_refresh_at, interval=self._interval, paused=self._paused
-            )
+    def _request_refresh(self) -> None:
+        """Ask the state service for a gather now (a no-op without a client)."""
+        if self._client is not None:
+            self._client.refresh()
 
     def _persist(self) -> None:
         if self._engine is None:
@@ -186,8 +191,6 @@ class AppController(QObject):
                 id=1,
                 layout=self._window.current_layout(),
                 table_header_state=self._window.table_header_state(),
-                refresh_interval=self._interval,
-                refresh_paused=self._paused,
                 card_style=self._window.current_card_style(),
             ),
         )
@@ -248,11 +251,11 @@ class AppController(QObject):
         """The Columns menu toggled a column — repaint immediately, then persist.
 
         Without the repaint, the change only reaches the table on whatever
-        the *next* refresh tick happens to push — and with "Off (manual)"
-        refresh, that tick may never come, making the menu look completely
-        inert. `set_groups(None)`'s "columns" default already reads the
-        window's own live `enabled_columns()`, so re-pushing the latest
-        snapshot here picks up the toggle without re-gathering anything.
+        the *next* snapshot the state service happens to push — seconds away
+        at best, making the menu look inert. `set_groups(None)`'s "columns"
+        default already reads the window's own live `enabled_columns()`, so
+        re-pushing the latest snapshot here picks up the toggle without
+        re-gathering anything.
         """
         if self._latest:
             self._window.set_groups(self._latest, now=datetime.now().astimezone())
@@ -451,7 +454,7 @@ class AppController(QObject):
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
-        self._worker.force()  # an action likely changed state — refresh ASAP
+        self._request_refresh()  # an action likely changed state — refresh ASAP
 
     @Slot(str)
     def on_new_container(self, prefix: str) -> None:
@@ -506,7 +509,7 @@ class AppController(QObject):
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
-        self._worker.force()
+        self._request_refresh()
 
     @Slot(str)
     def on_new_pr_container(self, prefix: str) -> None:
@@ -542,7 +545,7 @@ class AppController(QObject):
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
-        self._worker.force()
+        self._request_refresh()
 
     def _is_group_visible(self, group: RepoGroup) -> bool:
         """Gate stale UI actions against the window's current filtered view."""
@@ -592,7 +595,7 @@ class AppController(QObject):
         except OSError as exc:
             QMessageBox.warning(self._window, "Launch failed", str(exc))
             return
-        self._worker.force()  # the config may have changed under every card
+        self._request_refresh()  # the config may have changed under every card
 
     def _open_outbox(self, target: RepoTarget, container: str) -> None:
         if is_ssh_session():
@@ -666,41 +669,34 @@ class AppController(QObject):
         launches: a repo with no config file is addressed by it alone.
         """
         dialog = CommandOutputDialog(argv, title, cwd, parent=self._window)
-        # Never connect a worker method straight to a signal — the refresh
-        # worker has no Qt event loop of its own. Route through this slot, the
-        # same way on_action does.
+        # Routed through a controller slot, the same way on_action asks for
+        # a refresh, rather than wiring the client into a dialog signal.
         dialog.view.finished.connect(self._on_output_finished)
         dialog.show()
 
     @Slot(int)
     def _on_output_finished(self, _code: int) -> None:
-        self._worker.force()  # the command likely changed state
+        self._request_refresh()  # the command likely changed state
 
 
-def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) -> None:
-    """Connect window/worker signals to the controller.
+def _wire(window: MainWindow, bridge: StateBridge, controller: AppController) -> None:
+    """Connect window/bridge signals to the controller.
 
-    All worker *control* (force/set_interval/set_paused) is routed through
-    an ``AppController`` slot that calls the worker method directly, the
-    same pattern as ``on_action``'s ``self._worker.force()`` call — never
-    connected straight from a window signal to a worker bound method.
-    ``RefreshWorker.run_loop`` is a blocking loop, not a Qt event loop, so a
-    signal connected directly to a worker method resolves to a *queued*
-    connection the worker thread never processes; it would silently never
-    fire. The worker -> controller connections below are the mirror image
-    and are correct as direct signal/slot connections: they cross from the
-    worker thread to a controller living on the GUI thread, which *does*
-    run a real event loop, so Qt correctly delivers them as queued.
+    The bridge is a ``QObject`` living on the GUI thread, but it emits from
+    the ``StateClient``'s reader thread; Qt resolves those cross-thread
+    emissions to *queued* connections, so ``on_snapshot``/``on_failed`` run
+    on the GUI thread — nothing in the reader thread touches a widget.
+    Requests the other way (refresh, active) are plain method calls on the
+    client from controller slots: the client's own lock makes them safe.
     """
-    worker.groupsReady.connect(controller.on_groups)
-    worker.failed.connect(controller.on_failed)
+    bridge.snapshotReady.connect(controller.on_snapshot)
+    bridge.failed.connect(controller.on_failed)
     window.actionRequested.connect(controller.on_action)
     window.newContainerRequested.connect(controller.on_new_container)
     window.newPrContainerRequested.connect(controller.on_new_pr_container)
     window.configEditRequested.connect(controller.on_config_edit)
     window.refreshRequested.connect(controller.on_refresh_requested)
-    window.intervalChanged.connect(controller.on_interval_changed)
-    window.autoRefreshDisabled.connect(controller.on_auto_refresh_disabled)
+    window.activeChanged.connect(controller.on_window_active)
     window.layoutChanged.connect(controller.on_layout_changed)
     window.cardStyleChanged.connect(controller.on_card_style_changed)
     window.card_view.collapsedChanged.connect(controller.on_collapsed_changed)
@@ -708,14 +704,7 @@ def _wire(window: MainWindow, worker: RefreshWorker, controller: AppController) 
     window.repoVisibilityChanged.connect(controller.on_repo_visibility_changed)
 
 
-def run(
-    incus: Incus,
-    cwd_root: Path | None,
-    *,
-    interval: float | None,
-    git_interval: float,
-    no_git: bool,
-) -> int:
+def run(cwd_root: Path | None) -> int:
     """Launch the Qt dashboard. Returns the process exit code."""
     roots = preflight(cwd_root)
     if roots is None:
@@ -733,21 +722,10 @@ def run(
     if config_notice:
         column_notice = "; ".join(filter(None, (column_notice, config_notice)))
 
-    # Resolved once for the whole run — a live-refreshing dashboard must not
-    # re-merge config on every refresh tick.
     state = load_gui_state(engine)
-
-    resolved = interval if interval is not None else state.refresh_interval
-    resolved = max(0.5, resolved if resolved is not None else 3.0)
-    git_interval = max(git_interval, resolved)
-    paused = state.refresh_paused
-    git_enabled = not no_git
 
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
-        git_enabled=git_enabled,
-        interval=resolved,
-        paused=paused,
         layout=state.layout,
         header_state=state.table_header_state,
         card_style=state.card_style,
@@ -757,49 +735,25 @@ def run(
     )
     window.card_view.set_collapsed(set(view_state.folded))
 
-    thread = QThread()
-    worker = RefreshWorker(
-        incus,
-        cwd_root,
-        interval=resolved,
-        git_interval=git_interval,
-        git_enabled=git_enabled,
-    )
-    worker.moveToThread(thread)
-    thread.started.connect(worker.run_loop)
+    # The client needs `bridge.publish` as its `on_update` at construction:
+    # bridge first, then the client, then attach. The controller is kept on
+    # the GUI thread (never moveToThread'd) so the bridge's cross-thread
+    # emissions resolve to queued connections.
+    bridge = StateBridge()
+    client = StateClient(cwd_root, on_update=bridge.publish)
+    bridge.attach(client)
+    controller = AppController(window, client, cwd_root=cwd_root, engine=engine)
+    _wire(window, bridge, controller)
+    client.start()
 
-    # Kept on the GUI thread (never moveToThread'd) so cross-thread worker
-    # signals resolve to queued connections; held in a local so it isn't
-    # garbage-collected while `app.exec()` runs.
-    controller = AppController(window, worker, interval=resolved, engine=engine, paused=paused)
-    _wire(window, worker, controller)
-    if paused:
-        worker.set_paused(True)
-
-    # Surveyed before the window is shown, so it never appears blank and
-    # fills in a gather later. Only the cheap tier is waited for — the git
-    # probes are what make a full gather slow, and the worker's first tick
-    # fetches them at once (see `RefreshWorker.seed`).
-    #
-    # A failure here still shows the window, unlike the TUI's own pre-gather:
-    # a GUI launched detached has nowhere to print, so an error in the status
-    # bar beats a window that never appears.
+    # Waited for before the window is shown, so it never appears blank. A
+    # failure still shows the window, unlike the TUI: a GUI launched detached
+    # has nowhere to print, and the client keeps reconnecting behind it.
     try:
-        seeded = worker.gather_once(False)
-        # Twice, `PRIME_INTERVAL_SECONDS` apart: the first reading primes the
-        # sampler, the second turns it into a rate. Only the /proc read
-        # repeats — the gather does not.
-        worker.sample_activity(seeded)
-        time.sleep(PRIME_INTERVAL_SECONDS)
-        worker.sample_activity(seeded)
-    except Exception as exc:  # the worker keeps retrying; report and carry on
+        controller.on_snapshot(client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS))
+    except StateServiceUnavailable as exc:
         controller.on_failed(str(exc))
-    else:
-        # Stamped on completion, the way the loop stamps its own gathers.
-        worker.seed(seeded, at=time.monotonic())
-        controller.on_groups(seeded)
 
-    thread.start()
     window.show()
     if column_notice:
         QMessageBox.warning(window, "Dashboard column migration", column_notice)
@@ -812,7 +766,4 @@ def run(
             try:
                 controller._finish_outboxes()
             finally:
-                worker.request_stop()
-                worker.force()
-                thread.quit()
-                thread.wait(2000)
+                client.close()

@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -53,7 +54,7 @@ def test_gui_foreground_runs_inprocess(mocker):
     result = runner.invoke(app, ["gui", "--foreground"])
 
     assert result.exit_code == 0, result.output
-    qrun.assert_called_once()
+    qrun.assert_called_once_with(cwd_root=None)
     popen.assert_not_called()
 
 
@@ -109,25 +110,15 @@ def test_gui_missing_pyside_shows_install_hint(mocker):
     popen.assert_not_called()
 
 
-def test_gui_detach_omits_interval_when_not_given(mocker):
-    mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
-    mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
-    popen = mocker.patch("subprocess.Popen")
-
-    runner.invoke(app, ["gui"])
-    argv = popen.call_args.args[0]
-    assert "--interval" not in argv  # let the persisted value win downstream
-
-
-def test_gui_detach_forwards_explicit_interval(mocker):
+def test_gui_detach_forwards_no_cadence_flags(mocker):
+    """The cadence is the state service's (`dashboard.refresh` in the global
+    config); the detached child is told nothing about it."""
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
     mocker.patch("jailbee.qtui.app.run", return_value=0)
     popen = mocker.patch("subprocess.Popen")
 
-    runner.invoke(app, ["gui", "--interval", "5"])
-    argv = popen.call_args.args[0]
-    assert "--interval" in argv
-    assert "5.0" in argv or "5" in argv
+    runner.invoke(app, ["gui", "--interval", "5", "--git-interval", "9", "--no-git"])
+
+    assert popen.call_args.args[0] == [sys.executable, "-m", "jailbee", "gui", "--foreground"]

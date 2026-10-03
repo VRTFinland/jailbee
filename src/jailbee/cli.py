@@ -3729,13 +3729,7 @@ def _run_dashboard(
             return 1
 
         if foreground:
-            return qtui_app.run(
-                Incus(),
-                cwd_root=cwd_root,
-                interval=interval,
-                git_interval=git_interval,
-                no_git=no_git,
-            )
+            return qtui_app.run(cwd_root=cwd_root)
 
         if qtui_app.preflight(cwd_root) is None:
             from jailbee.dashboard import NOTHING_TO_SHOW
@@ -3744,19 +3738,7 @@ def _run_dashboard(
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
-        child_argv = [
-            sys.executable,
-            "-m",
-            "jailbee",
-            "gui",
-            "--foreground",
-            "--git-interval",
-            str(git_interval),
-        ]
-        if interval is not None:
-            child_argv += ["--interval", str(interval)]
-        if no_git:
-            child_argv.append("--no-git")
+        child_argv = [sys.executable, "-m", "jailbee", "gui", "--foreground"]
         with open(log_path, "ab") as logf:
             subprocess.Popen(
                 child_argv,
