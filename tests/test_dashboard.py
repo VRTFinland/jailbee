@@ -9692,3 +9692,99 @@ def test_render_without_height_draws_a_long_table_whole(tmp_path):
     )
     text = _render_text(frame, width=100)
     assert "row00" in text and "row39" in text and "more" not in text
+
+
+_FRAME_NOW = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+
+def _frame(groups, selected, *, overlay=None, height=None, width=100, show_details=True):
+    frame = dashboard.render(
+        groups,
+        selected,
+        now=_FRAME_NOW,
+        git_enabled=True,
+        overlay=overlay,
+        height=height,
+        show_details=show_details,
+    )
+    return _render_text(frame, width=width).splitlines()
+
+
+def test_details_panel_shows_under_the_table_for_the_highlighted_container(tmp_path):
+    lines = _frame([_named_rows_group(tmp_path, 3)], dashboard.Row("container", "alpha-row01"))
+    header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
+    title = next(i for i, ln in enumerate(lines) if "alpha-row01" in ln)
+    assert title > header + 3  # under the heading and three container rows
+    text = "\n".join(lines[title:])
+    assert "network" in text and "git" in text and "state" in text
+
+
+def test_details_toggled_off_draws_no_panel(tmp_path):
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        show_details=False,
+    )
+    assert "alpha-row01" not in "\n".join(lines)
+
+
+def test_menu_sits_to_the_right_of_the_details(tmp_path):
+    menu = dashboard.MenuState("alpha-row01", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        overlay=menu,
+        height=30,
+    )
+    shared = next(ln for ln in lines if "alpha-row01 →" in ln)
+    details_at = shared.find("alpha-row01")  # the details title comes first
+    menu_at = shared.find("alpha-row01 →")
+    assert details_at < menu_at
+
+
+def test_other_overlays_hide_the_details(tmp_path):
+    picker = dashboard.Picker("x", "Pick one", (dashboard.PickerEntry("Entry 0", "0"),))
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        overlay=picker,
+        height=30,
+    )
+    text = "\n".join(lines)
+    assert "Pick one" in text
+    assert "alpha-row01" not in text
+
+
+def test_repo_heading_shows_the_repo_summary(tmp_path):
+    text = "\n".join(_frame([_named_rows_group(tmp_path, 3)], dashboard.Row("repo", "alpha")))
+    assert "/repos/alpha" in text and "3 running / 3" in text
+
+
+def test_long_table_keeps_min_rows_and_the_cursor_with_details(tmp_path):
+    lines = _frame(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row39"),
+        height=24,
+    )
+    assert len(lines) <= 24
+    text = "\n".join(lines)
+    assert "row39" in text and "↑" in text
+    header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
+    panel_top = next(i for i, ln in enumerate(lines) if "alpha-row39" in ln)
+    assert panel_top - header - 1 >= dashboard.MIN_TABLE_ROWS
+    assert lines[-1].startswith("╰")
+
+
+def test_short_terminals_never_overflow(tmp_path):
+    menu = dashboard.MenuState(
+        "alpha-row05", [(f"Action {i}", f"v{i}") for i in range(30)], index=20
+    )
+    for height in (8, 10, 12, 16):
+        lines = _frame(
+            [_named_rows_group(tmp_path, 40)],
+            dashboard.Row("container", "alpha-row05"),
+            overlay=menu,
+            height=height,
+        )
+        assert len(lines) <= height, height
+        assert lines[-1].startswith("╰"), height

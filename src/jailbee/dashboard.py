@@ -54,6 +54,7 @@ from jailbee.dashboard_commands import (
     insert_options_before_separator,
     permitted,
 )
+from jailbee.dashboard_details import DETAILS_MAX_ROWS, DetailsView, details_for, render_details
 from jailbee.dashboard_egress import (
     EgressState,
     egress_argv,
@@ -1995,50 +1996,99 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
 # Panel border rows: around a windowed overlay's list, and around the frame.
 _OVERLAY_BORDER_ROWS = 2
 _FRAME_BORDER_ROWS = 2
+# Table rows (column header not counted) kept on screen under the bottom area.
+MIN_TABLE_ROWS = 5
 
 
 @dataclass(frozen=True)
 class _FrameBody:
-    """The dashboard body: the table, then the overlay, fitted to the screen.
+    """The dashboard body, fitted to the screen.
+
+    Top to bottom: the table window, the inline notice, a blank gap, the
+    bottom area, then the hint. The bottom area is the details panel, an
+    overlay, or — for an action menu — the details with the menu on the right.
 
     Without ``max_height`` (a plain ``console.print``) everything is drawn
     whole. Under the full-screen ``Live`` anything past the terminal's height
-    would be clipped by the screen — so a menu longer than the space below
-    the table would hide its own cursor, and a table filling the screen would
-    hide the overlay entirely. Instead a menu or picker is windowed to the
-    rows left under the table (never fewer than :data:`MIN_LIST_ROWS`), and
-    when the overlay still does not fit the table is cut from below.
+    would be clipped by the screen, so the table keeps :data:`MIN_TABLE_ROWS`
+    before the bottom area may grow; a menu or picker is windowed to what is
+    left, never below :data:`MIN_LIST_ROWS`; if even that does not fit, lines
+    are dropped from the top so the bottom border and hint stay.
 
     ``max_height`` is passed in rather than read from ``options.height``:
     Rich's ``Screen`` wraps its renderable in a ``Group``, which resets the
     height before anything below it renders.
     """
 
-    head: tuple[RenderableType, ...]
+    sections: _RepoSections
+    notice: RenderableType | None
     overlay: Overlay | None
+    details: DetailsView | None = None
     max_height: int | None = None
 
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        if self.overlay is None:
-            yield Group(*self.head)
-            return
-        hint = _hint_line(self.overlay)
-        if self.max_height is None:
-            yield Group(*self.head, "", _render_overlay(self.overlay), hint)
-            return
-        free = options.update(height=None)
-        head = console.render_lines(Group(*self.head), free, pad=False)
-        # A blank separator row, then the hint, which may wrap.
-        gap = console.render_lines(Text(""), free, pad=False)
-        hint_lines = console.render_lines(hint, free, pad=False)
-        tail_rows = len(gap) + len(hint_lines)
-        list_rows = self.max_height - len(head) - tail_rows - _OVERLAY_BORDER_ROWS
-        panel = console.render_lines(
-            _render_overlay(self.overlay, max(list_rows, MIN_LIST_ROWS)), free, pad=False
+    def _bottom(self, list_rows: int | None, details_rows: int | None) -> RenderableType | None:
+        """Details, an overlay, or both side by side with the menu on the right.
+
+        Only the action menus share the row: every other overlay is a task of
+        its own (a picker, a prompt, a settings page) and gets the full width.
+        """
+        menu = isinstance(self.overlay, (MenuState, RepoMenuState))
+        details = (
+            render_details(self.details, details_rows)
+            if self.details is not None and (self.overlay is None or menu)
+            else None
         )
-        keep = max(0, self.max_height - len(panel) - tail_rows)
-        for i, line in enumerate([*head[:keep], *gap, *panel, *hint_lines]):
-            if i:
+        if self.overlay is None:
+            return details
+        panel = _render_overlay(self.overlay, list_rows)
+        if details is None:
+            return panel
+        row = Table.grid(expand=True)
+        row.add_column(ratio=1)
+        row.add_column()
+        row.add_row(details, panel)
+        return row
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        hint = _hint_line(self.overlay) if self.overlay is not None else None
+        extras: list[RenderableType] = [] if self.notice is None else [self.notice]
+        if self.max_height is None:
+            bottom = self._bottom(None, DETAILS_MAX_ROWS)
+            tail: list[RenderableType] = [] if bottom is None else ["", bottom]
+            if hint is not None:
+                tail.append(hint)
+            yield Group(self.sections, *extras, *tail)
+            return
+
+        free = options.update(height=None)
+
+        def lines_of(renderable: RenderableType) -> list[list[Segment]]:
+            return console.render_lines(renderable, free, pad=False)
+
+        notice_lines = lines_of(Group(*extras)) if extras else []
+        hint_lines = lines_of(hint) if hint is not None else []
+        rest = self.max_height - len(notice_lines) - len(hint_lines)
+        has_bottom = self.overlay is not None or self.details is not None
+        gap_lines = lines_of(Text("")) if has_bottom else []
+        bottom_lines: list[list[Segment]] = []
+        if has_bottom:
+            natural = len(lines_of(self.sections))
+            floor = min(natural, MIN_TABLE_ROWS + 1)  # + the column header
+            room = max(0, rest - len(gap_lines) - floor) - _OVERLAY_BORDER_ROWS
+            bottom = self._bottom(max(room, MIN_LIST_ROWS), max(1, min(DETAILS_MAX_ROWS, room)))
+            if bottom is not None:
+                bottom_lines = lines_of(bottom)
+            else:
+                gap_lines = []
+        table_rows = max(0, rest - len(gap_lines) - len(bottom_lines))
+        table_lines = lines_of(replace(self.sections, max_rows=table_rows))[:table_rows]
+        out = [*table_lines, *notice_lines, *gap_lines, *bottom_lines, *hint_lines]
+        if len(out) > self.max_height:
+            # Even the minimum bottom area does not fit: lose the top, never
+            # the hint or the frame's bottom border.
+            out = out[len(out) - self.max_height :]
+        for index, line in enumerate(out):
+            if index:
                 yield Segment.line()
             yield from line
 
@@ -2056,6 +2106,7 @@ def render(
     hide_first: Sequence[str] = (),
     hidden_by_preferences: bool = False,
     height: int | None = None,
+    show_details: bool = False,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -2067,9 +2118,15 @@ def render(
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
     the table so the dashboard it acts on stays on screen. When the frame is
-    taller than the terminal the overlay wins: a menu or picker scrolls with
-    its cursor, and the table is cut from below (see :class:`_FrameBody`).
-    ``height`` is the terminal's height; None draws everything whole.
+    taller than the terminal the table scrolls to its cursor (keeping at least
+    :data:`MIN_TABLE_ROWS` rows) and a menu or picker scrolls with its own
+    (see :class:`_FrameBody`). ``height`` is the terminal's height; None draws
+    everything whole.
+
+    ``show_details`` draws the details panel for ``selected`` under the table
+    — the dashboard's `v` toggle; off by default so plain renders are
+    unchanged. An action menu then sits to the right of it; every other
+    overlay hides it.
 
     ``notice`` is a transient message (a rejected key, a view-only row) shown
     in the subtitle, or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped
@@ -2082,31 +2139,22 @@ def render(
     visible_groups = groups
     visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
     widths = _dashboard_column_widths(fields, visible_rows)
-    inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
-    body: list[RenderableType] = [
-        _RepoSections(
-            visible_groups,
-            fields,
-            widths,
-            selected,
-            folded,
-            empty=not groups,
-            hidden_by_preferences=hidden_by_preferences,
-            hide_first=hide_first,
-            max_rows=(
-                None
-                if height is None or overlay is not None
-                else max(0, height - _FRAME_BORDER_ROWS - (1 if inline_notice else 0))
-            ),
-        ),
-    ]
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a
     # CLI message may contain `[...]`.
-    if inline_notice is not None:
-        body.append(Text(inline_notice, style="yellow"))
-
+    inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
+    sections = _RepoSections(
+        visible_groups,
+        fields,
+        widths,
+        selected,
+        folded,
+        empty=not groups,
+        hidden_by_preferences=hidden_by_preferences,
+        hide_first=hide_first,
+    )
+    details = details_for(visible_groups, selected, now) if show_details and groups else None
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
@@ -2126,8 +2174,10 @@ def render(
     )
     return Panel(
         _FrameBody(
-            tuple(body),
+            sections,
+            Text(inline_notice, style="yellow") if inline_notice is not None else None,
             overlay,
+            details,
             None if height is None else max(0, height - _FRAME_BORDER_ROWS),
         ),
         title=title,
