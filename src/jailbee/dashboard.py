@@ -2888,33 +2888,6 @@ def _run_cli_foreground(
     return rc
 
 
-def _refresh_due(
-    *,
-    now: float,
-    last_base: float,
-    last_full: float,
-    interval: float,
-    git_interval: float,
-    git_enabled: bool,
-    first: bool,
-    forced: bool,
-    paused: bool = False,
-) -> tuple[bool, bool]:
-    """Decide whether to gather now and whether to include git status.
-
-    Returns ``(do_base, do_git)``. ``do_base`` is whether to gather at all;
-    ``do_git`` is whether this gather should include the (expensive) git tier.
-    ``now`` is a monotonic timestamp. ``first``/``forced`` force an immediate
-    git-inclusive gather. ``paused`` suppresses the periodic gathers only —
-    ``first`` and ``forced`` still go through.
-    """
-    if paused and not (first or forced):
-        return False, False
-    do_git = git_enabled and (first or forced or now >= last_full + git_interval)
-    do_base = first or forced or do_git or now >= last_base + interval
-    return do_base, do_git
-
-
 def run(
     incus: Incus,
     cwd_root: Path | None,
