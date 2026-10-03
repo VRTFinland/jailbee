@@ -9,14 +9,16 @@ the sections below expand on the ones that need host changes.
 
 ## Common problems
 
-### "Run `jb base build` in this repo to pick these up"
+### "Run `jb base build` in this repo (or `jb upgrade` for every repo) to pick these up"
 
 `jailbee ls`, `jailbee new` and `jailbee shell` print a short block on stderr,
 and `jailbee doctor` reports the same thing as its `upgrade actions` check,
 when the version of JailBee you just upgraded to changed something a golden
 image or a set of Incus profiles already on your machine does not have yet.
 Neither is rebuilt automatically, so the hint names what changed and the one
-command that picks it up — run it in the repo it appeared in.
+command that picks it up — run it in the repo it appeared in, or run
+`jailbee upgrade` once to bring every registered repo up to date without
+restarting any container (`--dry-run` shows what it would do).
 
 It is only a hint: nothing is blocked, and everything keeps working off the
 old image or profiles meanwhile. But it repeats on every one of those commands

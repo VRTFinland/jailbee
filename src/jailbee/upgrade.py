@@ -431,7 +431,9 @@ def format_advice(
         hidden = len(item.reasons) - len(shown)
         if hidden:
             lines.append(f"    - ... and {hidden} more (see the CHANGELOG)")
-        lines.append(f"    Run `{command}` in this repo to pick these up.")
+        lines.append(
+            f"    Run `{command}` in this repo (or `jb upgrade` for every repo) to pick these up."
+        )
         if dismissed is not None and item.action in dismissed:
             lines.append(f"    Dismissed at {dismissed[item.action]} — still owed.")
         else:
