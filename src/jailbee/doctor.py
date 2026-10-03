@@ -260,9 +260,7 @@ def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
             needed = egress_proxy.proxy_needed(cfg, incus, session)
         if not needed:
             return [
-                CheckResult(
-                    name, True, "not needed — no wildcard entries or always-on containers"
-                )
+                CheckResult(name, True, "not needed — no wildcard entries or always-on containers")
             ]
         status = egress_proxy.proxy_status(incus)
         missing = litellm.bridges_missing_services_acl(incus)

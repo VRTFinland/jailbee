@@ -1150,9 +1150,7 @@ def test_net_status_proxy_line_is_silent_without_wildcards(tmp_path, mocker, cap
     assert capsys.readouterr().out == ""
 
 
-def test_net_status_proxy_line_shows_an_existing_proxy_without_wildcards(
-    tmp_path, mocker, capsys
-):
+def test_net_status_proxy_line_shows_an_existing_proxy_without_wildcards(tmp_path, mocker, capsys):
     from jailbee.cli import _print_egress_proxy_status
 
     _proxy_status_rig(tmp_path, mocker, entries=["github.com"])
