@@ -2929,6 +2929,15 @@ def _new_worker(
     )
 
 
+@app.command("_state-service", hidden=True)
+def _state_service() -> None:
+    """Internal: the shared dashboard state service. Spawned by the dashboards."""
+    from jailbee.incus import Incus
+    from jailbee.state_service.server import run_service
+
+    raise typer.Exit(run_service(Incus()))
+
+
 @app.command("_destroy-worker", hidden=True)
 def _destroy_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to destroy.")],

@@ -357,6 +357,7 @@ def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> Non
         ("_destroy-worker",),
         ("_boot-worker",),
         ("_autostart-worker",),
+        ("_state-service",),
         ("submodule", "checkout"),
         ("claude", "ls"),
         ("chrome-pool", "ls"),
