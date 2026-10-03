@@ -920,7 +920,11 @@ def _work_env_incus(cfg, *, mode="strict", current=None, proxy=True):
     if proxy:
         listed.insert(
             0,
-            {"name": PROXY_CONTAINER, "status": "Running", "devices": {"cl-work": {"ipv4.address": "10.9.0.2"}}},
+            {
+                "name": PROXY_CONTAINER,
+                "status": "Running",
+                "devices": {"cl-work": {"ipv4.address": "10.9.0.2"}},
+            },
         )
     incus.list_containers.return_value = listed
     incus.network_acl_exists.return_value = False
@@ -937,7 +941,9 @@ def test_env_always_on_strict_work_container_without_wildcards(make_cfg, tmp_pat
     cfg = _cfg(make_cfg, tmp_path)
     mocker.patch("jailbee.tmux.set_server_environment")
     _patch_entries(mocker, ["github.com:443", "10.0.0.0/8"], {})
-    changed = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    changed = egress_proxy.sync_container_env(
+        cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict"
+    )
     assert changed["HTTPS_PROXY"] == "http://10.9.0.2:3128"
     assert changed["NO_PROXY"] == "localhost,127.0.0.1,.incus"
 
@@ -947,7 +953,9 @@ def test_env_always_on_does_not_change_when_entries_do(make_cfg, tmp_path, mocke
     cfg = _cfg(make_cfg, tmp_path)
     mocker.patch("jailbee.tmux.set_server_environment")
     _patch_entries(mocker, [], {})
-    first = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    first = egress_proxy.sync_container_env(
+        cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict"
+    )
     incus = _work_env_incus(cfg, current=_as_config(first))
     _patch_entries(mocker, entries, {})
     assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "strict") == {}
@@ -959,7 +967,9 @@ def test_env_always_on_survives_a_mode_switch(make_cfg, tmp_path, mocker):
     cfg = _cfg(make_cfg, tmp_path)
     mocker.patch("jailbee.tmux.set_server_environment")
     _patch_entries(mocker, ["*.repo.com"], {})
-    first = egress_proxy.sync_container_env(cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict")
+    first = egress_proxy.sync_container_env(
+        cfg, _work_env_incus(cfg), MagicMock(), "myrepo-new", "strict"
+    )
     incus = _work_env_incus(cfg, mode="loose", current=_as_config(first))
     assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "loose") == {}
     incus.config_unset.assert_not_called()
@@ -967,7 +977,9 @@ def test_env_always_on_survives_a_mode_switch(make_cfg, tmp_path, mocker):
 
 def test_env_always_on_keeps_the_environment_when_the_proxy_is_down(make_cfg, tmp_path, mocker):
     cfg = _cfg(make_cfg, tmp_path)
-    incus = _work_env_incus(cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"}, proxy=False)
+    incus = _work_env_incus(
+        cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"}, proxy=False
+    )
     _patch_entries(mocker, [], {})
     warn = mocker.patch("jailbee.tui.warn")
     assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", "strict") == {}
@@ -985,11 +997,15 @@ def test_env_always_off_work_container_without_wildcards_gets_nothing(make_cfg, 
 
 
 @pytest.mark.parametrize(("changed", "expected"), [({"HTTPS_PROXY": "x"}, True), ({}, False)])
-def test_sync_container_reports_whether_the_env_changed(make_cfg, tmp_path, mocker, changed, expected):
+def test_sync_container_reports_whether_the_env_changed(
+    make_cfg, tmp_path, mocker, changed, expected
+):
     cfg = _cfg(make_cfg, tmp_path)
     mocker.patch.object(egress_proxy, "sync_repo_rules")
     mocker.patch.object(egress_proxy, "sync_container_env", return_value=changed)
-    assert egress_proxy.sync_container(cfg, _work_env_incus(cfg), "myrepo-new", "strict") is expected
+    assert (
+        egress_proxy.sync_container(cfg, _work_env_incus(cfg), "myrepo-new", "strict") is expected
+    )
 
 
 def test_sync_container_returns_false_on_a_swallowed_error(make_cfg, tmp_path, mocker):
