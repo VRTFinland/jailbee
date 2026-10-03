@@ -129,3 +129,38 @@ def test_long_keys_are_hashed_to_keep_acl_names_short():
     names = [line.split()[1] for line in out.splitlines() if line.startswith("acl ")]
     assert all(len(n) <= 63 for n in names)
     assert key not in out
+
+
+def test_open_scope_allows_its_sources_without_destination_rules():
+    out = render_fragment("r", [_scope(key="r", sources=("10.9.0.8",), entries=(), kind="o")])
+    assert "acl jb_o_r_src src 10.9.0.8/32\n" in out
+    assert "http_access allow jb_o_r_src\n" in out
+    assert "dstdomain" not in out and " port " not in out and " dst " not in out
+
+
+def test_open_scope_without_sources_is_omitted():
+    out = render_fragment("r", [_scope(key="r", sources=(), entries=(), kind="o")])
+    assert "acl " not in out and "http_access" not in out
+
+
+def test_open_scope_ignores_entries():
+    out = render_fragment("r", [_scope(key="r", sources=("10.9.0.8",), entries=("*.a.com",), kind="o")])
+    assert ".a.com" not in out
+    assert out.count("http_access allow") == 1
+
+
+def test_open_and_filtered_scopes_of_one_repo_stay_apart():
+    out = render_fragment(
+        "r",
+        [
+            _scope(key="r", sources=("10.9.0.7",), entries=("*.a.com",)),
+            _scope(key="r", sources=("10.9.0.8",), entries=(), kind="o"),
+        ],
+    )
+    names = [line.split()[1] for line in out.splitlines() if line.startswith("acl ")]
+    assert len(names) == len(set(names))
+    for line in out.splitlines():
+        if "10.9.0.8" in line:
+            assert line.startswith("acl jb_o_r_src ")
+        if "10.9.0.7" in line:
+            assert line.startswith("acl jb_r_r_src ")

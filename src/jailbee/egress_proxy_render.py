@@ -5,7 +5,8 @@ Pure: no Incus, no filesystem.
 Each scope (a repo or one container) becomes a block of ACLs keyed on its
 client addresses, so one scope's rules never apply to another's sources.
 A scope with no sources or no entries is omitted entirely: Squid rejects an
-empty ``src`` ACL, and one bad fragment would break every repo.
+empty ``src`` ACL, and one bad fragment would break every repo. An open scope
+needs sources only, and allows them every destination.
 
 Entries are grouped by ``(kind, ports)`` in first-seen order. ``kind`` is
 ``domain`` (wildcards and hostnames) or ``dst`` (IP/CIDR). ``ports`` is
@@ -52,11 +53,13 @@ class ProxyScope:
     key: str  # squid-safe id, e.g. "myrepo" or "myrepo-feat-x"
     sources: tuple[str, ...]  # client IPv4 addresses, no prefix length
     entries: tuple[str, ...]  # raw egress entries, any kind
-    # "r" = a repo prefix, "c" = a container name. Both are [a-z0-9-]+ (no "_"), so
+    # "r" = a repo prefix, "c" = a container name, "o" = a repo prefix's open
+    # scope (loose containers that keep the proxy: every destination, entries
+    # ignored). Prefixes and names are [a-z0-9-]+ (no "_"), so
     # ``jb_<kind>_<key>_...`` cannot collide across kinds: a repo ``web-api`` and the
     # container ``web-api`` of repo ``web`` would otherwise share ACL names, which
     # Squid merges when the types match.
-    kind: Literal["r", "c"] = "r"
+    kind: Literal["r", "c", "o"] = "r"
 
 
 def _group_entries(entries: Iterable[str]) -> dict[_Group, list[str]]:
@@ -110,10 +113,21 @@ def _acl_base(scope: ProxyScope) -> str:
     return f"jb_{scope.kind}_h{digest}"
 
 
+def _src_acl(scope: ProxyScope) -> tuple[str, str]:
+    """The scope's source ACL: its name and its definition line."""
+    src = f"{_acl_base(scope)}_src"
+    return src, f"acl {src} src " + " ".join(f"{ip}/32" for ip in scope.sources)
+
+
+def _render_open(scope: ProxyScope) -> list[str]:
+    src, line = _src_acl(scope)
+    return [line, f"http_access allow {src}"]
+
+
 def _render_scope(scope: ProxyScope) -> list[str]:
+    src, line = _src_acl(scope)
+    lines = [line]
     base = _acl_base(scope)
-    src = f"{base}_src"
-    lines = [f"acl {src} src " + " ".join(f"{ip}/32" for ip in scope.sources)]
     for g, ((kind, ports), names) in enumerate(_group_entries(scope.entries).items()):
         dst = f"{base}_d{g}"
         if kind == "domain":
@@ -132,7 +146,10 @@ def _render_scope(scope: ProxyScope) -> list[str]:
 def render_fragment(prefix: str, scopes: Sequence[ProxyScope]) -> str:
     lines = [f"# jailbee egress proxy rules for {prefix} (generated, do not edit)"]
     for scope in scopes:
-        if scope.sources and scope.entries:
+        if scope.kind == "o":
+            if scope.sources:
+                lines.extend(_render_open(scope))
+        elif scope.sources and scope.entries:
             lines.extend(_render_scope(scope))
     return "\n".join(lines) + "\n"
 
