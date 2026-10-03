@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -122,3 +123,32 @@ def test_gui_detach_forwards_no_cadence_flags(mocker):
     runner.invoke(app, ["gui", "--interval", "5", "--git-interval", "9", "--no-git"])
 
     assert popen.call_args.args[0] == [sys.executable, "-m", "jailbee", "gui", "--foreground"]
+
+
+@pytest.mark.parametrize("command", ["dashboard", "tui", "gui"])
+@pytest.mark.parametrize(
+    ("argv", "flag"),
+    [
+        (["--interval", "5"], "--interval"),
+        (["--git-interval", "20"], "--git-interval"),
+        (["--no-git"], "--no-git"),
+    ],
+)
+def test_refresh_flags_are_ignored_with_a_warning(mocker, command, argv, flag):
+    run = mocker.patch("jailbee.cli._run_dashboard", return_value=0)
+
+    result = runner.invoke(app, [command, *argv])
+
+    assert result.exit_code == 0, result.output
+    assert f"{flag} is ignored; set dashboard.refresh in the global config" in result.output
+    run.assert_called_once()
+    assert not {"interval", "git_interval", "no_git"} & set(run.call_args.kwargs)
+
+
+@pytest.mark.parametrize("command", ["dashboard", "tui", "gui"])
+def test_no_warning_without_the_refresh_flags(mocker, command):
+    mocker.patch("jailbee.cli._run_dashboard", return_value=0)
+
+    result = runner.invoke(app, [command])
+
+    assert "is ignored" not in result.output

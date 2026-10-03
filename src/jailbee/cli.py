@@ -3546,15 +3546,18 @@ def tmux(
     raise typer.Exit(_attach_tmux(cfg, incus, name))
 
 
+_REFRESH_FLAG_HELP = "Deprecated, ignored: set dashboard.refresh in the global config."
+
+
 @app.command("dashboard")
 def dashboard_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
     gui: Annotated[
         bool, typer.Option("--gui", help="Launch the graphical (Qt) dashboard.")
     ] = False,
@@ -3580,11 +3583,9 @@ def dashboard_cmd(
     grouped by repo. In the TUI: ↑/↓ to move, Enter for the action menu, r to
     refresh, q to quit. Pass --gui (or run `jailbee gui`) for the Qt desktop app.
     """
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=gui,
             foreground=foreground,
             remote_policy_json=remote_policy_json,
@@ -3595,19 +3596,17 @@ def dashboard_cmd(
 @app.command("tui")
 def tui_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
 ) -> None:
     """Launch the terminal dashboard — alias for `jailbee dashboard`."""
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=False,
             foreground=False,
         )
@@ -3617,12 +3616,12 @@ def tui_cmd(
 @app.command("gui")
 def gui_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
     foreground: Annotated[
         bool,
         typer.Option(
@@ -3632,22 +3631,32 @@ def gui_cmd(
     ] = False,
 ) -> None:
     """Launch the graphical (Qt) dashboard — alias for `jailbee dashboard --gui`."""
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=True,
             foreground=foreground,
         )
     )
 
 
+def _warn_ignored_refresh_flags(
+    *, interval: float | None, git_interval: float | None, no_git: bool
+) -> None:
+    """The dashboards share one state service now, paced by the global config."""
+    for flag, given in (
+        ("--interval", interval is not None),
+        ("--git-interval", git_interval is not None),
+        ("--no-git", no_git),
+    ):
+        if given:
+            warn_plain(
+                f"{flag} is ignored; set dashboard.refresh in the global config", stderr=True
+            )
+
+
 def _run_dashboard(
     *,
-    interval: float | None,
-    git_interval: float,
-    no_git: bool,
     gui: bool,
     foreground: bool,
     remote_policy_json: str | None = None,
