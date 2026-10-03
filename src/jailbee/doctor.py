@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 from jailbee.config import Config, ConfigError
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
+from jailbee.egress_proxy import PROXY_CONTAINER
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
@@ -1051,6 +1052,9 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                     )
                 occupants: list[dict[str, Any]] = []
                 for container in containers:
+                    # The egress proxy's client NIC is a service, not a repo occupant.
+                    if container.get("name") == PROXY_CONTAINER:
+                        continue
                     profiles = container.get("profiles") or []
                     marked_work = generation_of(cfg, container) == "work"
                     instance_name = container.get("name")

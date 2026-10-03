@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from jailbee.egress import acl_raw_entries
+from jailbee.egress_proxy import PROXY_CONTAINER
 from jailbee.egress_scope import extra_acl_name
 from jailbee.network import SERVICES_ACL, acl_name, extra_acl_yaml, strict_nic_acls, work_loose_rule
 from jailbee.network_generation import WORK_BRIDGE
@@ -56,7 +57,9 @@ def _work_occupants(incus: Incus) -> list[dict[str, Any]]:
             for device_name, device in devices.items()
             if isinstance(device, dict) and device.get("network") == WORK_BRIDGE
         ]
-        if not work_devices:
+        # The egress proxy holds a client NIC on the bridge; it is a service,
+        # not a repo container, and carries no work marker.
+        if not work_devices or raw.get("name") == PROXY_CONTAINER:
             continue
         name = raw.get("name")
         if not isinstance(name, str):

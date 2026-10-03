@@ -471,3 +471,28 @@ def test_reconcile_is_idempotent_and_uses_loose_markers(make_cfg, tmp_path):
     incus.network_set.reset_mock()
     reconcile_work_acl(cfg, incus)
     incus.network_set.assert_not_called()
+
+
+def test_work_occupants_skip_the_egress_proxy(make_cfg, tmp_path):
+    from jailbee.egress_proxy import PROXY_CONTAINER
+    from jailbee.work_acl import _work_occupants
+
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-a"
+    proxy = {
+        "name": PROXY_CONTAINER,
+        "profiles": ["default", "jailbee-egress-proxy-profile"],
+        "devices": {
+            "cl-work": {
+                "type": "nic",
+                "network": "jailbee-work",
+                "name": "eth2",
+                "ipv4.address": "10.42.0.16",
+                "security.ipv4_filtering": "true",
+            }
+        },
+    }
+    incus = MagicMock()
+    incus.list_containers.return_value = [proxy, container(name)]
+
+    assert [item["name"] for item in _work_occupants(incus)] == [name]

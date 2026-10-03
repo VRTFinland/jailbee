@@ -2971,6 +2971,39 @@ def test_work_bridge_reports_foreign_unfiltered_and_duplicate_occupants(tmp_path
     assert "loose TTL but its mode marker is strict" in policy.detail
 
 
+def test_work_bridge_does_not_report_the_egress_proxy_as_foreign(tmp_path, mocker):
+    from jailbee.egress_proxy import PROXY_CONTAINER
+
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    incus.list_containers.return_value = [
+        {
+            "name": PROXY_CONTAINER,
+            "status": "Running",
+            "profiles": ["default", "jailbee-egress-proxy-profile"],
+            "devices": {
+                "cl-work": {
+                    "type": "nic",
+                    "network": "jailbee-work",
+                    "name": "eth2",
+                    "ipv4.address": "10.20.0.16",
+                    "security.ipv4_filtering": "true",
+                }
+            },
+        }
+    ]
+    # No eth0 in the listed devices makes doctor ask for the expanded config;
+    # a MagicMock fed to yaml.safe_load would allocate without bound.
+    incus.config_show.return_value = "devices: {}\n"
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    policy = next(row for row in results if row.name == "network jailbee-work policy")
+    assert PROXY_CONTAINER not in policy.detail, policy.detail
+
+
 def test_marker_recovers_work_nic_when_list_omits_device_fields(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
