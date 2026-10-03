@@ -3773,9 +3773,6 @@ def _run_dashboard(
     return dashboard.run(
         Incus(),
         cwd_root=cwd_root,
-        interval=interval if interval is not None else 3.0,
-        git_interval=git_interval,
-        no_git=no_git,
         remote=remote,
         over_ssh=over_ssh,
         ssh_policy=ssh_policy,

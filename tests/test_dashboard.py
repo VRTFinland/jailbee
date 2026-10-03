@@ -9,7 +9,6 @@ import itertools
 import json
 import os
 import re
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from jailbee.dashboard_jobs import JobResult, JobRunner
 from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
+from jailbee.state_service.protocol import Snapshot
 
 
 def test_inline_editor_keeps_shortcuts_as_text():
@@ -1416,7 +1416,7 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     def revoke_add() -> bytes:
@@ -1442,9 +1442,6 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -2861,7 +2858,7 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
     assert network.cell(loose) == "loose (2h)"
 
 
-def testglobal_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
+def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
     """A typo in the global `dashboard:` block must not lose the whole block —
     the dashboard used to swallow `load_global_config`'s `ConfigError` and
     degrade to `GlobalConfig()` entirely. Now `load_global_config` recovers
@@ -4285,85 +4282,6 @@ from typer.testing import CliRunner  # noqa: E402
 from jailbee.cli import app  # noqa: E402
 
 
-def test_refresh_due_schedule():
-    # first tick: always gather, git included when enabled
-    assert dashboard._refresh_due(
-        now=0.0,
-        last_base=0.0,
-        last_full=0.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=True,
-        forced=False,
-    ) == (True, True)
-    # forced: gather + git
-    assert dashboard._refresh_due(
-        now=1.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=True,
-    ) == (True, True)
-    # nothing due
-    assert dashboard._refresh_due(
-        now=2.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (False, False)
-    # base due, git not due
-    assert dashboard._refresh_due(
-        now=5.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (True, False)
-    # git due -> base also true
-    assert dashboard._refresh_due(
-        now=12.0,
-        last_base=11.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (True, True)
-    # git disabled: base due -> (True, False), never git
-    assert dashboard._refresh_due(
-        now=100.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=False,
-        first=False,
-        forced=False,
-    ) == (True, False)
-    assert dashboard._refresh_due(
-        now=100.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=False,
-        first=True,
-        forced=False,
-    ) == (True, False)
-
-
 def test_render_shows_memory_used_and_limit(tmp_path):
     c = _ci("alpha-one", "alpha")
     c.memory_usage = 4_000_000_000
@@ -4393,8 +4311,8 @@ def test_dashboard_command_delegates_to_run(mocker):
     result = CliRunner().invoke(app, ["dashboard", "-i", "5", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
-    assert kwargs["interval"] == 5.0
-    assert kwargs["no_git"] is True
+    # The cadence flags no longer reach the TUI: the state service owns it.
+    assert {"interval", "git_interval", "no_git"}.isdisjoint(kwargs)
     assert kwargs["cwd_root"] is None
 
 
@@ -4558,7 +4476,7 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
     child = mocker.patch.object(dashboard.subprocess, "run")
     child.return_value.returncode = 0
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     keys = itertools.chain([b"j", key, b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
@@ -4567,9 +4485,6 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
         dashboard.run(
             mocker.Mock(),
             None,
-            interval=0.5,
-            git_interval=1.0,
-            no_git=True,
             remote=True,
             over_ssh=True,
             ssh_policy=RemoteSSHConfig(),
@@ -4614,9 +4529,7 @@ def test_tui_command_is_an_alias_for_the_dashboard(mocker):
     result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
-    assert kwargs["interval"] == 5.0
-    assert kwargs["git_interval"] == 7.0
-    assert kwargs["no_git"] is True
+    assert {"interval", "git_interval", "no_git"}.isdisjoint(kwargs)
 
 
 def test_menu_actions_clear_job_entry_follows_session_when_clearable():
@@ -5064,6 +4977,46 @@ def _mock_terminal(mocker):
     return mocker.patch.object(dashboard.tty, "setcbreak")
 
 
+class FakeStateClient:
+    """Stands in for `StateClient`: `latest()` returns the *same* groups list
+    every frame, so a test that mutates it changes what the next frame sees."""
+
+    def __init__(self, groups, *, git_enabled=False, status=None, fail=None):
+        self.groups = groups
+        self.git_enabled = git_enabled
+        self._status = status
+        self.fail = fail
+        self.events: list[tuple] = []
+        self.closed = False
+
+    def wait_first_snapshot(self, timeout):
+        self.events.append(("wait",))
+        if self.fail is not None:
+            raise self.fail
+        return self.latest()
+
+    def latest(self):
+        return Snapshot(1, datetime(2026, 10, 4, tzinfo=UTC), self.git_enabled, self.groups)
+
+    def status(self):
+        return self._status
+
+    def refresh(self):
+        self.events.append(("refresh",))
+
+    def set_active(self, value):
+        self.events.append(("active", value))
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_state(mocker, groups, **kw) -> FakeStateClient:
+    fake = FakeStateClient(groups, **kw)
+    mocker.patch.object(dashboard, "open_state_client", return_value=fake)
+    return fake
+
+
 def _drive_run(
     mocker,
     key_sequence: list[bytes],
@@ -5080,16 +5033,15 @@ def _drive_run(
     mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
     always terminates even if a test's own key list doesn't. Everything
     that would touch a real terminal, the state DB, or Incus is mocked;
-    ``gather_live`` returns ``groups`` (empty by default), so most tests
-    exercise overlay and persistence behaviour without depending on the
-    background refresher thread ever publishing a snapshot before the key
-    loop reads it (a real race the tests must not depend on winning). A test
-    that needs a real, dispatchable container passes its own ``groups``.
+    the state service is a `FakeStateClient` serving ``groups`` (empty by
+    default), so most tests exercise overlay and persistence behaviour with
+    nothing selectable. A test that needs a real, dispatchable container
+    passes its own ``groups``.
     """
     _mock_terminal(mocker)
     if view_state is not None:
         mocker.patch.object(dashboard, "seed_view_state", return_value=view_state)
-    mocker.patch.object(dashboard, "gather_live", return_value=groups or [])
+    _fake_state(mocker, groups or [])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
@@ -5098,9 +5050,6 @@ def _drive_run(
     return dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=remote,
         over_ssh=over_ssh,
         ssh_policy=ssh_policy,
@@ -5110,17 +5059,15 @@ def _drive_run(
 def _drive_run_with_reader(mocker, read, groups: list[dashboard.RepoGroup]) -> int:
     """``_drive_run`` with a caller-supplied ``os.read`` side effect.
 
-    ``gather_live`` returns the ``groups`` list object itself, so a reader
-    that mutates it changes what the key loop sees on its next iteration.
-    ``present`` is made the identity for the same reason: the real one returns
-    a new list, which would sever that aliasing.
+    The fake state client serves the ``groups`` list object itself on every
+    frame, and the real `present` runs on it each frame, so a reader that
+    mutates it changes what the key loop sees on its next iteration.
     """
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=groups)
-    mocker.patch.object(dashboard, "present", side_effect=lambda gs, *_a, **_k: gs)
+    _fake_state(mocker, groups)
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", side_effect=read)
-    return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+    return dashboard.run(mocker.Mock(), None)
 
 
 def _keys(text: str) -> list[bytes]:
@@ -5192,7 +5139,7 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
     )
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     turns = 0
 
     def ready(*args, **kwargs):
@@ -5209,7 +5156,7 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
     )
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
     assert any(
         isinstance(call.kwargs.get("overlay"), dashboard.MenuState)
         and call.kwargs["overlay"].active_group == "PR →"
@@ -5303,7 +5250,7 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     select_count = 0
 
     def select(*args, **kwargs):
@@ -5326,9 +5273,6 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -5341,66 +5285,41 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     )
 
 
-def test_run_gathers_a_base_snapshot_before_taking_the_screen(mocker):
+def test_run_waits_for_the_first_snapshot_before_taking_the_screen(mocker):
     """The dashboard must not show an empty table while it works out what to
-    show: the first gather happens before `Live` takes the screen, so the
-    first frame is already populated.
-
-    It is the cheap tier — ``with_git=False`` — because the git probes are
-    what make a full gather slow, and their columns fill in on the next tick
-    exactly as they do after any base refresh. Waiting for them here would
-    just move the empty screen behind a spinner.
-    """
+    show: it waits for the state service's first snapshot before `Live` takes
+    the screen, so the first frame is already populated."""
     setcbreak = _mock_terminal(mocker)
-    gathers: list[tuple[bool, int]] = []
+    fake = _fake_state(mocker, [])
+    waited_at: list[int] = []
+    wait = fake.wait_first_snapshot
 
-    def _gather(incus, cwd_root, *, with_git):
-        gathers.append((with_git, setcbreak.call_count))
-        return []
+    def _wait(timeout):
+        waited_at.append(setcbreak.call_count)
+        return wait(timeout)
 
-    mocker.patch.object(dashboard, "gather_live", side_effect=_gather)
+    fake.wait_first_snapshot = _wait
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert gathers[0] == (False, 0)
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert waited_at == [0]
 
 
 def test_run_reports_a_failed_first_gather_without_taking_the_screen(mocker):
-    """An unreachable incus daemon used to take the screen, render an empty
-    table, and only then hand it back when the worker thread's first gather
-    blew up. Now the gather happens first, so the failure is reported on the
-    user's own terminal and the alternate screen is never entered.
-    """
+    """An unreachable state service is reported on the user's own terminal:
+    taking the alternate screen only to hand it straight back is a worse way
+    to say so."""
+    from jailbee.state_service import StateServiceUnavailable
+
     setcbreak = _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", side_effect=OSError("daemon unreachable"))
+    fake = _fake_state(mocker, [], fail=StateServiceUnavailable("no server"))
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 1
+    assert dashboard.run(mocker.Mock(), None) == 1
     assert setcbreak.call_count == 0
-
-
-def test_run_does_not_repeat_the_seeded_gather_when_git_is_disabled(mocker):
-    """With ``--no-git`` the pre-gather already produced the only tier there
-    is, so the worker must start from that snapshot's timestamp rather than
-    from scratch — otherwise launching the dashboard runs two identical
-    gathers back to back.
-    """
-    _mock_terminal(mocker)
-    gather = mocker.patch.object(dashboard, "gather_live", return_value=[])
-
-    def _blocking_select(*args, **kwargs):
-        # Outlive a worker tick (0.1s) but stay well inside `interval` (0.5s),
-        # so a second gather in this window can only be the redundant one.
-        time.sleep(0.3)
-        return ([True], [], [])
-
-    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert gather.call_count == 1
+    assert fake.closed
 
 
 def test_run_degrades_when_save_view_state_fails(mocker):
@@ -5722,11 +5641,11 @@ def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
 
     _mock_terminal(mocker)  # installs the synchronous fake; swap in the pending one
     mocker.patch.object(dashboard, "JobRunner", _PendingJobs)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     padded = itertools.chain(typed, [b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
-    dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+    dashboard.run(mocker.Mock(), None)
 
     notices = [str(call.kwargs.get("notice", "")) for call in render.call_args_list]
     assert any("creating work…" in n for n in notices)
@@ -5821,7 +5740,7 @@ def test_run_cannot_create_from_a_row_hidden_by_visibility_settings(mocker, tmp_
 def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     child = mocker.patch.object(dashboard.subprocess, "run")
     hiding = False
@@ -5847,7 +5766,7 @@ def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
     keys = itertools.chain([b"\x1b[B", b"\r", b"x", b"\r", b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, size: next(keys))
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
 
     overlays = [call.kwargs.get("overlay") for call in render.call_args_list]
     menu_frames = [overlay for overlay in overlays if isinstance(overlay, dashboard.MenuState)]
@@ -5863,7 +5782,7 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
     overlay (the action menu, help) is open switches to settings, not just
     closes whatever was open.
 
-    There is no live group in this harness (``gather_live`` returns
+    There is no live group in this harness (the fake state client serves
     ``[]``), and Space is only handled by the settings overlay. That makes
     ``save_view_state`` firing after ``h`` then ``S`` then `Space` a
     discriminating signal that ``S`` actually opened the settings overlay,
@@ -5884,7 +5803,7 @@ def test_run_dispatches_n_to_start_new_container(mocker):
     "new": overlay = start_new_container()``), not just `parse_key`/the binding shape in
     isolation — a typo in that `elif` arm would be caught by nothing else.
 
-    ``_drive_run``'s ``gather_live`` returns no containers, so nothing is
+    ``_drive_run``'s fake state client serves no containers, so nothing is
     selected and ``start_new_container`` takes its notice path (`new_container_
     reject_note` returning "Select a repo or a container first") without
     prompting or spawning anything. `render` is wrapped rather than replaced
@@ -6549,11 +6468,11 @@ def test_account_command_failure_shows_a_long_notice(mocker, tmp_path, change, s
         return item
 
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", side_effect=read)
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
 
     notices = [c.kwargs["notice"] for c in render.call_args_list]
     assert change.message in notices  # shown right after the command
@@ -6860,26 +6779,75 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
-def test_run_does_not_gather_while_a_child_owns_the_terminal(mocker, tmp_path):
-    """A dashboard that launched `jb tmux` must not keep polling incus for as
-    long as that session lives — nothing of it is on screen meanwhile. The
-    child outlasts several refresh intervals (0.5 s in `_drive_run`), so a
-    refresher that ignored the handover would gather during it."""
+def test_foreground_marks_the_client_inactive_and_refreshes_on_return(mocker, tmp_path):
+    """A dashboard that launched `jb tmux` must stop the shared service
+    gathering on its behalf, and show fresh state when the user comes back."""
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    during: list[int] = []
+    during: list[list[tuple]] = []
 
     def child(*args, **kwargs):
-        before = dashboard.gather_live.call_count
-        time.sleep(1.6)
-        during.append(dashboard.gather_live.call_count - before)
+        during.append(list(fake.events))
         return mocker.Mock(returncode=0)
 
+    fake = _fake_state(mocker, [group])
     mocker.patch.object(dashboard.subprocess, "run", side_effect=child)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"t"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
 
-    rc = _drive_run(mocker, [b"j", b"t"], groups=[group])
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert during and during[0][-1] == ("active", False)
+    after = fake.events[len(during[0]) :]
+    assert after[:2] == [("active", True), ("refresh",)]
 
-    assert rc == 0
-    assert during == [0]
+
+def test_a_service_problem_shows_as_a_notice_without_exiting(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    _fake_state(mocker, [group], status="refresh failed: incus is down")
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"j"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert any(
+        call.kwargs.get("notice") == "refresh failed: incus is down"
+        for call in render.call_args_list
+    )
+
+
+def test_the_r_key_asks_the_service_for_a_refresh(mocker):
+    fake = _fake_state(mocker, [])
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"r"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert ("refresh",) in fake.events
+    assert fake.closed
+
+
+def test_run_pins_its_own_cwd_and_applies_its_scope(mocker, tmp_path):
+    """Neither is baked into the shared snapshot: every frame, the dashboard
+    hands its own ``cwd_root`` and ``scope`` to `present`."""
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    a = dashboard.RepoGroup("alpha", "/a", None, [])
+    b = dashboard.RepoGroup("beta", str(tmp_path), None, [])
+    s = dashboard.RepoGroup("secret", "/s", None, [])
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    _fake_state(mocker, [a, b, s])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    dashboard.run(mocker.Mock(), tmp_path, scope=RemoteRepoScope(frozenset({"secret"})))
+
+    shown = render.call_args_list[-1].args[0]
+    assert [g.prefix for g in shown] == ["beta", "alpha"]
 
 
 def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
@@ -6949,7 +6917,7 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     wait = mocker.patch.object(dashboard, "_wait_for_return")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     keys = itertools.chain([b"j", b"!", b"merge", b"\r", b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
@@ -6960,9 +6928,6 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -7173,48 +7138,6 @@ def test_config_edit_reject_note_refuses_the_repo_layer_of_a_synthesized_config(
     assert "scratch.config" in note
     assert "config init" in note
     assert config_edit_reject_note_for_prefix([group], "demo", global_layer=True) is None
-
-
-def test_run_samples_activity_twice_before_taking_the_screen(mocker):
-    """A rate needs two readings. One sample here would dash the CPU column
-    on the first frame and fill it a tick later — the very symptom the
-    pre-gather exists to prevent."""
-    setcbreak = _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[])
-    # Patch the module's own constant rather than `time.sleep`: patching
-    # `dashboard.time.sleep` reaches the real `time` module and slows every
-    # other test in the process.
-    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
-    calls: list[int] = []
-    mocker.patch.object(
-        dashboard, "sample_activity", side_effect=lambda g, s: calls.append(setcbreak.call_count)
-    )
-    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert calls[:2] == [0, 0]  # both before the screen was taken
-
-
-def test_worker_samples_activity_on_every_gather(mocker):
-    """The columns are live: each refresh re-reads /proc, or the numbers
-    freeze at whatever the pre-gather saw."""
-    _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[])
-    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
-    sampled = mocker.patch.object(dashboard, "sample_activity")
-
-    def _blocking_select(*args, **kwargs):
-        # `run()` floors `interval` at 0.5s, so a shorter wait here would
-        # end the session before the worker's first tick was even due.
-        time.sleep(0.7)
-        return ([True], [], [])
-
-    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=0.5, no_git=True) == 0
-    assert sampled.call_count > 2  # two priming samples, plus the worker's
 
 
 def test_sample_activity_flattens_every_group(mocker):

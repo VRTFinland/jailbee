@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import termios
-import threading
 import time
 import tty
 from collections.abc import Iterable, Sequence
@@ -116,11 +115,11 @@ from jailbee.lifecycle import (
     tracking_notices,
 )
 from jailbee.paths import repo_config_path
-from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
 from jailbee.remote_ssh.session import host_restricted
+from jailbee.state_service import StateServiceUnavailable
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -132,6 +131,8 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
+    from jailbee.procstat import ActivitySampler
+    from jailbee.state_service.client import StateClient
 
 log = logging.getLogger(__name__)
 
@@ -154,6 +155,19 @@ whichever of those fired, and naming no cause must not also mean leaving the
 user with no next step — which is what the earlier, single-cause wording
 carried by implication and this one has to say outright.
 """
+
+# How long a dashboard waits for its first snapshot — a cold service's first
+# gather included — before giving up on the user's own terminal.
+STARTUP_TIMEOUT_SECONDS = 30.0
+
+
+def open_state_client(cwd_root: Path | None) -> StateClient:
+    """A started `StateClient` for this dashboard (the tests' seam)."""
+    from jailbee.state_service.client import StateClient
+
+    client = StateClient(cwd_root)
+    client.start()
+    return client
 
 
 class AppMenuEntry(NamedTuple):
@@ -2905,9 +2919,6 @@ def run(
     incus: Incus,
     cwd_root: Path | None,
     *,
-    interval: float,
-    git_interval: float,
-    no_git: bool,
     remote: bool = False,
     over_ssh: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
@@ -2915,10 +2926,11 @@ def run(
 ) -> int:
     """Main dashboard loop.
 
-    A daemon thread gathers container state on the two-tier schedule and
-    publishes it under a lock; this (main) thread only renders the latest
-    snapshot and handles input on a fast timer, so keystrokes stay responsive
-    even while a gather (which blocks on incus/git) is in flight.
+    Container state comes from the shared state service
+    (`jailbee.state_service`), which gathers once for every open dashboard;
+    this thread only renders the latest snapshot it pushed — with this
+    dashboard's own scope and cwd pin applied — and handles input on a fast
+    timer, so keystrokes stay responsive while a gather is in flight.
 
     ``remote`` is a remote SSH session, whose user may reach containers and
     the repos' git bridge but not the host itself. Everything here that runs
@@ -2932,7 +2944,7 @@ def run(
         error("jailbee dashboard requires an interactive terminal.")
         return 1
 
-    # Launch-time guard only; `gather_live` re-resolves the list per gather.
+    # Launch-time guard only; the state service re-resolves the list per gather.
     roots = (
         collect_repo_roots(cwd_root) if scope is None else collect_repo_roots(cwd_root, scope=scope)
     )
@@ -2959,111 +2971,22 @@ def run(
     show_details = view_state.show_details
     hide_first = tuple(global_config_or_defaults().dashboard.auto_hide.hide_first)
 
-    interval = max(0.5, interval)
-    git_interval = max(git_interval, interval)
-    git_enabled = not no_git
-
     def now() -> datetime:
         return datetime.now().astimezone()
 
-    # Surveyed before `Live` takes the screen, so the first frame is already
-    # populated: a dashboard that appears empty and fills in a second later is
-    # indistinguishable from a broken one. Only the cheap tier is waited for —
-    # the git probes are what make a full gather slow, and their columns land
-    # on the worker's first tick exactly as they do after any base refresh.
-    #
-    # A failure here is fatal rather than deferred to the worker: taking the
-    # alternate screen only to hand it straight back is a worse way to say
-    # "the incus daemon is unreachable" than saying so on the user's own
-    # terminal.
-    # One sampler for the whole session: a rate needs the previous reading,
-    # and a fresh sampler has none. The pre-gather below primes it, and the
-    # worker thread is the only other user — it starts after this returns,
-    # so the two never touch it at once.
-    sampler = ActivitySampler()
-
+    # Waited for before `Live` takes the screen, so the first frame is already
+    # populated — and so "the state service is unreachable" is said on the
+    # user's own terminal rather than by taking the screen only to hand it back.
+    client = open_state_client(cwd_root)
     try:
         with console.status("⏳ Surveying containers…"):
-            seeded = present(
-                gather_live(incus, [cwd_root] if cwd_root else [], with_git=False),
-                cwd_root,
-                scope,
-            )
-            # Twice: the first call primes the sampler, the second turns it
-            # into a rate. Only the /proc read repeats — never the gather.
-            sample_activity(seeded, sampler)
-            time.sleep(PRIME_INTERVAL_SECONDS)
-            sample_activity(seeded, sampler)
-    except Exception as exc:
+            client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
+    except StateServiceUnavailable as exc:
+        client.close()
         error(f"dashboard refresh failed: {exc}")
         return 1
-    seeded_at = time.monotonic()
 
-    lock = threading.Lock()
     jobs = JobRunner()
-    stop = threading.Event()
-    force = threading.Event()
-    # Set while `foreground` has handed the terminal to another command
-    # (`tmux`, `shell`, …). Nothing is on screen then, and a dashboard that
-    # launched a long tmux session would otherwise keep polling incus for as
-    # long as that session lives.
-    paused = threading.Event()
-    shared_groups: list[RepoGroup] = seeded
-    worker_error: list[BaseException] = []
-
-    def refresher() -> None:
-        nonlocal shared_groups
-        # Continues the schedule from the pre-gather instead of restarting it.
-        # `first` forces an immediate git-inclusive gather, which is exactly
-        # what is still missing — but with `--no-git` there is nothing left to
-        # fetch, and a `first` there would just repeat the gather we already
-        # have.
-        last_base = seeded_at
-        last_full = 0.0
-        first = git_enabled
-        prev_groups: list[RepoGroup] = seeded
-        while not stop.is_set():
-            forced = force.is_set()
-            do_base, do_git = _refresh_due(
-                now=time.monotonic(),
-                last_base=last_base,
-                last_full=last_full,
-                interval=interval,
-                git_interval=git_interval,
-                git_enabled=git_enabled,
-                first=first,
-                forced=forced,
-                paused=paused.is_set(),
-            )
-            if do_base:
-                if forced:
-                    force.clear()
-                try:
-                    groups = present(
-                        gather_live(incus, [cwd_root] if cwd_root else [], with_git=do_git),
-                        cwd_root,
-                        scope,
-                    )
-                except Exception as exc:  # surface any gather failure to the main thread
-                    worker_error.append(exc)
-                    stop.set()
-                    break
-                if not do_git:
-                    # A base gather has no git status; fill it in from the
-                    # last git-tier snapshot so the columns don't flicker
-                    # blank until the next git-tier refresh lands.
-                    carry_forward_git_status(groups, prev_groups)
-                sample_activity(groups, sampler)
-                ts = time.monotonic()
-                with lock:
-                    shared_groups = groups
-                prev_groups = groups
-                last_base = ts
-                if do_git:
-                    last_full = ts
-                first = False
-            # sleep until the next tick, waking early on a forced refresh or stop
-            force.wait(timeout=0.1)
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
@@ -3120,11 +3043,9 @@ def run(
             hidden_repos=hidden_repos,
         )
 
-    worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     last_title: str | None = None
     try:
         tty.setcbreak(fd)
-        worker.start()
         # Pushed before Live takes the screen and popped after it gives it
         # back, so the terminal's own title is saved and restored intact.
         with (
@@ -3142,7 +3063,9 @@ def run(
                 dashboard on screen behind it.
                 """
                 nonlocal last_title
-                paused.set()
+                # Nothing of this dashboard is on screen while `fn` runs: let
+                # the shared service stop gathering on its behalf.
+                client.set_active(False)
                 live.stop()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
                 try:
@@ -3150,9 +3073,9 @@ def run(
                 finally:
                     tty.setcbreak(fd)
                     live.start(refresh=True)
-                    # The snapshot is as old as the command was long: refresh now.
-                    paused.clear()
-                    force.set()
+                    # The snapshot is as old as the command was long.
+                    client.set_active(True)
+                    client.refresh()
                     # `fn` (jailbee shell / tmux) may have set its own OSC 2
                     # title; forget the last one we wrote so the next frame's
                     # title-changed check doesn't compare against it and skip
@@ -3170,7 +3093,7 @@ def run(
                 took the whole TUI down.
                 """
                 set_notice(f"'{repo.repo_root}' no longer exists")
-                force.set()
+                client.refresh()
 
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
@@ -3224,7 +3147,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
-                force.set()  # an action likely changed state — refresh ASAP
+                client.refresh()  # an action likely changed state — refresh ASAP
 
             def open_egress(prefix: str, container: str | None) -> EgressState | None:
                 """Load one scoped view after checking the read permission."""
@@ -3344,7 +3267,7 @@ def run(
                             seconds=_FAILURE_NOTICE_SECONDS,
                         )
                     else:
-                        force.set()
+                        client.refresh()
                         set_notice(f"net egress {action} {entry}: done")
                     panel = _egress_panel(overlay)
                     if panel is None or (panel.prefix, panel.container) != (
@@ -3446,7 +3369,7 @@ def run(
                         return
                     if rc != 0:
                         set_notice(f"'jailbee new' exited {rc}")
-                    force.set()  # the new container should appear on the next frame
+                    client.refresh()  # the new container should appear on the next frame
 
                 def finish(result: JobResult) -> None:
                     if needs_terminal(result):
@@ -3457,7 +3380,7 @@ def run(
                     if result.returncode != 0:
                         reason = result.failure_line() or f"exited {result.returncode}"
                         set_notice(f"jailbee new failed: {reason}", seconds=_FAILURE_NOTICE_SECONDS)
-                    force.set()
+                    client.refresh()
 
                 try:
                     jobs.start(
@@ -3510,7 +3433,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {dact.command_label(argv)}' exited {rc}")
-                force.set()  # the command likely changed state: refresh now
+                client.refresh()  # the command likely changed state: refresh now
 
             def open_container_entry(container: str, verb: str) -> Overlay | None:
                 """The first step of a terminal-only container entry; None once it has run."""
@@ -3668,7 +3591,7 @@ def run(
                     result.message,
                     seconds=_NOTICE_SECONDS if result.ok else _FAILURE_NOTICE_SECONDS,
                 )
-                force.set()  # a group or mount change shows in the next gather
+                client.refresh()  # a group or mount change shows in the next gather
                 return result.ok
 
             def load_listing(
@@ -4030,7 +3953,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee config edit' exited {rc}")
-                force.set()  # config may have changed under every row
+                client.refresh()  # config may have changed under every row
 
             def run_command(command: CommandState) -> None:
                 """Authorize and run the edited argv in the selected repo."""
@@ -4079,16 +4002,22 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {' '.join(argv)}' exited {rc}")
-                force.set()
+                client.refresh()
 
-            all_groups: list[RepoGroup] = seeded
+            # Before the loop too: the closures above read `all_groups`.
+            snapshot = client.latest()
+            assert snapshot is not None  # `wait_first_snapshot` returned
+            all_groups: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
+            git_enabled = snapshot.git_enabled
             groups: list[RepoGroup] = visible_repo_groups(
                 all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
             )
-            while not stop.is_set():
+            while True:
                 jobs.poll()
-                with lock:
-                    all_groups = shared_groups
+                snapshot = client.latest()
+                assert snapshot is not None  # `wait_first_snapshot` returned
+                all_groups = present(snapshot.groups, cwd_root, scope)
+                git_enabled = snapshot.git_enabled
                 groups = visible_repo_groups(
                     all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
                 )
@@ -4202,6 +4131,7 @@ def run(
                         enabled=enabled,
                         overlay=overlay,
                         notice=notice
+                        or client.status()
                         or "; ".join(jobs.active())
                         or ("; ".join(tracking) if tracking else None),
                         folded=folded,
@@ -4500,7 +4430,7 @@ def run(
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "refresh":
-                    force.set()
+                    client.refresh()
                 elif key == "details":
                     show_details = not show_details
                     persist_view_state(
@@ -4532,11 +4462,6 @@ def run(
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()
-        force.set()  # wake the worker so it notices stop and exits promptly
+        client.close()
         termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
-    worker.join(timeout=2.0)
-    if worker_error:
-        error(f"dashboard refresh failed: {worker_error[0]}")
-        return 1
     return 0
