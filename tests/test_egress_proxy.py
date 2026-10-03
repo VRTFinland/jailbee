@@ -181,7 +181,7 @@ def test_up_profile_yaml_and_autostart(set_service):
     body = yaml.safe_load(rig.incus.profile_set_yaml.call_args.args[1])
     assert body["devices"]["eth0"]["network"] == "jailbee-loose"
     assert body["devices"]["eth0"]["ipv4.address"] == "10.79.1.4"
-    assert body["config"] == {}
+    assert body["config"] == {"security.nesting": "true"}
     rig.incus.config_set.assert_any_call(PROXY_CONTAINER, "boot.autostart", "true")
 
 

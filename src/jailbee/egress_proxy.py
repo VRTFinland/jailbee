@@ -146,6 +146,13 @@ def _read_provision_text(filename: str) -> str:
 
 
 def _ensure_profile(incus: Incus) -> None:
+    """Create or refresh the proxy's profile.
+
+    ``security.nesting`` is required for the same reason as on the registry
+    mirror: on hosts with ``kernel.apparmor_restrict_unprivileged_userns=1``
+    systemd 256+ in the container hangs at ``(sd-mkuserns)``, so the boot
+    never finishes and networkd never asks for a DHCPv4 lease.
+    """
     if not incus.network_exists(_PROXY_BRIDGE):
         incus.network_create(_PROXY_BRIDGE)
     if not incus.profile_exists(PROXY_PROFILE):
@@ -157,7 +164,7 @@ def _ensure_profile(incus: Incus) -> None:
     profile = {
         "name": PROXY_PROFILE,
         "description": "network for the jailbee-egress-proxy container",
-        "config": {},
+        "config": {"security.nesting": "true"},
         "devices": {"eth0": eth0},
     }
     incus.profile_set_yaml(PROXY_PROFILE, yaml.safe_dump(profile, sort_keys=False))
