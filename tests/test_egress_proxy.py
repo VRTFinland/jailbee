@@ -988,6 +988,29 @@ def test_env_always_on_keeps_the_environment_when_the_proxy_is_down(make_cfg, tm
     incus.config_unset.assert_not_called()
 
 
+def test_env_always_on_keeps_the_environment_when_the_mode_is_unknown(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = _work_env_incus(cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"})
+    _patch_entries(mocker, [], {})
+    push = mocker.patch("jailbee.tmux.set_server_environment")
+    assert egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", None) == {}
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+    push.assert_not_called()
+
+
+def test_env_always_off_clears_the_environment_when_the_mode_is_unknown(
+    make_cfg, tmp_path, mocker
+):
+    cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=False)
+    incus = _work_env_incus(cfg, current={"environment.HTTPS_PROXY": "http://10.9.0.2:3128"})
+    _patch_entries(mocker, [], {})
+    mocker.patch("jailbee.tmux.set_server_environment")
+    changed = egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-new", None)
+    assert changed == {"HTTPS_PROXY": None}
+    incus.config_unset.assert_called_once_with("myrepo-new", "environment.HTTPS_PROXY")
+
+
 def test_env_always_off_work_container_without_wildcards_gets_nothing(make_cfg, tmp_path, mocker):
     cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=False)
     incus = _work_env_incus(cfg)

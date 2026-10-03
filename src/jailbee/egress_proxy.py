@@ -636,7 +636,9 @@ def sync_container_env(
     An always-on container's environment does not follow its entries (no
     literal entries in ``NO_PROXY``; Squid's ``dst`` rules carry them) and is
     left untouched when the proxy cannot be found: clearing it would bring back
-    the new-shell problem that always-on exists to remove.
+    the new-shell problem that always-on exists to remove. The same holds when
+    its network mode is unknown (``mode is None``): only a container known not
+    to want the proxy has its environment cleared.
     """
     from jailbee.egress_scope import container_extras, effective_repo_entries
 
@@ -644,6 +646,8 @@ def sync_container_env(
     listed = raws if raws is not None else incus.list_containers()
     raw = next((r for r in listed if r.get("name") == name), {})
     keep = always_on(cfg, raw)
+    if keep and mode is None:
+        return {}
     wanted: dict[str, str] = {}
     if proxy_use(cfg, raw, mode, entries) is not ProxyUse.NONE:
         endpoint = _endpoint_or_warn(name, raw, listed)
