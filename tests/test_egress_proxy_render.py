@@ -144,7 +144,9 @@ def test_open_scope_without_sources_is_omitted():
 
 
 def test_open_scope_ignores_entries():
-    out = render_fragment("r", [_scope(key="r", sources=("10.9.0.8",), entries=("*.a.com",), kind="o")])
+    out = render_fragment(
+        "r", [_scope(key="r", sources=("10.9.0.8",), entries=("*.a.com",), kind="o")]
+    )
     assert ".a.com" not in out
     assert out.count("http_access allow") == 1
 
