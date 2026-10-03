@@ -515,29 +515,44 @@ def _source_ipv4(cfg: Config, raw: dict[str, Any]) -> str | None:
 def collect_scopes(
     cfg: Config, incus: Incus, session: Session, raws: list[dict[str, Any]] | None = None
 ) -> list[ProxyScope]:
-    """The repo scope first, then one scope per work container with its own wildcard extras."""
+    """The repo scope, one scope per work container with its own extras, then the open scope.
+
+    ``proxy_use`` places each running container: a filtered one in the repo
+    scope (plus its own scope for extras on the work network), an open one in
+    the open scope only. Never both: Squid's open ``allow`` would otherwise let
+    a strict container through unfiltered.
+    """
     from jailbee.egress_scope import container_extras, effective_repo_entries
     from jailbee.lifecycle import list_containers
 
     repo_entries = effective_repo_entries(cfg, session)
     raw_by_name = {r["name"]: r for r in (raws if raws is not None else incus.list_containers())}
     repo_sources: list[str] = []
+    open_sources: list[str] = []
     container_scopes: list[ProxyScope] = []
     for info in list_containers(cfg, incus):
         raw = raw_by_name.get(info.name)
         if raw is None or info.state != "Running":
             continue
         extras = container_extras(incus, info.name)
-        if proxy_use(cfg, raw, info.network, [*repo_entries, *extras]) is not ProxyUse.FILTERED:
+        use = proxy_use(cfg, raw, info.network, [*repo_entries, *extras])
+        if use is ProxyUse.NONE:
             continue
         ip = _source_ipv4(cfg, raw)
         if ip is None:
             continue  # no address yet; the next sync picks it up
+        if use is ProxyUse.OPEN:
+            open_sources.append(ip)
+            continue
         repo_sources.append(ip)
         if extras and generation_of(cfg, raw) == "work":
             container_scopes.append(ProxyScope(info.name, (ip,), tuple(extras), kind="c"))
-    repo_scope = ProxyScope(cfg.container_prefix, tuple(repo_sources), tuple(repo_entries))
-    return [repo_scope, *container_scopes]
+    prefix = cfg.container_prefix
+    return [
+        ProxyScope(prefix, tuple(repo_sources), tuple(repo_entries)),
+        *container_scopes,
+        ProxyScope(prefix, tuple(open_sources), (), kind="o"),
+    ]
 
 
 def sync_repo_rules(cfg: Config, incus: Incus, session: Session) -> bool:

@@ -615,7 +615,12 @@ def test_collect_scopes(make_cfg, tmp_path, mocker):
     scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
     assert "10.9.0.9" not in {ip for s in scopes for ip in s.sources}
 
-    assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
+    assert [(s.kind, s.key) for s in scopes] == [
+        ("r", "myrepo"),
+        ("c", "myrepo-new"),
+        ("o", "myrepo"),
+    ]
+    assert scopes[-1].sources == ()
     assert set(scopes[0].sources) == {"10.1.0.5", "10.9.0.7"}
     assert scopes[0].entries == ("*.repo.com",)
     assert scopes[1].sources == ("10.9.0.7",)
@@ -642,7 +647,91 @@ def test_collect_scopes_wildcards_only_in_extras(make_cfg, tmp_path, mocker):
     _patch_entries(mocker, ["plain.com"], {"myrepo-new": ["*.foo.com"]})
     scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
     assert scopes[0].sources == ("10.9.0.7",)
-    assert [s.key for s in scopes] == ["myrepo", "myrepo-new"]
+    assert [(s.kind, s.key) for s in scopes] == [
+        ("r", "myrepo"),
+        ("c", "myrepo-new"),
+        ("o", "myrepo"),
+    ]
+
+
+def _cfg(make_cfg, tmp_path, **kw):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    return make_cfg(repo, **kw)
+
+
+def test_collect_scopes_always_on_strict_work_container_without_wildcards(
+    make_cfg, tmp_path, mocker
+):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_work(cfg, "myrepo-new")]
+    _patch_entries(mocker, ["plain.com"], {})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert scopes[0].sources == ("10.9.0.7",)
+    assert scopes[0].entries == ("plain.com",)
+    assert scopes[-1].sources == ()
+
+
+def test_collect_scopes_always_on_loose_work_container_is_open_only(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_work(cfg, "myrepo-new", ip="10.9.0.8", mode="loose")]
+    _patch_entries(mocker, ["*.repo.com"], {"myrepo-new": ["b.com"]})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert [(s.kind, s.sources) for s in scopes] == [("r", ()), ("o", ("10.9.0.8",))]
+
+
+@pytest.mark.parametrize("mode", ["strict", "loose"])
+def test_collect_scopes_puts_a_container_in_exactly_one_scope(make_cfg, tmp_path, mocker, mode):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_work(cfg, "myrepo-new", mode=mode)]
+    _patch_entries(mocker, ["*.repo.com"], {"myrepo-new": ["*.foo.com"]})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    in_repo = "10.9.0.7" in scopes[0].sources
+    in_open = "10.9.0.7" in scopes[-1].sources
+    assert in_repo != in_open
+    assert in_open is (mode == "loose")
+
+
+def test_collect_scopes_always_off_keeps_the_wildcard_rule(make_cfg, tmp_path, mocker):
+    cfg = _cfg(make_cfg, tmp_path, egress_proxy_always=False)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _work(cfg, "myrepo-new"),
+        _work(cfg, "myrepo-lo", ip="10.9.0.8", mode="loose"),
+    ]
+    _patch_entries(mocker, ["plain.com"], {})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert all(s.sources == () for s in scopes)
+
+
+def test_collect_scopes_legacy_container_in_always_on_repo_needs_a_wildcard(
+    make_cfg, tmp_path, mocker
+):
+    cfg = _cfg(make_cfg, tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_legacy("myrepo-old")]
+    _patch_entries(mocker, ["plain.com"], {})
+    scopes = egress_proxy.collect_scopes(cfg, incus, MagicMock())
+    assert all(s.sources == () for s in scopes)
+
+
+def test_repo_scope_carries_every_entry_the_repo_acl_is_built_from(make_cfg, tmp_path, mocker):
+    """Parity: the repo ACL (egress_pool) and the Squid repo scope share one source."""
+    from jailbee import egress_scope
+
+    cfg = _cfg(make_cfg, tmp_path, egress_allow=["github.com:443", "10.0.0.0/8", "*.a.com"])
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=["legacy.example.com"])
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=[])
+    incus = MagicMock()
+    incus.list_containers.return_value = [_work(cfg, "myrepo-new")]
+    session = MagicMock()
+    scopes = egress_proxy.collect_scopes(cfg, incus, session)
+    assert list(scopes[0].entries) == egress_scope.effective_repo_entries(cfg, session)
+    assert set(cfg.effective_egress_allow()) <= set(scopes[0].entries)
+    assert "legacy.example.com" in scopes[0].entries
 
 
 def _running_proxy_raw():
