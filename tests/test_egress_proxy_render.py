@@ -161,6 +161,8 @@ def test_open_and_filtered_scopes_of_one_repo_stay_apart():
     )
     names = [line.split()[1] for line in out.splitlines() if line.startswith("acl ")]
     assert len(names) == len(set(names))
+    assert "acl jb_o_r_src src 10.9.0.8/32" in out
+    assert "acl jb_r_r_src src 10.9.0.7/32" in out
     for line in out.splitlines():
         if "10.9.0.8" in line:
             assert line.startswith("acl jb_o_r_src ")
