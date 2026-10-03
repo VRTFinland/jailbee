@@ -1922,3 +1922,23 @@ def test_run_shows_the_window_when_priming_fails(mocker):
     qapp.run(mocker.Mock(), None, interval=3.0, git_interval=10.0, no_git=False)
 
     window.show.assert_called_once()
+
+
+def test_persist_view_state_carries_the_stored_details_preference(mocker):
+    """The Qt UI has no details toggle, but it saves the whole row: a hidden
+    panel set from the terminal must not flip back on."""
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name",)
+    window.collapsed_repos.return_value = set()
+    controller = qapp.AppController(
+        window,
+        mocker.Mock(),
+        interval=3.0,
+        engine=mocker.sentinel.engine,
+        show_details=False,
+    )
+
+    controller.on_columns_changed()
+
+    assert save_view.call_args.args[2].show_details is False

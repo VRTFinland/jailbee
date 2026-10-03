@@ -9788,3 +9788,31 @@ def test_short_terminals_never_overflow(tmp_path):
         )
         assert len(lines) <= height, height
         assert lines[-1].startswith("╰"), height
+
+
+def test_v_parses_to_the_details_toggle():
+    assert dashboard.parse_key(b"v") == "details"
+
+
+def test_v_toggles_the_details_panel_and_persists_it(mocker, tmp_path):
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    render = mocker.spy(dashboard, "render")
+    _drive_run(mocker, [b"v"], [_named_rows_group(tmp_path, 2)], view_state=dashboard.ViewState())
+    assert render.call_args_list[0].kwargs["show_details"] is True
+    assert render.call_args_list[-1].kwargs["show_details"] is False
+    assert saved.call_args.args[2].show_details is False
+
+
+def test_folding_keeps_a_stored_details_preference(mocker, tmp_path):
+    """Every ViewState the loop saves must carry show_details, or a fold
+    silently turns a hidden panel back on."""
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    _drive_run(
+        mocker,
+        [b" "],  # the cursor starts on the repo heading: Space folds it
+        [_named_rows_group(tmp_path, 2)],
+        view_state=dashboard.ViewState(show_details=False),
+    )
+    state = saved.call_args.args[2]
+    assert state.folded == frozenset({"alpha"})
+    assert state.show_details is False

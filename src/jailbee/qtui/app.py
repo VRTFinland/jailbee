@@ -111,6 +111,7 @@ class AppController(QObject):
         interval: float,
         engine: object | None = None,
         paused: bool = False,
+        show_details: bool = True,
     ) -> None:
         super().__init__()
         self._window = window
@@ -118,6 +119,10 @@ class AppController(QObject):
         self._interval = interval
         self._engine = engine
         self._paused = paused
+        # The terminal dashboard's details-panel preference. The Qt UI has no
+        # such toggle, but it saves the whole ViewState row, so it carries the
+        # stored value through rather than resetting it.
+        self._show_details = show_details
         # Timestamp of the last successful refresh, so a cadence change (a
         # menu action, not a refresh) can still update the status line
         # immediately instead of waiting for the next gather.
@@ -211,6 +216,7 @@ class AppController(QObject):
                 folded=frozenset(self._window.collapsed_repos()),
                 show_empty_repos=self._show_empty_repos(),
                 hidden_repos=self._hidden_repos(),
+                show_details=self._show_details,
             ),
         )
 
@@ -771,7 +777,14 @@ def run(
     # Kept on the GUI thread (never moveToThread'd) so cross-thread worker
     # signals resolve to queued connections; held in a local so it isn't
     # garbage-collected while `app.exec()` runs.
-    controller = AppController(window, worker, interval=resolved, engine=engine, paused=paused)
+    controller = AppController(
+        window,
+        worker,
+        interval=resolved,
+        engine=engine,
+        paused=paused,
+        show_details=view_state.show_details,
+    )
     _wire(window, worker, controller)
     if paused:
         worker.set_paused(True)

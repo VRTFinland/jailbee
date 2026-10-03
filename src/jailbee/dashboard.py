@@ -1172,6 +1172,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         brief="accounts",
     ),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
+    KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View", brief="details"),
     KeyBinding(
         "settings",
         (b"\x1bOQ", b"\x1b[12~", b"S"),
@@ -2892,6 +2893,7 @@ def run(
     folded: frozenset[str] = view_state.folded
     show_empty_repos = view_state.show_empty_repos
     hidden_repos = view_state.hidden_repos
+    show_details = view_state.show_details
     hide_first = tuple(_global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     interval = max(0.5, interval)
@@ -4133,6 +4135,7 @@ def run(
                         hide_first=hide_first,
                         hidden_by_preferences=bool(all_groups) and not groups,
                         height=console.height,
+                        show_details=show_details,
                     ),
                     refresh=True,
                 )
@@ -4261,7 +4264,13 @@ def run(
                             show_empty_repos = overlay.show_empty_repos
                             hidden_repos = overlay.hidden_repos
                             persist_view_state(
-                                ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                                ViewState(
+                                    columns=enabled,
+                                    folded=folded,
+                                    show_empty_repos=show_empty_repos,
+                                    hidden_repos=hidden_repos,
+                                    show_details=show_details,
+                                )
                             )
                     elif isinstance(overlay, EgressState):
                         if key in ("up", "down"):
@@ -4325,7 +4334,13 @@ def run(
                                 elif verb == "fold":
                                     folded = toggle_folded(folded, target)
                                     persist_view_state(
-                                        ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                                        ViewState(
+                                            columns=enabled,
+                                            folded=folded,
+                                            show_empty_repos=show_empty_repos,
+                                            hidden_repos=hidden_repos,
+                                            show_details=show_details,
+                                        )
                                     )
                                 elif verb == "net egress ls":
                                     egress_parent = repo_parent
@@ -4413,6 +4428,17 @@ def run(
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "refresh":
                     force.set()
+                elif key == "details":
+                    show_details = not show_details
+                    persist_view_state(
+                        ViewState(
+                            columns=enabled,
+                            folded=folded,
+                            show_empty_repos=show_empty_repos,
+                            hidden_repos=hidden_repos,
+                            show_details=show_details,
+                        )
+                    )
                 elif key == "space":
                     prefix = fold_target(groups, selected)
                     if prefix is not None:
@@ -4422,7 +4448,13 @@ def run(
                         # reconcile_selection pick a neighbour repo.
                         selected = Row("repo", prefix)
                         persist_view_state(
-                            ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                            ViewState(
+                                columns=enabled,
+                                folded=folded,
+                                show_empty_repos=show_empty_repos,
+                                hidden_repos=hidden_repos,
+                                show_details=show_details,
+                            )
                         )
     except KeyboardInterrupt:
         pass
