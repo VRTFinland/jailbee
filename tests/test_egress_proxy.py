@@ -729,6 +729,46 @@ def test_sync_container_env_writes_nothing_when_equal(make_cfg, tmp_path, mocker
     incus.config_unset.assert_not_called()
 
 
+def test_sync_container_env_pushes_changes_into_the_running_tmux(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus({"environment.FOO_UNRELATED": "x"})
+    _patch_entries(mocker, ["*.repo.com"], {})
+    push = mocker.patch("jailbee.tmux.set_server_environment")
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict")
+    push.assert_called_once()
+    name, env = push.call_args.args[1:]
+    assert name == "myrepo-old"
+    assert set(env) == set(egress_proxy.PROXY_ENV_KEYS)
+    assert env["HTTPS_PROXY"] == "http://10.0.0.2:3128"
+
+
+def test_sync_container_env_pushes_only_the_unset_keys_to_tmux(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus, _ = _env_incus({"environment.HTTP_PROXY": "http://10.0.0.2:3128"})
+    _patch_entries(mocker, ["*.repo.com"], {})
+    push = mocker.patch("jailbee.tmux.set_server_environment")
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "loose")
+    push.assert_called_once_with(incus, "myrepo-old", {"HTTP_PROXY": None})
+
+
+def test_sync_container_env_leaves_tmux_alone_when_nothing_changed(make_cfg, tmp_path, mocker):
+    from jailbee.egress_proxy_render import proxy_env
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    current = {f"environment.{k}": v for k, v in proxy_env("10.0.0.2", ["*.repo.com"]).items()}
+    incus, _ = _env_incus(current)
+    _patch_entries(mocker, ["*.repo.com"], {})
+    push = mocker.patch("jailbee.tmux.set_server_environment")
+    egress_proxy.sync_container_env(cfg, incus, MagicMock(), "myrepo-old", "strict")
+    push.assert_not_called()
+
+
 def test_sync_container_env_warns_and_unsets_without_endpoint(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()

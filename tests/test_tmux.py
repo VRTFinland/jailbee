@@ -119,6 +119,40 @@ def test_kill_window_ignores_missing_window():
     kill_window(incus, "c1", "frontend")
 
 
+def test_set_server_environment_sets_and_unsets_in_one_exec():
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    tmux.set_server_environment(
+        incus, "c1", {"HTTPS_PROXY": "http://10.0.0.2:3128", "NO_PROXY": None}
+    )
+    incus.exec.assert_called_once()
+    script = incus.exec.call_args.args[1][-1]
+    # No server running is not an error: there is nothing stale to fix.
+    assert script.startswith("tmux list-sessions >/dev/null 2>&1 || exit 0;")
+    assert "tmux set-environment -g HTTPS_PROXY http://10.0.0.2:3128" in script
+    assert "tmux set-environment -gu NO_PROXY" in script
+
+
+def test_set_server_environment_quotes_values():
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    tmux.set_server_environment(incus, "c1", {"NO_PROXY": "a b;rm -rf /"})
+    script = incus.exec.call_args.args[1][-1]
+    assert "NO_PROXY 'a b;rm -rf /'" in script
+
+
+def test_set_server_environment_swallows_incus_error():
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("container not running")
+    tmux.set_server_environment(incus, "c1", {"HTTPS_PROXY": "x"})
+
+
+def test_set_server_environment_noop_without_keys():
+    incus = MagicMock()
+    tmux.set_server_environment(incus, "c1", {})
+    incus.exec.assert_not_called()
+
+
 def test_select_window_returns_true_on_success():
     from jailbee.tmux import select_window
 
