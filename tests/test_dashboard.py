@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9816,3 +9817,135 @@ def test_folding_keeps_a_stored_details_preference(mocker, tmp_path):
     state = saved.call_args.args[2]
     assert state.folded == frozenset({"alpha"})
     assert state.show_details is False
+
+
+@pytest.mark.parametrize("path", ["fold", "settings", "repo-menu"])
+def test_every_saved_view_state_keeps_a_stored_details_preference(mocker, tmp_path, path):
+    """The Space fold, the settings overlay and the repo menu's Fold each save
+    a whole ViewState; none may turn a stored-hidden panel back on."""
+    group = _named_rows_group(tmp_path, 2)
+    keys = {
+        "fold": [b" "],
+        "settings": [b"S", b" "],
+        "repo-menu": _repo_menu_keys(group, "fold"),
+    }[path]
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    _drive_run(mocker, keys, [group], view_state=dashboard.ViewState(show_details=False))
+    assert saved.call_count >= 1
+    assert saved.call_args.args[2].show_details is False
+
+
+def _mixed_group(tmp_path, n=40):
+    """A repo whose containers differ in how much their panels have to say."""
+    containers = [
+        _ci(
+            f"alpha-row{i:02d}",
+            "alpha",
+            git_status=GitStatus(wt="+1 -2", ahead_diff="+3 -4", ahead_count="7", conflict="ok")
+            if i % 2
+            else None,
+        )
+        for i in range(n)
+    ]
+    return dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", containers)
+
+
+def _rows_shown(lines):
+    """How many container rows the table draws (the `rowNN` lines above the panel)."""
+    panel = next((i for i, ln in enumerate(lines) if i and "╭" in ln), len(lines))
+    return sum(1 for ln in lines[:panel] if re.search(r"row\d\d", ln))
+
+
+def test_table_window_does_not_depend_on_the_highlighted_row(tmp_path):
+    group = _mixed_group(tmp_path)
+    shown = set()
+    for selected in (
+        dashboard.Row("repo", "alpha"),
+        dashboard.Row("container", "alpha-row10"),
+        dashboard.Row("container", "alpha-row11"),
+        dashboard.Row("container", "alpha-row12"),
+    ):
+        lines = _frame([group], selected, height=30, width=80)
+        assert len(lines) <= 30 and lines[-1].startswith("╰")
+        shown.add((_rows_shown(lines), next(i for i, ln in enumerate(lines) if i and "╭" in ln)))
+    assert len(shown) == 1, shown
+
+
+@pytest.mark.parametrize("height", [8, 10, 12, 14])
+def test_cursor_row_is_visible_and_the_frame_fits_at_small_heights(tmp_path, height):
+    for row in ("alpha-row00", "alpha-row21", "alpha-row39"):
+        lines = _frame(
+            [_mixed_group(tmp_path)], dashboard.Row("container", row), height=height, width=80
+        )
+        assert len(lines) <= height, (height, row)
+        assert lines[-1].startswith("╰"), (height, row)
+        assert row.removeprefix("alpha-") in "\n".join(lines), (height, row)
+
+
+@pytest.mark.parametrize("height", [8, 10, 12])
+def test_a_panel_too_small_for_two_rows_is_dropped(tmp_path, height):
+    lines = _frame(
+        [_mixed_group(tmp_path)], dashboard.Row("container", "alpha-row21"), height=height
+    )
+    assert "…" not in "\n".join(lines)
+    assert not any(i and "╭" in ln for i, ln in enumerate(lines))
+
+
+def test_a_menu_alone_replaces_a_panel_that_does_not_fit(tmp_path):
+    menu = dashboard.MenuState("alpha-row21", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_mixed_group(tmp_path)],
+        dashboard.Row("container", "alpha-row21"),
+        overlay=menu,
+        height=10,
+    )
+    text = "\n".join(lines)
+    assert "alpha-row21 →" in text and "network" not in text
+    assert "row21" in text and lines[-1].startswith("╰") and len(lines) <= 10
+
+
+def test_the_table_keeps_min_rows_with_the_panel_at_height_14(tmp_path):
+    """Pins MIN_TABLE_ROWS: at 14 the panel gets what is left after the floor."""
+    lines = _frame(
+        [_mixed_group(tmp_path)], dashboard.Row("container", "alpha-row21"), height=14, width=80
+    )
+    # Literal on purpose: MIN_TABLE_ROWS (5) lines under the header, two of
+    # them taken by the "more" markers.
+    assert _rows_shown(lines) >= 3
+
+
+def test_a_narrow_terminal_drops_the_details_beside_a_menu(tmp_path):
+    menu = dashboard.MenuState("alpha-row21", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_mixed_group(tmp_path)],
+        dashboard.Row("container", "alpha-row21"),
+        overlay=menu,
+        height=30,
+        width=40,
+    )
+    text = "\n".join(lines)
+    assert "alpha-row21 →" in text and "network" not in text
+
+
+def test_a_cursor_row_taller_than_the_window_is_not_cut_away(tmp_path, mocker):
+    mocker.patch.object(
+        dashboard,
+        "container_row",
+        lambda group, c, fields, widths, selected: f"{c.name}\nsecond\nthird\nfourth",
+    )
+    group = _mixed_group(tmp_path, 12)
+    fields = dashboard.visible_fields(_FRAME_NOW, group.containers)[:1]
+    sections = dashboard._RepoSections(
+        [group],
+        fields,
+        (10,),
+        dashboard.Row("container", "alpha-row06"),
+        frozenset(),
+        empty=False,
+    )
+    console = Console(width=60, record=True, file=io.StringIO())
+    for budget in (4, 5, 6):
+        lines = console.render_lines(dataclasses.replace(sections, max_rows=budget), pad=False)
+        text = "\n".join("".join(seg.text for seg in line) for line in lines)
+        assert "alpha-row06" in text, budget
+        assert len(lines) <= budget, budget

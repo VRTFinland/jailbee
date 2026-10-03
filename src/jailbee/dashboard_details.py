@@ -160,10 +160,13 @@ def details_for(
 @dataclass(frozen=True)
 class _DetailsGrid:
     """The label/value grid, flowed into as many pairs per line as fit, and
-    cut to ``max_rows`` lines with a dim ``…`` as the last one."""
+    cut to ``max_rows`` lines with a dim ``…`` as the last one, or — with
+    ``fixed`` — padded with blank lines up to exactly ``max_rows``, so the
+    panel keeps one shape whatever it describes."""
 
     items: tuple[DetailItem, ...]
     max_rows: int | None
+    fixed: bool = False
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         pairs = max(1, min(DETAILS_MAX_PAIRS, options.max_width // DETAILS_PAIR_WIDTH))
@@ -182,16 +185,20 @@ class _DetailsGrid:
         if self.max_rows is not None and len(lines) > self.max_rows:
             keep = max(0, self.max_rows - 1)
             lines = [*lines[:keep], [Segment("…", Style(dim=True))]]
+        if self.fixed and self.max_rows is not None:
+            lines += [[] for _ in range(self.max_rows - len(lines))]
         for index, line in enumerate(lines):
             if index:
                 yield Segment.line()
             yield from line
 
 
-def render_details(view: DetailsView, max_rows: int | None) -> Panel:
-    """The details panel; ``max_rows`` caps its content rows (None: uncapped)."""
+def render_details(view: DetailsView, max_rows: int | None, *, fixed: bool = False) -> Panel:
+    """The details panel; ``max_rows`` caps its content rows (None: uncapped).
+
+    ``fixed`` also pads it to exactly ``max_rows`` content rows."""
     return Panel(
-        _DetailsGrid(view.items, max_rows),
+        _DetailsGrid(view.items, max_rows, fixed),
         title=f"[bold]{escape(view.title)}[/]",
         title_align="left",
         box=box.ROUNDED,

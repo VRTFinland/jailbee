@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -66,12 +67,12 @@ def test_values_reuse_the_table_cells() -> None:
     gs = GitStatus(
         wt="+12 -3",
         ahead_diff="+245 -18",
-        ahead_count="3",
+        ahead_count="7",
         conflict="ok",
         target_diff="+245 -18",
-        behind_count="1",
+        behind_count="9",
         local_diff="+1 -0",
-        local_count="2",
+        local_count="5",
     )
     c = _c(
         git_status=gs,
@@ -99,6 +100,9 @@ def test_values_reuse_the_table_cells() -> None:
         ("state", "state"),
     ]:
         assert cells[name](c) in _value(items, label), (name, label)
+    # Distinct counts, so a swapped arrow cannot pass on a coincidence.
+    git = _plain(_value(items, "git"))
+    assert "↑7" in git and "↓9" in git and "local ↑5" in git
 
 
 def test_absent_values_render_as_a_dash() -> None:
@@ -141,7 +145,7 @@ def test_group_says_when_it_inherits_and_escapes_a_name() -> None:
     assert _plain(_value(dd.container_details(named, NOW), "group")) == "[work]"
 
 
-def test_repo_summary(tmp_path) -> None:
+def test_repo_summary(tmp_path: Path) -> None:
     g = dashboard.RepoGroup(
         "alpha",
         "/repos/alpha",

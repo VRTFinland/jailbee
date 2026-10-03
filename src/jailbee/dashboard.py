@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
+from rich.measure import Measurement
 from rich.panel import Panel
 from rich.segment import Segment
 from rich.table import Table
@@ -54,7 +55,13 @@ from jailbee.dashboard_commands import (
     insert_options_before_separator,
     permitted,
 )
-from jailbee.dashboard_details import DETAILS_MAX_ROWS, DetailsView, details_for, render_details
+from jailbee.dashboard_details import (
+    DETAILS_MAX_ROWS,
+    DETAILS_PAIR_WIDTH,
+    DetailsView,
+    details_for,
+    render_details,
+)
 from jailbee.dashboard_egress import (
     EgressState,
     egress_argv,
@@ -1915,6 +1922,17 @@ class _RepoSections:
     max_rows: int | None = None
     """Line budget including the column header and the "more" markers; None draws every row."""
 
+    def line_count_floor(self) -> int:
+        """A lower bound on the drawn line count, without rendering anything.
+
+        One line per heading and container row, plus the column header; a
+        wrapped row draws more, so the true count is never smaller.
+        """
+        if self.empty:
+            return 1
+        expanded = [g for g in self.groups if g.containers and g.prefix not in self.folded]
+        return (1 if expanded else 0) + len(self.groups) + sum(len(g.containers) for g in expanded)
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         fields, measured = _fit_dashboard_fields(
             self.fields, self.widths, options.max_width, self.hide_first
@@ -1962,6 +1980,10 @@ class _RepoSections:
             lines += console.render_lines(
                 Text(f"  ↓ {window.hidden_below} more", style="dim"), free, pad=False
             )
+        if len(lines) > self.max_rows and cursor is not None:
+            # A cursor row taller than the budget overran its window: show that
+            # row alone (its top lines) rather than let the frame cut it.
+            lines = [*head, *rendered[cursor]][: self.max_rows]
         for index, line in enumerate(lines):
             if index:
                 yield Segment.line()
@@ -1997,6 +2019,8 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
 # Panel border rows: around a windowed overlay's list, and around the frame.
 _OVERLAY_BORDER_ROWS = 2
 _FRAME_BORDER_ROWS = 2
+# Content rows a details panel needs to say anything; with fewer it is left out.
+_MIN_DETAILS_ROWS = 2
 # Table rows (column header not counted) kept on screen under the bottom area.
 MIN_TABLE_ROWS = 5
 
@@ -2027,16 +2051,23 @@ class _FrameBody:
     details: DetailsView | None = None
     max_height: int | None = None
 
-    def _bottom(self, list_rows: int | None, details_rows: int | None) -> RenderableType | None:
+    def _bottom(
+        self, list_rows: int | None, details_rows: int | None, *, fixed: bool = False
+    ) -> RenderableType | None:
         """Details, an overlay, or both side by side with the menu on the right.
+
+        ``details_rows`` caps the panel's content rows; None leaves the panel
+        out. ``fixed`` pads it to exactly that many, so it keeps one shape.
 
         Only the action menus share the row: every other overlay is a task of
         its own (a picker, a prompt, a settings page) and gets the full width.
         """
         menu = isinstance(self.overlay, (MenuState, RepoMenuState))
         details = (
-            render_details(self.details, details_rows)
-            if self.details is not None and (self.overlay is None or menu)
+            render_details(self.details, details_rows, fixed=fixed)
+            if self.details is not None
+            and details_rows is not None
+            and (self.overlay is None or menu)
             else None
         )
         if self.overlay is None:
@@ -2050,11 +2081,19 @@ class _FrameBody:
         row.add_row(details, panel)
         return row
 
+    def _details_fit_beside_menu(self, console: Console, options: ConsoleOptions) -> bool:
+        """Whether the details keep a column wide enough to read next to a menu."""
+        if not isinstance(self.overlay, (MenuState, RepoMenuState)):
+            return True
+        menu = Measurement.get(console, options, _render_overlay(self.overlay)).maximum
+        return options.max_width - menu >= DETAILS_PAIR_WIDTH
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         hint = _hint_line(self.overlay) if self.overlay is not None else None
         extras: list[RenderableType] = [] if self.notice is None else [self.notice]
+        details_fit = self._details_fit_beside_menu(console, options)
         if self.max_height is None:
-            bottom = self._bottom(None, DETAILS_MAX_ROWS)
+            bottom = self._bottom(None, DETAILS_MAX_ROWS if details_fit else None)
             tail: list[RenderableType] = [] if bottom is None else ["", bottom]
             if hint is not None:
                 tail.append(hint)
@@ -2073,16 +2112,34 @@ class _FrameBody:
         gap_lines = lines_of(Text("")) if has_bottom else []
         bottom_lines: list[list[Segment]] = []
         if has_bottom:
-            natural = len(lines_of(self.sections))
+            # The table's line count is only needed against thresholds, and a
+            # table with more rows than the floor has at least that many lines.
+            count = self.sections.line_count_floor()
+            full = None if count > MIN_TABLE_ROWS + 1 else len(lines_of(self.sections))
+            natural = count if full is None else full
             floor = min(natural, MIN_TABLE_ROWS + 1)  # + the column header
             room = max(0, rest - len(gap_lines) - floor) - _OVERLAY_BORDER_ROWS
-            bottom = self._bottom(max(room, MIN_LIST_ROWS), max(1, min(DETAILS_MAX_ROWS, room)))
+            # A panel with fewer than two content rows says nothing: leave it out.
+            details_rows = min(DETAILS_MAX_ROWS, room)
+            with_details = details_fit and details_rows >= _MIN_DETAILS_ROWS
+            # When the table overflows it is the panel that must keep its shape:
+            # a panel as tall as its content would resize the table window as
+            # the cursor moves between a repo heading and a container.
+            fixed = False
+            if with_details:
+                budget = rest - len(gap_lines) - (details_rows + _OVERLAY_BORDER_ROWS)
+                if full is None and count <= budget:
+                    full = len(lines_of(self.sections))
+                fixed = count > budget or (full or 0) > budget
+            bottom = self._bottom(
+                max(room, MIN_LIST_ROWS), details_rows if with_details else None, fixed=fixed
+            )
             if bottom is not None:
                 bottom_lines = lines_of(bottom)
             else:
                 gap_lines = []
         table_rows = max(0, rest - len(gap_lines) - len(bottom_lines))
-        table_lines = lines_of(replace(self.sections, max_rows=table_rows))[:table_rows]
+        table_lines = lines_of(replace(self.sections, max_rows=table_rows))
         out = [*table_lines, *notice_lines, *gap_lines, *bottom_lines, *hint_lines]
         if len(out) > self.max_height:
             # Even the minimum bottom area does not fit: lose the top, never
