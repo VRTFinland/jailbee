@@ -3273,10 +3273,10 @@ jailbee dashboard
 #     still exactly what you left it. Each front-end has its own row in
 #     state.sqlite's view_prefs table.
 
-# Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
-# (WT/DIFF ±/↑/↓/MERGE) update every ~10s. Tune with -i / --git-interval, or
-# drop git entirely:
-jailbee dashboard --no-git -i 2
+# Refresh: base state (state/ip/op) updates every ~3s; git columns
+# (WT/DIFF ±/↑/↓/MERGE) every ~10s. The pace is `dashboard.refresh` in the
+# global config. The old flags are deprecated and ignored, with a warning:
+jailbee dashboard --no-git -i 2   # "--interval is ignored; set dashboard.refresh ..."
 
 # Orphans: a jailbee-managed container whose repo isn't registered and isn't the
 # cwd repo shows under its prefix as "(orphan — no config)" and is view-only
@@ -3588,17 +3588,20 @@ Requires a real Incus daemon, at least one JailBee container, and PySide6
 5. Choose **Destroy** → confirm the dialog; the row disappears on the next
    refresh.
 6. Stop a container from the CLI in another shell; confirm the GUI reflects it
-   within `--interval` seconds.
+   within `dashboard.refresh.interval` seconds (default 3).
 7. **View** menu → switch **Table** ↔ **Cards**. Cards should re-wrap columns
    as you resize the window (one column when narrow, several when wide);
    right-click actions and selection should work identically in both.
-8. Resize a Table column, switch layout via the **View** menu, adjust the
-   **Refresh** menu's cadence (or pause it), then close the window and
-   relaunch `jailbee gui`. Confirm the layout, column widths/order, and refresh
-   cadence/paused state came back — but the window's size/position did not
-   (that's left to the window manager).
-9. Relaunch with `jailbee gui --interval 7`: the explicit flag should win over
-   whatever cadence was persisted in step 8.
+8. Resize a Table column and switch layout via the **View** menu, then close
+   the window and relaunch `jailbee gui`. Confirm the layout and column
+   widths/order came back — but the window's size/position did not (that's left
+   to the window manager).
+9. Open `jailbee dashboard` in a terminal beside the GUI: both follow the one
+   shared state service (`pgrep -fa _state-service` shows a single process) at
+   the pace of `dashboard.refresh` in the global config. The **Refresh** menu
+   has only **Refresh now**. `jailbee gui --interval 7` prints
+   "--interval is ignored; set dashboard.refresh in the global config" and
+   changes nothing. Close every dashboard: the service exits after ~30 s.
 
 ### Workflow commands in the Qt dashboard
 
