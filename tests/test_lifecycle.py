@@ -157,6 +157,22 @@ def test_list_containers_returns_only_own_repo(make_cfg, tmp_path):
     assert result[0].repo == "myrepo"
 
 
+def test_list_containers_reads_given_instances_without_listing(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    instances = [
+        _container(name="myrepo-feat-foo"),
+        _container(name="unmanaged", profiles=["default"]),
+    ]
+
+    result = list_containers(cfg, incus, instances=instances)
+
+    assert [c.name for c in result] == ["myrepo-feat-foo"]
+    incus.list_containers.assert_not_called()
+
+
 def test_list_containers_skips_null_profiles(make_cfg, tmp_path):
     """A container mid-destroy can be reported by `incus list` with
     ``"profiles": null``. The key exists with a null value, so the

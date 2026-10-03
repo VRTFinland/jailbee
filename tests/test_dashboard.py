@@ -338,7 +338,7 @@ def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_c
     def fake_load(root):
         return cwd_cfg if root == cwd_root else other_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return []  # no orphans
         if cfg is cwd_cfg:
@@ -395,7 +395,7 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -416,7 +416,7 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -436,7 +436,7 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -455,7 +455,7 @@ def test_gather_rows_carries_the_repos_agent_homes(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [_ci("orphan-x", "orphan")] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -479,7 +479,7 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -496,7 +496,7 @@ def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -512,7 +512,7 @@ def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -527,7 +527,7 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
@@ -545,7 +545,7 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
@@ -573,7 +573,7 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
     def fake_load(root):
         return alpha if root == alpha_root else beta
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             # one orphan ('zeta') plus the two covered repos
             return [_ci("alpha-1", "alpha"), _ci("beta-1", "beta"), _ci("zeta-x", "zeta")]
@@ -602,7 +602,7 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
     def fake_load(root):
         return empty_cfg if root == empty_root else populated_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return []  # no orphans
         if cfg is empty_cfg:
@@ -624,9 +624,32 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
 def test_gather_rows_empty_repo_roots_returns_empty(mocker):
     # No repos -> no base_cfg -> no orphan scan -> empty result, no calls.
     lc = mocker.patch.object(dashboard, "list_containers")
-    result = dashboard.gather_rows(mocker.MagicMock(), [], cwd_root=None, with_git=False)
+    incus = mocker.MagicMock()
+    result = dashboard.gather_rows(incus, [], cwd_root=None, with_git=False)
     assert result == []
     lc.assert_not_called()
+    incus.list_containers.assert_not_called()
+
+
+def test_gather_rows_lists_incus_once_for_every_repo_and_the_orphan_scan(
+    tmp_path, mocker, make_cfg
+):
+    """Each `incus list` makes the daemon build every instance's full state,
+    and the dashboards gather every few seconds: one listing per repo kept
+    incusd busy for as long as any dashboard was open."""
+    alpha_root, beta_root = tmp_path / "alpha", tmp_path / "beta"
+    cfgs = {alpha_root: make_cfg(alpha_root), beta_root: make_cfg(beta_root)}
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=cfgs.__getitem__)
+    lc = mocker.patch.object(dashboard, "list_containers", return_value=[])
+    incus = mocker.MagicMock()
+
+    dashboard.gather_rows(incus, [alpha_root, beta_root], cwd_root=None, with_git=False)
+
+    incus.list_containers.assert_called_once_with()
+    assert lc.call_count == 3  # two repos and the orphan scan
+    assert all(
+        call.kwargs["instances"] is incus.list_containers.return_value for call in lc.call_args_list
+    )
 
 
 def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make_cfg):
@@ -639,7 +662,7 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
             raise OSError("gone")
         return good
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
@@ -2588,7 +2611,7 @@ def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
@@ -2605,7 +2628,7 @@ def test_gather_rows_orphan_groups_have_no_apps(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]

@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TextIO
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
@@ -480,6 +480,11 @@ def gather_rows(
     covered: set[str] = set()
     base_cfg = None
     gcfg = _global_config_or_defaults()
+    # One `incus list` per gather, shared by every repo and the orphan scan:
+    # each listing makes the daemon build every instance's full state, and
+    # the dashboards gather every few seconds. Fetched on first use, so a
+    # gather with no loadable repo still never calls Incus.
+    instances: list[dict[str, Any]] | None = None
     excluded_roots: set[Path] = set()
     if scope is not None and scope.excluded:
         from sqlmodel import Session, select
@@ -504,12 +509,15 @@ def gather_rows(
             continue
         if base_cfg is None:
             base_cfg = cfg
+        if instances is None:
+            instances = incus.list_containers()
         containers = list_containers(
             cfg,
             incus,
             all_repos=False,
             with_git_status=with_git,
             with_background=True,
+            instances=instances,
         )
         covered.add(cfg.container_prefix)
         groups.append(
@@ -541,6 +549,7 @@ def gather_rows(
             all_repos=True,
             with_git_status=False,
             with_background=False,
+            instances=instances,
         )
         orphans: dict[str, list[ContainerInfo]] = {}
         for c in all_rows:
