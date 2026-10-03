@@ -1696,6 +1696,22 @@ def column_header(fields: list[FieldSpecCI], widths: tuple[int, ...]) -> Table:
     return _aligned_table(fields, widths, show_header=True)
 
 
+def _container_cells(
+    group: RepoGroup, container: ContainerInfo, fields: list[FieldSpecCI]
+) -> list[str]:
+    cells: list[str] = []
+    for index, field_spec in enumerate(fields):
+        value = (
+            container.name
+            if field_spec.name == "name" and group.repo_root is None
+            else field_spec.cell(container)
+        )
+        if index == 0:
+            value = "  " + value  # indent under the repo heading
+        cells.append(value)
+    return cells
+
+
 def repo_table(
     group: RepoGroup,
     fields: list[FieldSpecCI],
@@ -1706,18 +1722,77 @@ def repo_table(
     table = _aligned_table(fields, widths, show_header=False)
     for container in group.containers:
         is_selected = selected == Row("container", container.name)
-        cells: list[str] = []
-        for index, field_spec in enumerate(fields):
-            value = (
-                container.name
-                if field_spec.name == "name" and group.repo_root is None
-                else field_spec.cell(container)
-            )
-            if index == 0:
-                value = "  " + value  # indent under the repo heading
-            cells.append(value)
-        table.add_row(*cells, style=CURSOR_STYLE if is_selected else None)
+        table.add_row(
+            *_container_cells(group, container, fields),
+            style=CURSOR_STYLE if is_selected else None,
+        )
     return table
+
+
+def container_row(
+    group: RepoGroup,
+    container: ContainerInfo,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    selected: Row | None,
+) -> Table:
+    """One container as a single-row table, so the table can be windowed by row."""
+    return repo_table(replace(group, containers=[container]), fields, widths, selected)
+
+
+@dataclass(frozen=True)
+class TableWindow:
+    """Rows ``[start, stop)`` are drawn; the counts feed the "more" markers."""
+
+    start: int
+    stop: int
+    hidden_above: int
+    hidden_below: int
+
+
+def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> TableWindow:
+    """The rows to draw in ``budget`` lines so that row ``cursor`` is visible.
+
+    ``heights`` are each row's rendered line count (a wrapped row is taller
+    than one). A hidden end costs one marker line. Like
+    :func:`dashboard_overlays.window_lines`, the window is derived from the
+    cursor alone: pinned to the top while the cursor fits there, to the
+    bottom near the end, centred otherwise. A cursor row taller than the
+    whole budget is still drawn; the frame clips it.
+    """
+    count = len(heights)
+    if sum(heights) <= budget:
+        return TableWindow(0, count, 0, 0)
+    anchor = 0 if cursor is None else cursor
+
+    stop, used = 0, 0
+    while stop < count and used + heights[stop] <= budget - 1:
+        used += heights[stop]
+        stop += 1
+    if anchor < stop:
+        return TableWindow(0, stop, 0, count - stop)
+
+    start, used = count, 0
+    while start > 0 and used + heights[start - 1] <= budget - 1:
+        start -= 1
+        used += heights[start]
+    if anchor >= start:
+        return TableWindow(start, count, start, 0)
+
+    inner = budget - 2
+    start, stop, used = anchor, anchor + 1, heights[anchor]
+    grew = True
+    while grew:
+        grew = False
+        if stop < count and used + heights[stop] <= inner:
+            used += heights[stop]
+            stop += 1
+            grew = True
+        if start > 0 and used + heights[start - 1] <= inner:
+            start -= 1
+            used += heights[start]
+            grew = True
+    return TableWindow(start, stop, start, count - stop)
 
 
 def _dashboard_column_widths(
@@ -1835,30 +1910,60 @@ class _RepoSections:
     empty: bool
     hidden_by_preferences: bool = False
     hide_first: Sequence[str] = ()
+    max_rows: int | None = None
+    """Line budget including the column header and the "more" markers; None draws every row."""
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         fields, measured = _fit_dashboard_fields(
             self.fields, self.widths, options.max_width, self.hide_first
         )
         widths = _fit_dashboard_column_widths(measured, options.max_width)
-        sections: list[RenderableType] = []
         if self.empty:
-            sections.append(
+            yield (
                 "All repositories are hidden — open Settings > Visibility to show them"
                 if self.hidden_by_preferences
                 else "(no containers found)"
             )
-        else:
-            expanded = {
-                g.prefix for g in self.groups if g.containers and g.prefix not in self.folded
-            }
-            if expanded:
-                sections.append(column_header(fields, widths))
-            for group in self.groups:
-                sections.append(repo_heading(group, self.selected, self.folded))
-                if group.prefix in expanded:
-                    sections.append(repo_table(group, fields, widths, self.selected))
-        yield Group(*sections)
+            return
+        expanded = {g.prefix for g in self.groups if g.containers and g.prefix not in self.folded}
+        header = column_header(fields, widths) if expanded else None
+        blocks: list[tuple[Row, RenderableType]] = []
+        for group in self.groups:
+            blocks.append(
+                (Row("repo", group.prefix), repo_heading(group, self.selected, self.folded))
+            )
+            if group.prefix in expanded:
+                blocks += [
+                    (
+                        Row("container", c.name),
+                        container_row(group, c, fields, widths, self.selected),
+                    )
+                    for c in group.containers
+                ]
+        if self.max_rows is None:
+            yield Group(*([header] if header is not None else []), *(b for _, b in blocks))
+            return
+        free = options.update(height=None)
+        head = console.render_lines(header, free, pad=False) if header is not None else []
+        rendered = [console.render_lines(b, free, pad=False) for _, b in blocks]
+        rows = [row for row, _ in blocks]
+        cursor = rows.index(self.selected) if self.selected in rows else None
+        window = window_rows([len(r) for r in rendered], cursor, max(1, self.max_rows - len(head)))
+        lines = list(head)
+        if window.hidden_above:
+            lines += console.render_lines(
+                Text(f"  ↑ {window.hidden_above} more", style="dim"), free, pad=False
+            )
+        for block in rendered[window.start : window.stop]:
+            lines += block
+        if window.hidden_below:
+            lines += console.render_lines(
+                Text(f"  ↓ {window.hidden_below} more", style="dim"), free, pad=False
+            )
+        for index, line in enumerate(lines):
+            if index:
+                yield Segment.line()
+            yield from line
 
 
 def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
@@ -1977,6 +2082,7 @@ def render(
     visible_groups = groups
     visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
     widths = _dashboard_column_widths(fields, visible_rows)
+    inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
     body: list[RenderableType] = [
         _RepoSections(
             visible_groups,
@@ -1987,13 +2093,17 @@ def render(
             empty=not groups,
             hidden_by_preferences=hidden_by_preferences,
             hide_first=hide_first,
+            max_rows=(
+                None
+                if height is None or overlay is not None
+                else max(0, height - _FRAME_BORDER_ROWS - (1 if inline_notice else 0))
+            ),
         ),
     ]
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a
     # CLI message may contain `[...]`.
-    inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
     if inline_notice is not None:
         body.append(Text(inline_notice, style="yellow"))
 

@@ -9622,3 +9622,73 @@ def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker,
     )
 
     wait.assert_not_called()
+
+
+def test_window_rows_keeps_everything_that_fits():
+    assert dashboard.window_rows([1, 1, 1], 2, 3) == dashboard.TableWindow(0, 3, 0, 0)
+
+
+def test_window_rows_is_top_anchored_while_the_cursor_fits_there():
+    # Four rows plus a "↓ 6 more" marker fill the five-line budget.
+    assert dashboard.window_rows([1] * 10, 1, 5) == dashboard.TableWindow(0, 4, 0, 6)
+
+
+def test_window_rows_is_bottom_anchored_near_the_end():
+    assert dashboard.window_rows([1] * 10, 9, 5) == dashboard.TableWindow(6, 10, 6, 0)
+
+
+def test_window_rows_centres_the_cursor_between_two_markers():
+    w = dashboard.window_rows([1] * 20, 10, 7)
+    assert w.start <= 10 < w.stop
+    assert w.stop - w.start == 5  # seven lines minus two markers
+    assert (w.hidden_above, w.hidden_below) == (w.start, 20 - w.stop)
+
+
+def test_window_rows_counts_wrapped_rows_by_their_height():
+    heights = [1, 2, 2, 2, 2, 2, 2]
+    w = dashboard.window_rows(heights, 6, 6)
+    assert w.start <= 6 < w.stop
+    assert sum(heights[w.start : w.stop]) + (w.hidden_above > 0) + (w.hidden_below > 0) <= 6
+
+
+def test_window_rows_without_a_cursor_starts_at_the_top():
+    assert dashboard.window_rows([1] * 10, None, 5).start == 0
+
+
+def _named_rows_group(tmp_path, n: int) -> dashboard.RepoGroup:
+    """Containers whose short names ("row07") cannot collide with anything else."""
+    return dashboard.RepoGroup(
+        "alpha",
+        "/repos/alpha",
+        tmp_path / "a.yaml",
+        [_ci(f"alpha-row{i:02d}", "alpha") for i in range(n)],
+    )
+
+
+def test_render_scrolls_a_long_table_to_the_cursor(tmp_path):
+    frame = dashboard.render(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row35"),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        height=20,
+    )
+    lines = _render_text(frame, width=100).splitlines()
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert "NAME" in text  # the column header stays pinned
+    assert "row35" in text
+    assert "row00" not in text
+    assert "↑" in text and "more" in text
+    assert lines[-1].startswith("╰")
+
+
+def test_render_without_height_draws_a_long_table_whole(tmp_path):
+    frame = dashboard.render(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row35"),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+    )
+    text = _render_text(frame, width=100)
+    assert "row00" in text and "row39" in text and "more" not in text
