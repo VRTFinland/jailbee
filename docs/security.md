@@ -116,13 +116,18 @@ While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:
 `config edit`/`init`/`migrate`, every `remote ...` command, `setup`, `init`,
 `apply`, `base build`/`prune`, `net install`/`migrate`/`refresh`/`unregister`,
-`net loose` and `net egress add` (either can open the host's own and its LAN's addresses to the container),
-`registry up`/`down`, `display up`/`down`, `litellm
+`net loose` and `net egress add` (either can open the host's own and its
+LAN's addresses to the container), `registry up`/`down`, `display up`/`down`,
+`litellm
 up`/`down`/`login`/`logout`/`logs`, the `account` commands that write, `mount`,
 `port to-container`, and the GUI launchers (`gui`, `ide`, the browsers, `apps
 run`). With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
 permitted and draw on the shared display instead; `gui` stays host-only.
-With `remote.ssh.network` on, `net loose` and container-scope `net egress add` are permitted too. `net strict` and container-scope `net egress rm` only narrow a container and are always permitted; `--repo` on `net egress add`/`rm` is refused regardless, because it writes the host-local repo layer.
+With `remote.ssh.network` on, `net loose` and container-scope
+`net egress add` are permitted too. `net strict` and container-scope
+`net egress rm` only narrow a container and are always permitted; `--repo` on
+`net egress add`/`rm` is refused regardless, because it writes the host-local
+repo layer.
 The startup log names any allowlisted command that stays refused this way, and every
 public command is classified one way or the other by the test suite, so a
 new one cannot land unclassified.

@@ -1063,6 +1063,7 @@ def test_network_narrowing_is_always_allowed(argv, monkeypatch) -> None:
         ("net", "egress", "add", "pypi.org", "--repo"),
         ("net", "egress", "add", "--repo", "pypi.org"),
         ("egress", "add", "pypi.org", "--repo"),
+        ("egress", "rm", "pypi.org", "--repo"),
         ("net", "egress", "rm", "pypi.org", "--repo"),
         ("net", "egress", "rm", "--repo", "pypi.org"),
     ],

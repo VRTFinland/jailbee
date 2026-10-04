@@ -233,8 +233,9 @@ commands are disabled. The same host-protection rule applies even when command
 policy is otherwise permissive, unless `restrict_host: false` was explicitly
 configured. For the dashboard's Egress panel, `net egress ls` controls read
 access and `net egress add`/`rm` are checked independently; with the default
-`restrict_host: true`, Egress is read-only even when the command policy is
-`full`. Each new SSH channel
+`restrict_host: true`, adding an egress rule is a host command unless
+`remote.ssh.network` is on, while removing one is always allowed
+(container scope only; `--repo` is always refused). Each new SSH channel
 gets the current validated effective policy; a console or dashboard already
 running keeps its startup snapshot. An upgrade adopting the enabled entry-point
 defaults can expose the console and command routes on an already-enabled service

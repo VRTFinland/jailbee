@@ -174,7 +174,7 @@ with a warning rather than cloned into the host tree,
 (it shares the host's working tree), and a branch-autostart privilege widening is refused even with `--yes`.
 Host-management commands — `config edit`/`init`/`migrate`, `remote ...`, `setup`,
 `init`, `apply`, `base build`/`prune`, `net install`/`migrate`/`refresh`/`unregister`,
-`net egress add`/`rm`, `registry up`/`down`, `display up`/`down`,
+`net loose`, `net egress add`, `registry up`/`down`, `display up`/`down`,
 `litellm up`/`down`/`login`/`logout`/`logs`, writing `account` commands,
 `mount`, `port to-container`, `gui`/`ide`/browsers/`apps run` — are refused
 in every mode, `full` and allowlists included (except that `ide`, the browsers and `apps run`

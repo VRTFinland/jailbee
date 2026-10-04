@@ -444,10 +444,9 @@ def _startup_summary(
     if config.network:
         lines.append("  network widening: on (net loose, net egress add)")
     if restricted and config.commands.mode == "allowlist":
+        unlocks = RemoteUnlocks.of(config)
         refused = sorted(
-            path
-            for path in config.commands.allow
-            if is_host_command(path, unlocks=RemoteUnlocks.of(config))
+            path for path in config.commands.allow if is_host_command(path, unlocks=unlocks)
         )
         if refused:
             lines.append(

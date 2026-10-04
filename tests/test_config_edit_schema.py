@@ -265,7 +265,7 @@ def test_build_specs_covers_every_config_leaf():
     them without anything being added to `schema.py` for them. The remote
     fields come from `remote.ssh`, a `RemoteSSHConfig` recursed into `listen`,
     `port`, `dashboard`, `shell`, `exec`, `default_entrypoint`,
-    `restrict_host`, `gui`, `excluded_repos`, and its nested `commands` policy's
+    `restrict_host`, `gui`, `files`, `network`, `excluded_repos`, and its nested `commands` policy's
     `mode` and `allow`.
     `dashboard.auto_hide.hide_first` adds one editable global leaf.
     The five `litellm` leaves (`enabled`, `version`, `default_profile`,

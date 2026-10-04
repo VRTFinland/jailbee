@@ -888,8 +888,9 @@ host `branch`, and `git pull`/`fetch` into the host's checked-out branch are
 refused (use `--into`/`--as`), a mount-mode container cannot be entered
 (`shell`/`tmux`/`exec`), and a branch-autostart privilege widening is
 refused even with `--yes`. Host-management commands (`config edit`/`init`,
-`remote ...`, `setup`, `init`, `apply`, `base build`/`prune`, `net egress
-add`/`rm`, `port to-container`, `mount`, writing `account` commands, the GUI
+`remote ...`, `setup`, `init`, `apply`, `base build`/`prune`, `net loose`,
+`net egress add` (both permitted when `remote.ssh.network` is on),
+`port to-container`, `mount`, writing `account` commands, the GUI
 launchers) are refused in every mode, `full` included. Publishing
 (`pr`, `review apply`, `issue apply`) stays allowed but never with `--yes`,
 and `pr --web`/`--open` are refused.
