@@ -301,8 +301,8 @@ def test_on_columns_changed_persists_view_state(mocker):
 
 def test_on_columns_changed_repaints_immediately(mocker):
     """A column toggle must reach the table right away, not on whatever the
-    next refresh tick happens to push — with "Off (manual)" refresh, that
-    tick may never come, and the Columns menu would look completely inert.
+    next snapshot happens to push — that one may be a whole refresh interval
+    away, and the Columns menu would look completely inert for it.
     This fails if on_columns_changed goes back to only persisting."""
     mocker.patch("jailbee.db.view_prefs.save_view_state")
     groups = [RepoGroup("p", "/repo", Path("/repo/.jailbee/config.yaml"), [])]

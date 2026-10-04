@@ -768,7 +768,8 @@ repo not registered) show view-only.
 
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`
-keeps it bound to the terminal). Same deprecated, ignored refresh flags; its Refresh menu has only "Refresh now".
+keeps it bound to the terminal). Same deprecated, ignored refresh flags; its
+Refresh menu has only "Refresh now".
 It offers the same menu entries under the same rules, but runs them as a GUI
 rather than in a terminal: only `shell`/`tmux` open a host terminal emulator,
 while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
