@@ -373,8 +373,12 @@ if [ -n "$BASE" ]; then
       set -- $meta
       om=${1#:}; nm=$2; os=$3; ns=$4
       [ "$om" = "160000" ] || [ "$nm" = "160000" ] || continue
-      case "$os" in *[!0]*) ;; *) printf '?\n'; continue ;; esac
-      case "$ns" in *[!0]*) ;; *) printf '?\n'; continue ;; esac
+      # An added/removed submodule has no endpoint to diff its content
+      # against. Count the gitlink line itself, as `git diff --shortstat`
+      # does: the field never reads "clean", and the superproject's own diff
+      # is not hidden behind "?".
+      case "$os" in *[!0]*) ;; *) printf ' 1 file changed, 1 insertion(+)\n'; continue ;; esac
+      case "$ns" in *[!0]*) ;; *) printf ' 1 file changed, 1 deletion(-)\n'; continue ;; esac
       git -C "$sub_path" diff --shortstat "$os" "$ns" 2>/dev/null || printf '?\n'
     done
     )
