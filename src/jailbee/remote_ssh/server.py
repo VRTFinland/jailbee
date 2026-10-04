@@ -30,6 +30,7 @@ from jailbee.remote_ssh.overrides import (
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import (
+    RemoteUnlocks,
     RouteError,
     command_path,
     help_text,
@@ -442,7 +443,9 @@ def _startup_summary(
         lines.append("  sftp/scp: on (container repo directories only)")
     if restricted and config.commands.mode == "allowlist":
         refused = sorted(
-            path for path in config.commands.allow if is_host_command(path, gui=config.gui)
+            path
+            for path in config.commands.allow
+            if is_host_command(path, unlocks=RemoteUnlocks.of(config))
         )
         if refused:
             lines.append(

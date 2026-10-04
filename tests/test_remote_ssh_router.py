@@ -944,39 +944,58 @@ GUI_APPS = ["ide", "chrome", "firefox", "browser"]
 
 @pytest.mark.parametrize("path", GUI_APPS)
 def test_gui_apps_are_host_commands_unless_the_feature_is_on(path: str) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
         policy_allows([path], policy, restrict_host=True)
-    assert policy_allows([path], policy, restrict_host=True, gui=True) == path
+    assert (
+        policy_allows([path], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True)) == path
+    )
 
 
 def test_apps_run_follows_the_same_rule() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
         policy_allows(["apps", "run", "x"], policy, restrict_host=True)
-    assert policy_allows(["apps", "run", "x"], policy, restrict_host=True, gui=True) == "apps run"
+    assert (
+        policy_allows(
+            ["apps", "run", "x"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True)
+        )
+        == "apps run"
+    )
 
 
 def test_the_qt_dashboard_launcher_stays_a_host_command_even_with_gui_on() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
-        policy_allows(["gui"], policy, restrict_host=True, gui=True)
+        policy_allows(["gui"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True))
 
 
 def test_gui_apps_still_respect_an_allowlist() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
 
     with pytest.raises(RouteError, match="not allowed"):
-        policy_allows(["chrome"], policy, restrict_host=True, gui=True)
+        policy_allows(["chrome"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True))
 
 
 def test_every_leaf_is_classified_with_gui_on_too() -> None:
     from jailbee.remote_ssh import router
 
-    gui_paths = {p for p in known_command_paths() if not router.is_host_command(p, gui=True)}
+    gui_paths = {
+        p
+        for p in known_command_paths()
+        if not router.is_host_command(p, unlocks=router.RemoteUnlocks(gui=True))
+    }
     assert {"ide", "chrome", "firefox", "browser", "apps run"} <= gui_paths
     assert gui_paths <= (router._CONTAINER_COMMANDS | router._GUI_APP_COMMANDS)
 
@@ -988,3 +1007,18 @@ def test_route_threads_the_gui_flag_to_the_command_policy(repo, engine: Engine) 
     with pytest.raises(RouteError, match="manages the host"):
         route("--repo project chrome feat", off, engine=engine)
     assert route("--repo project chrome feat", on, engine=engine).kind == "command"
+
+
+def test_remote_unlocks_default_unlocks_nothing() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    assert RemoteUnlocks().commands() == frozenset()
+    assert RemoteUnlocks.of(None) == RemoteUnlocks()
+
+
+def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    unlocks = RemoteUnlocks.of(RemoteSSHConfig(gui=True))
+    assert unlocks.commands() == frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
+    assert "gui" not in unlocks.commands()

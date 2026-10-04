@@ -1109,12 +1109,16 @@ def test_full_help_keeps_generic_cli_help_without_exclusions(mocker, capsys, tmp
 
 
 def test_gui_flag_adds_the_launchers_to_completion_and_help(capsys, tmp_path) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     allow = RemoteCommandPolicy(mode="allowlist", allow=["ls", "chrome"])
 
     assert "chrome" not in console._allowed_paths(allow)
-    assert "chrome" in console._allowed_paths(allow, gui=True)
+    assert "chrome" in console._allowed_paths(allow, unlocks=RemoteUnlocks(gui=True))
 
-    console._print_help(allow, dashboard_enabled=False, repo_root=tmp_path, gui=True)
+    console._print_help(
+        allow, dashboard_enabled=False, repo_root=tmp_path, unlocks=RemoteUnlocks(gui=True)
+    )
     assert "chrome" in capsys.readouterr().out
 
 

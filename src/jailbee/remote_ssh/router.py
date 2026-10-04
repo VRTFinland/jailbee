@@ -174,24 +174,6 @@ def known_command_paths() -> frozenset[str]:
     return _command_tree().public_leaves
 
 
-def allowed_command_paths(
-    policy: RemoteCommandPolicy,
-    *,
-    restrict_host: bool = True,
-    scope: RemoteRepoScope | None = None,
-    gui: bool = False,
-) -> frozenset[str]:
-    """Return public leaf paths accepted by the common command decision."""
-    allowed: set[str] = set()
-    for path in known_command_paths():
-        try:
-            policy_allows(path.split(), policy, restrict_host=restrict_host, scope=scope, gui=gui)
-        except RouteError:
-            continue
-        allowed.add(path)
-    return frozenset(allowed)
-
-
 def command_leaf(argv: Sequence[str]) -> tuple[str, TyperCommand]:
     """Return the typed leaf path and its cached Click command."""
     typed, _ = _resolve_leaf(argv)
@@ -306,6 +288,33 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
 # always opens a window on the host.
 _GUI_APP_COMMANDS: frozenset[str] = frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
 
+
+@dataclass(frozen=True)
+class RemoteUnlocks:
+    """The `remote.ssh` switches that move host commands to the container side.
+
+    Each switch only reclassifies: an allowlist still has to name the command,
+    and `restrict_host: false` makes the whole question moot.
+    """
+
+    gui: bool = False
+
+    @classmethod
+    def of(cls, config: RemoteSSHConfig | None) -> RemoteUnlocks:
+        """The switches `config` turns on; all off without a config."""
+        if config is None:
+            return cls()
+        return cls(gui=config.gui)
+
+    def commands(self) -> frozenset[str]:
+        """Host commands these switches turn into container commands."""
+        return _GUI_APP_COMMANDS if self.gui else frozenset()
+
+
+# The default for every `unlocks` parameter: nothing unlocked. A shared
+# immutable value, since a call in a default argument trips ruff B008.
+NO_UNLOCKS = RemoteUnlocks()
+
 _CONTAINER_COMMANDS = frozenset(
     {
         "account ls",
@@ -383,14 +392,34 @@ _CONTAINER_COMMANDS = frozenset(
 )
 
 
-def is_host_command(path: str, *, gui: bool = False) -> bool:
+def is_host_command(path: str, *, unlocks: RemoteUnlocks = NO_UNLOCKS) -> bool:
     """True when canonical `path` is, or lies under, a `_HOST_COMMANDS` entry.
 
-    With ``gui`` (`remote.ssh.gui`), the GUI app launchers are not.
+    A command `unlocks` turns on (see `RemoteUnlocks`) is not.
     """
-    if gui and path in _GUI_APP_COMMANDS:
+    if path in unlocks.commands():
         return False
     return any(path == entry or path.startswith(entry + " ") for entry in _HOST_COMMANDS)
+
+
+def allowed_command_paths(
+    policy: RemoteCommandPolicy,
+    *,
+    restrict_host: bool = True,
+    scope: RemoteRepoScope | None = None,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
+) -> frozenset[str]:
+    """Return public leaf paths accepted by the common command decision."""
+    allowed: set[str] = set()
+    for path in known_command_paths():
+        try:
+            policy_allows(
+                path.split(), policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks
+            )
+        except RouteError:
+            continue
+        allowed.add(path)
+    return frozenset(allowed)
 
 
 # Parameters a remote caller may never set, by canonical command path, on top
@@ -539,7 +568,7 @@ def policy_allows(
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
     allow_scoped_aggregates: bool = True,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> str:
     """Return the public command path when the remote policy permits it.
 
@@ -556,9 +585,8 @@ def policy_allows(
     `remote.ssh.restrict_host: false` (``restrict_host``) skips it, and not
     even that inside an already restricted session (`host_restricted`).
 
-    ``gui`` (`remote.ssh.gui`) turns the GUI app launchers into container
-    commands; the Qt dashboard launcher `gui` stays a host command, and an
-    allowlist still has to name the launcher.
+    ``unlocks`` (`RemoteUnlocks`) turns the host commands its `remote.ssh`
+    switches cover into container commands; an allowlist still has to name them.
     """
     from jailbee.cli_outbox import normalize_outbox_argv
 
@@ -664,11 +692,11 @@ def policy_allows(
     # A nested dashboard cannot claim the server-to-child transport option,
     # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):
-        if is_host_command(path, gui=gui):
+        if is_host_command(path, unlocks=unlocks):
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"
             )
-        if path not in _CONTAINER_COMMANDS and not (gui and path in _GUI_APP_COMMANDS):
+        if path not in _CONTAINER_COMMANDS and path not in unlocks.commands():
             raise RouteError(f"remote Jailbee command is not classified: {path}")
         check_arguments(argv)
     return path
@@ -754,7 +782,7 @@ def route(
         restrict_host=config.restrict_host,
         scope=scope,
         allow_scoped_aggregates=True,
-        gui=config.gui,
+        unlocks=RemoteUnlocks.of(config),
     )
     root = resolve_repo(prefix, engine=engine, scope=scope)
     return Route("command", command_argv, prefix, root, False)

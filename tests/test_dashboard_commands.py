@@ -13,7 +13,7 @@ from jailbee.dashboard_commands import (
     insert_options_before_separator,
     permitted,
 )
-from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.router import RemoteUnlocks, RouteError
 from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, SSH_SESSION_ENV
 
 
@@ -273,8 +273,10 @@ def test_gui_flag_adds_the_launchers_to_the_allowed_and_offered_paths() -> None:
     full = RemoteCommandPolicy(mode="full")
 
     assert "chrome" not in allowed_command_paths(full)
-    on = allowed_command_paths(full, gui=True)
+    on = allowed_command_paths(full, unlocks=RemoteUnlocks(gui=True))
     assert {"chrome", "ide", "apps run"} <= on
     assert "gui" not in on
     assert "chrome" not in completion_candidates("chr", (), on, restrict_host=True)
-    assert "chrome" in completion_candidates("chr", (), on, restrict_host=True, gui=True)
+    assert "chrome" in completion_candidates(
+        "chr", (), on, restrict_host=True, unlocks=RemoteUnlocks(gui=True)
+    )

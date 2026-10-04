@@ -4156,7 +4156,7 @@ def run(
                                     ssh_policy.commands,
                                     restrict_host=ssh_policy.restrict_host,
                                     scope=scope,
-                                    gui=ssh_policy.gui,
+                                    unlocks=ssh_router.RemoteUnlocks.of(ssh_policy),
                                 )
                         candidates = completion_candidates(
                             overlay.text,
@@ -4169,7 +4169,7 @@ def run(
                                 and ssh_policy is not None
                                 and host_restricted(ssh_policy.restrict_host)
                             ),
-                            gui=bool(over_ssh and ssh_policy is not None and ssh_policy.gui),
+                            unlocks=ssh_router.RemoteUnlocks.of(ssh_policy if over_ssh else None),
                         )
                         overlay = edit_command(replace(overlay, suggestions=candidates), data)
                     continue

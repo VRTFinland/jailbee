@@ -29,6 +29,8 @@ from jailbee.db import get_engine, state_dir
 from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope, scope_for_session
 from jailbee.remote_ssh.router import (
+    NO_UNLOCKS,
+    RemoteUnlocks,
     RouteError,
     allowed_command_paths,
     known_command_short_help,
@@ -129,7 +131,7 @@ def _print_help(
     repo_root: Path,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> int:
     """Render the console-local command panel, then this policy's Jailbee help.
 
@@ -169,7 +171,7 @@ def _print_help(
         status = _returncode(completed)
     else:
         short_help = known_command_short_help()
-        allowed = _allowed_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui)
+        allowed = _allowed_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks)
         rows = [(path, short_help.get(path, "")) for path in sorted(allowed)]
         _render_command_panel(rich_console, "[bold]Allowed Jailbee commands[/bold]", rows)
 
@@ -204,13 +206,13 @@ def _allowed_paths(
     *,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> frozenset[str]:
     """Command paths this session may complete, per its own command policy.
 
     Paths are filtered by the same policy decision used when dispatching.
     """
-    return allowed_command_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui)
+    return allowed_command_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks)
 
 
 def _command_tree(paths: Sequence[str]) -> dict[str, Any]:
@@ -252,12 +254,12 @@ def _session(
     *,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> PromptSession[str]:
     return PromptSession(
         history=_history(),
         completer=_completer(
-            _allowed_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui), repos
+            _allowed_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks), repos
         ),
     )
 
@@ -375,7 +377,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
         ssh_config.commands,
         restrict_host=ssh_config.restrict_host,
         scope=scope,
-        gui=ssh_config.gui,
+        unlocks=RemoteUnlocks.of(ssh_config),
     )
     if initial_repo is None:
         if len(repos) == 1:
@@ -428,7 +430,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
                 repo_root=current.root,
                 restrict_host=ssh_config.restrict_host,
                 scope=scope,
-                gui=ssh_config.gui,
+                unlocks=RemoteUnlocks.of(ssh_config),
             )
             continue
         if command == "repos":
@@ -483,7 +485,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
                 restrict_host=ssh_config.restrict_host,
                 scope=scope,
                 allow_scoped_aggregates=True,
-                gui=ssh_config.gui,
+                unlocks=RemoteUnlocks.of(ssh_config),
             )
         except RouteError as error:
             _error(str(error))
