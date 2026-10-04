@@ -21,7 +21,6 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import IO, TYPE_CHECKING
 
 from jailbee import __version__
-from jailbee.upgrade import parse_version
 from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
@@ -37,6 +36,7 @@ from jailbee.state_service.protocol import (
     decode,
     encode,
 )
+from jailbee.upgrade import parse_version
 
 if TYPE_CHECKING:
     from pathlib import Path
