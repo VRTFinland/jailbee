@@ -21,7 +21,7 @@ from jailbee.state_service import client as client_module
 from jailbee.state_service.client import DISCONNECTED, StateClient
 from jailbee.state_service.protocol import PROTOCOL, Hello, Snapshot, encode
 from jailbee.state_service.server import StateServer
-from tests.test_state_server import T0, FakeGatherer
+from tests.test_state_server import T0, FakeGatherer, reap_servers, track_server  # noqa: F401
 
 
 class Spawner:
@@ -42,6 +42,7 @@ class Spawner:
         )
         thread.start()
         self.threads.append(thread)
+        track_server(server, thread)
 
 
 def _client(spawner, **kw):

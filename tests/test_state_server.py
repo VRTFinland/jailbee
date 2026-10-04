@@ -59,6 +59,30 @@ def wait_until(predicate, what: str, timeout: float = 5.0) -> None:
         time.sleep(0.01)
 
 
+# Everything a test opens, closed by `reap_servers` so no thread or socket
+# outlives its test (leaked fds push the suite towards select()'s 1024 limit).
+_LIVE_CONNS: list[Conn] = []
+_LIVE_SERVERS: list[tuple[StateServer, threading.Thread]] = []
+
+
+def track_server(server: StateServer, thread: threading.Thread) -> None:
+    _LIVE_SERVERS.append((server, thread))
+
+
+@pytest.fixture(autouse=True)
+def reap_servers():
+    yield
+    for conn in _LIVE_CONNS:
+        conn.close()
+    _LIVE_CONNS.clear()
+    for server, _thread in _LIVE_SERVERS:
+        server._stopping = True  # noticed within one TICK_SECONDS
+    for _server, thread in _LIVE_SERVERS:
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "a test server outlived its test"
+    _LIVE_SERVERS.clear()
+
+
 class Running:
     """A StateServer on its own event loop thread."""
 
@@ -68,6 +92,7 @@ class Running:
             target=lambda: asyncio.run(self.server.serve(path)), daemon=True
         )
         self.thread.start()
+        track_server(self.server, self.thread)
         wait_until(path.exists, "the server to bind")
 
 
@@ -78,6 +103,7 @@ class Conn:
         self.sock.connect(str(path))
         self.reader = self.sock.makefile("rb")
         self.send(Hello(PROTOCOL, version, cwd))
+        _LIVE_CONNS.append(self)
         self.hello = self.recv()
 
     def send(self, message):
@@ -211,6 +237,7 @@ def test_garbage_drops_only_that_client(sock_path):
     bad.connect(str(sock_path))
     bad.sendall(b"nonsense\n")
     assert bad.recv(1) == b""  # closed by the server
+    bad.close()
     assert isinstance(good.recv(), Snapshot)
 
 
