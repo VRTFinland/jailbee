@@ -185,6 +185,49 @@ def test_client_replaces_a_server_of_another_version(runtime_dir):
         client.close()
 
 
+def test_a_stale_client_leaves_a_newer_server_alone_and_stops(runtime_dir, monkeypatch):
+    newer = Spawner(version="1.7.0")
+    newer()
+    _until(paths.socket_path().exists)
+    connects: list[int] = []
+    real_ensure = client_module.ensure_runtime_dir
+
+    def counting_ensure():
+        connects.append(1)
+        return real_ensure()
+
+    monkeypatch.setattr(client_module, "ensure_runtime_dir", counting_ensure)
+    client = _client(Spawner(version="1.6.0"))
+    try:
+        _until(lambda: not client._thread.is_alive())
+        assert "1.7.0" in client.status()
+        assert "restart this dashboard" in client.status()
+        assert newer.threads[0].is_alive()
+        assert not newer.servers[0]._stopping
+        assert len(connects) == 1
+        time.sleep(0.4)  # several backoff periods: no reconnect
+        assert len(connects) == 1
+        with pytest.raises(StateServiceUnavailable, match="restart this dashboard"):
+            client.wait_first_snapshot(5)
+    finally:
+        client.close()
+        newer.servers[0]._stopping = True
+
+
+def test_client_replaces_an_older_server_even_with_parseable_versions(runtime_dir):
+    old = Spawner(version="1.6.0")
+    old()
+    _until(paths.socket_path().exists)
+    new = Spawner(version="1.7.0")
+    client = _client(new)
+    try:
+        client.wait_first_snapshot(5)
+        old.threads[0].join(timeout=3)
+        assert not old.threads[0].is_alive()
+    finally:
+        client.close()
+
+
 def test_set_active_reaches_the_server_and_survives_a_reconnect(runtime_dir):
     spawner = Spawner()
     client = _client(spawner)
@@ -383,6 +426,7 @@ def test_spawn_server_logs_to_the_state_dir_and_detaches(tmp_path, monkeypatch):
     argv, kw = popens[0]
     assert argv[1:] == ["-m", "jailbee", "_state-service"]
     assert kw["start_new_session"] is True
+    assert kw["cwd"] == "/"
     assert kw["stdin"] == subprocess.DEVNULL
     assert kw["stdout"] is kw["stderr"]
     assert files[0].mode == "ab"

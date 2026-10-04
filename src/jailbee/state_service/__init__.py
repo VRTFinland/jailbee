@@ -17,3 +17,7 @@ class StateServiceError(RuntimeError):
 
 class StateServiceUnavailable(StateServiceError):  # noqa: N818
     """No snapshot arrived from the state service in time."""
+
+
+class StaleDashboard(StateServiceError):
+    """This dashboard is older than the running state service: restart it."""

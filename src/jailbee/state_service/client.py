@@ -21,7 +21,8 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import IO, TYPE_CHECKING
 
 from jailbee import __version__
-from jailbee.state_service import StateServiceError, StateServiceUnavailable
+from jailbee.upgrade import parse_version
+from jailbee.state_service import StaleDashboard, StateServiceError, StateServiceUnavailable
 from jailbee.state_service.paths import ensure_runtime_dir, log_path, socket_path, spawn_lock_path
 from jailbee.state_service.protocol import (
     PROTOCOL,
@@ -57,6 +58,7 @@ def spawn_server() -> None:
             stdin=subprocess.DEVNULL,
             stdout=logf,
             stderr=logf,
+            cwd="/",  # do not pin the first dashboard's directory for the server's lifetime
             start_new_session=True,
         )
 
@@ -120,12 +122,14 @@ class StateClient:
         self._thread.start()
 
     def wait_first_snapshot(self, timeout: float) -> Snapshot:
-        """The first snapshot, or `StateServiceUnavailable` after ``timeout``."""
+        """The first snapshot, or `StateServiceUnavailable` after ``timeout``
+        (at once when this dashboard turned out to be stale)."""
         if not self._first.wait(timeout):
             reason = self.status() or "no snapshot from the state service"
             raise StateServiceUnavailable(f"{reason} (log: {log_path()})")
         snapshot = self.latest()
-        assert snapshot is not None  # set before `_first`
+        if snapshot is None:  # `_first` was set by a stale stop, not a snapshot
+            raise StateServiceUnavailable(self.status() or "the state client stopped")
         return snapshot
 
     def latest(self) -> Snapshot | None:
@@ -187,6 +191,12 @@ class StateClient:
         while not self._closed.is_set():
             try:
                 sock, reader = self._connect()
+            except StaleDashboard as exc:
+                # Retrying would respawn a server after each idle exit, and
+                # the newer one is what everyone else is already using.
+                self._set_status(str(exc))
+                self._first.set()  # wakes `wait_first_snapshot`
+                return
             except (OSError, ProtocolError, StateServiceError) as exc:
                 log.debug("state service connect failed", exc_info=True)
                 self._set_status(f"state service unavailable: {exc}")
@@ -271,6 +281,16 @@ class StateClient:
             if not isinstance(reply, Hello):
                 raise ProtocolError(f"expected hello, got {type(reply).__name__}")
             if (reply.protocol, reply.version) != (PROTOCOL, self._version):
+                # The newer jailbee wins: a stale dashboard must not shut
+                # down a newer server (its respawn runs the new code, so the
+                # two would flap forever). A differing protocol integer, an
+                # older server or an unparseable version: the server is
+                # replaced by our own.
+                theirs, ours = parse_version(reply.version), parse_version(self._version)
+                if reply.protocol == PROTOCOL and theirs and ours and theirs > ours:
+                    raise StaleDashboard(
+                        f"jailbee was upgraded to {reply.version}; restart this dashboard"
+                    )
                 sock.sendall(encode(Shutdown()))
                 self._await_gone(path)
                 raise StateServiceError(f"replaced a state service from jailbee {reply.version}")
