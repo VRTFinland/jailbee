@@ -561,6 +561,7 @@ class MainWindow(QMainWindow):
         self.set_status(f"Last refresh {at:%H:%M:%S}{note}")
 
     def set_refresh_failed(self, msg: str) -> None:
-        """Status bar for a failed gather. Non-modal — the loop keeps
-        retrying, so a dialog per failure would spam the user."""
-        self.set_status(f"Refresh failed: {msg} — retrying…")
+        """Status bar for a state-client problem. ``msg`` is already a complete
+        sentence ("refresh failed: …", "state service disconnected — …"), so it
+        is shown as is. Non-modal — a dialog per failure would spam the user."""
+        self.set_status(msg)

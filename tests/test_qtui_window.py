@@ -232,10 +232,8 @@ def test_set_refresh_ok_shows_no_git_marker_when_git_disabled(qtbot):
 def test_set_refresh_failed_shows_non_modal_status(qtbot):
     win = MainWindow()
     qtbot.addWidget(win)
-    win.set_refresh_failed("boom")
-    msg = win.statusBar().currentMessage()
-    assert "boom" in msg
-    assert "failed" in msg.lower()
+    win.set_refresh_failed("refresh failed: boom")
+    assert win.statusBar().currentMessage() == "refresh failed: boom"
 
 
 def test_window_title_stays_constant(qtbot):

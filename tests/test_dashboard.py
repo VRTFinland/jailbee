@@ -5026,6 +5026,7 @@ def _drive_run(
     over_ssh: bool = False,
     ssh_policy=None,
     view_state: dashboard.ViewState | None = None,
+    git_enabled: bool = False,
 ) -> int:
     """Run the real ``dashboard.run()`` key loop with a fake terminal.
 
@@ -5041,7 +5042,7 @@ def _drive_run(
     _mock_terminal(mocker)
     if view_state is not None:
         mocker.patch.object(dashboard, "seed_view_state", return_value=view_state)
-    _fake_state(mocker, groups or [])
+    _fake_state(mocker, groups or [], git_enabled=git_enabled)
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
@@ -5054,6 +5055,15 @@ def _drive_run(
         over_ssh=over_ssh,
         ssh_policy=ssh_policy,
     )
+
+
+@pytest.mark.parametrize("git_enabled", [True, False])
+def test_run_renders_with_the_snapshots_git_enabled(mocker, git_enabled):
+    """The TUI forwards the service's `git_enabled` (it never probes git itself)."""
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(mocker, [], git_enabled=git_enabled)
+    assert render.call_args_list
+    assert all(c.kwargs["git_enabled"] is git_enabled for c in render.call_args_list)
 
 
 def _drive_run_with_reader(mocker, read, groups: list[dashboard.RepoGroup]) -> int:
