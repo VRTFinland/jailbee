@@ -1184,11 +1184,14 @@ def delete_branch(repo_root: Path, branch: str) -> None:
 
 
 def submodule_update(repo_root: Path) -> None:
-    """Run `git submodule update --init --recursive` in repo_root.
+    """Run `git submodule update --init --checkout --recursive` in repo_root.
 
     Passes `-c protocol.file.allow=always` so submodule clones from local
     paths work (git blocks the file transport for submodules by default
-    since 2.38 / CVE-2022-39253). Output is inherited by the parent.
+    since 2.38 / CVE-2022-39253). `--checkout` overrides a configured
+    `submodule.<name>.update` — above all `none`, which git would otherwise
+    skip, leaving that sub-repo on a stale commit while every other one
+    follows its gitlink. Output is inherited by the parent.
     """
     _refuse_host_tree_write("Updating the submodules")
     returncode = subprocess.call(
@@ -1199,6 +1202,7 @@ def submodule_update(repo_root: Path) -> None:
             "submodule",
             "update",
             "--init",
+            "--checkout",
             "--recursive",
         ],
         cwd=repo_root,

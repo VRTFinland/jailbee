@@ -788,6 +788,10 @@ def _init_level(
                 "submodule",
                 "update",
                 "--init",
+                # Overrides `submodule.<name>.update = none`, which `--init`
+                # alone skips — leaving an empty directory, and nothing for
+                # push/pull to transport.
+                "--checkout",
                 "--",
                 path,
             ],
@@ -820,10 +824,12 @@ def update_submodules_in_container(
     env: dict[str, str],
     branch: str | None = None,
 ) -> None:
-    """`git submodule update --init --recursive` inside the container.
+    """`git submodule update --init --checkout --recursive` inside the container.
 
     Acts as the apply-and-verify gate after a container-side merge/rebase:
     a missing object makes git fail, surfaced here as `SubmoduleError`.
+    `--checkout` overrides `submodule.<name>.update = none`, as on the host
+    (`git.submodule_update`).
     `env` must carry HOME/USER/LOGNAME (git needs HOME for ~/.gitconfig).
 
     When `branch` is given, submodules are placed on it directly. When
@@ -842,6 +848,7 @@ def update_submodules_in_container(
                 "submodule",
                 "update",
                 "--init",
+                "--checkout",
                 "--recursive",
             ],
             uid=uid,
@@ -860,7 +867,7 @@ def update_submodules_in_container(
 
 
 def update_submodules_on_host(repo_root: Path, branch: str | None = None) -> None:
-    """`git submodule update --init --recursive` on the host working tree, then
+    """`git submodule update --init --checkout --recursive` on the host working tree, then
     place every submodule on ``branch`` (recursively).
 
     When ``branch`` is given, each submodule is placed on it regardless of any
