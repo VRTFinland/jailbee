@@ -98,6 +98,9 @@ class Gatherer:
         self._last_full: float | None = None
         self._prev: list[RepoGroup] = []
         self._seq = 0
+        # The message of the failure being logged, so an outage that lasts
+        # all night writes one traceback, not one every few seconds.
+        self._failing: str | None = None
 
     def tick(
         self, *, active: bool, refresh: bool, roots: Sequence[Path]
@@ -131,9 +134,15 @@ class Gatherer:
                 self._primed = True
             sample_activity(groups, self._sampler)
         except Exception as exc:  # reported to every client; the service lives on
-            log.warning("gather failed", exc_info=True)
-            result = GatherError(str(exc) or type(exc).__name__)
+            message = str(exc) or type(exc).__name__
+            if message != self._failing:
+                log.warning("gather failed", exc_info=True)
+                self._failing = message
+            result = GatherError(message)
         else:
+            if self._failing is not None:
+                log.warning("gather recovered (was failing: %s)", self._failing)
+                self._failing = None
             self._prev = groups
             self._seq += 1
             result = Snapshot(self._seq, self._wall_clock(), self.cadence.git, groups)

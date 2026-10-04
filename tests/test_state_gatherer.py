@@ -138,3 +138,31 @@ def test_a_failed_gather_is_reported_and_retried_on_the_cadence(mocker):
     assert g.tick(active=True, refresh=False, roots=[]) is None  # not a hot loop
     clock.t = 3.0
     assert isinstance(g.tick(active=True, refresh=False, roots=[]), GatherError)
+
+
+def _failures(caplog):
+    return [r for r in caplog.records if r.getMessage() == "gather failed"]
+
+
+def test_a_repeated_failure_is_logged_once_and_a_new_one_again(mocker, caplog):
+    clock = _Clock()
+    errors = [OSError("down"), OSError("down"), OSError("down"), OSError("other")]
+    g = _gatherer(mocker, mocker.Mock(side_effect=errors), clock)
+    with caplog.at_level("WARNING", logger="jailbee.state_service.gatherer"):
+        for _ in errors:
+            g.tick(active=True, refresh=False, roots=[])
+            clock.t += 3.0
+    messages = [r.exc_info[1].args[0] for r in _failures(caplog)]
+    assert messages == ["down", "other"]
+
+
+def test_a_failure_after_a_recovery_is_logged_again(mocker, caplog):
+    clock = _Clock()
+    outcomes = [OSError("down"), [], OSError("down")]
+    g = _gatherer(mocker, mocker.Mock(side_effect=outcomes), clock)
+    with caplog.at_level("WARNING", logger="jailbee.state_service.gatherer"):
+        for _ in outcomes:
+            g.tick(active=True, refresh=False, roots=[])
+            clock.t += 3.0
+    assert len(_failures(caplog)) == 2
+    assert sum("gather recovered" in r.getMessage() for r in caplog.records) == 1
