@@ -895,6 +895,7 @@ launchers) are refused in every mode, `full` included. Publishing
 and `pr --web`/`--open` are refused.
 `remote.ssh.restrict_host: false` (or `serve --no-restrict-host`) lifts all
 of these at once.
+Over a restricted SSH session, `jb net loose` and `jb net egress add` (container scope) need `remote.ssh.network: true`; `net strict` and `net egress rm` always work; `--repo` egress changes are host-only.
 
 The service runs as the same host UID as local JailBee, and every authorized
 key has identical access to the configured surface across all registered

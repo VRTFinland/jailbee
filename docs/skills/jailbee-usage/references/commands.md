@@ -178,7 +178,7 @@ Host-management commands — `config edit`/`init`/`migrate`, `remote ...`, `setu
 `litellm up`/`down`/`login`/`logout`/`logs`, writing `account` commands,
 `mount`, `port to-container`, `gui`/`ide`/browsers/`apps run` — are refused
 in every mode, `full` and allowlists included (except that `ide`, the browsers and `apps run`
-are permitted when `remote.ssh.gui` is on, and draw on the shared display); the startup log names any
+are permitted when `remote.ssh.gui` is on, and draw on the shared display; `net loose` and container-scope `net egress add` are permitted when `remote.ssh.network` is on); the startup log names any
 allowlisted one. Publishing (`pr`, `submodule pr`, `review apply`, `issue
 apply`, `outbox apply`) stays allowed but refuses `--yes`, and `pr --web`/`--open` are
 refused as host browsers. `remote.ssh.restrict_host: false` (or `serve

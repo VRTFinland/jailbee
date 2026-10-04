@@ -25,6 +25,11 @@ before editing `## Unreleased`.
   proxy to containers with a wildcard. Container-scope wildcards need the work
   network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net
   status` and `jailbee doctor` report the proxy.
+- **`remote.ssh.network`.** Lets a remote SSH session widen a container's
+  network — `jailbee net loose` and container-scope `jailbee net egress add` —
+  which can open the host's LAN to it, so it is off by default.
+  `jailbee net egress rm` on a container now works over SSH without it;
+  `--repo` egress changes stay host-only.
 
 ### Changed
 
@@ -38,6 +43,8 @@ before editing `## Unreleased`.
   `autostart cancel`, `issue resolve`, `outbox drop/apply`,
   `account group rm`, `remote ssh key rm`) ask even when there is only one
   candidate.
+- **`jailbee net loose` over remote SSH needs `remote.ssh.network: true`.**
+  It was allowed by default, although loose mode can reach the host's LAN.
 
 ### Fixed
 
