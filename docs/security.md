@@ -124,7 +124,9 @@ up`/`down`/`login`/`logout`/`logs`, the `account` commands that write, `mount`,
 run`). With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
 permitted and draw on the shared display instead; `gui` stays host-only.
 With `remote.ssh.network` on, `net loose` and container-scope
-`net egress add` are permitted too. `net strict` and container-scope
+`net egress add` are permitted too, and so is `new --net loose` (which
+creates a container in loose mode); without it `new` is refused only when
+`--net` names `loose`, in any spelling of the case. `net strict` and container-scope
 `net egress rm` only narrow a container and are always permitted; `--repo` on
 `net egress add`/`rm` is refused regardless, because it writes the host-local
 repo layer.

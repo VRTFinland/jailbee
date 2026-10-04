@@ -1130,3 +1130,68 @@ def test_every_leaf_is_classified_with_network_on_too() -> None:
     paths = {p for p in known_command_paths() if not router.is_host_command(p, unlocks=unlocks)}
     assert {"net loose", "net egress add"} <= paths
     assert paths <= (router._CONTAINER_COMMANDS | router._NETWORK_WIDENING_COMMANDS)
+
+
+_NEW_LOOSE = [
+    ("new", "feat", "--net", "loose"),
+    ("new", "--net", "loose", "feat"),  # leading position
+    ("new", "feat", "--net=loose"),
+    ("new", "--net=loose", "feat"),
+    ("new", "feat", "--net", "Loose"),
+    ("new", "feat", "--net=LOOSE"),
+    ("new", "feat", "--net", " loose "),
+]
+
+
+@pytest.mark.parametrize("argv", _NEW_LOOSE)
+def test_new_net_loose_needs_the_network_switch(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match=r"--net=loose unless remote\.ssh\.network is on: new"):
+        policy_allows(argv, FULL)
+    with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(gui=True))
+    assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True)) == "new"
+
+
+@pytest.mark.parametrize("argv", _NEW_LOOSE)
+def test_new_net_loose_is_refused_in_allowlist_mode_too(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["new"])
+    with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
+        policy_allows(argv, allow)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("new", "feat"),
+        ("new", "feat", "--net", "strict"),
+        ("new", "feat", "--net=strict"),
+        ("new", "feat", "--net", "loosest"),
+        ("new", "--", "--net", "loose"),  # branch names, not the option
+    ],
+)
+def test_new_without_a_widening_net_value_is_allowed(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(argv, FULL) == "new"
+
+
+def test_new_net_loose_is_unchanged_when_the_host_is_unrestricted(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    argv = ("new", "feat", "--net", "loose")
+    assert policy_allows(argv, FULL, restrict_host=False) == "new"
+
+
+def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None:
+    from jailbee.dashboard_commands import permitted
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    off = RemoteSSHConfig(commands=FULL)
+    on = off.model_copy(update={"network": True})
+    argv = ["new", "feat", "--net", "loose"]
+    assert not permitted(argv, off, over_ssh=True)
+    assert permitted(argv, on, over_ssh=True)
+    assert permitted(["new", "feat", "--net", "strict"], off, over_ssh=True)
+    assert permitted(argv, off, over_ssh=False)

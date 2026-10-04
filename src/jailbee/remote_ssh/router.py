@@ -461,6 +461,17 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     "outbox apply": frozenset({"yes"}),
 }
 
+# Parameters a remote caller may set only to a narrowing value unless
+# `remote.ssh.network` is on, by (canonical command path, parameter name). The
+# parameter itself stays usable, so `_REMOTE_DENIED_PARAMS` cannot express it.
+# `new --net loose` creates a container on the wide-egress network: the same
+# widening `net loose` is, which `RemoteUnlocks.network` already gates. Values
+# compare stripped and lower-cased, as the leaf's own `str` option is not
+# normalised by Click.
+_NETWORK_WIDENING_VALUES: dict[tuple[str, str], frozenset[str]] = {
+    ("new", "network"): frozenset({"loose"}),
+}
+
 
 def _host_reaching_params(command: TyperCommand, canonical: str) -> list[Parameter]:
     """The parameters of `command` a remote argv must leave at their default.
@@ -482,8 +493,11 @@ def _host_reaching_params(command: TyperCommand, canonical: str) -> list[Paramet
     ]
 
 
-def check_arguments(argv: Sequence[str]) -> None:
+def check_arguments(argv: Sequence[str], *, unlocks: RemoteUnlocks = NO_UNLOCKS) -> None:
     """Refuse a remote argv that sets a host-reaching parameter of its leaf.
+
+    A parameter in `_NETWORK_WIDENING_VALUES` is refused only when set to a
+    widening value and `unlocks.network` is off.
 
     The argv is parsed by the leaf's own Click command, exactly as the real
     invocation will parse it, and only the resulting parameter sources are
@@ -501,7 +515,12 @@ def check_arguments(argv: Sequence[str]) -> None:
     typed, canonical = _resolve_leaf(argv)
     command = _command_tree().leaf_commands[typed]
     params = _host_reaching_params(command, canonical)
-    if not params:
+    widening = {
+        name: values
+        for (path, name), values in _NETWORK_WIDENING_VALUES.items()
+        if path == canonical and not unlocks.network
+    }
+    if not params and not widening:
         return
     words = typed.split()
     try:
@@ -525,6 +544,16 @@ def check_arguments(argv: Sequence[str]) -> None:
             if ctx.get_parameter_source(param.name) is ParameterSource.COMMANDLINE:
                 shown = param.opts[0] if param.opts else param.name
                 raise RouteError(f"remote Jailbee commands may not set {shown}: {canonical}")
+        for name, values in widening.items():
+            if ctx.get_parameter_source(name) is not ParameterSource.COMMANDLINE:
+                continue
+            value = str(ctx.params.get(name) or "").strip().lower()
+            if value in values:
+                option = next((p.opts[0] for p in command.params if p.name == name), name)
+                raise RouteError(
+                    f"remote Jailbee commands may not set {option}={value} "
+                    f"unless remote.ssh.network is on: {canonical}"
+                )
 
 
 def _help_only_path(argv: Sequence[str]) -> str | None:
@@ -624,7 +653,7 @@ def policy_allows(
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
     if path == "dashboard":
-        check_arguments(argv)
+        check_arguments(argv, unlocks=unlocks)
     if scope is not None and scope.excluded:
         # Until aggregate sources are individually audited, only commands
         # whose scope is inherently the selected/specified single repo pass.
@@ -712,7 +741,7 @@ def policy_allows(
             )
         if path not in _CONTAINER_COMMANDS and path not in unlocks.commands():
             raise RouteError(f"remote Jailbee command is not classified: {path}")
-        check_arguments(argv)
+        check_arguments(argv, unlocks=unlocks)
     return path
 
 
