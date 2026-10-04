@@ -530,3 +530,38 @@ def test_config_edit_is_rejected_in_a_repo_config(tmp_path):
             tmp_path / "config.yaml",
             origin=str(tmp_path),
         )
+
+
+def test_dashboard_refresh_defaults():
+    refresh = GlobalConfig().dashboard.refresh
+    assert (refresh.interval, refresh.git_interval, refresh.git) == (3.0, 10.0, True)
+
+
+def test_dashboard_refresh_loads_from_the_global_file(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  refresh:\n    interval: 5\n    git: false\n")
+    gcfg, _ = load_global_config(path)
+    assert gcfg.dashboard.refresh.interval == 5.0
+    assert gcfg.dashboard.refresh.git_interval == 10.0
+    assert gcfg.dashboard.refresh.git is False
+
+
+@pytest.mark.parametrize(
+    "block",
+    ["refresh:\n    interval: 0\n", "refresh:\n    git_interval: -1\n", "refresh:\n    every: 3\n"],
+)
+def test_dashboard_refresh_rejects_bad_values(tmp_path, block):
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  " + block)
+    with pytest.raises(ConfigError):
+        load_global_config(path)
+
+
+def test_a_custom_refresh_keeps_the_column_fast_path(tmp_path, mocker):
+    """`load_global_config` runs once per dashboard gather; a refresh block
+    alone must not send it down the column-sanitising slow path."""
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  refresh:\n    interval: 5\n")
+    sanitize = mocker.patch("jailbee.config.sanitize_column_blocks")
+    load_global_config(path)
+    sanitize.assert_not_called()

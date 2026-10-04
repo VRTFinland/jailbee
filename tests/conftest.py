@@ -7,7 +7,9 @@ import functools
 import itertools
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
 import weakref
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
@@ -732,3 +734,16 @@ def patch_list_slots(mocker: Any, by_agent: dict[str, list[Any]]) -> Any:
         "jailbee.accounts.engine.list_slots",
         side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
     )
+
+
+@pytest.fixture
+def runtime_dir(monkeypatch):
+    """A short private `$XDG_RUNTIME_DIR` for state-service sockets.
+
+    Not `tmp_path`: a unix socket path must fit in ~104 bytes, and pytest's
+    tmp paths do not reliably.
+    """
+    base = tempfile.mkdtemp(prefix="jb-", dir="/tmp")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", base)
+    yield Path(base) / "jailbee"
+    shutil.rmtree(base, ignore_errors=True)

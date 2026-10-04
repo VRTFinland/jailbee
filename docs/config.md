@@ -2326,6 +2326,24 @@ a folded `wt`/`target_diff`/`ahead_count`/`behind_count`/`conflict` summary — 
 configured column outside that set (`local_diff`, say) reaches the tree and
 the Grid card style but never Compact. Switch card style to see it.
 
+### `dashboard.refresh` — how often the dashboards update
+
+Global config only. Every open dashboard — `jailbee dashboard`, `jailbee tui`,
+`jailbee gui` — shows what one shared background service gathers, so this sets
+the pace for all of them at once:
+
+```yaml
+dashboard:
+  refresh:
+    interval: 3        # seconds between base-state gathers (floor 0.5)
+    git_interval: 10   # seconds between git-status probes (never below interval)
+    git: true          # false: skip the git probes entirely
+```
+
+The service reads it when it starts, and exits once no dashboard has been open
+for 30 seconds — close every dashboard to apply a change. The dashboards'
+`--interval`, `--git-interval` and `--no-git` flags are deprecated and ignored.
+
 ## Computed attributes
 
 The `Config` object exposes four attributes set at load time, not from YAML,

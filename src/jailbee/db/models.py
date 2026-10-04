@@ -157,7 +157,7 @@ class BackgroundJob(SQLModel, table=True):
 
 class GuiState(SQLModel, table=True):
     """Single-row (id=1) persisted state for the Qt dashboard *widget* itself
-    (layout, header, card style, refresh cadence).
+    (layout, header, card style).
 
     Machine-written UI state — kept in the state DB (not config.yaml) so it
     stays out of the user's hand-edited config. Written by the Qt app only;
@@ -171,6 +171,9 @@ class GuiState(SQLModel, table=True):
     id: int = Field(default=1, primary_key=True)
     layout: str = "cards"  # "table" | "cards"
     table_header_state: str | None = None  # base64(QHeaderView.saveState())
+    # Unused since the shared state service (2026-10): the dashboards' cadence is
+    # `dashboard.refresh` in the global config. Kept because migrations are
+    # additive — an older jailbee reads this database as-is.
     refresh_interval: float | None = None
     refresh_paused: bool = False
     card_style: str = "compact"  # "compact" | "grid"

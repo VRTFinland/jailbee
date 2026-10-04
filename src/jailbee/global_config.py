@@ -153,6 +153,26 @@ class DashboardAutoHide(BaseModel):
     )
 
 
+class DashboardRefresh(BaseModel):
+    """How often the shared dashboard state service gathers, for every dashboard."""
+
+    model_config = ConfigDict(extra="forbid")
+    interval: float = Field(
+        default=3.0,
+        gt=0,
+        description="Seconds between base-state gathers (incus list, CPU, jobs). Floored at 0.5.",
+    )
+    git_interval: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Seconds between git-status probes (one `incus exec` per running "
+            "container). Never faster than `interval`."
+        ),
+    )
+    git: bool = Field(default=True, description="Probe git status at all.")
+
+
 class DashboardConfig(ColumnConfig):
     """New layout preferences alongside the legacy one-time column seed."""
 
@@ -171,6 +191,13 @@ class DashboardConfig(ColumnConfig):
     auto_hide: DashboardAutoHide = Field(
         default_factory=DashboardAutoHide,
         description="Temporary terminal-width column hiding (TUI only).",
+    )
+    refresh: DashboardRefresh = Field(
+        default_factory=DashboardRefresh,
+        description=(
+            "How often the shared state service gathers for every open dashboard. "
+            "Read when the service starts; it exits once no dashboard is open."
+        ),
     )
 
 
@@ -211,9 +238,10 @@ class GlobalConfig(BaseModel):
     dashboard: DashboardConfig = Field(
         default_factory=DashboardConfig,
         description=(
-            "`auto_hide` controls temporary TUI column hiding. Legacy `fields`/`hide` "
-            "are imported once into each dashboard's remembered column settings; "
-            "use F2 in the TUI or View ▸ Columns in the GUI to change those."
+            "`auto_hide` controls temporary TUI column hiding; `refresh` sets "
+            "how often every dashboard updates. Legacy `fields`/`hide` are imported "
+            "once into each dashboard's remembered column settings; use F2 in the TUI "
+            "or View ▸ Columns in the GUI to change those."
         ),
     )
     credentials: Credentials = Field(
@@ -430,7 +458,7 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     cosmetic typo is the wrong trade — the same principle that keeps a
     column preference from narrowing `--format json`. `cli._load_global()`
     is the one place ``warnings`` gets surfaced (via `tui.warn`); the
-    dashboards (`dashboard._global_config_or_defaults`) get the sanitized
+    dashboards (`dashboard.global_config_or_defaults`) get the sanitized
     config and otherwise ignore the list.
 
     Genuine host-level schema problems (bad YAML, a malformed
@@ -463,7 +491,9 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # saved work is not one-time — the global-layer twin of `load_config`'s
     # short-circuit for the repo layer; see `_columns_already_sanitized` for
     # why comparing by value here is safe.
-    dashboard_columns = gcfg.dashboard.model_copy(update={"auto_hide": DashboardAutoHide()})
+    dashboard_columns = gcfg.dashboard.model_copy(
+        update={"auto_hide": DashboardAutoHide(), "refresh": DashboardRefresh()}
+    )
     if _columns_already_sanitized(
         [(gcfg.ls, _LS_DEFAULT), (dashboard_columns, _DASHBOARD_DEFAULT)]
     ):

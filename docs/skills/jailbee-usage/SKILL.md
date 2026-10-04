@@ -94,9 +94,12 @@ window instead of a terminal TUI. Its **View** menu switches between a wide
 Table layout and a width-adaptive Cards layout (the default on a fresh
 install), and within Cards, between a denser **Compact** style and a
 **Grid** style; per-repo card groups are collapsible (click the group
-header). The chosen layout, card style, collapsed repo groups, table column
-widths/order, and refresh cadence / paused state persist across sessions
-(window size/position do not).
+header). The chosen layout, card style, collapsed repo groups and table column
+widths/order persist across sessions (window size/position do not). The refresh
+cadence is not a per-window setting: it comes from the global config's
+`dashboard.refresh` and is shared by every dashboard through one on-demand state
+service (the `--interval`/`--git-interval`/`--no-git` flags are deprecated and
+ignored).
 Both dashboards include known repositories with no containers by default;
 toggle **Show empty repos** to hide or restore all such groups, or hide an
 individual repository by prefix. In the TUI, use **Settings > Visibility**;

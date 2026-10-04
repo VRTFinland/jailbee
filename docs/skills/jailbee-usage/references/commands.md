@@ -701,8 +701,8 @@ when it would do something:
   PR column. On an authored PR the head is downstream of the container, so the
   refresh could only be a no-op;
 - `git pull` also needs commits ahead of the base, and `git diff` something to
-  show. A git status that is merely *unknown* — under `--no-git`, or before the
-  first git-tier refresh — hides nothing: a missing column is not evidence of a
+  show. A git status that is merely *unknown* — while the
+  service has not yet run its first git probe, or with `dashboard.refresh.git: false` — hides nothing: a missing column is not evidence of a
   clean tree.
 
 A builtin's "Launch `<name>`" entry (a browser or the IDE) dispatches a bare
@@ -756,19 +756,25 @@ Output is not lost when an action prints something. `git diff` opens in
 Enter, because the dashboard repaints over the screen the moment it returns.
 Prompts those commands would normally ask (`git push`'s merge/rebase picker,
 `pr`'s branch-name confirmation) work exactly as on the command line — the TUI
-hands over the real terminal. Two-tier
-refresh: base state ~3s, git columns ~10s — tune with `-i` / `--git-interval`, or
-`--no-git` to drop git columns. Requires a TTY. Orphan containers (jailbee-managed but
+hands over the real terminal. Every dashboard shows
+what one shared background service (`jailbee _state-service`, started on demand,
+exits 30 s after the last dashboard closes) gathers; the pace comes from
+`dashboard.refresh` (`interval` 3s, `git_interval` 10s, `git`) in the *global*
+config, and the service log is `~/.local/state/jailbee/state-service.log`.
+`-i`/`--interval`, `--git-interval` and `--no-git` are deprecated: warned about
+and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
+make the service gather. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`
-keeps it bound to the terminal). Same `-i` / `--git-interval` / `--no-git` knobs.
+keeps it bound to the terminal). Same deprecated, ignored refresh flags; its
+Refresh menu has only "Refresh now".
 It offers the same menu entries under the same rules, but runs them as a GUI
 rather than in a terminal: only `shell`/`tmux` open a host terminal emulator,
 while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
 into a JailBee window with Stop and Copy buttons and the exit code on its status
-line (non-modal, so the dashboard keeps refreshing behind it). Stop is what ends
+line (non-modal, so the dashboard keeps updating behind it). Stop is what ends
 a `job log --follow`.
 
 Creating a container joins `shell`/`tmux` as a terminal-window action, for the
@@ -797,11 +803,8 @@ enabled, independently of the TUI's own set (see `jailbee dashboard` above)
 — at least one must stay checked. Each repo's card group has a header that
 can be clicked to collapse/expand it. It persists, between sessions, in the
 SQLite state DB: the chosen layout, card style, collapsed repo groups, the
-enabled columns, the table's column widths/order, and the refresh cadence /
-paused state — but never the window size or position. `-i`/`--interval`
-precedence at startup: explicit flag > persisted value > 3s default.
-`--git-interval` is not persisted. Fresh installs default to the Cards
-layout.
+enabled columns, the table's column widths/order — but never the window size or position.
+Fresh installs default to the Cards layout.
 
 ### `jailbee job`
 

@@ -52,6 +52,9 @@ isolated per-branch development environments using Incus system containers. See
   start Jailbee itself, not `incus` — `console.py` via `subprocess.run` on a
   re-exec (`python -m jailbee ...`), `pty.py` via `pty.fork()`/`os.execvpe`
   for the PTY case and `asyncio.create_subprocess_exec` for the non-PTY case.
+  `state_service/client.py` is a third: `spawn_server` starts
+  `python -m jailbee _state-service` detached (`subprocess.Popen`), the shared
+  dashboard state service.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
   `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
@@ -61,6 +64,9 @@ isolated per-branch development environments using Incus system containers. See
   `registry.py` runs the mirror through the `Incus` wrapper and calls no
   `subprocess` of its own. `litellm.py` likewise runs the proxy through the
   `Incus` wrapper and calls no `subprocess` of its own.
+- **The dashboards gather nothing themselves.** `state_service/` holds the only
+  gather loop (`gatherer.Gatherer`), run by one on-demand per-user server;
+  `dashboard.run` and the Qt app render what `StateClient` holds.
 - **`accounts/` is the agent account pool: the engine knows no agent, an
   adapter knows one.** `accounts/engine.py` is the generic store —
   park/switch/remove, slot naming, member resolution — driven only through

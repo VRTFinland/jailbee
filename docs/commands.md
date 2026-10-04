@@ -311,8 +311,21 @@ ask: `git push`'s merge/rebase/plain choice when the repo's
 existing-PR-head choices, and a confirmation for `git pull`, which merges into
 the host's own branch. Cancelling a dialog dispatches nothing.
 
-Options mirror the TUI: `--interval`, `--git-interval`, `--no-git`, plus
-`--foreground` (GUI-only).
+`--foreground` (GUI-only) keeps it attached to the terminal. The TUI's
+`--interval`/`-i`, `--git-interval` and `--no-git` are accepted by all three
+commands but deprecated and ignored (see [Refresh](#refresh)).
+
+#### Refresh
+
+Every dashboard — `jailbee dashboard`, `jailbee tui`, `jailbee gui` — shows what
+one shared background service (`jailbee _state-service`) gathers. It starts on
+demand and exits 30 seconds after the last dashboard closes. Its pace is set by
+[`dashboard.refresh`](config.md#dashboardrefresh--how-often-the-dashboards-update)
+in the global config; its log is `~/.local/state/jailbee/state-service.log`.
+`--interval`/`-i`, `--git-interval` and `--no-git` are deprecated: they print a
+warning and have no effect. The Qt **Refresh** menu has only **Refresh now**.
+A minimised window, or a dashboard whose terminal is running `jailbee tmux` or
+`jailbee shell`, does not make the service gather.
 
 #### Layouts: Table vs Cards
 
@@ -331,17 +344,10 @@ Between sessions the GUI remembers, per-machine, in the same SQLite state DB
 used for other JailBee state (`state.sqlite`):
 
 - the selected layout (Table or Cards),
-- the table layout's column widths and order,
-- the refresh cadence and whether auto-refresh is paused (set via the
-  **Refresh** menu).
+- the table layout's column widths and order.
 
 **Not** persisted: window size and position — that's left to the window
 manager.
-
-`--interval` precedence when the GUI starts: an explicit `--interval`/`-i`
-flag wins, otherwise the persisted refresh cadence from the last session is
-used, otherwise the default of 3s. `--git-interval` is never persisted — pass
-it each time it should differ from the default.
 
 ---
 

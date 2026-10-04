@@ -289,6 +289,7 @@ def list_containers(
     fast: bool = False,
     timeout: int | None = None,
     scope: RemoteRepoScope | None = None,
+    instances: list[dict[str, Any]] | None = None,
 ) -> list[ContainerInfo]:
     """Return container infos for jailbee-managed containers.
 
@@ -301,6 +302,12 @@ def list_containers(
     ``fast=True`` leaves ``ip`` and ``memory_usage`` as None because the
     per-instance state is not fetched; callers that only need names (shell
     completion) use it.
+
+    ``instances`` is an ``Incus.list_containers()`` result fetched by the
+    caller; when given, Incus is not listed again (``fast`` and ``timeout``
+    are then unused). A caller that reads several repos from one snapshot
+    — the dashboards, every refresh tick — passes it so the daemon builds
+    the full instance state once instead of once per repo.
     """
     from jailbee.accounts import groups
     from jailbee.mounts import attached_kinds
@@ -311,7 +318,9 @@ def list_containers(
     own_net_to_mode = {v: k for k, v in own_names.net_by_mode.items()}
 
     out: list[ContainerInfo] = []
-    for raw in incus.list_containers(fast=fast, timeout=timeout):
+    if instances is None:
+        instances = incus.list_containers(fast=fast, timeout=timeout)
+    for raw in instances:
         # A container mid-destroy can be reported with "profiles": null, so the
         # `.get(..., [])` default is bypassed (key present, value None) — same
         # trap the state/network chain below guards against with `or {}`.

@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QLabel,
@@ -58,9 +58,6 @@ _PREFIX_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 # Built from the framework-free STATE_COLORS (shared with the card view).
 _STATE_COLORS = {state: QColor(hex_) for state, hex_ in STATE_COLORS.items()}
 
-# Numeric cadence presets offered in the Refresh menu, in seconds.
-_CADENCE_PRESETS = (1.0, 2.0, 3.0, 5.0, 10.0, 30.0)
-
 # Layout name -> QStackedWidget index.
 _LAYOUT_INDEX = {"table": 0, "cards": 1}
 
@@ -84,8 +81,7 @@ class MainWindow(QMainWindow):
 
     actionRequested = Signal(str, str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: (verb, container_name)
     refreshRequested = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); "Refresh now" was triggered
-    intervalChanged = Signal(float)  # noqa: N815 - Qt signal naming convention (camelCase); payload: new interval seconds
-    autoRefreshDisabled = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); "Off (manual)" was selected
+    activeChanged = Signal(bool)  # noqa: N815 - Qt signal naming convention (camelCase); False while minimised
     layoutChanged = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: "table" | "cards"
     cardStyleChanged = Signal(str)  # noqa: N815 - Qt signal naming; payload: "compact" | "grid"
     columnsChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the enabled column set changed
@@ -97,9 +93,6 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         *,
-        git_enabled: bool,
-        interval: float,
-        paused: bool = False,
         layout: str = "cards",
         card_style: str = "compact",
         header_state: str | None = None,
@@ -108,7 +101,6 @@ class MainWindow(QMainWindow):
         hidden_repos: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__()
-        self._git_enabled = git_enabled
         self._groups: list[RepoGroup] = []
         self._all_groups: list[RepoGroup] = []
         self._show_empty_repos = show_empty_repos
@@ -148,7 +140,7 @@ class MainWindow(QMainWindow):
         self._build_columns_menu()
         self._build_repositories_menu()
         self._build_card_style_menu(self._card_style)
-        self._build_refresh_menu(interval, paused=paused)
+        self._build_refresh_menu()
         self._build_container_menu()
         self._build_config_menu()
 
@@ -320,9 +312,8 @@ class MainWindow(QMainWindow):
         data = self.tree.header().saveState()
         return bytes(data.toBase64().data()).decode("ascii")
 
-    def _build_refresh_menu(self, interval: float, *, paused: bool = False) -> None:
-        """Build the Refresh menu: manual refresh-now plus an exclusive
-        group of cadence presets (including an "Off (manual)" pause option).
+    def _build_refresh_menu(self) -> None:
+        """Build the Refresh menu: a manual "Refresh now" (F5).
 
         Exposed as ``self.refresh_menu`` (mirroring ``self.tree``) so tests
         can find its actions directly, rather than round-tripping through
@@ -337,30 +328,6 @@ class MainWindow(QMainWindow):
         refresh_now = menu.addAction("Refresh now")
         refresh_now.setShortcut(QKeySequence("F5"))
         refresh_now.triggered.connect(lambda: self.refreshRequested.emit())
-
-        menu.addSeparator()
-
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        closest = min(_CADENCE_PRESETS, key=lambda v: abs(v - interval))
-        for value in _CADENCE_PRESETS:
-            preset_action = menu.addAction(f"{value:.0f}s")
-            preset_action.setCheckable(True)
-            preset_action.setChecked(value == closest and not paused)
-            group.addAction(preset_action)
-            preset_action.triggered.connect(
-                lambda _checked=False, v=value: self.intervalChanged.emit(v)
-            )
-
-        manual_action = menu.addAction("Off (manual)")
-        manual_action.setCheckable(True)
-        manual_action.setChecked(paused)
-        group.addAction(manual_action)
-        manual_action.triggered.connect(lambda: self.autoRefreshDisabled.emit())
-
-        # Kept alive on the window so the action group itself isn't GC'd
-        # once this method returns.
-        self._refresh_action_group = group
 
     def _build_container_menu(self) -> None:
         """The one repo-scoped menu: creating a container, not acting on one.
@@ -577,18 +544,24 @@ class MainWindow(QMainWindow):
         # for the signal's `object` parameter doesn't narrow to QPoint here.
         menu.exec(self.tree.viewport().mapToGlobal(pos))  # type: ignore[call-overload]
 
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+        """Tell the controller when the window is minimised or restored, so
+        the shared state service stops gathering for a window nobody sees."""
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.activeChanged.emit(not self.isMinimized())
+        super().changeEvent(event)
+
     def set_status(self, text: str) -> None:
         self.statusBar().showMessage(text)
 
-    def set_refresh_ok(self, *, at: datetime, interval: float, paused: bool = False) -> None:
-        """Status bar for a successful refresh: last-refresh time, cadence,
-        and a ``(no-git)`` marker when git probing is disabled. Cadence reads
-        ``manual`` when auto-refresh is paused, ``every Xs`` otherwise."""
-        note = "" if self._git_enabled else "  ·  (no-git)"
-        cadence = "manual" if paused else f"every {interval:.0f}s"
-        self.set_status(f"Last refresh {at:%H:%M:%S} · {cadence}{note}")
+    def set_refresh_ok(self, *, at: datetime, git_enabled: bool) -> None:
+        """Status bar for a fresh snapshot: its time, and ``(no-git)`` when the
+        state service is not probing git."""
+        note = "" if git_enabled else "  ·  (no-git)"
+        self.set_status(f"Last refresh {at:%H:%M:%S}{note}")
 
     def set_refresh_failed(self, msg: str) -> None:
-        """Status bar for a failed gather. Non-modal — the loop keeps
-        retrying, so a dialog per failure would spam the user."""
-        self.set_status(f"Refresh failed: {msg} — retrying…")
+        """Status bar for a state-client problem. ``msg`` is already a complete
+        sentence ("refresh failed: …", "state service disconnected — …"), so it
+        is shown as is. Non-modal — a dialog per failure would spam the user."""
+        self.set_status(msg)

@@ -2929,6 +2929,15 @@ def _new_worker(
     )
 
 
+@app.command("_state-service", hidden=True)
+def _state_service() -> None:
+    """Internal: the shared dashboard state service. Spawned by the dashboards."""
+    from jailbee.incus import Incus
+    from jailbee.state_service.server import run_service
+
+    raise typer.Exit(run_service(Incus()))
+
+
 @app.command("_destroy-worker", hidden=True)
 def _destroy_worker(
     name: Annotated[str, typer.Option("--name", help="Full container name to destroy.")],
@@ -3537,15 +3546,18 @@ def tmux(
     raise typer.Exit(_attach_tmux(cfg, incus, name))
 
 
+_REFRESH_FLAG_HELP = "Deprecated, ignored: set dashboard.refresh in the global config."
+
+
 @app.command("dashboard")
 def dashboard_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
     gui: Annotated[
         bool, typer.Option("--gui", help="Launch the graphical (Qt) dashboard.")
     ] = False,
@@ -3571,11 +3583,9 @@ def dashboard_cmd(
     grouped by repo. In the TUI: ↑/↓ to move, Enter for the action menu, r to
     refresh, q to quit. Pass --gui (or run `jailbee gui`) for the Qt desktop app.
     """
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=gui,
             foreground=foreground,
             remote_policy_json=remote_policy_json,
@@ -3586,19 +3596,17 @@ def dashboard_cmd(
 @app.command("tui")
 def tui_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
 ) -> None:
     """Launch the terminal dashboard — alias for `jailbee dashboard`."""
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=False,
             foreground=False,
         )
@@ -3608,12 +3616,12 @@ def tui_cmd(
 @app.command("gui")
 def gui_cmd(
     interval: Annotated[
-        float | None, typer.Option("--interval", "-i", help="Base-state refresh seconds.")
+        float | None, typer.Option("--interval", "-i", help=_REFRESH_FLAG_HELP)
     ] = None,
     git_interval: Annotated[
-        float, typer.Option("--git-interval", help="Git-status refresh seconds.")
-    ] = 10.0,
-    no_git: Annotated[bool, typer.Option("--no-git", help="Disable git-status probing.")] = False,
+        float | None, typer.Option("--git-interval", help=_REFRESH_FLAG_HELP)
+    ] = None,
+    no_git: Annotated[bool, typer.Option("--no-git", help=_REFRESH_FLAG_HELP)] = False,
     foreground: Annotated[
         bool,
         typer.Option(
@@ -3623,22 +3631,32 @@ def gui_cmd(
     ] = False,
 ) -> None:
     """Launch the graphical (Qt) dashboard — alias for `jailbee dashboard --gui`."""
+    _warn_ignored_refresh_flags(interval=interval, git_interval=git_interval, no_git=no_git)
     raise typer.Exit(
         _run_dashboard(
-            interval=interval,
-            git_interval=git_interval,
-            no_git=no_git,
             gui=True,
             foreground=foreground,
         )
     )
 
 
+def _warn_ignored_refresh_flags(
+    *, interval: float | None, git_interval: float | None, no_git: bool
+) -> None:
+    """The dashboards share one state service now, paced by the global config."""
+    for flag, given in (
+        ("--interval", interval is not None),
+        ("--git-interval", git_interval is not None),
+        ("--no-git", no_git),
+    ):
+        if given:
+            warn_plain(
+                f"{flag} is ignored; set dashboard.refresh in the global config", stderr=True
+            )
+
+
 def _run_dashboard(
     *,
-    interval: float | None,
-    git_interval: float,
-    no_git: bool,
     gui: bool,
     foreground: bool,
     remote_policy_json: str | None = None,
@@ -3720,13 +3738,7 @@ def _run_dashboard(
             return 1
 
         if foreground:
-            return qtui_app.run(
-                Incus(),
-                cwd_root=cwd_root,
-                interval=interval,
-                git_interval=git_interval,
-                no_git=no_git,
-            )
+            return qtui_app.run(cwd_root=cwd_root)
 
         if qtui_app.preflight(cwd_root) is None:
             from jailbee.dashboard import NOTHING_TO_SHOW
@@ -3735,19 +3747,7 @@ def _run_dashboard(
             return 1
 
         log_path = "/tmp/jailbee-gui.log"
-        child_argv = [
-            sys.executable,
-            "-m",
-            "jailbee",
-            "gui",
-            "--foreground",
-            "--git-interval",
-            str(git_interval),
-        ]
-        if interval is not None:
-            child_argv += ["--interval", str(interval)]
-        if no_git:
-            child_argv.append("--no-git")
+        child_argv = [sys.executable, "-m", "jailbee", "gui", "--foreground"]
         with open(log_path, "ab") as logf:
             subprocess.Popen(
                 child_argv,
@@ -3764,9 +3764,6 @@ def _run_dashboard(
     return dashboard.run(
         Incus(),
         cwd_root=cwd_root,
-        interval=interval if interval is not None else 3.0,
-        git_interval=git_interval,
-        no_git=no_git,
         remote=remote,
         over_ssh=over_ssh,
         ssh_policy=ssh_policy,
