@@ -415,7 +415,10 @@ objects travel over the same `ext::` transport the superproject uses. A
 sub-repo the peer is missing is created there first, so adding a submodule on
 one side and syncing works without preparing the other side by hand. Failures
 are loud: a `SubmoduleError` stops the operation rather than leaving the peer
-with a superproject whose gitlinks point at objects it doesn't have. `fetch`
+with a superproject whose gitlinks point at objects it doesn't have. Every
+`submodule update` JailBee runs passes `--checkout`, so a submodule declared
+`update = none` is checked out and transported like any other, and a
+configured `merge` or `rebase` mode is replaced by a checkout too. `fetch`
 additionally points each submodule's branch of the same name at the
 container's state, exactly as it does for the superproject branch — without
 switching any working tree.

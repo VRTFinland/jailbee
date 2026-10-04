@@ -1095,6 +1095,17 @@ def test_submodule_update_invokes_recursive_with_file_protocol(mocker, tmp_path)
     assert "protocol.file.allow=always" in args
 
 
+def test_submodule_update_forces_checkout_past_update_none(mocker, tmp_path):
+    """`submodule.<name>.update = none` would skip the submodule on a pull;
+    `--checkout` overrides it so the host sub-repo follows its gitlink."""
+    from jailbee import git
+
+    call = mocker.patch("jailbee.git.subprocess.call", return_value=0)
+    git.submodule_update(tmp_path)
+
+    assert "--checkout" in call.call_args.args[0]
+
+
 def test_submodule_update_raises_on_failure(mocker, tmp_path):
     from jailbee import git
 

@@ -274,8 +274,31 @@ def test_init_single_submodule_runs_config_update_sync():
 
     joined = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
     assert any("config submodule.lib.url /mnt/host-source/lib" in j for j in joined)
-    assert any("protocol.file.allow=always submodule update --init -- lib" in j for j in joined)
+    assert any(
+        "protocol.file.allow=always submodule update --init --checkout -- lib" in j for j in joined
+    )
     assert any("submodule sync -- lib" in j for j in joined)
+
+
+def test_init_forces_checkout_past_update_none():
+    """`submodule.<name>.update = none` makes a plain `update --init` print
+    "Skipping submodule" and leave an empty directory; `--checkout` overrides
+    the configured mode, so such a submodule is initialized like any other."""
+    incus = MagicMock()
+    incus.exec.side_effect = _exec_router(
+        [
+            ("config -f /home/dev/repo/.gitmodules --get-regexp", "submodule.lib.path lib\n"),
+            ("config -f /home/dev/repo/lib/.gitmodules --get-regexp", IncusError("none")),
+        ]
+    )
+
+    submodules.init_submodules_in_container(
+        incus, "c1", repo_dir="/home/dev/repo", uid=1000, gid=1000
+    )
+
+    updates = [c.args[1] for c in incus.exec.call_args_list if "update" in c.args[1]]
+    assert updates
+    assert all("--checkout" in argv for argv in updates)
 
 
 def test_init_hard_fails_when_host_submodule_uninitialized():
@@ -330,7 +353,10 @@ def test_init_two_level_recursion():
 
     # Nested level: config/update/sync must target the inner submodule
     assert any("config submodule.inner.url /mnt/host-source/lib/inner" in j for j in joined)
-    assert any("protocol.file.allow=always submodule update --init -- inner" in j for j in joined)
+    assert any(
+        "protocol.file.allow=always submodule update --init --checkout -- inner" in j
+        for j in joined
+    )
     assert any("submodule sync -- inner" in j for j in joined)
 
     # Nested commands must run with -C /home/dev/repo/lib
@@ -338,7 +364,8 @@ def test_init_two_level_recursion():
         "git -C /home/dev/repo/lib" in j and "config submodule.inner.url" in j for j in joined
     )
     assert any(
-        "git -C /home/dev/repo/lib" in j and "submodule update --init -- inner" in j for j in joined
+        "git -C /home/dev/repo/lib" in j and "submodule update --init --checkout -- inner" in j
+        for j in joined
     )
     assert any("git -C /home/dev/repo/lib" in j and "submodule sync -- inner" in j for j in joined)
 
@@ -351,8 +378,22 @@ def test_update_in_container_runs_recursive_update():
     )
     joined_calls = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
     assert any(
-        "protocol.file.allow=always submodule update --init --recursive" in j for j in joined_calls
+        "protocol.file.allow=always submodule update --init --checkout --recursive" in j
+        for j in joined_calls
     )
+
+
+def test_update_in_container_forces_checkout_past_update_none():
+    """Without `--checkout` a `submodule.<name>.update = none` submodule is
+    skipped, so a pushed gitlink bump never reaches its working tree."""
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.update_submodules_in_container(
+        incus, "c1", repo_dir="/home/dev/repo", uid=1000, env={"HOME": "/home/dev"}
+    )
+    updates = [c.args[1] for c in incus.exec.call_args_list if "update" in c.args[1]]
+    assert len(updates) == 1
+    assert "--checkout" in updates[0]
 
 
 def test_update_in_container_hard_fails_on_error():

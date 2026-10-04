@@ -53,6 +53,11 @@ before editing `## Unreleased`.
   stale HEAD "the gitlink" and warn that it needed a bump; it now places the
   branch at the real gitlink, or leaves the submodule as is with a warning when
   that commit is not present there.
+- **Submodules declared `update = none` are pushed and pulled like the rest.**
+  `jailbee new` left such a submodule as an empty directory in the container,
+  and `push`, `pull` and `checkout` never moved its working tree to the new
+  gitlink. Every `submodule update` jailbee runs now passes `--checkout`, which
+  overrides the configured update mode.
 
 ## 1.6.0 - 2026-10-02
 
