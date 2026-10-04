@@ -178,3 +178,10 @@ def test_files_defaults_off_and_accepts_true() -> None:
 
     assert RemoteSSHConfig().files is False
     assert RemoteSSHConfig(files=True).files is True
+
+
+def test_network_defaults_off_and_accepts_true() -> None:
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    assert RemoteSSHConfig().network is False
+    assert RemoteSSHConfig(network=True).network is True

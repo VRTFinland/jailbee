@@ -1083,7 +1083,7 @@ def test_network_group_keeps_mode_eligibility_and_stopped_egress_view():
     assert dashboard.group_menu_actions(dashboard.menu_actions(_ctx(has_repo=False))) == []
 
 
-def test_egress_view_remote_policy_is_independent_and_restricted_host_read_only():
+def test_egress_view_remote_policy_is_independent():
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])
@@ -1233,7 +1233,7 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     assert calls[-1].kwargs.get("overlay") is None
 
 
-def test_ssh_egress_read_view_is_read_only_even_with_full_policy(mocker, tmp_path):
+def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
@@ -1284,13 +1284,49 @@ def test_ssh_egress_read_view_is_read_only_even_with_full_policy(mocker, tmp_pat
     panels = [call.kwargs["overlay"] for call in render.call_args_list]
     egress = next(panel for panel in panels if isinstance(panel, dashboard.EgressState))
     assert egress.can_add is False
-    assert egress.can_rm is False
+    assert egress.can_rm is True
     # A refused add never opens the destination question.
     assert not any(isinstance(panel, dashboard.TextPrompt) for panel in panels)
     assert any(
         "net egress add is not permitted" in str(call.kwargs.get("notice"))
         for call in render.call_args_list
     )
+
+
+@pytest.mark.parametrize("network", [False, True])
+def test_ssh_egress_permission_by_scope_and_network_switch(network: bool) -> None:
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.dashboard_commands import permitted
+    from jailbee.dashboard_egress import EgressState, egress_argv
+
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), network=network)
+    container = EgressState("alpha", "alpha-1", ())
+    repo = EgressState("alpha", None, ())
+
+    def ok(state: EgressState, action: str) -> bool:
+        return permitted(egress_argv(state, action, "example.com"), policy, over_ssh=True)
+
+    assert ok(container, "add") is network
+    assert ok(container, "rm") is True
+    assert ok(repo, "add") is False
+    assert ok(repo, "rm") is False
+
+
+@pytest.mark.parametrize("network", [False, True])
+def test_ssh_action_menu_offers_loose_only_with_the_network_switch(network: bool) -> None:
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])
+    local = [verb for _, verb in dashboard.actions_for_container([group], "alpha-1")]
+    assert "net loose" in local
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), network=network)
+    verbs = [
+        verb
+        for _, verb in dashboard.actions_for_container(
+            [group], "alpha-1", over_ssh=True, ssh_policy=policy
+        )
+    ]
+    assert ("net loose" in verbs) is network
 
 
 def test_run_removes_only_selected_container_override(mocker, tmp_path):

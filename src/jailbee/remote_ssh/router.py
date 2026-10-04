@@ -226,8 +226,9 @@ def command_path(argv: Sequence[str]) -> str:
 #     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
 #     `net migrate`, `registry up`/`down`, `display up`/`down`, `litellm up`/`down`/`login`/
 #     `logout`/`logs`;
-#   - persistent network policy: `net egress add`/`rm` accept any address,
-#     the host's own and its LAN's included;
+#   - widening a container's network: `net loose` and `net egress add`
+#     can open the host's own and its LAN's addresses to it, so both are
+#     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry), `port to-container`;
@@ -252,7 +253,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net refresh",
         "net unregister",
         "net egress add",
-        "net egress rm",
+        "net loose",
         "registry up",
         "registry down",
         "display up",
@@ -288,6 +289,11 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
 # always opens a window on the host.
 _GUI_APP_COMMANDS: frozenset[str] = frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
 
+# The network-widening commands that `remote.ssh.network` turns from host
+# commands into container commands. Narrowing (`net strict`, `net egress rm`)
+# is a container command outright.
+_NETWORK_WIDENING_COMMANDS: frozenset[str] = frozenset({"net loose", "net egress add"})
+
 
 @dataclass(frozen=True)
 class RemoteUnlocks:
@@ -298,17 +304,20 @@ class RemoteUnlocks:
     """
 
     gui: bool = False
+    network: bool = False
 
     @classmethod
     def of(cls, config: RemoteSSHConfig | None) -> RemoteUnlocks:
         """The switches `config` turns on; all off without a config."""
         if config is None:
             return cls()
-        return cls(gui=config.gui)
+        return cls(gui=config.gui, network=config.network)
 
     def commands(self) -> frozenset[str]:
         """Host commands these switches turn into container commands."""
-        return _GUI_APP_COMMANDS if self.gui else frozenset()
+        return (_GUI_APP_COMMANDS if self.gui else frozenset()) | (
+            _NETWORK_WIDENING_COMMANDS if self.network else frozenset()
+        )
 
 
 # The default for every `unlocks` parameter: nothing unlocked. A shared
@@ -353,7 +362,7 @@ _CONTAINER_COMMANDS = frozenset(
         "litellm status",
         "net egress export",
         "net egress ls",
-        "net loose",
+        "net egress rm",
         "net status",
         "net strict",
         "new",
@@ -428,6 +437,9 @@ def allowed_command_paths(
 #   - `new --mount` bind-mounts the host repo read-write, `.git` included, so
 #     the container could plant a hook or `core.fsmonitor` that the host's own
 #     git later runs;
+#   - `net egress add`/`rm` `--repo` writes the host-local repo layer
+#     (`repos/<prefix>.yaml`) and so changes every container of the repo, not
+#     only the session's own;
 #   - `pr`/`submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
 #     on the host's display;
 #   - `--yes` on the commands that publish to GitHub with the host's own
@@ -440,6 +452,8 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     # capability. A dashboard command inside a console must not forge it.
     "dashboard": frozenset({"remote_policy_json"}),
     "new": frozenset({"mount"}),
+    "net egress add": frozenset({"repo"}),
+    "net egress rm": frozenset({"repo"}),
     "pr": frozenset({"web", "open_only", "yes"}),
     "submodule pr": frozenset({"web", "open_only", "yes"}),
     "review apply": frozenset({"yes"}),

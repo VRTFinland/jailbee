@@ -441,6 +441,8 @@ def _startup_summary(
     ]
     if config.files:
         lines.append("  sftp/scp: on (container repo directories only)")
+    if config.network:
+        lines.append("  network widening: on (net loose, net egress add)")
     if restricted and config.commands.mode == "allowlist":
         refused = sorted(
             path

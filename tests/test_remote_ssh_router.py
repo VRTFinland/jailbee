@@ -1022,3 +1022,110 @@ def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
     unlocks = RemoteUnlocks.of(RemoteSSHConfig(gui=True))
     assert unlocks.commands() == frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
     assert "gui" not in unlocks.commands()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "loose", "box"),
+        ("net", "egress", "add", "pypi.org", "box"),
+        ("egress", "add", "pypi.org", "box"),  # hidden alias
+    ],
+)
+def test_network_widening_is_a_host_command_unless_the_feature_is_on(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match="manages the host itself"):
+        policy_allows(argv, FULL)
+    assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True)) in {
+        "net loose",
+        "net egress add",
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "strict", "box"),
+        ("net", "egress", "rm", "pypi.org", "box"),
+        ("egress", "rm", "pypi.org", "box"),  # hidden alias
+    ],
+)
+def test_network_narrowing_is_always_allowed(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(argv, FULL) in {"net strict", "net egress rm"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "egress", "add", "pypi.org", "--repo"),
+        ("net", "egress", "add", "--repo", "pypi.org"),
+        ("egress", "add", "pypi.org", "--repo"),
+        ("net", "egress", "rm", "pypi.org", "--repo"),
+        ("net", "egress", "rm", "--repo", "pypi.org"),
+    ],
+)
+def test_repo_scope_egress_is_refused_even_with_network_on(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match="may not set --repo"):
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True))
+
+
+def test_network_widening_still_respects_an_allowlist(monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["net strict"])
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(("net", "loose", "box"), allow, unlocks=RemoteUnlocks(network=True))
+
+
+def test_unrestricted_sessions_keep_every_network_command(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(("net", "loose", "box"), FULL, restrict_host=False) == "net loose"
+    assert (
+        policy_allows(("net", "egress", "add", "x.org", "--repo"), FULL, restrict_host=False)
+        == "net egress add"
+    )
+
+
+def test_allowed_command_paths_follow_the_network_switch() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks, allowed_command_paths
+
+    off = allowed_command_paths(FULL)
+    on = allowed_command_paths(FULL, unlocks=RemoteUnlocks(network=True))
+    assert {"net loose", "net egress add"}.isdisjoint(off)
+    assert {"net strict", "net egress rm"} <= off
+    assert {"net loose", "net egress add", "net strict", "net egress rm"} <= on
+
+
+def test_remote_unlocks_network_unlocks_widening_only() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    assert RemoteUnlocks.of(RemoteSSHConfig(network=True)).commands() == frozenset(
+        {"net loose", "net egress add"}
+    )
+    both = RemoteUnlocks(gui=True, network=True).commands()
+    assert {"chrome", "net loose"} <= both
+
+
+def test_route_threads_the_network_flag_to_the_command_policy(repo, engine: Engine) -> None:
+    off = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))
+    on = off.model_copy(update={"network": True})
+
+    with pytest.raises(RouteError, match="manages the host"):
+        route("--repo project net loose feat", off, engine=engine)
+    assert route("--repo project net loose feat", on, engine=engine).kind == "command"
+
+
+def test_every_leaf_is_classified_with_network_on_too() -> None:
+    from jailbee.remote_ssh import router
+
+    unlocks = router.RemoteUnlocks(network=True)
+    paths = {p for p in known_command_paths() if not router.is_host_command(p, unlocks=unlocks)}
+    assert {"net loose", "net egress add"} <= paths
+    assert paths <= (router._CONTAINER_COMMANDS | router._NETWORK_WIDENING_COMMANDS)

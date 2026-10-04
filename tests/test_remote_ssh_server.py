@@ -1373,6 +1373,29 @@ def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, c
     assert "allowlisted but refused while host restrictions are on: gui" in caplog.text
 
 
+def test_startup_reports_network_widening_when_on(listener, caplog, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, network=True)))
+
+    assert "network widening: on (net loose, net egress add)" in caplog.text
+
+
+def test_startup_does_not_call_net_loose_refused_when_network_is_on(listener, caplog, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    config = RemoteSSHConfig(
+        exec=True,
+        network=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "net loose", "setup"]),
+    )
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+
+    assert "allowlisted but refused while host restrictions are on: setup" in caplog.text
+
+
 def test_process_factory_passes_the_run_update_watch(listener, mocker):
     # A plain Mock: the factory's coroutine is never awaited here.
     handle = mocker.patch.object(server, "handle_process", new=Mock())

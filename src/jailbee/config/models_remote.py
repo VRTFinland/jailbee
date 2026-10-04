@@ -92,6 +92,16 @@ class RemoteSSHConfig(BaseModel):
             "Off by default."
         ),
     )
+    network: bool = Field(
+        default=False,
+        description=(
+            "Let remote sessions widen a container's network: `net loose` and "
+            "container-scope `net egress add`. Either can open the host's LAN "
+            "to the container. Narrowing (`net strict`, `net egress rm`) is "
+            "always allowed; `--repo` on `net egress add`/`rm` never is. "
+            "Off by default."
+        ),
+    )
     files: bool = Field(
         default=False,
         description=(

@@ -273,7 +273,7 @@ def test_build_specs_covers_every_config_leaf():
     Phase 2 of LiteLLM adds `accounts`, `egress` and `extra`: 33 + 3 = 36.
     Phase 3 of LiteLLM adds `autostart`: 36 + 1 = 37. The host-level
     `agent_instructions` field makes 38, `remote.ssh.gui` makes 39, and
-    `remote.ssh.files` the final 40.
+    `remote.ssh.files` 40.
     The `pr` block (`agent`, `ai_description`, `ai_branch`, `prompt`, `model`,
     `timeout`) adds six repo-level leaves: 95 + 6 = 101. The Claude agent's
     old `ai_pr_*` fields were not counted, since `agents` is a map the editor
@@ -281,11 +281,12 @@ def test_build_specs_covers_every_config_leaf():
     The `egress_proxy_always` bool (always-on egress proxy control) adds one:
     101 + 1 = 102.
     `dashboard.refresh` (`interval`, `git_interval`, `git`) adds three: 40 + 3 = 43.
+    `remote.ssh.network` makes 44.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 102
-    assert len(build_specs(GlobalConfig)) == 43
+    assert len(build_specs(GlobalConfig)) == 44
 
 
 def test_a_default_factory_field_reports_its_real_default():
