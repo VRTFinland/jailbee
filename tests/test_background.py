@@ -284,8 +284,7 @@ def test_job_label_dead_destroy_job_in_starting_keeps_worker_gone_suffix(mocker)
 
     mocker.patch.object(background, "worker_alive", return_value=False)
     assert (
-        background.job_label(background.PHASE_STARTING, 1234, kind=JOB_DESTROY)
-        == "starting (dead)"
+        background.job_label(background.PHASE_STARTING, 1234, kind=JOB_DESTROY) == "starting (dead)"
     )
 
 
