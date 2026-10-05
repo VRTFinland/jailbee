@@ -796,8 +796,11 @@ _PR_MENU_VERBS = frozenset({"pr --open", "pr", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
-# Hoist the browser in the terminal; legacy leaves remain groupable for callers.
-_PENDING_APPLY_VERBS = frozenset({"outbox browse", "review apply", "issue apply"})
+# Legacy apply leaves only ever exist with pending work: the terminal hoists
+# them. "Outbox" is always offered, so `menu_actions` places it by its count.
+_PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
+_SHELL_VERB = frozenset({"shell"})
+_TMUX_VERB = frozenset({"tmux"})
 
 
 def group_menu_actions(
@@ -811,9 +814,9 @@ def group_menu_actions(
     Relative order within each submenu and among ungrouped leaves is retained;
     this function never changes eligibility or adds executable verbs.
 
-    ``terminal_order`` is the terminal dashboard's presentation: pending
-    outbox browser leads the menu and ``Git →`` sits above ``PR →``. It is
-    opt-in because the Qt dashboard shares this function and keeps its order.
+    ``terminal_order`` is the terminal dashboard's presentation, see
+    :func:`_terminal_order`. It is opt-in because the Qt dashboard shares this
+    function and keeps its order.
     """
     pr_verbs = _PR_MENU_VERBS - _PENDING_APPLY_VERBS if terminal_order else _PR_MENU_VERBS
     launch_actions = tuple(action for action in actions if action[0].startswith("Launch "))
@@ -842,16 +845,52 @@ def group_menu_actions(
                 seen.add("network")
         else:
             result.append(action)
-    if not terminal_order:
-        return result
-    pending = [i for i in result if isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS]
-    rest = [i for i in result if not (isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS)]
-    labels = [i.label if isinstance(i, MenuGroup) else None for i in rest]
-    if "Git →" in labels and "PR →" in labels:
-        git_at, pr_at = labels.index("Git →"), labels.index("PR →")
-        if git_at > pr_at:
-            rest[git_at], rest[pr_at] = rest[pr_at], rest[git_at]
-    return [*pending, *rest]
+    return _terminal_order(result) if terminal_order else result
+
+
+def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
+    """The terminal dashboard's arrangement of already grouped menu items.
+
+    Pending apply leaves lead and ``Launch →`` follows the session entry.
+    ``Git →``, ``PR →``, ``Lifecycle →`` (restart/stop/destroy; a lone Destroy
+    stays a leaf) and ``Network →`` form one block, in that order, where the
+    first of them used to be. "Open shell" is not listed: the ``s`` key and
+    the ``!`` prompt still reach it, and it stays among the offered leaves
+    those gate on. Everything else keeps its relative order.
+    """
+
+    def is_leaf(item: MenuItem, verbs: frozenset[str]) -> bool:
+        return isinstance(item, tuple) and item[1] in verbs
+
+    def group(label: str) -> MenuGroup | None:
+        return next((i for i in items if isinstance(i, MenuGroup) and i.label == label), None)
+
+    pending = [i for i in items if is_leaf(i, _PENDING_APPLY_VERBS)]
+    rest = [
+        i for i in items if not is_leaf(i, _PENDING_APPLY_VERBS) and not is_leaf(i, _SHELL_VERB)
+    ]
+
+    launch = group("Launch →")
+    if launch is not None:
+        rest.remove(launch)
+        session = next((n for n, i in enumerate(rest) if is_leaf(i, _TMUX_VERB)), -1)
+        rest.insert(session + 1, launch)
+
+    lifecycle = [i for i in rest if isinstance(i, tuple) and i[1] in _CONTAINER_LIFECYCLE_VERBS]
+    git, pr, network = group("Git →"), group("PR →"), group("Network →")
+    block: list[MenuItem] = [g for g in (git, pr) if g is not None]
+    block += [MenuGroup("Lifecycle →", tuple(lifecycle))] if len(lifecycle) > 1 else lifecycle
+    block += [network] if network is not None else []
+    members = {id(i) for i in (git, pr, network, *lifecycle) if i is not None}
+
+    arranged: list[MenuItem] = []
+    for item in rest:
+        if id(item) not in members:
+            arranged.append(item)
+        elif block:
+            arranged.extend(block)
+            block = []
+    return [*pending, *arranged]
 
 
 # The GitStatus cell values that mean "there is provably nothing to do". Every
@@ -884,6 +923,16 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
     return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
 
 
+def _outbox_pending(git: GitStatus | None) -> int | None:
+    """Manifests waiting in the PR and issue outboxes, or None when unprobed."""
+    if git is None:
+        return None
+    counts = (git.pending_pr_actions, git.pending_issue_actions)
+    if all(n is None for n in counts):
+        return None
+    return sum(n or 0 for n in counts)
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -899,8 +948,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
-    Running rows lead with session and app actions, followed by job diagnostics,
-    Outbox, PR leaves, Git leaves, network modes and lifecycle actions.
+    Running rows lead with session actions, Outbox and app actions, followed by
+    job diagnostics, PR leaves, Git leaves, network modes and lifecycle actions.
     Git pull and diff are hidden when status proves they would do nothing;
     unknown status still offers them. Stopped rows lead with Start, followed
     by eligible diagnostics and Open PR, then Destroy.
@@ -915,6 +964,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     "Outbox" (``outbox browse``) is always available on addressable running
     containers, including mount mode and unknown/empty counts. Its fixed stores
     do not require a clone or an existing PR; publication stays in the browser.
+    With manifests pending in the PR or issue outbox (read from
+    ``ctx.git_status``) it leads the menu and
+    carries the count; otherwise it follows "Open shell".
 
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
@@ -925,9 +977,12 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         return []
     actions: list[tuple[str, str]] = []
     if ctx.state == "Running":
-        actions.extend(
-            [("Attach tmux", "tmux"), ("Open shell", "shell"), ("Outbox", "outbox browse")]
-        )
+        session = [("Attach tmux", "tmux"), ("Open shell", "shell")]
+        pending = _outbox_pending(ctx.git_status)
+        if pending:
+            actions.extend([(f"Outbox ({pending} pending)", "outbox browse"), *session])
+        else:
+            actions.extend([*session, ("Outbox", "outbox browse")])
         for app in [] if (ctx.remote and not ctx.gui_remote) else ctx.apps:
             actions.append((f"Launch {app.label}", app.verb))
     elif ctx.state == "Stopped":
