@@ -2125,7 +2125,7 @@ def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
         "Git →": "g",
         "PR →": "p",
         "Lifecycle →": "l",
-        "Network →": "n",
+        "Network →": "w",
     }
 
 
@@ -2159,7 +2159,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
 def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
     menu = dashboard.MenuState("alpha-x", dashboard.menu_actions(_ctx(state="Stopped")))
 
-    assert _hotkeys(menu) == {"Start": "s", "Network →": "n", "Destroy": "D"}
+    assert _hotkeys(menu) == {"Start": "s", "Network →": "w", "Destroy": "D"}
 
 
 def test_menu_hotkeys_cover_the_repo_menu():
@@ -2185,12 +2185,114 @@ def test_menu_hotkeys_cover_the_repo_menu():
         "New from PR…": "p",
         "Credential group…": "c",
         "Accounts…": "a",
-        "Network →": "e",
-        "Apply config…": "l",
+        "Network →": "w",
+        "Apply config…": "y",
         "Diagnostics →": "d",
         "Prune stale containers…": "r",
         "Fold": "f",
     }
+
+
+def _levels(menu: dashboard.MenuState | dashboard.RepoMenuState):
+    """Every level of ``menu`` as (group label or None, entries)."""
+    root = dashboard._menu_entries(menu)
+    yield None, root
+    for item in root:
+        if isinstance(item, dashboard.MenuGroup):
+            yield item.label, item.actions
+
+
+def _assert_every_key_is_fixed(menu: dashboard.MenuState | dashboard.RepoMenuState) -> None:
+    for group, entries in _levels(menu):
+        if group == "Launch →":
+            continue  # app labels come from the repo's config: the one dynamic level
+        for item, key in zip(entries, dashboard.menu_hotkeys(entries), strict=True):
+            preferred = dashboard._preferred_menu_key(item)
+            assert preferred is not None, f"{item} has no fixed key"
+            assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
+
+
+_LIFECYCLE_SUBSETS = (
+    ("restart", "stop", "destroy"),
+    ("restart",),
+    ("stop",),
+    ("destroy",),
+    (),
+)
+
+
+@pytest.mark.parametrize("state", ["Running", "Stopped"])
+@pytest.mark.parametrize("lifecycle", _LIFECYCLE_SUBSETS)
+def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle):
+    """Every entry keeps its own fixed key in every combination that can co-occur.
+
+    Fails when a new menu entry has no `_MENU_KEYS` letter, or when two entries
+    that can be on one level at once share one — either makes a key depend on
+    which other entries happen to be visible.
+    """
+    autostart = (
+        ("Autostart status", dashboard.dact.AUTOSTART_STATUS),
+        ("Cancel autostart…", dashboard.dact.AUTOSTART_CANCEL),
+    )
+    before = (
+        ("Snapshots…", dashboard.dact.SNAPSHOTS),
+        ("Mount…", dashboard.dact.MOUNT_ADD),
+        ("Unmount…", dashboard.dact.MOUNT_REMOVE),
+    )
+    for pr_number, pr_author, job, network, extras, pending in itertools.product(
+        (None, 7),
+        (False, True),
+        ("none", "running", "failed"),
+        ("strict", None),
+        (False, True),
+        (False, True),
+    ):
+        ctx = _ctx(
+            state=state,
+            pr_number=pr_number,
+            pr_author=pr_author,
+            has_job=job != "none",
+            job_running=job == "running",
+            job_clearable=job == "failed",
+            current_network=network,
+            apps=_apps("ide", "chrome"),
+            git_status=dataclasses.replace(_dirty(), pending_pr_actions=2) if pending else None,
+        )
+        actions = [
+            a
+            for a in dashboard.menu_actions(ctx)
+            if a[1] not in dashboard._CONTAINER_LIFECYCLE_VERBS or a[1] in lifecycle
+        ]
+        if extras:
+            actions = dashboard._insert_after_job(actions, autostart)
+            actions = dashboard._insert_before_network(actions, before)
+        actions = dashboard._with_credential_group(actions)
+        _assert_every_key_is_fixed(dashboard.MenuState("alpha-x", actions))
+
+
+@pytest.mark.parametrize("drop", [None, "credential-group", "accounts", "apply", "prune"])
+def test_repo_menu_keys_never_move_whatever_the_policy_hides(drop):
+    actions: list[dashboard.MenuItem] = [
+        ("New container…", "new"),
+        ("New from PR…", "new-pr"),
+        ("Credential group…", "credential-group"),
+        ("Accounts…", "accounts"),
+        dashboard.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
+        ("Apply config…", dashboard.dact.REPO_APPLY),
+        dashboard.MenuGroup(
+            dashboard.dact.DIAGNOSTICS_LABEL,
+            (
+                ("Doctor", dashboard.dact.REPO_DOCTOR),
+                ("Disk usage", dashboard.dact.REPO_DISK_USAGE),
+            ),
+        ),
+        ("Prune stale containers…", dashboard.dact.REPO_PRUNE),
+        ("Fold", "fold"),
+    ]
+    menu = dashboard.RepoMenuState(
+        "alpha", [a for a in actions if isinstance(a, dashboard.MenuGroup) or a[1] != drop]
+    )
+    _assert_every_key_is_fixed(menu)
 
 
 def test_menu_hotkeys_fall_back_to_a_free_label_letter_then_digits():

@@ -1570,10 +1570,13 @@ def move_menu(menu: MenuState | RepoMenuState, delta: int) -> MenuState | RepoMe
 # Each menu entry's own key, by leaf verb (labels carry counts) or group label.
 # Scoped to the level that is open, so `l` is Lifecycle at the root and `git
 # pull` inside Git. Where a dashboard quick key exists the letter matches it,
-# and Destroy stays a capital as there. Entries not named here, and those that
-# lose a clash, take a free letter of their label (see `menu_hotkeys`).
+# and Destroy stays a capital as there. Every entry a menu can show has one,
+# unique among the entries that can share its level, so no key moves when
+# another entry comes or goes; the tests enumerate those combinations. Only
+# app launches (`Launch →`, labels from the repo's config) take a free letter
+# of their label (see `menu_hotkeys`).
 _MENU_KEYS: dict[str, str] = {
-    # container root
+    # container root (start and a lone stop never share it)
     "tmux": "t",
     "outbox browse": "o",
     "Launch →": "a",
@@ -1581,13 +1584,16 @@ _MENU_KEYS: dict[str, str] = {
     "job log": "b",
     "job log --follow": "b",
     "job clear": "x",
-    "credential-group": "c",
+    dact.AUTOSTART_STATUS: "A",
+    dact.AUTOSTART_CANCEL: "C",
     "Git →": "g",
     "PR →": "p",
     "Lifecycle →": "l",
-    "Network →": "n",
-    "review apply": "r",
-    "issue apply": "i",
+    dact.SNAPSHOTS: "n",
+    dact.MOUNT_ADD: "m",
+    dact.MOUNT_REMOVE: "u",
+    "credential-group": "c",
+    "Network →": "w",
     # Git →
     "merge": "m",
     "git pull": "l",
@@ -1598,18 +1604,23 @@ _MENU_KEYS: dict[str, str] = {
     # PR →
     "pr --open": "p",
     "pr": "P",
-    # Lifecycle →
+    # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
     "stop": "s",
     "destroy": "D",
-    # Network →
+    # Network → (modes take their own initial, see `_preferred_menu_key`)
     "net egress ls": "e",
     # repo menu
     "new": "n",
     "new-pr": "p",
     "accounts": "a",
+    dact.REPO_APPLY: "y",
     dact.DIAGNOSTICS_LABEL: "d",
+    dact.REPO_PRUNE: "r",
     "fold": "f",
+    # Diagnostics →
+    dact.REPO_DOCTOR: "d",
+    dact.REPO_DISK_USAGE: "u",
 }
 
 # Tokens the open menu already answers (`run`'s overlay branch); their keys
