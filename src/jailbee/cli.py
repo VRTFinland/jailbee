@@ -356,6 +356,26 @@ def remote_console_cmd(
     raise typer.Exit(run(repo, policy_json))
 
 
+@app.command("console")
+def console_cmd(
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo", help="Start in this registered repository (default: the current one)."
+        ),
+    ] = None,
+) -> None:
+    """Interactive `jb[repo]>` prompt: run jailbee commands with completion and history.
+
+    Starts in the registered repo containing the current directory, or asks
+    which one. `use` switches repo, `dashboard` opens the dashboard, `exit`
+    leaves.
+    """
+    from jailbee.remote_ssh.console import run_local
+
+    raise typer.Exit(run_local(repo))
+
+
 ConfigOption = Annotated[
     Path | None,
     typer.Option("--config", "-c", help="Path to config.yaml"),

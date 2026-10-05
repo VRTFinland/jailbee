@@ -1195,3 +1195,9 @@ def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None
     assert permitted(argv, on, over_ssh=True)
     assert permitted(["new", "feat", "--net", "strict"], off, over_ssh=True)
     assert permitted(argv, off, over_ssh=False)
+
+
+def test_console_is_a_host_command() -> None:
+    from jailbee.remote_ssh.router import is_host_command
+
+    assert is_host_command("console")

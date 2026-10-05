@@ -10834,3 +10834,10 @@ def test_setup_offer_is_never_made_over_ssh(mocker, monkeypatch, marker):
     consume.assert_called_once()
     pending.assert_not_called()
     confirm.assert_not_called()
+
+
+def test_console_command_delegates_to_run_local(mocker) -> None:
+    run_local = mocker.patch("jailbee.remote_ssh.console.run_local", return_value=3)
+    result = CliRunner().invoke(app, ["console", "--repo", "x"])
+    assert result.exit_code == 3
+    run_local.assert_called_once_with("x")

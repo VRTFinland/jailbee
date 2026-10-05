@@ -1138,3 +1138,63 @@ def test_console_runs_a_gui_launcher_only_when_the_gui_flag_is_on(
     run_with(False).assert_not_called()
     assert "manages the host itself" in capsys.readouterr().err
     run_with(True).assert_called_once()
+
+
+def test_local_policy_is_unrestricted() -> None:
+    policy = console.local_policy()
+    assert policy.commands.mode == "full"
+    assert policy.restrict_host is False
+    assert policy.excluded_repos == []
+    assert policy.dashboard is True
+
+
+def test_cwd_repo_picks_deepest_containing_root(tmp_path: Path) -> None:
+    outer = tmp_path / "outer"
+    inner = outer / "vendor" / "inner"
+    inner.mkdir(parents=True)
+    repos = [console.RepoChoice("outer", outer), console.RepoChoice("inner", inner)]
+    assert console.cwd_repo(repos, inner / "src") == repos[1]
+    assert console.cwd_repo(repos, outer / "docs") == repos[0]
+    assert console.cwd_repo(repos, tmp_path) is None
+
+
+def test_run_local_starts_in_cwd_repo(console_env: ConsoleEnv, monkeypatch) -> None:
+    monkeypatch.chdir(console_env.other_root)
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    assert console_env.prompt.prompt.call_args.args[0] == "jb[other]> "
+
+
+def test_run_local_outside_any_repo_uses_picker(console_env: ConsoleEnv, mocker, tmp_path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    mocker.patch("jailbee.remote_ssh.console.Path.cwd", return_value=elsewhere)
+    picker = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("project", console_env.repo_root),
+    )
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    picker.assert_called_once()
+
+
+def test_run_local_dashboard_has_no_remote_policy(console_env: ConsoleEnv, mocker) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
+    )
+    console_env.lines(["dashboard", "exit"])
+    assert console.run_local("project") == 0
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "dashboard"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_run_local_allows_host_commands(console_env: ConsoleEnv, mocker) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
+    )
+    console_env.lines(["config edit", "exit"])
+    assert console.run_local("project") == 0
+    assert run.call_args.args[0] == [sys.executable, "-m", "jailbee", "config", "edit"]

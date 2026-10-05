@@ -232,7 +232,8 @@ def command_path(argv: Sequence[str]) -> str:
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry), `port to-container`;
-#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`.
+#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`;
+#   - a second console: `console` runs with the local, unrestricted policy;
 # `tests/test_remote_ssh_router.py` partitions every public leaf between this
 # set and the container-side rest, so a new command fails the suite until
 # someone decides which side it is on.
@@ -280,6 +281,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "firefox",
         "browser",
         "apps run",
+        "console",
     }
 )
 
