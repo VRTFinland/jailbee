@@ -223,7 +223,7 @@ remote:
     listen: 127.0.0.1
     port: 8022
     dashboard: true
-    shell: true
+    console: true
     exec: true
     commands:
       mode: allowlist
@@ -248,7 +248,7 @@ journalctl --user -u jailbee-ssh.service -n 30
 ```
 
 Expect `installed`, `enabled`, and `active` to be `yes`, listener
-`127.0.0.1:8022`, entry points `dashboard, shell, exec`, and one authorized
+`127.0.0.1:8022`, entry points `dashboard, console, exec`, and one authorized
 key. The journal must not print a complete remote argv, key material, or
 terminal input.
 
@@ -314,7 +314,7 @@ First prove the PTY requirement:
 
 ```bash
 ssh "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
-ssh "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost console --repo "$JB_SSH_PREFIX"
 ```
 
 Both must fail with `This entry point requires a PTY; retry with ssh -t.` and
@@ -322,7 +322,7 @@ status 2. With `-t`, the existing interfaces should render normally:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
-ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost console --repo "$JB_SSH_PREFIX"
 ```
 
 In the dashboard, verify only registered repos appear. Press `n` on this repo,
@@ -5290,7 +5290,7 @@ deviation; the setup B results decide whether its "experimental" banner goes.
    host-key prompt naming `jailbee-devbox`, then the enabled entry points.
 3. `ssh -t jb dashboard`. Expected: the remote dashboard, registered repos
    only; arrow keys and quit work from the macOS terminal.
-4. `ssh -t jb shell`, pick a repo, run `ls`. Then `ssh -t jb -- --repo
+4. `ssh -t jb console`, pick a repo, run `ls`. Then `ssh -t jb -- --repo
    PREFIX shell <container>`. Expected: a shell inside the container.
 5. With an `ssh jb` session open, Windows App → Add PC `localhost:3389`,
    connect, accept the certificate. Expected: the empty weston desktop.

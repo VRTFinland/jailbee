@@ -27,7 +27,7 @@ Common conventions:
 - [Config (`config show|validate|init|edit|migrate`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
-- [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
+- [Enter & run (`shell`, `console`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
 - [PR review outbox (`review apply|ls|show|drop`)](#pr-review-outbox)
@@ -99,7 +99,7 @@ installation nor `jailbee setup` enables the service.
 | `jb remote ssh disable` | Stop and disable the unit. Leaves global config, client keys and host key intact. |
 | `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
 | `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
-| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--shell\|--no-shell] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]... [--restrict-host\|--no-restrict-host] [--files\|--no-files]` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. `--files` turns on `sftp`/`scp` into a container's repo directory for this run (see Security → File transfer); the persistent setting is `remote.ssh.files: true` in `global.yaml`, and changing it needs `jb remote ssh restart`. |
+| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--console\|--no-console] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]... [--restrict-host\|--no-restrict-host] [--files\|--no-files]` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. `--files` turns on `sftp`/`scp` into a container's repo directory for this run (see Security → File transfer); the persistent setting is `remote.ssh.files: true` in `global.yaml`, and changing it needs `jb remote ssh restart`. |
 | `jb remote ssh key add [PATH\|-]` | Read one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt (no argument, terminal) / piped stdin (no argument, no terminal) — reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
 | `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
 | `jb remote ssh key rm [SHA256:FINGERPRINT]` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
@@ -109,7 +109,7 @@ grammar is exactly:
 
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
-ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
@@ -118,9 +118,11 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
+The old `shell` spelling (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+
 A commandless login prints help listing only configured entry points and exits
 zero by default. `remote.ssh.default_entrypoint` in the host's `global.yaml`
-can select `dashboard` or `shell` instead (the selected entry point must be
+can select `dashboard` or `console` instead (the selected entry point must be
 enabled). Explicit `help` always prints the list. `dashboard` and the
 restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
@@ -833,6 +835,7 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | Command | Notes |
 |---|---|
 | `jailbee shell [NAME]` | Interactive shell, lands in `~/<container_prefix>` (the clone); falls back to `$HOME` if there's no clone. Waits if the container is being created in the background. |
+| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `use [PREFIX]` switches repo, `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec [NAME] -- CMD...` | Run a command as the dev user. `NAME` comes first, so the command must follow it (`jailbee exec NAME -- cmd`); both are asked for on a terminal and are required arguments for you (exit 2 otherwise). `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 

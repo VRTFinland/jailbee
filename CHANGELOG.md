@@ -25,6 +25,14 @@ before editing `## Unreleased`.
   proxy to containers with a wildcard. Container-scope wildcards need the work
   network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net
   status` and `jailbee doctor` report the proxy.
+- **`jailbee console`.** An interactive `jb[<prefix>]>` prompt on your own
+  terminal, with tab completion and history. It starts in the registered repo
+  containing the current directory (or asks which), `use` switches repo,
+  `dashboard` opens the dashboard and `exit` leaves. It applies no
+  `remote.ssh` restrictions locally.
+- **`default_command`.** A host-level key in `global.yaml` choosing what bare
+  `jailbee` opens on a terminal: `dashboard` (default), `gui`, `console` or
+  `help`. A broken `global.yaml` falls back to the dashboard with a warning.
 - **`remote.ssh.network`.** Lets a remote SSH session widen a container's
   network — `jailbee net loose`, `jailbee new --net loose` and
   container-scope `jailbee net egress add` — which can open the host's LAN to it, so it is off by default.
@@ -33,6 +41,9 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **Bare `jailbee` opens the dashboard on a terminal.** It used to print the
+  help text; `default_command` picks something else. Without a terminal (a
+  pipe, a script, `JAILBEE_NONINTERACTIVE`) it still prints help and exits 0.
 - **Every command runs without arguments.** A value left out — a container,
   snapshot, port forward, job, manifest, group, key, or a free-text value such
   as `jailbee new`'s name or `jailbee exec`'s command — is asked for on a
@@ -46,6 +57,15 @@ before editing `## Unreleased`.
 - **`jailbee net loose` and `jailbee new --net loose` over remote SSH need
   `remote.ssh.network: true`.** They were allowed by default, although loose
   mode can reach the host's LAN.
+
+### Deprecated
+
+- The remote SSH `shell` entry point is now `console`: `remote.ssh.shell`,
+  `remote.ssh.default_entrypoint: shell`, `ssh … shell` and
+  `jailbee remote ssh serve --shell` move to `remote.ssh.console`,
+  `default_entrypoint: console`, `ssh … console` and `serve --console`. The old
+  spelling still works and is removed in 2.0.0; `jailbee config migrate --apply`
+  renames the keys in `global.yaml`.
 
 ### Fixed
 
