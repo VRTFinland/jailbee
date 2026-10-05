@@ -320,14 +320,26 @@ def test_implicit_outbox_group_config_conflicts(argv):
         lift_repo(argv)
 
 
-@pytest.mark.parametrize("command", [["pr", "feat"], ["new", "feat"], ["outbox", "apply", "feat", "pr/a.json"]])
-@pytest.mark.parametrize("option", [["-yc/tmp/beta.yaml"], ["-yc", "/tmp/beta.yaml"], ["-yc=/tmp/beta.yaml"], ["-y", "--config=/tmp/beta.yaml"]])
+@pytest.mark.parametrize(
+    "command", [["pr", "feat"], ["new", "feat"], ["outbox", "apply", "feat", "pr/a.json"]]
+)
+@pytest.mark.parametrize(
+    "option",
+    [
+        ["-yc/tmp/beta.yaml"],
+        ["-yc", "/tmp/beta.yaml"],
+        ["-yc=/tmp/beta.yaml"],
+        ["-y", "--config=/tmp/beta.yaml"],
+    ],
+)
 def test_clustered_config_conflicts_before_selector_is_lost(command, option):
     with pytest.raises(RepoOptionError, match="--config and --repo"):
         lift_repo([*command, *option, "--repo", "alpha"])
 
 
-@pytest.mark.parametrize("value", ["-changes", "--config=/tmp/beta.yaml", "--config", "-c", "ordinary title"])
+@pytest.mark.parametrize(
+    "value", ["-changes", "--config=/tmp/beta.yaml", "--config", "-c", "ordinary title"]
+)
 @pytest.mark.parametrize("attached", [False, True])
 def test_config_looking_title_is_an_ordinary_value(value, attached):
     title = [f"--title={value}"] if attached else ["--title", value]
@@ -348,6 +360,7 @@ def test_config_detection_never_runs_parameter_callbacks(mocker):
     for param in command.params:
         mocker.patch.object(param, "callback", callback)
     assert lift_repo(["pr", "--title", "-changes", "--repo", "alpha"]) == (
-        "alpha", ["pr", "--title", "-changes"]
+        "alpha",
+        ["pr", "--title", "-changes"],
     )
     callback.assert_not_called()
