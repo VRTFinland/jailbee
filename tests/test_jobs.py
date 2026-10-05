@@ -88,9 +88,9 @@ def test_job_field_specs_phase_cell_marks_a_dead_worker(mocker) -> None:
 
     mocker.patch.object(background, "worker_alive", return_value=False)
     specs = {f.name: f for f in jobs.job_field_specs(now=NOW, all_repos=False)}
-    assert "worker gone" in specs["phase"].cell(_job(phase="cloning"))
+    assert "(dead)" in specs["phase"].cell(_job(phase="cloning"))
     # A failed row is labelled by its phase, not by the worker probe.
-    assert "worker gone" not in specs["phase"].cell(_job(phase="failed"))
+    assert "(dead)" not in specs["phase"].cell(_job(phase="failed"))
 
 
 def test_job_field_specs_phase_cell_shows_destroying_for_live_destroy_job(mocker) -> None:
@@ -114,7 +114,7 @@ def test_job_field_specs_phase_cell_dead_destroy_job_keeps_worker_gone(mocker) -
     mocker.patch.object(background, "worker_alive", return_value=False)
     specs = {f.name: f for f in jobs.job_field_specs(now=NOW, all_repos=False)}
     cell = specs["phase"].cell(_job(phase="starting", op_kind=JOB_DESTROY))
-    assert "starting (worker gone)" in cell
+    assert "starting (dead)" in cell
     assert "[red]" in cell
 
 

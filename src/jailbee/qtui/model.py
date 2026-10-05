@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee.background import DEAD_SUFFIX
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 
 if TYPE_CHECKING:
@@ -137,13 +138,13 @@ def job_badge(cc: CardContent) -> tuple[str, str] | None:
 
     ``kind`` is ``"failed"`` or ``"running"``; the caller maps it to a colour.
     The text is the JOB cell as rendered everywhere else, so a dead worker's
-    ``"<phase> (worker gone)"`` label must count as failed too — it names a
+    ``"<phase> (dead)"`` label must count as failed too — it names a
     working phase but nothing is progressing.
     """
     value = card_field(cc, "job")
     if value is None:
         return None
-    dead = value.startswith("failed") or "(worker gone)" in value
+    dead = value.startswith("failed") or DEAD_SUFFIX in value
     return value, "failed" if dead else "running"
 
 
