@@ -222,3 +222,36 @@ def test_cli_pick_repo_is_hidden_and_enters_repo(repos, tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert Path.cwd() == repos["beta"]
     assert "--pick-repo" not in CliRunner().invoke(app, ["--help"]).output
+
+
+@pytest.mark.parametrize("option", [["-c", "/tmp/beta.yaml"], ["--config", "/tmp/beta.yaml"], ["--config=/tmp/beta.yaml"], ["-c/tmp/beta.yaml"], ["-c=/tmp/beta.yaml"]])
+def test_lift_rejects_competing_config_before_stripping(option):
+    with pytest.raises(RepoOptionError, match="--config and --repo"):
+        lift_repo(["ls", *option, "--repo", "alpha"])
+
+
+def test_config_in_opaque_payload_does_not_conflict():
+    assert lift_repo(["exec", "feat", "--repo", "alpha", "--", "tool", "-c/tmp/x"]) == (
+        "alpha", ["exec", "feat", "--", "tool", "-c/tmp/x"]
+    )
+
+
+@pytest.mark.parametrize("args", [
+    ["outbox", "ls", "--config", "/tmp/beta.yaml"],
+    ["outbox", "--config=/tmp/beta.yaml", "ls"],
+    ["outbox", "drop", "feat", "issue/x.json", "-c/tmp/beta.yaml"],
+])
+def test_cli_outbox_config_conflict_never_loads_or_runs(args, mocker, monkeypatch, tmp_path):
+    from jailbee.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("jailbee.repo_option.enter_repo", return_value="alpha")
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.outbox.commands.drop_selected", return_value=0)
+    load = mocker.patch("jailbee.config.load_config")
+    run = mocker.patch("jailbee.outbox.commands.show_overview", return_value=0)
+    result = CliRunner().invoke(app, ["--repo", "alpha", *args])
+    assert result.exit_code == 2, result.output
+    assert "--config and --repo" in result.output
+    load.assert_not_called()
+    run.assert_not_called()

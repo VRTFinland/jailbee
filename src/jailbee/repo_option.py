@@ -32,6 +32,17 @@ def _is_repo(token: str) -> bool:
     return token == _OPTION or token.startswith(_OPTION + "=")
 
 
+def check_config_selection(path: Path | None) -> None:
+    """Guard direct Click config loaders as well as preprocessed entry points."""
+    if path is None:
+        return
+    from typer._click.globals import get_current_context
+
+    ctx = get_current_context(silent=True)
+    if ctx is not None and CTX_KEY in ctx.find_root().meta:
+        raise RepoOptionError("--config and --repo both name the repository; give one of them.")
+
+
 def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
     """Return the global repo prefix and argv without that option."""
     args = list(argv)
@@ -80,6 +91,11 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
         raise RepoOptionError("--repo given more than once")
     if not found:
         return None, args
+    if any(
+        token == "--config" or token.startswith("--config=") or token.startswith("-c")
+        for token in args[:end]
+    ):
+        raise RepoOptionError("--config and --repo both name the repository; give one of them.")
     start, width = spans[0]
     return found[0], args[:start] + args[start + width :]
 

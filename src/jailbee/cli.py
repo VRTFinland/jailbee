@@ -539,14 +539,13 @@ def _resolve_config_path(path: Path | None) -> Path:
     short on purpose, and every entry on it carries the guard.
     """
     if path is not None:
-        from typer._click.globals import get_current_context
-
         from jailbee import repo_option
 
-        ctx = get_current_context(silent=True)
-        if ctx is not None and repo_option.CTX_KEY in ctx.find_root().meta:
-            error("--config and --repo both name the repository; give one of them.")
-            raise typer.Exit(2)
+        try:
+            repo_option.check_config_selection(path)
+        except repo_option.RepoOptionError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
         return path
     return find_repo_config()
 
