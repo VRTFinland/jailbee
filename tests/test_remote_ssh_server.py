@@ -200,9 +200,7 @@ def test_connection_audit_identifies_source_key_and_safe_disconnect_reason(
     assert "private disconnect message" not in caplog.text
 
 
-def actual_process(
-    command=None, *, term=None, env=None, raw_env=None, subsystem=None, extra=None
-):
+def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem=None, extra=None):
     """Keep AsyncSSH process/stream APIs real and mock only the transport channel."""
     channel = Mock(spec=asyncssh.SSHServerChannel)
     channel.get_encoding.return_value = (None, "strict")
@@ -1793,7 +1791,9 @@ def waypipe_ops(mocker):
     }
 
 
-def test_a_waypipe_session_runs_its_command_with_the_session_markers(child, gui_config, waypipe_ops):
+def test_a_waypipe_session_runs_its_command_with_the_session_markers(
+    child, gui_config, waypipe_ops
+):
     session(WP_CMD, term="xterm", extra=WP_FORWARD)
 
     spec = child.call_args.args[1]
@@ -1861,7 +1861,10 @@ def test_the_session_is_stopped_even_when_the_child_fails(child, gui_config, way
 
 
 def test_an_empty_waypipe_command_takes_the_no_command_route(child, gui_config, waypipe_ops):
-    cmd = f"waypipe --login-shell --unlink-socket --compress lz4 --socket {WP_SOCK} --display w server"
+    cmd = (
+        f"waypipe --login-shell --unlink-socket --compress lz4 --socket {WP_SOCK} "
+        "--display w server"
+    )
 
     _, channel = session(cmd, term="xterm", extra=WP_FORWARD)
 

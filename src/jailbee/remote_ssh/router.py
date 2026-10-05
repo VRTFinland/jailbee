@@ -297,6 +297,7 @@ def is_gui_app_command(argv: Sequence[str]) -> bool:
     except RouteError:
         return False
 
+
 # The network-widening commands that `remote.ssh.network` turns from host
 # commands into container commands. Narrowing (`net strict`, `net egress rm`)
 # is a container command outright.
