@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -125,7 +126,7 @@ def test_apps_run_launches_the_named_app(tmp_path, mocker):
     # Finding 3: pin the full cfg-first call, not just spec/args — `launch`'s
     # leading cfg/incus/container exist for the same container-user-not-root
     # reason as `probe`'s, and a swap among them still type-checks.
-    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), ["--flag"])
+    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), ["--flag"], move=None)
 
 
 def test_apps_run_unknown_name_exits_2_and_lists_options(tmp_path, mocker):
@@ -162,7 +163,7 @@ def test_apps_run_omitting_container_resolves_default(tmp_path, mocker):
     # No --container was given, so `_resolve_attachable` must have been
     # called with container=None, not "figma".
     assert resolve_attachable.call_args.args[1] is None
-    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), [])
+    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), [], move=None)
 
 
 def test_apps_run_args_after_double_dash_are_not_swallowed_as_container(tmp_path, mocker):
@@ -188,7 +189,7 @@ def test_apps_run_args_after_double_dash_are_not_swallowed_as_container(tmp_path
     result = runner.invoke(app, ["apps", "run", "figma", "--", "--flag"])
     assert result.exit_code == 0
     assert resolve_attachable.call_args.args[1] is None
-    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), ["--flag"])
+    launch.assert_called_once_with(cfg, incus, "c1", get_app(cfg, "figma"), ["--flag"], move=None)
 
 
 def test_browser_opens_the_single_enabled_browser(tmp_path, mocker):
@@ -626,3 +627,44 @@ def test_apps_run_without_name_off_a_tty_lists_apps(tmp_path, mocker):
     result = runner.invoke(app, ["apps", "run"])
     assert result.exit_code == 2
     assert "Candidates: figma, gimp" in panel_text(result.output)
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["chrome", "c1"], None),
+        (["chrome", "c1", "--move"], True),
+        (["chrome", "c1", "--no-move"], False),
+        (["firefox", "c1", "--move"], True),
+        (["browser", "c1", "--no-move"], False),
+        (["apps", "run", "chrome", "--container", "c1", "--move"], True),
+    ],
+)
+def test_move_flag_reaches_launch(tmp_path, mocker, argv, expected):
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(
+        tmp_path,
+        browsers={"chrome": {"enabled": True}, "firefox": {"enabled": True}, "default": "chrome"},
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    launch = mocker.patch("jailbee.apps.launch")
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0, result.output
+    assert launch.call_args.kwargs["move"] is expected
+
+
+def test_a_failed_move_exits_1_with_the_message(tmp_path, mocker):
+    from jailbee.app_instance import AppMoveError
+    from jailbee.incus import Incus
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_attachable", return_value=(Incus(), "c1"))
+    mocker.patch("jailbee.apps.launch", side_effect=AppMoveError("Chrome did not close"))
+    result = runner.invoke(app, ["chrome", "c1"])
+    assert result.exit_code == 1
+    assert "Chrome did not close" in result.output

@@ -9,7 +9,13 @@ import time
 
 import pytest
 
-from jailbee.incus import Incus, IncusError
+from jailbee.incus import (
+    RUNNING_INSTANCE_SCRIPT,
+    Incus,
+    IncusError,
+    RunningInstance,
+    parse_running_instance,
+)
 
 
 @pytest.fixture
@@ -1373,3 +1379,131 @@ def test_exec_bytes_dry_run_runs_nothing(mocker):
 
     assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
     run.assert_not_called()
+
+
+def _fake_proc(root, pid, exe, environ):
+    d = root / str(pid)
+    d.mkdir(parents=True)
+    os.symlink(exe, d / "exe")
+    (d / "environ").write_bytes(b"\0".join(e.encode() for e in environ) + b"\0")
+
+
+def _run_script(lock_glob, proc, exe_names="chrome"):
+    # The real script, run locally: this tests its logic, not just its text.
+    return subprocess.run(
+        ["sh", "-c", RUNNING_INSTANCE_SCRIPT, "sh", lock_glob, str(proc), exe_names],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_script_reports_a_live_chrome_and_its_display(tmp_path):
+    proc = tmp_path / "proc"
+    _fake_proc(
+        proc,
+        4242,
+        "/opt/google/chrome/chrome",
+        ["HOME=/home/dev", "WAYLAND_DISPLAY=wayland-1", "DISPLAY=:0"],
+    )
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    out = _run_script(str(profile / "SingletonLock"), proc)
+    assert parse_running_instance(out) == RunningInstance(4242, "wayland-1", ":0")
+
+
+def test_script_finds_a_browser_whose_binary_was_updated_in_place(tmp_path):
+    # After an in-place update the kernel reports the replaced file as
+    # "<path> (deleted)"; the live browser must still be found.
+    proc = tmp_path / "proc"
+    _fake_proc(proc, 4242, "/opt/google/chrome/chrome (deleted)", ["WAYLAND_DISPLAY=wayland-1"])
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    out = _run_script(str(profile / "SingletonLock"), proc)
+    assert parse_running_instance(out) == RunningInstance(4242, "wayland-1", None)
+
+
+def test_script_ignores_a_reused_pid_of_another_program(tmp_path):
+    # The stale lock of a crashed Chrome names a PID that a container restart
+    # handed to bash. Reporting it would SIGTERM bash.
+    proc = tmp_path / "proc"
+    _fake_proc(proc, 4242, "/usr/bin/bash", ["WAYLAND_DISPLAY=wayland-1"])
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    assert parse_running_instance(_run_script(str(profile / "SingletonLock"), proc)) is None
+
+
+def test_script_ignores_a_dead_pid(tmp_path):
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    assert parse_running_instance(_run_script(str(profile / "SingletonLock"), proc)) is None
+
+
+def test_script_with_no_lock_reports_nothing(tmp_path):
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    out = _run_script(str(tmp_path / "google-chrome" / "SingletonLock"), proc)
+    assert parse_running_instance(out) is None
+
+
+def test_script_finds_the_live_firefox_profile_past_a_stale_one(tmp_path):
+    # Firefox's glob matches every profile dir; the first one's lock is stale,
+    # the second's is live.
+    proc = tmp_path / "proc"
+    _fake_proc(proc, 77, "/opt/firefox/firefox", ["WAYLAND_DISPLAY=/run/jailbee-display/wayland-0"])
+    root = tmp_path / "firefox"
+    (root / "a.default").mkdir(parents=True)
+    (root / "b.work").mkdir()
+    os.symlink("10.0.0.5:+9999", root / "a.default" / "lock")
+    os.symlink("10.0.0.5:+77", root / "b.work" / "lock")
+    out = _run_script(str(root / "*" / "lock"), proc, "firefox firefox-bin")
+    assert parse_running_instance(out) == RunningInstance(
+        77, "/run/jailbee-display/wayland-0", None
+    )
+
+
+def test_script_skips_an_unreadable_environ(tmp_path):
+    proc = tmp_path / "proc"
+    _fake_proc(proc, 4242, "/opt/google/chrome/chrome", ["WAYLAND_DISPLAY=wayland-1"])
+    (proc / "4242" / "environ").chmod(0)
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    if os.access(proc / "4242" / "environ", os.R_OK):
+        pytest.skip("running as root: chmod 0 does not deny reads")
+    assert parse_running_instance(_run_script(str(profile / "SingletonLock"), proc)) is None
+
+
+def test_parse_running_instance_without_display_vars():
+    assert parse_running_instance("pid=12\n") == RunningInstance(12, None, None)
+
+
+def test_parse_running_instance_rejects_garbage():
+    assert parse_running_instance("") is None
+    assert parse_running_instance("pid=abc\n") is None
+
+
+def test_running_instance_execs_the_script_as_the_user(incus, mocker):
+    run = _mock_run(mocker, stdout="pid=5\nWAYLAND_DISPLAY=wayland-0\n")
+    got = incus.running_instance(
+        "c1", "/home/dev/.config/google-chrome/SingletonLock", ["chrome"], uid=1000, gid=1000
+    )
+    assert got == RunningInstance(5, "wayland-0", None)
+    argv = run.call_args[0][0]
+    assert argv[argv.index("--user") + 1] == "1000"
+    tail = argv[argv.index("--") + 1 :]
+    assert tail == [
+        "sh",
+        "-c",
+        RUNNING_INSTANCE_SCRIPT,
+        "sh",
+        "/home/dev/.config/google-chrome/SingletonLock",
+        "/proc",
+        "chrome",
+    ]

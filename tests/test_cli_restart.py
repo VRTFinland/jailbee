@@ -147,7 +147,7 @@ def test_restart_continues_launching_chrome_after_ide_launcher_is_missing(mocker
     mocker.patch("jailbee.autostart.run_autostart")
     error_mock = mocker.patch("jailbee.tui.error")
 
-    def fake_launch(cfg, incus, container, spec, args=None):
+    def fake_launch(cfg, incus, container, spec, args=None, **kwargs):
         if spec.name == "ide":
             raise ValueError("No idea launcher found in /opt/jetbrains-toolbox/apps")
 
