@@ -1070,6 +1070,22 @@ confirmation, receipts, resume and cleanup rules remain authoritative.
 `--yes` skips confirmation only; `--dry-run` publishes nothing but publication
 preflight can still read GitHub, unlike inspection.
 
+A PR manifest normally names a PR the container owns: the one it was created
+from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked
+(`--stacked`). It may also name **any other PR of the same repository** — a
+description fix or a reply on a neighbouring PR, say. The repository lock
+still holds; only the ownership check is relaxed, and never silently. The plan
+then opens with a warning naming the PR, its author and the container, and on
+a terminal the confirmation under it is the consent. With `-y` nobody reads
+that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
+`jb outbox apply` and `jb review apply`; invalid for issues). The terminal
+browser and the Qt dashboard's terminal both ask under the plan, so they need
+no flag. The terminal dashboard's Publish runs with `--yes` and therefore
+refuses, naming `--foreign`. `jb pr`'s post-push offer never publishes to
+another PR: it holds such a manifest back and names
+`jb review apply --foreign <container>`. `jb review ls` lists it with the state
+`not bound`.
+
 The terminal browser offers containers, proposals, actions and comments,
 with Back, Refresh and Exit at each level. Without a TTY, the shorthand
 prints an overview rather than prompting. The terminal dashboard's

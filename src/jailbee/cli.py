@@ -12462,6 +12462,14 @@ def review_apply_cmd(
         bool,
         typer.Option("--force", help="Post line comments even though the PR head moved."),
     ] = False,
+    foreign: Annotated[
+        bool,
+        typer.Option(
+            "--foreign",
+            help="Publish to a PR the container does not own. Needed with -y; "
+            "at a terminal the warning and the prompt suffice.",
+        ),
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
     """Show what a container wants to publish to GitHub, then publish it."""
@@ -12512,6 +12520,9 @@ def review_apply_cmd(
         outbox=outbox,
         force=force,
         dry_run=dry_run,
+        # A PR the container does not own is warned about in the plan; the
+        # prompt below the plan is consent only when someone reads it.
+        allow_foreign=foreign or (prompting.is_interactive() and not yes),
     ):
         raise typer.Exit(1)
 
@@ -12584,10 +12595,13 @@ def review_ls_cmd(
                 manifest = pr_outbox.parse_manifest(
                     manifest_name, outbox.files[manifest_name], outbox.files
                 )
-                # force=True so a moved head is a *column value* here rather
-                # than a refusal: `ls` reports, and `apply` is where staleness
-                # blocks. Nothing is published either way.
-                target = pr_outbox.resolve_target(cfg, incus, ci.name, manifest, force=True)
+                # force/allow_foreign so a moved head or a PR the container
+                # does not own is a *column value* here rather than a refusal:
+                # `ls` reports, and `apply` is where both block. Nothing is
+                # published either way.
+                target = pr_outbox.resolve_target(
+                    cfg, incus, ci.name, manifest, force=True, allow_foreign=True
+                )
             except (pr_outbox.ManifestError, pr_outbox.GateError) as e:
                 rows.append(
                     _ReviewRow(
@@ -12602,10 +12616,12 @@ def review_ls_cmd(
                 continue
             if target.pr is None:
                 state = "for jb pr"
-            elif target.stale:
-                state = "stale"
             else:
-                state = "ok"
+                flags = [
+                    *(["stale"] if target.stale else []),
+                    *(["not bound"] if target.foreign else []),
+                ]
+                state = ", ".join(flags) or "ok"
             rows.append(
                 _ReviewRow(
                     container=short,

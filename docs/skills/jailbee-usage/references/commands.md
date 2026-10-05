@@ -1139,7 +1139,7 @@ manifests in `~/.jailbee/pr-outbox/` instead (the manifest schema is
 normative in the **jailbee-pr-review** skill, not here). These commands read
 and publish what it wrote.
 
-### `jailbee review apply [NAME] [-y] [--dry-run] [--force]`
+### `jailbee review apply [NAME] [-y] [--dry-run] [--force] [--foreign]`
 
 Show the plan for every pending manifest (comments, replies, and
 descriptions alike), ask once, then publish. No `NAME` + a TTY picks the one
@@ -1154,8 +1154,10 @@ manifest fully applied is deleted (with any `body_file` no other pending
 manifest still references) and gets a line in
 `~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
 nothing left to publish for it — nothing double-posts. A manifest naming a
-PR the container does not own, a repo mismatch, or a malformed field is a
-refusal (exit non-zero). A `pr: null` manifest resolves to the container's
+PR of the same repo that the container does not own is published only after
+a warning at the top of its plan; with `-y` (nobody reads that warning) it is
+a refusal unless `--foreign` is also given. A repo mismatch or a malformed
+field is always a refusal (exit non-zero). A `pr: null` manifest resolves to the container's
 own PR when exactly one is bound to it (opened by `jailbee pr`, or adopted
 with `jailbee pr --pr N`); with none bound — or with both a PR and a stacked
 PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
@@ -1163,7 +1165,8 @@ PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
 ### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
 
 One row per pending manifest across running containers: CONTAINER, PR,
-MANIFEST, ACTIONS, STATE (`ok`, `stale`, `for jb pr`, or `error`), and ERROR
+MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
+does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
 (hidden from the default table). A stopped container's outbox cannot be read
 at all, so it is named in a note under the table instead of appearing empty.
 `--fields` is comma-separated from that same list; `-o json` describes
@@ -1330,7 +1333,7 @@ management](../../../git-bridge.md#unified-proposal-management).
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
 | `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json]` | The complete proposal, with zero-based action and inline-comment indices. |
 | `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
-| `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and invalid for issues. |
+| `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [--foreign] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and `--foreign` admits a PR the container does not own under `-y`; both are invalid for issues. |
 
 ## Branch placement
 

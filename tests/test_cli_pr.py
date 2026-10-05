@@ -2878,6 +2878,32 @@ def test_a_non_stale_refusal_is_not_told_to_retry_with_force(mocker, tmp_path):
     assert "--force" not in result.output
 
 
+def test_a_foreign_pr_manifest_is_held_back_and_names_foreign(mocker, tmp_path):
+    """`jb pr` never publishes to a PR the container does not own; it points
+    at the command that can, with the flag that admits it."""
+    from jailbee.pr_outbox import ForeignPrError
+
+    _setup(mocker, tmp_path)
+    _tty(mocker)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
+    _pending_comment_manifest(mocker, tmp_path)
+    resolve = mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=ForeignPrError("manifest 001-x.json references PR #999"),
+    )
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+
+    result = CliRunner().invoke(app, ["pr", "feat-foo"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    apply_mock.assert_not_called()
+    assert resolve.call_args.kwargs["allow_foreign"] is False
+    assert "jailbee review apply --foreign feat-foo" in result.output
+    assert "--force" not in result.output
+
+
 def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
     monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
     _setup(mocker, tmp_path)

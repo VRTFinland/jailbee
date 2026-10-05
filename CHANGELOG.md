@@ -70,6 +70,14 @@ before editing `## Unreleased`.
   at boot (an autostart step) needs `gui.wayland: always`, the old behaviour. Each launch
   also replaces a socket a host re-login left dead, which used to need a
   container restart.
+- **A container's agent can stage PR actions for a PR the container does not
+  own.** A description fix, comment, reply or review naming any other PR of
+  the same repository used to be refused outright. `jailbee review apply` and
+  `jailbee outbox apply` now publish it after a warning at the top of the plan
+  that names the PR and its author. The confirmation under that warning is
+  the consent, so with `-y` such a manifest also needs the new `--foreign`.
+  The repository check is unchanged. `jailbee pr`'s post-push offer still
+  holds such a manifest back, and `jailbee review ls` lists it as `not bound`.
 
 ### Deprecated
 

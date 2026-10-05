@@ -202,8 +202,8 @@ def apply_selected(
     confirm: Callable[[int], bool],
     expected_revision: str | None = None,
 ) -> int:
-    if proposal.kind == "issue" and options.force:
-        raise OutboxError("force is only valid for PR publication")
+    if proposal.kind == "issue" and (options.force or options.foreign):
+        raise OutboxError("force and foreign are only valid for PR publication")
     target, container, view = _selected(
         cfg, incus, name, proposal, journal_store=journal_store, revision=expected_revision
     )

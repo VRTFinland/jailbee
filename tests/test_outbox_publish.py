@@ -771,6 +771,40 @@ def test_pr_ownership_revalidated_after_confirm(env):
     assert_no_mutation(env)
 
 
+def test_pr_unowned_by_the_container_is_refused_without_foreign(env, capsys):
+    env[5]["user.jailbee.pr"] = "43"
+
+    assert selected(env, "pr") == 1
+    assert_no_mutation(env)
+    assert "--foreign" in capsys.readouterr().err
+
+
+def test_pr_unowned_by_the_container_publishes_with_foreign_and_warns(env, capsys):
+    env[5]["user.jailbee.pr"] = "43"
+    asked: list[str] = []
+
+    def confirm(count):
+        asked.append(capsys.readouterr().out)
+        return True
+
+    assert selected(env, "pr", confirm=confirm, foreign=True) == 0
+    assert "not bound to container" in asked[0]
+    assert env[4]["pr_comment"].call_count == 2
+
+
+def test_pr_ownership_gained_after_confirm_still_refuses_a_foreign_plan(env):
+    """The user approved a plan that warned about a foreign PR; a target that
+    is no longer the one shown is a changed proposal, not a quiet upgrade."""
+    env[5]["user.jailbee.pr"] = "43"
+
+    def confirm(count):
+        env[5]["user.jailbee.pr"] = "42"
+        return True
+
+    assert selected(env, "pr", confirm=confirm, foreign=True) == 1
+    assert_no_mutation(env)
+
+
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_before_prepare_stale_token_never_reaches_remote_gate(env, kind, mocker):
     token = revision(env, kind)

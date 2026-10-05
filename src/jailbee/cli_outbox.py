@@ -256,7 +256,9 @@ def browse(
                 incus,
                 name,
                 proposal,
-                options=PublishOptions(),
+                # Always interactive: the plan warns about a PR the container
+                # does not own, and the confirmation below it is the consent.
+                options=PublishOptions(foreign=proposal.kind == "pr"),
                 journal_store=journals,
                 confirm=lambda total: typer.confirm(
                     f"Publish {total} pending actions in the whole manifest?", default=False
@@ -395,11 +397,20 @@ def apply(
     force: Annotated[
         bool, typer.Option("--force", help="PR stale-anchor override only; invalid for issues.")
     ] = False,
+    foreign: Annotated[
+        bool,
+        typer.Option(
+            "--foreign",
+            help="Publish to a PR the container does not own (needed with -y); "
+            "invalid for issues.",
+        ),
+    ] = False,
     yes: YesOption = False,
     revision: RevisionOption = None,
     config: ConfigOption = None,
 ) -> None:
     """Publish one whole manifest through its existing domain gates."""
+    from jailbee import prompting
     from jailbee.outbox.commands import apply_selected
     from jailbee.outbox.publish import PublishOptions
     from jailbee.outbox_io import JournalStore
@@ -414,7 +425,11 @@ def apply(
             incus,
             name,
             pid,
-            options=PublishOptions(dry_run, force),
+            # A PR the container does not own is warned about in the plan;
+            # the prompt below it is consent only when someone reads it.
+            options=PublishOptions(
+                dry_run, force, foreign or (prompting.is_interactive() and not yes)
+            ),
             journal_store=store,
             confirm=lambda total: (
                 yes or typer.confirm(f"Publish {total} pending actions?", default=False)

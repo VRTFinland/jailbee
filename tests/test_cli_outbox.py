@@ -359,6 +359,57 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
         assert "002.json" in env[2][kind].as_dict()
 
 
+def _unowned(env):
+    env[1].config_get.side_effect = lambda c, key: "43" if key == "user.jailbee.pr" else None
+
+
+def test_apply_refuses_an_unowned_pr_with_yes_and_names_foreign(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "-y"])
+
+    assert result.exit_code == 2, result.output
+    assert "--foreign" in result.output
+    review.assert_not_called()
+
+
+def test_apply_publishes_to_an_unowned_pr_with_foreign(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "pr/001.json", "-y", "--foreign"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not bound to container" in result.output
+    review.assert_called_once()
+
+
+def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index("not bound to container") < result.output.index("Publish 1")
+    review.assert_called_once()
+
+
+def test_apply_rejects_foreign_for_an_issue(publication_env):
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--foreign"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "foreign" in result.output
+
+
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_apply_domain_validation_exit_two(publication_env, mocker, kind):
     env, create, comment, review = publication_env
@@ -959,3 +1010,25 @@ def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
     assert result.exit_code == 0, result.output
     assert select.call_count == 1
     env[4].assert_called_once()
+
+
+@pytest.mark.parametrize(("kind", "foreign"), [("pr", True), ("issue", False)])
+def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(
+    env, mocker, kind, foreign
+):
+    """The browser always asks under the plan, so its consent covers a PR the
+    container does not own; an issue proposal must not carry the PR-only flag."""
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.cli_outbox.browser_read_only", return_value=False)
+    actions = {}
+    mocker.patch(
+        "jailbee.outbox.browser.run_browser",
+        side_effect=lambda a, _container: actions.setdefault("a", a) and 0,
+    )
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+
+    result = CliRunner().invoke(app, ["outbox", "browse", "feature"])
+    assert result.exit_code == 0, result.output
+    actions["a"].publish("feature", ProposalId(kind, "001.json"), "a" * 64)
+
+    assert applied.call_args.kwargs["options"].foreign is foreign
