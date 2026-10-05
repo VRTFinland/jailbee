@@ -57,6 +57,7 @@ for f in $1; do
   pid=$(readlink "$f" | grep -o '[0-9]*$')
   [ -n "$pid" ] || continue
   exe=$(readlink "$2/$pid/exe" 2>/dev/null) || continue
+  exe=${exe% (deleted)}
   case " $3 " in *" ${exe##*/} "*) ;; *) continue ;; esac
   [ -O "$2/$pid" ] && [ -r "$2/$pid/environ" ] || continue
   echo "pid=$pid"
@@ -73,7 +74,8 @@ tree), ``$3`` the space-separated executable basenames that count as the
 app. The PID is the last run of digits in the lock's target — Chrome writes
 ``<host>-<pid>``, Firefox ``<ip>:+<pid>``. A PID whose executable is not the
 app's is skipped: a lock left by a crash outlives a container restart, and
-its PID then belongs to whatever got it next. Always exits 0; the answer is
+its PID then belongs to whatever got it next. A `` (deleted)`` suffix on the
+executable (the binary was replaced by an update) is ignored. Always exits 0; the answer is
 on stdout.
 """
 

@@ -47,12 +47,23 @@ def test_same_display(was, now, same):
     assert same_display(_running(was), now) is same
 
 
-def test_an_x11_host_compares_display_too():
-    # On an X11 host Chrome draws on DISPLAY; WAYLAND_DISPLAY is only the
-    # unused `wayland-0` fallback and equal on both sides.
-    running = RunningInstance(1, "wayland-0", ":1")
-    assert same_display(running, {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}) is False
-    assert same_display(running, {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":1"}) is True
+def test_two_host_launches_are_one_display_whatever_their_socket_names():
+    # The host target falls back to wayland-0 / :0 while the browser runs on
+    # wayland-1 or an X11 :1; neither is another display worth moving for.
+    running = RunningInstance(1, "wayland-1", ":1")
+    assert same_display(running, {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}) is True
+    assert same_display(running, {"WAYLAND_DISPLAY": "wayland-1"}) is True
+
+
+def test_a_host_instance_without_display_matches_a_launch_that_sets_it():
+    running = RunningInstance(1, "wayland-1", None)
+    assert same_display(running, {"WAYLAND_DISPLAY": "wayland-1", "DISPLAY": ":0"}) is True
+
+
+def test_a_host_instance_differs_from_the_shared_and_waypipe_displays():
+    running = RunningInstance(1, "wayland-1", ":0")
+    assert same_display(running, SHARED) is False
+    assert same_display(running, WAYPIPE_A) is False
 
 
 @pytest.mark.parametrize(
@@ -145,39 +156,92 @@ def test_declining_keeps_the_old_window_and_says_where(tmp_path, mocker, capsys)
     assert "Chrome is open on the host display; the window opens there." in capsys.readouterr().out
 
 
+class _Clock:
+    """A fake monotonic clock that only `sleep` advances."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.t += seconds
+
+
+def _move(tmp_path, incus, clock, cfg=None):
+    return ensure_on_this_display(
+        cfg or make_cfg(tmp_path),
+        incus,
+        "c1",
+        SPEC,
+        SHARED,
+        move=True,
+        sleep_fn=clock.sleep,
+        now_fn=clock.now,
+    )
+
+
+def _incus_with_pid(instances, alive):
+    """`running_instance` yields ``instances``; `test -d /proc/<pid>` answers
+    from ``alive`` (True: exits 0, False: raises IncusError)."""
+    incus = _incus(*instances)
+    answers = iter(alive)
+
+    def exec_(container, cmd, **kwargs):
+        if cmd[:2] == ["test", "-d"]:
+            if next(answers):
+                return ""
+            raise IncusError("exit 1")
+        return ""
+
+    incus.exec.side_effect = exec_
+    return incus
+
+
 def test_a_move_terms_the_pid_and_waits_for_it(tmp_path, capsys):
     cfg = make_cfg(tmp_path)
-    incus = _incus(ON_HOST, ON_HOST, ON_HOST, None)
-    sleeps: list[float] = []
-    moved = ensure_on_this_display(
-        cfg, incus, "c1", SPEC, SHARED, move=True, sleep_fn=sleeps.append
-    )
-    assert moved is True
-    incus.exec.assert_called_once_with(
-        "c1", ["kill", "-TERM", "42"], uid=cfg.container_user.uid, gid=cfg.container_user.gid
-    )
-    assert sleeps == [0.25, 0.25]
+    clock = _Clock()
+    incus = _incus_with_pid([ON_HOST, ON_HOST, ON_HOST, None], [False])
+    assert _move(tmp_path, incus, clock, cfg) is True
+    assert incus.exec.call_args_list[0].args == ("c1", ["kill", "-TERM", "42"])
+    assert incus.exec.call_args_list[1].args == ("c1", ["test", "-d", "/proc/42"])
+    assert clock.sleeps == [0.25, 0.25]
     assert "Moving chrome from the host display" in capsys.readouterr().out
+
+
+def test_the_wait_continues_while_the_process_outlives_its_lock(tmp_path):
+    # Browsers release the lock before they exit; relaunching then races them.
+    clock = _Clock()
+    incus = _incus_with_pid([ON_HOST, None, None, None], [True, True, False])
+    assert _move(tmp_path, incus, clock) is True
+    assert clock.sleeps == [0.25, 0.25]
 
 
 def test_a_process_gone_before_the_kill_still_counts_as_closed(tmp_path):
     # Review Focus 3: it exited between detection and `kill`.
+    clock = _Clock()
     incus = _incus(ON_HOST, None)
     incus.exec.side_effect = IncusError("kill: (42) - No such process")
-    moved = ensure_on_this_display(
-        make_cfg(tmp_path), incus, "c1", SPEC, SHARED, move=True, sleep_fn=lambda s: None
-    )
-    assert moved is True
+    assert _move(tmp_path, incus, clock) is True
 
 
 def test_an_instance_that_does_not_close_is_an_error(tmp_path):
-    incus = _incus(*([ON_HOST] * 62))
-    sleeps: list[float] = []
+    clock = _Clock()
+    incus = _incus(*([ON_HOST] * 200))
     with pytest.raises(AppMoveError, match="Chrome did not close on the host display within 15 s"):
-        ensure_on_this_display(
-            make_cfg(tmp_path), incus, "c1", SPEC, SHARED, move=True, sleep_fn=sleeps.append
-        )
-    assert len(sleeps) == 60
+        _move(tmp_path, incus, clock)
+    assert clock.t == 15.0
+    assert set(clock.sleeps) == {0.25}
+
+
+def test_a_process_that_outlives_its_lock_past_the_deadline_is_an_error(tmp_path):
+    clock = _Clock()
+    incus = _incus_with_pid([ON_HOST] + [None] * 200, [True] * 200)
+    with pytest.raises(AppMoveError, match="did not close"):
+        _move(tmp_path, incus, clock)
 
 
 def test_cancelling_the_prompt_closes_nothing(tmp_path, mocker):

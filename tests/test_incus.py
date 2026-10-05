@@ -1394,6 +1394,20 @@ def test_script_reports_a_live_chrome_and_its_display(tmp_path):
     assert parse_running_instance(out) == RunningInstance(4242, "wayland-1", ":0")
 
 
+def test_script_finds_a_browser_whose_binary_was_updated_in_place(tmp_path):
+    # After an in-place update the kernel reports the replaced file as
+    # "<path> (deleted)"; the live browser must still be found.
+    proc = tmp_path / "proc"
+    _fake_proc(
+        proc, 4242, "/opt/google/chrome/chrome (deleted)", ["WAYLAND_DISPLAY=wayland-1"]
+    )
+    profile = tmp_path / "google-chrome"
+    profile.mkdir()
+    os.symlink("c1-4242", profile / "SingletonLock")
+    out = _run_script(str(profile / "SingletonLock"), proc)
+    assert parse_running_instance(out) == RunningInstance(4242, "wayland-1", None)
+
+
 def test_script_ignores_a_reused_pid_of_another_program(tmp_path):
     # The stale lock of a crashed Chrome names a PID that a container restart
     # handed to bash. Reporting it would SIGTERM bash.

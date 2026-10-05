@@ -25,12 +25,17 @@ if TYPE_CHECKING:
 def same_display(running: RunningInstance, env: Mapping[str, str]) -> bool:
     """Whether a launch with ``env`` would draw where ``running`` draws.
 
-    ``DISPLAY`` is compared only when the launch sets it (the host target):
-    on an X11 host it is the display Chrome actually uses.
+    The host is one display: an instance on it matches any launch that does
+    not target the shared RDP display or a waypipe session, whatever its
+    ``WAYLAND_DISPLAY`` / ``DISPLAY`` say (the host target's fallbacks such as
+    ``wayland-0`` / ``:0`` need not equal the names the browser started with,
+    and moving a working desktop browser for that would be wrong). Shared and
+    waypipe displays compare by their socket path.
     """
-    if running.wayland_display != env.get("WAYLAND_DISPLAY"):
-        return False
-    return "DISPLAY" not in env or running.display == env["DISPLAY"]
+    launch = env.get("WAYLAND_DISPLAY")
+    if display_name(running) == "host" and not (launch or "").startswith(f"{SHARED_DISPLAY_DIR}/"):
+        return True
+    return running.wayland_display == launch
 
 
 def display_name(running: RunningInstance) -> str:
@@ -44,8 +49,8 @@ def display_name(running: RunningInstance) -> str:
 
 
 POLL_SECONDS = 0.25
-WAIT_POLLS = 60
-"""15 s in all: long enough for a browser to write its session out."""
+WAIT_SECONDS = 15.0
+"""Long enough for a browser to write its session out."""
 
 
 class AppMoveError(RuntimeError):
@@ -81,6 +86,7 @@ def ensure_on_this_display(
     *,
     move: bool | None,
     sleep_fn: Callable[[float], None] = time.sleep,
+    now_fn: Callable[[], float] = time.monotonic,
 ) -> bool:
     """Close ``spec``'s running instance if it is on another display and the
     user wants it here; True when one was closed.
@@ -113,12 +119,22 @@ def ensure_on_this_display(
         incus.exec(container, ["kill", "-TERM", str(running.pid)], uid=uid, gid=gid)
     except IncusError:
         pass  # already gone; the poll below confirms it
-    for _ in range(WAIT_POLLS):
-        if find() is None:
+    def process_gone() -> bool:
+        try:
+            incus.exec(container, ["test", "-d", f"/proc/{running.pid}"], uid=uid, gid=gid)
+        except IncusError:
             return True
+        return False
+
+    # The lock goes before the process does; a relaunch in between would race
+    # the dying browser, so both must be gone.
+    deadline = now_fn() + WAIT_SECONDS
+    while True:
+        if find() is None and process_gone():
+            return True
+        if now_fn() >= deadline:
+            break
         sleep_fn(POLL_SECONDS)
-    if find() is None:
-        return True
     raise AppMoveError(
         f"{title} did not close on the {where} display within 15 s; close it there and retry."
     )
