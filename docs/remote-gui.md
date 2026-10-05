@@ -98,6 +98,16 @@ waypipe ssh -p <ssh port> jailbee@<host> --repo <prefix> chrome <container>
 The direct command waits until the app exits, and the session ends with it.
 `--repo <prefix>` is required for it.
 
+- The direct form is for the GUI launchers (`chrome`, `firefox`, `browser`,
+  `ide`, `apps run`). `exec --gui` detaches, so its window closes as soon as
+  the session ends; start it from the dashboard instead.
+- If Chrome already runs in that container, a new attached `chrome` launch
+  returns at once (Chrome hands the request to the running instance), which
+  ends the session and closes the window.
+- OpenSSH connection sharing breaks waypipe: only the first `waypipe ssh` over
+  a `ControlMaster`/`ControlPersist` connection works. Add
+  `-o ControlMaster=no` (or `-o ControlPath=none`) to the command.
+
 - Window titles carry a `[<container>] ` prefix, so windows from different
   containers can be told apart.
 - Each session runs one waypipe server per container, as a transient unit in

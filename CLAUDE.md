@@ -56,10 +56,12 @@ isolated per-branch development environments using Incus system containers. See
   `python -m jailbee _state-service` detached (`subprocess.Popen`), the shared
   dashboard state service.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
-  `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
+  `subprocess.Popen` of `incus exec` (`launch_detached`), so a GUI app outlives
+  the CLI, or — for a `waypipe ssh` session's own command — `launch_attached`,
+  a foreground `subprocess.run` that waits for the app.
   `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
   no `subprocess` of their own: they resolve an `AppSpec` and hand it to
-  `gui.launch_detached`, deliberately not adding a second exception to the
+  `gui.launch_detached` / `gui.launch_attached`, deliberately not adding a second exception to the
   "one module runs `incus` outside `incus.py`" rule above.
   `registry.py` runs the mirror through the `Incus` wrapper and calls no
   `subprocess` of its own. `litellm.py` likewise runs the proxy through the
