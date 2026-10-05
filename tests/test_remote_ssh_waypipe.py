@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import socket
 from unittest.mock import MagicMock
 
 import pytest
@@ -128,6 +130,13 @@ def test_names():
 WPS = WaypipeSession(id="0a1b2c3d", compress="zstd=5")
 
 
+@pytest.fixture(autouse=True)
+def _live_session():
+    """The session's forward listener exists, as it does while the client is connected."""
+    wp.links_dir().mkdir(parents=True, exist_ok=True)
+    wp.links_socket(WPS.id).touch()
+
+
 def _socket_appears(name="wp-0a1b2c3d-app-main"):
     from jailbee.gui import display_state_dir
 
@@ -146,7 +155,7 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
     incus.exec.side_effect = _socket_appears()
 
     path = wp.start_container_server(
-        incus, WPS, "app-main", uid=1000, gid=1001, sleep_fn=lambda _s: None
+        incus, WPS, "app-main", sleep_fn=lambda _s: None
     )
 
     assert path == "/run/jailbee-display/wp-0a1b2c3d-app-main"
@@ -154,10 +163,16 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
     assert run.args[0] == "jailbee-display"
     argv = run.args[1]
     assert "--unit=jailbee-wp-0a1b2c3d-app-main" in argv
-    assert "--uid=1000" in argv and "--gid=1001" in argv and "--collect" in argv
-    tail = argv[argv.index("waypipe") :]
+    assert f"--uid={os.getuid()}" in argv and f"--gid={os.getgid()}" in argv
+    assert "--collect" in argv
+    tail = argv[argv.index("_") :]
+    assert argv[argv.index("sh") + 1 : argv.index("_")] == [
+        "-c",
+        'rm -f "$1"; shift; exec waypipe "$@"',
+    ]
     assert tail == [
-        "waypipe",
+        "_",
+        "/srv/jailbee-display/wp-0a1b2c3d-app-main",
         "--no-gpu",
         "--compress",
         "zstd=5",
@@ -179,7 +194,7 @@ def test_start_mounts_the_shared_directory_into_the_client_container(mocker):
     incus.exec.side_effect = _socket_appears()
     mount = mocker.patch("jailbee.remote_display.ensure_display_mount")
 
-    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+    wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
     mount.assert_called_once_with(incus, "app-main")
 
@@ -192,7 +207,7 @@ def test_a_running_server_is_reused():
     incus = MagicMock()
     incus.exec.return_value = "active\n"
 
-    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+    wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
     assert all(c.args[1][0] != "systemd-run" for c in incus.exec.call_args_list)
 
@@ -214,7 +229,7 @@ def test_a_concurrent_start_that_lost_the_race_is_success():
 
     incus.exec.side_effect = run
 
-    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+    wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
 
 def test_a_socket_that_never_appears_fails_and_stops_the_unit():
@@ -223,7 +238,7 @@ def test_a_socket_that_never_appears_fails_and_stops_the_unit():
 
     with pytest.raises(DisplayError, match="waypipe"):
         wp.start_container_server(
-            incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None, wait_seconds=1
+            incus, WPS, "app-main", sleep_fn=lambda _s: None, wait_seconds=1
         )
 
     stops = [c.args[1] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]]
@@ -235,7 +250,7 @@ def test_an_unsafe_container_name_never_reaches_systemd(container):
     incus = MagicMock()
 
     with pytest.raises(DisplayError):
-        wp.start_container_server(incus, WPS, container, uid=1, gid=1, sleep_fn=lambda _s: None)
+        wp.start_container_server(incus, WPS, container, sleep_fn=lambda _s: None)
 
     assert incus.mock_calls == []
 
@@ -247,7 +262,7 @@ def test_an_invalid_compress_value_never_reaches_incus(compress):
 
     with pytest.raises(DisplayError):
         wp.start_container_server(
-            incus, session, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None
+            incus, session, "app-main", sleep_fn=lambda _s: None
         )
 
     assert incus.mock_calls == []
@@ -275,12 +290,107 @@ def test_stop_session_never_raises(mocker):
     removed.assert_called_once_with("0a1b2c3d")
 
 
-def test_prune_all_stops_every_session_unit_and_removes_every_socket(mocker):
+def test_an_ended_session_starts_nothing():
+    wp.links_socket(WPS.id).unlink()
     incus = MagicMock()
-    incus.exec.side_effect = IncusError("not running")
-    removed = mocker.patch("jailbee.remote_display.remove_waypipe_sockets")
 
-    wp.prune_all(incus)
+    with pytest.raises(DisplayError, match="ended"):
+        wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
-    assert incus.exec.call_args.args[1] == ["systemctl", "stop", "jailbee-wp-*.service"]
-    removed.assert_called_once_with()
+    assert incus.mock_calls == []
+
+
+def test_the_unit_runs_as_the_displays_own_user_not_the_repos(mocker):
+    mocker.patch("jailbee.remote_ssh.waypipe.os.getuid", return_value=4242)
+    mocker.patch("jailbee.remote_ssh.waypipe.os.getgid", return_value=4343)
+    incus = MagicMock()
+    incus.exec.side_effect = _socket_appears()
+
+    wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
+
+    argv = next(c.args[1] for c in incus.exec.call_args_list if c.args[1][0] == "systemd-run")
+    assert "--uid=4242" in argv and "--gid=4343" in argv
+
+
+def test_stop_session_survives_a_socket_that_cannot_be_removed(mocker):
+    incus = MagicMock()
+    mocker.patch("jailbee.remote_display.remove_waypipe_sockets", side_effect=PermissionError("x"))
+
+    wp.stop_session(incus, "0a1b2c3d")  # must not raise
+
+
+# Sessions ``aaaaaaaa`` (live listener) and ``bbbbbbbb`` (dead) are mixed on
+# disk and in systemd below.
+LIVE, DEAD = "aaaaaaaa", "bbbbbbbb"
+
+
+@pytest.fixture
+def listening():
+    """A live listener on the LIVE session's links socket, a stale file for DEAD's."""
+    from jailbee.gui import display_state_dir
+
+    wp.links_socket(WPS.id).unlink()  # the autouse fixture's file is not part of this scene
+    display_state_dir().mkdir(parents=True, exist_ok=True)
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(wp.links_socket(LIVE)))
+    server.listen()
+    stale = socket.socket(socket.AF_UNIX)
+    stale.bind(str(wp.links_socket(DEAD)))
+    stale.close()  # the file stays, nothing listens
+    for name in (f"wp-{LIVE}-c1", f"wp-{DEAD}-c1"):
+        (display_state_dir() / name).touch()
+    yield
+    server.close()
+
+
+def _units_listing(incus):
+    def run(container, cmd, **kwargs):
+        if cmd[:2] == ["systemctl", "list-units"]:
+            return (
+                f"jailbee-wp-{LIVE}-c1.service loaded active running waypipe\n"
+                f"jailbee-wp-{DEAD}-c1.service loaded active running waypipe\n"
+                "jailbee-wp-cccccccc-c9.service loaded failed failed waypipe\n"
+            )
+        return ""
+
+    incus.exec.side_effect = run
+
+
+def test_prune_dead_keeps_a_session_with_a_live_listener(listening):
+    from jailbee.gui import display_state_dir
+
+    incus = MagicMock()
+    _units_listing(incus)
+
+    wp.prune_dead(incus)
+
+    stops = [c.args[1][2] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]]
+    assert sorted(stops) == [f"jailbee-wp-{DEAD}-*.service", "jailbee-wp-cccccccc-*.service"]
+    assert wp.links_socket(LIVE).exists()
+    assert (display_state_dir() / f"wp-{LIVE}-c1").exists()
+    assert not wp.links_socket(DEAD).exists()
+    assert not (display_state_dir() / f"wp-{DEAD}-c1").exists()
+
+
+def test_prune_dead_never_raises(listening):
+    incus = MagicMock()
+    incus.exec.side_effect = RuntimeError("boom")
+
+    wp.prune_dead(incus)
+
+
+def test_prune_dead_without_anything_does_no_stop():
+    wp.links_socket(WPS.id).unlink()
+    incus = MagicMock()
+    incus.exec.return_value = ""
+
+    wp.prune_dead(incus)
+
+    assert all(c.args[1][:2] != ["systemctl", "stop"] for c in incus.exec.call_args_list)
+
+
+def test_a_listener_that_cannot_be_probed_counts_as_alive(mocker, tmp_path):
+    probe = mocker.patch("jailbee.remote_ssh.waypipe.socket.socket").return_value
+    probe.connect.side_effect = PermissionError("denied")
+
+    assert wp._listener_alive(tmp_path / "x.sock") is True

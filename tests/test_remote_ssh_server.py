@@ -1634,7 +1634,7 @@ def test_server_factory_hands_the_live_gui_flag_to_the_server(listener, mocker, 
     """A dropped `remote_gui_enabled` wiring leaves forwarding on or off for good."""
     _, listen = listener
     seen = mocker.patch.object(server, "remote_gui_enabled", return_value=enabled)
-    mocker.patch("jailbee.remote_ssh.waypipe.prune_all")
+    mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
     asyncio.run(server.serve_async(RemoteSSHConfig()))
     seen.reset_mock()  # startup also asks, to decide on pruning waypipe leftovers
 
@@ -1870,20 +1870,42 @@ def test_an_empty_waypipe_command_takes_the_no_command_route(child, gui_config, 
 
     # default_entrypoint is "help" in this config: help text, no child.
     child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()
     assert b"Available remote commands" in output(channel)
 
 
 @pytest.mark.parametrize("gui", [True, False])
-def test_serve_async_prunes_waypipe_leftovers_only_with_gui_on(listener, mocker, gui):
+def test_serve_async_prunes_dead_waypipe_sessions_only_with_gui_on_and_after_listening(
+    listener, mocker, gui
+):
     _, listen = listener
     mocker.patch.object(server, "remote_gui_enabled", return_value=gui)
-    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_all")
-    prune.side_effect = lambda incus: assert_not_listening(listen)
+    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
+    listening_at_prune = []
+    prune.side_effect = lambda incus: listening_at_prune.append(bool(listen.await_count))
 
     asyncio.run(server.serve_async(RemoteSSHConfig()))
 
     assert prune.call_count == (1 if gui else 0)
+    assert listening_at_prune == ([True] if gui else [])
 
 
-def assert_not_listening(listen):
-    assert not listen.await_count
+def test_a_failed_listen_prunes_nothing(listener, mocker):
+    _, listen = listener
+    listen.side_effect = OSError("Address already in use")
+    mocker.patch.object(server, "remote_gui_enabled", return_value=True)
+    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
+
+    with pytest.raises(OSError):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+
+    prune.assert_not_called()
+
+
+def test_a_refused_waypipe_command_never_provisions_the_display(child, gui_config, waypipe_ops):
+    cmd = WP_CMD.replace("server dashboard", "server definitely-not-a-command")
+
+    session(cmd, extra=WP_FORWARD)
+
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()

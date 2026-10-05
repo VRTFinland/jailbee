@@ -200,9 +200,7 @@ def launch_env(
     if target == "waypipe" and session is not None:
         from jailbee.remote_ssh.waypipe import start_container_server
 
-        display = start_container_server(
-            incus, session, container, uid=cfg.container_user.uid, gid=cfg.container_user.gid
-        )
+        display = start_container_server(incus, session, container)
         return {**gui_env(cfg, target, wayland_display=display), **(extra or {})}
     port = shared_display_port()
     # `display_target() == "shared"` already implies a port; checking it here

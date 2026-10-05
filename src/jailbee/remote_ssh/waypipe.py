@@ -11,14 +11,19 @@ is launched (`start_container_server`). The parser accepts only what waypipe
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import secrets
 import shlex
+import socket
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jailbee.remote_ssh.router import RouteError
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -148,8 +153,6 @@ def start_container_server(
     session: WaypipeSession,
     container: str,
     *,
-    uid: int,
-    gid: int,
     sleep_fn: Callable[[float], None] = time.sleep,
     wait_seconds: float = SERVER_WAIT_SECONDS,
 ) -> str:
@@ -160,6 +163,11 @@ def start_container_server(
     with it, which killing waypipe's main process does not (spec, spike
     item 4). Its Wayland socket lands in the shared display directory, which
     ``container`` mounts read-only at `SHARED_DISPLAY_DIR`.
+
+    The unit runs as the display's own user, the one jailbee-display was
+    provisioned and idmapped for (`remote_display._provision`), not the repo's
+    ``container_user``. A session that has ended (its forward listener is
+    gone) starts nothing: a unit launched then would have nothing to stop it.
     """
     from jailbee.gui import SHARED_DISPLAY_DIR, display_state_dir
     from jailbee.incus import IncusError
@@ -175,6 +183,8 @@ def start_container_server(
         raise DisplayError(f"Cannot open a waypipe display for container {container!r}.")
     if not _COMPRESS_RE.fullmatch(session.compress):
         raise DisplayError(f"Invalid compression setting {session.compress!r}.")
+    if not links_socket(session.id).exists():
+        raise DisplayError("This waypipe session has ended; reconnect.")
     name = server_name(session.id, container)
     unit_base = unit_name(session.id, container)
     unit = f"{unit_base}.service"
@@ -187,11 +197,18 @@ def start_container_server(
                 [
                     "systemd-run",
                     f"--unit={unit_base}",
-                    f"--uid={uid}",
-                    f"--gid={gid}",
+                    f"--uid={os.getuid()}",
+                    f"--gid={os.getgid()}",
                     "--collect",
                     f"--setenv=XDG_RUNTIME_DIR={DISPLAY_CONTAINER_DIR}",
-                    "waypipe",
+                    # A socket left by a killed unit would satisfy the wait below
+                    # at once. Removed here, not by the caller, so that only the
+                    # launch whose systemd-run wins ever does it.
+                    "sh",
+                    "-c",
+                    'rm -f "$1"; shift; exec waypipe "$@"',
+                    "_",
+                    f"{DISPLAY_CONTAINER_DIR}/{name}",
                     "--no-gpu",
                     "--compress",
                     session.compress,
@@ -235,15 +252,88 @@ def stop_session(incus: Incus, session_id: str) -> None:
     from jailbee.remote_display import remove_waypipe_sockets
 
     _stop(incus, f"jailbee-wp-{session_id}-*.service")
-    remove_waypipe_sockets(session_id)
+    try:
+        remove_waypipe_sockets(session_id)
+    except OSError:
+        log.warning("Could not remove waypipe sockets of session %s", session_id, exc_info=True)
 
 
-def prune_all(incus: Incus) -> None:
-    """Remove every session's leftovers; for a server start, when none is live."""
-    from jailbee.remote_display import remove_waypipe_sockets
+_UNIT_ID_RE = re.compile(r"^jailbee-wp-([0-9a-f]{8})-")
+_SOCKET_ID_RE = re.compile(r"^(?:wp-)?([0-9a-f]{8})(?:-.*|\.sock)$")
 
-    _stop(incus, "jailbee-wp-*.service")
-    remove_waypipe_sockets()
+
+def prune_dead(incus: Incus) -> None:
+    """Remove the leftovers of sessions that are no longer live. Never raises.
+
+    A session is live while something listens on its links socket (the SSH
+    server that owns it); another server may be running beside this one, so
+    only sessions whose listener is gone are cleaned up. Their ids come from
+    the sockets on disk and from the units still known to systemd.
+    """
+    try:
+        ids = _session_ids_on_disk() | _session_ids_of_units(incus)
+        for session_id in sorted(ids):
+            if not _listener_alive(links_socket(session_id)):
+                stop_session(incus, session_id)
+    except Exception:
+        log.warning("Pruning waypipe leftovers failed", exc_info=True)
+
+
+def _session_ids_on_disk() -> set[str]:
+    from jailbee.gui import display_state_dir
+
+    ids: set[str] = set()
+    for directory in (links_dir(), display_state_dir()):
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            match = _SOCKET_ID_RE.match(path.name)
+            if match:
+                ids.add(match.group(1))
+    return ids
+
+
+def _session_ids_of_units(incus: Incus) -> set[str]:
+    from jailbee.incus import IncusError
+    from jailbee.remote_display import DISPLAY_CONTAINER
+
+    try:
+        out = incus.exec(
+            DISPLAY_CONTAINER,
+            [
+                "systemctl",
+                "list-units",
+                "--all",
+                "--plain",
+                "--no-legend",
+                "--no-pager",
+                "jailbee-wp-*",
+            ],
+            timeout=30,
+        )
+    except IncusError:
+        return set()
+    ids: set[str] = set()
+    for line in out.splitlines():
+        match = _UNIT_ID_RE.match(line.strip())
+        if match:
+            ids.add(match.group(1))
+    return ids
+
+
+def _listener_alive(path: Path) -> bool:
+    """Whether something accepts connections at ``path``; only a clear no counts as dead."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(2)
+    try:
+        probe.connect(str(path))
+    except (FileNotFoundError, ConnectionRefusedError):
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+    return True
 
 
 def _unit_state(incus: Incus, unit: str) -> str:

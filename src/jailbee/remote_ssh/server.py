@@ -364,9 +364,6 @@ async def handle_process(
             waypipe_session = WaypipeSession(id=forward[1], compress=request.compress)
             command = request.command
             kind, prefix, path = _request_fields(command)
-            from jailbee.remote_display import ensure_waypipe_display
-
-            await asyncio.to_thread(ensure_waypipe_display, Incus())
         selected = route(command, config)
         kind, prefix = selected.kind, selected.repo_prefix
         if selected.requires_pty and process.term_type is None:
@@ -376,6 +373,11 @@ async def handle_process(
             process.stdout.write(_server_text(help_text(config), pty=pty))
             process.exit(0)
             return
+        if waypipe_session is not None:
+            # Only an allowed command gets the display provisioned.
+            from jailbee.remote_display import ensure_waypipe_display
+
+            await asyncio.to_thread(ensure_waypipe_display, Incus())
         argv = (sys.executable, "-m", "jailbee", *selected.argv)
         if selected.kind == "console":
             # The console child re-validates this itself (never trusting it
@@ -626,13 +628,6 @@ async def serve_async(
         else None
     )
 
-    if remote_gui_enabled(overrides):
-        from jailbee.remote_ssh.waypipe import prune_all
-
-        # No session is live yet, so every waypipe unit and socket is a
-        # leftover of a crash or a restart.
-        prune_all(Incus())
-
     try:
         listener = await asyncssh.listen(
             config.listen,
@@ -653,6 +648,13 @@ async def serve_async(
             gss_host=None,
         )
         log.info(_startup_summary(config, listener, overrides))
+        if remote_gui_enabled(overrides):
+            from jailbee.remote_ssh.waypipe import prune_dead
+
+            # After a successful listen (a failed second start must touch
+            # nothing), and only sessions nobody listens for any more: another
+            # server may be running beside this one.
+            await asyncio.to_thread(prune_dead, Incus())
         record_running(__version__)
         poller = asyncio.create_task(poll_for_update())
         loop = asyncio.get_running_loop()

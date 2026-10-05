@@ -358,11 +358,48 @@ def test_remove_waypipe_sockets_for_one_session_or_all(tmp_path):
     assert list(links_dir().iterdir()) == []
 
 
+def test_remove_waypipe_sockets_can_leave_the_links_alone():
+    from jailbee.gui import display_state_dir
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    display_state_dir().mkdir(parents=True)
+    links_dir().mkdir(parents=True)
+    (display_state_dir() / "wp-aaaaaaaa-c1").touch()
+    (links_dir() / "aaaaaaaa.sock").touch()
+
+    rd.remove_waypipe_sockets(links=False)
+
+    assert list(display_state_dir().iterdir()) == []
+    assert [p.name for p in links_dir().iterdir()] == ["aaaaaaaa.sock"]
+
+
+def test_remove_waypipe_sockets_survives_a_path_that_cannot_be_removed(mocker):
+    from pathlib import Path
+
+    from jailbee.gui import display_state_dir
+
+    display_state_dir().mkdir(parents=True)
+    for name in ("wp-aaaaaaaa-c1", "wp-aaaaaaaa-c2"):
+        (display_state_dir() / name).touch()
+    real = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self.name == "wp-aaaaaaaa-c1":
+            raise PermissionError("denied")
+        real(self, missing_ok=missing_ok)
+
+    mocker.patch.object(Path, "unlink", unlink)
+
+    rd.remove_waypipe_sockets()  # must not raise
+
+    assert [p.name for p in display_state_dir().iterdir()] == ["wp-aaaaaaaa-c1"]
+
+
 def test_remove_waypipe_sockets_without_directories_is_a_no_op():
     rd.remove_waypipe_sockets()
 
 
-def test_down_removes_every_waypipe_socket(mocker):
+def test_down_removes_the_display_sockets_but_not_the_ssh_servers_links(mocker):
     incus = MagicMock()
     incus.list_containers.return_value = _running()
     mocker.patch.object(rd, "stop_container")
@@ -370,7 +407,7 @@ def test_down_removes_every_waypipe_socket(mocker):
 
     rd.display_down(incus)
 
-    removed.assert_called_once_with()
+    removed.assert_called_once_with(links=False)
 
 
 def _existing(status, exec_out):

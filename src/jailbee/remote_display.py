@@ -10,6 +10,7 @@ draws on the one screen. Modelled on `registry.py`; everything goes through the
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from jailbee.incus import Incus, IncusError
 from jailbee.remote_ssh.display_forward import DISPLAY_FORWARD_HOST, DISPLAY_FORWARD_PORT
 from jailbee.runtime_mounts import DISPLAY_DEVICE, display_device_config
 from jailbee.stopping import stop_container
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -259,7 +262,7 @@ def display_down(incus: Incus) -> None:
     if entry is None or entry.get("status") != "Running":
         return
     stop_container(incus, DISPLAY_CONTAINER, force_fallback=True, label="the shared display")
-    remove_waypipe_sockets()
+    remove_waypipe_sockets(links=False)
 
 
 def client_connected(incus: Incus) -> bool:
@@ -377,17 +380,29 @@ def ensure_waypipe_display(
     ensure_links_device(incus)
 
 
-def remove_waypipe_sockets(session_id: str | None = None) -> None:
-    """Remove the host-side sockets of one waypipe session, or of all of them."""
+def remove_waypipe_sockets(session_id: str | None = None, *, links: bool = True) -> None:
+    """Remove the host-side sockets of one waypipe session, or of all of them.
+
+    ``links=False`` leaves the SSH server's forward listeners alone: they
+    belong to the server, not to the display. Never raises: a path that
+    cannot be removed is logged and the rest are still removed.
+    """
     from jailbee.remote_ssh.waypipe import links_dir
 
-    servers = f"wp-{session_id}-*" if session_id else "wp-*"
-    links = f"{session_id}.sock" if session_id else "*.sock"
-    for directory, pattern in ((display_state_dir(), servers), (links_dir(), links)):
-        if not directory.is_dir():
+    targets = [(display_state_dir(), f"wp-{session_id}-*" if session_id else "wp-*")]
+    if links:
+        targets.append((links_dir(), f"{session_id}.sock" if session_id else "*.sock"))
+    for directory, pattern in targets:
+        try:
+            paths = list(directory.glob(pattern)) if directory.is_dir() else []
+        except OSError:
+            log.warning("Could not list %s for waypipe sockets", directory, exc_info=True)
             continue
-        for path in directory.glob(pattern):
-            path.unlink(missing_ok=True)
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Could not remove waypipe socket %s", path, exc_info=True)
 
 
 def prepare_shared_display(

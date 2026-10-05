@@ -463,7 +463,7 @@ def test_launch_env_in_a_waypipe_session_starts_the_containers_server(
 
     assert env["WAYLAND_DISPLAY"] == "/run/jailbee-display/wp-0a1b2c3d-c"
     assert start.call_args.args[1:3] == (WaypipeSession("0a1b2c3d", "lz4"), "c")
-    assert start.call_args.kwargs == {"uid": cfg.container_user.uid, "gid": cfg.container_user.gid}
+    assert start.call_args.kwargs == {}
     shared.assert_not_called()
 
 
