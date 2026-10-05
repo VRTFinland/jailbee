@@ -335,6 +335,7 @@ def test_ensure_waypipe_display_leaves_a_running_display_alone(mocker):
     rd.ensure_waypipe_display(incus)
 
     up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
 
 
 def test_remove_waypipe_sockets_for_one_session_or_all(tmp_path):
@@ -370,3 +371,46 @@ def test_down_removes_every_waypipe_socket(mocker):
     rd.display_down(incus)
 
     removed.assert_called_once_with()
+
+
+def _existing(status, exec_out):
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": rd.DISPLAY_CONTAINER, "status": status}]
+    incus.profile_exists.return_value = True
+    incus.exec.return_value = exec_out
+    return incus
+
+
+@pytest.mark.parametrize("status", ["Running", "Stopped"])
+def test_up_adds_the_links_device_to_an_existing_display(mocker, status):
+    incus = _existing(status, "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=False)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    incus.init.assert_not_called()
+    assert [c.args[1] for c in incus.config_device_add.call_args_list] == [rd.LINKS_DEVICE]
+
+
+def _provisioning_scripts(incus):
+    scripts = [c.args[1][2] for c in incus.exec.call_args_list if c.args[1][:2] == ["bash", "-c"]]
+    return [s for s in scripts if "JAILBEE_INSTALL_EOF" in s]
+
+
+def test_up_reprovisions_an_existing_display_that_lacks_waypipe(mocker):
+    incus = _existing("Running", "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=True)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    assert len(_provisioning_scripts(incus)) == 1
+    incus.init.assert_not_called()
+
+
+def test_up_leaves_a_fully_provisioned_existing_display_alone(mocker):
+    incus = _existing("Running", "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=False)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    assert _provisioning_scripts(incus) == []
