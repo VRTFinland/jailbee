@@ -23,6 +23,7 @@ from jailbee.remote_ssh import overrides as overrides_module
 from jailbee.remote_ssh import server
 from jailbee.remote_ssh.keys import ssh_paths
 from jailbee.remote_ssh.pty import ChildSpec, PTYError
+from jailbee.remote_ssh.session import WaypipeSession
 
 PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsz47IcK4hPdHS7xOXNGafb/Uw3epmEsD7xIJn434n6"
 FINGERPRINT = "SHA256:qLBHzrI/tje39Belv8gH7aaz1iprjQMjKh4sbnQnFT4"
@@ -199,7 +200,9 @@ def test_connection_audit_identifies_source_key_and_safe_disconnect_reason(
     assert "private disconnect message" not in caplog.text
 
 
-def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem=None):
+def actual_process(
+    command=None, *, term=None, env=None, raw_env=None, subsystem=None, extra=None
+):
     """Keep AsyncSSH process/stream APIs real and mock only the transport channel."""
     channel = Mock(spec=asyncssh.SSHServerChannel)
     channel.get_encoding.return_value = (None, "strict")
@@ -216,6 +219,7 @@ def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem
     channel.get_extra_info.side_effect = {
         "peername": SOURCE,
         "jailbee_key_fingerprint": FINGERPRINT,
+        **(extra or {}),
     }.get
     process = asyncssh.SSHServerProcess(lambda _: None, None, 3, False)
     process.connection_made(channel)
@@ -1632,7 +1636,9 @@ def test_server_factory_hands_the_live_gui_flag_to_the_server(listener, mocker, 
     """A dropped `remote_gui_enabled` wiring leaves forwarding on or off for good."""
     _, listen = listener
     seen = mocker.patch.object(server, "remote_gui_enabled", return_value=enabled)
+    mocker.patch("jailbee.remote_ssh.waypipe.prune_all")
     asyncio.run(server.serve_async(RemoteSSHConfig()))
+    seen.reset_mock()  # startup also asks, to decide on pruning waypipe leftovers
 
     instance = listen.call_args.kwargs["server_factory"]()
 
@@ -1710,3 +1716,171 @@ def test_startup_summary_names_the_file_transfer_scope_only_when_on():
     off = server._startup_summary(RemoteSSHConfig(), SimpleNamespace(get_port=lambda: 8022), None)
     assert "sftp/scp: on (container repo directories only)" in on
     assert "sftp/scp" not in off
+
+
+WP_SOCK = "/tmp/waypipe-server-6dCPSslHnp.sock"
+
+
+def test_the_waypipe_forward_listens_at_jailbees_own_path(connection):
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    connection.forward_local_path = Mock(return_value="listener-coro")
+
+    result = _gui_server(connection).unix_server_requested(WP_SOCK)
+
+    assert result == "listener-coro"
+    own, dest = connection.forward_local_path.call_args.args
+    listen, session_id = connection.get_extra_info("jailbee_waypipe")
+    assert dest == listen == WP_SOCK
+    from jailbee.remote_ssh.waypipe import links_socket
+
+    assert own == str(links_socket(session_id))
+    assert links_socket(session_id).parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    "setup",
+    ["feature-off", "unauthenticated", "second-forward", "bad-shape", "path-too-long"],
+)
+def test_the_waypipe_forward_is_refused(connection, monkeypatch, tmp_path, setup):
+    connection.forward_local_path = Mock(return_value="listener-coro")
+    enabled = setup != "feature-off"
+    if setup != "unauthenticated":
+        connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    instance = _gui_server(connection, enabled=enabled)
+    path = WP_SOCK
+    if setup == "second-forward":
+        assert instance.unix_server_requested(WP_SOCK) == "listener-coro"
+        path = "/tmp/waypipe-server-AAAAAAAAAA.sock"
+    if setup == "bad-shape":
+        path = "/run/user/1000/bus"
+    if setup == "path-too-long":
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ("d" * 120)))
+
+    assert instance.unix_server_requested(path) is False
+
+
+def test_unix_connections_stay_refused_even_in_a_waypipe_session(connection):
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    connection.forward_local_path = Mock(return_value="listener-coro")
+    instance = _gui_server(connection)
+    instance.unix_server_requested(WP_SOCK)
+
+    assert instance.unix_connection_requested(WP_SOCK) is False
+
+
+WP_CMD = (
+    f"waypipe --unlink-socket --threads 0 --compress zstd --socket {WP_SOCK} "
+    "--display wayland-x server dashboard"
+)
+WP_FORWARD = {"jailbee_waypipe": (WP_SOCK, "0a1b2c3d")}
+
+
+@pytest.fixture
+def gui_config(mocker):
+    ssh = RemoteSSHConfig(
+        shell=True, exec=True, dashboard=True, gui=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    return mocker.patch.object(
+        server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
+    )
+
+
+@pytest.fixture
+def waypipe_ops(mocker):
+    return {
+        "ensure": mocker.patch("jailbee.remote_display.ensure_waypipe_display"),
+        "stop": mocker.patch("jailbee.remote_ssh.waypipe.stop_session"),
+    }
+
+
+def test_a_waypipe_session_runs_its_command_with_the_session_markers(child, gui_config, waypipe_ops):
+    session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    spec = child.call_args.args[1]
+    assert spec.argv[3] == "dashboard"
+    assert spec.waypipe == WaypipeSession("0a1b2c3d", "zstd")
+    assert spec.waypipe_attach is False
+    waypipe_ops["ensure"].assert_called_once()
+    waypipe_ops["stop"].assert_called_once()
+    assert waypipe_ops["stop"].call_args.args[1] == "0a1b2c3d"
+
+
+def test_a_direct_gui_command_runs_attached(child, gui_config, waypipe_ops, repo):
+    cmd = WP_CMD.replace("server dashboard", "server --repo project chrome c")
+
+    session(cmd, extra=WP_FORWARD)
+
+    assert child.call_args.args[1].waypipe_attach is True
+
+
+def test_a_direct_non_gui_command_is_not_attached(child, gui_config, waypipe_ops, repo):
+    session(WP_CMD.replace("server dashboard", "server --repo project ls"), extra=WP_FORWARD)
+
+    assert child.call_args.args[1].waypipe_attach is False
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"jailbee_waypipe": ("/tmp/waypipe-server-OTHEROTHER.sock", "0a1b2c3d")}],
+)
+def test_waypipe_without_its_forward_is_refused_before_anything_runs(
+    child, gui_config, waypipe_ops, extra
+):
+    _, channel = session(WP_CMD, extra=extra)
+
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()
+    assert b"waypipe" in output(channel, 1)
+
+
+def test_waypipe_with_the_feature_off_is_refused_naming_the_key(child, configured, waypipe_ops):
+    _, channel = session(WP_CMD, extra=WP_FORWARD)
+
+    child.assert_not_called()
+    assert b"remote.ssh.gui" in output(channel, 1)
+
+
+def test_a_display_that_cannot_start_refuses_the_session(child, gui_config, waypipe_ops):
+    from jailbee.remote_display import DisplayError
+
+    waypipe_ops["ensure"].side_effect = DisplayError("weston is 'failed'")
+
+    _, channel = session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    child.assert_not_called()
+    assert b"weston is 'failed'" in output(channel, 1)
+    waypipe_ops["stop"].assert_called_once()
+
+
+def test_the_session_is_stopped_even_when_the_child_fails(child, gui_config, waypipe_ops):
+    child.side_effect = ConnectionResetError()
+
+    session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    waypipe_ops["stop"].assert_called_once()
+
+
+def test_an_empty_waypipe_command_takes_the_no_command_route(child, gui_config, waypipe_ops):
+    cmd = f"waypipe --login-shell --unlink-socket --compress lz4 --socket {WP_SOCK} --display w server"
+
+    _, channel = session(cmd, term="xterm", extra=WP_FORWARD)
+
+    # default_entrypoint is "help" in this config: help text, no child.
+    child.assert_not_called()
+    assert b"Available remote commands" in output(channel)
+
+
+@pytest.mark.parametrize("gui", [True, False])
+def test_serve_async_prunes_waypipe_leftovers_only_with_gui_on(listener, mocker, gui):
+    _, listen = listener
+    mocker.patch.object(server, "remote_gui_enabled", return_value=gui)
+    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_all")
+    prune.side_effect = lambda incus: assert_not_listening(listen)
+
+    asyncio.run(server.serve_async(RemoteSSHConfig()))
+
+    assert prune.call_count == (1 if gui else 0)
+
+
+def assert_not_listening(listen):
+    assert not listen.await_count

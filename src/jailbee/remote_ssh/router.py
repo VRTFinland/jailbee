@@ -289,6 +289,14 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
 # always opens a window on the host.
 _GUI_APP_COMMANDS: frozenset[str] = frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
 
+
+def is_gui_app_command(argv: Sequence[str]) -> bool:
+    """Whether ``argv`` is one of the GUI app launchers (the Qt dashboard excluded)."""
+    try:
+        return command_path(argv) in _GUI_APP_COMMANDS
+    except RouteError:
+        return False
+
 # The network-widening commands that `remote.ssh.network` turns from host
 # commands into container commands. Narrowing (`net strict`, `net egress rm`)
 # is a container command outright.

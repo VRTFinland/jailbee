@@ -10,6 +10,7 @@ from sqlmodel import Session
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.db.models import RegisteredRepo
+from jailbee.remote_ssh import router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import (
     Route,
@@ -1195,3 +1196,18 @@ def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None
     assert permitted(argv, on, over_ssh=True)
     assert permitted(["new", "feat", "--net", "strict"], off, over_ssh=True)
     assert permitted(argv, off, over_ssh=False)
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (("chrome", "c"), True),
+        (("apps", "run", "foot", "c"), True),
+        (("ide", "c"), True),
+        (("gui",), False),
+        (("ls",), False),
+        (("nonsense",), False),
+    ],
+)
+def test_is_gui_app_command(argv, expected):
+    assert router.is_gui_app_command(argv) is expected
