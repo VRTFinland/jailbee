@@ -3791,6 +3791,7 @@ if TYPE_CHECKING:
     from jailbee.dashboard import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
+    from jailbee.doctor_scroll import ScrollState
     from jailbee.incus import Incus as IncusType
     from jailbee.issue_manifest import IssueManifest
     from jailbee.issue_outbox import ApplyReport, OutboxSnapshot, PreparedBatch
@@ -16226,7 +16227,8 @@ def _doctor_table(
     from rich.spinner import Spinner
     from rich.table import Table
 
-    table = Table(title="Diagnostic checks")
+    hint = "↑/↓ PgUp/PgDn Home/End scroll · f follow" if window is not None else None
+    table = Table(title="Diagnostic checks", caption=hint)
     table.add_column("CHECK")
     table.add_column("STATUS")
     table.add_column("DETAIL")
@@ -16265,15 +16267,22 @@ class _DoctorLiveView:
 
     `Live` crops a renderable taller than the terminal and a cursor-addressed
     area cannot be scrolled, so on a small screen the running row would sit
-    below the crop. This draws a window of rows that keeps ``running`` in view
-    and says how many are hidden; the full table is printed once the checks
-    are done. A wrapped DETAIL makes a row taller than one line, so the budget
-    shrinks until the rendered frame fits.
+    below the crop. This draws a window of rows that follows ``running`` — or
+    the row ``scroll`` points at, once the user has scrolled — and says how
+    many are hidden; the full table is printed once the checks are done. A
+    wrapped DETAIL makes a row taller than one line, so the budget shrinks
+    until the rendered frame fits.
     """
 
-    def __init__(self, results: list["CheckResult"], running: tuple[int, _DeferredDetail]) -> None:
+    def __init__(
+        self,
+        results: list["CheckResult"],
+        running: tuple[int, _DeferredDetail],
+        scroll: "ScrollState | None" = None,
+    ) -> None:
         self._results = results
         self._running = running
+        self._scroll = scroll
 
     def __rich_console__(self, console: "Console", options: "ConsoleOptions") -> "RenderResult":
         from jailbee.dashboard import window_rows
@@ -16282,16 +16291,27 @@ class _DoctorLiveView:
         if not console.is_terminal:
             yield _doctor_table(self._results, self._running)
             return
-        # Title, top border, header, header rule and bottom border.
-        budget = options.max_height - 5
+        cursor = self._running[0]
+        if self._scroll is not None and self._scroll.cursor is not None:
+            cursor = self._scroll.cursor
+        # Title, top border, header, header rule, bottom border and the key hint.
+        budget = options.max_height - 6
         while True:
-            window = window_rows([1] * count, self._running[0], max(budget, 3))
+            window = window_rows([1] * count, cursor, max(budget, 3))
             table = _doctor_table(self._results, self._running, window)
             excess = len(console.render_lines(table, options, pad=False)) - options.max_height
             if excess <= 0 or budget <= 3:
                 break
             budget -= excess
         yield table
+
+
+def _stdin_fd() -> int | None:
+    """stdin's file descriptor, or None when it has none (a captured stream)."""
+    try:
+        return sys.stdin.fileno()
+    except (OSError, ValueError):
+        return None
 
 
 def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
@@ -16312,6 +16332,7 @@ def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
     from rich.live import Live
 
     from jailbee.doctor import CheckResult
+    from jailbee.doctor_scroll import ScrollState, scroll_keys
     from jailbee.tui import console
 
     results = list(results)
@@ -16320,8 +16341,18 @@ def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
         console.print(_doctor_table(results))
         return results
     interrupted = False
-    with Live(_doctor_table(results), console=console, refresh_per_second=8) as live:
+    scroll = ScrollState()
+    running_row = [pending[0]]
+
+    def on_key(key: str) -> None:
+        scroll.apply(key, running=running_row[0], count=len(results))
+
+    with (
+        scroll_keys(_stdin_fd(), on_key),
+        Live(_doctor_table(results), console=console, refresh_per_second=8) as live,
+    ):
         for index in pending:
+            running_row[0] = index
             check = results[index]
             assert check.deferred is not None
             if interrupted:
@@ -16330,7 +16361,7 @@ def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
                 )
                 continue
             detail = _DeferredDetail()
-            live.update(_DoctorLiveView(results, (index, detail)))
+            live.update(_DoctorLiveView(results, (index, detail), scroll))
 
             def on_progress(progress: "CacheProgress", detail: _DeferredDetail = detail) -> None:
                 detail.progress = progress
