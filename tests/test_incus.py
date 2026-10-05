@@ -1398,9 +1398,7 @@ def test_script_finds_a_browser_whose_binary_was_updated_in_place(tmp_path):
     # After an in-place update the kernel reports the replaced file as
     # "<path> (deleted)"; the live browser must still be found.
     proc = tmp_path / "proc"
-    _fake_proc(
-        proc, 4242, "/opt/google/chrome/chrome (deleted)", ["WAYLAND_DISPLAY=wayland-1"]
-    )
+    _fake_proc(proc, 4242, "/opt/google/chrome/chrome (deleted)", ["WAYLAND_DISPLAY=wayland-1"])
     profile = tmp_path / "google-chrome"
     profile.mkdir()
     os.symlink("c1-4242", profile / "SingletonLock")

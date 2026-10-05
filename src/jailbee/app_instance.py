@@ -119,6 +119,7 @@ def ensure_on_this_display(
         incus.exec(container, ["kill", "-TERM", str(running.pid)], uid=uid, gid=gid)
     except IncusError:
         pass  # already gone; the poll below confirms it
+
     def process_gone() -> bool:
         try:
             incus.exec(container, ["test", "-d", f"/proc/{running.pid}"], uid=uid, gid=gid)
