@@ -1175,9 +1175,9 @@ first of them — or `jailbee exec -d --gui`, or `jailbee display attach` — ru
 in the container, so a container that never opens a window cannot reach the
 host compositor at all. Each such launch also replaces a socket that a
 restarted compositor (a re-login) left dead. A GUI app started some other way
-— from `jailbee shell`, an autostart step, an agent — needs `jailbee display
-attach` first, or `wayland: always`, which attaches it on every boot as
-before. A window is all the socket gives the container.
+— from `jailbee shell`, an agent — needs `jailbee display attach` first. One
+started at boot, such as an autostart step, runs before anyone can attach, so
+it needs `wayland: always`, which attaches the socket on every boot as before. A window is all the socket gives the container.
 
 `dbus` and `audio` came in alongside it as a desktop bundle but do
 more than draw. The session bus is the host desktop's control channel —

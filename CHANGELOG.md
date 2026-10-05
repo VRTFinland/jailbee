@@ -61,8 +61,8 @@ before editing `## Unreleased`.
   host compositor socket on its first GUI launch (`jailbee ide`, `chrome`,
   `firefox`, `browser`, `apps run`, `exec -d --gui`) instead of on every boot,
   so a container that never opens a window cannot reach it. A GUI app started
-  from `jailbee shell` or an autostart step needs the new `jailbee display
-  attach` first, or `gui.wayland: always` for the old behaviour. Each launch
+  from `jailbee shell` needs the new `jailbee display attach` first; one started
+  at boot (an autostart step) needs `gui.wayland: always`, the old behaviour. Each launch
   also replaces a socket a host re-login left dead, which used to need a
   container restart.
 

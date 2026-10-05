@@ -933,8 +933,8 @@ available inside a container); `display status` works over SSH.
 
 On the host, the Wayland display is attached to a container on its first GUI
 launch (`gui.wayland: on-demand`, the default). A GUI app started from `jailbee
-shell` or an autostart step needs `jailbee display attach <name>` first (or
-`gui.wayland: always`). `display attach` also replaces a socket left dead by a
+shell` needs `jailbee display attach <name>` first; one started at boot (an
+autostart step) needs `gui.wayland: always`. `display attach` also replaces a socket left dead by a
 host re-login; it is host-only.
 
 On a Linux laptop with a Wayland session and waypipe installed, `waypipe ssh`
