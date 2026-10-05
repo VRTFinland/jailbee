@@ -15103,7 +15103,7 @@ def _write_repo_group(config: Path | None, value: object) -> None:
     block = folded.get("credentials")
     repos = block.get("repos") if isinstance(block, dict) else None
     if isinstance(repos, dict) and prefix in repos:
-        changes = config_writer.credential_key_migration(
+        changes = config_writer.legacy_key_migrations(
             raw,
             [config_writer.YamlChange(("credentials", "repos", prefix), config_writer.DELETE)],
         )

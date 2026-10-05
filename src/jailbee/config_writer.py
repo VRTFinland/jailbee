@@ -107,6 +107,36 @@ def credential_key_migration(
     ]
 
 
+def remote_ssh_key_migration(
+    raw: dict[str, object], changes: Sequence[YamlChange]
+) -> list[YamlChange]:
+    """The changes that rename 1.6.0's `remote.ssh.shell` spellings in one write.
+
+    `credential_key_migration`'s sibling, for the same reason: a staged
+    `remote.ssh.console` change next to an on-disk `shell` would leave both
+    spellings, which `normalize_remote_ssh_keys` refuses. The caller's own
+    changes come last so they win.
+    """
+    remote = raw.get("remote")
+    ssh = remote.get("ssh") if isinstance(remote, dict) else None
+    if not isinstance(ssh, dict):
+        return list(changes)
+    out: list[YamlChange] = []
+    if "shell" in ssh:
+        out.append(YamlChange(("remote", "ssh", "console"), deepcopy(ssh["shell"])))
+        out.append(YamlChange(("remote", "ssh", "shell"), DELETE))
+    if ssh.get("default_entrypoint") == "shell":
+        out.append(YamlChange(("remote", "ssh", "default_entrypoint"), "console"))
+    return [*out, *changes]
+
+
+def legacy_key_migrations(
+    raw: dict[str, object], changes: Sequence[YamlChange]
+) -> list[YamlChange]:
+    """Every rename a write to `global.yaml` carries; see the two helpers."""
+    return remote_ssh_key_migration(raw, credential_key_migration(raw, changes))
+
+
 def _yaml() -> YAML:
     y = YAML()
     y.default_flow_style = False
