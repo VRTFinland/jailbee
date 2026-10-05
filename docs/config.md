@@ -2611,7 +2611,7 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 
 Routes accept `model` (required for new routes), `effort` (fixed),
 `min_effort` (floor; mutually exclusive with `effort`), `context_window`
-(required for unknown models, default `272000` for `gpt-6-astra` and `gpt-6.1-sol`, `1050000` for `gpt-6-luna`),
+(required for unknown models, default `272000` for `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
 `oauth` (true: use the account's xAI subscription login, only on `xai/` routes, experimental),
 `api_key` (name of a variable in `~/.config/jailbee/litellm/secrets.env`, never
 the key; not allowed on `chatgpt/` routes), `api_base` (endpoint URL; its host

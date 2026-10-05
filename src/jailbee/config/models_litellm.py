@@ -84,12 +84,12 @@ An `oauth: true` route needs it besides `PROVIDER_HOSTS["xai"]`."""
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6-astra": 272_000,
     "chatgpt/gpt-6.1-sol": 272_000,
-    "chatgpt/gpt-6-luna": 1_050_000,
+    "chatgpt/gpt-6-luna": 272_000,
 }
 """Window Claude Code manages per model. Claude Code compacts a fixed reserve
 below this value, so one above what the subscription backend accepts would
-compact after the backend has already refused the prompt. The sol and astra
-windows are the subscription backend's input limit, not the API's 1.05M."""
+compact after the backend has already refused the prompt. These are the
+subscription backend's input limit, not the API's 1.05M."""
 
 PARAMS_DENYLIST: frozenset[str] = frozenset(
     {
@@ -256,8 +256,8 @@ class LiteLLMRoute(BaseModel):
         description=(
             "Context window in tokens that Claude Code manages (use the backend's "
             "maximum input). Passed to Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
-            "Defaults to 272000 for `chatgpt/gpt-6-astra` and `chatgpt/gpt-6.1-sol`, "
-            "1050000 for `chatgpt/gpt-6-luna`; required for any other model."
+            "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` and "
+            "`chatgpt/gpt-6-luna`; required for any other model."
         ),
     )
     api_key: str | None = Field(

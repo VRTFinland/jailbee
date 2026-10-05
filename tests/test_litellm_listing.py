@@ -21,7 +21,7 @@ def test_host_block_lists_the_builtin_profile_and_its_efforts():
     assert "opus    jb.codex.capable       sol-high" in text
     assert "codex*  account default" in text
     assert "fable" in text and "chatgpt/gpt-6-astra" in text and "high (fixed)" in text
-    assert "high (fixed)" in text and "272000 tokens" in text and "1050000 tokens" in text
+    assert "high (fixed)" in text and "272000 tokens" in text
 
 
 def test_each_repo_block_shows_its_own_scope_and_settings():

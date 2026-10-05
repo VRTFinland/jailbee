@@ -120,7 +120,7 @@ def test_builtin_gpt6_context_windows():
         "astra": 272_000,
         "sol-high": 272_000,
         "sol-medium": 272_000,
-        "luna-high": 1_050_000,
+        "luna-high": 272_000,
     }
 
 

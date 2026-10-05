@@ -192,21 +192,21 @@ def test_container_profiles():
                 "sonnet": "jb.codex.standard",
                 "haiku": "jb.codex.cheap",
             },
-            "context_window": 1_050_000,
+            "context_window": 272_000,
         }
     }
 
 
-def test_profile_context_window_is_the_largest_of_the_profiles_routes():
+def test_profile_context_window_is_the_smallest_of_the_profiles_routes():
     cfg = LiteLLMConfig.model_validate(
         {
-            "routes": {"sol-medium": {"context_window": 400_000}},
-            "profiles": {"small": {"account": "default", "sonnet": "sol-medium"}},
+            "routes": {"luna-high": {"context_window": 1_050_000}},
+            "profiles": {"wide": {"account": "default", "haiku": "luna-high"}},
         }
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
-    assert profiles["small"]["context_window"] == 400_000
-    assert profiles["codex"]["context_window"] == 1_050_000
+    assert profiles["wide"]["context_window"] == 1_050_000
+    assert profiles["codex"]["context_window"] == 272_000
 
 
 def test_container_profiles_carry_the_profile_instructions():

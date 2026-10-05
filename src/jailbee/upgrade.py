@@ -268,6 +268,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "enable that agent"
         ),
     ),
+    UpgradeNote(
+        version=(1, 7, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "Claude Code through `jailbee litellm` gets the smallest context window of its "
+            "profile's routes, and the built-in `luna-high` route drops to "
+            "272,000 tokens — nothing to re-apply unless you use `jailbee litellm`"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

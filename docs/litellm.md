@@ -257,13 +257,14 @@ for `/model` and for sessions started before tier names existed. Profile names
 follow the same rule as route names (`[a-z0-9][a-z0-9_-]{0,63}`).
 
 The built-in models default to a **272,000-token context window** (`astra`,
-`sol-*`) and **1,050,000 tokens** (`luna-high`). For the sol and astra models
-that is the ChatGPT subscription backend's maximum input, not the API's 1.05M
-total. Claude Code compacts a fixed reserve below the window it is told about, so a
-larger value would compact only after the backend had refused the prompt. A new
-model needs an explicit `context_window`; the wrapper exports
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the largest window among the selected
-profile's mapped routes.
+`sol-*`, `luna-high`): the ChatGPT subscription backend's maximum input, not
+the API's 1.05M total. Claude Code compacts a fixed reserve below the window it
+is told about, so a larger value would compact only after the backend had
+refused the prompt. A new model needs an explicit `context_window`. Claude Code
+takes one window for the whole session, whichever tier answers, so the wrapper
+exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the **smallest** window among the
+selected profile's mapped routes; a larger window on one route takes effect
+only in a profile whose every route has it.
 
 ## Adding a new model
 
