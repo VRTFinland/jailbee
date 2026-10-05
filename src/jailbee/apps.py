@@ -242,11 +242,17 @@ def launch(
     container: str,
     spec: AppSpec,
     args: list[str] | None = None,
+    *,
+    move: bool | None = None,
+    check_running: bool = True,
 ) -> None:
     """Start `spec` in `container`, logging inside the container.
 
     Detached, unless the `waypipe ssh` session's own command is this launch:
     then it runs attached, so the session lasts as long as the app.
+
+    ``move`` and ``check_running``: see `app_instance.ensure_on_this_display`;
+    autostart passes ``check_running=False`` and never moves an app.
     """
     import shlex as _shlex
 
@@ -271,6 +277,18 @@ def launch(
 
     cwd = _container_cwd(cfg, incus, container, spec.cwd)
 
+    # Before the "Launching" line: a failed display preparation must print
+    # nothing about launching.
+    env = launch_env(cfg, incus, container, spec.env)
+
+    moved = False
+    if spec.singleton is not None and check_running:
+        from jailbee.app_instance import ensure_on_this_display
+
+        moved = ensure_on_this_display(cfg, incus, container, spec, env, move=move)
+    if moved and spec.singleton is not None:
+        argv += spec.singleton.restore_args
+
     call_args = list(args or [])
     if call_args:
         argv += call_args
@@ -286,9 +304,6 @@ def launch(
         # says which would win if one ever did.
         argv.append(cwd)
 
-    # Before the "Launching" line: a failed display preparation must print
-    # nothing about launching.
-    env = launch_env(cfg, incus, container, spec.env)
     log_path = app_log_path(spec.name)
     inner = " ".join(_shlex.quote(a) for a in argv)
     if waypipe_attach():
@@ -327,7 +342,7 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
         if not spec.autostart:
             continue
         try:
-            launch(cfg, incus, container, spec)
+            launch(cfg, incus, container, spec, check_running=False)
         except DisplayError as e:
             error(str(e))
             error("Skipping the remaining autostart apps: the shared display is not ready.")
