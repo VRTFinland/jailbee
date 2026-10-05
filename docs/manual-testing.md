@@ -5273,6 +5273,28 @@ The display container therefore mounts the shared directory at
 `/srv/jailbee-display` (not under `/run`); client containers get theirs
 attached after boot and keep `/run/jailbee-display`.
 
+## Remote GUI over waypipe (Linux laptop)
+
+Host-only checks. The host needs `remote.ssh.gui: true`, the SSH service
+running and `jb display up` done; the laptop is Linux with a Wayland session
+and waypipe 0.10 or newer. Background:
+[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe-linux).
+
+1. `waypipe ssh -t -p <port> jailbee@<host> dashboard`. From the menu launch
+   Chrome in container A and a terminal in container B. Expected: both windows
+   open on the laptop, titled `[<A>] ...` and `[<B>] ...`.
+2. Close the SSH session. Expected: both windows close, and `incus exec
+   jailbee-display -- systemctl list-units 'jailbee-wp-*'` lists nothing.
+3. `waypipe ssh -p <port> jailbee@<host> --repo <prefix> chrome <container>`.
+   Expected: Chrome opens, and the command stays open until Chrome is closed.
+4. `waypipe --compress zstd ssh ...` as in step 3. Expected: works.
+5. With `remote.ssh.gui: false`, repeat step 3. Expected: refused, with
+   `remote.ssh.gui` named.
+6. Open a session as in step 1, then `jb remote ssh restart`. Expected: no
+   `jailbee-wp-*` unit survives (the listing from step 2 is empty).
+7. Record the client waypipe version tested. 0.8 and 0.9 clients are
+   untested.
+
 ## macOS client
 
 Needs a real Mac with Windows App, and a Linux host for setup A or Colima for

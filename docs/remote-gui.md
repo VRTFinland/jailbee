@@ -71,12 +71,55 @@ display, so they can wait for the RDP client in the same way. If the display
 cannot be prepared, the first failure is reported and the remaining autostart
 apps are skipped, so `jb new` waits at most once.
 
+## Native windows with waypipe (Linux)
+
+On a Linux laptop with a Wayland session and
+[waypipe](https://gitlab.freedesktop.org/mstoeckl/waypipe) installed, a
+`waypipe ssh` session carries the apps' windows to your own desktop as native
+windows. They close with the session. Choose RDP instead on macOS or Windows,
+and for windows that must survive a disconnect.
+
+Needs `remote.ssh.gui: true` (a waypipe session is refused without it) and a
+stock waypipe client; the SSH server needs nothing else. Open the dashboard
+and launch from its menu:
+
+```bash
+waypipe ssh -t -p <ssh port> jailbee@<host> dashboard
+```
+
+The `-t` is needed for the dashboard. A launch from the dashboard that fails
+shows only the exit-code notice, not the launcher's message. To run one app
+directly:
+
+```bash
+waypipe ssh -p <ssh port> jailbee@<host> --repo <prefix> chrome <container>
+```
+
+The direct command waits until the app exits, and the session ends with it.
+`--repo <prefix>` is required for it.
+
+- Window titles carry a `[<container>] ` prefix, so windows from different
+  containers can be told apart.
+- Each session runs one waypipe server per container, as a transient unit in
+  `jailbee-display`; stopping the session stops them, and with them every
+  window.
+- The client's `--compress` is honoured (`waypipe --compress zstd ssh ...`).
+  The other waypipe options (`--threads`, `--video`, `--no-gpu`) are the
+  laptop's own; the server does not use them.
+- Not supported: `--oneshot`, `--xwls` and `--remote-bin`. The error names the
+  supported form.
+- The first session after upgrading re-provisions `jailbee-display` (it
+  installs waypipe), which takes about a minute.
+
+The command parser accepts what waypipe 0.11 sends; 0.8 and 0.9 clients are
+untested.
+
 ## What it does not do
 
 - No RDP authentication. Any login is accepted; access is limited by network
   reachability and the SSH tunnel (see [Security](security.md#remote-gui)).
-- Window titles do not name the container; two Chrome windows from two
-  containers look alike.
+- On the RDP display, window titles do not name the container; two Chrome
+  windows from two containers look alike. (Waypipe sessions prefix them.)
 - No GPU. Rendering is in software.
 - One screen for all containers, and one shared clipboard.
 - `jb gui` (the Qt dashboard) stays a host command.

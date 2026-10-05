@@ -921,6 +921,15 @@ arbitrary command use `jailbee exec <name> -d --gui -- <cmd>`; a plain `exec
 -d` never touches the display. `display up|down` are host-only (not
 available inside a container); `display status` works over SSH.
 
+On a Linux laptop with a Wayland session and waypipe installed, `waypipe ssh`
+gives native windows instead (needs `remote.ssh.gui: true`): `waypipe ssh -t -p
+<port> jailbee@<host> dashboard` and launch from the menu, or `waypipe ssh -p
+<port> jailbee@<host> --repo <prefix> chrome <container>` (waits until the app
+exits). Window titles carry a `[<container>] ` prefix; the client's `--compress`
+is honoured; `--oneshot`, `--xwls` and `--remote-bin` are unsupported. Windows
+close with the session. The first session after an upgrade re-provisions
+`jailbee-display`, which takes about a minute. See `docs/remote-gui.md`.
+
 ## Other day-to-day commands
 
 - **Shell / run:** `jailbee shell [<name>]` (interactive, lands in the clone),

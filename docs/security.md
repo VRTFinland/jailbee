@@ -156,9 +156,14 @@ The SSH protocol surface is also fail-closed:
 - public-key authentication is the only authentication method; password,
   keyboard-interactive, host-based and GSS authentication are disabled;
 - agent forwarding, X11 forwarding, Unix-socket forwarding and remote
-  listeners are disabled, and so is TCP forwarding, with one exception:
-  while `remote.ssh.gui` is on, `127.0.0.1:13389` (the shared display, see
-  [Remote GUI](#remote-gui)), for any authorized key;
+  listeners are disabled, and so is TCP forwarding, with two exceptions, both
+  only while `remote.ssh.gui` is on (see [Remote GUI](#remote-gui)):
+  `127.0.0.1:13389` (the shared display), for any authorized key; and one
+  reverse unix forward per connection, for `waypipe ssh`, requested by a
+  connection authenticated by an authorized key. JailBee listens for that
+  forward at its own path under the state directory (the client never chooses
+  a host path), and the listener's directory is mounted into `jailbee-display`
+  only;
 - SFTP and SCP are disabled unless `remote.ssh.files` is on. When it is, they
   serve one thing only (see [File transfer](#file-transfer)) and every other
   subsystem is still refused;
@@ -301,6 +306,14 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   isolated from each other on this screen.
 - The display container uses the dev user's idmap, like the client containers,
   so the shared socket is owned by the same host user.
+- Each `waypipe ssh` session (see [Native windows with
+  waypipe](remote-gui.md#native-windows-with-waypipe-linux)) runs one waypipe
+  server per container inside `jailbee-display`. Their sockets live in the same
+  shared directory, so any container can open a window through another
+  container's server; that window carries the other container's title prefix.
+  No two containers share a server process. Untrusted Wayland traffic is
+  parsed in `jailbee-display`, and the laptop's waypipe client only ever talks
+  to those servers.
 - With SSH repository exclusions active, the GUI launchers (`ide`, the
   browsers, `apps run`) are refused over SSH regardless of this setting.
   `exec -d --gui` is not: it is admitted as a command scoped to one container
