@@ -70,6 +70,18 @@ Four ideas make the whole tool make sense:
    unattended agent can't surprise-push. To push/fetch/use `gh`, switch to
    **loose** (full NAT) for the operation, then it auto-reverts.
 
+## Global repository option
+
+`--repo PREFIX` runs a command in an exact registered repo (never a path)
+instead of the cwd's repo. It works before the command (`jb --repo x chrome
+feat`), inside its path (`jb net --repo x egress add pypi.org feat`) or after
+its arguments (`jb chrome feat --repo x`), but never after `--` (opaque
+payload). Only one global selector is accepted; it cannot be combined with
+`-c` / `--config`. Without it, local cwd / scratch behaviour is unchanged.
+A leaf's own `--repo` keeps its meaning after its name: `net egress add` / `rm`,
+`net refresh`, `net unregister`, `console`. Put the global selector before
+that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
+
 ## The daily loop
 
 ```bash
@@ -860,6 +872,9 @@ Client forms at the default loopback endpoint:
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
+ssh -p 8022 jailbee@localhost help
+ssh -p 8022 jailbee@localhost repos
+ssh -p 8022 jailbee@localhost COMMAND [ARGS...] [--repo PREFIX]
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
@@ -867,14 +882,30 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-The old `shell` spelling (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+Only the exact `ssh … shell` and `ssh … shell --repo PREFIX` forms mean the
+legacy console until 2.0.0; `ssh -t … shell NAME --repo PREFIX` runs `jb shell
+NAME` in a container. The old config/serve spellings (`remote.ssh.shell`,
+`default_entrypoint: shell`, `serve --shell`) also still work until 2.0.0;
+`jailbee config migrate --apply` renames them.
 
 A commandless login prints the enabled forms and exits by default; set
 `remote.ssh.default_entrypoint: dashboard` (or `console`, if enabled) in the
 host's `global.yaml` to open that entry point instead. `ssh jailbee@host help`
-always prints the enabled forms. Dashboard and the
-restricted JailBee console need `-t`. Every one-shot command requires an exact
-registered `PREFIX`; `--repo` never accepts a path. Started without `--repo`,
+always lists enabled forms and allowed command paths. Dashboard and the
+restricted JailBee console need `-t`.
+
+One-shot SSH execution accepts every JailBee command the remote console does,
+under the same policy and host restrictions. The global `--repo PREFIX`
+follows the placement rules above; the old `-- --repo PREFIX COMMAND` form
+still works. A prefix is exact and registered, never a path; its root becomes
+cwd. Without it, one visible repo is used automatically; with several,
+`ssh -t` shows a picker and a non-PTY call exits 2 naming the candidates.
+Command help needs no repo or picker. `repos` lists visible prefixes and roots
+(requires `exec: true`); excluded repos are unavailable to listings, pickers
+and selectors. A console line's global selector affects only that command,
+not the selected repo: use `use` to switch persistently.
+
+Started without `--repo`,
 the console shows an arrow-key menu of registered repos (skipped when exactly
 one is registered); Esc/Ctrl-C/Ctrl-D cancel it. The console's local commands
 are `repos`, `use [PREFIX]` (bare `use` reopens the menu), `dashboard` (shown
@@ -888,7 +919,7 @@ a one-line note. Every other line is a JailBee argv checked against
 allowing `git merge` also allows `merge`. A public group's own help (`git`,
 `git --help`) is allowed on its own whenever some command under it is
 allowed, and so is the bare top-level `--help`. A name matching no command at
-all is run anyway, so `jailbee` reports its own "No such command" error. It
+all is rejected before a JailBee child starts. It
 has no shell operators, expansion or executable lookup. In every mode, `full`
 included, a remote command may not set a path-typed option or argument
 (`--config`, `net refresh --repo`, ...) nor `new --mount`: the policy picks
@@ -944,7 +975,7 @@ cocoa-way`) and Homebrew's `waypipe-darwin`, with `XDG_RUNTIME_DIR` and
 `WAYLAND_DISPLAY` pointed at the socket under `$TMPDIR/cocoa-way/` (the
 `cwaypipe` function in the docs' macOS guide does this): `waypipe ssh -t -p
 <port> jailbee@<host> dashboard` and launch from the menu, or `waypipe ssh -p
-<port> jailbee@<host> --repo <prefix> chrome <container>` (waits until the app
+<port> jailbee@<host> chrome <container> --repo <prefix>` (waits until the app
 exits). Window titles carry a `[<container>] ` prefix; the client's `--compress`
 is honoured; `--oneshot`, `--xwls` and `--remote-bin` are unsupported. Windows
 close with the session. The first session after an upgrade re-provisions
