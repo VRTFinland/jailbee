@@ -50,6 +50,8 @@ def mock_resolve(mocker):
         # Auto-added by Config.effective_egress_allow() when
         # claude.enabled=true (full_config fixture has this set).
         "code.claude.com": ["3.5.6.7"],
+        "platform.claude.com": ["3.5.6.10"],
+        "mcp-proxy.anthropic.com": ["3.5.6.11"],
         "claude.ai": ["3.5.6.9"],
         "downloads.claude.ai": ["3.5.6.8"],
         # Auto-added by Config.effective_egress_allow() when
@@ -58,6 +60,7 @@ def mock_resolve(mocker):
         "api.github.com": ["140.82.121.5"],
         "raw.githubusercontent.com": ["185.199.108.133"],
         "objects.githubusercontent.com": ["185.199.108.134"],
+        "release-assets.githubusercontent.com": ["185.199.108.135"],
         "codeload.github.com": ["140.82.121.10"],
         "registry.npmjs.org": ["104.16.0.35"],
     }

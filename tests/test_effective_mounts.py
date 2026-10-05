@@ -224,6 +224,26 @@ def test_effective_egress_allow_includes_claude_install_bootstrap_host(tmp_path)
     assert "claude.ai:443" in allow
 
 
+def test_effective_egress_allow_includes_claude_login_hosts(tmp_path):
+    """`/login` posts the pasted code to `platform.claude.com/v1/oauth/token`,
+    and a signed-in session loads claude.ai connectors through
+    `mcp-proxy.anthropic.com`. Both share api.anthropic.com's IP, so the IP
+    ACL passed them unlisted; the egress proxy matches on the hostname and
+    refused them ("proxy refused the connection")."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    allow = cfg.effective_egress_allow()
+    assert "platform.claude.com:443" in allow
+    assert "mcp-proxy.anthropic.com:443" in allow
+
+
+def test_effective_egress_allow_includes_github_release_asset_host(tmp_path):
+    """A GitHub release download redirects to
+    `release-assets.githubusercontent.com`; without it a plugin fetching a
+    release binary is refused by the egress proxy."""
+    cfg = make_cfg(tmp_path, claude={"enabled": True})
+    assert "release-assets.githubusercontent.com:443" in cfg.effective_egress_allow()
+
+
 def test_effective_egress_allow_dedupes_claude_hosts(tmp_path):
     """If the user already listed a claude host, the auto-add doesn't duplicate it."""
     cfg = make_cfg(

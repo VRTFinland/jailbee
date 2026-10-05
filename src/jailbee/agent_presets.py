@@ -158,11 +158,17 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # nothing reads it — so confirm it on a host that has the agent
         # before relying on it.
         "skills_dir": "~/.gemini/skills",
+        # `www.googleapis.com` is the account lookup a Google sign-in makes
+        # right after the token exchange (`/oauth2/v2/userinfo`, read off the
+        # 0.62.0 bundle). It shares Google's front-end IPs with the hosts
+        # above, so only the egress proxy, which matches on the hostname, ever
+        # needed it listed. Telemetry (`play.googleapis.com`) is left out.
         "egress_allow": [
             "generativelanguage.googleapis.com:443",
             "cloudcode-pa.googleapis.com:443",
             "oauth2.googleapis.com:443",
             "accounts.google.com:443",
+            "www.googleapis.com:443",
         ],
     },
     "aider": {
@@ -250,9 +256,13 @@ AGENT_PRESETS: dict[str, dict[str, object]] = {
         # configures — those stay the user's to add (see docs/agents.md §6).
         # `opencode.ai` covers both first-party paths: the built-in "zen"
         # gateway (`/zen/v1/...`) and the version pointer a self-update reads.
-        # `models.dev` is the model catalogue opencode fetches at startup.
+        # `models.opencode.ai` is the model catalogue opencode fetches at
+        # startup (1.18.34; `OPENCODE_MODELS_URL` overrides it); `models.dev`
+        # served it before and stays for older builds. Session sharing
+        # (`opncd.ai`) is left out: it uploads the session.
         "egress_allow": [
             "opencode.ai:443",
+            "models.opencode.ai:443",
             "models.dev:443",
         ],
     },

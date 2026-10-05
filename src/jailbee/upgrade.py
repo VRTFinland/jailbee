@@ -259,6 +259,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"base_build"}),
         reason="the golden image ships `claude-jb`, Claude Code through `jailbee litellm`",
     ),
+    UpgradeNote(
+        version=(1, 7, 0),
+        actions=frozenset({"apply"}),
+        reason=(
+            "the `opencode` agent preset allows `models.opencode.ai`, where current "
+            "opencode fetches its model catalogue — nothing to re-apply unless you "
+            "enable that agent"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

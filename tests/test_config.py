@@ -2639,6 +2639,22 @@ def test_codex_sign_in_hosts_reach_the_allowlist(tmp_path):
     assert "chatgpt.com:443" in allowed
 
 
+def test_gemini_account_lookup_host_reaches_the_allowlist(tmp_path):
+    """A Google sign-in reads `www.googleapis.com/oauth2/v2/userinfo` right
+    after the token exchange. It shares Google's front-end IPs with the other
+    gemini hosts, so the IP ACL passed it unlisted; the egress proxy matches on
+    the hostname and refuses it."""
+    cfg = make_cfg(tmp_path, agents={"gemini": {"enabled": True}})
+    assert "www.googleapis.com:443" in cfg.effective_egress_allow()
+
+
+def test_opencode_model_catalogue_host_reaches_the_allowlist(tmp_path):
+    """Current opencode fetches its model catalogue from `models.opencode.ai`,
+    not `models.dev`, and on different IPs, so strict mode blocked it."""
+    cfg = make_cfg(tmp_path, agents={"opencode": {"enabled": True}})
+    assert "models.opencode.ai:443" in cfg.effective_egress_allow()
+
+
 def test_validate_agents_revalidates_a_plain_agentconfig_under_claude_key():
     """A caller building `Config` in Python (not from YAML) can pass an
     already-constructed base `AgentConfig` under the `claude` key.
