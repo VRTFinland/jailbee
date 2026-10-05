@@ -207,7 +207,8 @@ enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
 mount-mode container, and clone-mode containers are unaffected.
 
 One host resource stays reachable from inside a container on purpose: the
-Wayland display socket, attached whenever the host session is Wayland. Any
+Wayland display socket, attached on a container's first GUI launch (or every
+boot with `gui.wayland: always`; [`gui`](config.md#gui)). Once attached, any
 process in the container — a remote session's shell included — can open a
 window on the host's screen with it, and JailBee's own GUI launchers are
 withheld remotely (unless `remote.ssh.gui` is on) only because a window there

@@ -57,6 +57,14 @@ before editing `## Unreleased`.
 - **`jailbee net loose` and `jailbee new --net loose` over remote SSH need
   `remote.ssh.network: true`.** They were allowed by default, although loose
   mode can reach the host's LAN.
+- **The host's Wayland display is attached on demand.** A container gets the
+  host compositor socket on its first GUI launch (`jailbee ide`, `chrome`,
+  `firefox`, `browser`, `apps run`, `exec -d --gui`) instead of on every boot,
+  so a container that never opens a window cannot reach it. A GUI app started
+  from `jailbee shell` or an autostart step needs the new `jailbee display
+  attach` first, or `gui.wayland: always` for the old behaviour. Each launch
+  also replaces a socket a host re-login left dead, which used to need a
+  container restart.
 
 ### Deprecated
 

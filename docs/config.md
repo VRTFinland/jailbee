@@ -1166,11 +1166,17 @@ no gpg-agent.
 |---|---|---|---|
 | `dbus` | bool | `false` | Attach the host's session D-Bus socket (`/run/user/<uid>/bus`) as the `dbus-socket` device. |
 | `audio` | bool | `false` | Attach the host's PulseAudio socket dir (`/run/user/<uid>/pulse`) as the read-only `pulse-socket` device. |
+| `wayland` | `on-demand` \| `always` | `on-demand` | When the host's Wayland display socket is attached as the `wayland-socket` device: on the first GUI launch or `jailbee display attach` (`on-demand`), or on every boot (`always`). |
 
-The Wayland display socket is attached whenever the host session is
-Wayland, with or without this block: it is what `jailbee chrome`, `jailbee
-ide` and `apps run` draw through, and a window is all it gives the
-container. The other two came in alongside it as a desktop bundle but do
+The Wayland display socket is what `jailbee chrome`, `jailbee ide` and `apps
+run` draw through. By default (`wayland: on-demand`) it is attached when the
+first of them — or `jailbee exec -d --gui`, or `jailbee display attach` — runs
+in the container, so a container that never opens a window cannot reach the
+host compositor at all. Each such launch also replaces a socket that a
+restarted compositor (a re-login) left dead. A GUI app started some other way
+— from `jailbee shell`, an autostart step, an agent — needs `jailbee display
+attach` first, or `wayland: always`, which attaches it on every boot as
+before. A window is all the socket gives the container. The other two came in alongside it as a desktop bundle but do
 more than draw. The session bus is the host desktop's control channel —
 with it, anything in the container can talk to the host user's session
 services — and the pulse socket is the host's speakers and microphone. So
