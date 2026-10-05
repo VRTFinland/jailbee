@@ -414,7 +414,7 @@ class AppController(QObject):
             )
             if retarget_dlg.exec() != QDialog.DialogCode.Accepted:
                 return None
-            return [retarget_dlg.answer()]
+            return ["--", retarget_dlg.answer()]
         if verb == "pr":
             pr_dlg = PrOptionsDialog(name, parent=self._window)
             if pr_dlg.exec() != QDialog.DialogCode.Accepted:

@@ -4173,7 +4173,9 @@ def run(
                         target=prompt.target,
                         carry=(answer,),
                         suggestions=host_branches(
-                            next((g.repo_root for g in groups if g.prefix == prompt.target), None)
+                            repo.repo_root
+                            if (repo := target_group(groups, prompt.target, "repo"))
+                            else None
                         ),
                     )
                 if prompt.purpose == "new-base":
@@ -4778,10 +4780,7 @@ def run(
                         over_ssh=over_ssh,
                     )
                     if verb is not None and container is not None:
-                        if verb == "git retarget":
-                            overlay = open_retarget(container)
-                        else:
-                            dispatch(container, verb)
+                        dispatch(container, verb)
                     else:
                         set_notice(
                             quick_reject_note(

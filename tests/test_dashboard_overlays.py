@@ -232,10 +232,10 @@ def test_tab_completes_the_highlighted_row():
 
 def test_typing_after_arrowing_resets_the_highlight_so_enter_takes_the_text():
     p, _ = ov.handle_prompt_key(_branch_prompt("ma"), _DOWN)
-    p, _ = ov.handle_prompt_key(p, b"x")
+    p, _ = ov.handle_prompt_key(p, b"i")
     assert p.highlight is None
     p, out = ov.handle_prompt_key(p, b"\r")
-    assert (out, p.text) == ("submit", "max")  # free text is fine for new-base
+    assert (out, p.text) == ("submit", "mai")  # free text is fine for new-base
 
 
 def test_backspace_also_resets_the_highlight():

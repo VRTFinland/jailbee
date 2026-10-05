@@ -9,7 +9,6 @@ terminal, so all of it unit-tests as plain functions.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
@@ -21,6 +20,8 @@ from rich.panel import Panel
 from jailbee.dashboard_settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rich.console import RenderableType
 
     from jailbee.dashboard_accounts import AccountsState

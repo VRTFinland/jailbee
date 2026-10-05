@@ -313,7 +313,7 @@ def test_extra_flags_come_after_the_force_flag():
 
 def test_retarget_runs_as_output_with_the_base_last():
     cmd = a.build_action(
-        "git retarget", "alpha-x", _t("/repo/.gie/config.yaml"), extra_flags=["develop"]
+        "git retarget", "alpha-x", _t("/repo/.gie/config.yaml"), extra_flags=["--", "develop"]
     )
     assert cmd.launch == "output"
     assert cmd.argv[:4] == ["jailbee", "git", "retarget", "alpha-x"]
