@@ -28,5 +28,5 @@ def resolve(
         return "help", None
     try:
         return load().default_command, None
-    except ConfigError as exc:
+    except (ConfigError, OSError) as exc:
         return "dashboard", f"{exc} — opening the dashboard"

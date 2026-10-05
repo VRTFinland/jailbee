@@ -34,6 +34,15 @@ def test_broken_global_config_falls_back_to_dashboard_with_warning() -> None:
     assert warning is not None and "boom" in warning
 
 
+def test_unreadable_global_config_falls_back_to_dashboard_with_warning() -> None:
+    def unreadable() -> GlobalConfig:
+        raise PermissionError(13, "Permission denied", "/g.yaml")
+
+    choice, warning = resolve(interactive=True, load=unreadable)
+    assert choice == "dashboard"
+    assert warning is not None and "Permission denied" in warning
+
+
 def test_unknown_value_is_rejected() -> None:
     with pytest.raises(ValueError):
         GlobalConfig.model_validate({"default_command": "shell"})
