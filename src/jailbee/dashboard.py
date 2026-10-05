@@ -799,6 +799,8 @@ _GIT_MENU_VERBS = frozenset(
 # Legacy apply leaves only ever exist with pending work: the terminal hoists
 # them. "Outbox" is always offered, so `menu_actions` places it by its count.
 _PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
+_SHELL_VERB = frozenset({"shell"})
+_TMUX_VERB = frozenset({"tmux"})
 
 
 def group_menu_actions(
@@ -812,9 +814,9 @@ def group_menu_actions(
     Relative order within each submenu and among ungrouped leaves is retained;
     this function never changes eligibility or adds executable verbs.
 
-    ``terminal_order`` is the terminal dashboard's presentation: pending
-    apply leaves lead the menu and ``Git →`` sits above ``PR →``. It is
-    opt-in because the Qt dashboard shares this function and keeps its order.
+    ``terminal_order`` is the terminal dashboard's presentation, see
+    :func:`_terminal_order`. It is opt-in because the Qt dashboard shares this
+    function and keeps its order.
     """
     pr_verbs = _PR_MENU_VERBS - _PENDING_APPLY_VERBS if terminal_order else _PR_MENU_VERBS
     launch_actions = tuple(action for action in actions if action[0].startswith("Launch "))
@@ -843,16 +845,52 @@ def group_menu_actions(
                 seen.add("network")
         else:
             result.append(action)
-    if not terminal_order:
-        return result
-    pending = [i for i in result if isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS]
-    rest = [i for i in result if not (isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS)]
-    labels = [i.label if isinstance(i, MenuGroup) else None for i in rest]
-    if "Git →" in labels and "PR →" in labels:
-        git_at, pr_at = labels.index("Git →"), labels.index("PR →")
-        if git_at > pr_at:
-            rest[git_at], rest[pr_at] = rest[pr_at], rest[git_at]
-    return [*pending, *rest]
+    return _terminal_order(result) if terminal_order else result
+
+
+def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
+    """The terminal dashboard's arrangement of already grouped menu items.
+
+    Pending apply leaves lead and ``Launch →`` follows the session entry.
+    ``Git →``, ``PR →``, ``Lifecycle →`` (restart/stop/destroy; a lone Destroy
+    stays a leaf) and ``Network →`` form one block, in that order, where the
+    first of them used to be. "Open shell" is not listed: the ``s`` key and
+    the ``!`` prompt still reach it, and it stays among the offered leaves
+    those gate on. Everything else keeps its relative order.
+    """
+
+    def is_leaf(item: MenuItem, verbs: frozenset[str]) -> bool:
+        return isinstance(item, tuple) and item[1] in verbs
+
+    def group(label: str) -> MenuGroup | None:
+        return next((i for i in items if isinstance(i, MenuGroup) and i.label == label), None)
+
+    pending = [i for i in items if is_leaf(i, _PENDING_APPLY_VERBS)]
+    rest = [
+        i for i in items if not is_leaf(i, _PENDING_APPLY_VERBS) and not is_leaf(i, _SHELL_VERB)
+    ]
+
+    launch = group("Launch →")
+    if launch is not None:
+        rest.remove(launch)
+        session = next((n for n, i in enumerate(rest) if is_leaf(i, _TMUX_VERB)), -1)
+        rest.insert(session + 1, launch)
+
+    lifecycle = [i for i in rest if isinstance(i, tuple) and i[1] in _CONTAINER_LIFECYCLE_VERBS]
+    git, pr, network = group("Git →"), group("PR →"), group("Network →")
+    block: list[MenuItem] = [g for g in (git, pr) if g is not None]
+    block += [MenuGroup("Lifecycle →", tuple(lifecycle))] if len(lifecycle) > 1 else lifecycle
+    block += [network] if network is not None else []
+    members = {id(i) for i in (git, pr, network, *lifecycle) if i is not None}
+
+    arranged: list[MenuItem] = []
+    for item in rest:
+        if id(item) not in members:
+            arranged.append(item)
+        elif block:
+            arranged.extend(block)
+            block = []
+    return [*pending, *arranged]
 
 
 # The GitStatus cell values that mean "there is provably nothing to do". Every

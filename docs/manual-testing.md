@@ -3180,11 +3180,11 @@ jailbee new feat/dashsmoke --background
 # Navigate + act:
 #  ↑/↓ (or j/k) to move the highlight (spans repos; repo headers are cursor
 #       stops now, not skipped — see the folding recipe below)
-#  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
-#           start/destroy when Stopped). It opens inline BELOW the table —
+#  Enter -> action menu (tmux, Launch →, Outbox, Git →, PR →, Lifecycle →,
+#           Network → when Running; start/destroy when Stopped). It opens inline BELOW the table —
 #           expect the container rows to stay on screen and keep refreshing
 #           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
-#           Pick "Open shell" -> lands in the container; exit -> returns to the
+#           Press `s` (Open shell is not in the menu) -> lands in the container; exit -> returns to the
 #           dashboard, which refreshes.
 #           On an orphan (view-only) row, Enter opens nothing and prints a
 #           yellow note in the panel footer for ~2.5s instead of going silent.

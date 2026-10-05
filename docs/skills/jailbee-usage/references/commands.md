@@ -681,16 +681,18 @@ closes the overlay itself.
 
 The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mount…`/`Unmount…` for the repo's `optional_mounts` (only kinds not attached / attached), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
 
-The menu, in order: tmux/shell, then `Outbox` (`outbox browse`, always
-offered on a running container — it moves to the very top as "Outbox (N
-pending)" while the PR or issue outbox holds staged manifests), then
-`Launch →` with one "Launch `<name>`" entry per app the repo's GUI registry
-declares (browsers, the JetBrains IDE, and any `apps:` entries, in that order —
-empty repos get none), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
-`git pull`, `git push`, `git push --pr`, `git diff`), then `PR →`
-(`pr --open`, `pr`), then `Snapshots…`, `Mount…`, `Unmount…`, then `Credential group…`, then `Network →` with available
-mode switches and `Egress…`, then restart/stop/destroy for Running (a Stopped
-container leads with start and ends with destroy). Each entry appears only
+The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
+`<name>`" entry per app the repo's GUI registry declares (browsers, the
+JetBrains IDE, and any `apps:` entries, in that order — empty repos get none),
+then `Outbox` (`outbox browse`, always offered on a running container — it
+moves to the very top as "Outbox (N pending)" while the PR or issue outbox
+holds staged manifests), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
+`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` (`pr --open`,
+`pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
+switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,
+`Credential group…`. A Stopped container leads with start, and its lone
+destroy stays a plain entry after `PR →`. Open shell is not listed — `s` or
+`!shell` opens it. Each entry appears only
 when it would do something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live

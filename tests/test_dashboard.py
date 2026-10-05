@@ -1178,7 +1178,7 @@ def _container_egress_keys(group: dashboard.RepoGroup, **menu_kwargs) -> list[by
     """
     menu = dashboard.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1240,7 +1240,7 @@ def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocke
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), restrict_host=True)
     menu = dashboard.open_menu([group], "alpha-x", remote=True, over_ssh=True, ssh_policy=policy)
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1341,7 +1341,7 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
     mocker.patch.object(dashboard, "_wait_for_return")
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1610,7 +1610,7 @@ def test_egress_loader_failure_is_visible_and_does_not_crash(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -3701,7 +3701,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
         [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
     )
     menu = dashboard.MenuState(
-        "alpha-one", [("Attach tmux", "tmux"), ("Open shell", "shell")], index=1
+        "alpha-one", [("Attach tmux", "tmux"), ("Outbox", "outbox browse")], index=1
     )
     out = _render_text(
         dashboard.render(
@@ -3716,10 +3716,10 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     assert "one" in out and "two" in out
     assert "NAME" in out
     # The menu lists its actions, titled with the target container.
-    assert "Attach tmux" in out and "Open shell" in out
+    assert "Attach tmux" in out and "Outbox" in out
     assert "alpha-one" in out
     # The highlighted entry (index=1) carries the cursor, the other does not.
-    cursor_line = next(ln for ln in out.splitlines() if "Open shell" in ln)
+    cursor_line = next(ln for ln in out.splitlines() if "Outbox" in ln)
     other_line = next(ln for ln in out.splitlines() if "Attach tmux" in ln)
     assert "▸" in cursor_line
     assert "▸" not in other_line
@@ -5162,7 +5162,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     rc = _drive_run(
         mocker,
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\r"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\r"],
         groups=[group],
     )
 
@@ -5184,7 +5184,7 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
 
     _drive_run(
         mocker,
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b", b"\r", b"q"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b", b"\r", b"q"],
         groups=[group],
     )
 
@@ -5195,12 +5195,11 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
         None,
         None,
         None,
-        None,
         "PR →",
         None,
         "PR →",
     ]
-    assert menus[6].index == 4
+    assert menus[5].index == 3
     assert overlays[-1] is None
     child.assert_not_called()
 
@@ -5217,13 +5216,13 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
     def ready(*args, **kwargs):
         nonlocal turns
         turns += 1
-        if turns == 8:
+        if turns == 7:
             group.containers.clear()
         return ([True], [], [])
 
     mocker.patch.object(dashboard.select, "select", side_effect=ready)
     keys = itertools.chain(
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\x03"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\x03"],
         itertools.repeat(b"\x03"),
     )
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
@@ -6596,6 +6595,8 @@ def _open_container_group_picker(group: dashboard.RepoGroup, **menu_kwargs) -> l
 
 
 def test_container_menu_offers_credential_group_just_before_network_and_lifecycle(tmp_path):
+    # The offered leaves keep it before network; the terminal draws it after
+    # the Git/PR/Lifecycle/Network block.
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
@@ -6606,8 +6607,8 @@ def test_container_menu_offers_credential_group_just_before_network_and_lifecycl
     assert at < verbs.index("restart")
     # in the drawn menu it sits right above the Network → group
     entries = list(dashboard._menu_entries(menu))
-    after = entries[entries.index(_CREDENTIAL_GROUP_LEAF) + 1]
-    assert isinstance(after, dashboard.MenuGroup) and after.label == "Network →"
+    labels = [i.label if isinstance(i, dashboard.MenuGroup) else i[0] for i in entries]
+    assert labels.index("Network →") < entries.index(_CREDENTIAL_GROUP_LEAF)
 
 
 def test_stopped_container_menu_offers_credential_group_before_egress(tmp_path):
@@ -7359,11 +7360,57 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
         leaves[4],
         leaves[7],
         leaves[0],
-        leaves[1],
         dashboard.MenuGroup("Git →", (leaves[5], leaves[6])),
         dashboard.MenuGroup("PR →", (leaves[2], leaves[3])),
         dashboard.MenuGroup("Network →", (leaves[8],)),
     ]
+
+
+def test_terminal_order_running_menu_layout(tmp_path):
+    apps = [dashboard.AppMenuEntry("chrome", "Chrome")]
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)], apps=apps
+    )
+    menu = dashboard.open_menu([group], "alpha-x")
+    assert menu is not None
+    labels = [
+        item.label if isinstance(item, dashboard.MenuGroup) else item[0]
+        for item in dashboard._menu_entries(menu)
+    ]
+    assert labels[:7] == [
+        "Attach tmux",
+        "Launch →",
+        "Outbox",
+        "Git →",
+        "PR →",
+        "Lifecycle →",
+        "Network →",
+    ]
+    assert "Open shell" not in labels
+    lifecycle = next(
+        i
+        for i in dashboard._menu_entries(menu)
+        if isinstance(i, dashboard.MenuGroup) and i.label == "Lifecycle →"
+    )
+    assert [v for _, v in lifecycle.actions] == ["restart", "stop", "destroy"]
+    # Leaves stay offered: the `s` and `D` keys gate on them.
+    assert {"shell", "destroy"} <= {v for _, v in menu.actions}
+
+
+def test_terminal_order_stopped_menu_keeps_a_lone_destroy_leaf(tmp_path):
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", "Stopped", pr_number=7)]
+    )
+    menu = dashboard.open_menu([group], "alpha-x")
+    assert menu is not None
+    labels = [
+        item.label if isinstance(item, dashboard.MenuGroup) else item[0]
+        for item in dashboard._menu_entries(menu)
+    ]
+    assert labels[0] == "Start"
+    at = labels.index("PR →")
+    assert labels[at : at + 3] == ["PR →", "Destroy", "Network →"]
+    assert "Lifecycle →" not in labels
 
 
 def test_group_menu_actions_default_order_is_unchanged_for_qt():
