@@ -237,7 +237,20 @@ def test_an_unsafe_container_name_never_reaches_systemd(container):
     with pytest.raises(DisplayError):
         wp.start_container_server(incus, WPS, container, uid=1, gid=1, sleep_fn=lambda _s: None)
 
-    incus.exec.assert_not_called()
+    assert incus.mock_calls == []
+
+
+@pytest.mark.parametrize("compress", ["", "zstd=5 --x", "gzip", "lz4=123"])
+def test_an_invalid_compress_value_never_reaches_incus(compress):
+    incus = MagicMock()
+    session = WaypipeSession(id="0a1b2c3d", compress=compress)
+
+    with pytest.raises(DisplayError):
+        wp.start_container_server(
+            incus, session, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None
+        )
+
+    assert incus.mock_calls == []
 
 
 def test_stop_session_stops_by_glob_so_a_unit_still_starting_is_caught(mocker):
