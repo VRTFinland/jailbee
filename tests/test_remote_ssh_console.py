@@ -159,6 +159,72 @@ def test_parse_console_line_rejects_malformed_quotes() -> None:
         console.parse_console_line('ls "unterminated')
 
 
+def test_line_with_repo_runs_once_in_that_repo_without_switching(
+    console_env: ConsoleEnv, mocker
+) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    console_env.lines(["ls --repo other", "ls", "exit"])
+
+    assert console.run("project", console_env.policy_json) == 0
+
+    assert [call.kwargs["cwd"] for call in run.call_args_list] == [
+        console_env.other_root,
+        console_env.repo_root,
+    ]
+    assert run.call_args_list[0].args[0][-1] == "ls"
+
+
+def test_line_with_bad_repo_option_is_reported_and_not_run(
+    console_env: ConsoleEnv, mocker, capsys
+) -> None:
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    console_env.lines(["ls --repo", "exit"])
+
+    assert console.run("project", console_env.policy_json) == 0
+
+    run.assert_not_called()
+    assert "--repo needs" in capsys.readouterr().err
+
+
+def test_line_repo_option_cannot_select_an_excluded_repo(
+    console_env: ConsoleEnv, mocker, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    console_env.lines(["ls --repo other", "exit"])
+
+    assert console.run("project", console_env.policy_json) == 0
+
+    run.assert_not_called()
+    assert "unknown registered repo: other" in capsys.readouterr().err
+
+
+def test_leaf_owned_repo_option_remains_in_argv_for_policy(console_env: ConsoleEnv, mocker) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run",
+        return_value=CompletedProcess([], 0),
+    )
+    policy_allows = mocker.patch("jailbee.remote_ssh.console.policy_allows")
+    console_env.lines(["net egress add example.com --repo project", "exit"])
+
+    assert console.run("project", console_env.policy_json) == 0
+
+    policy_allows.assert_called_once()
+    assert policy_allows.call_args.args[0] == [
+        "net",
+        "egress",
+        "add",
+        "example.com",
+        "--repo",
+        "project",
+    ]
+    assert run.call_args.kwargs["cwd"] == console_env.repo_root
+
+
 def test_console_runs_jailbee_argv_without_a_shell(console_env: ConsoleEnv, mocker) -> None:
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run",

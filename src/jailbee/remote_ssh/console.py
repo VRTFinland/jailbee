@@ -498,18 +498,26 @@ def run_console(policy: RemoteSSHConfig, initial_repo: str | None, *, local: boo
             last_status = _returncode(completed)
             continue
 
+        from jailbee.repo_option import RepoOptionError, lift_repo
+
         try:
+            prefix, lifted = lift_repo(argv)
             policy_allows(
-                argv,
+                lifted,
                 policy.commands,
                 restrict_host=policy.restrict_host,
                 scope=scope,
                 allow_scoped_aggregates=True,
                 unlocks=RemoteUnlocks.of(policy),
             )
-        except RouteError as error:
+            target = (
+                current
+                if prefix is None
+                else _resolve_choice(prefix, scope if scope.excluded else None)
+            )
+        except (RepoOptionError, RouteError) as error:
             _error(str(error))
             continue
 
-        completed = _run_foreground([sys.executable, "-m", "jailbee", *argv], current.root)
+        completed = _run_foreground([sys.executable, "-m", "jailbee", *lifted], target.root)
         last_status = _returncode(completed)
