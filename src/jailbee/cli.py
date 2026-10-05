@@ -461,6 +461,15 @@ AttachContainerArg = Annotated[
 ]
 """The container positional for commands that attach to, or launch into, one."""
 
+MoveOption = Annotated[
+    bool | None,
+    typer.Option(
+        "--move/--no-move",
+        help="When the app is already open on another display, move it here "
+        "(default: ask on a terminal, move otherwise).",
+    ),
+]
+
 ReviewContainerArg = Annotated[
     str | None,
     typer.Argument(
@@ -13732,6 +13741,8 @@ def _launch_or_exit(
     container: str,
     spec: "AppSpec",
     args: list[str] | None = None,
+    *,
+    move: bool | None = None,
 ) -> None:
     """Launch `spec`, turning a resolver's `ValueError` into a clean exit(2).
 
@@ -13742,15 +13753,16 @@ def _launch_or_exit(
     traceback instead of the same message `jailbee apps ls`'s STATUS column
     already reports as "missing".
     """
+    from jailbee.app_instance import AppMoveError
     from jailbee.apps import launch
     from jailbee.remote_display import DisplayError
 
     try:
-        launch(cfg, incus, container, spec, args)
+        launch(cfg, incus, container, spec, args, move=move)
     except ValueError as e:
         error(str(e))
         raise typer.Exit(2) from e
-    except DisplayError as e:
+    except (DisplayError, AppMoveError) as e:
         error(str(e))
         raise typer.Exit(1) from e
 
@@ -13781,6 +13793,7 @@ def apps_run_cmd(
             "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
+    move: MoveOption = None,
     config: ConfigOption = None,
 ) -> None:
     """Launch a GUI app in the container.
@@ -13811,7 +13824,7 @@ def apps_run_cmd(
         error(str(e))
         raise typer.Exit(2) from e
     incus, resolved = _resolve_attachable(cfg, container, force=force, attach_cmd="apps run")
-    _launch_or_exit(cfg, incus, resolved, spec, list(args or []))
+    _launch_or_exit(cfg, incus, resolved, spec, list(args or []), move=move)
 
 
 # ---- GUI launcher commands ----
@@ -13825,6 +13838,7 @@ def _launch_registry_app(
     force: bool,
     args: list[str] | None = None,
     attach_cmd: str | None = None,
+    move: bool | None = None,
 ) -> None:
     """Resolve a container and launch one registry app in it.
 
@@ -13842,7 +13856,7 @@ def _launch_registry_app(
         error(str(e))
         raise typer.Exit(2) from e
     incus, resolved = _resolve_attachable(cfg, name, force=force, attach_cmd=attach_cmd or app_name)
-    _launch_or_exit(cfg, incus, resolved, spec, args)
+    _launch_or_exit(cfg, incus, resolved, spec, args, move=move)
 
 
 @app.command("browser")
@@ -13860,6 +13874,7 @@ def browser_cmd(
             "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
+    move: MoveOption = None,
     config: ConfigOption = None,
 ) -> None:
     """Launch the default browser in the container.
@@ -13885,7 +13900,13 @@ def browser_cmd(
             )
         raise typer.Exit(2)
     _launch_registry_app(
-        cfg, name, chosen, force=force, args=[url] if url else None, attach_cmd="browser"
+        cfg,
+        name,
+        chosen,
+        force=force,
+        args=[url] if url else None,
+        attach_cmd="browser",
+        move=move,
     )
 
 
@@ -13964,6 +13985,7 @@ def chrome_cmd(
             "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
+    move: MoveOption = None,
     config: ConfigOption = None,
 ) -> None:
     """Launch Chrome in the container."""
@@ -13971,7 +13993,9 @@ def chrome_cmd(
     if not cfg.browsers.chrome.enabled:
         error("Chrome is disabled in config (browsers.chrome.enabled: false).")
         raise typer.Exit(2)
-    _launch_registry_app(cfg, name, "chrome", force=force, args=[url] if url else None)
+    _launch_registry_app(
+        cfg, name, "chrome", force=force, args=[url] if url else None, move=move
+    )
 
 
 @app.command("firefox")
@@ -13992,6 +14016,7 @@ def firefox_cmd(
             "job failed or is still unfinished — launch straight away.",
         ),
     ] = False,
+    move: MoveOption = None,
     config: ConfigOption = None,
 ) -> None:
     """Launch Firefox in the container."""
@@ -13999,7 +14024,9 @@ def firefox_cmd(
     if not cfg.browsers.firefox.enabled:
         error("Firefox is disabled in config (browsers.firefox.enabled: false).")
         raise typer.Exit(2)
-    _launch_registry_app(cfg, name, "firefox", force=force, args=[url] if url else None)
+    _launch_registry_app(
+        cfg, name, "firefox", force=force, args=[url] if url else None, move=move
+    )
 
 
 account_app = typer.Typer(
