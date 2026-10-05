@@ -306,11 +306,13 @@ def test_prepare_preserves_literal_payloads_and_leaf_options(mocker, tmp_path, a
 
 
 def test_main_lifts_repo_before_running_the_app(mocker, tmp_path):
-    mocker.patch("jailbee.entry._command_names", return_value={"ls"})
+    from jailbee.remote_ssh.router import _command_tree
+
+    _command_tree.cache_clear()
     mocker.patch("jailbee.macos.maybe_delegate")
     mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
     mocker.patch.object(sys, "argv", ["jailbee", "ls", "--repo", "x"])
-    mocker.patch("jailbee.cli.app")
+    mocker.patch("typer.Typer.__call__")
     main()
     assert sys.argv == ["jailbee", "--repo", "x", "ls"]
 
@@ -318,8 +320,11 @@ def test_main_lifts_repo_before_running_the_app(mocker, tmp_path):
 def test_module_entry_lifts_a_trailing_repo(mocker):
     import runpy
 
+    from jailbee.remote_ssh.router import _command_tree
+
+    _command_tree.cache_clear()
     mocker.patch.object(sys, "argv", ["jailbee", "version", "--repo", "x"])
-    mocker.patch("jailbee.cli.app")
+    mocker.patch("typer.Typer.__call__")
     runpy.run_module("jailbee", run_name="__main__")
     assert sys.argv == ["jailbee", "--repo", "x", "version"]
 
@@ -327,8 +332,11 @@ def test_module_entry_lifts_a_trailing_repo(mocker):
 def test_module_entry_reports_a_malformed_repo(mocker, capsys):
     import runpy
 
+    from jailbee.remote_ssh.router import _command_tree
+
+    _command_tree.cache_clear()
     mocker.patch.object(sys, "argv", ["jailbee", "version", "--repo"])
-    mocker.patch("jailbee.cli.app")
+    mocker.patch("typer.Typer.__call__")
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_module("jailbee", run_name="__main__")
     assert excinfo.value.code == 2
