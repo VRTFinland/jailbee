@@ -81,7 +81,10 @@ Genericity inside the container doesn't mean the container is open:
   rotating CDN hands out, and pins each container's `/etc/hosts` to the
   same set so its resolver can't drift onto an address the ACL drops. It
   filters at the network layer rather than in an HTTP proxy, so `ssh`,
-  `git+ssh` and a database connection are covered by the same list.
+  `git+ssh` and a database connection are covered by the same list. A
+  wildcard such as `*.example.com` is the one exception: an IP ACL cannot
+  express it, so it goes through a Squid proxy JailBee runs in its own
+  container, and only tools that honour `HTTP_PROXY`/`HTTPS_PROXY` can use it.
   `github.com` is deliberately **not** in the default strict list, so an
   unattended agent can't surprise-push. Flip to `loose` for the minute you
   need it, with an auto-revert TTL.
@@ -94,8 +97,9 @@ Genericity inside the container doesn't mean the container is open:
   JailBee cannot verify — see
   [the limitation](security.md#running-an-agent-without-prompts).
 - **Secrets are read-only or absent.** GnuPG, SSH agent and gitconfig are
-  bind-mounted read-only; the host's D-Bus and PulseAudio sockets are off
-  unless you turn them on; everything else stays out unless you declare it.
+  bind-mounted read-only; the host's Wayland display is attached only when a
+  container first opens a window, and D-Bus and PulseAudio only when you turn
+  them on; everything else stays out unless you declare it.
 - **Snapshots.** `jailbee snapshot create` before you let it run, `restore` when
   it doesn't work out.
 - **The container holds its own clone**, so a wrecked environment can't take
@@ -199,6 +203,9 @@ cost of that is transport, so JailBee makes the container a git remote:
 modes, snapshots, mounts, GUI launches, golden-image management, background
 jobs (`--background` plus `jailbee job ls/log/clear`), diagnostics (`jailbee doctor`,
 `jailbee disk-usage`), and JSON output (`-o json`, `--fields`) for scripting.
+You don't have to memorise it: every command runs without arguments and asks
+for what it needs on a terminal, bare `jailbee` opens the dashboard, and
+`jailbee console` is an interactive prompt with completion and history.
 Shell completion covers container names, branches and snapshot tags.
 
 For the overview there are two dashboards, both spanning **every repo** on
@@ -213,8 +220,10 @@ base, destroy.
 You don't have to sit at the host. An optional, key-only SSH service
 (`jailbee remote ssh`) opens the dashboard, a restricted console, policy-limited
 one-shot commands and SFTP into container repos from another computer, with
-host-management commands refused; GUI apps launched that way appear on a
-shared RDP display. See [Remote GUI over SSH](remote-gui.md).
+host-management commands refused and network widening off unless you allow
+it. GUI apps launched that way come to you as native windows over
+`waypipe ssh` from another Linux desktop, or on a shared RDP display from any
+RDP client. See [Remote GUI over SSH](remote-gui.md).
 
 ## How this differs from the alternatives
 
@@ -237,7 +246,7 @@ apply to that model. Note the two rows where JailBee is the one with the ❌.
 | Two branches both listening on `:3000` | 🟡 each forwarded to a different host port | 🟡 a port range per feature | ❌ | ✅ | ✅ |
 | Run an emulator or a VM (`/dev/kvm`) | 🟡 if you pass the device in yourself | ❌ | ❌ | ❌ only an NVIDIA GPU, experimental | ✅ `host_devices` |
 | A browser and an IDE **inside** the boundary, on your own screen | ❌ community noVNC feature only | ❌ | n/a — they run on the host | ❌ | ✅ |
-| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ `host:port` rules, any protocol |
+| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ `host:port` rules, any protocol; wildcards through a proxy |
 | Agent's GitHub writes held for a human to publish | ❌ | ❌ | 🟡 a token proxy can block writes; nothing stages them | 🟡 method/path rules can block writes; nothing stages them | ✅ outbox, published with the host's own `gh` |
 | Keep an agent out of your real checkout | 🟡 opt-in clone into a volume | ❌ | 🟡 per-path grants | 🟡 `--clone` | ✅ always its own clone |
 | Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✅ `jailbee git push/pull/diff` |
@@ -421,7 +430,9 @@ the runtime is the hard part *and* you want the whole runtime fenced.
 - **Host setup is real work.** Incus, UID delegation, firewall, kernel keyring
   limits — [Installation](installation.md) is an afternoon, once.
 - **A golden image build**, ~10–15 minutes, once per repo stack. After that
-  containers are copy-on-write clones and creation is fast.
+  containers are copy-on-write clones and creation is fast. Some upgrades
+  need the image rebuilt; `jailbee upgrade` does that, and the `apply`, in
+  every repo that needs it, without restarting a container.
 - **Disk.** Cheap per container, not free.
 - **JetBrains, Chrome and Firefox out of the box; anything else registered by
   hand.** `jailbee ide` accepts the JetBrains launcher names, and
