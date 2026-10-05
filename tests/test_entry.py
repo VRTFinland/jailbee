@@ -9,6 +9,7 @@ import pytest
 from jailbee.config import ConfigError
 from jailbee.entry import main, rewrite_app_argv
 from jailbee.incus import IncusError
+from jailbee.repo_option import RepoOptionError
 
 
 def test_incus_error_is_reported_as_a_message_not_a_traceback(mocker, capsys):
@@ -181,3 +182,127 @@ def test_command_names_come_from_the_live_typer_app():
 
     names = _command_names()
     assert {"ls", "new", "shell", "exec", "apps"} <= names
+
+
+def test_prepare_moves_a_trailing_repo_to_the_front(mocker, tmp_path):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch("jailbee.entry._top_level_app_names", return_value=set())
+    assert prepare_argv(["ls", "--repo", "x"]) == ["--repo", "x", "ls"]
+
+
+def test_prepare_reads_top_level_apps_from_the_named_repo(mocker, tmp_path):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    apps = mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert prepare_argv(["figma", "feat", "--repo", "x"]) == [
+        "--repo", "x", "apps", "run", "figma", "feat",
+    ]
+    apps.assert_called_once_with(tmp_path)
+
+
+@pytest.mark.parametrize("argv", [
+    ["lss", "--repo", "x"],
+    ["lss", "--repo"],
+    ["lss", "--repo="],
+    ["lss", "--repo", "x", "--repo", "y"],
+    ["--repo", "x", "lss", "--repo", "y"],
+    ["--repo", "x", "lss", "--repo"],
+])
+def test_prepare_preserves_unknown_commands(mocker, tmp_path, argv):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert prepare_argv(argv) == argv
+
+
+def test_prepare_does_not_use_cwd_apps_for_an_unresolved_trailing_repo(mocker):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", side_effect=RepoOptionError("unknown"))
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert prepare_argv(["figma", "--repo", "missing"]) == ["figma", "--repo", "missing"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["--repo", "x", "ls", "--repo", "y"],
+    ["figma", "--repo", "x", "--repo", "y"],
+    ["--repo", "x", "figma", "--repo", "y"],
+    ["figma", "--repo"],
+])
+def test_prepare_rejects_malformed_repo_for_known_commands_and_apps(mocker, tmp_path, argv):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    with pytest.raises(RepoOptionError):
+        prepare_argv(argv)
+
+
+def test_main_reports_a_bad_repo_option_and_exits_2(mocker, capsys):
+    mocker.patch("jailbee.macos.maybe_delegate")
+    mocker.patch.object(sys, "argv", ["jailbee", "ls", "--repo"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 2
+    assert "--repo needs" in capsys.readouterr().err
+
+
+def test_prepare_uses_selected_repo_apps_not_cwd_apps(mocker, tmp_path, make_cfg):
+    from jailbee.config import AppEntry
+    from jailbee.entry import prepare_argv
+
+    cfg = make_cfg(tmp_path)
+    selected = cfg.model_copy(update={"apps": {"figma": AppEntry(command=["figma"], top_level=True)}})
+    elsewhere = cfg.model_copy(update={"apps": {"other": AppEntry(command=["other"], top_level=True)}})
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch("jailbee.config.load_repo_config", side_effect=lambda root: selected if root == tmp_path else elsewhere)
+    assert prepare_argv(["figma", "--repo=x"]) == ["--repo", "x", "apps", "run", "figma"]
+    assert prepare_argv(["other", "--repo=x"]) == ["other", "--repo=x"]
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["figma", "--", "--repo", "x"], ["apps", "run", "figma", "--", "--repo", "x"]),
+    (["--repo=x", "lss", "--repo=y"], ["--repo", "x", "lss", "--repo=y"]),
+    (["figma", "--container", "c1", "--repo=x"], ["--repo", "x", "apps", "run", "figma", "--container", "c1"]),
+    (["net", "egress", "add", "example.com", "--repo"], ["net", "egress", "add", "example.com", "--repo"]),
+])
+def test_prepare_preserves_literal_payloads_and_leaf_options(mocker, tmp_path, argv, expected):
+    from jailbee.entry import prepare_argv
+
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
+    assert prepare_argv(argv) == expected
+
+
+def test_main_lifts_repo_before_running_the_app(mocker, tmp_path):
+    mocker.patch("jailbee.entry._command_names", return_value={"ls"})
+    mocker.patch("jailbee.macos.maybe_delegate")
+    mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
+    mocker.patch.object(sys, "argv", ["jailbee", "ls", "--repo", "x"])
+    mocker.patch("jailbee.cli.app")
+    main()
+    assert sys.argv == ["jailbee", "--repo", "x", "ls"]
+
+
+def test_module_entry_lifts_a_trailing_repo(mocker):
+    import runpy
+
+    mocker.patch.object(sys, "argv", ["jailbee", "version", "--repo", "x"])
+    mocker.patch("jailbee.cli.app")
+    runpy.run_module("jailbee", run_name="__main__")
+    assert sys.argv == ["jailbee", "--repo", "x", "version"]
+
+
+def test_module_entry_reports_a_malformed_repo(mocker, capsys):
+    import runpy
+
+    mocker.patch.object(sys, "argv", ["jailbee", "version", "--repo"])
+    mocker.patch("jailbee.cli.app")
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("jailbee", run_name="__main__")
+    assert excinfo.value.code == 2
+    assert "--repo needs" in capsys.readouterr().err

@@ -11,6 +11,7 @@ when — `figma` is not already a real command.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 
 def _command_names() -> set[str]:
@@ -36,17 +37,15 @@ def _command_names() -> set[str]:
     return set(command.commands)
 
 
-def _top_level_app_names() -> set[str]:
+def _top_level_app_names(repo_root: Path | None = None) -> set[str]:
     """Names of `apps:` entries that asked to be top-level commands."""
-    from pathlib import Path
-
     from jailbee.config import load_repo_config
 
-    cfg = load_repo_config(Path.cwd())
+    cfg = load_repo_config(repo_root or Path.cwd())
     return {name for name, entry in cfg.apps.items() if entry.top_level}
 
 
-def rewrite_app_argv(argv: list[str]) -> list[str]:
+def rewrite_app_argv(argv: list[str], repo_root: Path | None = None) -> list[str]:
     """Turn `jailbee <app> ...` into `jailbee apps run <app> ...`.
 
     A registered command always wins, so this can never shadow built-in
@@ -70,12 +69,56 @@ def rewrite_app_argv(argv: list[str]) -> list[str]:
     from jailbee.config import ConfigError
 
     try:
-        apps = _top_level_app_names()
+        apps = _top_level_app_names(repo_root)
     except (ConfigError, OSError):
         return argv
     if argv[0] in apps:
         return ["apps", "run", argv[0], *argv[1:]]
     return argv
+
+
+def prepare_argv(argv: list[str]) -> list[str]:
+    """Lift the global repo option, including after a configured app name.
+
+    A provisional lookup may discover an app in the selected repo, but must
+    not consume options or report malformed options for unknown commands.
+    """
+    from jailbee import repo_option
+
+    prefix, rest = repo_option.lift_repo(argv)
+    root: Path | None = None
+    if prefix is not None:
+        try:
+            root = repo_option.resolve_repo_root(prefix)
+        except repo_option.RepoOptionError:
+            # The root callback reports the invalid selection.
+            return repo_option.with_repo_first(prefix, rest)
+    if not rest or rest[0].startswith("-") or rest[0] in _command_names():
+        return repo_option.with_repo_first(prefix, rest)
+
+    if prefix is None:
+        end = rest.index("--") if "--" in rest else len(rest)
+        for i, token in enumerate(rest[:end]):
+            if token != "--repo" and not token.startswith("--repo="):
+                continue
+            try:
+                candidate, _ = repo_option.lift_repo(["apps", "run", *rest[i : i + (2 if token == "--repo" else 1)]])
+            except repo_option.RepoOptionError:
+                continue
+            if candidate is not None:
+                try:
+                    root = repo_option.resolve_repo_root(candidate)
+                except repo_option.RepoOptionError:
+                    return rest
+                break
+
+    rewritten = rewrite_app_argv(rest, repo_root=root)
+    if rewritten == rest:
+        return repo_option.with_repo_first(prefix, rest)
+    late, rewritten = repo_option.lift_repo(rewritten)
+    if prefix is not None and late is not None:
+        raise repo_option.RepoOptionError("--repo given more than once")
+    return repo_option.with_repo_first(prefix if prefix is not None else late, rewritten)
 
 
 def main() -> None:
@@ -90,7 +133,13 @@ def main() -> None:
     from jailbee.incus import IncusError
 
     # After maybe_delegate, so the macOS bridge always sees the user's own argv.
-    sys.argv[1:] = rewrite_app_argv(sys.argv[1:])
+    from jailbee.repo_option import RepoOptionError
+
+    try:
+        sys.argv[1:] = prepare_argv(sys.argv[1:])
+    except RepoOptionError as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(2) from e
 
     try:
         app()
