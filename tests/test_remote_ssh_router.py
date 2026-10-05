@@ -159,7 +159,7 @@ def test_excluded_repo_is_indistinguishable_from_unknown(raw: str, engine, repo)
 
 @pytest.mark.parametrize(
     "raw",
-    ["ls", "--repo project", "--repo /tmp ls", "--repo project --repo other ls"],
+    ["--repo project", "--repo /tmp ls", "--repo project --repo other ls", "ls --repo", "ls --repo project --repo other"],
 )
 def test_invalid_one_shot_shapes_are_rejected(raw: str, configured_ssh, engine) -> None:
     with pytest.raises(RouteError):
@@ -202,7 +202,7 @@ def test_console_routes_with_optional_registered_repo(engine, repo) -> None:
     )
 
 
-@pytest.mark.parametrize("raw", ["shell now", "shell --repo", "shell --repo project extra"])
+@pytest.mark.parametrize("raw", ["console now", "console --repo", "console --repo project extra"])
 def test_invalid_console_shapes_are_rejected(raw: str, engine) -> None:
     cfg = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     with pytest.raises(RouteError):
@@ -453,7 +453,7 @@ def test_help_lists_only_configured_entrypoints() -> None:
     dashboard_only = help_text(RemoteSSHConfig(console=False, exec=False))
     assert "  dashboard" in dashboard_only
     assert "  console [--repo PREFIX]" not in dashboard_only
-    assert "  --repo PREFIX COMMAND [ARGS...]" not in dashboard_only
+    assert "  COMMAND [ARGS...] [--repo PREFIX]" not in dashboard_only
 
     all_entrypoints = help_text(
         RemoteSSHConfig(
@@ -464,7 +464,7 @@ def test_help_lists_only_configured_entrypoints() -> None:
     )
     assert "  dashboard" in all_entrypoints
     assert "  console [--repo PREFIX]" in all_entrypoints
-    assert "  --repo PREFIX COMMAND [ARGS...]" in all_entrypoints
+    assert "  COMMAND [ARGS...] [--repo PREFIX]" in all_entrypoints
 
 
 FULL = RemoteCommandPolicy(mode="full")
@@ -1239,4 +1239,138 @@ def test_console_entry_point_accepts_both_names(word: str, engine) -> None:
 
 def test_help_text_names_console() -> None:
     assert "  console [--repo PREFIX]" in help_text(RemoteSSHConfig())
-    assert "shell" not in help_text(RemoteSSHConfig())
+    assert "  shell\n" not in help_text(RemoteSSHConfig()).split("\n\n")[0] + "\n"
+
+
+
+def test_trailing_repo_routes_like_leading_form(engine, repo, configured_ssh):
+    expected = Route("command", ("ls", "--all"), "project", repo, False)
+    assert route("--repo project ls --all", configured_ssh, engine=engine) == expected
+    assert route("ls --all --repo project", configured_ssh, engine=engine) == expected
+
+
+def test_missing_repo_asks_child_to_pick(configured_ssh, engine):
+    cfg = configured_ssh.model_copy(update={"gui": True})
+    assert route("chrome feat", cfg, engine=engine) == Route(
+        "command", ("chrome", "feat"), None, None, False, pick_repo=True
+    )
+
+
+@pytest.mark.parametrize("raw", ["git pull --help", "git --help", "git", "--help", "-h"])
+def test_help_requests_never_pick_repo(raw, configured_ssh, engine):
+    result = route(raw, configured_ssh, engine=engine)
+    assert result.kind == "command"
+    assert result.pick_repo is False
+
+
+@pytest.mark.parametrize("raw", [
+    "--pick-repo ls", "ls --pick-repo", "--repo project --pick-repo ls",
+    "--pick-repo=true ls", "ls --pick-repo=false", "git --pick-repo= ls",
+    "--repo project ls --pick-repo=true --help",
+])
+def test_pick_repo_transport_cannot_be_forged(raw, configured_ssh, engine, repo):
+    with pytest.raises(RouteError, match="--pick-repo is internal"):
+        route(raw, configured_ssh, engine=engine)
+
+
+def test_pick_repo_after_separator_is_opaque(configured_ssh, engine, repo):
+    result = route("exec feat --repo project -- --pick-repo=true --repo other --help", configured_ssh, engine=engine)
+    assert result == Route("command", ("exec", "feat", "--", "--pick-repo=true", "--repo", "other", "--help"), "project", repo, False)
+    assert route("exec feat -- --help", configured_ssh, engine=engine).pick_repo is True
+
+
+def test_trailing_excluded_repo_is_indistinguishable_from_unknown(engine, repo):
+    cfg = RemoteSSHConfig(exec=True, excluded_repos=["project"], commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError) as excluded:
+        route("ls --repo project", cfg, engine=engine)
+    assert str(excluded.value) == "unknown registered repo: project"
+
+
+def test_leaf_owned_repo_still_meets_check_arguments(engine, repo):
+    cfg = RemoteSSHConfig(exec=True, network=True, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="may not set --repo"):
+        route("net egress add example.com --repo", cfg, engine=engine)
+    assert route("net --repo project egress add example.com", cfg, engine=engine).argv == ("net", "egress", "add", "example.com")
+
+
+def test_legacy_shell_shapes_only_are_console(engine, repo, configured_ssh):
+    assert route("shell", configured_ssh).kind == "console"
+    assert route("shell --repo project", configured_ssh, engine=engine).kind == "console"
+    assert route("shell feat-1 --repo project", configured_ssh, engine=engine) == Route("command", ("shell", "feat-1"), "project", repo, False)
+    assert route("--repo project shell", configured_ssh, engine=engine).kind == "command"
+
+
+def test_repos_lists_scoped_repositories(engine, repo, tmp_path):
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    with Session(engine) as session:
+        session.add(RegisteredRepo(container_prefix="hidden", repo_root=str(hidden), registered_at=datetime(2026, 10, 5, tzinfo=UTC)))
+        session.commit()
+    cfg = RemoteSSHConfig(exec=True, excluded_repos=["hidden"], commands=RemoteCommandPolicy(mode="full"))
+    assert route("repos", cfg, engine=engine) == Route("repos", (), None, None, False)
+    assert router.repos_text(cfg, engine=engine) == f"project\t{repo}\n"
+
+
+def test_repos_needs_exec():
+    cfg = RemoteSSHConfig(exec=False, console=True, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="execution is disabled"):
+        route("repos", cfg)
+
+
+def test_help_lists_session_commands():
+    cfg = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "git pull"]))
+    entry, commands = help_text(cfg).split("\n\n")
+    assert entry.splitlines() == ["Available remote commands:", "  help", "  dashboard", "  console [--repo PREFIX]", "  repos", "  COMMAND [ARGS...] [--repo PREFIX]"]
+    lines = commands.splitlines()
+    assert len(lines) == 3
+    assert lines[0] == "Commands this session may run:"
+    assert lines[1].startswith("  git pull  ")
+    assert lines[2].startswith("  ls")
+
+
+POLICIES = [
+    RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full")),
+    RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "git pull"])),
+    RemoteSSHConfig(exec=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full")),
+    RemoteSSHConfig(exec=True, excluded_repos=["other"], commands=RemoteCommandPolicy(mode="full")),
+    RemoteSSHConfig(exec=True, gui=True, network=True, commands=RemoteCommandPolicy(mode="full")),
+]
+
+
+@pytest.mark.parametrize("cfg", POLICIES)
+def test_one_shot_decides_every_command_like_console(cfg, engine, repo):
+    scope = RemoteRepoScope(frozenset(cfg.excluded_repos))
+    paths = known_command_paths()
+    assert "ls" in paths and "git pull" in paths and "shell" in paths
+    checked = set()
+    for path in sorted(paths):
+        if path.split()[0] in {"help", "repos", "dashboard", "console", "shell"}:
+            continue
+        argv = path.split()
+        try:
+            policy_allows(argv, cfg.commands, restrict_host=cfg.restrict_host, scope=scope, allow_scoped_aggregates=True, unlocks=router.RemoteUnlocks.of(cfg))
+            expected = None
+        except RouteError as error:
+            expected = str(error)
+        raw = f"--repo project {path}" if router.leaf_owns_option(path, "--repo") else f"{path} --repo project"
+        try:
+            result = route(raw, cfg, engine=engine)
+            assert result.argv == tuple(argv), path
+            actual = None
+        except RouteError as error:
+            actual = str(error)
+        assert actual == expected, path
+        checked.add(path)
+    assert checked == paths - {p for p in paths if p.split()[0] in {"help", "repos", "dashboard", "console", "shell"}}
+    try:
+        policy_allows(["shell", "feat"], cfg.commands, restrict_host=cfg.restrict_host, scope=scope, allow_scoped_aggregates=True, unlocks=router.RemoteUnlocks.of(cfg))
+        expected = None
+    except RouteError as error:
+        expected = str(error)
+    try:
+        result = route("shell feat --repo project", cfg, engine=engine)
+        assert result == Route("command", ("shell", "feat"), "project", repo, False)
+        actual = None
+    except RouteError as error:
+        actual = str(error)
+    assert actual == expected, "shell feat"
