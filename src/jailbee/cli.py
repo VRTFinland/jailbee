@@ -13993,9 +13993,7 @@ def chrome_cmd(
     if not cfg.browsers.chrome.enabled:
         error("Chrome is disabled in config (browsers.chrome.enabled: false).")
         raise typer.Exit(2)
-    _launch_registry_app(
-        cfg, name, "chrome", force=force, args=[url] if url else None, move=move
-    )
+    _launch_registry_app(cfg, name, "chrome", force=force, args=[url] if url else None, move=move)
 
 
 @app.command("firefox")
@@ -14024,9 +14022,7 @@ def firefox_cmd(
     if not cfg.browsers.firefox.enabled:
         error("Firefox is disabled in config (browsers.firefox.enabled: false).")
         raise typer.Exit(2)
-    _launch_registry_app(
-        cfg, name, "firefox", force=force, args=[url] if url else None, move=move
-    )
+    _launch_registry_app(cfg, name, "firefox", force=force, args=[url] if url else None, move=move)
 
 
 account_app = typer.Typer(
