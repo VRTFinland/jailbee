@@ -1022,7 +1022,7 @@ available inside a container); `display status` works over SSH.
   Keys: `base-build` / `apply` (an owed action after an upgrade), `update`
   (a newer JailBee release is on PyPI) and
   `legacy-config-dir` / `legacy-chrome-block` / `legacy-credentials-block` /
-  `legacy-per-repo-map` / `legacy-pr-keys` (a deprecated config spelling —
+  `legacy-per-repo-map` / `legacy-pr-keys` / `legacy-remote-ssh-shell` (a deprecated config spelling —
   `jailbee config migrate --apply` on the host moves most of them);
   `KEY@scope` picks one of several files raising the same notice. With no
   arguments it lists what applies and what has been dismissed. An owed action
