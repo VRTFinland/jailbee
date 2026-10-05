@@ -223,3 +223,10 @@ def test_ask_text_without_an_alternative_still_says_type():
     with pytest.raises(MissingValue) as exc:
         ask_text("port", validate=lambda s: None, is_interactive=_no)
     assert exc.value.message == "missing port; pass it explicitly, or run in a terminal to type it"
+
+
+def test_stdout_is_terminal_follows_stdout(mocker):
+    mocker.patch("jailbee.prompting.sys.stdout.isatty", return_value=False)
+    assert prompting.stdout_is_terminal() is False
+    mocker.patch("jailbee.prompting.sys.stdout.isatty", return_value=True)
+    assert prompting.stdout_is_terminal() is True

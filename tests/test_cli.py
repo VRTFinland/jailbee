@@ -10843,8 +10843,11 @@ def test_console_command_delegates_to_run_local(mocker) -> None:
     run_local.assert_called_once_with("x")
 
 
-def _bare(mocker, *, interactive: bool, choice: str = "dashboard"):
+def _bare(
+    mocker, *, interactive: bool, choice: str = "dashboard", stdout_terminal: bool = True
+):
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    mocker.patch("jailbee.prompting.stdout_is_terminal", return_value=stdout_terminal)
     mocker.patch(
         "jailbee.default_command.resolve",
         side_effect=lambda *, interactive, load: (choice if interactive else "help", None),
@@ -10876,6 +10879,14 @@ def test_bare_jb_without_terminal_prints_help_exit_0(mocker) -> None:
     assert result.exit_code == 0
     assert "Usage" in result.stdout
     dash.assert_not_called()
+
+
+def test_bare_jb_with_piped_stdout_prints_help_even_on_a_tty_stdin(mocker) -> None:
+    dash, console, result = _bare(mocker, interactive=True, stdout_terminal=False)
+    assert result.exit_code == 0
+    assert "Usage" in result.stdout
+    dash.assert_not_called()
+    console.assert_not_called()
 
 
 def test_completion_never_launches_dashboard(mocker, monkeypatch) -> None:

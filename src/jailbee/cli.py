@@ -885,7 +885,7 @@ def main(
     from jailbee.global_config import default_global_config_path, load_global_config
 
     choice, warning = default_command.resolve(
-        interactive=prompting.is_interactive(),
+        interactive=prompting.is_interactive() and prompting.stdout_is_terminal(),
         load=lambda: load_global_config(default_global_config_path())[0],
     )
     if warning is not None:
