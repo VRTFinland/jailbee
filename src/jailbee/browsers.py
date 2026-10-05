@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jailbee.apps import AppSpec
+from jailbee.apps import AppSpec, SingletonSpec
 from jailbee.gui import display_target, host_is_wayland
 
 if TYPE_CHECKING:
@@ -30,6 +30,20 @@ package installs to.
 """
 
 BROWSER_POOLS: dict[str, str] = {"chrome": "chrome-profile", "firefox": "firefox-profile"}
+
+BROWSER_SINGLETONS: dict[str, SingletonSpec] = {
+    "chrome": SingletonSpec(
+        lock="~/.config/google-chrome/SingletonLock",
+        # google-chrome is a wrapper script that execs the `chrome` binary.
+        exe_names=("chrome",),
+        restore_args=("--restore-last-session",),
+    ),
+    "firefox": SingletonSpec(
+        lock="~/.mozilla/firefox/*/lock",
+        exe_names=("firefox", "firefox-bin"),
+        # No CLI equivalent: restoring needs `browser.startup.page = 3`.
+    ),
+}
 
 
 def builtin_specs(cfg: Config) -> list[AppSpec]:
@@ -56,6 +70,7 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 cwd="home",
                 env=env,
                 pool=BROWSER_POOLS[name],
+                singleton=BROWSER_SINGLETONS[name],
                 top_level=True,
                 autostart=browser.autostart,
                 source="builtin",

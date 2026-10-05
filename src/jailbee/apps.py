@@ -22,6 +22,22 @@ AppSource = Literal["builtin", "config"]
 
 
 @dataclass(frozen=True)
+class SingletonSpec:
+    """How to find an app's one running instance per profile, and restart it.
+
+    An app with a profile lock forwards a second launch to the running
+    process, which draws on whatever display it started on. `lock` is the
+    lock's container path (`~`-relative glob), `exe_names` the executable
+    basenames that make a PID really this app's, `restore_args` what a
+    restart after a move adds to bring the session back.
+    """
+
+    lock: str
+    exe_names: tuple[str, ...]
+    restore_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AppSpec:
     """One launchable application, whatever declared it."""
 
@@ -58,6 +74,9 @@ class AppSpec:
     binary is found by searching the container at launch time. `None` means
     `command` is already the final argv.
     """
+    singleton: SingletonSpec | None = None
+    """Set for apps whose second launch is forwarded to a running instance;
+    `apps.launch` then moves that instance to the launching display."""
 
 
 def app_log_path(name: str) -> str:

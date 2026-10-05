@@ -137,3 +137,32 @@ def test_chrome_gets_the_ozone_flag_in_a_waypipe_session(tmp_path, monkeypatch) 
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True}})
     assert "--ozone-platform=wayland" in _spec(cfg, "chrome").command
+
+
+def test_chrome_restores_its_session_after_a_move(tmp_path):
+    from jailbee.apps import get_app
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True}})
+    singleton = get_app(cfg, "chrome").singleton
+    assert singleton is not None
+    assert singleton.lock == "~/.config/google-chrome/SingletonLock"
+    assert singleton.exe_names == ("chrome",)
+    assert singleton.restore_args == ("--restore-last-session",)
+
+
+def test_firefox_locks_per_profile_dir_and_has_no_restore_flag(tmp_path):
+    from jailbee.apps import get_app
+
+    cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True}})
+    singleton = get_app(cfg, "firefox").singleton
+    assert singleton is not None
+    assert singleton.lock == "~/.mozilla/firefox/*/lock"
+    assert set(singleton.exe_names) == {"firefox", "firefox-bin"}
+    assert singleton.restore_args == ()
+
+
+def test_config_apps_have_no_singleton(tmp_path):
+    from jailbee.apps import get_app
+
+    cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
+    assert get_app(cfg, "figma").singleton is None
