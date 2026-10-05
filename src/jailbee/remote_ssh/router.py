@@ -190,6 +190,17 @@ def known_command_short_help() -> dict[str, str]:
     return _command_tree().public_short_help
 
 
+def routable_leaf_paths() -> frozenset[str]:
+    """Every leaf path a command may be typed as: public leaves and their aliases."""
+    return frozenset(_command_tree().leaf_commands)
+
+
+def leaf_owns_option(path: str, option: str) -> bool:
+    """Whether the leaf typed as `path` declares `option` itself."""
+    command = _command_tree().leaf_commands[path]
+    return any(option in (*param.opts, *param.secondary_opts) for param in command.params)
+
+
 def _resolve_leaf(argv: Sequence[str]) -> tuple[str, str]:
     """(typed, canonical) paths of the longest public or aliased leaf `argv` names."""
     from jailbee.cli_outbox import normalize_outbox_argv

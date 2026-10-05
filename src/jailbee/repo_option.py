@@ -1,0 +1,85 @@
+"""Lift the global `--repo PREFIX` option from anywhere in command argv."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+_OPTION = "--repo"
+
+
+class RepoOptionError(ValueError):
+    """`--repo` was given twice, or without a prefix."""
+
+
+def _occurrence(argv: Sequence[str], i: int, end: int) -> tuple[str, int]:
+    """The prefix at `argv[i]` and how many tokens it spans."""
+    token = argv[i]
+    if token.startswith(_OPTION + "="):
+        value, width = token[len(_OPTION) + 1 :], 1
+    else:
+        value = argv[i + 1] if i + 1 < end else ""
+        width = 2
+    if not value or value.startswith("-"):
+        raise RepoOptionError("--repo needs a registered repository prefix")
+    return value, width
+
+
+def _is_repo(token: str) -> bool:
+    return token == _OPTION or token.startswith(_OPTION + "=")
+
+
+def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
+    """Return the global repo prefix and argv without that option."""
+    args = list(argv)
+    end = args.index("--") if "--" in args else len(args)
+    if not any(_is_repo(token) for token in args[:end]):
+        return None, args
+
+    from jailbee.remote_ssh.router import leaf_owns_option, routable_leaf_paths
+
+    leaves = routable_leaf_paths()
+    groups = {" ".join(leaf.split()[:n]) for leaf in leaves for n in range(1, len(leaf.split()))}
+    spans: list[tuple[int, int]] = []
+    found: list[str] = []
+    path: list[str] = []
+    leaf: str | None = None
+    i = 0
+    while i < end:
+        token = args[i]
+        if _is_repo(token):
+            value, width = _occurrence(args, i, end)
+            found.append(value)
+            spans.append((i, width))
+            i += width
+            continue
+        if token.startswith("-"):
+            break
+        candidate = " ".join([*path, token])
+        if candidate in leaves:
+            leaf = candidate
+            i += 1
+            break
+        if candidate not in groups:
+            break
+        path.append(token)
+        i += 1
+    if leaf is not None and not leaf_owns_option(leaf, _OPTION):
+        while i < end:
+            if _is_repo(args[i]):
+                value, width = _occurrence(args, i, end)
+                found.append(value)
+                spans.append((i, width))
+                i += width
+            else:
+                i += 1
+    if len(found) > 1:
+        raise RepoOptionError("--repo given more than once")
+    if not found:
+        return None, args
+    start, width = spans[0]
+    return found[0], args[:start] + args[start + width :]
+
+
+def with_repo_first(prefix: str | None, argv: Sequence[str]) -> list[str]:
+    """Return argv with the global option first, where Click expects it."""
+    return [_OPTION, prefix, *argv] if prefix is not None else list(argv)
