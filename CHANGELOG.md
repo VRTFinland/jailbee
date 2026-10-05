@@ -38,6 +38,11 @@ before editing `## Unreleased`.
   container-scope `jailbee net egress add` — which can open the host's LAN to it, so it is off by default.
   `jailbee net egress rm` on a container now works over SSH without it;
   `--repo` egress changes stay host-only.
+- `jb chrome`, `jb firefox`, `jb browser` and `jb apps run` move a browser
+  that is already open on another display (host, shared RDP display or a
+  waypipe session) to the one you launch from, instead of opening the
+  window on the old display. Asks on a terminal; `--move`/`--no-move`
+  decide up front.
 
 ### Changed
 

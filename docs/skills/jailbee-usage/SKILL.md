@@ -1001,7 +1001,9 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   `firefox-profile`; the old `jailbee chrome-pool ls`/`prune` spelling
   still works for Chrome, deprecated). Firefox defaults to `source: image`
   (built into the golden image) — Ubuntu's own Firefox is a snap, not
-  usefully mountable.
+  usefully mountable. A browser already open on another display (host,
+  shared RDP, waypipe) is closed there and reopened here; `--move`/`--no-move`
+  skip the question.
 - **Other GUI apps:** anything registered under `apps:` (an AppImage, a
   vendor binary, a wrapper script) launches with `jailbee apps run [<name>]
   [<args>…] [--container <name>]`, or directly as `jailbee <name>` when the

@@ -124,6 +124,21 @@ The direct command waits until the app exits, and the session ends with it.
 The command parser accepts what waypipe 0.11 sends; 0.8 and 0.9 clients are
 untested.
 
+## An app already open on another display
+
+Chrome and Firefox run once per profile: a second launch hands its URL to
+the running browser, which can only draw where it started. When `jb chrome`
+(or `jb firefox`, `jb browser`, `jb apps run`) finds the browser open on a
+different display — the host, the shared RDP display, a waypipe session — it
+closes it there and starts it again here, with the same profile. On a
+terminal it asks first; without one (a `waypipe ssh` command, a dashboard
+action) it moves. `--move` and `--no-move` skip the question.
+
+Chrome reopens its tabs. Firefox does so only with *Open previous windows
+and tabs* (`browser.startup.page = 3`) set in its settings. A browser that
+does not close within 15 seconds is left alone and the launch fails; close
+it on the other display and run the command again.
+
 ## What it does not do
 
 - No RDP authentication. Any login is accepted; access is limited by network
