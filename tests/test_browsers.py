@@ -19,6 +19,24 @@ def test_host_and_image_sources_give_different_binaries(tmp_path):
     assert _spec(image, "chrome").command[0] == "/usr/bin/google-chrome-stable"
 
 
+def test_the_menu_label_names_the_browser_not_its_source(tmp_path):
+    """The dashboard shows `description` as "Launch <description>". "Chrome
+    (host)" read as the display it opens on — wrong from a remote session —
+    and a container has one Chrome whichever source it uses.
+    """
+    host = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "source": "host"}})
+    image = make_cfg(
+        tmp_path,
+        browsers={
+            "chrome": {"enabled": True, "source": "image", "host_path": None},
+            "firefox": {"enabled": True},
+        },
+    )
+    assert _spec(host, "chrome").description == "Chrome"
+    assert _spec(image, "chrome").description == "Chrome"
+    assert _spec(image, "firefox").description == "Firefox"
+
+
 def test_firefox_image_source_uses_the_apt_binary(tmp_path):
     cfg = make_cfg(tmp_path, browsers={"firefox": {"enabled": True}})
     assert _spec(cfg, "firefox").command[0] == "/usr/bin/firefox"

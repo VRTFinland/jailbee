@@ -74,7 +74,9 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 top_level=True,
                 autostart=browser.autostart,
                 source="builtin",
-                description=f"{name.capitalize()} ({browser.source})",
+                # The browser only: a container has one per name, and a source
+                # suffix read as the display the window opens on.
+                description=name.capitalize(),
                 accepts_url=True,
                 # Not baked into `command`: `apps.launch` appends this only
                 # when no explicit URL is given at launch time, so a caller

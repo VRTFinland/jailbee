@@ -180,8 +180,8 @@ class AppMenuEntry(NamedTuple):
     real top-level ``jailbee`` command taking the container as a plain
     positional) but ``"apps run <name> --container"`` for a config-sourced
     `apps:` entry. ``label`` is `AppSpec.description` when the repo's config
-    set one (JetBrains sets ``"JetBrains idea"``, a browser sets ``"Chrome
-    (host)"``); it falls back to the bare app name for a user's ``apps:``
+    set one (JetBrains sets ``"JetBrains idea"``, a browser sets
+    ``"Chrome"``); it falls back to the bare app name for a user's ``apps:``
     entry that left ``description`` empty, so the menu never renders a blank
     label.
     """

@@ -1752,7 +1752,7 @@ def test_group_menu_actions_separates_git_and_pr():
 def test_group_menu_actions_collects_registry_launches_at_first_occurrence():
     leaves = [
         ("Attach tmux", "tmux"),
-        ("Launch Chrome (host)", "chrome"),
+        ("Launch Chrome", "chrome"),
         ("Open shell", "shell"),
         ("Launch Figma", "apps run figma --container"),
         ("Create/update PR", "pr"),
