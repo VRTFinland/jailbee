@@ -796,8 +796,9 @@ _PR_MENU_VERBS = frozenset({"pr --open", "pr", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
-# Hoist the browser in the terminal; legacy leaves remain groupable for callers.
-_PENDING_APPLY_VERBS = frozenset({"outbox browse", "review apply", "issue apply"})
+# Legacy apply leaves only ever exist with pending work: the terminal hoists
+# them. "Outbox" is always offered, so `menu_actions` places it by its count.
+_PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
 
 
 def group_menu_actions(
@@ -812,7 +813,7 @@ def group_menu_actions(
     this function never changes eligibility or adds executable verbs.
 
     ``terminal_order`` is the terminal dashboard's presentation: pending
-    outbox browser leads the menu and ``Git →`` sits above ``PR →``. It is
+    apply leaves lead the menu and ``Git →`` sits above ``PR →``. It is
     opt-in because the Qt dashboard shares this function and keeps its order.
     """
     pr_verbs = _PR_MENU_VERBS - _PENDING_APPLY_VERBS if terminal_order else _PR_MENU_VERBS
@@ -884,6 +885,16 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
     return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
 
 
+def _outbox_pending(git: GitStatus | None) -> int | None:
+    """Manifests waiting in the PR and issue outboxes, or None when unprobed."""
+    if git is None:
+        return None
+    counts = (git.pending_pr_actions, git.pending_issue_actions)
+    if all(n is None for n in counts):
+        return None
+    return sum(n or 0 for n in counts)
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -899,8 +910,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
-    Running rows lead with session and app actions, followed by job diagnostics,
-    Outbox, PR leaves, Git leaves, network modes and lifecycle actions.
+    Running rows lead with session actions, Outbox and app actions, followed by
+    job diagnostics, PR leaves, Git leaves, network modes and lifecycle actions.
     Git pull and diff are hidden when status proves they would do nothing;
     unknown status still offers them. Stopped rows lead with Start, followed
     by eligible diagnostics and Open PR, then Destroy.
@@ -915,6 +926,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     "Outbox" (``outbox browse``) is always available on addressable running
     containers, including mount mode and unknown/empty counts. Its fixed stores
     do not require a clone or an existing PR; publication stays in the browser.
+    With manifests pending in the PR or issue outbox (read from
+    ``ctx.git_status``) it leads the menu and
+    carries the count; otherwise it follows "Open shell".
 
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
@@ -925,9 +939,12 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         return []
     actions: list[tuple[str, str]] = []
     if ctx.state == "Running":
-        actions.extend(
-            [("Attach tmux", "tmux"), ("Open shell", "shell"), ("Outbox", "outbox browse")]
-        )
+        session = [("Attach tmux", "tmux"), ("Open shell", "shell")]
+        pending = _outbox_pending(ctx.git_status)
+        if pending:
+            actions.extend([(f"Outbox ({pending} pending)", "outbox browse"), *session])
+        else:
+            actions.extend([*session, ("Outbox", "outbox browse")])
         for app in [] if (ctx.remote and not ctx.gui_remote) else ctx.apps:
             actions.append((f"Launch {app.label}", app.verb))
     elif ctx.state == "Stopped":

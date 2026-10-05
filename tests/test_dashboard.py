@@ -1857,10 +1857,36 @@ def test_menu_has_one_outbox_regardless_of_counts(count, mode):
     actions = dashboard.menu_actions(
         _ctx(mode=mode, git_status=_dirty(pending_pr_actions=count, pending_issue_actions=count))
     )
-    assert actions.count(("Outbox", "outbox browse")) == 1
+    assert [v for _, v in actions].count("outbox browse") == 1
     assert not {"review apply", "issue apply"} & {v for _, v in actions}
     for ctx in (_ctx(state="Stopped", mode=mode), _ctx(has_repo=False, mode=mode)):
         assert "outbox browse" not in {v for _, v in dashboard.menu_actions(ctx)}
+
+
+@pytest.mark.parametrize(
+    "git_status",
+    [None, _dirty(), _dirty(pending_pr_actions=0, pending_issue_actions=0)],
+)
+def test_outbox_follows_the_shell_when_nothing_is_pending(git_status):
+    actions = dashboard.menu_actions(_ctx(git_status=git_status))
+    assert actions[:3] == [
+        ("Attach tmux", "tmux"),
+        ("Open shell", "shell"),
+        ("Outbox", "outbox browse"),
+    ]
+    menu = dashboard.MenuState("alpha-x", actions)
+    assert dashboard._menu_entries(menu)[0] == ("Attach tmux", "tmux")
+
+
+@pytest.mark.parametrize(("pr", "issue", "total"), [(2, None, 2), (None, 1, 1), (2, 1, 3)])
+def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
+    actions = dashboard.menu_actions(
+        _ctx(git_status=_dirty(pending_pr_actions=pr, pending_issue_actions=issue))
+    )
+    lead = (f"Outbox ({total} pending)", "outbox browse")
+    assert actions[:3] == [lead, ("Attach tmux", "tmux"), ("Open shell", "shell")]
+    menu = dashboard.MenuState("alpha-x", actions)
+    assert dashboard._menu_entries(menu)[0] == lead
 
 
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
@@ -7361,7 +7387,7 @@ def test_terminal_menu_drops_an_empty_pr_group_when_only_apply_remains():
         item.label if isinstance(item, dashboard.MenuGroup) else item[0]
         for item in dashboard._menu_entries(menu)
     ]
-    assert labels[0] == "Outbox"
+    assert labels[0] == "Outbox (2 pending)"
     assert "PR →" not in labels
 
 
