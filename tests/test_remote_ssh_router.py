@@ -538,7 +538,7 @@ def test_the_argument_policy_holds_in_allowlist_mode_too() -> None:
 def test_exec_route_refuses_a_host_path_before_resolving_the_repo(engine, repo) -> None:
     cfg = RemoteSSHConfig(exec=True, commands=FULL)
 
-    with pytest.raises(RouteError, match="may not set --config"):
+    with pytest.raises(RouteError, match="--config and --repo"):
         route("--repo project ls --config /etc/passwd", cfg, engine=engine)
 
 
@@ -582,7 +582,7 @@ def test_exec_route_honours_restrict_host_false(engine, repo, monkeypatch) -> No
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     cfg = RemoteSSHConfig(exec=True, commands=FULL, restrict_host=False)
 
-    assert route("--repo project ls --config /x", cfg, engine=engine).argv == (
+    assert route("ls --config /x", cfg, engine=engine).argv == (
         "ls",
         "--config",
         "/x",
@@ -1444,3 +1444,25 @@ def test_one_shot_decides_every_command_like_console(cfg, engine, repo):
     except RouteError as error:
         actual = str(error)
     assert actual == expected, "shell feat"
+
+
+@pytest.mark.parametrize("option", ["-c /tmp/beta.yaml", "--config=/tmp/beta.yaml", "-c/tmp/beta.yaml", "-c=/tmp/beta.yaml"])
+@pytest.mark.parametrize("restrict", [False, True])
+def test_route_config_conflict_is_rejected_before_child(option, restrict, engine, repo):
+    cfg = RemoteSSHConfig(exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="--config and --repo"):
+        route(f"ls {option} --repo project", cfg, engine=engine)
+
+
+@pytest.mark.parametrize("argv", ["outbox feat", "outbox", "git --help", "--help"])
+def test_help_and_implicit_outbox_selector_parity(argv, configured_ssh, engine, repo):
+    router.policy_allows(argv.split(), configured_ssh.commands, restrict_host=configured_ssh.restrict_host)
+    result = route(f"{argv} --repo project", configured_ssh, engine=engine)
+    assert result.argv == tuple(argv.split())
+    assert result.repo_root == repo
+    assert result.repo_prefix == "project"
+
+
+def test_route_config_in_payload_is_opaque(configured_ssh, engine, repo):
+    result = route("exec feat --repo project -- tool --config=/tmp/beta.yaml", configured_ssh, engine=engine)
+    assert result.argv == ("exec", "feat", "--", "tool", "--config=/tmp/beta.yaml")
