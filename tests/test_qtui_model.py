@@ -287,9 +287,9 @@ def test_job_badge_worker_gone_is_failed_kind_despite_a_working_phase():
     cc = CardContent(
         name="feat",
         state="Running",
-        fields=[CardField("job", "JOB", "cloning (worker gone)")],
+        fields=[CardField("job", "JOB", "cloning (dead)")],
     )
-    assert job_badge(cc) == ("cloning (worker gone)", "failed")
+    assert job_badge(cc) == ("cloning (dead)", "failed")
 
 
 def test_job_badge_in_flight_phase_is_running_kind():

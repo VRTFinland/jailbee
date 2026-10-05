@@ -8267,7 +8267,7 @@ def test_ls_shows_job_column_when_job_present(make_cfg, tmp_path, monkeypatch, m
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
     # PID 4242 is synthetic; force the liveness probe to report alive so the
-    # JOB column renders the bare phase rather than "cloning (worker gone)".
+    # JOB column renders the bare phase rather than "cloning (dead)".
     mocker.patch("jailbee.background.worker_alive", return_value=True)
 
     from jailbee.lifecycle import ContainerInfo

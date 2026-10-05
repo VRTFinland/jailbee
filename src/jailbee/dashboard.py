@@ -1907,12 +1907,15 @@ def _aligned_table(
     )
     for index, (field_spec, width) in enumerate(zip(fields, widths, strict=True)):
         title = ("  " if index == 0 else "") + field_spec.header
+        capped = field_spec.dashboard_max_width is not None
         table.add_column(
             title if show_header else "",
             justify=field_spec.justify,
             width=width,
             min_width=1,
-            no_wrap=False,
+            # A capped column is one line by design: its overlong values end
+            # in an ellipsis (Rich's default overflow) rather than wrapping.
+            no_wrap=capped,
         )
     return table
 
@@ -2024,18 +2027,29 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
 def _dashboard_column_widths(
     fields: list[FieldSpecCI], rows: list[tuple[RepoGroup, ContainerInfo]]
 ) -> tuple[int, ...]:
-    """Measure visible headers and cells once for cross-repo consistency."""
+    """Measure visible headers and cells once for cross-repo consistency.
+
+    A field's dashboard width bounds apply to its cells, never its header:
+    the reserve keeps a live column steady across refreshes, the cap stops a
+    free-form one from crowding out the rest.
+    """
     widths: list[int] = []
     for index, field_spec in enumerate(fields):
-        values = [field_spec.header]
-        for group, container in rows:
-            value = (
-                container.name
-                if field_spec.name == "name" and group.repo_root is None
-                else field_spec.cell(container)
-            )
-            values.append(value)
-        measured = max(Text.from_markup(value).cell_len for value in values)
+        cells = max(
+            (
+                Text.from_markup(
+                    container.name
+                    if field_spec.name == "name" and group.repo_root is None
+                    else field_spec.cell(container)
+                ).cell_len
+                for group, container in rows
+            ),
+            default=0,
+        )
+        cells = max(cells, field_spec.dashboard_min_width)
+        if field_spec.dashboard_max_width is not None:
+            cells = min(cells, field_spec.dashboard_max_width)
+        measured = max(cells, Text.from_markup(field_spec.header).cell_len)
         widths.append(measured + (2 if index == 0 else 0))
     return tuple(widths)
 

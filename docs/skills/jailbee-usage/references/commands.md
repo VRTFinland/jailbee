@@ -438,8 +438,8 @@ Inspect and stop a container's **detached** autostart run — the part of
 
 `jailbee ls`'s **JOB** column renders a live detached run as
 `autostart:<stage>`. Once the supervisor has died the `autostart:` prefix
-drops — it reads the bare `<stage> (worker gone)`, the stage it was on when
-it died, not `autostart:<stage> (worker gone)`. `jailbee job log <name>
+drops — it reads the bare `<stage> (dead)`, the stage it was on when
+it died, not `autostart:<stage> (dead)`. `jailbee job log <name>
 [--follow]` prints its output — there is no separate `jailbee autostart
 log`. `jailbee net <mode> <name>` only warns while a detached run is live,
 since its own restore is compare-and-swap and therefore cannot undo a mode

@@ -8169,8 +8169,8 @@ def test_ls_job_cell_names_the_phase_a_dead_worker_died_in(mocker):
     spec = next(
         f for f in ls_field_specs(now=datetime.now(UTC), all_repos=False) if f.name == "job"
     )
-    assert "cloning (worker gone)" in spec.cell(c)
-    assert spec.json(c) == "cloning (worker gone)"
+    assert "cloning (dead)" in spec.cell(c)
+    assert spec.json(c) == "cloning (dead)"
 
 
 def test_ls_job_cell_agrees_with_job_ls_phase_cell_for_a_live_destroy_job(mocker):
@@ -8219,7 +8219,7 @@ def test_ls_job_cell_agrees_with_job_ls_phase_cell_for_a_live_destroy_job(mocker
 
 
 def test_ls_job_cell_agrees_with_job_ls_phase_cell_for_a_dead_destroy_job(mocker):
-    """A dead destroy job reads 'starting (worker gone)' in both places, not
+    """A dead destroy job reads 'starting (dead)' in both places, not
     'destroying' — the friendlier name must not hide a vanished worker."""
     from datetime import UTC, datetime, timedelta
 
@@ -8256,8 +8256,8 @@ def test_ls_job_cell_agrees_with_job_ls_phase_cell_for_a_dead_destroy_job(mocker
     ls_spec = next(f for f in ls_field_specs(now=now, all_repos=False) if f.name == "job")
     job_spec = next(f for f in jobs.job_field_specs(now=now, all_repos=False) if f.name == "phase")
 
-    assert "starting (worker gone)" in ls_spec.cell(c)
-    assert "starting (worker gone)" in job_spec.cell(job)
+    assert "starting (dead)" in ls_spec.cell(c)
+    assert "starting (dead)" in job_spec.cell(job)
     assert "[red]" in ls_spec.cell(c)
     assert "[red]" in job_spec.cell(job)
 

@@ -42,6 +42,11 @@ PHASE_FAILED = "failed"
 
 TERMINAL_PHASES = frozenset({PHASE_FAILED})
 
+# Appended by `job_label` to a working phase whose worker has vanished. Kept
+# short: the label is a table cell in `jailbee ls`, `jailbee job ls` and the
+# dashboards, and the suffix is what renderers test for a dead row.
+DEAD_SUFFIX = " (dead)"
+
 # Phases at which the container is already `incus start`ed and can be attached
 # to (shell/tmux) without waiting for the whole op to finish. A create starts
 # the container before the clone, so by the autostart phase it's running and
@@ -98,13 +103,13 @@ def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
     """Plain-text label for a job's state.
 
     A terminal phase speaks for itself. A working phase whose worker has
-    vanished gains a `(worker gone)` suffix — keeping the phase, so the label
+    vanished gains :data:`DEAD_SUFFIX` — keeping the phase, so the label
     says where progress stopped. Single source of truth for every renderer:
     the `jailbee ls` JOB column, its `--json` value, and `jailbee job ls`'s PHASE.
 
     ``kind`` lets a live `destroy`-kind job in the `starting` phase render as
     the more legible ``"destroying"`` — but only while its worker is alive;
-    a dead destroy job still reads ``"starting (worker gone)"`` so a vanished
+    a dead destroy job still reads ``"starting (dead)"`` so a vanished
     worker is never hidden behind the friendlier name. This label is text
     only — callers must use :func:`clearable` (not a comparison against this
     label) to decide whether a job is dead, since a live destroy job's label
@@ -113,12 +118,12 @@ def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
     An `autostart`-kind row renders as ``autostart:<stage>``: its phase is
     the stage name the supervisor is on, which means nothing on its own.
     Same ordering rule as ``destroying`` — only a live worker gets the
-    friendlier form, so ``deps (worker gone)`` still surfaces a dead one.
+    friendlier form, so ``deps (dead)`` still surfaces a dead one.
     """
     if phase in TERMINAL_PHASES:
         return phase
     if not worker_alive(pid):
-        return f"{phase} (worker gone)"
+        return f"{phase}{DEAD_SUFFIX}"
     if kind == JOB_AUTOSTART:
         return f"autostart:{phase}"
     if kind == JOB_DESTROY and phase == PHASE_STARTING:

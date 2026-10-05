@@ -207,7 +207,7 @@ def header(short: str, row: BackgroundJob) -> str:
     """The line above the table: which stage the run is on, and whose pid.
 
     The state text is `background.job_label`, the same source `jailbee ls` and
-    `jailbee job ls` render — so a dead worker reads ``deps (worker gone)``
+    `jailbee job ls` render — so a dead worker reads ``deps (dead)``
     here exactly as it does there, and the two can never disagree.
     """
     from jailbee import background

@@ -10591,3 +10591,55 @@ def test_present_drops_groups_the_scope_excludes():
     groups = [_group("alpha", "/a"), _group("secret", "/s"), _group("gamma")]
     shown = dashboard.present(groups, None, RemoteRepoScope(frozenset({"secret"})))
     assert [g.prefix for g in shown] == ["alpha", "gamma"]
+
+
+def _data_line(frame: RenderableType, marker: str) -> str:
+    return next(line for line in _render_text(frame).splitlines() if marker in line)
+
+
+def test_live_cpu_value_growing_does_not_shift_later_columns(tmp_path):
+    """CPU 9% → 100% stays inside the column's reserve: the columns after
+    it keep their positions between refreshes."""
+
+    def frame(percent: float) -> RenderableType:
+        from jailbee.procstat import ProcessActivity
+
+        c = dataclasses.replace(
+            _ci("alpha-one", "alpha"),
+            cpu_percent=percent,
+            cpu_limit="16",
+            activity=(ProcessActivity(comm="pytest", percent=percent, count=1),),
+        )
+        return dashboard.render(
+            [dashboard.RepoGroup("alpha", str(tmp_path), None, [c])],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            git_enabled=False,
+            enabled=("name", "cpu", "doing"),
+        )
+
+    low, high = _data_line(frame(9), "pytest"), _data_line(frame(100), "pytest")
+    assert "9%·16" in low and "100%·16" in high
+    assert low.index("pytest") == high.index("pytest")
+
+
+def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
+    from jailbee.procstat import ProcessActivity
+
+    long_name = "x" * 60
+    c = dataclasses.replace(
+        _ci("alpha-one", "alpha"),
+        activity=(ProcessActivity(comm=long_name, percent=50.0, count=1),),
+    )
+    out = _render_text(
+        dashboard.render(
+            [dashboard.RepoGroup("alpha", str(tmp_path), None, [c])],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            git_enabled=False,
+            enabled=("name", "doing", "network"),
+        )
+    )
+    row = [line for line in out.splitlines() if "strict" in line]
+    assert len(row) == 1
+    assert long_name not in row[0] and "…" in row[0]
