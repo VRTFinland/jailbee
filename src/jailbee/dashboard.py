@@ -118,7 +118,7 @@ from jailbee.paths import repo_config_path
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
-from jailbee.remote_ssh.session import host_restricted
+from jailbee.remote_ssh.session import host_restricted, waypipe_session
 from jailbee.state_service import StateServiceUnavailable
 from jailbee.tui import console, error
 
@@ -2824,9 +2824,16 @@ def _dispatch_action(
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
-    if over_ssh and ssh_policy is not None and ssh_policy.gui and _is_gui_verb(verb):
-        # The launch prints how to reach the shared display; "plain" would
-        # throw that away the moment the dashboard repaints.
+    if (
+        over_ssh
+        and ssh_policy is not None
+        and ssh_policy.gui
+        and _is_gui_verb(verb)
+        and waypipe_session() is None
+    ):
+        # The launch prints how to reach the shared RDP display; "plain" would
+        # throw that away the moment the dashboard repaints. A waypipe session
+        # has nothing to show: the window simply opens on the laptop.
         style = "output"
     if style == "paged" and remote:
         style = "output"

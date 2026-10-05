@@ -9575,6 +9575,30 @@ def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocke
     wait.assert_called_once_with()
 
 
+def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
+    mocker, monkeypatch, tmp_path
+):
+    """A waypipe session has no RDP recipe to read: the window opens on the laptop."""
+    from jailbee.remote_ssh.session import WaypipeSession, child_environment
+
+    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(
+        _dispatch_target(tmp_path),
+        "chrome",
+        "alpha-x",
+        over_ssh=True,
+        ssh_policy=_gui_dispatch_policy(gui=True),
+    )
+
+    wait.assert_not_called()
+
+
 def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 0
