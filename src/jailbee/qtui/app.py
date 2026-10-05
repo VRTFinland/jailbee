@@ -27,6 +27,7 @@ from jailbee.dashboard import (
     config_edit_reject_note_for_prefix,
     dashboard_config_migration_notice,
     dashboard_group_notices,
+    host_branches,
     new_container_argv,
     new_container_base_default,
     new_container_reject_note_for_prefix,
@@ -49,6 +50,7 @@ from jailbee.qtui.prompts import (
     NewContainerDialog,
     PrOptionsDialog,
     PushOptionsDialog,
+    RetargetDialog,
     confirm_text,
     pr_flags,
     pr_refresh_title,
@@ -402,6 +404,17 @@ class AppController(QObject):
             if push_dlg.exec() != QDialog.DialogCode.Accepted:
                 return None
             return push_flags(push_dlg.answers())
+        if verb == "git retarget":
+            current = container.base_branch if container else None
+            retarget_dlg = RetargetDialog(
+                name,
+                current_base=current,
+                branches=host_branches(group.repo_root, exclude=current),
+                parent=self._window,
+            )
+            if retarget_dlg.exec() != QDialog.DialogCode.Accepted:
+                return None
+            return ["--", retarget_dlg.answer()]
         if verb == "pr":
             pr_dlg = PrOptionsDialog(name, parent=self._window)
             if pr_dlg.exec() != QDialog.DialogCode.Accepted:
@@ -488,6 +501,7 @@ class AppController(QObject):
         dialog = NewContainerDialog(
             group.prefix,
             base_default=new_container_base_default(group.repo_root),
+            branches=host_branches(group.repo_root),
             parent=self._window,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

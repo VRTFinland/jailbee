@@ -4223,6 +4223,34 @@ def test_new_container_reject_note_for_prefix_names_the_orphan_repo(tmp_path):
     assert note is not None and "gamma" in note
 
 
+@pytest.fixture(autouse=True)
+def _no_real_branch_listing(mocker):
+    """Keep the base prompt's branch listing from reaching a patched ``subprocess.run``."""
+    mocker.patch("jailbee.git.list_branches", return_value=[])
+
+
+def test_host_branches_lists_the_groups_repo_minus_the_excluded(mocker, tmp_path):
+    lb = mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "dev"])
+    assert dashboard.host_branches(str(tmp_path), exclude="feat/a") == ("main", "dev")
+    lb.assert_called_once_with(tmp_path)
+
+
+def test_host_branches_is_empty_without_a_repo_root(mocker):
+    lb = mocker.patch("jailbee.git.list_branches")
+    assert dashboard.host_branches(None) == ()
+    lb.assert_not_called()
+
+
+def test_retarget_argv_puts_the_names_after_the_separator():
+    assert dashboard.dact.retarget_argv("alpha-x", "main") == [
+        "git",
+        "retarget",
+        "--",
+        "alpha-x",
+        "main",
+    ]
+
+
 def test_new_container_base_default_reads_the_groups_own_repo(mocker, tmp_path):
     """Cross-repo dashboards: the branch offered must come from the row's
     repo, not the process's cwd."""
@@ -5879,6 +5907,87 @@ def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path)
     child.assert_called_once_with(
         ["jailbee", "new", "--background", "--", "feature", "dev"], check=False, cwd=tmp_path
     )
+
+
+def _retarget_group(tmp_path):
+    info = dataclasses.replace(_ci("alpha-x", "alpha"), base_branch="feat/a")
+    return dashboard.RepoGroup("alpha", str(tmp_path), None, [info])
+
+
+def _fake_branches(_root, *, exclude=None):
+    return tuple(b for b in ("main", "feat/a", "develop") if b != exclude)
+
+
+def _text_prompts(render):
+    return [
+        c.kwargs["overlay"]
+        for c in render.call_args_list
+        if isinstance(c.kwargs.get("overlay"), dashboard.TextPrompt)
+    ]
+
+
+def test_run_retarget_asks_inline_and_runs_the_cli_with_the_base(mocker, tmp_path):
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [b"j", _ENTER, b"g", b"b", *_keys("dev"), b"\t", _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    prompts = _text_prompts(render)
+    assert prompts[0].purpose == "container-retarget"
+    assert prompts[0].suggestions == ("main", "develop")  # current base left out
+    assert prompts[0].require_suggestion is True
+    assert "feat/a" in prompts[0].title
+    child.assert_called_once()
+    assert child.call_args.args[0] == ["jailbee", "git", "retarget", "--", "alpha-x", "develop"]
+
+
+def test_run_retarget_refuses_an_unknown_branch_inline(mocker, tmp_path):
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"g", b"b", *_keys("nope"), _ENTER], [group])
+
+    child.assert_not_called()
+    assert any(p.error == "'nope' is not one of the listed branches" for p in _text_prompts(render))
+
+
+def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path):
+    """No prompt opens when the pre-checks (SSH policy, availability) refuse the verb."""
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    mocker.patch.object(
+        dashboard, "check_dashboard_command", side_effect=dashboard.RouteError("refused by policy")
+    )
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"g", b"b", _ESC], [group])
+
+    assert _text_prompts(render) == []
+    child.assert_not_called()
+    assert any("refused by policy" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_run_new_base_prompt_offers_the_host_branches(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "new_container_base_default", return_value="main")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"n", *_keys("feature"), _ENTER], [group])
+
+    base = [p for p in _text_prompts(render) if p.purpose == "new-base"]
+    assert base and base[-1].suggestions == ("main", "feat/a", "develop")
+    assert base[-1].require_suggestion is False
+    assert base[-1].text == "main"
 
 
 def _sigint_reader(sequence: list[bytes | type[BaseException]]):

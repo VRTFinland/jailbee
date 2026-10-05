@@ -76,6 +76,7 @@ from jailbee.dashboard_overlays import (
     MIN_LIST_ROWS,
     PICKER_HINT,
     PROMPT_HINT,
+    SUGGEST_HINT,
     Picker,
     PickerEntry,
     TextPrompt,
@@ -1861,7 +1862,7 @@ def _hint_line(overlay: Overlay | None) -> str:
     if isinstance(overlay, CommandState):
         return "[bold]Enter[/bold] run  ·  [bold]Tab[/bold] complete  ·  [bold]Esc[/bold] cancel"
     if isinstance(overlay, TextPrompt):
-        return PROMPT_HINT
+        return SUGGEST_HINT if overlay.suggestions else PROMPT_HINT
     if isinstance(overlay, Picker):
         return PICKER_HINT
     if isinstance(overlay, da.AccountsState):
@@ -2778,6 +2779,20 @@ def new_container_base_default(repo_root: str | None) -> str | None:
     return git.get_current_branch(Path(repo_root))
 
 
+def host_branches(repo_root: str | None, *, exclude: str | None = None) -> tuple[str, ...]:
+    """``repo_root``'s local branches, for a branch prompt's suggestions.
+
+    The group's repo, not the cwd, for the same reason as
+    :func:`new_container_base_default`. Empty for a null root (an orphan group)
+    or a failing ``git`` — the prompt then takes plain text.
+    """
+    if repo_root is None:
+        return ()
+    from jailbee import git
+
+    return tuple(b for b in git.list_branches(Path(repo_root)) if b != exclude)
+
+
 def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     """``jailbee new <branch> <base>``, plus ``target``'s ``--config`` if any.
 
@@ -3290,14 +3305,18 @@ def run(
                 set_notice(f"'{repo.repo_root}' no longer exists")
                 client.refresh()
 
-            def dispatch(target: str, verb: str) -> None:
-                nonlocal notice, notice_until
+            def dispatchable(target: str, verb: str) -> RepoTarget | None:
+                """The repo to run ``verb`` on ``target`` in, or None after noticing why not.
+
+                The SSH policy and the action's current availability, checked
+                before anything is shown or run.
+                """
                 group = _find_group(groups, target)
                 if group is None:
-                    return
+                    return None
                 repo = RepoTarget.of(group)
                 if repo is None:
-                    return  # an orphan group: no repo root to address a child at
+                    return None  # an orphan group: no repo root to address a child at
                 try:
                     check_dashboard_command(
                         dashboard_action_argv(
@@ -3310,7 +3329,7 @@ def run(
                     )
                 except RouteError as exc:
                     set_notice(str(exc))
-                    return
+                    return None
                 if verb not in {
                     current_verb
                     for _label, current_verb in actions_for_container(
@@ -3322,6 +3341,12 @@ def run(
                     )
                 }:
                     set_notice(f"Action '{verb}' is no longer available for '{target}'")
+                    return None
+                return repo
+
+            def dispatch(target: str, verb: str) -> None:
+                repo = dispatchable(target, verb)
+                if repo is None:
                     return
                 try:
                     rc = foreground(
@@ -3644,6 +3669,29 @@ def run(
                 if verb in (dact.MOUNT_ADD, dact.MOUNT_REMOVE):
                     return open_mount_picker(container, remove=verb == dact.MOUNT_REMOVE)
                 return None
+
+            def open_retarget(container: str) -> TextPrompt | None:
+                """Ask for the new base inline; the CLI's own picker would blank the screen."""
+                if dispatchable(container, "git retarget") is None:
+                    return None
+                group = _find_group(groups, container)
+                info = (
+                    next((c for c in group.containers if c.name == container), None)
+                    if group is not None
+                    else None
+                )
+                if group is None or info is None:
+                    set_notice(f"'{container}' is gone")
+                    return None
+                current = info.base_branch
+                return TextPrompt(
+                    "container-retarget",
+                    f"Retarget '{container}' (base: {current or 'unset'})",
+                    "Base branch",
+                    target=container,
+                    suggestions=host_branches(group.repo_root, exclude=current),
+                    require_suggestion=True,
+                )
 
             def open_mount_picker(container: str, *, remove: bool) -> Picker | None:
                 """The kinds Mount… (Unmount…) can act on right now, or a notice."""
@@ -4141,6 +4189,11 @@ def run(
                         text=prompt.carry[0],
                         target=prompt.target,
                         carry=(answer,),
+                        suggestions=host_branches(
+                            repo.repo_root
+                            if (repo := target_group(groups, prompt.target, "repo"))
+                            else None
+                        ),
                     )
                 if prompt.purpose == "new-base":
                     branch = prompt.carry[0]
@@ -4151,6 +4204,11 @@ def run(
                         return new_container_argv(repo, branch, answer)
 
                     run_new_container(prompt.target, branch, branch_argv)
+                    return None
+                if prompt.purpose == "container-retarget":
+                    run_dashboard_command(
+                        prompt.target, "container", dact.retarget_argv(prompt.target, answer)
+                    )
                     return None
                 if prompt.purpose == "egress-add":
                     # begin_egress_add always sets it
@@ -4690,6 +4748,8 @@ def run(
                                     # Qt hands the terminal to the browser; here
                                     # it is the dashboard's own picker panels.
                                     overlay = open_outbox(target)
+                                elif verb == "git retarget":
+                                    overlay = open_retarget(target)
                                 else:
                                     dispatch(target, verb)
                     continue

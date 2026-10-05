@@ -161,6 +161,11 @@ def snapshot_create_argv(name: str, tag: str | None) -> list[str]:
     return ["snapshot", "create", "--", name, *([tag] if tag else [])]
 
 
+def retarget_argv(name: str, base: str) -> list[str]:
+    """Re-point ``name`` at ``base``. Both follow ``--``: a typed name is never an option."""
+    return ["git", "retarget", "--", name, base]
+
+
 def snapshot_restore_argv(name: str, tag: str) -> list[str]:
     return ["snapshot", "restore", "--", name, tag]
 

@@ -5679,28 +5679,6 @@ app.command(
 )(pull)
 
 
-def _pick_retarget_base(cfg: "Config", *, current_base: str | None) -> str | None:
-    """Open a questionary.select for the new base branch.
-
-    Offers the host's local branches except the container's current base.
-    Returns the branch, or None when the user cancels or there is nothing to
-    choose from.
-    """
-    import questionary
-
-    from jailbee.git import list_branches
-
-    candidates = [b for b in list_branches(cfg.repo_root) if b != current_base]
-    if not candidates:
-        error("No other local branch on the host to retarget onto.")
-        return None
-    result = questionary.select(
-        "Retarget onto which host branch?",
-        choices=[questionary.Choice(title=b, value=b) for b in candidates],
-    ).ask()
-    return None if result is None else str(result)
-
-
 @git_app.command("retarget")
 def retarget(
     name: ContainerArg = None,
@@ -5748,9 +5726,23 @@ def retarget(
                 "No base branch given and no TTY to ask on. Usage: jailbee git retarget NAME BASE"
             )
             raise typer.Exit(1)
-        new_base = _pick_retarget_base(cfg, current_base=_container_base_branch(incus, full))
-        if new_base is None:
-            raise typer.Abort()
+        current = _container_base_branch(incus, full)
+        candidates = [b for b in git_helpers.list_branches(cfg.repo_root) if b != current]
+
+        def _base_problem(text: str) -> str | None:
+            text = text.strip()
+            if not text:
+                return "enter a branch name"
+            if text == current:
+                return f"'{text}' is already the base branch"
+            if candidates and text not in candidates:
+                return f"no branch '{text}' on the host"
+            return None
+
+        # Ctrl-C / Esc raises prompting.Cancelled, which Typer reports (exit 1).
+        new_base = prompting.ask_text(
+            "base branch", validate=_base_problem, completions=candidates
+        ).strip()
 
     try:
         result = sync.retarget_container(cfg, incus, short, new_base)
