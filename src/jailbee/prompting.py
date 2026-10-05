@@ -119,6 +119,14 @@ def _ask(noun: str, default: str | None) -> str | None:
     return None if result is None else str(result)
 
 
+def _confirm(question: str, default: bool) -> bool | None:
+    """The default yes/no prompt. None on Ctrl-C / Esc."""
+    import questionary
+
+    result = questionary.confirm(question, default=default).ask()
+    return None if result is None else bool(result)
+
+
 def choose_one(  # noqa: UP047
     noun: str,
     options: Sequence[Option[T]],
@@ -174,3 +182,16 @@ def ask_text(
         if problem is None:
             return answer
         _note(problem)
+
+
+def confirm(question: str, *, default: bool = True) -> bool:
+    """Ask a yes/no question on the terminal; Ctrl-C / Esc is `Cancelled`.
+
+    Unlike `choose_one` / `ask_text` this is not a missing-value resolver:
+    the caller decides what a non-interactive run means and checks
+    `is_interactive()` before asking.
+    """
+    answer = _confirm(question, default)
+    if answer is None:
+        raise Cancelled()
+    return answer

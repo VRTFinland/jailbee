@@ -230,3 +230,21 @@ def test_stdout_is_terminal_follows_stdout(mocker):
     assert prompting.stdout_is_terminal() is False
     mocker.patch("jailbee.prompting.sys.stdout.isatty", return_value=True)
     assert prompting.stdout_is_terminal() is True
+
+
+def test_confirm_returns_the_answer(mocker):
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=False)
+    assert prompting.confirm("Move it?", default=True) is False
+    ask.assert_called_once_with("Move it?", True)
+
+
+def test_confirm_passes_the_default_through(mocker):
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=True)
+    assert prompting.confirm("Move it?", default=False) is True
+    ask.assert_called_once_with("Move it?", False)
+
+
+def test_confirm_cancel_raises_cancelled(mocker):
+    mocker.patch("jailbee.prompting._confirm", return_value=None)
+    with pytest.raises(Cancelled):
+        prompting.confirm("Move it?")
