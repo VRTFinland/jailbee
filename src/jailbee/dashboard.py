@@ -411,7 +411,8 @@ def seed_view_state(
     ``decode_names`` only validates JSON shape, not column vocabulary, so a
     renamed or removed column would otherwise reach both front-ends raw. The
     retired ``ahead_diff`` is migrated to ``target_diff`` with a visible notice
-    before this filter. Each
+    before this filter, and that rename alone is written back so the notice
+    appears once. Each
     front-end's own last-column guard (``dashboard_settings.toggle_current``
     here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
     length, so a phantom name inflates that count without ever being a real,
@@ -419,7 +420,7 @@ def seed_view_state(
     toggle. Filtering here, before either guard sees the set, is what keeps
     that count honest.
 
-    This function itself never writes: the filtered value is only returned,
+    Apart from that one rename, this function never writes: the filtered value is only returned,
     not saved back over the stored row. That does **not** mean an unknown
     name survives in storage, though — the filtered value becomes the
     long-lived ``enabled`` / ``self._enabled_columns`` each front-end holds
@@ -438,8 +439,16 @@ def seed_view_state(
     state = load_view_state(engine, frontend)
     if state.columns is not None:
         notice = stored_column_migration_notice(state.columns)
-        if notice is not None and on_migration is not None:
-            on_migration(notice)
+        if notice is not None:
+            if on_migration is not None:
+                on_migration(notice)
+            # Persist the rename alone, so the notice is shown once rather than
+            # on every launch until some unrelated action saves the view. Only
+            # `ahead_diff` is rewritten; other names keep the no-write rule.
+            renamed = ("target_diff" if n == "ahead_diff" else n for n in state.columns)
+            state = replace(state, columns=tuple(dict.fromkeys(renamed)))
+            save_view_state(engine, frontend, state)
+        stored = state.columns or ()
         # Canonicalized *before* the filter: a stored set predating the
         # `claude_group` -> `group` rename holds a name `all_column_names` no
         # longer knows, and per this function's own contract the first save
@@ -450,13 +459,7 @@ def seed_view_state(
         from jailbee.config.models_columns import canonical_ls_field
 
         known = frozenset(all_column_names())
-        filtered = tuple(
-            dict.fromkeys(
-                c
-                for n in state.columns
-                if (c := "target_diff" if n == "ahead_diff" else canonical_ls_field(n)) in known
-            )
-        )
+        filtered = tuple(dict.fromkeys(c for n in stored if (c := canonical_ls_field(n)) in known))
         return replace(state, columns=filtered or default_columns())
     gcfg = global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))

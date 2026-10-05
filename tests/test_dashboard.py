@@ -3308,6 +3308,29 @@ def test_seed_view_state_migrates_retired_diff_with_visible_notice(mocker):
     assert shown == [notice]
 
 
+def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mocker):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_QT, ViewState, load_view_state, save_view_state
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    folded = frozenset({"p"})
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name", "ahead_diff"), folded=folded))
+
+    first: list[str] = []
+    dashboard.seed_view_state(engine, FRONTEND_QT, on_migration=first.append)
+    stored = load_view_state(engine, FRONTEND_QT)
+    assert stored.columns == ("name", "target_diff")
+    assert stored.folded == folded
+
+    second: list[str] = []
+    state = dashboard.seed_view_state(engine, FRONTEND_QT, on_migration=second.append)
+    assert len(first) == 1
+    assert second == []
+    assert state.columns == ("name", "target_diff")
+
+
 def test_dashboard_config_migration_notice_is_visible_not_debug_only(mocker):
     mocker.patch.object(
         dashboard,
@@ -3391,7 +3414,8 @@ def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(m
 
 
 def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
-    """`seed_view_state` itself never writes: filtering happens only on the
+    """`seed_view_state` never writes for an unknown name (only the retired
+    `ahead_diff` rename is persisted): filtering happens only on the
     value it returns, not on the stored row, which still has the phantom
     name right after this call.
 
