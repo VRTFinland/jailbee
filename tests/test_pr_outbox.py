@@ -915,9 +915,7 @@ def test_allow_foreign_keeps_the_repo_lock(mocker, make_cfg, tmp_path):
 def test_allow_foreign_keeps_the_stale_review_refusal(mocker, make_cfg, tmp_path):
     from jailbee.pr_outbox import StaleError, parse_manifest, resolve_target
 
-    incus = _target_setup(
-        mocker, tmp_path, pr=_pr_info(number=999, head_sha="def5678")
-    )
+    incus = _target_setup(mocker, tmp_path, pr=_pr_info(number=999, head_sha="def5678"))
     manifest = parse_manifest(
         "001-x.json",
         _manifest_text(

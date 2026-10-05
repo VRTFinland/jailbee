@@ -1013,9 +1013,7 @@ def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
 
 
 @pytest.mark.parametrize(("kind", "foreign"), [("pr", True), ("issue", False)])
-def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(
-    env, mocker, kind, foreign
-):
+def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(env, mocker, kind, foreign):
     """The browser always asks under the plan, so its consent covers a PR the
     container does not own; an issue proposal must not carry the PR-only flag."""
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)

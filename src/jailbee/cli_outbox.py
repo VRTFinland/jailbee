@@ -401,8 +401,7 @@ def apply(
         bool,
         typer.Option(
             "--foreign",
-            help="Publish to a PR the container does not own (needed with -y); "
-            "invalid for issues.",
+            help="Publish to a PR the container does not own (needed with -y); invalid for issues.",
         ),
     ] = False,
     yes: YesOption = False,
