@@ -51,7 +51,7 @@ def repo(tmp_path, engine: Engine):
 @pytest.fixture
 def configured_ssh() -> RemoteSSHConfig:
     return RemoteSSHConfig(
-        shell=True,
+        console=True,
         exec=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -70,16 +70,16 @@ def test_configured_default_routes_to_dashboard(raw: str | None) -> None:
 
 def test_configured_default_routes_to_console() -> None:
     cfg = RemoteSSHConfig(
-        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+        default_entrypoint="console", console=True, commands=RemoteCommandPolicy(mode="full")
     )
     assert route(None, cfg) == Route("console", ("_remote-console",), None, None, True)
 
 
-@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "shell"])
+@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "console"])
 def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str) -> None:
     cfg = RemoteSSHConfig(
         default_entrypoint=default_entrypoint,
-        shell=True,
+        console=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
     assert route("help", cfg) == Route("help", (), None, None, False)
@@ -87,7 +87,7 @@ def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str)
 
 def test_explicit_entrypoint_overrides_default() -> None:
     cfg = RemoteSSHConfig(
-        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+        default_entrypoint="console", console=True, commands=RemoteCommandPolicy(mode="full")
     )
     assert route("dashboard", cfg) == Route("dashboard", ("dashboard",), None, None, True)
 
@@ -146,7 +146,10 @@ def test_one_shot_resolves_repo_and_drops_remote_selector(engine, repo) -> None:
 @pytest.mark.parametrize("raw", ["--repo project ls", "shell --repo project"])
 def test_excluded_repo_is_indistinguishable_from_unknown(raw: str, engine, repo) -> None:
     cfg = RemoteSSHConfig(
-        exec=True, shell=True, excluded_repos=["project"], commands=RemoteCommandPolicy(mode="full")
+        exec=True,
+        console=True,
+        excluded_repos=["project"],
+        commands=RemoteCommandPolicy(mode="full"),
     )
     with pytest.raises(RouteError) as excluded:
         route(raw, cfg, engine=engine)
@@ -187,7 +190,7 @@ def test_disabled_dashboard_and_extra_arguments_are_rejected() -> None:
 
 
 def test_console_routes_with_optional_registered_repo(engine, repo) -> None:
-    cfg = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     assert route("shell", cfg) == Route("console", ("_remote-console",), None, None, True)
     assert route("shell --repo project", cfg, engine=engine) == Route(
         "console",
@@ -200,16 +203,16 @@ def test_console_routes_with_optional_registered_repo(engine, repo) -> None:
 
 @pytest.mark.parametrize("raw", ["shell now", "shell --repo", "shell --repo project extra"])
 def test_invalid_console_shapes_are_rejected(raw: str, engine) -> None:
-    cfg = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     with pytest.raises(RouteError):
         route(raw, cfg, engine=engine)
 
 
 def test_disabled_shell_and_exec_entrypoints_are_rejected(engine, repo) -> None:
-    cfg = RemoteSSHConfig(shell=False, exec=False, commands=RemoteCommandPolicy(mode="full"))
-    with pytest.raises(RouteError, match="shell is disabled"):
+    cfg = RemoteSSHConfig(console=False, exec=False, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="console is disabled"):
         route("shell", cfg)
-    with pytest.raises(RouteError, match="shell is disabled"):
+    with pytest.raises(RouteError, match="console is disabled"):
         route("shell --repo unregistered", cfg, engine=engine)
     with pytest.raises(RouteError, match="execution is disabled"):
         route("--repo project ls", cfg, engine=engine)
@@ -446,20 +449,20 @@ def test_one_shot_exec_rejects_an_unknown_command(engine, repo) -> None:
 
 
 def test_help_lists_only_configured_entrypoints() -> None:
-    dashboard_only = help_text(RemoteSSHConfig(shell=False, exec=False))
+    dashboard_only = help_text(RemoteSSHConfig(console=False, exec=False))
     assert "  dashboard" in dashboard_only
-    assert "  shell [--repo PREFIX]" not in dashboard_only
+    assert "  console [--repo PREFIX]" not in dashboard_only
     assert "  --repo PREFIX COMMAND [ARGS...]" not in dashboard_only
 
     all_entrypoints = help_text(
         RemoteSSHConfig(
-            shell=True,
+            console=True,
             exec=True,
             commands=RemoteCommandPolicy(mode="full"),
         )
     )
     assert "  dashboard" in all_entrypoints
-    assert "  shell [--repo PREFIX]" in all_entrypoints
+    assert "  console [--repo PREFIX]" in all_entrypoints
     assert "  --repo PREFIX COMMAND [ARGS...]" in all_entrypoints
 
 
@@ -1201,3 +1204,14 @@ def test_console_is_a_host_command() -> None:
     from jailbee.remote_ssh.router import is_host_command
 
     assert is_host_command("console")
+
+
+@pytest.mark.parametrize("word", ["console", "shell"])
+def test_console_entry_point_accepts_both_names(word: str, engine) -> None:
+    cfg = RemoteSSHConfig(console=True)
+    assert route(word, cfg, engine=engine).kind == "console"
+
+
+def test_help_text_names_console() -> None:
+    assert "  console [--repo PREFIX]" in help_text(RemoteSSHConfig())
+    assert "shell" not in help_text(RemoteSSHConfig())

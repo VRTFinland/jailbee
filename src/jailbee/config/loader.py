@@ -388,6 +388,24 @@ def _warn_legacy_credentials_block(source: str) -> None:
 
 
 @functools.cache
+def _warn_legacy_remote_shell(source: str) -> None:
+    """Print the 1.6.0 `remote.ssh.shell` rename notice once per process, per source."""
+    from jailbee.notices import Notice, emit
+
+    emit(
+        Notice(
+            key="legacy-remote-ssh-shell",
+            scope=source,
+            lines=(
+                f"`remote.ssh.shell` (and `default_entrypoint: shell`) in {source} is "
+                "deprecated and renamed to `console` — run `jailbee config migrate`, "
+                f"or see docs/config.md. It keeps working until {LEGACY_REMOVAL_VERSION}.",
+            ),
+        )
+    )
+
+
+@functools.cache
 def _warn_legacy_per_repo_entry(
     source: str, key: str, prefix: str, local_path: str, conflict: bool
 ) -> None:

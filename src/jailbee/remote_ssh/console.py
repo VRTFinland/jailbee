@@ -349,7 +349,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
     *effective* `RemoteSSHConfig` for this session (`global.yaml` merged
     with any `jb remote ssh serve` overrides) — see `server.handle_process`.
     Using it instead of reloading `global.yaml` here is the fix for the bug
-    where every override flag (`--commands full`, `--shell`, ...) was
+    where every override flag (`--commands full`, `--console`, ...) was
     silently ignored inside the console, which reads its own config. The
     policy is loaded once, at startup, and never reloaded for the rest of
     this session, matching the console's existing "load once" contract for
@@ -373,7 +373,7 @@ def local_policy() -> RemoteSSHConfig:
         restrict_host=False,
         excluded_repos=[],
         dashboard=True,
-        shell=True,
+        console=True,
     )
 
 

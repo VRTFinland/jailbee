@@ -214,9 +214,9 @@ def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
         return "help", None, None
     if argv[0] == "dashboard":
         return "dashboard", None, "dashboard"
-    if argv[0] == "shell":
+    if argv[0] in ("console", "shell"):
         prefix = argv[2] if len(argv) >= 3 and argv[1] == "--repo" else None
-        return "console", prefix, "shell"
+        return "console", prefix, "console"
     if len(argv) >= 3 and argv[0] == "--repo":
         try:
             path = command_path(argv[2:])
@@ -330,7 +330,7 @@ async def handle_process(
             # (global.yaml + any `jb remote ssh serve` overrides) here is
             # what fixes the console silently reloading global.yaml on its
             # own and ignoring every override flag (e.g. `--commands full`,
-            # `--shell`), including its own `dashboard` check.
+            # `--console`), including its own `dashboard` check.
             argv = (*argv, "--policy-json", config.model_dump_json())
         elif selected.kind == "dashboard":
             argv = (*argv, "--remote-policy-json", config.model_dump_json())
@@ -381,7 +381,7 @@ def _enabled_entry_points(config: RemoteSSHConfig) -> str:
         name
         for name, enabled in (
             ("dashboard", config.dashboard),
-            ("shell", config.shell),
+            ("console", config.console),
             ("exec", config.exec),
         )
         if enabled
@@ -396,8 +396,8 @@ def _connect_example(host: str, port: int, config: RemoteSSHConfig) -> str:
         display_host = host
     if config.dashboard:
         return f"ssh -t -p {port} jailbee@{display_host} dashboard"
-    if config.shell:
-        return f"ssh -t -p {port} jailbee@{display_host} shell"
+    if config.console:
+        return f"ssh -t -p {port} jailbee@{display_host} console"
     return f"ssh -p {port} jailbee@{display_host}"
 
 

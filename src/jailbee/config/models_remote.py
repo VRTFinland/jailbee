@@ -16,7 +16,7 @@ class RemoteCommandPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: CommandMode = Field(
         default="disabled",
-        description="Command policy for remote shell and exec entry points.",
+        description="Command policy for remote console and exec entry points.",
     )
     allow: list[str] = Field(
         default_factory=list,
@@ -59,15 +59,15 @@ class RemoteSSHConfig(BaseModel):
         default=True,
         description="Whether SSH clients may open the dashboard.",
     )
-    shell: bool = Field(
+    console: bool = Field(
         default=True,
-        description="Enable the restricted JailBee console.",
+        description="Enable the interactive JailBee console entry point.",
     )
     exec: bool = Field(
         default=True,
         description="Enable one-shot JailBee command routing.",
     )
-    default_entrypoint: Literal["help", "dashboard", "shell"] = Field(
+    default_entrypoint: Literal["help", "dashboard", "console"] = Field(
         default="help",
         description="Entry point opened when an SSH client supplies no command.",
     )
@@ -125,7 +125,7 @@ class RemoteSSHConfig(BaseModel):
     def _entrypoints_are_usable(self) -> Self:
         if self.excluded_repos and not self.restrict_host:
             raise ValueError("remote.ssh.excluded_repos requires restrict_host=true")
-        if not (self.dashboard or self.shell or self.exec):
+        if not (self.dashboard or self.console or self.exec):
             raise ValueError("remote.ssh must enable at least one entry point")
         if self.default_entrypoint != "help" and not getattr(self, self.default_entrypoint):
             raise ValueError("remote.ssh.default_entrypoint must be an enabled entry point")

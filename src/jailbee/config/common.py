@@ -147,6 +147,43 @@ def normalize_credentials_key(
     return out, True
 
 
+REMOTE_SSH_LEGACY_KEYS: tuple[tuple[str, ...], ...] = (("remote", "ssh", "shell"),)
+"""Raw paths of the 1.6.0 `remote.ssh` spellings renamed to `console`."""
+
+
+def normalize_remote_ssh_keys(
+    raw: dict[str, object], origin: str
+) -> tuple[dict[str, object], bool]:
+    """Fold 1.6.0's `remote.ssh.shell` / `default_entrypoint: shell` into `console`.
+
+    The sibling of `normalize_credentials_key`, and pure for the same reason:
+    the notice belongs to the caller. Both spellings at once is an error, not a
+    precedence question. Returns a new mapping; `raw` is never mutated (the
+    editor's `LayerSet.global_raw` must stay byte-faithful).
+    """
+    remote = raw.get("remote")
+    ssh = remote.get("ssh") if isinstance(remote, dict) else None
+    if not isinstance(ssh, dict):
+        return raw, False
+    if "shell" in ssh and "console" in ssh:
+        raise ConfigError(
+            f"Both `remote.ssh.console` and deprecated `remote.ssh.shell` are set in "
+            f"{origin}; remove the old key instead of making jailbee choose."
+        )
+    new_ssh = dict(ssh)
+    folded = False
+    if "shell" in new_ssh:
+        new_ssh["console"] = new_ssh.pop("shell")
+        folded = True
+    if new_ssh.get("default_entrypoint") == "shell":
+        new_ssh["default_entrypoint"] = "console"
+        folded = True
+    if not folded:
+        return raw, False
+    assert isinstance(remote, dict)
+    return {**raw, "remote": {**remote, "ssh": new_ssh}}, True
+
+
 def _read_yaml_or_empty(path: Path) -> dict[str, object]:
     """Read and parse a YAML file. Missing file -> {}. Invalid YAML -> ConfigError."""
     if not path.exists():

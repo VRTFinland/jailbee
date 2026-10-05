@@ -426,7 +426,7 @@ def test_render_global_yaml_round_trips_a_remote_ssh_block(tmp_path):
                 "listen": "::1",
                 "port": 22022,
                 "dashboard": True,
-                "shell": True,
+                "console": True,
                 "exec": True,
                 "commands": {"mode": "allowlist", "allow": ["ls", "git pull"]},
             }

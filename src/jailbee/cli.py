@@ -252,9 +252,17 @@ def remote_ssh_serve_cmd(
             help="Override remote.ssh.dashboard for this run only.",
         ),
     ] = None,
-    shell: Annotated[
+    console: Annotated[
         bool | None,
-        typer.Option("--shell/--no-shell", help="Override remote.ssh.shell for this run only."),
+        typer.Option(
+            "--console/--no-console", help="Override remote.ssh.console for this run only."
+        ),
+    ] = None,
+    legacy_shell: Annotated[
+        bool | None,
+        typer.Option(
+            "--shell/--no-shell", hidden=True, help="Deprecated alias of --console/--no-console."
+        ),
     ] = None,
     exec_: Annotated[
         bool | None,
@@ -300,11 +308,22 @@ def remote_ssh_serve_cmd(
     from jailbee.remote_ssh import keys
     from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides
 
+    if legacy_shell is not None:
+        if console is not None:
+            error_plain("--shell is the deprecated spelling of --console; pass only one.")
+            raise typer.Exit(2)
+        warn_plain(
+            f"--shell/--no-shell is deprecated, use --console/--no-console "
+            f"(removed in {LEGACY_REMOVAL_VERSION}).",
+            stderr=True,
+        )
+        console = legacy_shell
+
     overrides = ServeOverrides(
         listen=listen,
         port=port,
         dashboard=dashboard,
-        shell=shell,
+        console=console,
         exec=exec_,
         commands_mode=commands,
         allow=allow,

@@ -1,9 +1,12 @@
 """Tests for the host-global remote SSH policy."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from jailbee.config import ConfigError
+from jailbee.config.common import normalize_remote_ssh_keys
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteConfig, RemoteSSHConfig
 from jailbee.global_config import GlobalConfig, validate_global_raw
 
@@ -14,7 +17,7 @@ def test_remote_ssh_defaults_enable_all_routes_with_full_commands() -> None:
     assert ssh.port == 8022
     assert ssh.dashboard is True
     assert ssh.default_entrypoint == "help"
-    assert ssh.shell is True
+    assert ssh.console is True
     assert ssh.exec is True
     assert ssh.commands.mode == "full"
     assert ssh.commands.allow == []
@@ -38,7 +41,7 @@ def test_command_entrypoint_accepts_an_enabled_policy(mode: str, allow: list[str
 
 def test_disabled_command_policy_does_not_disable_routes() -> None:
     ssh = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
-    assert (ssh.dashboard, ssh.shell, ssh.exec) == (True, True, True)
+    assert (ssh.dashboard, ssh.console, ssh.exec) == (True, True, True)
 
 
 def test_allowlist_mode_requires_at_least_one_leaf() -> None:
@@ -48,16 +51,16 @@ def test_allowlist_mode_requires_at_least_one_leaf() -> None:
 
 def test_all_entrypoints_cannot_be_disabled() -> None:
     with pytest.raises(ValidationError, match="at least one"):
-        RemoteSSHConfig(dashboard=False, shell=False, exec=False)
+        RemoteSSHConfig(dashboard=False, console=False, exec=False)
 
 
-@pytest.mark.parametrize("entrypoint", ["dashboard", "shell"])
+@pytest.mark.parametrize("entrypoint", ["dashboard", "console"])
 def test_default_entrypoint_must_be_enabled(entrypoint: str) -> None:
     with pytest.raises(ValidationError, match="default_entrypoint"):
         RemoteSSHConfig(
             default_entrypoint=entrypoint,
             dashboard=entrypoint != "dashboard",
-            shell=entrypoint != "shell",
+            console=entrypoint != "console",
             exec=True,
             commands=RemoteCommandPolicy(mode="full"),
         )
@@ -185,3 +188,64 @@ def test_network_defaults_off_and_accepts_true() -> None:
 
     assert RemoteSSHConfig().network is False
     assert RemoteSSHConfig(network=True).network is True
+
+
+def test_fold_renames_shell_and_entrypoint() -> None:
+    raw: dict[str, object] = {
+        "remote": {"ssh": {"shell": False, "default_entrypoint": "shell", "port": 1}}
+    }
+    out, folded = normalize_remote_ssh_keys(raw, "g.yaml")
+    assert folded
+    assert out["remote"]["ssh"] == {  # type: ignore[index]
+        "console": False,
+        "default_entrypoint": "console",
+        "port": 1,
+    }
+    assert raw["remote"]["ssh"]["shell"] is False  # type: ignore[index]  # input untouched
+
+
+def test_fold_is_noop_without_legacy_keys() -> None:
+    raw: dict[str, object] = {"remote": {"ssh": {"console": True}}}
+    assert normalize_remote_ssh_keys(raw, "g.yaml") == (raw, False)
+    assert normalize_remote_ssh_keys({}, "g.yaml") == ({}, False)
+    assert normalize_remote_ssh_keys({"remote": None}, "g.yaml") == ({"remote": None}, False)
+
+
+def test_both_spellings_is_an_error_naming_both_keys() -> None:
+    with pytest.raises(ConfigError) as exc:
+        normalize_remote_ssh_keys({"remote": {"ssh": {"shell": True, "console": True}}}, "g.yaml")
+    assert "remote.ssh.console" in str(exc.value)
+    assert "remote.ssh.shell" in str(exc.value)
+
+
+def test_both_spellings_in_global_yaml_is_an_error() -> None:
+    with pytest.raises(ConfigError, match=r"remote\.ssh\.shell"):
+        validate_global_raw({"remote": {"ssh": {"shell": True, "console": True}}}, Path("/g.yaml"))
+
+
+def test_legacy_global_yaml_loads_with_notice(mocker) -> None:
+    emit = mocker.patch("jailbee.notices.emit")
+    cfg = validate_global_raw({"remote": {"ssh": {"shell": False}}}, Path("/g.yaml"))
+    assert cfg.remote.ssh.console is False
+    assert emit.call_args.args[0].key == "legacy-remote-ssh-shell"
+
+
+def test_legacy_fold_is_silent_without_emit_hint(mocker) -> None:
+    emit = mocker.patch("jailbee.notices.emit")
+    validate_global_raw({"remote": {"ssh": {"shell": False}}}, Path("/g.yaml"), emit_hint=False)
+    emit.assert_not_called()
+
+
+def test_legacy_default_entrypoint_shell_folds_to_console() -> None:
+    cfg = validate_global_raw(
+        {"remote": {"ssh": {"default_entrypoint": "shell"}}}, Path("/g.yaml"), emit_hint=False
+    )
+    assert cfg.remote.ssh.default_entrypoint == "console"
+
+
+def test_disabled_console_cannot_be_legacy_default_entrypoint() -> None:
+    with pytest.raises(ConfigError, match="enabled entry point"):
+        validate_global_raw(
+            {"remote": {"ssh": {"console": False, "default_entrypoint": "shell"}}},
+            Path("/g.yaml"),
+        )
