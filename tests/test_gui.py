@@ -44,11 +44,34 @@ def test_gui_env_sets_user_and_logname_for_the_container_user(tmp_path):
 
 def test_launch_detached_passes_env_as_incus_env_flags(mocker):
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
-    launch_detached("c1", 1000, {"HOME": "/home/dev", "DISPLAY": ":0"}, "/bin/true", "/tmp/x.log")
+    launch_detached(
+        "c1", 1000, {"HOME": "/home/dev", "DISPLAY": ":0"}, "/bin/true", "/tmp/x.log", gid=1000
+    )
 
     argv = popen.call_args.args[0]
     pairs = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
     assert pairs == ["HOME=/home/dev", "DISPLAY=:0"]
+
+
+def test_launches_run_as_the_container_users_group(mocker):
+    """`incus exec --user` alone runs the app with gid 0. The move check then
+    runs as uid:gid and the kernel refuses it the app's /proc/<pid>/exe and
+    environ (the ptrace access check wants the gids to match too), so a
+    browser open on another display was never found and never moved.
+    """
+    from unittest.mock import MagicMock
+
+    from jailbee import gui
+
+    popen = mocker.patch.object(gui.subprocess, "Popen")
+    run = mocker.patch.object(gui.subprocess, "run", return_value=MagicMock(returncode=0))
+    gui.launch_detached("c", 1000, {}, "chrome", "/tmp/l.log", gid=1001)
+    gui.launch_attached("c", 1000, {}, "chrome", "/tmp/l.log", gid=1001)
+
+    for argv in (popen.call_args.args[0], run.call_args.args[0]):
+        prefix = argv[: argv.index("--")]
+        assert prefix[prefix.index("--user") + 1] == "1000"
+        assert prefix[prefix.index("--group") + 1] == "1001"
 
 
 def test_launch_detached_redirects_to_the_log_file(mocker):
@@ -63,7 +86,7 @@ def test_launch_detached_redirects_to_the_log_file(mocker):
     without this.
     """
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
-    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/jailbee-app-x.log")
+    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/jailbee-app-x.log", gid=1000)
     script = popen.call_args.args[0][-1]
     assert ">/tmp/jailbee-app-x.log" in script
     assert "2>&1" in script
@@ -80,7 +103,7 @@ def test_launch_detached_fully_detaches_from_parent(mocker):
     appears. Verify both detach knobs are set.
     """
     popen = mocker.patch("jailbee.gui.subprocess.Popen")
-    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/x.log")
+    launch_detached("c1", 1000, {}, "/bin/true", "/tmp/x.log", gid=1000)
 
     kw = popen.call_args.kwargs
     assert kw.get("start_new_session") is True
@@ -153,7 +176,7 @@ def test_launch_attached_runs_in_the_foreground_and_returns_the_status(mocker):
 
     run = mocker.patch.object(gui.subprocess, "run", return_value=MagicMock(returncode=3))
 
-    assert gui.launch_attached("c", 1000, {"A": "1"}, "chrome", "/tmp/l.log") == 3
+    assert gui.launch_attached("c", 1000, {"A": "1"}, "chrome", "/tmp/l.log", gid=1000) == 3
 
     argv = run.call_args.args[0]
     assert argv[:3] == ["incus", "exec", "c"]

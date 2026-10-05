@@ -16281,6 +16281,7 @@ def exec_cmd(
             env,
             f"bash -lc {shlex.quote(shell_cmd)}",
             log_path,
+            gid=cfg.container_user.gid,
             cwd=target,
         )
         info(f"Started in background in {resolved} (logs in container: {log_path})")

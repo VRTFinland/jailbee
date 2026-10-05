@@ -314,10 +314,26 @@ def launch(
     inner = " ".join(_shlex.quote(a) for a in argv)
     if waypipe_attach():
         info(f"Running {spec.name} in {container} until it exits (logs in container: {log_path})")
-        launch_attached(container, cfg.container_user.uid, env, inner, log_path, cwd=cwd)
+        launch_attached(
+            container,
+            cfg.container_user.uid,
+            env,
+            inner,
+            log_path,
+            gid=cfg.container_user.gid,
+            cwd=cwd,
+        )
         return
     info(f"Launching {spec.name} in {container} (background, logs in container: {log_path})")
-    launch_detached(container, cfg.container_user.uid, env, inner, log_path, cwd=cwd)
+    launch_detached(
+        container,
+        cfg.container_user.uid,
+        env,
+        inner,
+        log_path,
+        gid=cfg.container_user.gid,
+        cwd=cwd,
+    )
 
 
 def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:

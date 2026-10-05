@@ -120,13 +120,32 @@ def host_wayland_socket() -> str:
     return os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
 
 
-def _exec_prefix(container: str, uid: int, env: dict[str, str], cwd: str | None) -> list[str]:
-    """The `incus exec` argv up to and including ``--``: user, cwd and env flags."""
+def _exec_prefix(
+    container: str, uid: int, gid: int, env: dict[str, str], cwd: str | None
+) -> list[str]:
+    """The `incus exec` argv up to and including ``--``: user, group, cwd and env flags.
+
+    ``--group`` is not optional: without it Incus runs the app with gid 0, and
+    a process whose gids differ from the caller's is closed to it in /proc
+    (``exe``, ``environ``). The move check (`app_instance`) runs as uid:gid and
+    would never see the app.
+    """
     cwd_args = ["--cwd", cwd] if cwd else []
     env_args: list[str] = []
     for k, v in env.items():
         env_args += ["--env", f"{k}={v}"]
-    return ["incus", "exec", container, "--user", str(uid), *cwd_args, *env_args, "--"]
+    return [
+        "incus",
+        "exec",
+        container,
+        "--user",
+        str(uid),
+        "--group",
+        str(gid),
+        *cwd_args,
+        *env_args,
+        "--",
+    ]
 
 
 def launch_detached(
@@ -136,6 +155,7 @@ def launch_detached(
     inner_cmd: str,
     log_path: str,
     *,
+    gid: int,
     cwd: str | None = None,
 ) -> None:
     """Spawn `incus exec` so a GUI app survives `jailbee` returning.
@@ -152,7 +172,7 @@ def launch_detached(
     """
     shell = f"setsid bash -c {shlex.quote(inner_cmd)} </dev/null >{shlex.quote(log_path)} 2>&1 &"
     subprocess.Popen(
-        [*_exec_prefix(container, uid, env, cwd), "bash", "-c", shell],
+        [*_exec_prefix(container, uid, gid, env, cwd), "bash", "-c", shell],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -167,6 +187,7 @@ def launch_attached(
     inner_cmd: str,
     log_path: str,
     *,
+    gid: int,
     cwd: str | None = None,
 ) -> int:
     """Run a GUI app through `incus exec` and wait for it; return its status.
@@ -177,7 +198,7 @@ def launch_attached(
     """
     shell = f"{inner_cmd} </dev/null >{shlex.quote(log_path)} 2>&1"
     return subprocess.run(
-        [*_exec_prefix(container, uid, env, cwd), "bash", "-c", shell],
+        [*_exec_prefix(container, uid, gid, env, cwd), "bash", "-c", shell],
         stdin=subprocess.DEVNULL,
         check=False,
     ).returncode
