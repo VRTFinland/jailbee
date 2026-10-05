@@ -67,6 +67,12 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
             spans.append((i, width))
             i += width
             continue
+        if path == ["outbox"] and (
+            token == "--config" or token.startswith("--config=") or token.startswith("-c")
+        ):
+            # Its group config is consumed before OutboxGroup's default leaf.
+            i += 2 if token in ("--config", "-c") else 1
+            continue
         if token in ("--help", "-h"):
             # Only pure root/group help is resolvable without a leaf.
             tail = i + 1

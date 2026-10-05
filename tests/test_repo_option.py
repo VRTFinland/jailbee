@@ -284,3 +284,12 @@ def test_repo_option_import_and_fast_path_are_lazy():
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("argv", [
+    ["outbox", "--config=/tmp/beta.yaml", "feat", "--repo", "alpha"],
+    ["outbox", "-c/tmp/beta.yaml", "--repo", "alpha"],
+])
+def test_implicit_outbox_group_config_conflicts(argv):
+    with pytest.raises(RepoOptionError, match="--config and --repo"):
+        lift_repo(argv)
