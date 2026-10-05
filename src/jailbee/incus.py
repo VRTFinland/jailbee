@@ -11,7 +11,7 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Generator
+from collections.abc import Collection, Generator
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +40,59 @@ class ExecResult:
     returncode: int
     stdout: bytes
     stderr: bytes
+
+
+@dataclass(frozen=True)
+class RunningInstance:
+    """A live app process found through its profile lock, and its display."""
+
+    pid: int
+    wayland_display: str | None
+    display: str | None
+
+
+RUNNING_INSTANCE_SCRIPT = r"""
+for f in $1; do
+  [ -L "$f" ] || continue
+  pid=$(readlink "$f" | grep -o '[0-9]*$')
+  [ -n "$pid" ] || continue
+  exe=$(readlink "$2/$pid/exe" 2>/dev/null) || continue
+  case " $3 " in *" ${exe##*/} "*) ;; *) continue ;; esac
+  [ -O "$2/$pid" ] && [ -r "$2/$pid/environ" ] || continue
+  echo "pid=$pid"
+  tr '\0' '\n' < "$2/$pid/environ" | grep -E '^(WAYLAND_DISPLAY|DISPLAY)=' || true
+  exit 0
+done
+exit 0
+"""
+"""Find the live process behind an app's profile lock.
+
+``$1`` is the lock glob (unquoted on purpose: it is expanded here), ``$2``
+the proc root (``/proc``; a parameter only so tests can point it at a fake
+tree), ``$3`` the space-separated executable basenames that count as the
+app. The PID is the last run of digits in the lock's target — Chrome writes
+``<host>-<pid>``, Firefox ``<ip>:+<pid>``. A PID whose executable is not the
+app's is skipped: a lock left by a crash outlives a container restart, and
+its PID then belongs to whatever got it next. Always exits 0; the answer is
+on stdout.
+"""
+
+
+def parse_running_instance(out: str) -> RunningInstance | None:
+    """Parse `RUNNING_INSTANCE_SCRIPT`'s output; None when it found nothing."""
+    values: dict[str, str] = {}
+    for line in out.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            values.setdefault(key, value)
+    pid = values.get("pid", "")
+    if not pid.isdigit():
+        return None
+    return RunningInstance(
+        pid=int(pid),
+        wayland_display=values.get("WAYLAND_DISPLAY"),
+        display=values.get("DISPLAY"),
+    )
 
 
 # An argument longer than this, or one spanning lines, is summarised rather
@@ -429,6 +482,22 @@ class Incus:
         )
         result = self._run(args, timeout=timeout)
         return result.stdout
+
+    def running_instance(
+        self, name: str, lock_glob: str, exe_names: Collection[str], *, uid: int, gid: int
+    ) -> RunningInstance | None:
+        """The live process holding ``lock_glob`` in ``name``, or None.
+
+        Runs as the container user: the lock lives in that user's profile,
+        and `/proc/<pid>/environ` is readable only by the process's owner.
+        """
+        out = self.exec(
+            name,
+            ["sh", "-c", RUNNING_INSTANCE_SCRIPT, "sh", lock_glob, "/proc", " ".join(exe_names)],
+            uid=uid,
+            gid=gid,
+        )
+        return parse_running_instance(out)
 
     def exec_with_input(
         self,
