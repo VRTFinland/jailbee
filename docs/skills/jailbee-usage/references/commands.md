@@ -649,7 +649,7 @@ details under the table; the action menu opens to its right; persisted),
 force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible; `↑/↓` then move the
-menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` quits from
+menu cursor, `Enter` runs the entry — or press the key shown in brackets beside it (`[g] Git →`, then `[u]` inside; keys are per menu level) — `Esc`/`q` closes it (`Ctrl-C` quits from
 the plain view, menus and panels; at an inline prompt or picker it cancels just
 that question).
 

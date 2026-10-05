@@ -1567,6 +1567,113 @@ def move_menu(menu: MenuState | RepoMenuState, delta: int) -> MenuState | RepoMe
     return replace(menu, index=max(0, min(last, menu.index + delta)))
 
 
+# Each menu entry's own key, by leaf verb (labels carry counts) or group label.
+# Scoped to the level that is open, so `l` is Lifecycle at the root and `git
+# pull` inside Git. Where a dashboard quick key exists the letter matches it,
+# and Destroy stays a capital as there. Entries not named here, and those that
+# lose a clash, take a free letter of their label (see `menu_hotkeys`).
+_MENU_KEYS: dict[str, str] = {
+    # container root
+    "tmux": "t",
+    "outbox browse": "o",
+    "Launch →": "a",
+    "start": "s",
+    "job log": "b",
+    "job log --follow": "b",
+    "job clear": "x",
+    "credential-group": "c",
+    "Git →": "g",
+    "PR →": "p",
+    "Lifecycle →": "l",
+    "Network →": "n",
+    "review apply": "r",
+    "issue apply": "i",
+    # Git →
+    "merge": "m",
+    "git pull": "l",
+    "git push": "u",
+    "git push --pr": "r",
+    "git retarget": "b",
+    "git diff": "d",
+    # PR →
+    "pr --open": "p",
+    "pr": "P",
+    # Lifecycle →
+    "restart": "r",
+    "stop": "s",
+    "destroy": "D",
+    # Network →
+    "net egress ls": "e",
+    # repo menu
+    "new": "n",
+    "new-pr": "p",
+    "accounts": "a",
+    dact.DIAGNOSTICS_LABEL: "d",
+    "fold": "f",
+}
+
+# Tokens the open menu already answers (`run`'s overlay branch); their keys
+# can never be an entry's own.
+_MENU_HANDLED_TOKENS = frozenset(
+    {"up", "down", "enter", "cancel", "quit", "help", "settings", "interrupt"}
+)
+_MENU_RESERVED_KEYS = frozenset(
+    key.decode()
+    for b in KEY_BINDINGS
+    if b.token in _MENU_HANDLED_TOKENS
+    for key in b.keys
+    if len(key) == 1 and key.isascii() and key.decode().isprintable()
+)
+
+
+def _preferred_menu_key(item: MenuItem) -> str | None:
+    if isinstance(item, MenuGroup):
+        return _MENU_KEYS.get(item.label)
+    verb = item[1]
+    if verb.startswith("net ") and verb.removeprefix("net ") in _NETWORK_MODES:
+        return verb.removeprefix("net ")[0]
+    return _MENU_KEYS.get(verb)
+
+
+def menu_hotkeys(entries: Sequence[MenuItem]) -> list[str | None]:
+    """Each entry's key at this level, parallel to ``entries``.
+
+    Preferred keys (:data:`_MENU_KEYS`) are handed out first, in entry order,
+    so a fixed key never moves because an entry above it appeared. The rest
+    take the first free letter of their label, then a digit; None once those
+    run out. Keys the open menu already handles are never assigned.
+    """
+    taken = set(_MENU_RESERVED_KEYS)
+    keys: list[str | None] = [None] * len(entries)
+    for i, item in enumerate(entries):
+        key = _preferred_menu_key(item)
+        if key is not None and key not in taken:
+            keys[i] = key
+            taken.add(key)
+    for i, item in enumerate(entries):
+        if keys[i] is not None:
+            continue
+        label = item.label if isinstance(item, MenuGroup) else item[0]
+        candidates = [ch for ch in label.lower() if ch.isascii() and ch.isalpha()]
+        key = next((ch for ch in (*candidates, *"123456789") if ch not in taken), None)
+        keys[i] = key
+        if key is not None:
+            taken.add(key)
+    return keys
+
+
+def hotkey_menu(menu: MenuState | RepoMenuState, data: bytes) -> MenuState | RepoMenuState | None:
+    """``menu`` with the cursor on the entry whose key ``data`` is, else None."""
+    try:
+        typed = data.decode()
+    except UnicodeDecodeError:
+        return None
+    keys = menu_hotkeys(_menu_entries(menu))
+    if typed not in keys:
+        return None
+    return replace(menu, index=keys.index(typed))
+
+
 def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
     """Selected leaf verb, or None for a group or an empty menu."""
     entries = _menu_entries(menu)
@@ -1579,10 +1686,14 @@ def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
 def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
     """The action menu as a bordered panel: one row per action, cursor on the
     highlighted one, windowed to ``max_rows`` around the cursor."""
+    entries = _menu_entries(menu)
     lines = [
-        f"[bold cyan]▸[/] [{CURSOR_STYLE}]{label}[/]" if i == menu.index else f"  {label}"
-        for i, item in enumerate(_menu_entries(menu))
+        f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
+        if i == menu.index
+        else f"  {tag} {label}"
+        for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True))
         for label in [item.label if isinstance(item, MenuGroup) else item[0]]
+        for tag in [f"[bold]\\[{key}][/]" if key else "   "]
     ]
     if isinstance(menu, RepoMenuState):
         title = (
@@ -1624,6 +1735,7 @@ def _render_help() -> RenderableType:
         ]
     lines += [
         "",
+        "Menus: the key in brackets picks that entry, like Enter on it.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
@@ -1691,17 +1803,26 @@ def quick_reject_note(
     return f"{what} is not available for '{name}'"
 
 
+_MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
+
+
 def _hint_line(overlay: Overlay | None) -> str:
     """Contextual controls shown only while an overlay is open."""
     if isinstance(overlay, MenuState):
         if overlay.active_group is not None:
             return (
-                "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  "
+                f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] run  ·  "
                 "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
             )
-        return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
+        return (
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
+            "[bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
+        )
     if isinstance(overlay, RepoMenuState):
-        return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+        return (
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
+            "[bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+        )
     if isinstance(overlay, EgressState):
         return (
             "[bold]↑/↓[/bold] move  ·  [bold]a[/bold] add  ·  "
@@ -4342,8 +4463,12 @@ def run(
                     elif isinstance(overlay, (MenuState, RepoMenuState)):
                         if key in ("up", "down"):
                             overlay = move_menu(overlay, -1 if key == "up" else 1)
-                        elif key == "enter":
-                            next_menu, verb = enter_menu(overlay)
+                        # An entry's own key is Enter on that entry, so both
+                        # take this one path to its group or verb.
+                        elif (
+                            chosen_menu := overlay if key == "enter" else hotkey_menu(overlay, data)
+                        ) is not None:
+                            next_menu, verb = enter_menu(chosen_menu)
                             if verb is None:
                                 overlay = next_menu
                                 continue

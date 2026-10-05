@@ -2107,6 +2107,139 @@ def test_menu_group_cursor_clamps_within_visible_entries():
     assert dashboard.move_menu(git, -10).index == 0
 
 
+def _hotkeys(menu: dashboard.MenuState | dashboard.RepoMenuState) -> dict[str, str | None]:
+    entries = dashboard._menu_entries(menu)
+    labels = [item.label if isinstance(item, dashboard.MenuGroup) else item[0] for item in entries]
+    return dict(zip(labels, dashboard.menu_hotkeys(entries), strict=True))
+
+
+def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
+    ctx = _ctx(pr_number=7, has_job=True, job_clearable=True)
+    menu = dashboard.MenuState("alpha-x", dashboard.menu_actions(ctx))
+
+    assert _hotkeys(menu) == {
+        "Attach tmux": "t",
+        "Outbox": "o",
+        "Clear failed job": "x",
+        "Job log": "b",
+        "Git →": "g",
+        "PR →": "p",
+        "Lifecycle →": "l",
+        "Network →": "n",
+    }
+
+
+def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
+    ctx = _ctx(pr_number=7)
+    root = dashboard.MenuState("alpha-x", dashboard.menu_actions(ctx))
+
+    def submenu(label: str) -> dashboard.MenuState:
+        index = next(
+            i
+            for i, item in enumerate(dashboard._menu_entries(root))
+            if isinstance(item, dashboard.MenuGroup) and item.label == label
+        )
+        child, _ = dashboard.enter_menu(dataclasses.replace(root, index=index))
+        assert isinstance(child, dashboard.MenuState)
+        return child
+
+    assert _hotkeys(submenu("Git →")) == {
+        "Merge into…": "m",
+        "Send commits to host (git pull)": "l",
+        "Update from base (git push)": "u",
+        "Refresh from PR head (git push --pr)": "r",
+        "Change base branch (git retarget)": "b",
+        "Show diff (git diff)": "d",
+    }
+    assert _hotkeys(submenu("PR →")) == {"Open PR": "p", "Create/update PR": "P"}
+    assert _hotkeys(submenu("Lifecycle →")) == {"Restart": "r", "Stop": "s", "Destroy": "D"}
+    assert _hotkeys(submenu("Network →")) == {"Network: loose": "l", "Egress…": "e"}
+
+
+def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
+    menu = dashboard.MenuState("alpha-x", dashboard.menu_actions(_ctx(state="Stopped")))
+
+    assert _hotkeys(menu) == {"Start": "s", "Network →": "n", "Destroy": "D"}
+
+
+def test_menu_hotkeys_cover_the_repo_menu():
+    menu = dashboard.RepoMenuState(
+        "alpha",
+        [
+            ("New container…", "new"),
+            ("New from PR…", "new-pr"),
+            ("Credential group…", "credential-group"),
+            ("Accounts…", "accounts"),
+            dashboard.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
+            ("Apply config…", "apply"),
+            dashboard.MenuGroup(
+                "Diagnostics →", (("Doctor", "doctor"), ("Disk usage", "disk-usage"))
+            ),
+            ("Prune stale containers…", "prune"),
+            ("Fold", "fold"),
+        ],
+    )
+
+    assert _hotkeys(menu) == {
+        "New container…": "n",
+        "New from PR…": "p",
+        "Credential group…": "c",
+        "Accounts…": "a",
+        "Network →": "e",
+        "Apply config…": "l",
+        "Diagnostics →": "d",
+        "Prune stale containers…": "r",
+        "Fold": "f",
+    }
+
+
+def test_menu_hotkeys_fall_back_to_a_free_label_letter_then_digits():
+    entries = [
+        ("Attach tmux", "tmux"),
+        ("Tally", "unknown-1"),  # preferred-free: t is taken, a is next
+        ("Hook", "unknown-2"),  # h is the help key: never assigned, o follows
+        ("ttt", "unknown-3"),  # every letter taken: the first digit
+    ]
+
+    assert dashboard.menu_hotkeys(entries) == ["t", "a", "o", "1"]
+
+
+def test_menu_hotkeys_never_take_a_key_the_open_menu_already_handles():
+    reserved = {"j", "k", "q", "h", "?", "S"}
+    entries = [(f"{ch}{ch.upper()}", f"x-{ch}") for ch in "jkqhs"]
+
+    keys = dashboard.menu_hotkeys(entries)
+
+    assert not reserved & {k for k in keys if k}
+    assert len({k for k in keys if k}) == len([k for k in keys if k])
+
+
+def test_menu_hotkeys_preferred_keys_win_over_earlier_fallbacks():
+    # "Tally" sits first, but `t` is Attach tmux's own key: the fallback yields.
+    entries = [("Tally", "unknown"), ("Attach tmux", "tmux")]
+
+    assert dashboard.menu_hotkeys(entries) == ["a", "t"]
+
+
+def test_hotkey_menu_moves_the_cursor_to_the_entry_or_returns_none():
+    root = _grouped_menu()  # Attach tmux, Git →, PR →
+
+    hit = dashboard.hotkey_menu(root, b"p")
+    assert hit is not None and hit.index == 2 and hit.active_group is None
+    assert dashboard.hotkey_menu(root, b"z") is None
+    assert dashboard.hotkey_menu(root, b"\x1b[A") is None
+
+
+def test_render_menu_shows_each_entry_with_its_key():
+    console = Console(width=60, record=True)
+    console.print(dashboard._render_menu(_grouped_menu()))
+    text = console.export_text()
+
+    assert "[t] Attach tmux" in text
+    assert "[g] Git →" in text
+    assert "[p] PR →" in text
+
+
 # --- RepoTarget: how a spawned `jailbee` child is pointed at one repo --------
 
 
@@ -3220,7 +3353,7 @@ def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
     lines = _screen_lines([_tall_group(tmp_path, 3)], menu, height=20)
     text = "\n".join(lines)
     assert len(lines) <= 20
-    assert "▸ Action 25" in text
+    assert re.search(r"▸ (\[\w\]|   ) Action 25\b", text)  # keys run out before 25
     assert "Action 0 " not in text
     assert "more" in text
     assert lines[-1].startswith("╰")  # the frame's bottom border is on screen
@@ -3240,7 +3373,7 @@ def test_render_cuts_a_table_taller_than_the_screen_to_keep_the_menu_visible(tmp
     text = "\n".join(lines)
     assert len(lines) <= 20
     assert "NAME" in text  # the table is cut from below, keeping its header
-    assert "▸ Action 12" in text
+    assert re.search(r"▸ \[\w\] Action 12\b", text)
     assert "Enter" in lines[-2]  # the hint line, right above the bottom border
 
 
@@ -4279,6 +4412,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
     assert "offered" in out or "available" in out
     assert "close" in out
     assert "Egress panel: a adds, r removes a scoped override" in out
+    assert "Menus: the key in brackets picks that entry" in out
 
 
 def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
@@ -4295,6 +4429,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
         )
     )
     assert "Enter open/run" in out and "Esc cancel" in out
+    assert "[key] pick" in out
     assert "h/? help" in out.splitlines()[0]
 
 
@@ -5173,6 +5308,45 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
         for call in render.call_args_list
     )
     assert any(call.args[0] == ["jailbee", "pr", "alpha-x"] for call in child.call_args_list)
+
+
+def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, [b"j", _ENTER, b"g", b"u"], groups=[group]) == 0
+
+    assert any(
+        call.args[0] == ["jailbee", "git", "push", "alpha-x"] for call in child.call_args_list
+    )
+
+
+def test_run_menu_capital_hotkey_destroys_only_through_lifecycle(mocker, tmp_path):
+    """`D` inside `Lifecycle →` reaches destroy; a lowercase `d` there does nothing."""
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    _drive_run(mocker, [b"j", _ENTER, b"l", b"d"], groups=[group])
+    assert not any("destroy" in call.args[0] for call in child.call_args_list)
+
+    _drive_run(mocker, [b"j", _ENTER, b"l", b"D"], groups=[group])
+    assert any(call.args[0][:2] == ["jailbee", "destroy"] for call in child.call_args_list)
+
+
+def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"z"], groups=[group])
+
+    menus = [c.kwargs["overlay"] for c in render.call_args_list if c.kwargs.get("overlay")]
+    assert menus and isinstance(menus[-1], dashboard.MenuState) and menus[-1].index == 0
+    child.assert_not_called()
 
 
 def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
