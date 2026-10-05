@@ -3593,6 +3593,44 @@ def test_the_running_row_renders_its_spinner_and_progress(tmp_path):
     assert "11.2" in out
 
 
+def _live_view_output(rows: int, height: int, running: int, *, terminal: bool = True) -> str:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jailbee.cli import _DeferredDetail, _DoctorLiveView
+    from jailbee.doctor import CheckResult
+
+    results = [CheckResult(f"check-{i}", True, "fine") for i in range(rows)]
+    console = Console(force_terminal=terminal, width=80, height=height, file=StringIO())
+    console.print(_DoctorLiveView(results, (running, _DeferredDetail())))
+    return console.file.getvalue()
+
+
+def test_live_view_keeps_the_running_row_on_a_short_terminal() -> None:
+    out = _live_view_output(rows=40, height=12, running=30)
+
+    assert "check-30" in out
+    assert "more above" in out
+    assert "more below" in out
+    assert "check-0 " not in out
+    assert len(out.splitlines()) <= 12
+
+
+def test_live_view_draws_everything_when_it_fits() -> None:
+    out = _live_view_output(rows=3, height=40, running=1)
+
+    assert all(f"check-{i}" in out for i in range(3))
+    assert "more" not in out
+
+
+def test_live_view_does_not_window_off_a_terminal() -> None:
+    out = _live_view_output(rows=40, height=12, running=30, terminal=False)
+
+    assert "check-0 " in out
+    assert "more above" not in out
+
+
 def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mocker) -> None:
     """`jailbee setup` cannot install it — that would mean reinstalling the
     tool jailbee is running from — so doctor reports it and never fails on it."""

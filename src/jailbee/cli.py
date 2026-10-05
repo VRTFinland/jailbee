@@ -3774,6 +3774,7 @@ def _run_dashboard(
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rich.console import Console, ConsoleOptions, RenderResult
     from rich.table import Table
     from rich.text import Text
     from sqlalchemy.engine import Engine
@@ -3787,6 +3788,7 @@ if TYPE_CHECKING:
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
+    from jailbee.dashboard import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.incus import Incus as IncusType
@@ -16215,8 +16217,11 @@ class _DeferredDetail:
 
 
 def _doctor_table(
-    results: list["CheckResult"], running: tuple[int, _DeferredDetail] | None = None
+    results: list["CheckResult"],
+    running: tuple[int, _DeferredDetail] | None = None,
+    window: "TableWindow | None" = None,
 ) -> "Table":
+    """The doctor table; ``window`` draws only rows ``[start, stop)`` plus markers."""
     from rich.markup import escape
     from rich.spinner import Spinner
     from rich.table import Table
@@ -16225,7 +16230,11 @@ def _doctor_table(
     table.add_column("CHECK")
     table.add_column("STATUS")
     table.add_column("DETAIL")
+    if window is not None and window.hidden_above:
+        table.add_row(f"[dim]… {window.hidden_above} more above[/dim]", "", "")
     for index, r in enumerate(results):
+        if window is not None and not window.start <= index < window.stop:
+            continue
         if running is not None and running[0] == index:
             # The same `dots` spinner `console.status` draws everywhere else.
             table.add_row(escape(r.name), Spinner("dots"), running[1])
@@ -16246,7 +16255,43 @@ def _doctor_table(
         else:
             status = "[red]✗ FAIL[/red]"
         table.add_row(escape(r.name), status, escape(r.detail))
+    if window is not None and window.hidden_below:
+        table.add_row(f"[dim]… {window.hidden_below} more below[/dim]", "", "")
     return table
+
+
+class _DoctorLiveView:
+    """The doctor table while a deferred check runs, kept within the terminal.
+
+    `Live` crops a renderable taller than the terminal and a cursor-addressed
+    area cannot be scrolled, so on a small screen the running row would sit
+    below the crop. This draws a window of rows that keeps ``running`` in view
+    and says how many are hidden; the full table is printed once the checks
+    are done. A wrapped DETAIL makes a row taller than one line, so the budget
+    shrinks until the rendered frame fits.
+    """
+
+    def __init__(self, results: list["CheckResult"], running: tuple[int, _DeferredDetail]) -> None:
+        self._results = results
+        self._running = running
+
+    def __rich_console__(self, console: "Console", options: "ConsoleOptions") -> "RenderResult":
+        from jailbee.dashboard import window_rows
+
+        count = len(self._results)
+        if not console.is_terminal:
+            yield _doctor_table(self._results, self._running)
+            return
+        # Title, top border, header, header rule and bottom border.
+        budget = options.max_height - 5
+        while True:
+            window = window_rows([1] * count, self._running[0], max(budget, 3))
+            table = _doctor_table(self._results, self._running, window)
+            excess = len(console.render_lines(table, options, pad=False)) - options.max_height
+            if excess <= 0 or budget <= 3:
+                break
+            budget -= excess
+        yield table
 
 
 def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
@@ -16285,7 +16330,7 @@ def _run_deferred_checks(results: list["CheckResult"]) -> list["CheckResult"]:
                 )
                 continue
             detail = _DeferredDetail()
-            live.update(_doctor_table(results, running=(index, detail)))
+            live.update(_DoctorLiveView(results, (index, detail)))
 
             def on_progress(progress: "CacheProgress", detail: _DeferredDetail = detail) -> None:
                 detail.progress = progress
