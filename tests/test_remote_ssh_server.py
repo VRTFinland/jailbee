@@ -417,14 +417,18 @@ def test_trailing_repo_dispatches_like_the_leading_form(child, configured, repo)
     process, channel = session("ls --all --repo project")
     child.assert_awaited_once_with(
         process,
-        ChildSpec(argv=(sys.executable, "-m", "jailbee", "ls", "--all"), cwd=repo, requires_pty=False),
+        ChildSpec(
+            argv=(sys.executable, "-m", "jailbee", "ls", "--all"), cwd=repo, requires_pty=False
+        ),
     )
     channel.exit.assert_called_once_with(7)
 
 
 @pytest.mark.parametrize("term", [None, "xterm"])
 @pytest.mark.parametrize("arguments, excluded", [("chrome feat", []), ("ls", ["secret"])])
-def test_missing_repo_spawns_a_picking_child_in_the_state_dir(child, configured, tmp_path, mocker, term, arguments, excluded):
+def test_missing_repo_spawns_a_picking_child_in_the_state_dir(
+    child, configured, tmp_path, mocker, term, arguments, excluded
+):
     fallback = tmp_path / "state"
     mocker.patch.object(server, "state_dir", return_value=fallback)
     configured.return_value[0].remote.ssh = configured.return_value[0].remote.ssh.model_copy(
@@ -1879,7 +1883,9 @@ def test_a_direct_gui_command_runs_attached(child, gui_config, waypipe_ops, repo
     assert child.call_args.args[1].waypipe_attach is True
 
 
-def test_a_gui_command_without_repo_stays_attached_with_picker_transport(child, gui_config, waypipe_ops):
+def test_a_gui_command_without_repo_stays_attached_with_picker_transport(
+    child, gui_config, waypipe_ops
+):
     session(WP_CMD.replace("server dashboard", "server chrome feat"), extra=WP_FORWARD)
     spec = child.await_args.args[1]
     assert spec.argv == (sys.executable, "-m", "jailbee", "--pick-repo", "chrome", "feat")
