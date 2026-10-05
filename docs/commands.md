@@ -13,6 +13,7 @@
 | `jailbee job log [<name>] [--follow]` | Print (or follow) the worker log of a background job — including a detached autostart run's supervisor; there is no separate `jailbee autostart log`. Asked which job when `<name>` is omitted |
 | `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
 | `jailbee dashboard` (alias: `jailbee tui`) | Live, auto-refreshing TUI of containers across all repos; Enter opens a container menu or a repo-header menu with New container…, New from PR…, Credential group…, Accounts…, a `Network →` submenu (Egress), Apply config…, Diagnostics →, Prune stale containers… and Fold/Unfold (orphan repos only offer Fold/Unfold; details below). Container menus group network mode switches and `Egress…` under `Network →`; Egress is viewable for stopped containers too. In the Egress panel, `a` adds an override and `r` removes the selected removable override; config-sourced grants and inherited repo grants in a container panel are read-only. Repo-level removal deletes the stored entry from both host-local and legacy sources when duplicated. Every change goes through the scoped `jailbee net egress` CLI, so its DNS/ACL validation and repo `jailbee apply` advice remain authoritative. A change that succeeds — an egress add or remove, an account change — closes the panel and the menu it was opened from; a failed or refused one keeps the panel open for a retry. The container action menu carries workflow commands too — `merge`, `pr`, `git push`, `git push --pr` ("refresh from PR head", review containers only), `git retarget` ("change base branch"; the CLI asks for the branch), `git pull`, `git diff`, `job log` — each shown only when it would do something. Pending outbox applies (`Apply N PR action(s)`, `Apply N issue action(s)`) lead the menu; `Git →` comes before `PR →`. `!` opens an inline JailBee command line: Tab completes command paths, options and containers in the selected repository; Enter runs it and Esc/Ctrl-C cancels it. A selected container supplies an omitted, unambiguous container positional (including `!merge`'s source); a selected repo header supplies the repository only, so `!merge` lets the CLI ask for both source and target. Explicit arguments always win. Quick keys: `t`/`s` tmux/shell, `i`/`c` IDE/Chrome, `p` open the PR, `P` create/update it, `u` update from base, `d` show the diff, `D` destroy the container (asks to confirm), `F2`/`S` settings overlay (columns + folding), `h`/`?` help, `e`/`E` edit the selected row's repo config (`E`: the global one), `n` create a container in the selected row's repo (asks for a branch and a base branch, then runs `jailbee new` in the terminal). `Space` folds/unfolds the selected repo (in the settings overlay it toggles the setting). `v` shows/hides the details panel under the table — everything known about the highlighted container (or repo), with the action menu drawn to its right while open; the choice persists. A table taller than the screen scrolls with the cursor. `A`, or `Accounts…` in the repo menu, opens the credential-group overlay: pick a group or stored login and use, park or delete it, `n` creates a group; the repo and container menus carry `Credential group…` to change which group a repo or a single container follows. Changes run the real `jailbee account …` commands; a refusal (for example a running agent) is shown as a notice — use `!` with `--force` to override. The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mount…`/`Unmount…` for the repo's `optional_mounts` (only kinds not attached / attached), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden. Press `h`/`?` for the full key reference. |
+| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt for running JailBee commands with tab completion and history, on your own terminal and without the remote policy. See [Console](#console) |
 | `jailbee shell [<name>]` | Interactive shell (lands in the in-container clone) |
 | `jailbee tmux [<name>]` | Attach to the autostart tmux session inside the container |
 | `jailbee exec [<name>] [--cwd repo\|home\|<path>] [--detach\|-d [--gui]] -- <cmd>` | Run a command in the container as the dev user. `<name>` comes first, so a command must follow the container name (`jailbee exec smoke -- pnpm test`); a container or command left out is asked for on a terminal (exit 2 off one). (e.g. `jailbee exec smoke -- pnpm test`). `--detach`/`-d` runs it in the background — it survives `jailbee` returning and its output goes to a log file inside the container (`/tmp/jailbee-exec-<timestamp>-<uuid>.log`); needed for a GUI app (`jailbee exec smoke -d -- firefox`), useful for anything long-running. `--gui` (with `-d` only; otherwise exit 2) marks the command as a GUI app: in a GUI-enabled SSH session it draws on the shared RDP display, which is started and awaited first (see [Remote GUI](remote-gui.md)); a plain `-d` never touches that display |
@@ -86,7 +87,7 @@
 | `jailbee litellm logs [ACCOUNT] [-f]` | Show the instance's last 200 journal lines; `-f` follows. |
 | `jailbee setup [--yes] [--status] [--only STEP] [--shell SHELL]` | Post-install steps for this machine: shell completions (`jailbee` and `jb`), the `jailbee-net-refresh` user timer, and the bundled agent skills for the agents found on the host (opt-in — `install_host_skills` in the global config). Interactive by default and idempotent — re-run after upgrading. `--status` reports what is in place without installing anything. Needs no repo config |
 | `jailbee doctor` | Diagnostics |
-| `jailbee dismiss [KEYS…] [--all] [--clear]` | Mark repeating advisory warnings read, so they stop appearing on `jailbee ls` / `new` / `shell`. Keys are `base-build` and `apply` (an owed action — see [Troubleshooting](troubleshooting.md#run-jb-base-build-in-this-repo-to-pick-these-up)), `update` (a newer release on PyPI — see [`update_check`](config.md#update_check)) and `legacy-config-dir` / `legacy-chrome-block` / `legacy-credentials-block` / `legacy-per-repo-map` / `legacy-pr-keys` (deprecated config spellings). With no arguments, lists what applies here and what has been dismissed. An owed action returns when a later release adds a **new** reason for it — upgrading alone does not bring it back; a dismissed `update` returns when a release newer than the dismissed one appears; a deprecation stays dismissed until the config changes. `jailbee doctor` reports them either way, marked with when they were dismissed, so nothing is ever hidden from it. `KEY@scope` targets one of several files raising the same notice; `--clear` undoes a dismissal |
+| `jailbee dismiss [KEYS…] [--all] [--clear]` | Mark repeating advisory warnings read, so they stop appearing on `jailbee ls` / `new` / `shell`. Keys are `base-build` and `apply` (an owed action — see [Troubleshooting](troubleshooting.md#run-jb-base-build-in-this-repo-to-pick-these-up)), `update` (a newer release on PyPI — see [`update_check`](config.md#update_check)) and `legacy-config-dir` / `legacy-chrome-block` / `legacy-credentials-block` / `legacy-per-repo-map` / `legacy-pr-keys` / `legacy-remote-ssh-shell` (deprecated config spellings). With no arguments, lists what applies here and what has been dismissed. An owed action returns when a later release adds a **new** reason for it — upgrading alone does not bring it back; a dismissed `update` returns when a release newer than the dismissed one appears; a deprecation stays dismissed until the config changes. `jailbee doctor` reports them either way, marked with when they were dismissed, so nothing is ever hidden from it. `KEY@scope` targets one of several files raising the same notice; `--clear` undoes a dismissal |
 | `jailbee disk-usage` | Disk usage breakdown |
 | `jailbee prune` | Interactive cleanup of stale containers |
 | `jailbee config show/validate/init` | Configuration. `show` accepts `--layer global\|repo\|local\|effective` (default `effective`); the effective layer includes an `agents:` section with every configured agent fully resolved (preset fields included) — see [Generic agent support](agents.md) |
@@ -100,6 +101,24 @@
 > invocation. A container labelled `user.jailbee.claude_group` (the
 > pre-rename spelling) is read but never written, and is not warned about —
 > nobody is being asked to retype it. All are removed in 2.0.0.
+
+### Console
+
+`jailbee console` opens an interactive `jb[<prefix>]> ` prompt on your own
+terminal. It starts in the registered repository containing the current
+directory, or asks which one (straight in when exactly one is registered);
+`--repo PREFIX` picks one explicitly. At the prompt, type JailBee commands
+without the `jailbee` prefix, with tab completion and history. `repos` lists
+the registered repositories, `use [PREFIX]` switches repository (bare `use`
+reopens the menu), `dashboard` opens the dashboard, `help` lists the commands
+and `exit` (or Ctrl-D) leaves. Locally it is unrestricted: it applies no
+`remote.ssh` policy. It is an interactive entry point only, so it cannot be run
+as a one-shot command over remote SSH (there the console is
+`ssh -t … console`, restricted by policy; see below).
+
+Bare `jailbee` (or `jb`) on a terminal opens whatever
+[`default_command`](config.md#default_command) names — the dashboard by
+default. Off a terminal it prints the help text and exits 0.
 
 ### Remote SSH service
 
@@ -148,7 +167,7 @@ without touching `global.yaml`:
 
 ```bash
 jb remote ssh serve [--listen ADDR] [--port N] \
-                     [--dashboard/--no-dashboard] [--shell/--no-shell] [--exec/--no-exec] \
+                     [--dashboard/--no-dashboard] [--console/--no-console] [--exec/--no-exec] \
                      [--commands disabled|allowlist|full] [--allow CMD]... \
                      [--restrict-host/--no-restrict-host] [--files/--no-files]
 ```
@@ -159,14 +178,14 @@ jb remote ssh serve [--listen ADDR] [--port N] \
 Every flag defaults to unset, in which case `global.yaml` decides as usual;
 only a flag actually given overrides its field, for this run alone. The
 merged result is validated by the same rules as `global.yaml` (for example
-`--shell` still requires an enabled `commands.mode`), so an invalid
+`--console` still requires an enabled `commands.mode`), so an invalid
 combination is reported the same way a broken config file is. `--allow` is
 repeatable, and given at least once, REPLACES the configured
 `commands.allow` list rather than appending to it. The systemd service's
 `ExecStart` never passes any of these flags. For example:
 
 ```bash
-jb remote ssh serve --port 18022 --shell --commands allowlist --allow ls --allow new
+jb remote ssh serve --port 18022 --console --commands allowlist --allow ls --allow new
 ```
 
 The SSH username is always `jailbee`. With the default listener port, the
@@ -174,10 +193,12 @@ accepted client forms are:
 
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
-ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
+
+The old `shell` spelling of the remote entry point (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
 
 The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
@@ -185,7 +206,7 @@ destination while the next word starts with `-`, so a bare `--repo` fails with
 
 A commandless `ssh -p 8022 jailbee@localhost` prints the enabled entry points
 and exits successfully by default. Set `remote.ssh.default_entrypoint` in the
-host's `global.yaml` to `dashboard` or `shell` to open that entry point instead;
+host's `global.yaml` to `dashboard` or `console` to open that entry point instead;
 an explicit `help` always prints the list. All three entry points are enabled
 by default, while `commands.mode` independently governs console and one-shot
 commands across the console and dashboard; `exec: false` disables one-shot
@@ -200,7 +221,7 @@ child JailBee command output is unaffected either way.
 
 The console starts by asking which registered repository to use — an
 arrow-key menu when more than one is registered, or straight in if there is
-exactly one — unless started with `shell --repo PREFIX`. It offers `repos`,
+exactly one — unless started with `console --repo PREFIX`. It offers `repos`,
 `use [PREFIX]` (bare `use` reopens the menu), `dashboard` (listed only when
 enabled), `help`, and `exit`, rendered as a Rich panel styled like `jb
 --help`'s own. In `full` mode, `help` then runs the real `python -m jailbee
@@ -221,7 +242,7 @@ expansion, pipes, redirection or executable lookup.
 
 Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
 repository prefix, never a filesystem path; the registered root becomes the
-command's working directory. The same rule applies to `shell --repo PREFIX`.
+command's working directory. The same rule applies to `console --repo PREFIX`.
 See [Security and limitations](security.md#remote-ssh) before granting access.
 
 For SSH dashboard sessions, the effective `remote.ssh` policy is checked before

@@ -239,7 +239,7 @@ With the `jb` entry from setup A (or B), from a macOS terminal:
 | To | Run |
 |---|---|
 | Open the dashboard | `ssh -t jb dashboard` |
-| Open a JailBee console (pick a repo, run commands) | `ssh -t jb shell`, or `ssh -t jb shell --repo PREFIX` |
+| Open a JailBee console (pick a repo, run commands) | `ssh -t jb console`, or `ssh -t jb console --repo PREFIX` |
 | Run one command | `ssh jb -- --repo PREFIX ls` |
 | Get a shell inside a container | `ssh -t jb -- --repo PREFIX shell feat-x` |
 | Open the IDE or a browser on the shared display | `ssh jb -- --repo PREFIX ide feat-x`, `... chrome feat-x [url]`, `... apps run APP --container feat-x` |

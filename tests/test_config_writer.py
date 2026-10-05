@@ -22,6 +22,7 @@ from jailbee.config_writer import (
     credential_key_migration,
     patch_file,
     patch_yaml,
+    remote_ssh_key_migration,
     render_documented,
 )
 
@@ -426,7 +427,7 @@ def test_render_global_yaml_round_trips_a_remote_ssh_block(tmp_path):
                 "listen": "::1",
                 "port": 22022,
                 "dashboard": True,
-                "shell": True,
+                "console": True,
                 "exec": True,
                 "commands": {"mode": "allowlist", "allow": ["ls", "git pull"]},
             }
@@ -539,3 +540,19 @@ def test_render_documented_writes_nested_multiline_strings_as_literal_blocks():
     out = render_documented(values, GlobalConfig)
     assert "instructions: |-\n" in out
     assert yaml.safe_load(out) == values
+
+
+def test_remote_ssh_migration_renames_both_spellings() -> None:
+    raw = {"remote": {"ssh": {"shell": False, "default_entrypoint": "shell"}}}
+    own = YamlChange(("remote", "ssh", "port"), 9000)
+    assert remote_ssh_key_migration(raw, [own]) == [
+        YamlChange(("remote", "ssh", "console"), False),
+        YamlChange(("remote", "ssh", "shell"), DELETE),
+        YamlChange(("remote", "ssh", "default_entrypoint"), "console"),
+        own,
+    ]
+
+
+def test_remote_ssh_migration_noop() -> None:
+    own = YamlChange(("x",), 1)
+    assert remote_ssh_key_migration({"remote": {"ssh": {"console": True}}}, [own]) == [own]

@@ -37,6 +37,12 @@ def is_interactive() -> bool:
     return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
 
 
+def stdout_is_terminal() -> bool:
+    """Whether stdout is a terminal; false in a pipe or a redirect, where a
+    full-screen UI would have nowhere to draw."""
+    return sys.stdout.isatty()
+
+
 @dataclass(frozen=True)
 class Option(Generic[T]):  # noqa: UP046
     """One candidate: what is returned, its picker row, its name in errors."""

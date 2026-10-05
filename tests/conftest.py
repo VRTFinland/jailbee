@@ -542,6 +542,7 @@ def _reset_deprecation_notices():
         _warn_legacy_credentials_block,
         _warn_legacy_per_repo_entry,
         _warn_legacy_pr_keys,
+        _warn_legacy_remote_shell,
     )
     from jailbee.paths import _warn_legacy_config_dir
 
@@ -550,6 +551,7 @@ def _reset_deprecation_notices():
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
     _warn_legacy_pr_keys.cache_clear()
+    _warn_legacy_remote_shell.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
@@ -558,6 +560,7 @@ def _reset_deprecation_notices():
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
     _warn_legacy_pr_keys.cache_clear()
+    _warn_legacy_remote_shell.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
 

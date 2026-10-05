@@ -256,7 +256,7 @@ diagnostics, so first stop the unit or choose an unused port; on startup it
 prints the listening address, the host key's SHA256 fingerprint and a connect
 example. Running beside the service on another port also accepts one-off
 overrides for experimentation, without touching `global.yaml`, e.g.
-`jb remote ssh serve --port 18022 --shell --commands allowlist --allow ls
+`jb remote ssh serve --port 18022 --console --commands allowlist --allow ls
 --allow new` — see [`remote.ssh`](config.md#remotessh) for what each flag
 overrides and its validation rules. `jb remote ssh disable` stops and
 disables the unit but deliberately preserves configuration, authorized keys

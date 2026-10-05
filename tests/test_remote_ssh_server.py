@@ -259,7 +259,7 @@ def child(mocker):
 
 @pytest.fixture
 def configured(mocker):
-    ssh = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+    ssh = RemoteSSHConfig(console=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
     config = GlobalConfig(remote=RemoteConfig(ssh=ssh))
     return mocker.patch.object(server, "load_global_config", return_value=(config, []))
 
@@ -285,7 +285,7 @@ def repo(tmp_path, db_engine, monkeypatch):
 def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child):
     _, channel = session(command)
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     assert output(channel, 1) == b""
@@ -304,7 +304,7 @@ def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
     """
     _, channel = session(None, term="xterm")
     assert output(channel) == (
-        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  shell [--repo PREFIX]\r\n"
+        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  console [--repo PREFIX]\r\n"
         b"  --repo PREFIX COMMAND [ARGS...]\r\n"
     )
     channel.exit.assert_called_once_with(0)
@@ -314,7 +314,7 @@ def test_commandless_help_stays_bare_lf_without_a_pty(child):
     """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
     _, channel = session(None)
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     assert b"\r\n" not in output(channel)
@@ -327,12 +327,12 @@ def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
     _, first = session("--repo project ls")
     first.exit.assert_called_once_with(7)
     path.write_text(
-        "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    exec: false\n"
+        "remote:\n  ssh:\n    dashboard: false\n    console: true\n    exec: false\n"
         "    commands:\n      mode: full\n"
     )
     _, help_channel = session()
     assert output(help_channel) == (
-        b"Available remote commands:\n  help\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  console [--repo PREFIX]\n"
     )
     _, last = session("--repo project ls")
     last.exit.assert_called_once_with(2)
@@ -351,7 +351,7 @@ def test_commandless_login_uses_configured_dashboard_and_explicit_help(child, mo
 
     _, help_channel = session("help")
     assert output(help_channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     help_channel.exit.assert_called_once_with(0)
@@ -399,7 +399,7 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
         # `configured`'s own ssh policy, serialized: see
         # test_console_receives_the_session_effective_policy for the
         # dedicated regression test on this argument's *content*.
-        policy = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+        policy = RemoteSSHConfig(console=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
         expected_argv = (*expected_argv, "--policy-json", policy.model_dump_json())
     elif arguments[0] == "dashboard":
         expected_argv = (
@@ -433,14 +433,14 @@ def test_console_receives_the_session_effective_policy_including_overrides(child
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     raw = RemoteSSHConfig(
-        dashboard=True, shell=False, commands=RemoteCommandPolicy(mode="disabled")
+        dashboard=True, console=False, commands=RemoteCommandPolicy(mode="disabled")
     )
     mocker.patch.object(
         server,
         "load_global_config",
         return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
     )
-    overrides = ServeOverrides(shell=True, commands_mode="full")
+    overrides = ServeOverrides(console=True, commands_mode="full")
 
     session("shell", term="xterm", overrides=overrides)
 
@@ -448,7 +448,7 @@ def test_console_receives_the_session_effective_policy_including_overrides(child
     assert argv[:4] == (sys.executable, "-m", "jailbee", "_remote-console")
     assert argv[4] == "--policy-json"
     sent = RemoteSSHConfig.model_validate_json(argv[5])
-    assert sent.shell is True
+    assert sent.console is True
     assert sent.commands.mode == "full"
 
 
@@ -524,8 +524,8 @@ def test_unknown_command_is_rejected_by_router(child, configured, repo):
 @pytest.mark.parametrize(
     ("command", "settings", "message"),
     [
-        ("dashboard", {"dashboard": False, "shell": True}, b"dashboard is disabled"),
-        ("shell", {"shell": False}, b"shell is disabled"),
+        ("dashboard", {"dashboard": False, "console": True}, b"dashboard is disabled"),
+        ("console", {"console": False}, b"console is disabled"),
         ("--repo project ls", {"exec": False}, b"execution is disabled"),
     ],
 )
@@ -558,10 +558,10 @@ def test_overrides_are_reapplied_after_a_per_session_global_config_reload(child,
 
     overrides = ServeOverrides(dashboard=True)
     first_raw = RemoteSSHConfig(
-        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=True, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     second_raw = RemoteSSHConfig(
-        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=False, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     load = mocker.patch.object(
         server,
@@ -585,7 +585,7 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     raw = RemoteSSHConfig(
-        shell=True,
+        console=True,
         commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
     )
     mocker.patch.object(
@@ -608,10 +608,10 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
 def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):
     """The `overrides=None` default must not change today's reload behaviour."""
     first_raw = RemoteSSHConfig(
-        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=True, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     second_raw = RemoteSSHConfig(
-        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=False, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     mocker.patch.object(
         server,
@@ -675,7 +675,7 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     channel.exit.assert_called_once_with(0)
@@ -1119,7 +1119,7 @@ def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count
         listen="198.51.100.7",
         port=8123,
         dashboard=True,
-        shell=True,
+        console=True,
         exec=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -1128,7 +1128,7 @@ def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count
     text = caplog.text
     assert "198.51.100.7:19999" in text
     assert "198.51.100.7:8123" not in text
-    assert "entry points: dashboard, shell, exec" in text
+    assert "entry points: dashboard, console, exec" in text
     assert "commands: full" in text
     assert f"host key fingerprint: {expected_fingerprint}" in text
     assert "2 authorized client keys" in text
@@ -1147,19 +1147,19 @@ def test_startup_prints_the_overrides_line_only_when_overrides_are_given(
     paths.data_dir.mkdir(parents=True)
     host_key = asyncssh.generate_private_key("ssh-ed25519")
     paths.host_key.write_bytes(host_key.export_private_key("openssh"))
-    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
-    overrides = ServeOverrides(shell=True, commands_mode="allowlist", allow=["ls", "new"])
+    config = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
+    overrides = ServeOverrides(console=True, commands_mode="allowlist", allow=["ls", "new"])
     with caplog.at_level(logging.INFO, logger=server.__name__):
         asyncio.run(server.serve_async(config, overrides))
     text = caplog.text
-    assert "overrides (not from global.yaml): shell=on, commands=allowlist [ls, new]" in text
+    assert "overrides (not from global.yaml): console=on, commands=allowlist [ls, new]" in text
 
 
 def test_listener_uses_a_closure_process_factory_when_overrides_are_given(listener):
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     overrides = ServeOverrides(dashboard=False)
-    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    config = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     asyncio.run(server.serve_async(config, overrides))
     _, listen = listener
     factory = listen.call_args.kwargs["process_factory"]
@@ -1776,7 +1776,7 @@ WP_FORWARD = {"jailbee_waypipe": (WP_SOCK, "0a1b2c3d")}
 @pytest.fixture
 def gui_config(mocker):
     ssh = RemoteSSHConfig(
-        shell=True, exec=True, dashboard=True, gui=True, commands=RemoteCommandPolicy(mode="full")
+        console=True, exec=True, dashboard=True, gui=True, commands=RemoteCommandPolicy(mode="full")
     )
     return mocker.patch.object(
         server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])

@@ -10834,3 +10834,77 @@ def test_setup_offer_is_never_made_over_ssh(mocker, monkeypatch, marker):
     consume.assert_called_once()
     pending.assert_not_called()
     confirm.assert_not_called()
+
+
+def test_console_command_delegates_to_run_local(mocker) -> None:
+    run_local = mocker.patch("jailbee.remote_ssh.console.run_local", return_value=3)
+    result = CliRunner().invoke(app, ["console", "--repo", "x"])
+    assert result.exit_code == 3
+    run_local.assert_called_once_with("x")
+
+
+def _bare(mocker, *, interactive: bool, choice: str = "dashboard", stdout_terminal: bool = True):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    mocker.patch("jailbee.prompting.stdout_is_terminal", return_value=stdout_terminal)
+    mocker.patch(
+        "jailbee.default_command.resolve",
+        side_effect=lambda *, interactive, load: (choice if interactive else "help", None),
+    )
+    dash = mocker.patch("jailbee.cli._run_dashboard", return_value=0)
+    console = mocker.patch("jailbee.remote_ssh.console.run_local", return_value=0)
+    return dash, console, CliRunner().invoke(app, [])
+
+
+def test_bare_jb_opens_dashboard_on_a_terminal(mocker) -> None:
+    dash, _, result = _bare(mocker, interactive=True)
+    assert result.exit_code == 0
+    dash.assert_called_once_with(gui=False, foreground=False)
+
+
+def test_bare_jb_gui(mocker) -> None:
+    dash, _, _ = _bare(mocker, interactive=True, choice="gui")
+    dash.assert_called_once_with(gui=True, foreground=False)
+
+
+def test_bare_jb_console(mocker) -> None:
+    dash, console, _ = _bare(mocker, interactive=True, choice="console")
+    console.assert_called_once_with(None)
+    dash.assert_not_called()
+
+
+def test_bare_jb_without_terminal_prints_help_exit_0(mocker) -> None:
+    dash, _, result = _bare(mocker, interactive=False)
+    assert result.exit_code == 0
+    assert "Usage" in result.stdout
+    dash.assert_not_called()
+
+
+def test_bare_jb_with_piped_stdout_prints_help_even_on_a_tty_stdin(mocker) -> None:
+    dash, console, result = _bare(mocker, interactive=True, stdout_terminal=False)
+    assert result.exit_code == 0
+    assert "Usage" in result.stdout
+    dash.assert_not_called()
+    console.assert_not_called()
+
+
+def test_main_callback_is_inert_under_resilient_parsing(mocker) -> None:
+    """The callback body must not run a command while the shell is completing."""
+    import typer
+
+    from jailbee.cli import main
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    dash = mocker.patch("jailbee.cli._run_dashboard", return_value=0)
+    ctx = mocker.MagicMock(spec=typer.Context)
+    ctx.invoked_subcommand = None
+    mocker.patch("jailbee.default_command.resolve", return_value=("dashboard", None))
+
+    ctx.resilient_parsing = False  # control: the same call does launch it
+    with pytest.raises(typer.Exit):
+        main(ctx)
+    dash.assert_called_once()
+
+    dash.reset_mock()
+    ctx.resilient_parsing = True
+    main(ctx)
+    dash.assert_not_called()

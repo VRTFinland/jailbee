@@ -335,6 +335,24 @@ def test_build_plan_migrates_a_legacy_credentials_block(tmp_path):
         assert parsed["credentials"] == {"group": "work", "repos": {"side": "new"}}, policy
 
 
+def test_build_plan_migrates_a_legacy_remote_ssh_shell(tmp_path):
+    """An unrelated save over `remote.ssh.shell` renames it, under both policies."""
+    layers = _layers(tmp_path, global_text="remote:\n  ssh:\n    shell: false\n")
+    for policy in ("patch", "regenerate"):
+        plan = build_plan(
+            layers,
+            "global",
+            (YamlChange(("remote", "ssh", "port"), 9000),),
+            global_specs(),
+            policy,
+        )
+        ssh = yaml.safe_load(plan.new_text)["remote"]["ssh"]
+        assert ssh["console"] is False, policy
+        assert ssh["port"] == 9000, policy
+        assert "shell" not in ssh, policy
+        assert "console: false" in plan.new_text, policy
+
+
 def test_render_layer_uses_the_two_pass_renderer_for_global(tmp_path):
     text = render_layer({"gpg": {"enabled": True}, "scratch": {"enabled": True}}, "global")
     assert text.index("gpg:") < text.index("scratch:")

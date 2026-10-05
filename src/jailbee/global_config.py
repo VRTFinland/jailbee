@@ -27,6 +27,7 @@ from jailbee.config import (
     _split_host_keys,
     normalize_credentials_key,
 )
+from jailbee.config.common import normalize_remote_ssh_keys
 from jailbee.config.models_litellm import LiteLLMConfig
 from jailbee.config.models_remote import RemoteConfig
 from jailbee.paths import expand_path, xdg_data_home
@@ -275,6 +276,15 @@ class GlobalConfig(BaseModel):
             "is not a repo's decision."
         ),
     )
+    default_command: Literal["dashboard", "gui", "console", "help"] = Field(
+        default="dashboard",
+        description=(
+            "What `jailbee` run with no arguments opens on a terminal: the TUI "
+            "`dashboard`, the Qt `gui`, the interactive `console`, or `help`. "
+            "Without a terminal (a pipe, a script, `JAILBEE_NONINTERACTIVE`) it "
+            "always prints help. Host-level only (`common.py`'s `_HOST_LEVEL_KEYS`)."
+        ),
+    )
     install_host_skills: bool = Field(
         default=False,
         description=(
@@ -380,6 +390,11 @@ def validate_global_raw(
     it, ten of the twelve host-level paths the editor offers would be
     written unvalidated.
     """
+    raw, ssh_folded = normalize_remote_ssh_keys(raw, str(path))
+    if emit_hint and ssh_folded:
+        from jailbee.config.loader import _warn_legacy_remote_shell
+
+        _warn_legacy_remote_shell(str(path))
     raw, folded = normalize_credentials_key(raw, str(path))
     if emit_hint and folded:
         from jailbee.config.loader import _warn_legacy_credentials_block

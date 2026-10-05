@@ -43,7 +43,8 @@ The same command covers the deprecation notices about `.gie/config.yaml`
 (`legacy-config-dir`), a legacy `chrome:` block (`legacy-chrome-block`), a
 `claude_credentials:` block (`legacy-credentials-block`), per-repo entries
 still kept in `global.yaml` (`legacy-per-repo-map`) and the old
-`agents.claude.ai_pr_*` keys (`legacy-pr-keys`).
+`agents.claude.ai_pr_*` keys (`legacy-pr-keys`), and the old remote SSH
+`shell` spelling of `console` (`legacy-remote-ssh-shell`).
 Those cannot grow a new reason on their own, so they stay dismissed until you
 change the config; `jailbee doctor` lists them under its `dismissed notices`
 check. Warnings that answer the command you just typed — what `jailbee config

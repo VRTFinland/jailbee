@@ -524,7 +524,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
             "0.0.0.0",
             "--port",
             "18022",
-            "--shell",
+            "--console",
             "--commands",
             "allowlist",
             "--allow",
@@ -538,7 +538,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
     expected_overrides = ServeOverrides(
         listen="0.0.0.0",
         port=18022,
-        shell=True,
+        console=True,
         commands_mode="allowlist",
         allow=["ls", "new"],
     )
@@ -547,7 +547,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
     assert isinstance(effective, RemoteSSHConfig)
     assert effective.listen == "0.0.0.0"
     assert effective.port == 18022
-    assert effective.shell is True
+    assert effective.console is True
     assert effective.commands.mode == "allowlist"
     assert effective.commands.allow == ["ls", "new"]
     # `dashboard` was not overridden and the base config left it enabled, so
@@ -848,3 +848,45 @@ def test_remote_ssh_serve_files_is_passed_through(mocker: MockerFixture) -> None
     assert result.exit_code == 0, result.stdout
     serve.assert_called_once_with(mocker.ANY, ServeOverrides(files=True))
     assert serve.call_args.args[0].files is True
+
+
+def _serve_with(mocker: MockerFixture, *flags: str):
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", *flags])
+    return result, serve
+
+
+def test_remote_ssh_serve_console_flag_sets_override(mocker: MockerFixture) -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    result, serve = _serve_with(mocker, "--console")
+
+    assert result.exit_code == 0, result.output
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(console=True))
+
+
+def test_remote_ssh_serve_legacy_shell_flag_warns_and_sets_console(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    result, serve = _serve_with(mocker, "--no-shell")
+
+    assert result.exit_code == 0, result.output
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(console=False))
+    assert "--shell/--no-shell is deprecated" in result.output
+
+
+def test_remote_ssh_serve_both_console_and_shell_is_a_usage_error(
+    mocker: MockerFixture,
+) -> None:
+    result, serve = _serve_with(mocker, "--console", "--shell")
+
+    assert result.exit_code == 2
+    assert not serve.called

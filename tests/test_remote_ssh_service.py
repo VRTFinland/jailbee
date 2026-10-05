@@ -199,7 +199,7 @@ def test_status_reports_active_service_configuration_and_key_count(
         "    listen: '::1'\n"
         "    port: 2200\n"
         "    dashboard: true\n"
-        "    shell: true\n"
+        "    console: true\n"
         "    exec: false\n"
         "    commands:\n"
         "      mode: full\n"
@@ -221,7 +221,7 @@ def test_status_reports_active_service_configuration_and_key_count(
     assert result.active is True
     assert result.listen == "::1"
     assert result.port == 2200
-    assert result.entrypoints == ("dashboard", "shell")
+    assert result.entrypoints == ("dashboard", "console")
     assert result.authorized_keys == 1
     assert result.problems == ()
     assert [call.args[0] for call in run.call_args_list] == [
@@ -245,7 +245,9 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
 
     config = default_global_config_path()
     config.parent.mkdir(parents=True)
-    config.write_text("remote:\n  ssh:\n    listen: localhost\n    shell: false\n    exec: false\n")
+    config.write_text(
+        "remote:\n  ssh:\n    listen: localhost\n    console: false\n    exec: false\n"
+    )
     mocker.patch("jailbee.remote_ssh.service._ssh_dependency_available", return_value=False)
     mocker.patch(
         "subprocess.run",
@@ -259,7 +261,7 @@ def test_status_reports_missing_unit_dependency_keys_and_invalid_config(
     assert result.active is False
     assert result.listen == "127.0.0.1"
     assert result.port == 8022
-    assert result.entrypoints == ("dashboard", "shell", "exec")
+    assert result.entrypoints == ("dashboard", "console", "exec")
     assert result.authorized_keys == 0
     by_message = {problem.message.lower(): problem.severity for problem in result.problems}
     messages = "\n".join(by_message).lower()

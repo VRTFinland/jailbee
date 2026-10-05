@@ -94,7 +94,7 @@ replacement subset.
 The local file is a per-repo overlay, not another host-global config. It
 rejects `container_prefix`, computed fields such as `credential_group` and
 `claude_credentials_dir`, the host-only keys `scratch`, `config_edit`,
-`update_check`, `install_host_skills`, `agent_instructions`, `remote`, and
+`update_check`, `default_command`, `install_host_skills`, `agent_instructions`, `remote`, and
 `claude_credentials`, and `github.api_tokens`. Other `Config` fields—including `ls`, `dashboard`, and
 `docker_registry_mirror`—are allowed in the local overlay. Refused keys either
 describe the file/repo identity, apply to the whole host, or are legacy
@@ -183,11 +183,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Eleven top-level keys are read from `~/.config/jailbee/global.yaml` into
+Twelve top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
 `credentials`, `scratch`, `config_edit`, `update_check`,
-`install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
+`default_command`, `install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -200,7 +200,7 @@ merged this way — see
 `config_edit` describe this host rather than any one repo — what a directory
 with no config file gets, and how jailbee writes your files — so there is no
 repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
-[`config_edit`](#config_edit). `update_check`, `remote` and `litellm` are likewise
+[`config_edit`](#config_edit). `update_check`, `default_command`, `remote` and `litellm` are likewise
 properties of this host, not a repo: they are validated directly against
 `GlobalConfig`; explicitly configured values override their schema defaults,
 omitted fields retain their defaults, and no repo layer can augment or
@@ -2640,7 +2640,7 @@ remote:
     listen: 127.0.0.1
     port: 8022
     dashboard: true
-    shell: true
+    console: true
     exec: true
     default_entrypoint: help
     commands:
@@ -2693,9 +2693,9 @@ remote:
 | `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
 | `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
-| `shell` | bool | `true` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
+| `console` | bool | `true` | Permit the reserved `console [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
 | `exec` | bool | `true` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. This switch affects only the one-shot entry point. |
-| `default_entrypoint` | `help` \| `dashboard` \| `shell` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `shell` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
+| `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
@@ -2739,8 +2739,8 @@ commands remain refused while restrictions apply.
 
 Validation rejects all of these combinations:
 
-- `dashboard: false`, `shell: false`, and `exec: false` together;
-- `default_entrypoint: dashboard` or `shell` while that entry point is disabled;
+- `dashboard: false`, `console: false`, and `exec: false` together;
+- `default_entrypoint: dashboard` or `console` while that entry point is disabled;
 - `commands.mode: allowlist` with an empty `allow` list;
 - duplicate, malformed, or unknown command paths; unknown fields; a non-IP
   `listen` value; and a port outside `1..65535`.
@@ -2752,9 +2752,11 @@ switch back to `allowlist` does not discard policy. Listener address and port
 are fixed until `jb remote ssh restart`. Entry-point and command policy are
 loaded for each new SSH session; an already-running dashboard or console keeps
 the policy snapshot it started with. Upgrading to a release with these defaults
-enables shell and one-shot command entry points on an already-enabled SSH
+enables console and one-shot command entry points on an already-enabled SSH
 service unless its host-global configuration explicitly disables them; review
 `global.yaml` and authorized client keys before upgrading.
+
+The old `shell` spelling of the remote entry point (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
 
 `jb remote ssh serve` accepts command-line flags that override any of the
 above for that one foreground run, for trying out a different policy without
@@ -3104,6 +3106,19 @@ config_edit:
 `jailbee config edit --write patch|regenerate` overrides the key for one run.
 A `regenerate` that would drop hand-written comment lines always shows the
 diff and asks first — that confirmation cannot be turned off.
+
+### `default_command`
+
+What `jailbee` (or `jb`) run with no arguments opens. Host-level only: it
+describes how you like to work, not a repo.
+
+```yaml
+default_command: dashboard   # dashboard (default) | gui | console | help
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `default_command` | `dashboard` | `dashboard` opens the TUI, `gui` the Qt dashboard, `console` the interactive console, `help` prints the help text. Without a terminal (a pipe, a script, `JAILBEE_NONINTERACTIVE`) bare `jailbee` always prints help, whatever this says. A broken `global.yaml` falls back to `dashboard` with a warning. |
 
 ### `update_check`
 

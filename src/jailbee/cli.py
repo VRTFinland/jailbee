@@ -39,7 +39,7 @@ from jailbee.tui import (
 app = typer.Typer(
     name="jailbee",
     help="Manage isolated development environments using Incus.",
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 
 app.add_typer(outbox_app)
@@ -252,9 +252,17 @@ def remote_ssh_serve_cmd(
             help="Override remote.ssh.dashboard for this run only.",
         ),
     ] = None,
-    shell: Annotated[
+    console: Annotated[
         bool | None,
-        typer.Option("--shell/--no-shell", help="Override remote.ssh.shell for this run only."),
+        typer.Option(
+            "--console/--no-console", help="Override remote.ssh.console for this run only."
+        ),
+    ] = None,
+    legacy_shell: Annotated[
+        bool | None,
+        typer.Option(
+            "--shell/--no-shell", hidden=True, help="Deprecated alias of --console/--no-console."
+        ),
     ] = None,
     exec_: Annotated[
         bool | None,
@@ -300,11 +308,22 @@ def remote_ssh_serve_cmd(
     from jailbee.remote_ssh import keys
     from jailbee.remote_ssh.overrides import ServeOverrides, apply_ssh_overrides
 
+    if legacy_shell is not None:
+        if console is not None:
+            error_plain("--shell is the deprecated spelling of --console; pass only one.")
+            raise typer.Exit(2)
+        warn_plain(
+            f"--shell/--no-shell is deprecated, use --console/--no-console "
+            f"(removed in {LEGACY_REMOVAL_VERSION}).",
+            stderr=True,
+        )
+        console = legacy_shell
+
     overrides = ServeOverrides(
         listen=listen,
         port=port,
         dashboard=dashboard,
-        shell=shell,
+        console=console,
         exec=exec_,
         commands_mode=commands,
         allow=allow,
@@ -354,6 +373,26 @@ def remote_console_cmd(
     from jailbee.remote_ssh.console import run
 
     raise typer.Exit(run(repo, policy_json))
+
+
+@app.command("console")
+def console_cmd(
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo", help="Start in this registered repository (default: the current one)."
+        ),
+    ] = None,
+) -> None:
+    """Interactive `jb\\[repo]>` prompt: run jailbee commands with completion and history.
+
+    Starts in the registered repo containing the current directory, or asks
+    which one. `use` switches repo, `dashboard` opens the dashboard, `exit`
+    leaves.
+    """
+    from jailbee.remote_ssh.console import run_local
+
+    raise typer.Exit(run_local(repo))
 
 
 ConfigOption = Annotated[
@@ -819,6 +858,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -838,6 +878,26 @@ def main(
     except RepoScopeError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
+
+    if ctx.invoked_subcommand is not None or ctx.resilient_parsing:
+        return
+    from jailbee import default_command, prompting
+    from jailbee.global_config import default_global_config_path, load_global_config
+
+    choice, warning = default_command.resolve(
+        interactive=prompting.is_interactive() and prompting.stdout_is_terminal(),
+        load=lambda: load_global_config(default_global_config_path())[0],
+    )
+    if warning is not None:
+        warn_plain(warning)
+    if choice == "help":
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+    if choice == "console":
+        from jailbee.remote_ssh.console import run_local
+
+        raise typer.Exit(run_local(None))
+    raise typer.Exit(_run_dashboard(gui=choice == "gui", foreground=False))
 
 
 @app.command()
@@ -15044,7 +15104,7 @@ def _write_repo_group(config: Path | None, value: object) -> None:
     block = folded.get("credentials")
     repos = block.get("repos") if isinstance(block, dict) else None
     if isinstance(repos, dict) and prefix in repos:
-        changes = config_writer.credential_key_migration(
+        changes = config_writer.legacy_key_migrations(
             raw,
             [config_writer.YamlChange(("credentials", "repos", prefix), config_writer.DELETE)],
         )

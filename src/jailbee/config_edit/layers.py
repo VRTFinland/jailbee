@@ -33,9 +33,10 @@ from jailbee.config.common import (
     _HOST_LEVEL_KEYS,
     _read_yaml_or_empty,
     normalize_credentials_key,
+    normalize_remote_ssh_keys,
 )
 from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS, FieldKind, dotted, entry_model
-from jailbee.config_writer import DELETE, KeyPath, YamlChange, credential_key_migration
+from jailbee.config_writer import DELETE, KeyPath, YamlChange, legacy_key_migrations
 from jailbee.global_config import validate_global_raw
 
 if TYPE_CHECKING:
@@ -162,7 +163,8 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     `chrome:` block still reports a real origin for `browsers.chrome.*`
     instead of lying and saying "default". The same goes for a legacy
     `claude_credentials:` block, folded to `credentials` on a copy of the
-    global layer so its rows report the real origin. Both folds are silent
+    global layer so its rows report the real origin, and likewise 1.6.0's
+    `remote.ssh.shell` folded to `console`. All the folds are silent
     by construction — the deprecation notices live in
     `loader.load_config_from_layers`, not in the folds — which is what this
     reload path needs: it runs on every reload, including while the editor
@@ -173,8 +175,11 @@ def resolve(specs: Sequence[FieldSpec], layer_set: LayerSet) -> dict[KeyPath, Or
     user's legacy block as a side effect of an unrelated save.
     """
     repo_raw = resolve_browsers_raw(layer_set.repo_raw)
+    origin = str(layer_set.global_path)
     global_raw = resolve_browsers_raw(
-        normalize_credentials_key(layer_set.global_raw, str(layer_set.global_path))[0]
+        normalize_remote_ssh_keys(
+            normalize_credentials_key(layer_set.global_raw, origin)[0], origin
+        )[0]
     )
     local_raw = resolve_browsers_raw(layer_set.local_raw)
     out: dict[KeyPath, Origin] = {}
@@ -418,7 +423,7 @@ def validate(layer_set: LayerSet, layer: LayerName, changes: Sequence[YamlChange
         # `claude_credentials` they actually wrote.
         repo_raw = apply_changes(repo_raw, changes)
     elif layer == "global":
-        changes = credential_key_migration(global_raw, changes)
+        changes = legacy_key_migrations(global_raw, changes)
         global_raw = apply_changes(global_raw, changes)
         if not layer_set.repo_path.exists() and not (
             lookup(global_raw, _PREFIX_PATH)[0] or lookup(repo_raw, _PREFIX_PATH)[0]

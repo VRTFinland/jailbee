@@ -232,7 +232,8 @@ def command_path(argv: Sequence[str]) -> str:
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry), `port to-container`;
-#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`.
+#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`;
+#   - a second console: `console` runs with the local, unrestricted policy;
 # `tests/test_remote_ssh_router.py` partitions every public leaf between this
 # set and the container-side rest, so a new command fails the suite until
 # someone decides which side it is on.
@@ -280,6 +281,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "firefox",
         "browser",
         "apps run",
+        "console",
     }
 )
 
@@ -737,10 +739,10 @@ def policy_allows(
                         "config show --layer global is unavailable when SSH repository "
                         "exclusions are active"
                     )
-    if path in {"dashboard", "tui"}:
-        raise RouteError(
-            f"`{path}` is reserved; use the remote dashboard route or console navigation"
-        )
+    # `console` runs the unrestricted local console, so a remote policy must
+    # never reach it, however permissive its mode or `restrict_host` is.
+    if path in {"dashboard", "tui", "console"}:
+        raise RouteError(f"`{path}` is reserved; use the dashboard or console navigation")
     # A nested dashboard cannot claim the server-to-child transport option,
     # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):
@@ -803,9 +805,9 @@ def route(
             raise RouteError("remote dashboard is disabled")
         return Route("dashboard", ("dashboard",), None, None, True)
 
-    if argv[0] == "shell":
-        if not config.shell:
-            raise RouteError("remote shell is disabled")
+    if argv[0] in ("console", "shell"):
+        if not config.console:
+            raise RouteError("remote console is disabled")
         prefix: str | None
         root: Path | None
         console_argv: tuple[str, ...]
@@ -818,7 +820,7 @@ def route(
             root = resolve_repo(prefix, engine=engine, scope=scope)
             console_argv = ("_remote-console", "--repo", prefix)
         else:
-            raise RouteError("remote shell accepts only an optional --repo PREFIX")
+            raise RouteError("remote console accepts only an optional --repo PREFIX")
         return Route("console", console_argv, prefix, root, True)
 
     if not config.exec:
@@ -845,8 +847,8 @@ def help_text(config: RemoteSSHConfig) -> str:
     lines = ["Available remote commands:", "  help"]
     if config.dashboard:
         lines.append("  dashboard")
-    if config.shell:
-        lines.append("  shell [--repo PREFIX]")
+    if config.console:
+        lines.append("  console [--repo PREFIX]")
     if config.exec:
         lines.append("  --repo PREFIX COMMAND [ARGS...]")
     return "\n".join(lines) + "\n"
