@@ -154,9 +154,7 @@ def test_start_runs_one_unit_with_the_clients_compression_and_the_container_titl
     incus = MagicMock()
     incus.exec.side_effect = _socket_appears()
 
-    path = wp.start_container_server(
-        incus, WPS, "app-main", sleep_fn=lambda _s: None
-    )
+    path = wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None)
 
     assert path == "/run/jailbee-display/wp-0a1b2c3d-app-main"
     run = next(c for c in incus.exec.call_args_list if c.args[1][0] == "systemd-run")
@@ -237,9 +235,7 @@ def test_a_socket_that_never_appears_fails_and_stops_the_unit():
     incus.exec.return_value = "inactive\n"
 
     with pytest.raises(DisplayError, match="waypipe"):
-        wp.start_container_server(
-            incus, WPS, "app-main", sleep_fn=lambda _s: None, wait_seconds=1
-        )
+        wp.start_container_server(incus, WPS, "app-main", sleep_fn=lambda _s: None, wait_seconds=1)
 
     stops = [c.args[1] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]]
     assert stops == [["systemctl", "stop", "jailbee-wp-0a1b2c3d-app-main.service"]]
@@ -261,9 +257,7 @@ def test_an_invalid_compress_value_never_reaches_incus(compress):
     session = WaypipeSession(id="0a1b2c3d", compress=compress)
 
     with pytest.raises(DisplayError):
-        wp.start_container_server(
-            incus, session, "app-main", sleep_fn=lambda _s: None
-        )
+        wp.start_container_server(incus, session, "app-main", sleep_fn=lambda _s: None)
 
     assert incus.mock_calls == []
 
@@ -364,7 +358,9 @@ def test_prune_dead_keeps_a_session_with_a_live_listener(listening):
 
     wp.prune_dead(incus)
 
-    stops = [c.args[1][2] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]]
+    stops = [
+        c.args[1][2] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]
+    ]
     assert sorted(stops) == [f"jailbee-wp-{DEAD}-*.service", "jailbee-wp-cccccccc-*.service"]
     assert wp.links_socket(LIVE).exists()
     assert (display_state_dir() / f"wp-{LIVE}-c1").exists()
