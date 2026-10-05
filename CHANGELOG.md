@@ -82,6 +82,9 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **opencode's model catalogue is reachable in strict mode.** Current opencode
+  fetches it from `models.opencode.ai` rather than `models.dev`, which the
+  `opencode` preset did not allow. Run `jailbee apply` to pick it up.
 - **The `AGENT` column understands Claude Code's `shell` state.** Newer Claude
   Code reports `shell` when it is idle but a background shell job it started is
   still running; the compact column showed it as `? shell`. It is now `◐`,
