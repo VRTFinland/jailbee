@@ -798,7 +798,8 @@ _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
 # Legacy apply leaves only ever exist with pending work: the terminal hoists
-# them. "Outbox" is always offered, so `menu_actions` places it by its count.
+# them. "Outbox" is offered unless both outboxes are known to be empty, and
+# `menu_actions` places it by its count.
 _PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
 _SHELL_VERB = frozenset({"shell"})
 _TMUX_VERB = frozenset({"tmux"})
@@ -934,6 +935,11 @@ def _outbox_pending(git: GitStatus | None) -> int | None:
     return sum(n or 0 for n in counts)
 
 
+def _outbox_empty(git: GitStatus | None) -> bool:
+    """Whether the probe counted no manifest in *both* outboxes; unknown is not empty."""
+    return git is not None and git.pending_pr_actions == 0 and git.pending_issue_actions == 0
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -962,13 +968,14 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
-    "Outbox" (``outbox browse``) is always available on addressable running
-    containers, including mount mode and unknown/empty counts. Its fixed stores
-    do not require a clone or an existing PR. The Qt dashboard opens its own
+    "Outbox" (``outbox browse``) is offered on addressable running containers,
+    including mount mode, unless the probe counted no manifest in both
+    outboxes; an unknown count still offers it. Its fixed stores do not require
+    a clone or an existing PR. The Qt dashboard opens its own
     window for it; the terminal dashboard its own pickers (`dashboard_outbox`).
     With manifests pending in the PR or issue outbox (read from
     ``ctx.git_status``) it leads the menu and
-    carries the count; otherwise it follows "Open shell".
+    carries the count; with an unknown count it follows "Open shell".
 
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
@@ -983,6 +990,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         pending = _outbox_pending(ctx.git_status)
         if pending:
             actions.extend([(f"Outbox ({pending} pending)", "outbox browse"), *session])
+        elif _outbox_empty(ctx.git_status):
+            actions.extend(session)
         else:
             actions.extend([*session, ("Outbox", "outbox browse")])
         for app in [] if (ctx.remote and not ctx.gui_remote) else ctx.apps:

@@ -684,8 +684,8 @@ The repo menu also carries `Apply config…` (runs `jailbee apply` in the termin
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the
 JetBrains IDE, and any `apps:` entries, in that order — empty repos get none),
-then `Outbox` (always offered on a running container — it
-moves to the very top as "Outbox (N pending)" while the PR or issue outbox
+then `Outbox` (on a running container, left out while both its PR and
+issue outbox are empty — it moves to the very top as "Outbox (N pending)" while the PR or issue outbox
 holds staged manifests; it lists the proposals in a picker, each with Show,
 Publish… and Delete…, plus `Browse actions & comments…` for the full
 `outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,

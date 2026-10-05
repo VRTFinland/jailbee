@@ -1851,9 +1851,9 @@ def test_menu_actions_omits_pr_refresh_when_the_bridge_is_impossible():
         assert "git push --pr" not in [v for _, v in dashboard.menu_actions(ctx)]
 
 
-@pytest.mark.parametrize("count", [None, 0, 2])
+@pytest.mark.parametrize("count", [None, 2])
 @pytest.mark.parametrize("mode", ["clone", "mount"])
-def test_menu_has_one_outbox_regardless_of_counts(count, mode):
+def test_menu_has_one_outbox_unless_both_outboxes_are_empty(count, mode):
     actions = dashboard.menu_actions(
         _ctx(mode=mode, git_status=_dirty(pending_pr_actions=count, pending_issue_actions=count))
     )
@@ -1863,11 +1863,22 @@ def test_menu_has_one_outbox_regardless_of_counts(count, mode):
         assert "outbox browse" not in {v for _, v in dashboard.menu_actions(ctx)}
 
 
-@pytest.mark.parametrize(
-    "git_status",
-    [None, _dirty(), _dirty(pending_pr_actions=0, pending_issue_actions=0)],
-)
-def test_outbox_follows_the_shell_when_nothing_is_pending(git_status):
+@pytest.mark.parametrize("mode", ["clone", "mount"])
+def test_an_empty_outbox_is_not_offered(mode):
+    empty = _dirty(pending_pr_actions=0, pending_issue_actions=0)
+    actions = dashboard.menu_actions(_ctx(mode=mode, git_status=empty))
+    assert "outbox browse" not in {v for _, v in actions}
+    assert actions[:2] == [("Attach tmux", "tmux"), ("Open shell", "shell")]
+
+
+@pytest.mark.parametrize(("pr", "issue"), [(0, None), (None, 0)])
+def test_one_unknown_outbox_count_still_offers_the_outbox(pr, issue):
+    status = _dirty(pending_pr_actions=pr, pending_issue_actions=issue)
+    assert ("Outbox", "outbox browse") in dashboard.menu_actions(_ctx(git_status=status))
+
+
+@pytest.mark.parametrize("git_status", [None, _dirty()])
+def test_outbox_follows_the_shell_when_the_count_is_unknown(git_status):
     actions = dashboard.menu_actions(_ctx(git_status=git_status))
     assert actions[:3] == [
         ("Attach tmux", "tmux"),
