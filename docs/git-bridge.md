@@ -1072,8 +1072,14 @@ preflight can still read GitHub, unlike inspection.
 
 The terminal browser offers containers, proposals, actions and comments,
 with Back, Refresh and Exit at each level. Without a TTY, the shorthand
-prints an overview rather than prompting. Dashboard **Outbox...** opens this
-browser; the local Qt dashboard instead opens a native non-modal tree with
+prints an overview rather than prompting. The terminal dashboard's
+**Outbox** entry lists the container's proposals in the same picker panels as
+its other menus: a proposal offers Show (paged), Publish… and Delete…, each
+change confirmed with "No" first and run as the explicit `outbox apply` or
+`outbox drop` pinned to the listed revision, and **Browse actions &
+comments…** opens this browser for deleting a single action or comment. Over
+remote SSH each entry appears only when the session's policy permits its
+command. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication
 opens a host terminal running the exact selected `outbox apply` with its
 revision; that terminal owns the authoritative approval. Launching it is

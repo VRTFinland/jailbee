@@ -9413,6 +9413,238 @@ def test_an_unknown_snapshot_action_spawns_nothing(mocker, tmp_path):
     child.assert_not_called()
 
 
+# --- Outbox: the same picker panels as Snapshots… ------------------------------
+
+_OUTBOX_JSON = json.dumps(
+    {
+        "schema": 1,
+        "containers": [
+            {
+                "name": "alpha-x",
+                "available": True,
+                "error": None,
+                "stores": [],
+                "proposals": [
+                    {
+                        "id": "pr/a.json",
+                        "state": "pending",
+                        "revision": "r1",
+                        "actions": [{"index": 0}],
+                        "error": None,
+                        "edit_block": None,
+                    }
+                ],
+            }
+        ],
+    }
+)
+_OUTBOX_LS = ["outbox", "ls", "alpha-x", "-o", "json"]
+_TO_PROPOSAL = [_ENTER]  # the first entry is the only proposal
+
+
+def _fake_outbox_ls(mocker, result=None):
+    """Patch the quiet runner the outbox listing (and a delete) go through."""
+    return mocker.patch.object(
+        dashboard.da,
+        "run_cli_quiet",
+        return_value=result or dashboard.da.CliResult(True, "done", _OUTBOX_JSON),
+    )
+
+
+@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
+def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_path, over_ssh):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    policy = RemoteSSHConfig() if over_ssh else None
+    listing = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
+
+    keys = _container_menu_keys(group, "outbox browse", **kwargs)
+    assert _drive_run(mocker, keys, [group], **kwargs) == 0
+
+    flags = [] if over_ssh else ["--config", str(group.config_path)]
+    listing.assert_called_once_with([*_OUTBOX_LS, *flags], cwd=tmp_path)
+    picker = _rendered(render, dashboard.Picker)[0]
+    assert picker.title == "Outbox — alpha-x"
+    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
+    child.assert_not_called()  # listing is quiet: the screen never blanked
+
+
+def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    run_cli = mocker.patch.object(dashboard, "_run_cli_foreground", return_value=0)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [*_container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    actions = [
+        p for p in _rendered(render, dashboard.Picker) if p.purpose == "container-outbox-proposal"
+    ]
+    assert [e.value for e in actions[0].entries] == ["show", "publish", "delete"]
+    run_cli.assert_called_once()
+    assert run_cli.call_args.args[1] == ["outbox", "show", "alpha-x", "pr/a.json"]
+    assert run_cli.call_args.kwargs["style"] == "paged"
+
+
+def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        b"j",  # Publish…
+        _ENTER,
+        b"j",  # "Yes, publish"
+        _ENTER,
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_called_once_with(
+        [
+            "jailbee",
+            "outbox",
+            "apply",
+            "alpha-x",
+            "pr/a.json",
+            "--yes",
+            "--revision",
+            "r1",
+            "--config",
+            str(group.config_path),
+        ],
+        check=False,
+        cwd=tmp_path,
+    )
+    wait.assert_called_once()
+
+
+def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    quiet = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        b"j",
+        b"j",  # Delete…
+        _ENTER,
+        b"j",  # "Yes, delete"
+        _ENTER,
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    flags = ["--config", str(group.config_path)]
+    assert quiet.call_args_list[-1] == mocker.call(
+        ["outbox", "drop", "alpha-x", "pr/a.json", "--yes", "--revision", "r1", *flags],
+        cwd=tmp_path,
+    )
+    child.assert_not_called()
+
+
+@pytest.mark.parametrize("downs", [1, 2], ids=["publish", "delete"])
+def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    quiet = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        *[b"j"] * downs,
+        _ENTER,
+        _ENTER,  # a stray Enter lands on "No"
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_not_called()
+    assert quiet.call_count == 1  # only the listing
+    assert "Cancelled" in _notices(render)
+
+
+def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    keys = [*_container_menu_keys(group, "outbox browse"), b"j", _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_called_once_with(
+        ["jailbee", "outbox", "browse", "alpha-x", "--config", str(group.config_path)],
+        check=False,
+        cwd=tmp_path,
+    )
+    wait.assert_not_called()  # interactive: nothing left on screen to read
+
+
+@pytest.mark.parametrize(
+    ("result", "notice"),
+    [
+        (dashboard.da.CliResult(False, "error: boom"), "could not list the outbox: error: boom"),
+        (
+            dashboard.da.CliResult(True, "done", "Container  Proposal"),
+            "could not list the outbox: unexpected output from 'jailbee outbox ls'",
+        ),
+        (
+            dashboard.da.CliResult(
+                False,
+                "exit 2",
+                json.dumps(
+                    {"containers": [{"name": "alpha-x", "available": False, "error": "stopped"}]}
+                ),
+            ),
+            "could not read the outbox: stopped",
+        ),
+        (
+            dashboard.da.CliResult(True, "done", json.dumps({"containers": []})),
+            "Outbox of 'alpha-x' is empty",
+        ),
+    ],
+    ids=["cli-failed", "not-json", "unavailable", "empty"],
+)
+def test_an_outbox_with_nothing_to_offer_is_a_notice(mocker, tmp_path, result, notice):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker, result)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    assert _drive_run(mocker, _container_menu_keys(group, "outbox browse"), [group]) == 0
+
+    assert not _rendered(render, dashboard.Picker)
+    assert notice in _notices(render)
+
+
+def test_outbox_hides_what_the_ssh_allowlist_does_not_permit(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["shell", "outbox browse", "outbox ls"]}}
+    )
+    _fake_outbox_ls(mocker)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
+
+    keys = [*_container_menu_keys(group, "outbox browse", **kwargs), *_TO_PROPOSAL]
+    assert _drive_run(mocker, keys, [group], **kwargs) == 0
+
+    picker = _rendered(render, dashboard.Picker)[0]
+    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
+    assert "Nothing can be done to pr/a.json here" in _notices(render)
+
+
 # --- Mount… / Unmount… -------------------------------------------------------
 
 

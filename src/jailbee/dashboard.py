@@ -37,6 +37,7 @@ from rich.text import Text
 from jailbee import agent_status, table_format
 from jailbee import dashboard_accounts as da
 from jailbee import dashboard_actions as dact
+from jailbee import dashboard_outbox as dob
 from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
@@ -963,7 +964,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
 
     "Outbox" (``outbox browse``) is always available on addressable running
     containers, including mount mode and unknown/empty counts. Its fixed stores
-    do not require a clone or an existing PR; publication stays in the browser.
+    do not require a clone or an existing PR. The Qt dashboard opens its own
+    window for it; the terminal dashboard its own pickers (`dashboard_outbox`).
     With manifests pending in the PR or issue outbox (read from
     ``ctx.git_status``) it leads the menu and
     carries the count; otherwise it follows "Open shell".
@@ -3670,6 +3672,129 @@ def run(
                     return None
                 return picker
 
+            # The last listing per container, so a proposal step needs no second one.
+            outbox_rows: dict[str, tuple[dob.ProposalRow, ...]] = {}
+
+            def open_outbox(container: str) -> Picker | None:
+                """List the container's staged proposals quietly and offer them, or notice why not.
+
+                Each entry is gated on its own argv, as for snapshots.
+                """
+                repo = repo_for(container, "container")
+                if repo is None:
+                    set_notice(f"'{container}' is gone")
+                    return None
+                argv = dact.addressed(
+                    dob.outbox_ls_argv(container), repo.flags(), over_ssh=over_ssh
+                )
+                try:
+                    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
+                    # `outbox ls` exits 2 for an unavailable container but still
+                    # prints the listing, whose error says why; parse it first.
+                    result = da.run_cli_quiet(argv, cwd=repo.cwd())
+                    try:
+                        listing = dob.parse_outbox_listing(result.stdout, container)
+                    except dob.OutboxLoadError:
+                        if result.ok:
+                            raise
+                        raise dob.OutboxLoadError(result.message) from None
+                except (RouteError, dob.OutboxLoadError) as exc:
+                    set_notice(f"could not list the outbox: {exc}", seconds=_FAILURE_NOTICE_SECONDS)
+                    return None
+                if listing.error is not None:
+                    set_notice(
+                        f"could not read the outbox: {listing.error}",
+                        seconds=_FAILURE_NOTICE_SECONDS,
+                    )
+                    return None
+                if not listing.rows:
+                    set_notice(
+                        listing.warnings[0]
+                        if listing.warnings
+                        else f"Outbox of '{container}' is empty",
+                        seconds=_FAILURE_NOTICE_SECONDS if listing.warnings else _NOTICE_SECONDS,
+                    )
+                    return None
+                outbox_rows[container] = listing.rows
+                return dob.outbox_picker(
+                    container,
+                    listing.rows,
+                    can_browse=permitted(
+                        dob.outbox_browse_argv(container), ssh_policy, over_ssh=over_ssh
+                    ),
+                )
+
+            def submit_outbox_picker(picker: Picker, entry: PickerEntry) -> Overlay | None:
+                """The `container-outbox*` steps. Show and Publish run in the terminal.
+
+                Publishing talks to GitHub and may outlast the quiet runner's
+                60 s cutoff; a delete is local and runs quietly.
+                """
+                container = picker.target
+                if picker.purpose == "container-outbox":
+                    if entry.value == dob.BROWSE:
+                        run_dashboard_command(
+                            container, "container", dob.outbox_browse_argv(container), style="plain"
+                        )
+                        return None
+                    pid = dob.proposal_id(entry.value)
+                    row = next((r for r in outbox_rows.get(container, ()) if r.id == pid), None)
+                    if row is None:
+                        return None
+                    actions = dob.proposal_picker(
+                        container,
+                        row,
+                        can_show=permitted(
+                            dob.outbox_show_argv(container, row.id), ssh_policy, over_ssh=over_ssh
+                        ),
+                        can_publish=permitted(
+                            dob.outbox_apply_argv(container, row.id, row.revision),
+                            ssh_policy,
+                            over_ssh=over_ssh,
+                        ),
+                        can_delete=permitted(
+                            dob.outbox_drop_argv(container, row.id, row.revision),
+                            ssh_policy,
+                            over_ssh=over_ssh,
+                        ),
+                    )
+                    if not actions.entries:
+                        set_notice(f"Nothing can be done to {row.id} here")
+                        return None
+                    return actions
+                if picker.purpose == "container-outbox-proposal":
+                    pid, revision, count = picker.carry
+                    if entry.value == dob.SHOW:
+                        run_dashboard_command(
+                            container,
+                            "container",
+                            dob.outbox_show_argv(container, pid),
+                            style="paged",
+                        )
+                        return None
+                    if entry.value in (dob.PUBLISH, dob.DELETE):
+                        return dob.outbox_confirm_picker(
+                            container, entry.value, pid, revision, int(count)
+                        )
+                    return None
+                if picker.purpose == "container-outbox-confirm":
+                    if entry.value != "yes":
+                        set_notice("Cancelled")
+                        return None
+                    action, pid, revision = picker.carry
+                    if action == dob.PUBLISH:
+                        run_dashboard_command(
+                            container, "container", dob.outbox_apply_argv(container, pid, revision)
+                        )
+                    elif action == dob.DELETE:
+                        repo = repo_for(container, "container")
+                        if repo is None:
+                            set_notice(f"'{container}' is gone")
+                        elif run_quiet_cli(repo, dob.outbox_drop_argv(container, pid, revision)):
+                            client.refresh()
+                    return None
+                return None
+
             def submit_snapshot_picker(picker: Picker, entry: PickerEntry) -> Overlay | None:
                 """The `container-snapshot*` steps. Every change runs in the terminal.
 
@@ -4071,6 +4196,8 @@ def run(
                     return None
                 if picker.purpose.startswith("container-snapshot"):
                     return submit_snapshot_picker(picker, entry)
+                if picker.purpose.startswith("container-outbox"):
+                    return submit_outbox_picker(picker, entry)
                 if picker.purpose in ("container-mount-add", "container-mount-remove"):
                     build = (
                         dact.unmount_argv
@@ -4533,6 +4660,10 @@ def run(
                                     overlay = open_group_picker("container-group", target)
                                 elif verb in dact.CONTAINER_VERBS:
                                     overlay = open_container_entry(target, verb)
+                                elif verb == "outbox browse":
+                                    # Qt hands the terminal to the browser; here
+                                    # it is the dashboard's own picker panels.
+                                    overlay = open_outbox(target)
                                 else:
                                     dispatch(target, verb)
                     continue
