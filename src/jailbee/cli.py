@@ -384,7 +384,7 @@ def console_cmd(
         ),
     ] = None,
 ) -> None:
-    """Interactive `jb[repo]>` prompt: run jailbee commands with completion and history.
+    """Interactive `jb\\[repo]>` prompt: run jailbee commands with completion and history.
 
     Starts in the registered repo containing the current directory, or asks
     which one. `use` switches repo, `dashboard` opens the dashboard, `exit`

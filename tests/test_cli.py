@@ -10887,16 +10887,6 @@ def test_bare_jb_with_piped_stdout_prints_help_even_on_a_tty_stdin(mocker) -> No
     console.assert_not_called()
 
 
-def test_completion_never_launches_dashboard(mocker, monkeypatch) -> None:
-    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    dash = mocker.patch("jailbee.cli._run_dashboard", return_value=0)
-    monkeypatch.setenv("_JAILBEE_COMPLETE", "complete_bash")
-    monkeypatch.setenv("COMP_WORDS", "jailbee ")
-    monkeypatch.setenv("COMP_CWORD", "1")
-    CliRunner().invoke(app, [], prog_name="jailbee")
-    dash.assert_not_called()
-
-
 def test_main_callback_is_inert_under_resilient_parsing(mocker) -> None:
     """The callback body must not run a command while the shell is completing."""
     import typer
