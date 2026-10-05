@@ -94,11 +94,13 @@ shows only the exit-code notice, not the launcher's message. To run one app
 directly:
 
 ```bash
-waypipe ssh -p <ssh port> jailbee@<host> --repo <prefix> chrome <container>
+waypipe ssh -p <ssh port> jailbee@<host> chrome <container> --repo <prefix>
 ```
 
 The direct command waits until the app exits, and the session ends with it.
-`--repo <prefix>` is required for it.
+`--repo <prefix>` selects a registered repo explicitly. Without it, a single
+visible repo is used automatically; several need `-t` for a picker (otherwise
+exit 2 lists them).
 
 - The direct form is for the GUI launchers (`chrome`, `firefox`, `browser`,
   `ide`, `apps run`). `exec --gui` detaches, so its window closes as soon as

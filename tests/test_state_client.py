@@ -35,7 +35,7 @@ class Spawner:
 
     def __call__(self):
         paths.ensure_runtime_dir()
-        server = StateServer(self.gatherer_factory(), version=self.version, idle_timeout=0.5)
+        server = StateServer(self.gatherer_factory(), version=self.version)
         self.servers.append(server)
         thread = threading.Thread(
             target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
@@ -70,6 +70,68 @@ def test_the_first_client_spawns_the_server(runtime_dir):
         assert len(spawner.servers) == 1
         assert client.status() is None
     finally:
+        client.close()
+
+
+def test_delayed_first_hello_does_not_spawn_a_replacement(runtime_dir, monkeypatch):
+    hello_entered = threading.Event()
+    release_hello = threading.Event()
+    idle_checked = threading.Event()
+    advanced_clock_read = threading.Event()
+    server_time = [0.0]
+    real_handshake = StateClient._handshake
+
+    def server_clock():
+        now = server_time[0]
+        if now == 1.0:
+            advanced_clock_read.set()
+        return now
+
+    class ObservedGatherer(FakeGatherer):
+        def tick(self, **kw):
+            # Reaching tick proves the real scheduler passed its idle check.
+            if advanced_clock_read.is_set():
+                idle_checked.set()
+            return super().tick(**kw)
+
+    class ClockedServer(StateServer):
+        def __init__(self, *args, **kw):
+            super().__init__(*args, clock=server_clock, **kw)
+
+        async def serve(self, path):
+            try:
+                await super().serve(path)
+            finally:
+                # The old helper exits instead of ticking at the advanced time.
+                idle_checked.set()
+
+    def gated_handshake(self, sock, path):
+        if not hello_entered.is_set():
+            hello_entered.set()
+            if not release_hello.wait(5):
+                sock.close()
+                raise TimeoutError("the test did not release the first Hello")
+        return real_handshake(self, sock, path)
+
+    monkeypatch.setitem(globals(), "StateServer", ClockedServer)
+    monkeypatch.setattr(StateClient, "_handshake", gated_handshake)
+    spawner = Spawner(ObservedGatherer)
+    client = _client(spawner)
+    try:
+        assert hello_entered.wait(3), "the client never connected before Hello"
+        assert len(spawner.servers) == 1
+        assert not spawner.servers[0]._clients
+        # Exceed the old 0.5-second grace without advancing the client's clock.
+        server_time[0] = 1.0
+        assert idle_checked.wait(3), "the server never evaluated the advanced clock"
+        assert not spawner.servers[0]._clients
+        release_hello.set()
+        snap = client.wait_first_snapshot(3)
+        assert snap.seq >= 1
+        assert len(spawner.servers) == 1
+        assert client.status() is None
+    finally:
+        release_hello.set()
         client.close()
 
 

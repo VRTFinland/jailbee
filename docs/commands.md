@@ -1,5 +1,21 @@
 # Commands
 
+## Global repository option
+
+`--repo PREFIX` runs a command in that registered repository instead of the
+current directory's repo. `PREFIX` is an exact registered prefix, not a path.
+Without it, local commands keep their usual cwd / scratch behaviour.
+It may precede the command (`jb --repo x chrome feat`), appear inside its
+command path (`jb net --repo x egress add pypi.org feat`), or follow its
+arguments (`jb chrome feat --repo x`). Only one global `--repo` is accepted;
+arguments after `--` are passed through unchanged.
+
+Commands with their own `--repo` keep its existing meaning when written after
+the command name: `net egress add` / `rm`, `net refresh`, `net unregister`
+and `console`. Put the global selector before that name (or before the group),
+for example `jb --repo x net egress add pypi.org --repo`.
+The global selector cannot be combined with `-c` / `--config`.
+
 | Command | Description |
 |---|---|
 | `jailbee init` | First-time setup: create Incus profiles, ACLs, shared directories |
@@ -111,7 +127,9 @@ directory, or asks which one (straight in when exactly one is registered);
 without the `jailbee` prefix, with tab completion and history. `repos` lists
 the registered repositories, `use [PREFIX]` switches repository (bare `use`
 reopens the menu), `dashboard` opens the dashboard, `help` lists the commands
-and `exit` (or Ctrl-D) leaves. Locally it is unrestricted: it applies no
+and `exit` (or Ctrl-D) leaves. A line's global `--repo PREFIX` runs only that
+command in another repo; it does not change the prompt's selected repo (`use`
+does). Locally it is unrestricted: it applies no
 `remote.ssh` policy. It is an interactive entry point only, so it cannot be run
 as a one-shot command over remote SSH (there the console is
 `ssh -t … console`, restricted by policy; see below).
@@ -195,10 +213,16 @@ accepted client forms are:
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
+ssh -p 8022 jailbee@localhost repos
+ssh -p 8022 jailbee@localhost COMMAND [ARGS...] [--repo PREFIX]
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
-The old `shell` spelling of the remote entry point (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+The old `shell` spelling of the remote entry point (`remote.ssh.shell`,
+`default_entrypoint: shell`, `serve --shell`) still works until 2.0.0;
+`jailbee config migrate --apply` renames it. Only the exact `ssh … shell`
+and `ssh … shell --repo PREFIX` forms mean the legacy console;
+`ssh -t … shell NAME --repo PREFIX` runs `jb shell NAME` in a container.
 
 The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
@@ -207,7 +231,9 @@ destination while the next word starts with `-`, so a bare `--repo` fails with
 A commandless `ssh -p 8022 jailbee@localhost` prints the enabled entry points
 and exits successfully by default. Set `remote.ssh.default_entrypoint` in the
 host's `global.yaml` to `dashboard` or `console` to open that entry point instead;
-an explicit `help` always prints the list. All three entry points are enabled
+an explicit `help` lists enabled forms and allowed command paths. `repos`
+lists the registered prefixes and roots visible to the session (it requires
+`exec: true`). All three entry points are enabled
 by default, while `commands.mode` independently governs console and one-shot
 commands across the console and dashboard; `exec: false` disables one-shot
 execution only. `commands.mode: disabled` blocks dashboard actions that run
@@ -240,9 +266,16 @@ mode); the bare top-level `--help`/`-h` works the same way. Unknown commands
 are rejected before a JailBee child starts. The console performs no shell
 expansion, pipes, redirection or executable lookup.
 
-Every one-shot command needs `--repo PREFIX`. `PREFIX` is an exact registered
-repository prefix, never a filesystem path; the registered root becomes the
-command's working directory. The same rule applies to `console --repo PREFIX`.
+One-shot SSH execution accepts every JailBee command the remote console does,
+under the same command policy and host restrictions. The global `--repo PREFIX`
+follows the placement rules above; the old `-- --repo PREFIX COMMAND` form
+still works. The registered root becomes the command's working directory.
+Without a selector, one visible repo is used automatically; with several,
+`ssh -t` shows a picker and a non-PTY call exits 2 naming the candidates.
+Command help does not need a repo or open a picker. `console --repo PREFIX`
+also takes an exact registered prefix; a console line's global selector is
+temporary, just as it is locally. Excluded repos are unavailable to selectors,
+pickers and `repos`.
 See [Security and limitations](security.md#remote-ssh) before granting access.
 
 For SSH dashboard sessions, the effective `remote.ssh` policy is checked before

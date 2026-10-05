@@ -6,12 +6,19 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqlmodel import Session, select
+
+from jailbee.db import get_engine
+from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, is_ssh_session
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from sqlalchemy.engine import Engine
 
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -26,6 +33,29 @@ class RemoteRepoScope:
 
     def allows(self, prefix: str | None) -> bool:
         return prefix is None or prefix not in self.excluded
+
+
+@dataclass(frozen=True)
+class RepoChoice:
+    prefix: str
+    root: Path
+
+
+def registered_repos(
+    *, engine: Engine | None = None, scope: RemoteRepoScope | None = None
+) -> list[RepoChoice]:
+    """Return registered repositories whose host directories still exist."""
+    with Session(engine or get_engine()) as session:
+        rows = session.exec(select(RegisteredRepo)).all()
+    return sorted(
+        [
+            RepoChoice(row.container_prefix, Path(row.repo_root))
+            for row in rows
+            if Path(row.repo_root).is_dir()
+            and (scope is None or scope.allows(row.container_prefix))
+        ],
+        key=lambda repo: repo.prefix,
+    )
 
 
 def scope_for_session(environ: Mapping[str, str] | None = None) -> RemoteRepoScope:
