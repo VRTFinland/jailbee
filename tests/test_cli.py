@@ -10843,9 +10843,7 @@ def test_console_command_delegates_to_run_local(mocker) -> None:
     run_local.assert_called_once_with("x")
 
 
-def _bare(
-    mocker, *, interactive: bool, choice: str = "dashboard", stdout_terminal: bool = True
-):
+def _bare(mocker, *, interactive: bool, choice: str = "dashboard", stdout_terminal: bool = True):
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
     mocker.patch("jailbee.prompting.stdout_is_terminal", return_value=stdout_terminal)
     mocker.patch(
