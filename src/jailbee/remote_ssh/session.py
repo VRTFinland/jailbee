@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,6 +42,25 @@ SSH_EXCLUDED_REPOS_ENV = "JAILBEE_SSH_EXCLUDED_REPOS"
 # it inherits. It says GUI apps launched here belong on the shared RDP display
 # and tells the child which port to print in the connection recipe.
 SSH_GUI_ENV = "JAILBEE_SSH_GUI"
+# Set only for a child of a `waypipe ssh` session on a server whose
+# `remote.ssh.gui` is on (`server.handle_process`); `child_environment` removes
+# any inherited value. GUI apps launched here draw through the session's
+# waypipe forward instead of the shared RDP screen; the compression must match
+# the laptop's waypipe client, or every connection fails.
+WAYPIPE_SESSION_ENV = "JAILBEE_WAYPIPE_SESSION"
+WAYPIPE_COMPRESS_ENV = "JAILBEE_WAYPIPE_COMPRESS"
+# Set only when the session's own command is a GUI launcher: that launch runs
+# attached, so the session (and the forward) lives as long as the app.
+WAYPIPE_ATTACH_ENV = "JAILBEE_WAYPIPE_ATTACH"
+_WAYPIPE_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+
+
+@dataclass(frozen=True)
+class WaypipeSession:
+    """One `waypipe ssh` session: its id and the client's compression."""
+
+    id: str
+    compress: str
 
 
 def child_environment(
@@ -49,6 +70,8 @@ def child_environment(
     restricted: bool = True,
     excluded_repos: Sequence[str] = (),
     gui_port: int | None = None,
+    waypipe: WaypipeSession | None = None,
+    waypipe_attach: bool = False,
 ) -> dict[str, str]:
     """The environment for a child of the SSH server, built from ``base``.
 
@@ -57,7 +80,9 @@ def child_environment(
     through any path — a pager, a tool's own paging — cannot start a shell
     (`!`), an editor (`v`) or a pipe (`|`) on the host. An unrestricted one
     otherwise gets ``base`` unchanged, the restriction marker included if
-    ``base`` already carries it.
+    ``base`` already carries it. ``waypipe`` marks the child as part of that
+    `waypipe ssh` session; ``waypipe_attach`` adds that its own command is a
+    GUI launcher. Inherited waypipe markers are always removed.
     """
     env = dict(base)
     env[SSH_SESSION_ENV] = "1"
@@ -65,6 +90,13 @@ def child_environment(
     env.pop(SSH_GUI_ENV, None)
     if gui_port is not None:
         env[SSH_GUI_ENV] = str(gui_port)
+    for name in (WAYPIPE_SESSION_ENV, WAYPIPE_COMPRESS_ENV, WAYPIPE_ATTACH_ENV):
+        env.pop(name, None)
+    if waypipe is not None:
+        env[WAYPIPE_SESSION_ENV] = waypipe.id
+        env[WAYPIPE_COMPRESS_ENV] = waypipe.compress
+        if waypipe_attach:
+            env[WAYPIPE_ATTACH_ENV] = "1"
     if restricted:
         env[REMOTE_SESSION_ENV] = "1"
         env["LESSSECURE"] = "1"
@@ -97,6 +129,28 @@ def is_shared_display_session(environ: Mapping[str, str] | None = None) -> bool:
     """True for an SSH session whose GUI apps belong on the shared RDP display."""
     env = os.environ if environ is None else environ
     return is_ssh_session(env) and shared_display_port(env) is not None
+
+
+def waypipe_session(environ: Mapping[str, str] | None = None) -> WaypipeSession | None:
+    """The `waypipe ssh` session this process belongs to, or None.
+
+    Only inside a GUI-enabled SSH session, and only for a well-formed id: the
+    id becomes part of a unit name and a socket path.
+    """
+    env = os.environ if environ is None else environ
+    if not is_shared_display_session(env):
+        return None
+    session_id = env.get(WAYPIPE_SESSION_ENV, "")
+    compress = env.get(WAYPIPE_COMPRESS_ENV, "")
+    if not _WAYPIPE_ID_RE.fullmatch(session_id) or not compress:
+        return None
+    return WaypipeSession(id=session_id, compress=compress)
+
+
+def waypipe_attach(environ: Mapping[str, str] | None = None) -> bool:
+    """True when this process is a waypipe session's own GUI launch."""
+    env = os.environ if environ is None else environ
+    return waypipe_session(env) is not None and env.get(WAYPIPE_ATTACH_ENV) == "1"
 
 
 def host_tree_refusal(action: str, hint: str | None = None) -> str:
