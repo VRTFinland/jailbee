@@ -1475,3 +1475,20 @@ def test_route_config_in_payload_is_opaque(configured_ssh, engine, repo):
         "exec feat --repo project -- tool --config=/tmp/beta.yaml", configured_ssh, engine=engine
     )
     assert result.argv == ("exec", "feat", "--", "tool", "--config=/tmp/beta.yaml")
+
+
+@pytest.mark.parametrize("restrict", [False, True])
+def test_route_clustered_config_is_rejected_before_child(restrict, engine, repo):
+    cfg = RemoteSSHConfig(exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="--config and --repo"):
+        route("pr feat -yc/tmp/beta.yaml --repo project", cfg, engine=engine)
+
+
+@pytest.mark.parametrize("restrict", [False, True])
+@pytest.mark.parametrize("value", ["-changes", "--config=/tmp/beta.yaml"])
+def test_route_config_looking_title_is_not_a_config(restrict, value, engine, repo):
+    cfg = RemoteSSHConfig(exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full"))
+    result = route(f"pr feat --title '{value}' --repo project", cfg, engine=engine)
+    assert result.argv == ("pr", "feat", "--title", value)
+    assert result.repo_root == repo
+    assert result.repo_prefix == "project"

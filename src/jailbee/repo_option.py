@@ -43,6 +43,33 @@ def check_config_selection(path: Path | None) -> None:
         raise RepoOptionError("--config and --repo both name the repository; give one of them.")
 
 
+def _has_config_option(argv: Sequence[str]) -> bool:
+    """Inspect Click's raw option values without conversion, prompts or callbacks."""
+    from typer._click.core import Context
+    from typer.main import get_command
+
+    from jailbee.cli_outbox import app as outbox_app
+    from jailbee.cli_outbox import normalize_outbox_argv
+    from jailbee.remote_ssh.router import RouteError, command_leaf
+
+    args = normalize_outbox_argv(argv)
+    if args and args[0] == "outbox":
+        group = get_command(outbox_app)
+        with Context(group, resilient_parsing=True) as ctx:
+            values, rest, _ = group.make_parser(ctx).parse_args(args[1:])
+        if "config" in values:
+            return True
+        args = ["outbox", *rest]
+    try:
+        typed, command = command_leaf(args)
+    except RouteError:
+        # Keep unknown commands and pure group help for their existing handlers.
+        return False
+    with Context(command, resilient_parsing=True) as ctx:
+        values, _, _ = command.make_parser(ctx).parse_args(args[len(typed.split()) :])
+    return "config" in values
+
+
 def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
     """Return the global repo prefix and argv without that option."""
     args = list(argv)
@@ -114,13 +141,11 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
         raise RepoOptionError("--repo given more than once")
     if not found:
         return None, args
-    if any(
-        token == "--config" or token.startswith("--config=") or token.startswith("-c")
-        for token in args[:end]
-    ):
-        raise RepoOptionError("--config and --repo both name the repository; give one of them.")
     start, width = spans[0]
-    return found[0], args[:start] + args[start + width :]
+    rest = args[:start] + args[start + width :]
+    if _has_config_option(rest):
+        raise RepoOptionError("--config and --repo both name the repository; give one of them.")
+    return found[0], rest
 
 
 def with_repo_first(prefix: str | None, argv: Sequence[str]) -> list[str]:

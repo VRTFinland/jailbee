@@ -1312,3 +1312,24 @@ def test_console_config_payload_remains_opaque(console_env, mocker):
     console_env.lines(["exec feat --repo other -- tool -c/tmp/beta.yaml", "exit"])
     assert console.run("project", console_env.policy_json) == 0
     assert run.call_args.args[0][-4:] == ["feat", "--", "tool", "-c/tmp/beta.yaml"]
+
+
+@pytest.mark.parametrize("local", [True, False])
+def test_console_clustered_config_never_spawns(console_env, mocker, capsys, local):
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
+    cfg = RemoteSSHConfig(console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full"))
+    console_env.lines(["pr feat -yc/tmp/beta.yaml --repo other", "exit"])
+    assert console.run_console(cfg, "project", local=local) == 0
+    run.assert_not_called()
+    assert "--config and --repo" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("local", [True, False])
+@pytest.mark.parametrize("value", ["-changes", "--config=/tmp/beta.yaml"])
+def test_console_config_looking_title_reaches_child(console_env, mocker, local, value):
+    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0))
+    cfg = RemoteSSHConfig(console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full"))
+    console_env.lines([f"pr feat --title '{value}' --repo other", "exit"])
+    assert console.run_console(cfg, "project", local=local) == 0
+    assert run.call_args.args[0][-4:] == ["pr", "feat", "--title", value]
+    assert run.call_args.kwargs["cwd"] == console_env.other_root

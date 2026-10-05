@@ -318,3 +318,36 @@ def test_repo_option_import_and_fast_path_are_lazy():
 def test_implicit_outbox_group_config_conflicts(argv):
     with pytest.raises(RepoOptionError, match="--config and --repo"):
         lift_repo(argv)
+
+
+@pytest.mark.parametrize("command", [["pr", "feat"], ["new", "feat"], ["outbox", "apply", "feat", "pr/a.json"]])
+@pytest.mark.parametrize("option", [["-yc/tmp/beta.yaml"], ["-yc", "/tmp/beta.yaml"], ["-yc=/tmp/beta.yaml"], ["-y", "--config=/tmp/beta.yaml"]])
+def test_clustered_config_conflicts_before_selector_is_lost(command, option):
+    with pytest.raises(RepoOptionError, match="--config and --repo"):
+        lift_repo([*command, *option, "--repo", "alpha"])
+
+
+@pytest.mark.parametrize("value", ["-changes", "--config=/tmp/beta.yaml", "--config", "-c", "ordinary title"])
+@pytest.mark.parametrize("attached", [False, True])
+def test_config_looking_title_is_an_ordinary_value(value, attached):
+    title = [f"--title={value}"] if attached else ["--title", value]
+    rest = ["pr", "feat", *title]
+    assert lift_repo([*rest, "--repo", "alpha"]) == ("alpha", rest)
+
+
+def test_config_after_consumed_sentinel_still_conflicts():
+    with pytest.raises(RepoOptionError, match="--config and --repo"):
+        lift_repo(["--repo", "alpha", "pr", "feat", "--title", "--", "-yc/tmp/beta.yaml"])
+
+
+def test_config_detection_never_runs_parameter_callbacks(mocker):
+    from jailbee.remote_ssh.router import command_leaf
+
+    _, command = command_leaf(["pr"])
+    callback = mocker.Mock(side_effect=AssertionError("parameter callback ran"))
+    for param in command.params:
+        mocker.patch.object(param, "callback", callback)
+    assert lift_repo(["pr", "--title", "-changes", "--repo", "alpha"]) == (
+        "alpha", ["pr", "--title", "-changes"]
+    )
+    callback.assert_not_called()
