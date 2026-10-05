@@ -49,6 +49,10 @@ def test_repo_inside_the_command_path_is_global_even_for_an_owning_leaf():
 
 
 def test_alias_paths_resolve_like_their_public_leaf():
+    from jailbee.remote_ssh.router import leaf_owns_option, routable_leaf_paths
+
+    assert "egress add" in routable_leaf_paths()
+    assert leaf_owns_option("egress add", "--repo")
     # `egress add` is a hidden alias of `net egress add`, which owns `--repo`.
     argv = ["egress", "add", "example.com", "--repo"]
     assert lift_repo(argv) == (None, argv)
@@ -255,3 +259,28 @@ def test_cli_outbox_config_conflict_never_loads_or_runs(args, mocker, monkeypatc
     assert "--config and --repo" in result.output
     load.assert_not_called()
     run.assert_not_called()
+
+
+@pytest.mark.parametrize("argv,rest", [
+    (["outbox", "feat", "--repo", "alpha"], ["outbox", "feat"]),
+    (["outbox", "--repo=alpha"], ["outbox"]),
+    (["git", "--help", "--repo", "alpha"], ["git", "--help"]),
+    (["--help", "--repo=alpha"], ["--help"]),
+    (["git", "--repo", "alpha", "--help"], ["git", "--help"]),
+])
+def test_help_and_implicit_outbox_lift_without_rewriting(argv, rest):
+    assert lift_repo(argv) == ("alpha", rest)
+
+
+def test_repo_option_import_and_fast_path_are_lazy():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; from jailbee.repo_option import lift_repo; "
+         "assert lift_repo(['ls', '--all']) == (None, ['ls', '--all']); "
+         "assert 'jailbee.remote_ssh.router' not in sys.modules; "
+         "assert 'sqlalchemy' not in sys.modules"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr

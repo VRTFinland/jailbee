@@ -67,6 +67,23 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
             spans.append((i, width))
             i += width
             continue
+        if token in ("--help", "-h"):
+            # Only pure root/group help is resolvable without a leaf.
+            tail = i + 1
+            while tail < end and _is_repo(args[tail]):
+                _, width = _occurrence(args, tail, end)
+                tail += width
+            if tail == end and (not path or " ".join(path) in groups):
+                leaf = ""
+            break
+        if (
+            path == ["outbox"]
+            and not token.startswith("-")
+            and " ".join([*path, token]) not in leaves
+        ):
+            # OutboxGroup inserts browse for its existing default shorthand.
+            leaf = "outbox browse"
+            break
         if token.startswith("-"):
             break
         candidate = " ".join([*path, token])
@@ -78,7 +95,7 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
             break
         path.append(token)
         i += 1
-    if leaf is not None and not leaf_owns_option(leaf, _OPTION):
+    if leaf is not None and (not leaf or not leaf_owns_option(leaf, _OPTION)):
         while i < end:
             if _is_repo(args[i]):
                 value, width = _occurrence(args, i, end)
