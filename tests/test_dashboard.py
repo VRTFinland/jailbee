@@ -9498,7 +9498,7 @@ def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
     ]
     assert [e.value for e in actions[0].entries] == ["show", "publish", "delete"]
     run_cli.assert_called_once()
-    assert run_cli.call_args.args[1] == ["outbox", "show", "alpha-x", "pr/a.json"]
+    assert run_cli.call_args.args[1] == ["outbox", "show", "alpha-x", "pr/a.json", "--color"]
     assert run_cli.call_args.kwargs["style"] == "paged"
 
 

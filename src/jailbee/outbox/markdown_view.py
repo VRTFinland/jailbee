@@ -26,6 +26,7 @@ would show. Three rules follow:
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import sys
 from collections.abc import Iterable
@@ -76,6 +77,25 @@ def _terminal_width() -> int | None:
     return shutil.get_terminal_size().columns
 
 
+def render_width(color: bool | None) -> int | None:
+    """The width to lay bodies out at, or None for the verbatim text.
+
+    `color` is a command's `--color/--no-color`: None follows stdout
+    (`_terminal_width`), False is always verbatim, and True renders even into a
+    pipe — `jailbee dashboard` pipes `outbox show` into a pager, which draws on
+    the terminal stderr is still attached to, so that is the width taken.
+    """
+    if color is False:
+        return None
+    width = _terminal_width()
+    if width is not None or not color:
+        return width
+    try:
+        return os.get_terminal_size(sys.stderr.fileno()).columns
+    except (OSError, ValueError):
+        return shutil.get_terminal_size().columns
+
+
 def render_markdown(text: str, *, indent: str = "", width: int | None = None) -> list[str]:
     """Lay `text` out as Markdown for a terminal, one string per line, each prefixed by `indent`.
 
@@ -118,13 +138,19 @@ def render_markdown(text: str, *, indent: str = "", width: int | None = None) ->
     return [AnsiLine(f"{indent}{line}") if line else "" for line in lines]
 
 
-def print_lines(lines: Iterable[str]) -> None:
-    """Print outbox lines: `AnsiLine`s as the styled text they are, the rest as inert text."""
+def print_lines(lines: Iterable[str], *, color: bool = False) -> None:
+    """Print outbox lines: `AnsiLine`s as the styled text they are, the rest as inert text.
+
+    `color` keeps the styling when stdout is not a terminal, for a pager that
+    renders it (see `render_width`).
+    """
     from rich.text import Text
 
     from jailbee.outbox.inspect import safe_text
     from jailbee.tui import console
 
+    if color and not console.is_terminal:
+        console = Console(file=console.file, force_terminal=True)
     for line in lines:
         if isinstance(line, AnsiLine):
             console.print(Text.from_ansi(line), highlight=False, soft_wrap=True)

@@ -206,7 +206,7 @@ def test_safe_complete_details(view):
             replace(
                 view.proposals[0],
                 raw_text="[red]raw\x1b[2J",
-                actions=(replace(view.proposals[0].actions[0], text="long body\n" * 300),),
+                actions=(replace(view.proposals[0].actions[0], body="long body\n" * 300),),
             ),
         ),
     )

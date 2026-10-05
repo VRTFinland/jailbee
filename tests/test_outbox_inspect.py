@@ -448,3 +448,27 @@ def test_inspection_never_resolves_remote_targets(tmp_path, mocker):
     assert awaiting.state == "awaiting-pr"
     assert recorded[0].state == "pending"
     assert recorded[0].actions[0].target == "42"
+
+
+def test_titles_stay_apart_from_markdown_bodies(tmp_path):
+    pr_manifest = json.loads(pr_files()["001.json"])
+    pr_manifest["actions"] = [{"type": "description", "title": "T", "body": "**B**"}]
+    issue = json.loads(issue_files()["001.json"])
+    issue["actions"].append(
+        {"type": "labels", "repo": ".", "issue": 42, "add": ["bug"], "expected": {"labels": []}}
+    )
+    files = issue_files() | {"001.json": json.dumps(issue)}
+    views = build_views(
+        IDENTITY,
+        (store("pr", {"001.json": json.dumps(pr_manifest)}), store("issue", files)),
+        journal_store=JournalStore(tmp_path / "journals"),
+    )
+    pr_view = next(v for v in views if v.id.kind == "pr")
+    issue_view = next(v for v in views if v.id.kind == "issue")
+    description = pr_view.actions[0]
+    assert (description.title, description.body, description.markdown) == ("T", "**B**", True)
+    assert description.text == "T\n\n**B**"
+    create, labels = issue_view.actions[0], issue_view.actions[-1]
+    assert (create.title, create.body, create.markdown) == ("Example", "Original body", True)
+    assert create.text == "Example\n\nOriginal body"
+    assert labels.title is None and labels.markdown is False

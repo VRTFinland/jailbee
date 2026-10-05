@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Literal
 
 from jailbee import issue_manifest as issues
@@ -130,8 +130,11 @@ def _body_names(value: object) -> set[str]:
 
 
 def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
+    title: str | None = None
+    body: str | None
+    markdown = True
     if isinstance(action, issues.CreateAction):
-        target, text, kind = action.ref, f"{action.title}\n\n{action.body}", "create"
+        target, title, body, kind = action.ref, action.title, action.body, "create"
     else:
         target = (
             str(action.target.number)
@@ -139,20 +142,19 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
             else action.target.ref
         )
         if isinstance(action, issues.EditAction):
-            text, kind = (
-                "\n\n".join(v for v in (action.title, action.body) if v is not None),
-                "edit",
-            )
+            title, body, kind = action.title, action.body, "edit"
         elif isinstance(action, issues.CommentAction):
-            text, kind = action.body, "comment"
+            body, kind = action.body, "comment"
         elif isinstance(action, issues.LabelsAction):
-            text, kind = (
+            body, kind, markdown = (
                 f"add: {', '.join(action.add)}\nremove: {', '.join(action.remove)}",
                 "labels",
+                False,
             )
         else:
-            text, kind = action.state + (f" ({action.reason})" if action.reason else ""), "state"
-    return ActionView(index, kind, action.repo, target, text, "pending", None, ())
+            body = action.state + (f" ({action.reason})" if action.reason else "")
+            kind, markdown = "state", False
+    return ActionView(index, kind, action.repo, target, title, body, markdown, "pending", None, ())
 
 
 def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[ActionView, ...]:
@@ -170,16 +172,16 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
             kind = "reply"
         else:
             kind = "comment"
-        text = action.body
-        if isinstance(action, prs.DescriptionAction) and action.title is not None:
-            text = f"{action.title}\n\n{text}"
+        title = action.title if isinstance(action, prs.DescriptionAction) else None
         result.append(
             ActionView(
                 index,
                 kind,
                 manifest.repo,
                 str(manifest.pr or recorded_pr or ""),
-                text,
+                title,
+                action.body,
+                True,
                 "pending",
                 None,
                 comments,
@@ -243,15 +245,10 @@ def _build_view(
         elif state != "invalid":
             receipts = dict(progress.receipts)
             actions = tuple(
-                ActionView(
-                    a.index,
-                    a.kind,
-                    a.repo,
-                    a.target,
-                    a.text,
-                    "applied" if a.index in progress.applied else "pending",
-                    receipts.get(a.index),
-                    a.comments,
+                replace(
+                    a,
+                    state="applied" if a.index in progress.applied else "pending",
+                    receipt=receipts.get(a.index),
                 )
                 for a in actions
             )
@@ -292,16 +289,7 @@ def _build_view(
                         if receipt is not None:
                             local_state = "applied" if receipt.state == "applied" else "uncertain"
                         updated.append(
-                            ActionView(
-                                a.index,
-                                a.kind,
-                                a.repo,
-                                a.target,
-                                a.text,
-                                local_state,
-                                receipt.url if receipt else None,
-                                a.comments,
-                            )
+                            replace(a, state=local_state, receipt=receipt.url if receipt else None)
                         )
                     actions = tuple(updated)
                     if state != "invalid":

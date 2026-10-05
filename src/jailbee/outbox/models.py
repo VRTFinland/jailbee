@@ -58,14 +58,31 @@ class CommentView:
 
 @dataclass(frozen=True)
 class ActionView:
+    """One action of a proposal. `body` is Markdown only when `markdown` says so.
+
+    A title is kept apart from the body because GitHub shows it as plain text:
+    laying it out as Markdown would turn a `#` or `*` in it into styling.
+    """
+
     index: int
     kind: str
     repo: str
     target: str
-    text: str
+    title: str | None
+    body: str | None
+    markdown: bool
     state: Literal["pending", "applied", "uncertain"]
     receipt: str | None
     comments: tuple[CommentView, ...]
+
+    @property
+    def text(self) -> str:
+        """Title and body as one plain text, for JSON and the plain-text views."""
+        if self.title is None:
+            return self.body or ""
+        if self.body is None:
+            return self.title
+        return f"{self.title}\n\n{self.body}"
 
 
 @dataclass(frozen=True)
