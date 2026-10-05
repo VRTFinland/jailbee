@@ -8,7 +8,6 @@ import signal
 import subprocess
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,13 +20,15 @@ from pydantic import ValidationError
 from rich.console import Console as RichConsole
 from rich.panel import Panel
 from rich.table import Table
-from sqlalchemy.engine import Engine
-from sqlmodel import Session, select
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
-from jailbee.db import get_engine, state_dir
-from jailbee.db.models import RegisteredRepo
-from jailbee.remote_ssh.repo_scope import RemoteRepoScope, scope_for_session
+from jailbee.db import state_dir
+from jailbee.remote_ssh.repo_scope import (
+    RemoteRepoScope,
+    RepoChoice,
+    registered_repos,
+    scope_for_session,
+)
 from jailbee.remote_ssh.router import (
     NO_UNLOCKS,
     RemoteUnlocks,
@@ -46,29 +47,6 @@ _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
 # there: only this object, never `None` alone, means "no selection" once the
 # two extra key bindings are added, since Ctrl-C already answers `None`.
 _CANCELLED = object()
-
-
-@dataclass(frozen=True)
-class RepoChoice:
-    prefix: str
-    root: Path
-
-
-def registered_repos(
-    *, engine: Engine | None = None, scope: RemoteRepoScope | None = None
-) -> list[RepoChoice]:
-    """Return registered repositories whose host directories still exist."""
-    with Session(engine or get_engine()) as session:
-        rows = session.exec(select(RegisteredRepo)).all()
-    return sorted(
-        [
-            RepoChoice(row.container_prefix, Path(row.repo_root))
-            for row in rows
-            if Path(row.repo_root).is_dir()
-            and (scope is None or scope.allows(row.container_prefix))
-        ],
-        key=lambda repo: repo.prefix,
-    )
 
 
 def parse_console_line(raw: str) -> tuple[str, ...]:
