@@ -2123,9 +2123,10 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     happens after the boot returns, by which time PID 1 + logind are
     running. See the runtime_mounts module docstring.
 
-    ``restart=True`` falls back to `incus start` on a stopped container,
-    where `incus restart` would error out ("The instance is already
-    stopped"): `jailbee restart` means "ensure running, then run autostart".
+    ``restart=True`` stops a running container through
+    `stopping.stop_container` (bounded, diagnosed) and starts it again; a
+    stopped one is just started: `jailbee restart` means "ensure running,
+    then run autostart".
     ``restart=False`` never reboots — a running container reaching
     `incus start` fails, which is what `jailbee start` should report.
     After boot and attachment, its AHEAD base anchor is caught up forward-only.
@@ -2163,9 +2164,19 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
 
     detach_runtime_devices(cfg, incus, name)
     if restart and state == "Running":
-        incus.restart(name)
-    else:
-        incus.start(name)
+        # A stop plus a start rather than `incus restart`, which has no way
+        # to bound the clean shutdown: incusd waits its silent 600s default
+        # and then fails with "context deadline exceeded". `stop_container`
+        # gives up sooner and says what is holding the container up. No
+        # force fallback — this container holds the user's work.
+        try:
+            stop_container(incus, name, label=short_name(cfg, name))
+        except IncusError:
+            # Still running: put back the devices the reboot was going to
+            # re-create, so a failed restart does not also strand the GUI.
+            attach_runtime_devices(cfg, incus, name)
+            raise
+    incus.start(name)
     attach_runtime_devices(cfg, incus, name)
 
     # After the start, not before: see `agent_private.attach`. Re-adding the

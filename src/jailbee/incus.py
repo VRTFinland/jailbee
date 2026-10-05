@@ -345,9 +345,6 @@ class Incus:
             args += ["--timeout", str(timeout)]
         self._run(args)
 
-    def restart(self, name: str) -> None:
-        self._run(["restart", name])
-
     def delete(self, name: str, force: bool = False) -> None:
         args = ["delete", name]
         if force:

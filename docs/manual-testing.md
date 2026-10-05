@@ -4874,7 +4874,7 @@ jailbee doctor
 ### 4. Incus accepts the pool device on an already-running container
 
 `boot_container` calls `allocate_startup` — which calls `incus config
-device add` — **before** it issues the actual `incus restart`, so the add
+device add` — **before** it stops the container for the restart, so the add
 happens against a container Incus still considers Running, not one that's
 already stopped. This ordering is the one part of the mechanism no mock can
 validate, since the unit tests fake the Incus client entirely.

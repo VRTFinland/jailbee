@@ -24,6 +24,7 @@ from jailbee.lifecycle import (
     switch_network,
 )
 from jailbee.prompting import Cancelled, MissingValue
+from jailbee.stopping import CLEAN_STOP_BUDGET
 from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -4811,7 +4812,11 @@ def test_list_containers_reads_mode_from_user_gie_mode(make_cfg, tmp_path):
 
 @pytest.mark.parametrize(
     "restart,state,operation",
-    [(False, "Stopped", "start"), (True, "Stopped", "start"), (True, "Running", "restart")],
+    [
+        (False, "Stopped", ["start"]),
+        (True, "Stopped", ["start"]),
+        (True, "Running", ["stop", "start"]),
+    ],
 )
 def test_boot_container_syncs_instructions_before_allocation(
     tmp_path, mocker, restart, state, operation
@@ -4830,7 +4835,7 @@ def test_boot_container_syncs_instructions_before_allocation(
     boot_container(cfg, incus, "feat-x", restart=restart)
 
     sync.assert_called_once_with(cfg)
-    assert events == ["sync", "allocate", "detach", operation, "attach"]
+    assert events == ["sync", "allocate", "detach", *operation, "attach"]
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -4854,13 +4859,13 @@ def test_boot_container_refuses_missing_instruction_staging(tmp_path, mocker, re
     allocate.assert_not_called()
     detach.assert_not_called()
     incus.start.assert_not_called()
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
 
 
 def _boot_events(mocker, incus):
     """Record the detach/boot/attach order of one `boot_container` call."""
     events: list[str] = []
-    incus.restart.side_effect = lambda _n: events.append("restart")
+    incus.stop.side_effect = lambda _n, **_kw: events.append("stop")
     incus.start.side_effect = lambda _n: events.append("start")
     mocker.patch(
         "jailbee.runtime_mounts.detach_runtime_devices",
@@ -4924,10 +4929,9 @@ def test_boot_container_survives_a_raising_anchor_refresh(tmp_path, mocker):
 
 
 def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
-    """Detach must happen *before* `incus restart` so the four
-    socket devices don't race with logind on the next boot. attach must
-    happen *after* restart returns so logind has provisioned
-    /run/user/<uid>.
+    """Detach must happen *before* the reboot so the four socket devices
+    don't race with logind on the next boot. attach must happen *after* the
+    start returns so logind has provisioned /run/user/<uid>.
     """
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -4936,7 +4940,46 @@ def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
 
     boot_container(cfg, incus, "feat-x", restart=True)
 
-    assert events == ["detach", "restart", "attach"]
+    assert events == ["detach", "stop", "start", "attach"]
+
+
+def test_boot_container_restart_bounds_the_clean_shutdown(tmp_path, mocker):
+    """A restart is a stop plus a start, and the stop goes through
+    `stopping.stop_container`: a bare `incus restart` waits incusd's silent
+    600s default and then fails with "context deadline exceeded".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
+
+    incus.stop.assert_called_once_with("feat-x", timeout=CLEAN_STOP_BUDGET)
+    incus.start.assert_called_once_with("feat-x")
+
+
+def test_boot_container_restart_reattaches_when_the_shutdown_hangs(tmp_path, mocker):
+    """A container that will not shut down is still running, so the runtime
+    devices detached before the stop go back on, and it is not power-cut:
+    it holds the user's work.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    events = _boot_events(mocker, incus)
+    incus.stop.side_effect = IncusError(
+        'Failed shutting down instance, status is "Running": context deadline exceeded'
+    )
+    incus.exec.return_value = ""
+    incus.console_log.return_value = ""
+
+    with pytest.raises(IncusError, match="still running after a"):
+        boot_container(cfg, incus, "feat-x", restart=True)
+
+    incus.stop.assert_called_once_with("feat-x", timeout=CLEAN_STOP_BUDGET)
+    incus.start.assert_not_called()
+    assert events == ["detach", "attach"]
 
 
 def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
@@ -4951,7 +4994,7 @@ def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
 
     boot_container(cfg, incus, "feat-x", restart=True)
 
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
     assert events == ["detach", "start", "attach"]
 
@@ -4983,7 +5026,7 @@ def test_boot_container_start_mode_never_reboots_a_running_container(tmp_path, m
 
     boot_container(cfg, incus, "feat-x", restart=False)
 
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
 
 
@@ -5005,7 +5048,7 @@ def test_boot_container_allocates_on_start_pools(tmp_path, mocker):
 
 
 def test_boot_container_allocates_pools_before_starting(tmp_path, mocker):
-    """Allocation must precede `incus.start`/`incus.restart`: on the very
+    """Allocation must precede the boot: on the very
     first boot of an upgraded container, the slot device has to exist
     before autostart (which runs post-boot) can use it.
     """
