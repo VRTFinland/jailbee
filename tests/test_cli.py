@@ -10898,9 +10898,7 @@ def test_main_callback_is_inert_under_resilient_parsing(mocker) -> None:
     dash = mocker.patch("jailbee.cli._run_dashboard", return_value=0)
     ctx = mocker.MagicMock(spec=typer.Context)
     ctx.invoked_subcommand = None
-    mocker.patch(
-        "jailbee.default_command.resolve", return_value=("dashboard", None)
-    )
+    mocker.patch("jailbee.default_command.resolve", return_value=("dashboard", None))
 
     ctx.resilient_parsing = False  # control: the same call does launch it
     with pytest.raises(typer.Exit):
