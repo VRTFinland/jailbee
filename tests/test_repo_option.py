@@ -228,7 +228,16 @@ def test_cli_pick_repo_is_hidden_and_enters_repo(repos, tmp_path, monkeypatch):
     assert "--pick-repo" not in CliRunner().invoke(app, ["--help"]).output
 
 
-@pytest.mark.parametrize("option", [["-c", "/tmp/beta.yaml"], ["--config", "/tmp/beta.yaml"], ["--config=/tmp/beta.yaml"], ["-c/tmp/beta.yaml"], ["-c=/tmp/beta.yaml"]])
+@pytest.mark.parametrize(
+    "option",
+    [
+        ["-c", "/tmp/beta.yaml"],
+        ["--config", "/tmp/beta.yaml"],
+        ["--config=/tmp/beta.yaml"],
+        ["-c/tmp/beta.yaml"],
+        ["-c=/tmp/beta.yaml"],
+    ],
+)
 def test_lift_rejects_competing_config_before_stripping(option):
     with pytest.raises(RepoOptionError, match="--config and --repo"):
         lift_repo(["ls", *option, "--repo", "alpha"])
@@ -236,15 +245,19 @@ def test_lift_rejects_competing_config_before_stripping(option):
 
 def test_config_in_opaque_payload_does_not_conflict():
     assert lift_repo(["exec", "feat", "--repo", "alpha", "--", "tool", "-c/tmp/x"]) == (
-        "alpha", ["exec", "feat", "--", "tool", "-c/tmp/x"]
+        "alpha",
+        ["exec", "feat", "--", "tool", "-c/tmp/x"],
     )
 
 
-@pytest.mark.parametrize("args", [
-    ["outbox", "ls", "--config", "/tmp/beta.yaml"],
-    ["outbox", "--config=/tmp/beta.yaml", "ls"],
-    ["outbox", "drop", "feat", "issue/x.json", "-c/tmp/beta.yaml"],
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["outbox", "ls", "--config", "/tmp/beta.yaml"],
+        ["outbox", "--config=/tmp/beta.yaml", "ls"],
+        ["outbox", "drop", "feat", "issue/x.json", "-c/tmp/beta.yaml"],
+    ],
+)
 def test_cli_outbox_config_conflict_never_loads_or_runs(args, mocker, monkeypatch, tmp_path):
     from jailbee.cli import app
 
@@ -261,13 +274,16 @@ def test_cli_outbox_config_conflict_never_loads_or_runs(args, mocker, monkeypatc
     run.assert_not_called()
 
 
-@pytest.mark.parametrize("argv,rest", [
-    (["outbox", "feat", "--repo", "alpha"], ["outbox", "feat"]),
-    (["outbox", "--repo=alpha"], ["outbox"]),
-    (["git", "--help", "--repo", "alpha"], ["git", "--help"]),
-    (["--help", "--repo=alpha"], ["--help"]),
-    (["git", "--repo", "alpha", "--help"], ["git", "--help"]),
-])
+@pytest.mark.parametrize(
+    "argv,rest",
+    [
+        (["outbox", "feat", "--repo", "alpha"], ["outbox", "feat"]),
+        (["outbox", "--repo=alpha"], ["outbox"]),
+        (["git", "--help", "--repo", "alpha"], ["git", "--help"]),
+        (["--help", "--repo=alpha"], ["--help"]),
+        (["git", "--repo", "alpha", "--help"], ["git", "--help"]),
+    ],
+)
 def test_help_and_implicit_outbox_lift_without_rewriting(argv, rest):
     assert lift_repo(argv) == ("alpha", rest)
 
@@ -277,19 +293,28 @@ def test_repo_option_import_and_fast_path_are_lazy():
     import sys
 
     result = subprocess.run(
-        [sys.executable, "-c", "import sys; from jailbee.repo_option import lift_repo; "
-         "assert lift_repo(['ls', '--all']) == (None, ['ls', '--all']); "
-         "assert 'jailbee.remote_ssh.router' not in sys.modules; "
-         "assert 'sqlalchemy' not in sys.modules"],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            "-c",
+            "import sys; from jailbee.repo_option import lift_repo; "
+            "assert lift_repo(['ls', '--all']) == (None, ['ls', '--all']); "
+            "assert 'jailbee.remote_ssh.router' not in sys.modules; "
+            "assert 'sqlalchemy' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("argv", [
-    ["outbox", "--config=/tmp/beta.yaml", "feat", "--repo", "alpha"],
-    ["outbox", "-c/tmp/beta.yaml", "--repo", "alpha"],
-])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["outbox", "--config=/tmp/beta.yaml", "feat", "--repo", "alpha"],
+        ["outbox", "-c/tmp/beta.yaml", "--repo", "alpha"],
+    ],
+)
 def test_implicit_outbox_group_config_conflicts(argv):
     with pytest.raises(RepoOptionError, match="--config and --repo"):
         lift_repo(argv)

@@ -343,7 +343,9 @@ def test_module_entry_reports_a_malformed_repo(mocker, capsys):
     assert "--repo needs" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("option", [["-c", "/tmp/beta.yaml"], ["--config=/tmp/beta.yaml"], ["-c/tmp/beta.yaml"]])
+@pytest.mark.parametrize(
+    "option", [["-c", "/tmp/beta.yaml"], ["--config=/tmp/beta.yaml"], ["-c/tmp/beta.yaml"]]
+)
 def test_prepare_rejects_config_before_repo_resolution(option, mocker):
     from jailbee.entry import prepare_argv
 

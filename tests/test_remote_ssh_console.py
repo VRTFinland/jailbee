@@ -1290,10 +1290,15 @@ def test_run_local_allows_host_commands(console_env: ConsoleEnv, mocker) -> None
 
 
 @pytest.mark.parametrize("local", [True, False])
-@pytest.mark.parametrize("option", ["-c /tmp/beta.yaml", "--config=/tmp/beta.yaml", "-c/tmp/beta.yaml", "-c=/tmp/beta.yaml"])
+@pytest.mark.parametrize(
+    "option",
+    ["-c /tmp/beta.yaml", "--config=/tmp/beta.yaml", "-c/tmp/beta.yaml", "-c=/tmp/beta.yaml"],
+)
 def test_console_conflicting_selectors_never_spawn(console_env, mocker, capsys, local, option):
     run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
-    cfg = RemoteSSHConfig(console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(
+        console=True, restrict_host=False, commands=RemoteCommandPolicy(mode="full")
+    )
     console_env.lines([f"ls {option} --repo other", "exit"])
     assert console.run_console(cfg, "project", local=local) == 0
     run.assert_not_called()
@@ -1301,7 +1306,9 @@ def test_console_conflicting_selectors_never_spawn(console_env, mocker, capsys, 
 
 
 def test_console_config_payload_remains_opaque(console_env, mocker):
-    run = mocker.patch("jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0))
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
+    )
     console_env.lines(["exec feat --repo other -- tool -c/tmp/beta.yaml", "exit"])
     assert console.run("project", console_env.policy_json) == 0
     assert run.call_args.args[0][-4:] == ["feat", "--", "tool", "-c/tmp/beta.yaml"]

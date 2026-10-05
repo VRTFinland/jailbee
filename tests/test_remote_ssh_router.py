@@ -1446,17 +1446,24 @@ def test_one_shot_decides_every_command_like_console(cfg, engine, repo):
     assert actual == expected, "shell feat"
 
 
-@pytest.mark.parametrize("option", ["-c /tmp/beta.yaml", "--config=/tmp/beta.yaml", "-c/tmp/beta.yaml", "-c=/tmp/beta.yaml"])
+@pytest.mark.parametrize(
+    "option",
+    ["-c /tmp/beta.yaml", "--config=/tmp/beta.yaml", "-c/tmp/beta.yaml", "-c=/tmp/beta.yaml"],
+)
 @pytest.mark.parametrize("restrict", [False, True])
 def test_route_config_conflict_is_rejected_before_child(option, restrict, engine, repo):
-    cfg = RemoteSSHConfig(exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(
+        exec=True, restrict_host=restrict, commands=RemoteCommandPolicy(mode="full")
+    )
     with pytest.raises(RouteError, match="--config and --repo"):
         route(f"ls {option} --repo project", cfg, engine=engine)
 
 
 @pytest.mark.parametrize("argv", ["outbox feat", "outbox", "git --help", "--help"])
 def test_help_and_implicit_outbox_selector_parity(argv, configured_ssh, engine, repo):
-    router.policy_allows(argv.split(), configured_ssh.commands, restrict_host=configured_ssh.restrict_host)
+    router.policy_allows(
+        argv.split(), configured_ssh.commands, restrict_host=configured_ssh.restrict_host
+    )
     result = route(f"{argv} --repo project", configured_ssh, engine=engine)
     assert result.argv == tuple(argv.split())
     assert result.repo_root == repo
@@ -1464,5 +1471,7 @@ def test_help_and_implicit_outbox_selector_parity(argv, configured_ssh, engine, 
 
 
 def test_route_config_in_payload_is_opaque(configured_ssh, engine, repo):
-    result = route("exec feat --repo project -- tool --config=/tmp/beta.yaml", configured_ssh, engine=engine)
+    result = route(
+        "exec feat --repo project -- tool --config=/tmp/beta.yaml", configured_ssh, engine=engine
+    )
     assert result.argv == ("exec", "feat", "--", "tool", "--config=/tmp/beta.yaml")
