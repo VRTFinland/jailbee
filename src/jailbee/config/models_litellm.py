@@ -254,8 +254,10 @@ class LiteLLMRoute(BaseModel):
         default=None,
         gt=0,
         description=(
-            "Context window in tokens that Claude Code manages (use the backend's "
-            "maximum input). Passed to Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
+            "This route's context window in tokens (use the backend's maximum input), "
+            "published to the proxy as the model's `max_input_tokens`. Claude Code takes "
+            "one window per session, so `claude-jb` passes the smallest among the "
+            "profile's routes as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
             "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` and "
             "`chatgpt/gpt-6-luna`; required for any other model."
         ),
