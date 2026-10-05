@@ -938,7 +938,11 @@ autostart step) needs `gui.wayland: always`. `display attach` also replaces a so
 host re-login; it is host-only.
 
 On a Linux laptop with a Wayland session and waypipe installed, `waypipe ssh`
-gives native windows instead (needs `remote.ssh.gui: true`): `waypipe ssh -t -p
+gives native windows instead (needs `remote.ssh.gui: true`). A Mac does the
+same with the Cocoa-Way compositor (`COCOA_WAY_PRESENTATION=rootless
+cocoa-way`) and Homebrew's `waypipe-darwin`, with `XDG_RUNTIME_DIR` and
+`WAYLAND_DISPLAY` pointed at the socket under `$TMPDIR/cocoa-way/` (the
+`cwaypipe` function in the docs' macOS guide does this): `waypipe ssh -t -p
 <port> jailbee@<host> dashboard` and launch from the menu, or `waypipe ssh -p
 <port> jailbee@<host> --repo <prefix> chrome <container>` (waits until the app
 exits). Window titles carry a `[<container>] ` prefix; the client's `--compress`

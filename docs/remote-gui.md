@@ -71,13 +71,15 @@ display, so they can wait for the RDP client in the same way. If the display
 cannot be prepared, the first failure is reported and the remaining autostart
 apps are skipped, so `jb new` waits at most once.
 
-## Native windows with waypipe (Linux)
+## Native windows with waypipe
 
 On a Linux laptop with a Wayland session and
 [waypipe](https://gitlab.freedesktop.org/mstoeckl/waypipe) installed, a
 `waypipe ssh` session carries the apps' windows to your own desktop as native
-windows. They close with the session. Choose RDP instead on macOS or Windows,
-and for windows that must survive a disconnect.
+windows. They close with the session. A Mac can do the same with the
+Cocoa-Way compositor; see
+[Using JailBee from a Mac](macos.md#4-on-the-mac-native-windows-optional).
+Choose RDP instead on Windows, and for windows that must survive a disconnect.
 
 Needs `remote.ssh.gui: true` (a waypipe session is refused without it) and a
 stock waypipe client; the SSH server needs nothing else. Open the dashboard

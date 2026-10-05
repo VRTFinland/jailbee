@@ -308,7 +308,7 @@ display (see [Remote GUI over SSH](remote-gui.md)):
 - The display container uses the dev user's idmap, like the client containers,
   so the shared socket is owned by the same host user.
 - Each `waypipe ssh` session (see [Native windows with
-  waypipe](remote-gui.md#native-windows-with-waypipe-linux)) runs one waypipe
+  waypipe](remote-gui.md#native-windows-with-waypipe)) runs one waypipe
   server per container inside `jailbee-display`. Their sockets live in the same
   shared directory, so any container can open a window through another
   container's server; that window carries the other container's title prefix.

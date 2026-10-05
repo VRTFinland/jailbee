@@ -15,7 +15,9 @@ Either way, day-to-day use from the Mac goes through the same two things:
   JailBee console, one-shot commands and, if enabled, file transfer;
 - the [shared RDP display](remote-gui.md) — GUI apps from the containers (an
   IDE, Chrome, Firefox, your `apps:` entries), viewed in
-  Windows App (formerly Microsoft Remote Desktop), with a shared clipboard.
+  Windows App (formerly Microsoft Remote Desktop), with a shared clipboard —
+  or, optionally, as [native macOS windows](#4-on-the-mac-native-windows-optional)
+  through waypipe and the Cocoa-Way compositor.
 
 See [Daily use from the Mac](#daily-use-from-the-mac) for what that looks like,
 and [Limits and workarounds](#limits-and-workarounds) for what it does not do.
@@ -100,6 +102,71 @@ then:
    terminal tab). Accept the self-signed certificate warning.
 
 You see an empty weston desktop until a container app is launched onto it.
+
+### 4. On the Mac: native windows (optional)
+
+Instead of the shared display, container apps can open as ordinary macOS
+windows, one per app window, through a [waypipe](remote-gui.md#native-windows-with-waypipe)
+session and [Cocoa-Way](https://github.com/J-x-Z/cocoa-way), a third-party
+Wayland compositor for macOS. The windows close when the SSH session ends;
+keep Windows App for windows that must survive a disconnect.
+
+Tested with Cocoa-Way 2.0.3 and waypipe-darwin 0.11.2 on macOS 26, Apple
+silicon.
+
+Install both from the Cocoa-Way author's Homebrew tap:
+
+```bash
+brew tap J-x-Z/tap
+brew trust --tap J-x-Z/tap
+brew install cocoa-way waypipe-darwin
+```
+
+The tap is a single developer's repository, not reviewed by Homebrew, and
+`brew trust` lets its formulae run as you whenever Homebrew loads them,
+including on every later `brew upgrade`. Homebrew can also trust single
+formulae (`brew trust --formula J-x-Z/tap/cocoa-way`); building both from
+source at a pinned tag avoids the tap altogether.
+
+Start the compositor in rootless mode, so every app window becomes a macOS
+window of its own:
+
+```bash
+COCOA_WAY_PRESENTATION=rootless cocoa-way
+```
+
+Without the variable, every app opens inside a single Cocoa-Way window. The
+variable is read by Cocoa-Way 2.0.3 but not documented upstream, so check it
+after an upgrade.
+
+Cocoa-Way does not export its socket to your terminal, and a plain
+`waypipe ssh` fails with `WAYLAND_DISPLAY is not set`. Add this to
+`~/.zshrc`; it finds the socket Cocoa-Way creates under `$TMPDIR/cocoa-way/`:
+
+```bash
+cwaypipe() {
+  local dir="${TMPDIR%/}/cocoa-way"
+  local sock
+  sock=$(find "$dir" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | sort | head -n1)
+  [ -n "$sock" ] || { echo "Cocoa-Way is not running (no socket in $dir)" >&2; return 1; }
+  XDG_RUNTIME_DIR="$dir" WAYLAND_DISPLAY="$(basename "$sock")" \
+    waypipe --compress=zstd ssh -o StreamLocalBindUnlink=yes "$@"
+}
+```
+
+Then, with the `jb` entry from step 2:
+
+```bash
+cwaypipe -t jb dashboard                         # launch apps from the menu
+cwaypipe jb --repo PREFIX chrome <container>     # or one app directly
+```
+
+The direct form takes no `--` before `--repo`, unlike plain `ssh`, and stays
+open until the app exits. Window titles carry a `[<container>] ` prefix. The
+rest of [Native windows with waypipe](remote-gui.md#native-windows-with-waypipe)
+applies unchanged, including `-o ControlMaster=no` if your ssh config shares
+connections. Cocoa-Way's repository ships a `run_waypipe.sh` doing the same
+as the function; Homebrew does not install it.
 
 ## Setup B: a Linux VM on the Mac (Colima)
 
@@ -243,6 +310,7 @@ With the `jb` entry from setup A (or B), from a macOS terminal:
 | Run one command | `ssh jb -- --repo PREFIX ls` |
 | Get a shell inside a container | `ssh -t jb -- --repo PREFIX shell feat-x` |
 | Open the IDE or a browser on the shared display | `ssh jb -- --repo PREFIX ide feat-x`, `... chrome feat-x [url]`, `... apps run APP --container feat-x` |
+| Open them as native macOS windows instead ([step 4](#4-on-the-mac-native-windows-optional)) | `cwaypipe -t jb dashboard`, or `cwaypipe jb --repo PREFIX chrome feat-x` |
 | Copy files in or out (`files: true`) | `sftp jb` (the top level lists the running containers), or `scp ./notes.md jb:/<container>/docs/` |
 | Copy and paste | Works between the Mac and the shared display through Windows App |
 
@@ -265,7 +333,7 @@ or through the bridge (setup B). The full list is in
 |---|---|
 | VS Code or JetBrains *Remote-SSH* into a container (the service offers no shell, exec channel or general port forwarding) | Run the IDE in the container: `jb ide` onto the shared display |
 | Forwarding a container's dev server port (`:3000`) to the Mac's browser | Open it in the container's own browser on the shared display: `jb chrome feat-x http://localhost:3000` |
-| Telling windows apart by container | Window titles do not name the container; keep one app per container on screen, or check the address bar / project name |
+| Telling windows apart by container on the shared display | Window titles do not name the container; keep one app per container on screen, or check the address bar / project name. [Native windows](#4-on-the-mac-native-windows-optional) carry a `[<container>] ` prefix |
 | Audio, GPU acceleration | None; the display renders in software |
 | A separate screen per container | One shared screen and clipboard for every container (see [Security](security.md#remote-gui)) |
 | GPG signing with a key held on the Mac (e.g. a YubiKey) | Not bridged. In setup A, containers sign with the Linux host's gpg-agent as usual |
@@ -293,7 +361,8 @@ co-location matters.
 
 ## Verification
 
-The bridge is unit-tested with a mocked transport, and the shared display has
-been used from Windows App. The end-to-end checks for both setups on real Apple
+The bridge is unit-tested with a mocked transport, the shared display has
+been used from Windows App, and native windows through Cocoa-Way have been
+opened from the dashboard. The end-to-end checks for both setups on real Apple
 hardware are in [Manual testing](https://github.com/VRTFinland/jailbee/blob/main/docs/manual-testing.md#macos-client); they are the
 acceptance gate before setup B is treated as supported.
