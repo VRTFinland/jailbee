@@ -187,13 +187,23 @@ def launch_env(
     On the host this is `gui_env(cfg)`. From an SSH session whose server has
     `remote.ssh.gui` on, the shared RDP display is prepared first (started,
     mounted into ``container``, an RDP client awaited) and the app is pointed
-    at it. `DisplayError` propagates: nothing is launched.
+    at it. From a `waypipe ssh` session, the container's waypipe server is
+    started in jailbee-display and the app is pointed at it; no RDP client is
+    involved. `DisplayError` propagates: nothing is launched.
     """
     from jailbee.gui import display_target, gui_env
-    from jailbee.remote_ssh.session import shared_display_port
+    from jailbee.remote_ssh.session import shared_display_port, waypipe_session
     from jailbee.tui import info
 
     target = display_target()
+    session = waypipe_session()
+    if target == "waypipe" and session is not None:
+        from jailbee.remote_ssh.waypipe import start_container_server
+
+        display = start_container_server(
+            incus, session, container, uid=cfg.container_user.uid, gid=cfg.container_user.gid
+        )
+        return {**gui_env(cfg, target, wayland_display=display), **(extra or {})}
     port = shared_display_port()
     # `display_target() == "shared"` already implies a port; checking it here
     # narrows the type for `prepare_shared_display` without a fallback value.
@@ -216,10 +226,15 @@ def launch(
     spec: AppSpec,
     args: list[str] | None = None,
 ) -> None:
-    """Start `spec` in `container`, detached, logging inside the container."""
+    """Start `spec` in `container`, logging inside the container.
+
+    Detached, unless the `waypipe ssh` session's own command is this launch:
+    then it runs attached, so the session lasts as long as the app.
+    """
     import shlex as _shlex
 
-    from jailbee.gui import launch_detached
+    from jailbee.gui import launch_attached, launch_detached
+    from jailbee.remote_ssh.session import waypipe_attach
     from jailbee.tui import info
 
     if spec.pool is not None:
@@ -258,15 +273,13 @@ def launch(
     # nothing about launching.
     env = launch_env(cfg, incus, container, spec.env)
     log_path = app_log_path(spec.name)
+    inner = " ".join(_shlex.quote(a) for a in argv)
+    if waypipe_attach():
+        info(f"Running {spec.name} in {container} until it exits (logs in container: {log_path})")
+        launch_attached(container, cfg.container_user.uid, env, inner, log_path, cwd=cwd)
+        return
     info(f"Launching {spec.name} in {container} (background, logs in container: {log_path})")
-    launch_detached(
-        container,
-        cfg.container_user.uid,
-        env,
-        " ".join(_shlex.quote(a) for a in argv),
-        log_path,
-        cwd=cwd,
-    )
+    launch_detached(container, cfg.container_user.uid, env, inner, log_path, cwd=cwd)
 
 
 def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:

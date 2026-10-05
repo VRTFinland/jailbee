@@ -431,3 +431,73 @@ def test_launch_autostart_apps_stops_after_the_first_display_error(tmp_path, moc
     messages = [c.args[0] for c in error_mock.call_args_list]
     assert messages[0] == "no client"
     assert sum("Skipping the remaining autostart apps" in m for m in messages) == 1
+
+
+def _waypipe_env(monkeypatch, *, attach: bool) -> None:
+    from jailbee.remote_ssh.session import WaypipeSession, child_environment
+
+    env = child_environment(
+        {}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"), waypipe_attach=attach
+    )
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_launch_env_in_a_waypipe_session_starts_the_containers_server(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+    from jailbee.remote_ssh.session import WaypipeSession
+
+    cfg = make_cfg(tmp_path)
+    _waypipe_env(monkeypatch, attach=False)
+    start = mocker.patch(
+        "jailbee.remote_ssh.waypipe.start_container_server",
+        return_value="/run/jailbee-display/wp-0a1b2c3d-c",
+    )
+    shared = mocker.patch("jailbee.remote_display.prepare_shared_display")
+
+    env = launch_env(cfg, MagicMock(), "c")
+
+    assert env["WAYLAND_DISPLAY"] == "/run/jailbee-display/wp-0a1b2c3d-c"
+    assert start.call_args.args[1:3] == (WaypipeSession("0a1b2c3d", "lz4"), "c")
+    assert start.call_args.kwargs == {"uid": cfg.container_user.uid, "gid": cfg.container_user.gid}
+    shared.assert_not_called()
+
+
+def test_the_sessions_own_gui_command_runs_attached(tmp_path, mocker, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+
+    _waypipe_env(monkeypatch, attach=True)
+    mocker.patch.object(apps, "launch_env", return_value={})
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    attached = mocker.patch("jailbee.gui.launch_attached", return_value=0)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+
+    attached.assert_called_once()
+    detached.assert_not_called()
+
+
+def test_a_waypipe_session_without_attach_still_launches_detached(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+
+    _waypipe_env(monkeypatch, attach=False)
+    mocker.patch.object(apps, "launch_env", return_value={})
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    attached = mocker.patch("jailbee.gui.launch_attached", return_value=0)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+
+    detached.assert_called_once()
+    attached.assert_not_called()

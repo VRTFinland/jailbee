@@ -40,7 +40,7 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
         command = [BROWSER_BINARIES[(name, browser.source)]]
         env: dict[str, str] = {}
         if name == "chrome":
-            if host_is_wayland() or display_target() == "shared":
+            if host_is_wayland() or display_target() != "host":
                 # Chrome defaults to X11 even with WAYLAND_DISPLAY set; the
                 # Ozone backend has to be named explicitly. The shared RDP
                 # compositor is Wayland whatever the host runs.

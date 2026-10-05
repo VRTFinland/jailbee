@@ -16,7 +16,7 @@ from typing import Literal
 
 from jailbee.config import CONTAINER_USERNAME, Config
 
-DisplayTarget = Literal["host", "shared"]
+DisplayTarget = Literal["host", "shared", "waypipe"]
 
 SHARED_DISPLAY_DIR = "/run/jailbee-display"
 """Where the shared display's directory is mounted in every container."""
@@ -31,22 +31,28 @@ def display_state_dir() -> Path:
 
 
 def display_target(environ: Mapping[str, str] | None = None) -> DisplayTarget:
-    """Where this process's GUI apps should draw: the host, or the shared RDP display.
+    """Where this process's GUI apps should draw: the host, the shared RDP display, or waypipe.
 
-    ``shared`` only for an SSH session whose server has `remote.ssh.gui` on
-    (see `remote_ssh.session.child_environment`); everything else, every local
+    ``waypipe`` for a `waypipe ssh` session, ``shared`` for any other SSH
+    session whose server has `remote.ssh.gui` on (see
+    `remote_ssh.session.child_environment`); everything else, every local
     command included, keeps drawing on the host exactly as before.
     """
-    from jailbee.remote_ssh.session import is_shared_display_session
+    from jailbee.remote_ssh.session import is_shared_display_session, waypipe_session
 
+    if waypipe_session(environ) is not None:
+        return "waypipe"
     return "shared" if is_shared_display_session(environ) else "host"
 
 
-def gui_env(cfg: Config, target: DisplayTarget = "host") -> dict[str, str]:
+def gui_env(
+    cfg: Config, target: DisplayTarget = "host", *, wayland_display: str | None = None
+) -> dict[str, str]:
     """Environment vars for GUI apps inside the container.
 
-    ``target`` picks the display: the host's (default) or the shared RDP one,
-    which offers Wayland only.
+    ``target`` picks the display: the host's (default), the shared RDP one, or
+    a waypipe server's; the last two offer Wayland only. ``wayland_display`` is
+    the waypipe server's socket and is required for ``"waypipe"``.
 
     HOME, USER and LOGNAME must all be set explicitly: ``incus exec
     --user <uid>`` runs the process directly rather than through
@@ -64,6 +70,12 @@ def gui_env(cfg: Config, target: DisplayTarget = "host") -> dict[str, str]:
         "LOGNAME": CONTAINER_USERNAME,
         "XDG_RUNTIME_DIR": f"/run/user/{uid}",
     }
+    if target == "waypipe":
+        if wayland_display is None:
+            raise ValueError("the waypipe target needs its server's socket")
+        # Wayland only, as on the shared display: waypipe forwards no X11 here.
+        env["WAYLAND_DISPLAY"] = wayland_display
+        return env
     if target == "shared":
         # An absolute path is a valid WAYLAND_DISPLAY. No X11: the shared
         # compositor offers Wayland only.
@@ -108,6 +120,15 @@ def host_wayland_socket() -> str:
     return os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
 
 
+def _exec_prefix(container: str, uid: int, env: dict[str, str], cwd: str | None) -> list[str]:
+    """The `incus exec` argv up to and including ``--``: user, cwd and env flags."""
+    cwd_args = ["--cwd", cwd] if cwd else []
+    env_args: list[str] = []
+    for k, v in env.items():
+        env_args += ["--env", f"{k}={v}"]
+    return ["incus", "exec", container, "--user", str(uid), *cwd_args, *env_args, "--"]
+
+
 def launch_detached(
     container: str,
     uid: int,
@@ -125,31 +146,38 @@ def launch_detached(
     The inner shell uses ``setsid`` + ``</dev/null`` so the GUI process
     detaches from the bash that launched it.
 
-    This is the one place in jailbee outside ``incus.py`` that runs the
-    ``incus`` binary directly, and it stays that way: callers hand it an
+    With `launch_attached`, this is the one place in jailbee outside
+    ``incus.py`` that runs the ``incus`` binary directly, and it stays that way: callers hand it an
     environment and a command line, never their own subprocess.
     """
-    cwd_args = ["--cwd", cwd] if cwd else []
-    env_args: list[str] = []
-    for k, v in env.items():
-        env_args += ["--env", f"{k}={v}"]
     shell = f"setsid bash -c {shlex.quote(inner_cmd)} </dev/null >{shlex.quote(log_path)} 2>&1 &"
     subprocess.Popen(
-        [
-            "incus",
-            "exec",
-            container,
-            "--user",
-            str(uid),
-            *cwd_args,
-            *env_args,
-            "--",
-            "bash",
-            "-c",
-            shell,
-        ],
+        [*_exec_prefix(container, uid, env, cwd), "bash", "-c", shell],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+
+
+def launch_attached(
+    container: str,
+    uid: int,
+    env: dict[str, str],
+    inner_cmd: str,
+    log_path: str,
+    *,
+    cwd: str | None = None,
+) -> int:
+    """Run a GUI app through `incus exec` and wait for it; return its status.
+
+    For a `waypipe ssh` session whose own command is the launch: the session,
+    and with it the forward the app draws through, lasts as long as the app.
+    Output still goes to ``log_path`` in the container, as when detached.
+    """
+    shell = f"{inner_cmd} </dev/null >{shlex.quote(log_path)} 2>&1"
+    return subprocess.run(
+        [*_exec_prefix(container, uid, env, cwd), "bash", "-c", shell],
+        stdin=subprocess.DEVNULL,
+        check=False,
+    ).returncode

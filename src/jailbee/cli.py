@@ -2825,9 +2825,10 @@ def _post_create_gui_launches(cfg: "Config", incus: "IncusType", container: str)
 
     if not any(s.autostart for s in resolve_apps(cfg)):
         return
-    # A GUI-enabled SSH session draws on the shared RDP display, so the host's
-    # own WAYLAND_DISPLAY/DISPLAY (the SSH service's environment) is irrelevant.
-    if display_target() != "shared" and not has_graphical_session():
+    # A GUI-enabled SSH session draws on the shared RDP display or through
+    # waypipe, so the host's own WAYLAND_DISPLAY/DISPLAY (the SSH service's
+    # environment) is irrelevant.
+    if display_target() == "host" and not has_graphical_session():
         maybe_warn_no_gui()
         return
     launch_autostart_apps(cfg, incus, container)

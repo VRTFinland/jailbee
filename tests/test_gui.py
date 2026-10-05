@@ -113,3 +113,50 @@ def test_gui_module_no_longer_exports_the_old_launchers():
 
     assert not hasattr(gui, "open_chrome")
     assert not hasattr(gui, "open_ide")
+
+
+def test_a_waypipe_session_targets_waypipe_before_the_shared_display():
+    from jailbee.gui import display_target
+    from jailbee.remote_ssh.session import WaypipeSession, child_environment
+
+    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+
+    assert display_target(env) == "waypipe"
+    assert display_target(child_environment({}, gui_port=2222)) == "shared"
+    assert display_target({}) == "host"
+
+
+def test_the_waypipe_env_points_at_the_given_socket_and_offers_no_x11(tmp_path):
+    from tests.conftest import make_cfg
+
+    env = gui_env(
+        make_cfg(tmp_path), "waypipe", wayland_display="/run/jailbee-display/wp-0a1b2c3d-c"
+    )
+
+    assert env["WAYLAND_DISPLAY"] == "/run/jailbee-display/wp-0a1b2c3d-c"
+    assert "DISPLAY" not in env
+
+
+def test_the_waypipe_env_needs_its_socket(tmp_path):
+    import pytest
+
+    from tests.conftest import make_cfg
+
+    with pytest.raises(ValueError):
+        gui_env(make_cfg(tmp_path), "waypipe")
+
+
+def test_launch_attached_runs_in_the_foreground_and_returns_the_status(mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee import gui
+
+    run = mocker.patch.object(gui.subprocess, "run", return_value=MagicMock(returncode=3))
+
+    assert gui.launch_attached("c", 1000, {"A": "1"}, "chrome", "/tmp/l.log") == 3
+
+    argv = run.call_args.args[0]
+    assert argv[:3] == ["incus", "exec", "c"]
+    shell = argv[-1]
+    assert "setsid" not in shell and not shell.rstrip().endswith("&")
+    assert run.call_args.kwargs["stdin"] is gui.subprocess.DEVNULL
