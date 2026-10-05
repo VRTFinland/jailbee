@@ -142,7 +142,8 @@ def outbox_browse_argv(name: str) -> list[str]:
 
 
 def outbox_show_argv(name: str, proposal: str) -> list[str]:
-    return ["outbox", "show", name, proposal]
+    """Shown through a pager, so `--color` keeps the bodies rendered across the pipe."""
+    return ["outbox", "show", name, proposal, "--color"]
 
 
 def outbox_apply_argv(name: str, proposal: str, revision: str) -> list[str]:

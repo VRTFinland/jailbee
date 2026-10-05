@@ -81,7 +81,7 @@ def test_plain_full_text_and_zero_based_children(env):
 def test_long_html_like_body_is_literal_and_not_truncated(env, qtbot):
     dialog, view, read, *_ = env
     text = "<b>literal & [red]</b>\n" + "full text\n" * 6000
-    action = replace(view.proposals[0].actions[0], text=text)
+    action = replace(view.proposals[0].actions[0], title=None, body=text)
     proposal = replace(view.proposals[0], actions=(action,))
     read.return_value = replace(view, proposals=(proposal,))
     dialog.refresh()

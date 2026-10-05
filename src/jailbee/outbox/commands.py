@@ -13,7 +13,7 @@ from jailbee.lifecycle import list_containers
 from jailbee.outbox.delete import DeletePlan, DeleteSelection, plan_delete
 from jailbee.outbox.inspect import detail_json, overview_json, safe_text
 from jailbee.outbox.io import READ_TIMEOUT
-from jailbee.outbox.markdown_view import print_lines
+from jailbee.outbox.markdown_view import print_lines, render_markdown, render_width
 from jailbee.outbox.models import (
     ContainerView,
     OutboxChanged,
@@ -291,27 +291,43 @@ def show_selected(
     *,
     output: str,
     journal_store: JournalStore,
+    color: bool | None = None,
 ) -> int:
+    """Print one proposal; its Markdown bodies are laid out unless `render_width` says verbatim.
+
+    The raw manifest that closes the table is always verbatim: it is the exact
+    input, the thing to compare the rendered bodies against.
+    """
     _, container, view = _selected(cfg, incus, name, proposal, journal_store=journal_store)
     if output == "json":
         print_lines((json.dumps(detail_json(container, view), ensure_ascii=True),))
-    else:
-        print_lines((f"{container.name}: {proposal} ({view.state})", f"Revision: {view.revision}"))
-        if view.error:
-            print_lines((view.error,))
-        if view.edit_block:
-            print_lines((view.edit_block,))
-        for action in view.actions:
-            print_lines(
-                (
-                    f"Action {action.index}: {action.kind} {action.repo} "
-                    f"{action.target} [{action.state}]",
-                    action.text,
-                )
-            )
-            if action.receipt:
-                print_lines((f"Receipt: {action.receipt}",))
-            for comment in action.comments:
-                print_lines((f"Comment {comment.index}: {comment.label}", comment.text))
-        print_lines(("Raw manifest:", view.raw_text))
+        return 0
+    width = render_width(color)
+
+    def body(text: str | None, markdown: bool) -> list[str]:
+        if not text:
+            return []
+        if markdown and width is not None:
+            return render_markdown(text, width=width)
+        return text.split("\n")
+
+    lines = [f"{container.name}: {proposal} ({view.state})", f"Revision: {view.revision}"]
+    if view.error:
+        lines.append(view.error)
+    if view.edit_block:
+        lines.append(view.edit_block)
+    for action in view.actions:
+        lines.append(
+            f"Action {action.index}: {action.kind} {action.repo} {action.target} [{action.state}]"
+        )
+        if action.title is not None:
+            lines.append(f"Title: {action.title}")
+        lines.extend(body(action.body, action.markdown))
+        if action.receipt:
+            lines.append(f"Receipt: {action.receipt}")
+        for comment in action.comments:
+            lines.append(f"Comment {comment.index}: {comment.label}")
+            lines.extend(body(comment.text, True))
+    lines.extend(("Raw manifest:", view.raw_text))
+    print_lines(lines, color=bool(color))
     return 0

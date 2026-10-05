@@ -1328,7 +1328,7 @@ management](../../../git-bridge.md#unified-proposal-management).
 |---|---|
 | `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER]` | Interactive browser on a TTY, an overview off one. `browse` is the unambiguous spelling for a container named like a subcommand. The Qt dashboard has a native window for it. |
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
-| `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json]` | The complete proposal, with zero-based action and inline-comment indices. |
+| `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json] [--color\|--no-color]` | The complete proposal, with zero-based action and inline-comment indices. Markdown bodies are rendered on a terminal, verbatim in a pipe unless `--color`. |
 | `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
 | `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and invalid for issues. |
 

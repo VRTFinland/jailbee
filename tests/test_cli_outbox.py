@@ -4,6 +4,7 @@ import json
 
 import pytest
 import typer
+from rich.text import Text
 from typer.testing import CliRunner
 
 from jailbee.cli import app
@@ -959,3 +960,55 @@ def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
     assert result.exit_code == 0, result.output
     assert select.call_count == 1
     env[4].assert_called_once()
+
+
+def _description_store():
+    manifest = {
+        "version": 1,
+        "repo": ".",
+        "pr": 42,
+        "head_sha": "a" * 40,
+        "actions": [
+            {
+                "type": "description",
+                "title": "**Not** bold",
+                "body": "## Summary\n\n- **first** item\n- second item\n",
+            }
+        ],
+    }
+    return store("pr", {"001.json": json.dumps(manifest)})
+
+
+def test_show_pipe_keeps_markdown_bodies_verbatim(env):
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json"])
+    assert result.exit_code == 0, result.output
+    assert "## Summary" in result.stdout and "- **first** item" in result.stdout
+    assert "\x1b[" not in result.stdout
+
+
+def test_show_color_renders_markdown_bodies_into_a_pipe(env, mocker, monkeypatch):
+    # The dashboard's pager reads a pipe; the width comes from stderr's terminal.
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    mocker.patch("jailbee.outbox.markdown_view.os.get_terminal_size").return_value.columns = 60
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json", "--color"])
+    assert result.exit_code == 0, result.output
+    shown, raw = result.stdout.split("Raw manifest:")
+    assert "\x1b[" in shown
+    plain = Text.from_ansi(shown).plain
+    assert "## Summary" not in plain and "**first**" not in plain
+    assert "Summary" in plain and "first item" in plain
+    # A title is published as plain text, so it is shown as one.
+    assert "Title: **Not** bold" in plain
+    # The raw manifest stays the exact input to compare the rendering against.
+    assert "\x1b[" not in raw and "**first** item" in raw
+
+
+def test_show_no_color_keeps_bodies_verbatim_on_a_terminal(env, mocker):
+    mocker.patch("jailbee.outbox.markdown_view._terminal_width", return_value=60)
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json", "--no-color"])
+    assert result.exit_code == 0, result.output
+    assert "- **first** item" in result.stdout.split("Raw manifest:")[0]

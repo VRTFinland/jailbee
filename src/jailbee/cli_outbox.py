@@ -315,9 +315,24 @@ def show(
     container: ContainerArgument = None,
     proposal: ProposalArgument = None,
     output: OutputOption = Output.table,
+    color: Annotated[
+        bool | None,
+        typer.Option(
+            "--color/--no-color",
+            help=(
+                "Force rendered, coloured Markdown bodies on or off. Default: on "
+                "when stdout is a TTY. `jailbee dashboard` passes --color because "
+                "it pipes the proposal into a pager."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """Inspect a complete proposal with zero-based action and comment indices."""
+    """Inspect a complete proposal with zero-based action and comment indices.
+
+    Markdown bodies are laid out for the terminal; a pipe gets them verbatim,
+    so `| grep` matches what the agent wrote, unless `--color` is given.
+    """
     from jailbee.outbox.commands import show_selected
     from jailbee.outbox_io import JournalStore
 
@@ -326,7 +341,9 @@ def show(
         name, pid = _pick_target(
             cfg, incus, container, proposal, journal_store=store, destructive=False
         )
-        return show_selected(cfg, incus, name, pid, output=output.value, journal_store=store)
+        return show_selected(
+            cfg, incus, name, pid, output=output.value, journal_store=store, color=color
+        )
 
     _run(ctx, config, operation)
 
