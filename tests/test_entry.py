@@ -198,19 +198,27 @@ def test_prepare_reads_top_level_apps_from_the_named_repo(mocker, tmp_path):
     mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
     apps = mocker.patch("jailbee.entry._top_level_app_names", return_value={"figma"})
     assert prepare_argv(["figma", "feat", "--repo", "x"]) == [
-        "--repo", "x", "apps", "run", "figma", "feat",
+        "--repo",
+        "x",
+        "apps",
+        "run",
+        "figma",
+        "feat",
     ]
     apps.assert_called_once_with(tmp_path)
 
 
-@pytest.mark.parametrize("argv", [
-    ["lss", "--repo", "x"],
-    ["lss", "--repo"],
-    ["lss", "--repo="],
-    ["lss", "--repo", "x", "--repo", "y"],
-    ["--repo", "x", "lss", "--repo", "y"],
-    ["--repo", "x", "lss", "--repo"],
-])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["lss", "--repo", "x"],
+        ["lss", "--repo"],
+        ["lss", "--repo="],
+        ["lss", "--repo", "x", "--repo", "y"],
+        ["--repo", "x", "lss", "--repo", "y"],
+        ["--repo", "x", "lss", "--repo"],
+    ],
+)
 def test_prepare_preserves_unknown_commands(mocker, tmp_path, argv):
     from jailbee.entry import prepare_argv
 
@@ -227,12 +235,15 @@ def test_prepare_does_not_use_cwd_apps_for_an_unresolved_trailing_repo(mocker):
     assert prepare_argv(["figma", "--repo", "missing"]) == ["figma", "--repo", "missing"]
 
 
-@pytest.mark.parametrize("argv", [
-    ["--repo", "x", "ls", "--repo", "y"],
-    ["figma", "--repo", "x", "--repo", "y"],
-    ["--repo", "x", "figma", "--repo", "y"],
-    ["figma", "--repo"],
-])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--repo", "x", "ls", "--repo", "y"],
+        ["figma", "--repo", "x", "--repo", "y"],
+        ["--repo", "x", "figma", "--repo", "y"],
+        ["figma", "--repo"],
+    ],
+)
 def test_prepare_rejects_malformed_repo_for_known_commands_and_apps(mocker, tmp_path, argv):
     from jailbee.entry import prepare_argv
 
@@ -256,20 +267,36 @@ def test_prepare_uses_selected_repo_apps_not_cwd_apps(mocker, tmp_path, make_cfg
     from jailbee.entry import prepare_argv
 
     cfg = make_cfg(tmp_path)
-    selected = cfg.model_copy(update={"apps": {"figma": AppEntry(command=["figma"], top_level=True)}})
-    elsewhere = cfg.model_copy(update={"apps": {"other": AppEntry(command=["other"], top_level=True)}})
+    selected = cfg.model_copy(
+        update={"apps": {"figma": AppEntry(command=["figma"], top_level=True)}}
+    )
+    elsewhere = cfg.model_copy(
+        update={"apps": {"other": AppEntry(command=["other"], top_level=True)}}
+    )
     mocker.patch("jailbee.repo_option.resolve_repo_root", return_value=tmp_path)
-    mocker.patch("jailbee.config.load_repo_config", side_effect=lambda root: selected if root == tmp_path else elsewhere)
+    mocker.patch(
+        "jailbee.config.load_repo_config",
+        side_effect=lambda root: selected if root == tmp_path else elsewhere,
+    )
     assert prepare_argv(["figma", "--repo=x"]) == ["--repo", "x", "apps", "run", "figma"]
     assert prepare_argv(["other", "--repo=x"]) == ["other", "--repo=x"]
 
 
-@pytest.mark.parametrize("argv, expected", [
-    (["figma", "--", "--repo", "x"], ["apps", "run", "figma", "--", "--repo", "x"]),
-    (["--repo=x", "lss", "--repo=y"], ["--repo", "x", "lss", "--repo=y"]),
-    (["figma", "--container", "c1", "--repo=x"], ["--repo", "x", "apps", "run", "figma", "--container", "c1"]),
-    (["net", "egress", "add", "example.com", "--repo"], ["net", "egress", "add", "example.com", "--repo"]),
-])
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["figma", "--", "--repo", "x"], ["apps", "run", "figma", "--", "--repo", "x"]),
+        (["--repo=x", "lss", "--repo=y"], ["--repo", "x", "lss", "--repo=y"]),
+        (
+            ["figma", "--container", "c1", "--repo=x"],
+            ["--repo", "x", "apps", "run", "figma", "--container", "c1"],
+        ),
+        (
+            ["net", "egress", "add", "example.com", "--repo"],
+            ["net", "egress", "add", "example.com", "--repo"],
+        ),
+    ],
+)
 def test_prepare_preserves_literal_payloads_and_leaf_options(mocker, tmp_path, argv, expected):
     from jailbee.entry import prepare_argv
 

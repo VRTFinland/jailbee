@@ -102,7 +102,9 @@ def prepare_argv(argv: list[str]) -> list[str]:
             if token != "--repo" and not token.startswith("--repo="):
                 continue
             try:
-                candidate, _ = repo_option.lift_repo(["apps", "run", *rest[i : i + (2 if token == "--repo" else 1)]])
+                candidate, _ = repo_option.lift_repo(
+                    ["apps", "run", *rest[i : i + (2 if token == "--repo" else 1)]]
+                )
             except repo_option.RepoOptionError:
                 continue
             if candidate is not None:
