@@ -165,7 +165,7 @@ The SSH protocol surface is also fail-closed:
 - client environment requests, including `SendEnv`, are accepted by the
   protocol but ignored: the client's environment never reaches the child
   process, which is built from the service's own environment;
-- the interactive `shell` entry point is a restricted JailBee console, not a
+- the interactive `console` entry point is a restricted JailBee console, not a
   POSIX shell, and implements no pipes, redirection, expansion or executable
   lookup;
 - one-shot commands are parsed into an argv without invoking a shell, and

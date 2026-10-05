@@ -329,7 +329,7 @@ In the dashboard, verify only registered repos appear. Press `n` on this repo,
 enter a branch and base, and confirm that the normal `jailbee new` questions
 are interactive; decline once before accepting.
 
-For the console, first connect with a bare `shell` (no `--repo`): with more
+For the console, first connect with a bare `console` (no `--repo`): with more
 than one repo registered, an arrow-key menu appears; move with the arrow keys
 and press Enter to pick `$JB_SSH_PREFIX`. Reconnect and press Esc, then
 separately Ctrl-C, then separately Ctrl-D at that same menu — each must close
