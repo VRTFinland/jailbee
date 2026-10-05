@@ -51,6 +51,14 @@ class FieldSpec[T]:
     # and the footer row are appended below the data rows. JSON output
     # ignores footers — callers can aggregate the raw values themselves.
     footer: Callable[[Sequence[T]], str] | None = None
+    # Width bounds for a *dashboard* column, which is re-measured every
+    # refresh: without them a live value growing by one cell (CPU 9% → 10%)
+    # shifts every column to its right. ``dashboard_min_width`` reserves room
+    # for the value's usual range up front; ``dashboard_max_width`` caps a
+    # free-form value, which then ends in an ellipsis instead of widening the
+    # table. Both count terminal cells; one-shot tables ignore them.
+    dashboard_min_width: int = 0
+    dashboard_max_width: int | None = None
 
 
 def shows_by_default_in_dashboard[T](field: FieldSpec[T]) -> bool:
