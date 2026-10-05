@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
+from pathlib import Path
+
+CTX_KEY = "jailbee.repo"
 
 _OPTION = "--repo"
 
@@ -83,3 +87,36 @@ def lift_repo(argv: Sequence[str]) -> tuple[str | None, list[str]]:
 def with_repo_first(prefix: str | None, argv: Sequence[str]) -> list[str]:
     """Return argv with the global option first, where Click expects it."""
     return [_OPTION, prefix, *argv] if prefix is not None else list(argv)
+
+
+def resolve_repo_root(prefix: str) -> Path:
+    """Resolve a registered repo root, honouring the session's exclusions."""
+    from jailbee.remote_ssh.repo_scope import registered_repos, scope_for_session
+    from jailbee.remote_ssh.router import RouteError, resolve_repo
+
+    scope = scope_for_session()
+    try:
+        return resolve_repo(prefix, scope=scope)
+    except RouteError as exc:
+        known = ", ".join(repo.prefix for repo in registered_repos(scope=scope)) or "none"
+        raise RepoOptionError(f"{exc} (registered: {known})") from exc
+
+
+def enter_repo(prefix: str | None, *, pick: bool) -> str:
+    """Enter the registered repository named by prefix, or picked when requested."""
+    if pick:
+        if prefix is not None:
+            raise RepoOptionError("--repo and --pick-repo are exclusive")
+        from jailbee import prompting
+        from jailbee.remote_ssh.repo_scope import registered_repos, scope_for_session
+
+        choices = registered_repos(scope=scope_for_session())
+        prefix = prompting.choose_one(
+            "repository",
+            [prompting.Option(r.prefix, f"{r.prefix}\t{r.root}", r.prefix) for r in choices],
+            empty_reason="no registered repositories",
+        )
+    if prefix is None:
+        raise RepoOptionError("--repo needs a registered repository prefix")
+    os.chdir(resolve_repo_root(prefix))
+    return prefix

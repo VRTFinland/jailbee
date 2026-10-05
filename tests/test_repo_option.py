@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
+from datetime import UTC, datetime
+from pathlib import Path
 
+import pytest
+from sqlmodel import Session
+from typer.testing import CliRunner
+
+from jailbee import prompting, repo_option
+from jailbee.db.models import RegisteredRepo
 from jailbee.repo_option import RepoOptionError, lift_repo, with_repo_first
 
 
@@ -86,3 +93,132 @@ def test_no_tree_walk_without_repo_option(mocker):
 def test_with_repo_first():
     assert with_repo_first("x", ["ls"]) == ["--repo", "x", "ls"]
     assert with_repo_first(None, ["ls"]) == ["ls"]
+
+
+@pytest.fixture
+def repos(tmp_path, db_engine, monkeypatch):
+    roots = {}
+    with Session(db_engine) as db:
+        for prefix in ("alpha", "beta"):
+            root = tmp_path / prefix
+            root.mkdir()
+            roots[prefix] = root
+            db.add(
+                RegisteredRepo(
+                    container_prefix=prefix,
+                    repo_root=str(root),
+                    registered_at=datetime(2026, 10, 5, tzinfo=UTC),
+                )
+            )
+        db.commit()
+    monkeypatch.setattr("jailbee.remote_ssh.router.get_engine", lambda: db_engine)
+    monkeypatch.setattr("jailbee.remote_ssh.repo_scope.get_engine", lambda: db_engine)
+    return roots
+
+
+def test_enter_repo_changes_directory(repos, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert repo_option.enter_repo("beta", pick=False) == "beta"
+    assert Path.cwd() == repos["beta"]
+
+
+def test_unknown_prefix_names_the_registered_ones(repos):
+    with pytest.raises(RepoOptionError, match=r"unknown registered repo: nope.*alpha, beta"):
+        repo_option.enter_repo("nope", pick=False)
+
+
+def test_excluded_repo_is_unknown_inside_a_restricted_session(repos, monkeypatch):
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    monkeypatch.setattr(
+        "jailbee.remote_ssh.repo_scope.scope_for_session",
+        lambda: RemoteRepoScope(frozenset({"beta"})),
+    )
+    with pytest.raises(RepoOptionError, match=r"unknown registered repo: beta.*registered: alpha"):
+        repo_option.enter_repo("beta", pick=False)
+
+
+def test_pick_uses_choose_one_over_scoped_repos(repos, monkeypatch, mocker, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    choose = mocker.patch("jailbee.prompting.choose_one", return_value="alpha")
+    assert repo_option.enter_repo(None, pick=True) == "alpha"
+    assert [o.label for o in choose.call_args.args[1]] == ["alpha", "beta"]
+    assert Path.cwd() == repos["alpha"]
+
+
+def test_pick_filters_excluded_repos(repos, monkeypatch, tmp_path):
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "jailbee.remote_ssh.repo_scope.scope_for_session",
+        lambda: RemoteRepoScope(frozenset({"beta"})),
+    )
+    assert repo_option.enter_repo(None, pick=True) == "alpha"
+    assert Path.cwd() == repos["alpha"]
+
+
+@pytest.mark.parametrize("prefix,pick", [(None, False), ("alpha", True)])
+def test_enter_repo_rejects_missing_or_conflicting_selection(repos, prefix, pick):
+    with pytest.raises(RepoOptionError):
+        repo_option.enter_repo(prefix, pick=pick)
+
+
+def test_pick_noninteractive_missing_value(repos):
+    with pytest.raises(prompting.MissingValue):
+        repo_option.enter_repo(None, pick=True)
+
+
+def test_pick_cancelled(repos, monkeypatch):
+    monkeypatch.setattr(prompting, "is_interactive", lambda: True)
+    monkeypatch.setattr(prompting, "_select", lambda *args: None)
+    with pytest.raises(prompting.Cancelled):
+        repo_option.enter_repo(None, pick=True)
+
+
+def test_cli_trailing_repo_runs_in_that_repo(repos, monkeypatch, tmp_path):
+    from jailbee.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, with_repo_first(*lift_repo(["version", "--repo", "alpha"])))
+    assert result.exit_code == 0, result.output
+    assert Path.cwd() == repos["alpha"]
+
+
+def test_cli_unknown_repo_exits_2(repos):
+    from jailbee.cli import app
+
+    result = CliRunner().invoke(app, ["--repo", "nope", "version"])
+    assert result.exit_code == 2
+    assert "unknown registered repo: nope" in result.output
+
+
+def test_cli_repo_with_config_is_rejected(repos, tmp_path, monkeypatch):
+    from jailbee.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("container_prefix: alpha\n")
+    result = CliRunner().invoke(app, ["--repo", "alpha", "config", "show", "-c", str(cfg)])
+    assert result.exit_code == 2
+    assert "--config" in result.output and "--repo" in result.output
+
+
+def test_cli_without_repo_preserves_cwd(tmp_path, monkeypatch):
+    from jailbee.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["version"])
+    assert result.exit_code == 0, result.output
+    assert Path.cwd() == tmp_path
+
+
+def test_cli_pick_repo_is_hidden_and_enters_repo(repos, tmp_path, monkeypatch):
+    from jailbee.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(prompting, "choose_one", lambda *args, **kwargs: "beta")
+    result = CliRunner().invoke(app, ["--pick-repo", "version"])
+    assert result.exit_code == 0, result.output
+    assert Path.cwd() == repos["beta"]
+    assert "--pick-repo" not in CliRunner().invoke(app, ["--help"]).output
