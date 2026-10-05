@@ -452,8 +452,9 @@ User entries also win over JailBee's own GUI/SSH defaults
 only if you know why you want to.
 
 `WAYLAND_DISPLAY` is the exception to "profile changes need `jailbee apply`":
-unless you pin it here, JailBee re-points it at the compositor socket it
-bind-mounts on every container start, so a host whose socket is renumbered
+unless you pin it here, JailBee re-points it at the compositor socket each
+time it attaches that socket (on the first GUI launch, or every boot with
+`gui.wayland: always`), so a host whose socket is renumbered
 (`wayland-1`) needs no re-apply. That is why `incus config show <container>`
 lists the key on the instance and not only on the profile.
 
@@ -1176,14 +1177,17 @@ host compositor at all. Each such launch also replaces a socket that a
 restarted compositor (a re-login) left dead. A GUI app started some other way
 — from `jailbee shell`, an autostart step, an agent — needs `jailbee display
 attach` first, or `wayland: always`, which attaches it on every boot as
-before. A window is all the socket gives the container. The other two came in alongside it as a desktop bundle but do
+before. A window is all the socket gives the container.
+
+`dbus` and `audio` came in alongside it as a desktop bundle but do
 more than draw. The session bus is the host desktop's control channel —
 with it, anything in the container can talk to the host user's session
 services — and the pulse socket is the host's speakers and microphone. So
 both are opt-in, per repo or in `global.yaml`. GUI apps run without them;
 what they lose is desktop notifications, portals and sound. A change takes
 effect on the container's next start (every boot detaches and re-attaches
-the socket devices), no `jailbee apply` needed.
+the socket devices; with `wayland: on-demand` the Wayland socket follows at
+the next GUI launch), no `jailbee apply` needed.
 
 ### `ssh`
 

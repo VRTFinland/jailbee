@@ -65,8 +65,9 @@ sped up and say so on screen; nothing else is edited.
   Firefox (`jailbee chrome`, `jailbee firefox`), or any other app registered
   under `apps:` (`jailbee apps run <name>`), from inside a container onto
   your Wayland session.
-- **Host sockets, shared** — the Wayland display and (with `gpg.enabled`) the
-  gpg-agent are attached to every container, PulseAudio and D-Bus on request
+- **Host sockets, shared** — the gpg-agent (with `gpg.enabled`) is attached
+  to every container at boot and the Wayland display on a container's first GUI
+  launch (`gui.wayland`), PulseAudio and D-Bus on request
   (`gui.audio`, `gui.dbus`), so `git commit -S` and `ssh` work inside while
   the private key never leaves the host (a smartcard still asks for its
   touch). Mount any other host socket the same way and use it from inside.
