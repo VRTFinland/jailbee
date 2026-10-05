@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 from jailbee.config import Config, ConfigError
 from jailbee.constants import LEGACY_REMOVAL_VERSION
 from jailbee.db import get_engine
+from jailbee.egress_proxy import PROXY_CONTAINER
 from jailbee.git import detect_upstream_remote
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import Incus, IncusError
@@ -240,6 +241,44 @@ def _check_litellm(incus: Incus, gcfg: GlobalConfig) -> list[CheckResult]:
                 False,
                 f"cannot reach {', '.join(unreachable)} from the proxy (addresses may have "
                 "changed) — run 'jailbee litellm up' to re-resolve the egress allowlist",
+            )
+        )
+    return rows
+
+
+def _check_egress_proxy(cfg: Config, incus: Incus) -> list[CheckResult]:
+    """The egress proxy: needed for wildcards or always-on work containers, then it must be up."""
+    from jailbee import egress_proxy, litellm
+
+    name = "egress proxy"
+    try:
+        from sqlmodel import Session
+
+        from jailbee.db import get_engine
+
+        with Session(get_engine()) as session:
+            needed = egress_proxy.proxy_needed(cfg, incus, session)
+        if not needed:
+            return [
+                CheckResult(name, True, "not needed — no wildcard entries or always-on containers")
+            ]
+        status = egress_proxy.proxy_status(incus)
+        missing = litellm.bridges_missing_services_acl(incus)
+    except Exception as e:  # doctor reports a failed probe, never crashes on it
+        # IncusError, but also the state DB or a listing that cannot be read: a
+        # probe that failed must never read as "not needed".
+        return [CheckResult(name, False, f"error querying: {e}")]
+    if status == egress_proxy.ProxyStatus.RUNNING:
+        rows = [CheckResult(name, True, "status: running")]
+    else:
+        rows = [CheckResult(name, False, f"status: {status} — run 'jailbee apply'")]
+    if missing:
+        rows.append(
+            CheckResult(
+                "egress proxy reachability",
+                False,
+                f"the services ACL is not attached to {', '.join(missing)}, so strict "
+                "containers cannot reach the proxy — run 'jailbee apply'",
             )
         )
     return rows
@@ -1002,6 +1041,9 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
                     )
                 occupants: list[dict[str, Any]] = []
                 for container in containers:
+                    # The egress proxy's client NIC is a service, not a repo occupant.
+                    if container.get("name") == PROXY_CONTAINER:
+                        continue
                     profiles = container.get("profiles") or []
                     marked_work = generation_of(cfg, container) == "work"
                     instance_name = container.get("name")
@@ -1226,6 +1268,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
 
     if incus_available:
         results.extend(_check_litellm(incus, gcfg))
+        results.extend(_check_egress_proxy(cfg, incus))
 
     # 7b. Legacy host-Docker mirror left over from installs that predate
     # the Incus-hosted registry mirror.
@@ -1275,7 +1318,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
             CheckResult(
                 "graphical session",
                 False,
-                "no WAYLAND_DISPLAY set — GUI launches will skip",
+                "no WAYLAND_DISPLAY set — GUI launches will fail until one is available",
             )
         )
 

@@ -24,8 +24,18 @@ from __future__ import annotations
 # so users don't have to know the Anthropic service topology. Note: the
 # install now runs inside the (possibly strict-mode) container rather than
 # the unrestricted golden-build container, so claude.ai must be on the ACL.
+#
+# platform.claude.com is the OAuth token endpoint `/login` posts the pasted
+# code to (`/v1/oauth/token`), and mcp-proxy.anthropic.com carries the
+# claude.ai connectors a signed-in session loads at start. Both share
+# api.anthropic.com's anycast IP, so the IP-based ACL let them through
+# without being listed; the egress proxy matches on the hostname and refused
+# them — `/login` failed with "proxy refused the connection". Checked against
+# Claude Code 2.1.289: every hostname it builds a request URL for.
 CLAUDE_API_HOSTS: tuple[str, ...] = (
     "api.anthropic.com:443",
+    "platform.claude.com:443",
+    "mcp-proxy.anthropic.com:443",
     "code.claude.com:443",
     "claude.ai:443",
     "downloads.claude.ai:443",
@@ -37,11 +47,15 @@ CLAUDE_API_HOSTS: tuple[str, ...] = (
 # Added automatically by `Config.effective_egress_allow()` when both
 # `claude.enabled` and `claude.plugins_enabled` are true so that skills,
 # SessionStart hooks and plugin updates work in strict-mode containers.
+# release-assets.githubusercontent.com is where a GitHub release download now
+# redirects; it shares objects.githubusercontent.com's IPs, so only the egress
+# proxy, which matches on the hostname, ever needed it listed.
 CLAUDE_PLUGIN_HOSTS: tuple[str, ...] = (
     "github.com:443",
     "api.github.com:443",
     "raw.githubusercontent.com:443",
     "objects.githubusercontent.com:443",
+    "release-assets.githubusercontent.com:443",
     "codeload.github.com:443",
     "registry.npmjs.org:443",
 )

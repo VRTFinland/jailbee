@@ -83,6 +83,16 @@ def test_parse_value_rejects_a_non_number_for_an_int():
     assert parse_value(_spec(FieldKind.INT), "8") == (8, None)
 
 
+def test_parse_value_parses_floats_and_rejects_non_numbers():
+    value, error = parse_value(_spec(FieldKind.FLOAT), "3.5")
+    assert value == 3.5
+    assert error is None
+    assert parse_value(_spec(FieldKind.FLOAT), "10") == (10.0, None)
+    value, error = parse_value(_spec(FieldKind.FLOAT), "not_a_number")
+    assert value is None
+    assert "Expected a number" in error
+
+
 def test_parse_value_enforces_a_closed_choice_list():
     spec = _spec(FieldKind.CHOICE, choices=("idea", "pycharm"))
     assert parse_value(spec, "pycharm") == ("pycharm", None)

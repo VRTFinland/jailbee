@@ -10,8 +10,10 @@ Common conventions:
 
 - **`<name>`** is a container name. The **short** form (`feat-foo`) resolves to
   `<container_prefix>-feat-foo` automatically; full names from other repos also
-  work. Omitting `<name>` where a TTY exists opens an interactive picker for most
-  commands.
+  work. Omitting `<name>` where a TTY exists opens an interactive picker; without
+  a TTY (you, inside a container) it exits 2 with `missing <value>; … Candidates: …`.
+  Every omitted value behaves so — pass them all explicitly. Usage lines write
+  such values as `[NAME]`.
 - **`-c` / `--config <path>`** overrides the `.jailbee/config.yaml` location on nearly
   every command (omitted from the tables below).
 - Container names derive from branches by replacing `/` with `-`
@@ -25,7 +27,7 @@ Common conventions:
 - [Config (`config show|validate|init|edit|migrate`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
-- [Enter & run (`shell`, `tmux`, `exec`)](#enter--run)
+- [Enter & run (`shell`, `console`, `tmux`, `exec`)](#enter--run)
 - [Git bridge (`git fetch|checkout|pull|push|merge|diff|retarget`)](#git-bridge)
 - [PR publishing (`pr`)](#pr-publishing)
 - [PR review outbox (`review apply|ls|show|drop`)](#pr-review-outbox)
@@ -55,7 +57,7 @@ speculatively.
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base image and dated archive with its size, a per-repo subtotal, a prunable figure (archives only, i.e. what `jailbee base prune` would reclaim), and a grand total across images shown. `--all` includes every registered repo, not just the current one. |
 | `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, `uid delegation` (the `/etc/subuid` + `/etc/subgid` lines `raw.idmap` needs — without them containers are created but stay `STOPPED`), `network <bridge> reachability` (probes each bridge's DHCP lease, DNS and egress from a running container, to tell a host firewall's three missing openings apart; silent when no container runs on that bridge), keyring limits, registry mirror, registry cache integrity (every digest-keyed cache entry hashed against its digest — minutes on a large cache, with live progress; Ctrl+C skips just that row, which then shows SKIPPED and does not fail doctor), GitHub token perms, agent setup, port forwards, the `jailbee setup` steps (`shell completions`, `agent skills (host)`), `qt dashboard (optional)` (whether PySide6 is present for `jailbee gui` — reported, never a failure, since `jailbee setup` cannot install an extra into the environment it is running from), and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
 | `jailbee registry up [--recreate]\|down\|status\|verify [--purge]` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. `verify` checks cached blobs/manifests against their digests and removes corrupt ones on confirmation (`--purge`: without asking) — the fix when a pull fails with `unexpected commit digest`. Host-only: the container has no `jailbee`. |
-| `jailbee display up [--recreate]\|down\|status` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.gui: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. |
+| `jailbee display up [--recreate]\|down\|status\|attach [name]` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.gui: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. `attach` (host only) attaches the host's Wayland display to a running container, for GUI apps started from a shell; the GUI launchers do it themselves (see `gui.wayland` in `docs/config.md`). On a Linux laptop, `waypipe ssh` gives native windows instead (needs `remote.ssh.gui: true`; titles carry a `[<container>] ` prefix); see `docs/remote-gui.md`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
 | `jailbee version` / `jailbee --version` | Print the version. |
 
@@ -71,7 +73,7 @@ security and the `claude-jb` wrapper are described in [LiteLLM](../../../litellm
 | `jailbee litellm down [--purge]` | Delete the proxy container; keep its state volume (logins, settings) unless `--purge`. Run `jailbee apply` per repo afterward. |
 | `jailbee litellm status` | Show container, IP, version, and per account the service health and login presence; nonzero when absent or unhealthy. |
 | `jailbee litellm ls` | List profiles as `claude-jb` uses them (default profile, autostart, aliases, per tier route/model/effort/context window), globally and for each repo with a LiteLLM override. Read-only; allowed over remote SSH in the default commands mode, but refused when `remote.ssh.excluded_repos` is set (it lists every repo). |
-| `jailbee litellm login [ACCOUNT] [--provider chatgpt\|xai]` | Login for an account in `litellm.accounts` (optional when there is only one): ChatGPT by device code, xAI (experimental) in the host's browser. `--provider` is optional while the account's routes need one kind. |
+| `jailbee litellm login [ACCOUNT] [--provider chatgpt\|xai]` | Login for an account in `litellm.accounts` (`ACCOUNT` is asked for on a terminal when omitted and there is more than one; exit 2 without one — pass it): ChatGPT by device code, xAI (experimental) in the host's browser. `--provider` is optional while the account's routes need one kind. |
 | `jailbee litellm logout [ACCOUNT] [--provider chatgpt\|xai]` | Delete that account's token for the provider in the proxy's state volume (the proxy must be running). |
 | `jailbee litellm logs [ACCOUNT] [-f]` | Show the instance's last 200 journal lines; optionally follow. |
 
@@ -97,17 +99,17 @@ installation nor `jailbee setup` enables the service.
 | `jb remote ssh disable` | Stop and disable the unit. Leaves global config, client keys and host key intact. |
 | `jb remote ssh restart` | Restart an installed unit. Required after changing `remote.ssh.listen` or `.port`; active sessions close. |
 | `jb remote ssh status` | Print installed/enabled/active state, configured listener, enabled entry points, authorized-key count and each problem. Missing/disabled/inactive and no authorized keys are informational; invalid global config or an unsafe/missing host key exits nonzero. |
-| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--shell\|--no-shell] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]... [--restrict-host\|--no-restrict-host] [--files\|--no-files]` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. `--files` turns on `sftp`/`scp` into a container's repo directory for this run (see Security → File transfer); the persistent setting is `remote.ssh.files: true` in `global.yaml`, and changing it needs `jb remote ssh restart`. |
+| `jb remote ssh serve [--listen ADDR] [--port N] [--dashboard\|--no-dashboard] [--console\|--no-console] [--exec\|--no-exec] [--commands disabled\|allowlist\|full] [--allow CMD]... [--restrict-host\|--no-restrict-host] [--files\|--no-files]` | Run the same listener in the foreground for diagnostics. Stop the unit or use another port first. Prints the listening address, host key fingerprint and a connect example on startup. Every flag is a one-off override of `remote.ssh` for this run only — unset flags keep following `global.yaml`, nothing is ever written there, and the systemd unit's `ExecStart` never passes any of them. `--allow`, given at least once, REPLACES `commands.allow` rather than appending to it. The merged result is validated exactly like `global.yaml`; an invalid combination fails cleanly. `--files` turns on `sftp`/`scp` into a container's repo directory for this run (see Security → File transfer); the persistent setting is `remote.ssh.files: true` in `global.yaml`, and changing it needs `jb remote ssh restart`. |
 | `jb remote ssh key add [PATH\|-]` | Read one plain OpenSSH public key — from `PATH`, from stdin with `-`, or pasted at a prompt (no argument, terminal) / piped stdin (no argument, no terminal) — reject options/certificates/duplicates, add atomically, and print `<fingerprint>  <algorithm>  <comment>`. |
 | `jb remote ssh key ls` | Print one line per authorized key in the same stable format. Works without starting the service. |
-| `jb remote ssh key rm SHA256:FINGERPRINT` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
+| `jb remote ssh key rm [SHA256:FINGERPRINT]` | Atomically remove the exact full fingerprint. New connections see the change immediately; an existing authenticated connection remains open. |
 
 The fixed username is `jailbee`. At the default loopback listener, client
 grammar is exactly:
 
 ```text
 ssh -t -p 8022 jailbee@localhost dashboard
-ssh -t -p 8022 jailbee@localhost shell [--repo PREFIX]
+ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
@@ -116,9 +118,11 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
+The old `shell` spelling (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+
 A commandless login prints help listing only configured entry points and exits
 zero by default. `remote.ssh.default_entrypoint` in the host's `global.yaml`
-can select `dashboard` or `shell` instead (the selected entry point must be
+can select `dashboard` or `console` instead (the selected entry point must be
 enabled). Explicit `help` always prints the list. `dashboard` and the
 restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
@@ -172,11 +176,11 @@ with a warning rather than cloned into the host tree,
 (it shares the host's working tree), and a branch-autostart privilege widening is refused even with `--yes`.
 Host-management commands — `config edit`/`init`/`migrate`, `remote ...`, `setup`,
 `init`, `apply`, `base build`/`prune`, `net install`/`migrate`/`refresh`/`unregister`,
-`net egress add`/`rm`, `registry up`/`down`, `display up`/`down`,
+`net loose`, `net egress add`, `registry up`/`down`, `display up`/`down`/`attach`,
 `litellm up`/`down`/`login`/`logout`/`logs`, writing `account` commands,
 `mount`, `port to-container`, `gui`/`ide`/browsers/`apps run` — are refused
 in every mode, `full` and allowlists included (except that `ide`, the browsers and `apps run`
-are permitted when `remote.ssh.gui` is on, and draw on the shared display); the startup log names any
+are permitted when `remote.ssh.gui` is on, and draw on the shared display; `net loose`, `new --net loose` and container-scope `net egress add` are permitted when `remote.ssh.network` is on); the startup log names any
 allowlisted one. Publishing (`pr`, `submodule pr`, `review apply`, `issue
 apply`, `outbox apply`) stays allowed but refuses `--yes`, and `pr --web`/`--open` are
 refused as host browsers. `remote.ssh.restrict_host: false` (or `serve
@@ -309,6 +313,8 @@ Reachable from both dashboards: `e` (repo) and `E` (global) in
 
 ### `jailbee new [NAME] [BASE]`
 
+`NAME` left out (without `--current`/`--pr`) is asked for on a terminal; without one it exits 2 — always pass it.
+
 `BASE` names the container's **base branch** (`user.jailbee.base_branch`):
 `jailbee git pull` merges into it, and status resolves the corresponding live
 host target. `refs/jailbee/base/<base>` remains a transport anchor, not the
@@ -418,7 +424,7 @@ carries the identical exposure; cancel the run before retrying. Neither
 guard fires for a run that is already blocking the foreground (nothing can
 race a stage the CLI itself is waiting on).
 
-### `jailbee autostart status|cancel <name>`
+### `jailbee autostart status|cancel [NAME]`
 
 Inspect and stop a container's **detached** autostart run — the part of
 `on_create`/`on_start` that kept going in a background supervisor after a
@@ -427,8 +433,8 @@ Inspect and stop a container's **detached** autostart run — the part of
 
 | Command | Notes |
 |---|---|
-| `jailbee autostart status <name>` | One row per step, grouped by stage, in the order the run reached them. A step recorded as started but never finished renders `running` while the worker is alive and `interrupted` once it's dead (it was cut off and will never report a result). Notes below the table point at `jailbee job clear` once the worker is gone. |
-| `jailbee autostart cancel <name>` | SIGTERM to the supervisor, which unwinds the stage it's on: best-effort interrupt of the step in flight (does not wait for it to die), the stage's optional mounts come off, its network mode is restored (compare-and-swap — a mode you set by hand meanwhile stands), and `user.jailbee.autostart_in_progress` is cleared. The job row survives, marked failed with the cancellation as its reason, until `jailbee job clear` drops it. Refuses when the worker is already gone, naming `jailbee job clear` instead. |
+| `jailbee autostart status [NAME]` | One row per step, grouped by stage, in the order the run reached them. A step recorded as started but never finished renders `running` while the worker is alive and `interrupted` once it's dead (it was cut off and will never report a result). Notes below the table point at `jailbee job clear` once the worker is gone. |
+| `jailbee autostart cancel [NAME]` | SIGTERM to the supervisor, which unwinds the stage it's on: best-effort interrupt of the step in flight (does not wait for it to die), the stage's optional mounts come off, its network mode is restored (compare-and-swap — a mode you set by hand meanwhile stands), and `user.jailbee.autostart_in_progress` is cleared. The job row survives, marked failed with the cancellation as its reason, until `jailbee job clear` drops it. Refuses when the worker is already gone, naming `jailbee job clear` instead. |
 
 `jailbee ls`'s **JOB** column renders a live detached run as
 `autostart:<stage>`. Once the supervisor has died the `autostart:` prefix
@@ -443,7 +449,7 @@ you just chose.
 
 | Flag | Effect |
 |---|---|
-| (no args) | Interactive checkbox of this repo's containers (TTY required). |
+| (no args) | Interactive checkbox of this repo's containers. Off a terminal: exit 2, `missing container; … Candidates: …` — name the container. |
 | `--all` | Destroy every container in this repo (one confirmation, or none with `--force`). Mutually exclusive with a `NAME`. |
 | `--force` | Skip confirmation. |
 | `--background` / `-b` | Detached destroy; track via `jailbee ls`. Overrides `destroy.background`. `--no-background` forces foreground. |
@@ -554,10 +560,11 @@ so they cost no command inside the container.
 
 **AGENT** says whether an agent session inside the container needs you:
 `claude: waiting 4m` (it is waiting for input, and has been for four
-minutes), `claude: busy 12s`, `claude: idle 2h`; `·2` counts several
+minutes), `claude: busy 12s`, `claude: shell 20m` (idle, but a background
+shell job it started is still running), `claude: idle 2h`; `·2` counts several
 sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
-(waiting), `● 12s` (busy), `○ 2h` (idle). It names no agent and counts no
+(waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and counts no
 sessions; several agents in one state share one mark. A long idle time says
 how cold the agent's prompt cache is. These columns read the session files and trust a file only
 while a process of *that* container still matches it, so a crashed session
@@ -636,11 +643,13 @@ are cursor stops, not skipped), `Enter` action menu (on a repo header, a repo
 menu with New container, New from PR, Credential group, `Network → Egress…`, Apply config, `Diagnostics →` (doctor, disk usage), Prune stale containers and Fold/Unfold (orphan repos
 only offer Fold/Unfold; on a container, its action menu),
 `Space` fold/unfold the selected repo (in the settings overlay: toggle the
-selected setting), `F2`/`S` settings overlay (columns + folding), `r`
+selected setting), `v` show/hide the details panel (the highlighted row's full
+details under the table; the action menu opens to its right; persisted),
+`F2`/`S` settings overlay (columns + folding), `r`
 force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
-dashboard stays visible and keeps refreshing behind it; `↑/↓` then move the
-menu cursor, `Enter` runs the entry, `Esc`/`q` closes it (`Ctrl-C` quits from
+dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible; `↑/↓` then move the
+menu cursor, `Enter` runs the entry — or press the key shown in brackets beside it (`[g] Git →`, then `[u]` inside; keys are per menu level) — `Esc`/`q` closes it (`Ctrl-C` quits from
 the plain view, menus and panels; at an inline prompt or picker it cancels just
 that question).
 
@@ -652,8 +661,9 @@ override; config entries and inherited repo entries in a container panel are
 not removable. Repo-level removal removes all stored copies of an entry, so a
 duplicate local/legacy entry is not presented as a single-source deletion.
 Changes run through the CLI from the selected repo, preserving DNS validation,
-ACL updates and repo `jailbee apply` advice. Over SSH, the read panel requires
-`net egress ls`; add/remove require their own permitted command leaves, and
+ACL updates and repo `jailbee apply` advice. A change that works closes the
+panel and the menu behind it; a failed one keeps the panel open for a retry.
+Over SSH, the read panel requires `net egress ls`; add/remove require their own permitted command leaves, and
 `restrict_host: true` keeps them unavailable even under a full command policy.
 
 `A` (or `Accounts…` in the repo menu) opens the credential-group overlay — every credential group and stored
@@ -665,20 +675,26 @@ group. The repo and container menus carry `Credential group…` to change which
 group a repo (`account group set`/`unset`) or a single container (`account
 group use`/`reset`) follows. Changes run the real `jailbee account …` commands
 in the selected row's repo; a refusal (for example a running agent) is shown
-as a notice — use `!` with `--force` to override. `Esc` backs out of each
-question to the overlay, and closes the overlay itself.
+as a notice — use `!` with `--force` to override, while a change that works
+closes the overlay. `Esc` backs out of each question to the overlay, and
+closes the overlay itself.
 
 The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mount…`/`Unmount…` for the repo's `optional_mounts` (only kinds not attached / attached), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
 
-The menu, in order: pending outbox applies first (`review apply` "Apply N PR
-action(s)", `issue apply` "Apply N issue action(s)"), then tmux/shell, then
-`Launch →` with one "Launch `<name>`" entry per app the repo's GUI registry
-declares (browsers, the JetBrains IDE, and any `apps:` entries, in that order —
-empty repos get none), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
-`git pull`, `git push`, `git push --pr`, `git diff`), then `PR →`
-(`pr --open`, `pr`), then `Snapshots…`, `Mount…`, `Unmount…`, then `Credential group…`, then `Network →` with available
-mode switches and `Egress…`, then restart/stop/destroy for Running (a Stopped
-container leads with start and ends with destroy). Each entry appears only
+The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
+`<name>`" entry per app the repo's GUI registry declares (browsers, the
+JetBrains IDE, and any `apps:` entries, in that order — empty repos get none),
+then `Outbox` (on a running container, left out while both its PR and
+issue outbox are empty — it moves to the very top as "Outbox (N pending)" while the PR or issue outbox
+holds staged manifests; it lists the proposals in a picker, each with Show,
+Publish… and Delete…, plus `Browse actions & comments…` for the full
+`outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
+`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` (`pr --open`,
+`pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
+switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,
+`Credential group…`. A Stopped container leads with start, and its lone
+destroy stays a plain entry after `PR →`. Open shell is not listed — `s` or
+`!shell` opens it. Each entry appears only
 when it would do something:
 
 - `job clear`/`job log` need a background-job row (`job log` follows a live
@@ -692,8 +708,8 @@ when it would do something:
   PR column. On an authored PR the head is downstream of the container, so the
   refresh could only be a no-op;
 - `git pull` also needs commits ahead of the base, and `git diff` something to
-  show. A git status that is merely *unknown* — under `--no-git`, or before the
-  first git-tier refresh — hides nothing: a missing column is not evidence of a
+  show. A git status that is merely *unknown* — while the
+  service has not yet run its first git probe, or with `dashboard.refresh.git: false` — hides nothing: a missing column is not evidence of a
   clean tree.
 
 A builtin's "Launch `<name>`" entry (a browser or the IDE) dispatches a bare
@@ -747,19 +763,25 @@ Output is not lost when an action prints something. `git diff` opens in
 Enter, because the dashboard repaints over the screen the moment it returns.
 Prompts those commands would normally ask (`git push`'s merge/rebase picker,
 `pr`'s branch-name confirmation) work exactly as on the command line — the TUI
-hands over the real terminal. Two-tier
-refresh: base state ~3s, git columns ~10s — tune with `-i` / `--git-interval`, or
-`--no-git` to drop git columns. Requires a TTY. Orphan containers (jailbee-managed but
+hands over the real terminal. Every dashboard shows
+what one shared background service (`jailbee _state-service`, started on demand,
+exits 30 s after the last dashboard closes) gathers; the pace comes from
+`dashboard.refresh` (`interval` 3s, `git_interval` 10s, `git`) in the *global*
+config, and the service log is `~/.local/state/jailbee/state-service.log`.
+`-i`/`--interval`, `--git-interval` and `--no-git` are deprecated: warned about
+and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
+make the service gather. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`
-keeps it bound to the terminal). Same `-i` / `--git-interval` / `--no-git` knobs.
+keeps it bound to the terminal). Same deprecated, ignored refresh flags; its
+Refresh menu has only "Refresh now".
 It offers the same menu entries under the same rules, but runs them as a GUI
 rather than in a terminal: only `shell`/`tmux` open a host terminal emulator,
 while `pr`, `git push`, `git pull`, `git diff` and `job log` stream their output
 into a JailBee window with Stop and Copy buttons and the exit code on its status
-line (non-modal, so the dashboard keeps refreshing behind it). Stop is what ends
+line (non-modal, so the dashboard keeps updating behind it). Stop is what ends
 a `job log --follow`.
 
 Creating a container joins `shell`/`tmux` as a terminal-window action, for the
@@ -788,18 +810,15 @@ enabled, independently of the TUI's own set (see `jailbee dashboard` above)
 — at least one must stay checked. Each repo's card group has a header that
 can be clicked to collapse/expand it. It persists, between sessions, in the
 SQLite state DB: the chosen layout, card style, collapsed repo groups, the
-enabled columns, the table's column widths/order, and the refresh cadence /
-paused state — but never the window size or position. `-i`/`--interval`
-precedence at startup: explicit flag > persisted value > 3s default.
-`--git-interval` is not persisted. Fresh installs default to the Cards
-layout.
+enabled columns, the table's column widths/order — but never the window size or position.
+Fresh installs default to the Cards layout.
 
 ### `jailbee job`
 
 | Command | Notes |
 |---|---|
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |
-| `jailbee job log <name> [--follow]` | Print (or follow) the worker log of a background job — including a detached autostart supervisor's; there is no separate `jailbee autostart log` |
+| `jailbee job log [NAME] [--follow]` | Print (or follow) the worker log of a background job — including a detached autostart supervisor's; there is no separate `jailbee autostart log` |
 | `jailbee job clear [<name>] [--all]` | Acknowledge a dead background job — clears the `failed`/stale record without touching the container. Refuses a job whose worker is still alive. Leftover *boot* records need no acknowledging: a `jailbee start`/`jailbee restart` that completes clears its own |
 
 A `failed` job is a database record, not a container state: the container
@@ -821,8 +840,9 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | Command | Notes |
 |---|---|
 | `jailbee shell [NAME]` | Interactive shell, lands in `~/<container_prefix>` (the clone); falls back to `$HOME` if there's no clone. Waits if the container is being created in the background. |
+| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `repos` lists the registered repos, `use [PREFIX]` switches repo, `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
-| `jailbee exec NAME CMD...` | Run a command as the dev user. `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
+| `jailbee exec [NAME] -- CMD...` | Run a command as the dev user. `NAME` comes first, so the command must follow it (`jailbee exec NAME -- cmd`); both are asked for on a terminal and are required arguments for you (exit 2 otherwise). `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 
 **Attaching over a failed background job.** `shell`, `tmux`, `ide` and
 `chrome` all wait on an in-flight `jailbee new --background`. When that job
@@ -1000,7 +1020,7 @@ than using a pinned anchor or another branch.
 Colour follows stdout; `--color`/`--no-color` forces it either way, which is how
 `jailbee dashboard` keeps the diff coloured while piping it into a pager.
 
-### `jailbee git retarget NAME NEWBASE [--merge]`
+### `jailbee git retarget [NAME] [NEWBASE] [--merge]`
 
 Re-point a container at a new base branch (also top-level `jailbee retarget`). Rewrites
 `user.jailbee.base_branch`, so `jailbee git pull` and status' live host-target
@@ -1119,7 +1139,7 @@ manifests in `~/.jailbee/pr-outbox/` instead (the manifest schema is
 normative in the **jailbee-pr-review** skill, not here). These commands read
 and publish what it wrote.
 
-### `jailbee review apply [NAME] [-y] [--dry-run] [--force]`
+### `jailbee review apply [NAME] [-y] [--dry-run] [--force] [--foreign]`
 
 Show the plan for every pending manifest (comments, replies, and
 descriptions alike), ask once, then publish. No `NAME` + a TTY picks the one
@@ -1134,8 +1154,10 @@ manifest fully applied is deleted (with any `body_file` no other pending
 manifest still references) and gets a line in
 `~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
 nothing left to publish for it — nothing double-posts. A manifest naming a
-PR the container does not own, a repo mismatch, or a malformed field is a
-refusal (exit non-zero). A `pr: null` manifest resolves to the container's
+PR of the same repo that the container does not own is published only after
+a warning at the top of its plan; with `-y` (nobody reads that warning) it is
+a refusal unless `--foreign` is also given. A repo mismatch or a malformed
+field is always a refusal (exit non-zero). A `pr: null` manifest resolves to the container's
 own PR when exactly one is bound to it (opened by `jailbee pr`, or adopted
 with `jailbee pr --pr N`); with none bound — or with both a PR and a stacked
 PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
@@ -1143,7 +1165,8 @@ PR — it is left as a deferral for `jailbee pr` to consume, not a refusal.
 ### `jailbee review ls [--all-repos] [-o table|json] [--fields …]`
 
 One row per pending manifest across running containers: CONTAINER, PR,
-MANIFEST, ACTIONS, STATE (`ok`, `stale`, `for jb pr`, or `error`), and ERROR
+MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
+does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
 (hidden from the default table). A stopped container's outbox cannot be read
 at all, so it is named in a note under the table instead of appearing empty.
 `--fields` is comma-separated from that same list; `-o json` describes
@@ -1238,7 +1261,7 @@ named in a note under the table instead of appearing empty. `--fields` is
 comma-separated from `container, manifest, actions, repos, state, error`
 (`error` hidden from the default table); `-o json` includes it always.
 
-### `jailbee issue show NAME [MANIFEST]`
+### `jailbee issue show [NAME] [MANIFEST]`
 
 Print every pending manifest's validated proposal and host journal state,
 in full — never truncated, bodies Markdown-rendered on a terminal (HTML and
@@ -1265,7 +1288,7 @@ number for any `issue_ref` still ahead of it. An action left `uncertain` by
 an earlier run blocks the whole manifest until `jailbee issue resolve`
 reconciles it.
 
-### `jailbee issue drop NAME [MANIFEST] [--archive-journal] [-y]`
+### `jailbee issue drop [NAME] [MANIFEST] [--archive-journal] [-y]`
 
 Delete pending issue actions **without publishing them** — no GitHub call,
 no `applied.log` line. Refuses by default the instant the manifest has any
@@ -1278,10 +1301,12 @@ once the container's outbox files are deleted. Omit `MANIFEST` to act on
 everything pending in the container. Confirms first unless `-y`; refuses
 off a TTY without it.
 
-### `jailbee issue resolve NAME MANIFEST ACTION (--applied --url URL [--issue N] | --retry) [-y]`
+### `jailbee issue resolve [NAME] [MANIFEST] [ACTION] (--applied --url URL [--issue N] | --retry) [-y]`
 
 Reconcile one action an earlier `apply` left `uncertain` (its GitHub
-outcome could not be determined for certain). Exactly one of:
+outcome could not be determined for certain). On a terminal the container,
+manifest, action, mode (`--applied`/`--retry`) and URL are asked for when omitted;
+off a terminal they must all be given as arguments and flags (exit 2 otherwise). Exactly one of:
 
 - `--applied --url <github-issue-url> [--issue <n>]` — durably records a
   human's own confirmation, read off GitHub's UI, of what actually landed.
@@ -1306,9 +1331,9 @@ management](../../../git-bridge.md#unified-proposal-management).
 |---|---|
 | `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER]` | Interactive browser on a TTY, an overview off one. `browse` is the unambiguous spelling for a container named like a subcommand. The Qt dashboard has a native window for it. |
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
-| `jailbee outbox show CONTAINER PROPOSAL [-o table\|json]` | The complete proposal, with zero-based action and inline-comment indices. |
-| `jailbee outbox drop CONTAINER PROPOSAL [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
-| `jailbee outbox apply CONTAINER PROPOSAL [--dry-run] [--force] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and invalid for issues. |
+| `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json] [--color\|--no-color]` | The complete proposal, with zero-based action and inline-comment indices. Markdown bodies are rendered on a terminal, verbatim in a pipe unless `--color`. |
+| `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
+| `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [--foreign] [-y] [--revision TOKEN]` | Publish one whole manifest through the same gates as `review apply` / `issue apply`. `--force` is the PR stale-anchor override and `--foreign` admits a PR the container does not own under `-y`; both are invalid for issues. |
 
 ## Branch placement
 
@@ -1473,9 +1498,9 @@ container.
 
 | Command | Behaviour |
 |---|---|
-| `jailbee net egress add [ENTRY] [NAME] [--container NAME] [--repo]` | Allow one host. On a TTY, omitting `ENTRY` prompts for a destination. Defaults to container scope (stored in the container's `user.jailbee.egress_extra` label — dies with the container); `--container NAME` explicitly targets a container when `ENTRY` is omitted, while existing `ENTRY [NAME]` remains supported. `--container` names the target; it does not select repo scope. `--repo` stores a host-local, uncommitted override applying to every container of this repo on this host instead and skips container resolution. Rejects before storing anything: a malformed `ENTRY` (exit 2) or a hostname that fails to resolve (exit 1) — two different failures, two different codes. A no-op (exit 0, informational) if the entry is already covered by `config.yaml` or already stored at that scope. |
+| `jailbee net egress add [ENTRY] [NAME] [--container NAME] [--repo]` | Allow one host. On a TTY, omitting `ENTRY` prompts for a destination. Defaults to container scope (stored in the container's `user.jailbee.egress_extra` label — dies with the container); `--container NAME` explicitly targets a container when `ENTRY` is omitted, while existing `ENTRY [NAME]` remains supported. `--container` names the target; it does not select repo scope. `--repo` stores a host-local, uncommitted override applying to every container of this repo on this host instead and skips container resolution. Rejects before storing anything: a malformed `ENTRY` (exit 2) or a hostname that fails to resolve (exit 1) — two different failures, two different codes. A no-op (exit 0, informational) if the entry is already covered by `config.yaml` or already stored at that scope. A wildcard entry (`*.domain[:port]`, apex included, default ports 80/443) is not resolved: it is enforced by the Squid egress proxy, which `add` starts if needed, and only reaches tools honouring `HTTP_PROXY`/`HTTPS_PROXY` — on the work network with `egress_proxy_always` (default) the variables are always set and no new shell is needed; on a legacy container, or with the key off, open a new shell after the first wildcard. A container-scope wildcard needs the work network and exits 2 on a legacy container (use `--repo`). |
 | `jailbee net egress rm [ENTRY] [NAME] [--container NAME] [--repo]` | Remove an override. On a TTY, omitting `ENTRY` offers only stored overrides at the selected scope; `--container NAME` explicitly targets a container, and non-interactive use requires an explicit entry. Existing `ENTRY [NAME]` remains supported. `--repo` selects repo scope and skips container resolution. **Refuses** (exit 1, points at the config file) an entry that exists *only* in `config.yaml` — overrides can only widen the allowlist, never narrow config. Removes normally if the same entry is *also* stored as an override — that's the row that goes away, config is untouched. |
-| `jailbee net egress ls [NAME] [--format table\|json]` | Show every applicable entry with its source (`config`, `repo-override`, `container`) and a `redundant` note when an override duplicates a wider-scoped entry that already covers it — a repo-override row against `config.yaml`, or a container row against either `config.yaml` or a repo-scope override. With no `NAME`, shows repo scope only (config + repo overrides) — a read command must not prompt for a container — and prints a one-line stderr hint that container-scope entries are hidden; pass `NAME` to include that container's own overrides. |
+| `jailbee net egress ls [NAME] [--format table\|json]` | Show every applicable entry with its source (`config`, `repo-override`, `container`) and a `redundant` note when an override duplicates a wider-scoped entry that already covers it — a repo-override row against `config.yaml`, or a container row against either `config.yaml` or a repo-scope override. With no `NAME`, shows repo scope only (config + repo overrides) — a read command must not prompt for a container — and prints a one-line stderr hint that container-scope entries are hidden; pass `NAME` to include that container's own overrides. A `VIA` column (`proxy` for a wildcard, `acl+proxy` otherwise) appears once any entry is a wildcard. |
 | `jailbee net egress export [NAME]` | Print a **complete replacement** for the repo config's `egress_allow:` key — existing file entries plus promotable overrides — sourced from the repo config file itself, never from the global config layer or jailbee's feature auto-added hosts (those track releases and would go stale frozen into a file). Paste over the *whole* key, don't append one below it: a second `egress_allow:` mapping key makes `yaml.safe_load` silently keep only the last one, discarding the first. With no `NAME`, repo-scope overrides only; pass `NAME` to include that container's overrides too. After pasting and `jailbee apply`, the now-redundant overrides can be dropped with `jailbee net egress rm`. |
 
 Overrides are **additive only** — neither scope can revoke what
@@ -1626,7 +1651,7 @@ Use it before `create`, `rm` or `set`: those act on groups, and this is the
 list of what there is to act on. An `empty` / `unused` row is a group nothing
 holds and nothing reads, which is exactly what `rm` will let you remove.
 
-### `jailbee account group create <name>`
+### `jailbee account group create [NAME]`
 
 Create an empty credential group. Nothing has to exist first — `set`, `use`
 and `account use -g` all create the directory on demand — so this is for the
@@ -1635,7 +1660,7 @@ existing group is reported, not an error. One group name is one `0700`
 directory per enabled agent; the group shows up in `jailbee account ls` as
 `empty` / `unused` until something is assigned to it.
 
-### `jailbee account group rm <name> [--yes]`
+### `jailbee account group rm [NAME] [--yes]`
 
 Remove a credential group nothing uses. There is no `--force`: it refuses
 while
@@ -1659,7 +1684,7 @@ other group. `jailbee account rm` remains the only command that destroys a
 credential. The directory itself is removed with `rmdir`, never recursively —
 anything else left in it is named instead of deleted.
 
-### `jailbee account group set <name>|none [--force]` / `jailbee account group unset [--force]`
+### `jailbee account group set [NAME|none] [--force]` / `jailbee account group unset [--force]`
 
 Permanent, repo-wide. `set` writes this repo's group into `global.yaml`
 (`none` keeps this repo on its own login instead of sharing); `unset`
@@ -1675,7 +1700,7 @@ containers unless `--force` is passed, because a live session can overwrite the
 target group's login on its next token refresh. Restart the agent in the
 containers afterwards to pick up the new login.
 
-### `jailbee account group use <name>|none [<container>] [--force]` / `jailbee account group reset [<container>] [--force]`
+### `jailbee account group use [NAME|none] [<container>] [--force]` / `jailbee account group reset [<container>] [--force]`
 
 Temporary, single-container. `use` moves one container into another
 credential group (or, with `none`, out of grouping entirely) for as long
@@ -1708,8 +1733,8 @@ container label are the same kind of alias: read, never written.
 | `jailbee firefox [NAME] [URL]` | Launch Firefox (per-container profile slot). Needs `browsers.firefox.enabled`. URL falls back to `browsers.firefox.url`. Defaults to `source: image` — installed into the golden image, since the host's Firefox is normally a snap and not usefully mountable. |
 | `jailbee browser [NAME] [URL]` | Launch the default browser: `browsers.default` when set, otherwise the single enabled browser. Errors and names what to set if that's ambiguous (none, or more than one, enabled). |
 | `jailbee apps ls [NAME] [-o json] [--fields ...] [--force]` | List every GUI app this repo's containers can launch — builtins (browsers, JetBrains IDE) plus `apps:` entries, in registry order. Without `NAME` this is config only; with it, a STATUS column probes each app for real (`present`/`missing`). |
-| `jailbee apps run APP [ARGS...] [--container NAME] [--force]` | Launch a GUI app by name — `APP` is required and comes first (see `jailbee apps ls`); the container is named with `--container`, not a second positional, because `APP` optional-in-form plus variadic `ARGS` can't be told apart from a middle container slot. An `apps:` entry with `top_level: true` also runs as bare `jailbee <name> [ARGS...] [--container NAME]` — the argv after the name is passed through to `apps run` unchanged, so the container is still named with `--container` and a dash-leading argument still needs a `--` separator (`jailbee <name> -- --some-flag`). A bare `jailbee <name> NAME` silently launches in the *default* container and hands `NAME` to the app as an argument. |
-| `jailbee exec NAME -- CMD [ARGS...] [--cwd repo\|home\|PATH] [-d\|--detach [--gui]]` | Run any command in the container as the dev user. `-d`/`--detach` backgrounds it — needed for a GUI app run by hand (`jailbee exec smoke -d -- some-gui-tool`), useful for anything long-running; it returns immediately and logs to a file inside the container instead of the terminal. `--gui` (only with `-d`, else exit 2) marks it a GUI app: in a GUI-enabled remote SSH session it draws on the shared RDP display (started and awaited first); a plain `-d` never touches that display. |
+| `jailbee apps run [APP] [ARGS...] [--container NAME] [--force]` | Launch a GUI app by name — `APP` comes first and is asked for on a terminal when omitted (exit 2 without one; see `jailbee apps ls`); the container is named with `--container`, not a second positional, because `APP` optional-in-form plus variadic `ARGS` can't be told apart from a middle container slot. An `apps:` entry with `top_level: true` also runs as bare `jailbee <name> [ARGS...] [--container NAME]` — the argv after the name is passed through to `apps run` unchanged, so the container is still named with `--container` and a dash-leading argument still needs a `--` separator (`jailbee <name> -- --some-flag`). A bare `jailbee <name> NAME` silently launches in the *default* container and hands `NAME` to the app as an argument. |
+| `jailbee exec [NAME] -- CMD [ARGS...] [--cwd repo\|home\|PATH] [-d\|--detach [--gui]]` | Run any command in the container as the dev user. `-d`/`--detach` backgrounds it — needed for a GUI app run by hand (`jailbee exec smoke -d -- some-gui-tool`), useful for anything long-running; it returns immediately and logs to a file inside the container instead of the terminal. `--gui` (only with `-d`, else exit 2) marks it a GUI app: in a GUI-enabled remote SSH session it draws on the shared RDP display (started and awaited first); a plain `-d` never touches that display. |
 
 ## Cache pools
 
@@ -1731,8 +1756,8 @@ shared by all of them, seeded from the warmest existing slot.
 
 | Command | Notes |
 |---|---|
-| `jailbee mount KIND [NAME]` | Attach an `optional_mounts` entry (e.g. `aws`) to a live container. |
-| `jailbee unmount KIND [NAME]` | Detach it. |
+| `jailbee mount [KIND] [NAME]` | Attach an `optional_mounts` entry (e.g. `aws`) to a live container. |
+| `jailbee unmount [KIND] [NAME]` | Detach it. |
 
 (For always-on mounts, list them under `host_mounts` in config instead — that's
 the jailbee-repo-setup skill's domain.)
@@ -1742,6 +1767,6 @@ the jailbee-repo-setup skill's domain.)
 | Command | Notes |
 |---|---|
 | `jailbee snapshot create [NAME] [TAG]` | Snapshot a container's state (cheap, COW). |
-| `jailbee snapshot restore NAME TAG` | Roll back to a snapshot. |
+| `jailbee snapshot restore [NAME] [TAG]` | Roll back to a snapshot. `TAG` left out is asked for on a terminal even with one snapshot; exit 2 off one. |
 | `jailbee snapshot ls [NAME]` | List snapshots. |
-| `jailbee snapshot delete [NAME] [TAG]` | Delete a snapshot. |
+| `jailbee snapshot delete [NAME] [TAG]` | Delete a snapshot. `TAG` asked for like `restore`. |

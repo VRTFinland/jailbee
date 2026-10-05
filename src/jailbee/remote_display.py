@@ -10,6 +10,7 @@ draws on the one screen. Modelled on `registry.py`; everything goes through the
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ from jailbee.remote_ssh.display_forward import DISPLAY_FORWARD_HOST, DISPLAY_FOR
 from jailbee.runtime_mounts import DISPLAY_DEVICE, display_device_config
 from jailbee.stopping import stop_container
 
+log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -40,6 +43,11 @@ DISPLAY_BRIDGE = "jailbee-loose"
 # `SHARED_DISPLAY_DIR` attached after boot, so for them /run is fine. Keep in
 # step with the paths in provision/display/jailbee-display.service.
 DISPLAY_CONTAINER_DIR = "/srv/jailbee-display"
+# The `waypipe ssh` sessions' forward listeners (`remote_ssh.waypipe.links_dir`),
+# mounted into this container only: a client container must never reach the
+# laptop's waypipe client except through a server running here.
+WAYPIPE_LINKS_CONTAINER_DIR = "/srv/jailbee-waypipe-links"
+LINKS_DEVICE = "waypipe-links"
 RDP_PORT = 3389
 HOST_RDP_PORT = DISPLAY_FORWARD_PORT
 RDP_PORT_ADDRESS = f"localhost:{RDP_PORT}"
@@ -150,6 +158,12 @@ def _provision(incus: Incus) -> None:
     incus.exec(DISPLAY_CONTAINER, ["bash", "-c", script], timeout=600)
 
 
+def _links_device_config() -> dict[str, str]:
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    return {"source": str(links_dir()), "path": WAYPIPE_LINKS_CONTAINER_DIR}
+
+
 def _create(incus: Incus, shared_dir: str) -> None:
     incus.init(_IMAGE, DISPLAY_CONTAINER)
     incus.profile_assign(DISPLAY_CONTAINER, ["default", DISPLAY_PROFILE])
@@ -157,6 +171,7 @@ def _create(incus: Incus, shared_dir: str) -> None:
     incus.config_device_add(
         DISPLAY_CONTAINER, "shared", "disk", {"source": shared_dir, "path": DISPLAY_CONTAINER_DIR}
     )
+    incus.config_device_add(DISPLAY_CONTAINER, LINKS_DEVICE, "disk", _links_device_config())
     # weston listens on the container's own loopback only (the bridge is never
     # an access path); this device publishes it on the host's loopback.
     incus.config_device_add(
@@ -169,10 +184,18 @@ def _create(incus: Incus, shared_dir: str) -> None:
 
 
 def _provisioning_incomplete(incus: Incus) -> bool:
+    """An RDP-era display (no waypipe) is re-provisioned in place by the idempotent install.sh."""
     try:
         out = incus.exec(
             DISPLAY_CONTAINER,
-            ["bash", "-c", f"test -f {_UNIT_PATH} && echo present || echo absent"],
+            [
+                "bash",
+                "-c",
+                (
+                    f"test -f {_UNIT_PATH} && command -v waypipe >/dev/null "
+                    "&& echo present || echo absent"
+                ),
+            ],
             timeout=10,
         )
     except IncusError:
@@ -205,6 +228,11 @@ def display_up(
     directory = display_state_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory.chmod(0o700)
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    links = links_dir()
+    links.mkdir(parents=True, exist_ok=True, mode=0o700)
+    links.chmod(0o700)
     if not incus.network_exists(DISPLAY_BRIDGE):
         incus.network_create(DISPLAY_BRIDGE)
     _ensure_profile(incus)
@@ -219,6 +247,7 @@ def display_up(
     else:
         if entry.get("status") != "Running":
             incus.start(DISPLAY_CONTAINER)
+        ensure_links_device(incus)
         if _provisioning_incomplete(incus):
             on_step("finishing provisioning")
             _provision(incus)
@@ -233,6 +262,7 @@ def display_down(incus: Incus) -> None:
     if entry is None or entry.get("status") != "Running":
         return
     stop_container(incus, DISPLAY_CONTAINER, force_fallback=True, label="the shared display")
+    remove_waypipe_sockets(links=False)
 
 
 def client_connected(incus: Incus) -> bool:
@@ -318,6 +348,61 @@ def ensure_display_mount(incus: Incus, container: str) -> None:
         if "already exists" in str(e).lower():
             return
         raise
+
+
+def ensure_links_device(incus: Incus) -> None:
+    """Add the waypipe links directory to a display container that predates it."""
+    try:
+        incus.config_device_add(DISPLAY_CONTAINER, LINKS_DEVICE, "disk", _links_device_config())
+    except IncusError as e:
+        if "already exists" in str(e).lower():
+            return
+        raise
+
+
+def ensure_waypipe_display(
+    incus: Incus,
+    *,
+    on_step: Callable[[str], None] = _no_steps,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> None:
+    """Make jailbee-display ready to host `waypipe ssh` servers.
+
+    Unlike `prepare_shared_display`, no RDP client is involved: weston may
+    stay unconnected for the whole session.
+    """
+    if display_status(incus) is not DisplayStatus.RUNNING:
+        display_up(incus, on_step=on_step, sleep_fn=sleep_fn)
+    elif _provisioning_incomplete(incus):
+        # A running RDP-era display lacks waypipe; display_up is skipped for it.
+        on_step("finishing provisioning")
+        _provision(incus)
+    ensure_links_device(incus)
+
+
+def remove_waypipe_sockets(session_id: str | None = None, *, links: bool = True) -> None:
+    """Remove the host-side sockets of one waypipe session, or of all of them.
+
+    ``links=False`` leaves the SSH server's forward listeners alone: they
+    belong to the server, not to the display. Never raises: a path that
+    cannot be removed is logged and the rest are still removed.
+    """
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    targets = [(display_state_dir(), f"wp-{session_id}-*" if session_id else "wp-*")]
+    if links:
+        targets.append((links_dir(), f"{session_id}.sock" if session_id else "*.sock"))
+    for directory, pattern in targets:
+        try:
+            paths = list(directory.glob(pattern)) if directory.is_dir() else []
+        except OSError:
+            log.warning("Could not list %s for waypipe sockets", directory, exc_info=True)
+            continue
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Could not remove waypipe socket %s", path, exc_info=True)
 
 
 def prepare_shared_display(

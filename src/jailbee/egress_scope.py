@@ -388,9 +388,15 @@ def _resolve_entries_tolerant(name: str, entries: list[str]) -> list[EgressEntry
     whole container (and, via `jailbee apply`'s per-container loop, every
     later container in the repo) on the first failing host.
     """
-    from jailbee.egress import EgressEntry, parse_egress_entry, resolve_with_status
+    from jailbee.egress import (
+        EgressEntry,
+        acl_raw_entries,
+        parse_egress_entry,
+        resolve_with_status,
+    )
     from jailbee.tui import warn
 
+    entries = acl_raw_entries(entries)
     specs = [parse_egress_entry(raw) for raw in entries]
     hostnames = sorted({s.target for s in specs if not s.is_literal})
     resolved, failed = resolve_with_status(hostnames)
@@ -507,7 +513,11 @@ def _materialise_container_acl(
     if mode != "loose":
         ensure_services_acl(incus)
 
-    extras = container_extras(incus, name)
+    # Wildcards live in the Squid fragment, not in an ACL: all-wildcard extras
+    # mean "no ACL extras", which tears down an ACL left by earlier plain entries.
+    from jailbee.egress import acl_raw_entries
+
+    extras = acl_raw_entries(container_extras(incus, name))
     extra_name = extra_acl_name(name)
 
     if mode != "strict" or not extras:

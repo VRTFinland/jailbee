@@ -8,6 +8,109 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- **`jailbee upgrade`.** After upgrading jailbee, runs `base build` and `apply`
+  in every registered repo without restarting any container, dockerd or LiteLLM
+  instance. A repo runs only what the release's upgrade notes owe it; `--force`
+  runs both everywhere and `--dry-run` shows what would run.
+- **Wildcard `egress_allow` entries and an always-on egress proxy.** `*.example.com`
+  allows the domain and every subdomain, on ports 80 and 443
+  (`*.example.com:8443` for one port), in strict mode, in `egress_allow` and with
+  `jailbee net egress add`. They go through a Squid proxy container, so they reach
+  tools that honour `HTTP_PROXY` and `HTTPS_PROXY`; other tools stay blocked. On
+  the work network every container gets those variables from its first boot,
+  in strict and loose mode, so adding or removing an entry works in shells and
+  agents that are already running; `egress_proxy_always: false` limits the
+  proxy to containers with a wildcard. Container-scope wildcards need the work
+  network. `jailbee net egress ls` gains a `VIA` column, and `jailbee net
+  status` and `jailbee doctor` report the proxy.
+- **`jailbee console`.** An interactive `jb[<prefix>]>` prompt on your own
+  terminal, with tab completion and history. It starts in the registered repo
+  containing the current directory (or asks which), `use` switches repo,
+  `dashboard` opens the dashboard and `exit` leaves. It applies no
+  `remote.ssh` restrictions locally.
+- **`default_command`.** A host-level key in `global.yaml` choosing what bare
+  `jailbee` opens on a terminal: `dashboard` (default), `gui`, `console` or
+  `help`. A broken `global.yaml` falls back to the dashboard with a warning.
+- **`remote.ssh.network`.** Lets a remote SSH session widen a container's
+  network — `jailbee net loose`, `jailbee new --net loose` and
+  container-scope `jailbee net egress add` — which can open the host's LAN to it, so it is off by default.
+  `jailbee net egress rm` on a container now works over SSH without it;
+  `--repo` egress changes stay host-only.
+- `jb chrome`, `jb firefox`, `jb browser` and `jb apps run` move a browser
+  that is already open on another display (host, shared RDP display or a
+  waypipe session) to the one you launch from, instead of opening the
+  window on the old display. Asks on a terminal; `--move`/`--no-move`
+  decide up front.
+
+### Changed
+
+- **Bare `jailbee` opens the dashboard on a terminal.** It used to print the
+  help text; `default_command` picks something else. Without a terminal (a
+  pipe, a script, `JAILBEE_NONINTERACTIVE`) it still prints help and exits 0.
+- **Every command runs without arguments.** A value left out — a container,
+  snapshot, port forward, job, manifest, group, key, or a free-text value such
+  as `jailbee new`'s name or `jailbee exec`'s command — is asked for on a
+  terminal. Off a terminal (or with `JAILBEE_NONINTERACTIVE` set) the command
+  exits 2 naming the missing value and its candidates; the "which container?"
+  error that exited 1 now exits 2 like any other missing argument.
+  Destructive commands (`snapshot restore/delete`, `port rm`, `job clear`,
+  `autostart cancel`, `issue resolve`, `outbox drop/apply`,
+  `account group rm`, `remote ssh key rm`) ask even when there is only one
+  candidate.
+- **`jailbee net loose` and `jailbee new --net loose` over remote SSH need
+  `remote.ssh.network: true`.** They were allowed by default, although loose
+  mode can reach the host's LAN.
+- **The host's Wayland display is attached on demand.** A container gets the
+  host compositor socket on its first GUI launch (`jailbee ide`, `chrome`,
+  `firefox`, `browser`, `apps run`, `exec -d --gui`) instead of on every boot,
+  so a container that never opens a window cannot reach it. A GUI app started
+  from `jailbee shell` needs the new `jailbee display attach` first; one started
+  at boot (an autostart step) needs `gui.wayland: always`, the old behaviour. Each launch
+  also replaces a socket a host re-login left dead, which used to need a
+  container restart.
+- **A container's agent can stage PR actions for a PR the container does not
+  own.** A description fix, comment, reply or review naming any other PR of
+  the same repository used to be refused outright. `jailbee review apply` and
+  `jailbee outbox apply` now publish it after a warning at the top of the plan
+  that names the PR and its author. The confirmation under that warning is
+  the consent, so with `-y` such a manifest also needs the new `--foreign`.
+  The repository check is unchanged. `jailbee pr`'s post-push offer still
+  holds such a manifest back, and `jailbee review ls` lists it as `not bound`.
+
+### Deprecated
+
+- The remote SSH `shell` entry point is now `console`: `remote.ssh.shell`,
+  `remote.ssh.default_entrypoint: shell`, `ssh … shell` and
+  `jailbee remote ssh serve --shell` move to `remote.ssh.console`,
+  `default_entrypoint: console`, `ssh … console` and `serve --console`. The old
+  spelling still works and is removed in 2.0.0; `jailbee config migrate --apply`
+  renames the keys in `global.yaml`.
+
+### Fixed
+
+- **opencode's model catalogue is reachable in strict mode.** Current opencode
+  fetches it from `models.opencode.ai` rather than `models.dev`, which the
+  `opencode` preset did not allow. Run `jailbee apply` to pick it up.
+- **The `AGENT` column understands Claude Code's `shell` state.** Newer Claude
+  Code reports `shell` when it is idle but a background shell job it started is
+  still running; the compact column showed it as `? shell`. It is now `◐`,
+  ranked between busy and idle.
+- **Submodule branch placement uses the superproject's gitlink.** After
+  `jailbee git checkout`, `pull` or a container-side update, each submodule is
+  now compared against the commit its superproject records, not against the
+  submodule's own HEAD. When `git submodule update` had skipped a submodule
+  (for example `submodule.<name>.update = none`), jailbee used to call that
+  stale HEAD "the gitlink" and warn that it needed a bump; it now places the
+  branch at the real gitlink, or leaves the submodule as is with a warning when
+  that commit is not present there.
+- **Submodules declared `update = none` are pushed and pulled like the rest.**
+  `jailbee new` left such a submodule as an empty directory in the container,
+  and `push`, `pull` and `checkout` never moved its working tree to the new
+  gitlink. Every `submodule update` jailbee runs now passes `--checkout`, which
+  overrides the configured update mode.
+
 ## 1.6.0 - 2026-10-02
 
 ### Added

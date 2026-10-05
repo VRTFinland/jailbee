@@ -223,7 +223,7 @@ remote:
     listen: 127.0.0.1
     port: 8022
     dashboard: true
-    shell: true
+    console: true
     exec: true
     commands:
       mode: allowlist
@@ -248,7 +248,7 @@ journalctl --user -u jailbee-ssh.service -n 30
 ```
 
 Expect `installed`, `enabled`, and `active` to be `yes`, listener
-`127.0.0.1:8022`, entry points `dashboard, shell, exec`, and one authorized
+`127.0.0.1:8022`, entry points `dashboard, console, exec`, and one authorized
 key. The journal must not print a complete remote argv, key material, or
 terminal input.
 
@@ -314,7 +314,7 @@ First prove the PTY requirement:
 
 ```bash
 ssh "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
-ssh "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+ssh "${JB_SSH_COMMON[@]}" jailbee@localhost console --repo "$JB_SSH_PREFIX"
 ```
 
 Both must fail with `This entry point requires a PTY; retry with ssh -t.` and
@@ -322,14 +322,14 @@ status 2. With `-t`, the existing interfaces should render normally:
 
 ```bash
 ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost dashboard
-ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost shell --repo "$JB_SSH_PREFIX"
+ssh -t "${JB_SSH_COMMON[@]}" jailbee@localhost console --repo "$JB_SSH_PREFIX"
 ```
 
 In the dashboard, verify only registered repos appear. Press `n` on this repo,
 enter a branch and base, and confirm that the normal `jailbee new` questions
 are interactive; decline once before accepting.
 
-For the console, first connect with a bare `shell` (no `--repo`): with more
+For the console, first connect with a bare `console` (no `--repo`): with more
 than one repo registered, an arrow-key menu appears; move with the arrow keys
 and press Enter to pick `$JB_SSH_PREFIX`. Reconnect and press Esc, then
 separately Ctrl-C, then separately Ctrl-D at that same menu — each must close
@@ -1278,9 +1278,9 @@ cd ~/SampleApp && git log refs/jailbee/from/feat-merge-d/feat/merge-d --oneline 
 
 # 4. Neither end is inferred off a TTY.
 jailbee git merge feat-merge-a < /dev/null
-# expect: exit 1, names "--into <target>" and says to run in a TTY
+# expect: exit 2, "missing target container (--into)" with its candidates
 jailbee git merge < /dev/null
-# expect: exit 1, names BOTH "<source>..." and "--into <target>"
+# expect: exit 2, names BOTH the source container and "--into", with candidates
 
 # 4a. Interactive selection (needs a real terminal — pickers only render on a
 #     TTY, so this step cannot be piped or run under `script -c`'s stdin).
@@ -2993,7 +2993,8 @@ jailbee destroy feat-x --all
 
 # 6. Non-TTY guard (run from a script or pipe)
 echo "" | jailbee destroy
-# expect: exit 1, "no container name given; pass a name, use --all, ..."
+# expect: exit 2, "missing container; pass it explicitly or use --all, or run in a
+#         terminal to choose. Candidates: ..."
 ```
 
 ## `jailbee ls` git-status columns + `jailbee git diff` smoke test
@@ -3179,11 +3180,11 @@ jailbee new feat/dashsmoke --background
 # Navigate + act:
 #  ↑/↓ (or j/k) to move the highlight (spans repos; repo headers are cursor
 #       stops now, not skipped — see the folding recipe below)
-#  Enter -> action menu (tmux/shell/ide/chrome/restart/stop/destroy when Running;
-#           start/destroy when Stopped). It opens inline BELOW the table —
+#  Enter -> action menu (tmux, Launch →, Outbox, Git →, PR →, Lifecycle →,
+#           Network → when Running; start/destroy when Stopped). It opens inline BELOW the table —
 #           expect the container rows to stay on screen and keep refreshing
 #           behind it. ↑/↓ move the menu cursor, Esc/q close it without acting.
-#           Pick "Open shell" -> lands in the container; exit -> returns to the
+#           Press `s` (Open shell is not in the menu) -> lands in the container; exit -> returns to the
 #           dashboard, which refreshes.
 #           On an orphan (view-only) row, Enter opens nothing and prints a
 #           yellow note in the panel footer for ~2.5s instead of going silent.
@@ -3272,10 +3273,10 @@ jailbee dashboard
 #     still exactly what you left it. Each front-end has its own row in
 #     state.sqlite's view_prefs table.
 
-# Two-tier refresh: base state (state/ip/op) updates every ~3s; git columns
-# (WT/DIFF ±/↑/↓/MERGE) update every ~10s. Tune with -i / --git-interval, or
-# drop git entirely:
-jailbee dashboard --no-git -i 2
+# Refresh: base state (state/ip/op) updates every ~3s; git columns
+# (WT/DIFF ±/↑/↓/MERGE) every ~10s. The pace is `dashboard.refresh` in the
+# global config. The old flags are deprecated and ignored, with a warning:
+jailbee dashboard --no-git -i 2   # "--interval is ignored; set dashboard.refresh ..."
 
 # Orphans: a jailbee-managed container whose repo isn't registered and isn't the
 # cwd repo shows under its prefix as "(orphan — no config)" and is view-only
@@ -3587,17 +3588,20 @@ Requires a real Incus daemon, at least one JailBee container, and PySide6
 5. Choose **Destroy** → confirm the dialog; the row disappears on the next
    refresh.
 6. Stop a container from the CLI in another shell; confirm the GUI reflects it
-   within `--interval` seconds.
+   within `dashboard.refresh.interval` seconds (default 3).
 7. **View** menu → switch **Table** ↔ **Cards**. Cards should re-wrap columns
    as you resize the window (one column when narrow, several when wide);
    right-click actions and selection should work identically in both.
-8. Resize a Table column, switch layout via the **View** menu, adjust the
-   **Refresh** menu's cadence (or pause it), then close the window and
-   relaunch `jailbee gui`. Confirm the layout, column widths/order, and refresh
-   cadence/paused state came back — but the window's size/position did not
-   (that's left to the window manager).
-9. Relaunch with `jailbee gui --interval 7`: the explicit flag should win over
-   whatever cadence was persisted in step 8.
+8. Resize a Table column and switch layout via the **View** menu, then close
+   the window and relaunch `jailbee gui`. Confirm the layout and column
+   widths/order came back — but the window's size/position did not (that's left
+   to the window manager).
+9. Open `jailbee dashboard` in a terminal beside the GUI: both follow the one
+   shared state service (`pgrep -fa _state-service` shows a single process) at
+   the pace of `dashboard.refresh` in the global config. The **Refresh** menu
+   has only **Refresh now**. `jailbee gui --interval 7` prints
+   "--interval is ignored; set dashboard.refresh in the global config" and
+   changes nothing. Close every dashboard: the service exits after ~30 s.
 
 ### Workflow commands in the Qt dashboard
 
@@ -3697,10 +3701,9 @@ jailbee push
 
 # 7. Push off a TTY never reaches the confirmation at all (unlike pull/checkout).
 jailbee push < /dev/null
-# expect: exit 1, "No container name given. Pass a name, or run
-#         interactively in a TTY for the container picker." — no plan block,
-#         because push requires an explicit name before it ever lists
-#         containers when stdin isn't a TTY.
+# expect: exit 2, "missing container; pass it explicitly, or run in a terminal
+#         to choose. Candidates: ..." — no plan block, because off a TTY push
+#         lists the candidates and stops instead of choosing one.
 ```
 
 ## LOCAL diff and the destroy guard
@@ -4871,7 +4874,7 @@ jailbee doctor
 ### 4. Incus accepts the pool device on an already-running container
 
 `boot_container` calls `allocate_startup` — which calls `incus config
-device add` — **before** it issues the actual `incus restart`, so the add
+device add` — **before** it stops the container for the restart, so the add
 happens against a container Incus still considers Running, not one that's
 already stopped. This ordering is the one part of the mechanism no mock can
 validate, since the unit tests fake the Incus client entirely.
@@ -5269,3 +5272,159 @@ mounted by Incus before systemd puts a fresh tmpfs over `/run`, which hides it.
 The display container therefore mounts the shared directory at
 `/srv/jailbee-display` (not under `/run`); client containers get theirs
 attached after boot and keep `/run/jailbee-display`.
+
+## Remote GUI over waypipe (Linux laptop)
+
+Host-only checks. The host needs `remote.ssh.gui: true`, the SSH service
+running and `jb display up` done; the laptop is Linux with a Wayland session
+and waypipe 0.10 or newer. Background:
+[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe-linux).
+
+1. `waypipe ssh -t -p <port> jailbee@<host> dashboard`. From the menu launch
+   Chrome in container A and a terminal in container B. Expected: both windows
+   open on the laptop, titled `[<A>] ...` and `[<B>] ...`.
+2. Close the SSH session. Expected: both windows close, and `incus exec
+   jailbee-display -- systemctl list-units 'jailbee-wp-*'` lists nothing.
+3. `waypipe ssh -p <port> jailbee@<host> --repo <prefix> chrome <container>`.
+   Expected: Chrome opens, and the command stays open until Chrome is closed.
+4. `waypipe --compress zstd ssh ...` as in step 3. Expected: works.
+5. With `remote.ssh.gui: false`, repeat step 3. Expected: refused, with
+   `remote.ssh.gui` named.
+6. Open a session as in step 1, then `jb remote ssh restart`. Expected: no
+   `jailbee-wp-*` unit survives (the listing from step 2 is empty).
+7. Record the client waypipe version tested. 0.8 and 0.9 clients are
+   untested.
+
+## macOS client
+
+Needs a real Mac with Windows App, and a Linux host for setup A or Colima for
+setup B. Background: [Using JailBee from a Mac](macos.md). Record each
+deviation; the setup B results decide whether its "experimental" banner goes.
+
+### Setup A: Linux host, Mac as client
+
+1. On the host: `uv tool install 'jailbee[ssh]'`, `jb remote ssh key add`
+   (paste the Mac's public key), `jb remote ssh enable`, set
+   `remote.ssh.gui: true` and `files: true`, `jb remote ssh restart`,
+   `jb display up`. Expected: `jb remote ssh status` shows the service active.
+2. On the Mac, add the `Host jb` entry from the guide (with `ProxyJump` and
+   `LocalForward 3389 127.0.0.1:13389`), then `ssh jb help`. Expected: a
+   host-key prompt naming `jailbee-devbox`, then the enabled entry points.
+3. `ssh -t jb dashboard`. Expected: the remote dashboard, registered repos
+   only; arrow keys and quit work from the macOS terminal.
+4. `ssh -t jb console`, pick a repo, run `ls`. Then `ssh -t jb -- --repo
+   PREFIX shell <container>`. Expected: a shell inside the container.
+5. With an `ssh jb` session open, Windows App → Add PC `localhost:3389`,
+   connect, accept the certificate. Expected: the empty weston desktop.
+6. `ssh jb -- --repo PREFIX chrome <container> https://example.com`.
+   Expected: a Chrome window on the Windows App desktop.
+7. `ssh jb -- --repo PREFIX ide <container>`. Expected: the JetBrains IDE
+   opens on the display and is usable (typing, menus, scrolling).
+8. Copy text in macOS and paste it into the container's Chrome; copy from the
+   container and paste in macOS. Expected: both directions work.
+9. Close every SSH session, reopen one, run step 6 before connecting Windows
+   App. Expected: the recipe is printed and the launch waits; connecting
+   Windows App lets it proceed.
+10. Open two `ssh jb` sessions. Expected: the second warns that local port
+    3389 is in use and otherwise works; Windows App stays connected.
+11. `sftp jb`, `ls`, `cd <container>`, `put` a file, `get` it back; then
+    `scp ./x jb:/<container>/x`. Expected: the top level lists running
+    containers; the file lands in the container's repo directory, owned by
+    the dev user.
+12. Windows App display settings: try Retina / scaled resolution and a full
+    screen window. Note what looks sharp and what is slow.
+
+### Setup B: Colima VM on the Mac
+
+1. `jailbee version` on macOS with the VM stopped → prints the "VM not running"
+   remediation and exits non-zero.
+2. `colima start …` (as in the guide), then `jailbee mac bootstrap` → installs
+   JailBee in the VM.
+3. `jailbee version` → prints the in-VM version (delegated).
+4. `jailbee mac doctor` → all checks OK.
+5. In a repo under `$HOME`: `jailbee doctor`, then `jailbee new feat/smoke`, then
+   `jailbee shell feat-smoke` → interactive shell works (a pty is requested by
+   default, i.e. `tty_flag: ['-t']`; if your colima/ssh version rejects `-t`,
+   disable it with `tty_flag: []` in `~/.config/jailbee/macos.yaml`).
+6. From a directory OUTSIDE `$HOME` → `jailbee` prints the "must live under" error.
+7. In the container, create a file in the repo; on macOS, `ls -ln` it.
+   Expected: owned by your macOS user. Record any `jailbee doctor` idmap
+   warning.
+8. `jailbee chrome feat-smoke` through the bridge. Expected (documented gap):
+   no window anywhere. Record the actual output.
+9. Inside the VM (`colima ssh`): `uv tool install --force 'jailbee[ssh]'`,
+   then setup A step 1. Record whether `jb remote ssh enable` works there and
+   whether `loginctl enable-linger` was needed.
+10. On the Mac, `ssh -p 8022 jailbee@127.0.0.1 help` with no `ProxyJump`.
+    Record whether Lima's port forwarding makes it reachable. If not, try the
+    `ProxyJump colima` route from the guide.
+11. Repeat setup A steps 5–8 against the VM.
+
+## Wildcard egress through the proxy
+
+Needs a real Incus host (host-unverified until run). Image pull and `apt install
+squid` need egress.
+
+1. In a repo with `egress_allow: ["*.githubusercontent.com"]`, run `jb apply`.
+   Expected: the `jailbee-egress-proxy` container comes up, `jb net status`
+   prints `Egress proxy: running (incusbr0 <ip>, ...)`, and
+   `incus network acl show jailbee-services` has a `jailbee egress proxy` rule
+   per proxy address on port 3128.
+2. In a **new** strict container shell:
+   - `env | grep -i proxy` shows `HTTP_PROXY`/`HTTPS_PROXY` pointing at the
+     proxy.
+   - `curl -sI https://raw.githubusercontent.com` succeeds.
+   - `curl -sI https://example.com` fails with a 403 / `CONNECT` refused.
+   - `curl --noproxy '*' -sI https://raw.githubusercontent.com` fails: the
+     direct path is blocked by the NIC ACL. Use a wildcard-only host that
+     shares no IP address with any plain entry: the NIC ACL matches addresses,
+     so with `github.com:443` listed, `gist.github.com` still passes directly
+     because both resolve to the same IPs. The same goes for the
+     `api.github.com` auto-entry, which exists only when the GitHub
+     integration is enabled.
+3. With the work network (`jb net migrate`), add `jb egress add '*.example.org'
+   <container-B>`. Expected: reachable from B, 403 from container A of the
+   same repo. On a legacy-network container the same command exits 2.
+4. On a legacy-network container (or with `egress_proxy_always: false`),
+   `jb net loose <container>`, then a new shell. Expected: `env | grep -i
+   proxy` is empty. On the work network the variables stay (see below).
+5. `incus exec jailbee-egress-proxy -- tail /var/log/squid/access.log`.
+   Expected: the source addresses are the containers' own, not a bridge
+   gateway.
+6. `incus exec jailbee-egress-proxy -- squid -v` shows the Squid version. With
+   both `*.vendor.com` and `api.vendor.com` in `egress_allow`, the generated
+   fragment in `/etc/squid/jailbee.d/` should list only `.vendor.com`, and
+   `squid -k parse` should report no "already covered" warning.
+7. `jb egress ls` shows a `VIA` column; `jb doctor` shows `egress proxy:
+   status: running`. Stop the proxy (`incus stop jailbee-egress-proxy`) and
+   re-run both: `stopped`, with a `run 'jailbee apply'` hint.
+
+### Always-on (work network)
+
+Needs the work network (`jb net migrate --yes`) and a repo with
+`egress_allow: ["example.com:443"]` and no wildcards.
+
+1. `jb apply`. Expected: `jailbee-egress-proxy` is created although no entry
+   is a wildcard.
+2. `jb new t1` (strict), then in `jb shell t1`: `env | grep -i proxy` shows the
+   variables; `curl -sI https://example.com` succeeds through Squid;
+   `curl -sI https://www.iana.org` gets a Squid 403;
+   `curl --noproxy '*' -sI https://www.iana.org` is rejected by the NIC ACL.
+3. In the same shell, run `jb net egress add '*.iana.org' t1` on the host, then
+   `curl -sI https://www.iana.org`. Expected: it succeeds with no new shell,
+   and the `add` output has no "open a new shell" line.
+4. `jb net egress add 1.1.1.1:443 t1`. Expected: `env | grep -i no_proxy` is
+   unchanged and `curl -sI https://1.1.1.1` succeeds through the proxy
+   (a `dst` rule; check `access.log`).
+5. `jb net loose t1`. Expected: the same shell reaches an arbitrary host
+   through Squid and the environment is unchanged. `jb net strict t1` brings
+   back the 403, environment still unchanged.
+6. Claude Code started in step 2 keeps working across steps 3-5.
+7. `incus stop jailbee-egress-proxy`. Expected: `jb doctor` and `jb net status`
+   report `stopped` (check this before restarting anything). Then
+   `jb restart t1`. Expected: the proxy is running again, `env | grep -i proxy`
+   in a fresh `jb shell t1` is unchanged, and `curl -sI https://example.com`
+   works. `jb apply` also restores a stopped proxy.
+8. `jb net egress rm '*.iana.org' t1`, set `egress_proxy_always: false` and run
+   `jb apply`. Expected: t1's proxy variables are cleared.
+

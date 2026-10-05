@@ -857,6 +857,18 @@ def test_egress_allow_accepts_valid_entries():
     assert len(cfg.egress_allow) == 6
 
 
+def test_egress_allow_accepts_wildcards():
+    cfg = Config.model_validate({"egress_allow": ["*.vendor.com", "*.x.org:8443"]})
+    assert cfg.egress_allow == ["*.vendor.com", "*.x.org:8443"]
+
+
+def test_egress_allow_rejects_bare_star():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config.model_validate({"egress_allow": ["*"]})
+
+
 def test_egress_allow_rejects_bad_port():
     from pydantic import ValidationError
 
@@ -2627,6 +2639,22 @@ def test_codex_sign_in_hosts_reach_the_allowlist(tmp_path):
     assert "chatgpt.com:443" in allowed
 
 
+def test_gemini_account_lookup_host_reaches_the_allowlist(tmp_path):
+    """A Google sign-in reads `www.googleapis.com/oauth2/v2/userinfo` right
+    after the token exchange. It shares Google's front-end IPs with the other
+    gemini hosts, so the IP ACL passed it unlisted; the egress proxy matches on
+    the hostname and refuses it."""
+    cfg = make_cfg(tmp_path, agents={"gemini": {"enabled": True}})
+    assert "www.googleapis.com:443" in cfg.effective_egress_allow()
+
+
+def test_opencode_model_catalogue_host_reaches_the_allowlist(tmp_path):
+    """Current opencode fetches its model catalogue from `models.opencode.ai`,
+    not `models.dev`, and on different IPs, so strict mode blocked it."""
+    cfg = make_cfg(tmp_path, agents={"opencode": {"enabled": True}})
+    assert "models.opencode.ai:443" in cfg.effective_egress_allow()
+
+
 def test_validate_agents_revalidates_a_plain_agentconfig_under_claude_key():
     """A caller building `Config` in Python (not from YAML) can pass an
     already-constructed base `AgentConfig` under the `claude` key.
@@ -2779,6 +2807,14 @@ def test_new_config_background_defaults_false() -> None:
 def test_share_local_defaults_true(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     assert cfg.share_local is True
+
+
+def test_egress_proxy_always_defaults_true(make_cfg, tmp_path):
+    assert make_cfg(tmp_path).egress_proxy_always is True
+
+
+def test_egress_proxy_always_can_be_disabled(make_cfg, tmp_path):
+    assert make_cfg(tmp_path, egress_proxy_always=False).egress_proxy_always is False
 
 
 def test_share_local_override_false(make_cfg, tmp_path):
@@ -4937,3 +4973,24 @@ def test_ff_policy_rejects_unknown_value(make_cfg, tmp_path):
 
     with pytest.raises(pydantic.ValidationError):
         make_cfg(tmp_path, push={"ff": "maybe"})
+
+
+def test_gui_wayland_defaults_to_on_demand(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path).gui.wayland == "on-demand"
+
+
+def test_gui_wayland_accepts_always(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path, gui={"wayland": "always"}).gui.wayland == "always"
+
+
+def test_gui_wayland_rejects_other_values(tmp_path):
+    import pydantic
+
+    from tests.conftest import make_cfg
+
+    with pytest.raises(pydantic.ValidationError):
+        make_cfg(tmp_path, gui={"wayland": "never"})

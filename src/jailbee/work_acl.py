@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from jailbee.egress import acl_raw_entries
+from jailbee.egress_proxy import PROXY_CONTAINER
 from jailbee.egress_scope import extra_acl_name
 from jailbee.network import SERVICES_ACL, acl_name, extra_acl_yaml, strict_nic_acls, work_loose_rule
 from jailbee.network_generation import WORK_BRIDGE
@@ -55,7 +57,9 @@ def _work_occupants(incus: Incus) -> list[dict[str, Any]]:
             for device_name, device in devices.items()
             if isinstance(device, dict) and device.get("network") == WORK_BRIDGE
         ]
-        if not work_devices:
+        # The egress proxy holds a client NIC on the bridge; it is a service,
+        # not a repo container, and carries no work marker.
+        if not work_devices or raw.get("name") == PROXY_CONTAINER:
             continue
         name = raw.get("name")
         if not isinstance(name, str):
@@ -231,7 +235,10 @@ def apply_work_container_acl(
     marker_loose = any(isinstance(p, str) and p.endswith("-net-work-loose") for p in profiles)
     loose = mode == "loose" if mode is not None else marker_loose
     extras_name = extra_acl_name(name)
-    raw_extras = container_extras(incus, name)
+    # Wildcards live in the Squid fragment, not in an ACL: a container whose
+    # extras are all wildcards has no ACL extras at all, and any ACL left from
+    # earlier plain entries must go.
+    raw_extras = acl_raw_entries(container_extras(incus, name))
     entries = _resolve_entries_tolerant(name, raw_extras)
     if not loose and raw_extras and entries:
         if not incus.network_acl_exists(extras_name):

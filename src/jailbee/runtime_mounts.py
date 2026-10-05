@@ -11,12 +11,16 @@ invisible at directory listing level.
 
 The fix is to attach the socket devices *after* logind has
 provisioned ``/run/user/<uid>`` for the dev user — so the bind mounts
-land on logind's live tmpfs, not on a parent that gets shadowed.
+land on logind's live tmpfs, not on a parent that gets shadowed. In
+`gui.wayland: on-demand` mode the compositor socket is not attached at boot
+but by `ensure_host_display`, when something first needs a display.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from enum import StrEnum
 from pathlib import Path
 
 from jailbee.config import Config
@@ -234,6 +238,72 @@ def _add_device(incus: Incus, name: str, device_name: str, device_config: dict[s
         raise
 
 
+class EnsureResult(StrEnum):
+    """What `ensure_host_display` did."""
+
+    ATTACHED = "attached"
+    REATTACHED = "reattached"
+    UNCHANGED = "unchanged"
+
+
+def _host_inode(path: str) -> int | None:
+    """Inode of a host path, or None if it is gone. Separate so tests can say."""
+    try:
+        return os.stat(path).st_ino
+    except OSError:
+        return None
+
+
+def _same_inode(incus: Incus, name: str, path: str) -> bool:
+    """Whether the container's bind mount at ``path`` is the host's current socket.
+
+    A single-file bind mount pins the inode it was made from. A restarted
+    compositor creates a new socket at the same path, and the container
+    keeps seeing the dead one. A failing ``stat`` inside counts as stale.
+    """
+    host = _host_inode(path)
+    try:
+        inside = incus.exec(name, ["stat", "-c", "%i", path]).strip()
+    except IncusError:
+        return False
+    return host is not None and inside == str(host)
+
+
+def ensure_host_display(cfg: Config, incus: Incus, name: str) -> EnsureResult:
+    """Attach the host compositor socket to ``name``, or replace a stale one.
+
+    The one place the socket is attached after boot: every host-display GUI
+    launch (`apps.launch_env`) and `jailbee display attach` come here, in
+    both `gui.wayland` modes, so a socket a restarted compositor left dead
+    is replaced on the next launch. Idempotent; a current socket costs one
+    ``config device get`` and one ``stat`` and writes nothing.
+
+    Raises `DisplayError` when the host has no socket to attach.
+    """
+    # Lazy: remote_display imports this module at module level.
+    from jailbee.remote_display import DisplayError
+
+    runtime_dir = f"/run/user/{cfg.container_user.uid}"
+    reason = _wayland_skip_reason(runtime_dir)
+    if reason is not None:
+        raise DisplayError(f"cannot attach the host display to {name}: {reason}")
+    source = f"{runtime_dir}/{host_wayland_socket()}"
+    try:
+        mounted = incus.config_device_get(name, WAYLAND_DEVICE, "source")
+        if mounted is None:
+            result = EnsureResult.ATTACHED
+        elif mounted == source and _same_inode(incus, name, source):
+            return EnsureResult.UNCHANGED
+        else:
+            incus.config_device_remove(name, WAYLAND_DEVICE, missing_ok=True)
+            result = EnsureResult.REATTACHED
+        _add_device(incus, name, WAYLAND_DEVICE, {"source": source, "path": source})
+        _pin_wayland_display(cfg, incus, name, socket=host_wayland_socket())
+    except IncusError as e:
+        raise DisplayError(f"cannot attach the host display to {name}: {e}") from e
+    return result
+
+
 def attach_runtime_devices(
     cfg: Config,
     incus: Incus,
@@ -271,8 +341,12 @@ def attach_runtime_devices(
         )
         return False
 
-    wayland_skip_reason = _wayland_skip_reason(runtime_dir)
-    devices = _devices_for_host(cfg, skip_wayland=wayland_skip_reason is not None)
+    # In on-demand mode the compositor socket is `ensure_host_display`'s job;
+    # whether the host has one is asked there, not on every boot.
+    on_demand = cfg.gui.wayland == "on-demand"
+    wayland_skip_reason = None if on_demand else _wayland_skip_reason(runtime_dir)
+    skip_wayland = on_demand or wayland_skip_reason is not None
+    devices = _devices_for_host(cfg, skip_wayland=skip_wayland)
     for device_name, basename in devices.items():
         path = f"{runtime_dir}/{basename}"
         device_config = {"source": path, "path": path}
@@ -287,7 +361,7 @@ def attach_runtime_devices(
         cfg,
         incus,
         name,
-        socket=None if wayland_skip_reason is not None else host_wayland_socket(),
+        socket=None if skip_wayland else host_wayland_socket(),
     )
 
     config_skipped = sorted(set(SOCKET_DEVICES) - set(devices) - {WAYLAND_DEVICE})
@@ -299,7 +373,7 @@ def attach_runtime_devices(
             f"Attached GUI sockets to {name}, minus {WAYLAND_DEVICE} — "
             f"{wayland_skip_reason}, so GUI launches will not display."
         )
-    else:
+    elif devices:
         info(f"Attached GUI sockets to {name}")
     if config_skipped:
         # Config-driven omissions are what the user asked for, so they

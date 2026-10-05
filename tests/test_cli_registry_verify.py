@@ -63,7 +63,7 @@ def test_a_sound_cache_exits_zero(mirror):
 
 def test_corrupt_entries_without_a_terminal_are_listed_and_left(mirror):
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=False)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=False)
     purge = mirror.patch("jailbee.registry_cache.purge_entries")
     # Off a terminal there is nobody to ask: prompting would read as a hang,
     # and `default_confirm` turns the resulting EOF into a silent "no".
@@ -118,7 +118,7 @@ def test_a_confirmed_removal_that_fails_is_reported(mirror):
     """`purge_entries` reports a failure in `errors`, not as a corrupt entry:
     the user answered "yes" and must not be left with silence and exit 0."""
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=True)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=True)
     mirror.patch("jailbee.cli.default_confirm", return_value=True)
     mirror.patch(
         "jailbee.registry_cache.purge_entries",
@@ -135,7 +135,7 @@ def test_an_entry_evicted_before_the_removal_is_accounted_for(mirror):
     """The purge reports a vanished path in no counter at all; answering "yes"
     must still not produce silence and exit 0."""
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=True)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=True)
     mirror.patch("jailbee.cli.default_confirm", return_value=True)
     mirror.patch("jailbee.registry_cache.purge_entries", return_value=_report(ok=0))
 
@@ -149,7 +149,7 @@ def test_an_entry_repaired_before_the_removal_is_left_in_place(mirror):
     """A pull between the scan and the answer can replace the entry with a
     sound copy; the purge then verifies it and keeps it."""
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=True)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=True)
     mirror.patch("jailbee.cli.default_confirm", return_value=True)
     mirror.patch("jailbee.registry_cache.purge_entries", return_value=_report(ok=1))
 
@@ -162,7 +162,7 @@ def test_an_entry_repaired_before_the_removal_is_left_in_place(mirror):
 def test_the_skip_counts_say_what_they_are(mirror):
     """Bare numbers on their own line are unattributable."""
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=False)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(app, ["registry", "verify"])
 
@@ -172,7 +172,7 @@ def test_the_skip_counts_say_what_they_are(mirror):
 
 def test_confirming_on_a_terminal_removes_what_is_still_corrupt(mirror):
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=True)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=True)
     confirm = mirror.patch("jailbee.cli.default_confirm", return_value=True)
     purge = mirror.patch(
         "jailbee.registry_cache.purge_entries", return_value=_report(_corrupt(purged=True), ok=0)
@@ -188,7 +188,7 @@ def test_confirming_on_a_terminal_removes_what_is_still_corrupt(mirror):
 
 def test_declining_on_a_terminal_removes_nothing(mirror):
     mirror.patch("jailbee.registry_cache.verify_cache", return_value=_report(_corrupt()))
-    mirror.patch("jailbee.cli._is_tty", return_value=True)
+    mirror.patch("jailbee.prompting.is_interactive", return_value=True)
     mirror.patch("jailbee.cli.default_confirm", return_value=False)
     purge = mirror.patch("jailbee.registry_cache.purge_entries")
 

@@ -1,4 +1,4 @@
-"""Restricted interactive Jailbee console for remote SSH sessions."""
+"""Interactive Jailbee console: restricted for remote SSH sessions, unrestricted locally."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import typer.rich_utils as typer_rich_utils
 from prompt_toolkit import PromptSession
@@ -24,20 +24,20 @@ from rich.table import Table
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.db import get_engine, state_dir
 from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope, scope_for_session
 from jailbee.remote_ssh.router import (
+    NO_UNLOCKS,
+    RemoteUnlocks,
     RouteError,
     allowed_command_paths,
     known_command_short_help,
     policy_allows,
     resolve_repo,
 )
-
-if TYPE_CHECKING:
-    from jailbee.config.models_remote import RemoteCommandPolicy
+from jailbee.remote_ssh.session import is_ssh_session
 
 _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
 
@@ -129,7 +129,7 @@ def _print_help(
     repo_root: Path,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> int:
     """Render the console-local command panel, then this policy's Jailbee help.
 
@@ -169,7 +169,7 @@ def _print_help(
         status = _returncode(completed)
     else:
         short_help = known_command_short_help()
-        allowed = _allowed_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui)
+        allowed = _allowed_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks)
         rows = [(path, short_help.get(path, "")) for path in sorted(allowed)]
         _render_command_panel(rich_console, "[bold]Allowed Jailbee commands[/bold]", rows)
 
@@ -204,13 +204,13 @@ def _allowed_paths(
     *,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> frozenset[str]:
     """Command paths this session may complete, per its own command policy.
 
     Paths are filtered by the same policy decision used when dispatching.
     """
-    return allowed_command_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui)
+    return allowed_command_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks)
 
 
 def _command_tree(paths: Sequence[str]) -> dict[str, Any]:
@@ -252,12 +252,12 @@ def _session(
     *,
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> PromptSession[str]:
     return PromptSession(
         history=_history(),
         completer=_completer(
-            _allowed_paths(policy, restrict_host=restrict_host, scope=scope, gui=gui), repos
+            _allowed_paths(policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks), repos
         ),
     )
 
@@ -350,7 +350,7 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
     *effective* `RemoteSSHConfig` for this session (`global.yaml` merged
     with any `jb remote ssh serve` overrides) — see `server.handle_process`.
     Using it instead of reloading `global.yaml` here is the fix for the bug
-    where every override flag (`--commands full`, `--shell`, ...) was
+    where every override flag (`--commands full`, `--console`, ...) was
     silently ignored inside the console, which reads its own config. The
     policy is loaded once, at startup, and never reloaded for the rest of
     this session, matching the console's existing "load once" contract for
@@ -359,12 +359,60 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
     ssh_config = _load_policy(policy_json)
     if ssh_config is None:
         return 1
+    return run_console(ssh_config, initial_repo, local=False)
+
+
+def local_policy() -> RemoteSSHConfig:
+    """The policy `jb console` runs under: everything a local `jb` may do.
+
+    The one place "local means unrestricted" is spelled. Never read from
+    `global.yaml`: `remote.ssh` governs SSH sessions, not the user's own
+    terminal.
+    """
+    return RemoteSSHConfig(
+        commands=RemoteCommandPolicy(mode="full"),
+        restrict_host=False,
+        excluded_repos=[],
+        dashboard=True,
+        console=True,
+    )
+
+
+def cwd_repo(repos: Sequence[RepoChoice], cwd: Path) -> RepoChoice | None:
+    """The registered repo whose root contains `cwd`, deepest first."""
+    resolved = cwd.resolve()
+    matches = [r for r in repos if resolved.is_relative_to(r.root.resolve())]
+    return max(matches, key=lambda r: len(r.root.resolve().parts), default=None)
+
+
+def _cwd_repo_or_none(repos: Sequence[RepoChoice]) -> RepoChoice | None:
+    """`cwd_repo` for the process's cwd; none when the cwd was deleted."""
+    try:
+        return cwd_repo(repos, Path.cwd())
+    except FileNotFoundError:
+        return None
+
+
+def run_local(initial_repo: str | None = None) -> int:
+    """Run the console in the user's own terminal (`jb console`).
+
+    Refused inside any SSH session: this console applies no `remote.ssh`
+    policy, so a remote user reaching it would escape theirs.
+    """
+    if is_ssh_session():
+        _error("`console` runs without the remote policy; use the remote console entry point")
+        return 1
+    return run_console(local_policy(), initial_repo, local=True)
+
+
+def run_console(policy: RemoteSSHConfig, initial_repo: str | None, *, local: bool) -> int:
+    """The console loop under `policy`; `local` marks the user's own terminal."""
     try:
         snapshot_scope = scope_for_session()
     except ValueError as error:
         _error(str(error))
         return 1
-    scope = RemoteRepoScope(snapshot_scope.excluded | frozenset(ssh_config.excluded_repos))
+    scope = RemoteRepoScope(snapshot_scope.excluded | frozenset(policy.excluded_repos))
     repos = registered_repos(scope=scope)
     if not repos:
         _error("No registered repositories are available.")
@@ -372,13 +420,16 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
 
     session = _session(
         repos,
-        ssh_config.commands,
-        restrict_host=ssh_config.restrict_host,
+        policy.commands,
+        restrict_host=policy.restrict_host,
         scope=scope,
-        gui=ssh_config.gui,
+        unlocks=RemoteUnlocks.of(policy),
     )
     if initial_repo is None:
-        if len(repos) == 1:
+        here = _cwd_repo_or_none(repos) if local else None
+        if here is not None:
+            current = here
+        elif len(repos) == 1:
             current = repos[0]
             print(f"Only one registered repository; starting in {current.prefix} ({current.root}).")
         else:
@@ -423,12 +474,12 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
                 _error("usage: help")
                 continue
             last_status = _print_help(
-                ssh_config.commands,
-                dashboard_enabled=ssh_config.dashboard,
+                policy.commands,
+                dashboard_enabled=policy.dashboard,
                 repo_root=current.root,
-                restrict_host=ssh_config.restrict_host,
+                restrict_host=policy.restrict_host,
                 scope=scope,
-                gui=ssh_config.gui,
+                unlocks=RemoteUnlocks.of(policy),
             )
             continue
         if command == "repos":
@@ -459,31 +510,24 @@ def run(initial_repo: str | None = None, policy_json: str | None = None) -> int:
             if len(argv) != 1:
                 _error("usage: dashboard")
                 continue
-            if not ssh_config.dashboard:
+            if not policy.dashboard:
                 _error("remote dashboard is disabled")
                 continue
-            completed = _run_foreground(
-                [
-                    sys.executable,
-                    "-m",
-                    "jailbee",
-                    "dashboard",
-                    "--remote-policy-json",
-                    ssh_config.model_dump_json(),
-                ],
-                current.root,
-            )
+            dashboard_argv = [sys.executable, "-m", "jailbee", "dashboard"]
+            if not local:
+                dashboard_argv += ["--remote-policy-json", policy.model_dump_json()]
+            completed = _run_foreground(dashboard_argv, current.root)
             last_status = _returncode(completed)
             continue
 
         try:
             policy_allows(
                 argv,
-                ssh_config.commands,
-                restrict_host=ssh_config.restrict_host,
+                policy.commands,
+                restrict_host=policy.restrict_host,
                 scope=scope,
                 allow_scoped_aggregates=True,
-                gui=ssh_config.gui,
+                unlocks=RemoteUnlocks.of(policy),
             )
         except RouteError as error:
             _error(str(error))

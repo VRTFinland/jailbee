@@ -23,6 +23,8 @@ from jailbee.lifecycle import (
     resolve_container_name,
     switch_network,
 )
+from jailbee.prompting import Cancelled, MissingValue
+from jailbee.stopping import CLEAN_STOP_BUDGET
 from tests.conftest import with_agent
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -154,6 +156,22 @@ def test_list_containers_returns_only_own_repo(make_cfg, tmp_path):
     result = list_containers(cfg, incus)
     assert [c.name for c in result] == ["myrepo-feat-foo"]
     assert result[0].repo == "myrepo"
+
+
+def test_list_containers_reads_given_instances_without_listing(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    instances = [
+        _container(name="myrepo-feat-foo"),
+        _container(name="unmanaged", profiles=["default"]),
+    ]
+
+    result = list_containers(cfg, incus, instances=instances)
+
+    assert [c.name for c in result] == ["myrepo-feat-foo"]
+    incus.list_containers.assert_not_called()
 
 
 def test_list_containers_skips_null_profiles(make_cfg, tmp_path):
@@ -1206,8 +1224,8 @@ def test_resolve_container_for_interactive_uses_with_git_status(make_cfg, tmp_pa
 
     try:
         resolve_container_for_interactive(cfg, incus, None)
-    except ValueError:
-        # We expect a ValueError ("no managed containers found"). We
+    except MissingValue:
+        # We expect a MissingValue ("no managed containers found"). We
         # care about how list_containers was called, not the resolution.
         pass
 
@@ -1371,6 +1389,30 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     assert "limits.memory" in config_set_keys
     assert "limits.cpu" in config_set_keys
     incus.start.assert_called_once_with("repo-feat-x")
+
+
+def test_new_container_syncs_the_proxy_with_the_requested_mode(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+    )
+    new_container(cfg, incus, opts)
+
+    sync.assert_called_once_with(cfg, incus, "repo-feat-x", "strict")
 
 
 @pytest.mark.parametrize("with_payload", [True, False])
@@ -3045,7 +3087,7 @@ def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
         side_effect=[GitFetchError("fetch failed", stderr="fatal: connection refused"), None],
     )
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -3188,7 +3230,7 @@ def test_new_container_autofetch_retry_is_not_offered_off_tty(tmp_path, mocker):
         "jailbee.lifecycle.fetch_remote_ref",
         side_effect=GitFetchError("fetch failed", stderr="fatal: connection refused"),
     )
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     opts = NewContainerOptions(
@@ -4770,7 +4812,11 @@ def test_list_containers_reads_mode_from_user_gie_mode(make_cfg, tmp_path):
 
 @pytest.mark.parametrize(
     "restart,state,operation",
-    [(False, "Stopped", "start"), (True, "Stopped", "start"), (True, "Running", "restart")],
+    [
+        (False, "Stopped", ["start"]),
+        (True, "Stopped", ["start"]),
+        (True, "Running", ["stop", "start"]),
+    ],
 )
 def test_boot_container_syncs_instructions_before_allocation(
     tmp_path, mocker, restart, state, operation
@@ -4789,7 +4835,7 @@ def test_boot_container_syncs_instructions_before_allocation(
     boot_container(cfg, incus, "feat-x", restart=restart)
 
     sync.assert_called_once_with(cfg)
-    assert events == ["sync", "allocate", "detach", operation, "attach"]
+    assert events == ["sync", "allocate", "detach", *operation, "attach"]
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -4813,13 +4859,13 @@ def test_boot_container_refuses_missing_instruction_staging(tmp_path, mocker, re
     allocate.assert_not_called()
     detach.assert_not_called()
     incus.start.assert_not_called()
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
 
 
 def _boot_events(mocker, incus):
     """Record the detach/boot/attach order of one `boot_container` call."""
     events: list[str] = []
-    incus.restart.side_effect = lambda _n: events.append("restart")
+    incus.stop.side_effect = lambda _n, **_kw: events.append("stop")
     incus.start.side_effect = lambda _n: events.append("start")
     mocker.patch(
         "jailbee.runtime_mounts.detach_runtime_devices",
@@ -4883,10 +4929,9 @@ def test_boot_container_survives_a_raising_anchor_refresh(tmp_path, mocker):
 
 
 def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
-    """Detach must happen *before* `incus restart` so the four
-    socket devices don't race with logind on the next boot. attach must
-    happen *after* restart returns so logind has provisioned
-    /run/user/<uid>.
+    """Detach must happen *before* the reboot so the four socket devices
+    don't race with logind on the next boot. attach must happen *after* the
+    start returns so logind has provisioned /run/user/<uid>.
     """
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -4895,7 +4940,46 @@ def test_boot_container_detaches_then_restarts_then_attaches(tmp_path, mocker):
 
     boot_container(cfg, incus, "feat-x", restart=True)
 
-    assert events == ["detach", "restart", "attach"]
+    assert events == ["detach", "stop", "start", "attach"]
+
+
+def test_boot_container_restart_bounds_the_clean_shutdown(tmp_path, mocker):
+    """A restart is a stop plus a start, and the stop goes through
+    `stopping.stop_container`: a bare `incus restart` waits incusd's silent
+    600s default and then fails with "context deadline exceeded".
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=True)
+
+    incus.stop.assert_called_once_with("feat-x", timeout=CLEAN_STOP_BUDGET)
+    incus.start.assert_called_once_with("feat-x")
+
+
+def test_boot_container_restart_reattaches_when_the_shutdown_hangs(tmp_path, mocker):
+    """A container that will not shut down is still running, so the runtime
+    devices detached before the stop go back on, and it is not power-cut:
+    it holds the user's work.
+    """
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": "Running"}]
+    events = _boot_events(mocker, incus)
+    incus.stop.side_effect = IncusError(
+        'Failed shutting down instance, status is "Running": context deadline exceeded'
+    )
+    incus.exec.return_value = ""
+    incus.console_log.return_value = ""
+
+    with pytest.raises(IncusError, match="still running after a"):
+        boot_container(cfg, incus, "feat-x", restart=True)
+
+    incus.stop.assert_called_once_with("feat-x", timeout=CLEAN_STOP_BUDGET)
+    incus.start.assert_not_called()
+    assert events == ["detach", "attach"]
 
 
 def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
@@ -4910,7 +4994,7 @@ def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
 
     boot_container(cfg, incus, "feat-x", restart=True)
 
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
     assert events == ["detach", "start", "attach"]
 
@@ -4942,7 +5026,7 @@ def test_boot_container_start_mode_never_reboots_a_running_container(tmp_path, m
 
     boot_container(cfg, incus, "feat-x", restart=False)
 
-    incus.restart.assert_not_called()
+    incus.stop.assert_not_called()
     incus.start.assert_called_once_with("feat-x")
 
 
@@ -4964,7 +5048,7 @@ def test_boot_container_allocates_on_start_pools(tmp_path, mocker):
 
 
 def test_boot_container_allocates_pools_before_starting(tmp_path, mocker):
-    """Allocation must precede `incus.start`/`incus.restart`: on the very
+    """Allocation must precede the boot: on the very
     first boot of an upgraded container, the slot device has to exist
     before autostart (which runs post-boot) can use it.
     """
@@ -5445,6 +5529,63 @@ def test_switch_network_to_loose_keeps_the_mirror_row(make_cfg, tmp_path, mocker
     clear.assert_not_called()
 
 
+def test_switch_network_to_loose_syncs_the_proxy_after_the_switch(make_cfg, tmp_path, mocker):
+    """The container's IP must leave the strict-only Squid fragment, so the sync
+    runs with the NEW mode and after the profile and ACL switch have landed."""
+    from jailbee import egress_proxy
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    order: list[str] = []
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.hosts.clear_hosts")
+    mocker.patch(
+        "jailbee.egress_scope.apply_container_acl",
+        side_effect=lambda *_a, **_k: order.append("acl"),
+    )
+    sync = mocker.patch.object(
+        egress_proxy, "sync_container", side_effect=lambda *_a, **_k: order.append("proxy")
+    )
+    incus = MagicMock()
+    incus.profile_assign.side_effect = lambda *_a: order.append("profile")
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+        }
+    ]
+
+    switch_network(cfg, incus, "myrepo-x", "loose")
+
+    sync.assert_called_once_with(cfg, incus, "myrepo-x", "loose")
+    assert order == ["profile", "acl", "proxy"]
+
+
+def test_switch_network_to_strict_syncs_the_proxy_with_strict(make_cfg, tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch("jailbee.hosts.apply_hosts")
+    mocker.patch("jailbee.egress_scope.apply_container_acl")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        {
+            "name": "myrepo-x",
+            "status": "Running",
+            "profiles": ["default", "myrepo-base", "myrepo-binds", "myrepo-net-loose"],
+        }
+    ]
+
+    switch_network(cfg, incus, "myrepo-x", "strict")
+
+    sync.assert_called_once_with(cfg, incus, "myrepo-x", "strict")
+
+
 def test_work_switch_loose_grants_before_removing_nic_acl(make_cfg, tmp_path, mocker):
     from jailbee.work_network import work_nic
 
@@ -5810,7 +5951,7 @@ def test_resolver_errors_when_no_containers(make_cfg, tmp_path):
     incus.list_containers.return_value = []  # zero
     picker = MagicMock()
 
-    with pytest.raises(ValueError, match="no managed containers"):
+    with pytest.raises(MissingValue, match="no managed containers"):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5880,7 +6021,7 @@ def test_resolver_errors_when_multiple_and_non_interactive(make_cfg, tmp_path):
     picker = MagicMock()
     is_interactive = MagicMock(return_value=False)
 
-    with pytest.raises(ValueError, match=r"multiple containers.*specify <name>"):
+    with pytest.raises(MissingValue, match="Candidates: feat-a, feat-b"):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5902,7 +6043,7 @@ def test_resolver_raises_when_picker_cancelled(make_cfg, tmp_path):
     ]
     picker = MagicMock(return_value=None)  # Ctrl+C
 
-    with pytest.raises(ValueError, match="cancelled"):
+    with pytest.raises(Cancelled):
         resolve_container_for_interactive(
             cfg,
             incus,
@@ -5966,21 +6107,6 @@ def test_resolver_with_background_raises_when_neither_exists(make_cfg, tmp_path,
         resolve_container_for_interactive(cfg, incus, "nonexistent", with_background=True)
 
 
-def test_stdin_is_interactive_respects_env_and_tty(monkeypatch):
-    from jailbee.lifecycle import _stdin_is_interactive
-
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    assert _stdin_is_interactive() is True
-
-    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
-    assert _stdin_is_interactive() is False
-
-    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    assert _stdin_is_interactive() is False
-
-
 def test_resolver_always_prompt_shows_picker_for_a_single_container(make_cfg, tmp_path):
     cfg = make_cfg(tmp_path / "myrepo")
     cfg.repo_root.mkdir()
@@ -5997,21 +6123,20 @@ def test_resolver_always_prompt_shows_picker_for_a_single_container(make_cfg, tm
     assert result.auto_selected is False  # the user saw it and chose it
 
 
-def test_resolver_always_prompt_is_inert_off_a_tty(make_cfg, tmp_path):
-    """Scripts must not hang: off a TTY a single container is still auto-picked."""
+def test_resolver_always_prompt_off_a_tty_is_missing_value(make_cfg, tmp_path):
+    """A destructive choice is never settled silently: off a TTY it is exit 2."""
     cfg = make_cfg(tmp_path / "myrepo")
     cfg.repo_root.mkdir()
     incus = MagicMock()
     incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
     picker = MagicMock()
 
-    result = resolve_container_for_interactive_detailed(
-        cfg, incus, None, picker=picker, is_interactive=lambda: False, always_prompt=True
-    )
+    with pytest.raises(MissingValue):
+        resolve_container_for_interactive_detailed(
+            cfg, incus, None, picker=picker, is_interactive=lambda: False, always_prompt=True
+        )
 
     picker.assert_not_called()
-    assert result.name == "myrepo-feat-only"
-    assert result.auto_selected is True
 
 
 def test_resolver_always_prompt_does_not_affect_a_named_container(make_cfg, tmp_path):
@@ -6035,7 +6160,7 @@ def test_resolver_always_prompt_cancel_raises(make_cfg, tmp_path):
     incus = MagicMock()
     incus.list_containers.return_value = [_container(name="myrepo-feat-only")]
 
-    with pytest.raises(ValueError, match="cancelled"):
+    with pytest.raises(Cancelled):
         resolve_container_for_interactive_detailed(
             cfg,
             incus,
@@ -9542,6 +9667,7 @@ def test_agent_cell_is_a_dash_without_a_live_session():
     [
         ("waiting", 4 * 60, "◆ 4m"),
         ("busy", 12, "● 12s"),
+        ("shell", 20 * 60, "◐ 20m"),
         ("idle", 3 * 3600 + 59 * 60, "○ 3h"),
         ("idle", 30 * 3600, "○ 30h"),
     ],
@@ -9580,6 +9706,7 @@ def test_agent_compact_cell_colours_the_glyph_by_state():
 
     assert "[yellow]" in cell("waiting")
     assert "[green]" in cell("busy")
+    assert "[cyan]" in cell("shell")
     assert "[dim]" in cell("idle")
 
 
@@ -10028,3 +10155,69 @@ def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg,
         outbox_io.ensure_directories(cfg, incus, "repo-x")
         assert manifest.read_text() == "existing"
         assert (parent / "issue-outbox").is_dir()
+
+
+def _ci(name):
+    from jailbee.lifecycle import ContainerInfo
+
+    return ContainerInfo(
+        name=name, state="Running", network=None, ip=None, memory_limit=None, repo="app"
+    )
+
+
+def test_resolver_several_off_a_tty_is_missing_value(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    with pytest.raises(MissingValue) as exc:
+        resolve_container_for_interactive(
+            cfg, mocker.MagicMock(), None, is_interactive=lambda: False
+        )
+    assert exc.value.candidates == ("a", "b")
+
+
+def test_resolver_patch_on_prompting_reaches_the_default(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    got = resolve_container_for_interactive(
+        cfg, mocker.MagicMock(), None, picker=lambda cs: cs[1].name
+    )
+    assert got == "app-b"
+
+
+def test_resolver_always_prompt_shows_the_picker_for_one(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a")])
+    seen = []
+    r = resolve_container_for_interactive_detailed(
+        cfg,
+        mocker.MagicMock(),
+        None,
+        always_prompt=True,
+        picker=lambda cs: seen.append(cs) or cs[0].name,
+        is_interactive=lambda: True,
+    )
+    assert r.name == "app-a" and r.auto_selected is False and len(seen) == 1
+
+
+def test_resolver_cancel_raises_cancelled(make_cfg, tmp_path, mocker):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a"), _ci("app-b")])
+    with pytest.raises(Cancelled):
+        resolve_container_for_interactive(
+            cfg, mocker.MagicMock(), None, picker=lambda cs: None, is_interactive=lambda: True
+        )
+
+
+def test_resolver_single_auto_pick_notes_the_container_on_stderr(
+    make_cfg, tmp_path, mocker, capsys
+):
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_ci("app-a")])
+    got = resolve_container_for_interactive(
+        cfg, mocker.MagicMock(), None, is_interactive=lambda: False
+    )
+    out, err = capsys.readouterr()
+    assert got == "app-a"
+    assert "Using container a" in err
+    assert out == ""

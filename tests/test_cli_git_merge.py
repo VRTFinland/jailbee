@@ -26,7 +26,7 @@ from jailbee.sync import (
     SubmoduleMove,
     SyncError,
 )
-from tests.conftest import flat_output
+from tests.conftest import flat_output, panel_text
 
 runner = CliRunner()
 
@@ -625,48 +625,70 @@ def test_git_merge_self_merge_guard_compares_resolved_names(merge_repo, mocker):
     called.assert_not_called()
 
 
+def _off_tty(merge_repo, mocker, *containers):
+    """Off a TTY, with `containers` as the listing the candidates come from."""
+    _cfg, incus = merge_repo
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=list(containers))
+    return mocker.patch("jailbee.sync.merge_container_into_container")
+
+
 def test_git_merge_off_a_tty_requires_the_target_explicitly(merge_repo, mocker):
     """Off a TTY nothing can be prompted for, so the omission is an error.
 
     A script must be told what is missing rather than made to hang for a
-    choice it cannot make.
+    choice it cannot make; the candidates are listed, minus the named source.
     """
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
-    called = mocker.patch("jailbee.sync.merge_container_into_container")
+    called = _off_tty(merge_repo, mocker, _info("c1"), _info("c4"), _info("c5"))
 
     result = runner.invoke(app, ["git", "merge", "c1"])
 
-    assert result.exit_code == 1
-    combined = flat_output((result.output or "") + (result.stderr or ""))
-    assert "--into <target>" in combined
-    assert "TTY" in combined
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "--into" in combined
+    assert "<source>" not in combined
+    assert "Candidates: c4, c5" in combined
     called.assert_not_called()
 
 
 def test_git_merge_off_a_tty_requires_the_sources_explicitly(merge_repo, mocker):
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
-    called = mocker.patch("jailbee.sync.merge_container_into_container")
+    called = _off_tty(merge_repo, mocker, _info("c1"), _info("c4"))
 
     result = runner.invoke(app, ["git", "merge", "--into", "c4"])
 
-    assert result.exit_code == 1
-    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
     assert "<source>" in combined
-    assert "TTY" in combined
+    assert "--into" not in combined
+    assert "Candidates: c1" in combined
     called.assert_not_called()
 
 
-def test_git_merge_off_a_tty_names_both_missing_ends(merge_repo, mocker):
-    """A bare `jailbee git merge` off a TTY names both halves, not just one."""
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
-    called = mocker.patch("jailbee.sync.merge_container_into_container")
+def test_git_merge_off_a_tty_asks_for_the_sources_first_when_both_are_missing(merge_repo, mocker):
+    """A bare `jailbee git merge` off a TTY lists the candidates for the sources."""
+    called = _off_tty(merge_repo, mocker, _info("c1"), _info("c4"))
 
     result = runner.invoke(app, ["git", "merge"])
 
-    assert result.exit_code == 1
-    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
     assert "<source>" in combined
-    assert "--into <target>" in combined
+    assert "--into" in combined
+    assert "Candidates: c1, c4" in combined
+    called.assert_not_called()
+
+
+def test_git_merge_off_a_tty_with_a_branch_override_lists_the_candidates(merge_repo, mocker):
+    """`-b` makes the source prompt single-select; off a TTY it is still a missing value."""
+    called = _off_tty(merge_repo, mocker, _info("c1"), _info("c4"))
+
+    result = runner.invoke(app, ["git", "merge", "--into", "c4", "-b", "feat/x"])
+
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
+    assert "<source>" in combined
+    assert "Candidates: c1" in combined
     called.assert_not_called()
 
 
@@ -740,12 +762,12 @@ class _Pickers:
 def merge_pickers(merge_repo, mocker):
     """Wire the interactive path: a TTY, a stubbed listing and both pickers.
 
-    `list_containers` and `_stdin_is_interactive` are patched on
+    `list_containers` and `prompting.is_interactive` are patched on
     `jailbee.lifecycle`, where the command imports them from lazily.
     """
     _cfg, incus = merge_repo
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     return _Pickers(mocker)
 
 
@@ -908,8 +930,8 @@ def test_git_merge_says_so_when_the_sources_leave_no_target(merge_pickers, mocke
 
     result = runner.invoke(app, ["git", "merge"])
 
-    assert result.exit_code == 1
-    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
     assert "no eligible container left to merge into" in combined
     assert "targets" not in p.order
     called.assert_not_called()
@@ -923,8 +945,8 @@ def test_git_merge_says_so_when_the_targets_leave_no_source(merge_pickers, mocke
 
     result = runner.invoke(app, ["git", "merge", "--into", "c1", "--into", "c4"])
 
-    assert result.exit_code == 1
-    combined = flat_output((result.output or "") + (result.stderr or ""))
+    assert result.exit_code == 2
+    combined = panel_text((result.output or "") + (result.stderr or ""))
     assert "no eligible container left to merge from" in combined
     assert p.order == []
     called.assert_not_called()
@@ -939,7 +961,7 @@ def test_git_merge_cancelled_source_prompt_merges_nothing(merge_pickers, mocker)
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 1
-    assert "Aborted" in flat_output((result.output or "") + (result.stderr or ""))
+    assert "cancelled" in panel_text((result.output or "") + (result.stderr or ""))
     assert p.order == ["sources"]
     called.assert_not_called()
 
@@ -970,7 +992,7 @@ def test_git_merge_cancelled_target_prompt_merges_nothing(merge_pickers, mocker)
     result = runner.invoke(app, ["git", "merge"])
 
     assert result.exit_code == 1
-    assert "Aborted" in flat_output((result.output or "") + (result.stderr or ""))
+    assert "cancelled" in panel_text((result.output or "") + (result.stderr or ""))
     assert p.order == ["sources", "targets"]
     called.assert_not_called()
 
@@ -998,6 +1020,23 @@ def test_git_merge_without_eligible_containers_says_so(merge_pickers, mocker):
 
     result = runner.invoke(app, ["git", "merge"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
+    assert "no running clone-mode containers" in panel_text(
+        (result.output or "") + (result.stderr or "")
+    )
     assert p.order == []
+    called.assert_not_called()
+
+
+def test_git_merge_cancelled_single_source_prompt_merges_nothing(merge_pickers, mocker):
+    """`-b`'s single-select source prompt: cancel is exit 1 and merges nothing."""
+    p = merge_pickers
+    p.offer(_info("c1"), _info("c4"))
+    p.single_answer = None
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "--into", "c4", "-b", "feat/x"])
+
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text((result.output or "") + (result.stderr or ""))
     called.assert_not_called()

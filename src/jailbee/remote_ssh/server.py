@@ -19,6 +19,7 @@ from jailbee.config import ConfigError
 from jailbee.db import state_dir
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import Incus
+from jailbee.remote_display import DisplayError
 from jailbee.remote_ssh.display_forward import is_display_forward
 from jailbee.remote_ssh.keys import AuthorizedKey, SSHKeyError, read_authorized_keys, ssh_paths
 from jailbee.remote_ssh.overrides import (
@@ -30,17 +31,21 @@ from jailbee.remote_ssh.overrides import (
 from jailbee.remote_ssh.pty import ChildSpec, PTYError, run_child
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import (
+    RemoteUnlocks,
     RouteError,
     command_path,
     help_text,
+    is_gui_app_command,
     is_host_command,
     route,
 )
 from jailbee.remote_ssh.running import clear_running, installed_version, record_running
-from jailbee.remote_ssh.session import host_restricted
+from jailbee.remote_ssh.session import WaypipeSession, host_restricted
 from jailbee.remote_ssh.sftp import MAX_CONCURRENT_EXECS, SFTPService
 
 if TYPE_CHECKING:
+    from asyncssh.misc import MaybeAwait
+
     from jailbee.config.models_remote import RemoteSSHConfig
 
 log = logging.getLogger(__name__)
@@ -181,8 +186,36 @@ class JailbeeSSHServer(asyncssh.SSHServer):
     def unix_connection_requested(self, dest_path: str) -> bool:
         return False
 
-    def unix_server_requested(self, listen_path: str) -> bool:
-        return False
+    def unix_server_requested(self, listen_path: str) -> MaybeAwait[Any]:
+        """Admit one `waypipe ssh` forward per connection, at JailBee's own path.
+
+        Only with `remote.ssh.gui` on, for an authenticated key, and for a path
+        of the waypipe client's shape. The client never picks a host path: the
+        listener is created at `waypipe.links_socket` and each connection is
+        forwarded to the client under the name it asked for. Every other
+        request stays refused (`docs/security.md`).
+        """
+        from jailbee.remote_ssh import waypipe
+
+        if self._gui_enabled is None or not self._gui_enabled():
+            return False
+        if self._conn.get_extra_info("jailbee_key_fingerprint") is None:
+            return False
+        if self._conn.get_extra_info("jailbee_waypipe") is not None:
+            return False
+        if not waypipe.is_client_socket_path(listen_path):
+            return False
+        session_id = waypipe.new_session_id()
+        own = waypipe.links_socket(session_id)
+        if len(str(own).encode()) > waypipe.SUN_PATH_MAX:
+            log.warning("SSH waypipe forward refused: %s exceeds the socket path limit", own)
+            return False
+        directory = waypipe.links_dir()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        self._conn.set_extra_info(jailbee_waypipe=(listen_path, session_id))
+        log.info("SSH waypipe forward session=%s", session_id)
+        return self._conn.forward_local_path(str(own), listen_path)
 
 
 _LONE_LF_RE = re.compile(r"(?<!\r)\n")
@@ -213,9 +246,9 @@ def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
         return "help", None, None
     if argv[0] == "dashboard":
         return "dashboard", None, "dashboard"
-    if argv[0] == "shell":
+    if argv[0] in ("console", "shell"):
         prefix = argv[2] if len(argv) >= 3 and argv[1] == "--repo" else None
-        return "console", prefix, "shell"
+        return "console", prefix, "console"
     if len(argv) >= 3 and argv[0] == "--repo":
         try:
             path = command_path(argv[2:])
@@ -258,6 +291,7 @@ async def handle_process(
         update.stop()
         return
     kind, prefix, path = "unknown", None, None
+    waypipe_session: WaypipeSession | None = None
     decision = "rejected"
     reason = "completed"
     outcome: int | str | None = None
@@ -312,7 +346,25 @@ async def handle_process(
         config = global_config.remote.ssh
         if overrides is not None:
             config = apply_ssh_overrides(config, overrides)
-        selected = route(process.command, config)
+        from jailbee.remote_ssh import waypipe
+
+        command = process.command
+        request = waypipe.parse_server_command(command)
+        if request is not None:
+            if not config.gui:
+                raise RouteError(
+                    "waypipe sessions need remote.ssh.gui: true in the server's global.yaml"
+                )
+            forward = process.get_extra_info("jailbee_waypipe")
+            if forward is None or forward[0] != request.socket:
+                raise RouteError(
+                    "waypipe needs its own reverse forward on this connection. "
+                    + waypipe.SUPPORTED_FORM
+                )
+            waypipe_session = WaypipeSession(id=forward[1], compress=request.compress)
+            command = request.command
+            kind, prefix, path = _request_fields(command)
+        selected = route(command, config)
         kind, prefix = selected.kind, selected.repo_prefix
         if selected.requires_pty and process.term_type is None:
             raise PTYError("This entry point requires a PTY; retry with ssh -t.")
@@ -321,6 +373,11 @@ async def handle_process(
             process.stdout.write(_server_text(help_text(config), pty=pty))
             process.exit(0)
             return
+        if waypipe_session is not None:
+            # Only an allowed command gets the display provisioned.
+            from jailbee.remote_display import ensure_waypipe_display
+
+            await asyncio.to_thread(ensure_waypipe_display, Incus())
         argv = (sys.executable, "-m", "jailbee", *selected.argv)
         if selected.kind == "console":
             # The console child re-validates this itself (never trusting it
@@ -329,7 +386,7 @@ async def handle_process(
             # (global.yaml + any `jb remote ssh serve` overrides) here is
             # what fixes the console silently reloading global.yaml on its
             # own and ignoring every override flag (e.g. `--commands full`,
-            # `--shell`), including its own `dashboard` check.
+            # `--console`), including its own `dashboard` check.
             argv = (*argv, "--policy-json", config.model_dump_json())
         elif selected.kind == "dashboard":
             argv = (*argv, "--remote-policy-json", config.model_dump_json())
@@ -340,12 +397,18 @@ async def handle_process(
             restrict_host=config.restrict_host,
             excluded_repos=tuple(config.excluded_repos),
             gui_port=config.port if config.gui else None,
+            waypipe=waypipe_session,
+            waypipe_attach=(
+                waypipe_session is not None
+                and selected.kind == "command"
+                and is_gui_app_command(selected.argv)
+            ),
         )
         if selected.repo_root is None:
             spec.cwd.mkdir(parents=True, exist_ok=True)
         audit("started")
         await run_child(process, spec)
-    except (ConfigError, RouteError, PTYError) as exc:
+    except (ConfigError, RouteError, PTYError, DisplayError) as exc:
         reason = type(exc).__name__
         process.stderr.write(_server_text(str(exc) + "\n", pty=pty))
         process.exit(2)
@@ -360,6 +423,10 @@ async def handle_process(
         process.stderr.write(_server_text("Remote Jailbee session failed.\n", pty=pty))
         process.exit(1)
     finally:
+        if waypipe_session is not None:
+            from jailbee.remote_ssh.waypipe import stop_session
+
+            await asyncio.to_thread(stop_session, Incus(), waypipe_session.id)
         # Restore the two public callback methods overridden for this channel.
         process.exit = original_exit  # type: ignore[method-assign]
         process.exit_with_signal = original_signal  # type: ignore[method-assign]
@@ -380,7 +447,7 @@ def _enabled_entry_points(config: RemoteSSHConfig) -> str:
         name
         for name, enabled in (
             ("dashboard", config.dashboard),
-            ("shell", config.shell),
+            ("console", config.console),
             ("exec", config.exec),
         )
         if enabled
@@ -395,8 +462,8 @@ def _connect_example(host: str, port: int, config: RemoteSSHConfig) -> str:
         display_host = host
     if config.dashboard:
         return f"ssh -t -p {port} jailbee@{display_host} dashboard"
-    if config.shell:
-        return f"ssh -t -p {port} jailbee@{display_host} shell"
+    if config.console:
+        return f"ssh -t -p {port} jailbee@{display_host} console"
     return f"ssh -p {port} jailbee@{display_host}"
 
 
@@ -440,9 +507,12 @@ def _startup_summary(
     ]
     if config.files:
         lines.append("  sftp/scp: on (container repo directories only)")
+    if config.network:
+        lines.append("  network widening: on (net loose, net egress add)")
     if restricted and config.commands.mode == "allowlist":
+        unlocks = RemoteUnlocks.of(config)
         refused = sorted(
-            path for path in config.commands.allow if is_host_command(path, gui=config.gui)
+            path for path in config.commands.allow if is_host_command(path, unlocks=unlocks)
         )
         if refused:
             lines.append(
@@ -578,6 +648,13 @@ async def serve_async(
             gss_host=None,
         )
         log.info(_startup_summary(config, listener, overrides))
+        if remote_gui_enabled(overrides):
+            from jailbee.remote_ssh.waypipe import prune_dead
+
+            # After a successful listen (a failed second start must touch
+            # nothing), and only sessions nobody listens for any more: another
+            # server may be running beside this one.
+            await asyncio.to_thread(prune_dead, Incus())
         record_running(__version__)
         poller = asyncio.create_task(poll_for_update())
         loop = asyncio.get_running_loop()

@@ -13,11 +13,22 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from jailbee.config.common import _HOST_LEVEL_KEYS, _parse_yaml_text, normalize_credentials_key
+from jailbee.config.common import (
+    _HOST_LEVEL_KEYS,
+    _parse_yaml_text,
+    normalize_credentials_key,
+    normalize_remote_ssh_keys,
+)
 from jailbee.config.legacy_pr import LEGACY_PR_KEYS
 from jailbee.config.local_layer import local_config_dir, local_config_path, validate_local_raw
 from jailbee.config.models_host import _PREFIX_RE
-from jailbee.config_writer import DELETE, YamlChange, credential_key_migration, patch_yaml
+from jailbee.config_writer import (
+    DELETE,
+    YamlChange,
+    credential_key_migration,
+    patch_yaml,
+    remote_ssh_key_migration,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +39,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "chrome-block",
     "legacy-pr-keys",
     "claude-credentials-key",
+    "remote-ssh-console",
     "credentials-repos",
     "github-api-tokens",
     "egress-db-rows",
@@ -171,6 +183,16 @@ def _claude_credentials_key(state: _State) -> None:
     )
 
 
+def _remote_ssh_console(state: _State) -> None:
+    path = state.inputs.global_path
+    state.change(
+        "remote-ssh-console",
+        "`remote.ssh.shell` → `remote.ssh.console`",
+        path,
+        remote_ssh_key_migration(state.raw(path), []),
+    )
+
+
 def _per_repo_map(
     state: _State,
     *,
@@ -259,6 +281,7 @@ def plan_migrations(inputs: MigrationInputs) -> Plan:
     _chrome_block(state)
     _legacy_pr_keys(state)
     _claude_credentials_key(state)
+    _remote_ssh_console(state)
     _per_repo_map(
         state,
         migration_id="credentials-repos",
@@ -344,6 +367,7 @@ def _validate(inputs: MigrationInputs, plan: Plan) -> None:
         raw = _parse_yaml_text(text, str(path))
         if path == inputs.global_path:
             raw, _ = normalize_credentials_key(raw, str(path))
+            raw, _ = normalize_remote_ssh_keys(raw, str(path))
             validate_global_raw(raw, path, emit_hint=False)
             overlay = {key: value for key, value in raw.items() if key not in _HOST_LEVEL_KEYS}
             try:

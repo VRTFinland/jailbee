@@ -174,24 +174,6 @@ def known_command_paths() -> frozenset[str]:
     return _command_tree().public_leaves
 
 
-def allowed_command_paths(
-    policy: RemoteCommandPolicy,
-    *,
-    restrict_host: bool = True,
-    scope: RemoteRepoScope | None = None,
-    gui: bool = False,
-) -> frozenset[str]:
-    """Return public leaf paths accepted by the common command decision."""
-    allowed: set[str] = set()
-    for path in known_command_paths():
-        try:
-            policy_allows(path.split(), policy, restrict_host=restrict_host, scope=scope, gui=gui)
-        except RouteError:
-            continue
-        allowed.add(path)
-    return frozenset(allowed)
-
-
 def command_leaf(argv: Sequence[str]) -> tuple[str, TyperCommand]:
     """Return the typed leaf path and its cached Click command."""
     typed, _ = _resolve_leaf(argv)
@@ -241,15 +223,17 @@ def command_path(argv: Sequence[str]) -> str:
 #   - host configuration and the SSH service itself: `config edit`/`init`
 #     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
-#     `apply`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
-#     `net migrate`, `registry up`/`down`, `display up`/`down`, `litellm up`/`down`/`login`/
-#     `logout`/`logs`;
-#   - persistent network policy: `net egress add`/`rm` accept any address,
-#     the host's own and its LAN's included;
+#     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
+#     `net migrate`, `registry up`/`down`, `display up`/`down`/`attach`,
+#     `litellm up`/`down`/`login`/`logout`/`logs`;
+#   - widening a container's network: `net loose` and `net egress add`
+#     can open the host's own and its LAN's addresses to it, so both are
+#     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry), `port to-container`;
-#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`.
+#   - windows on the host's display: `gui`, `ide`, the browsers, `apps run`;
+#   - a second console: `console` runs with the local, unrestricted policy;
 # `tests/test_remote_ssh_router.py` partitions every public leaf between this
 # set and the container-side rest, so a new command fails the suite until
 # someone decides which side it is on.
@@ -262,6 +246,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "setup",
         "init",
         "apply",
+        "upgrade",
         "base build",
         "base prune",
         "net install",
@@ -269,10 +254,11 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net refresh",
         "net unregister",
         "net egress add",
-        "net egress rm",
+        "net loose",
         "registry up",
         "registry down",
         "display up",
+        "display attach",
         "display down",
         "litellm up",
         "litellm down",
@@ -296,6 +282,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "firefox",
         "browser",
         "apps run",
+        "console",
     }
 )
 
@@ -304,6 +291,50 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
 # the host's screen. `gui` (the Qt dashboard) is deliberately not here: it
 # always opens a window on the host.
 _GUI_APP_COMMANDS: frozenset[str] = frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
+
+
+def is_gui_app_command(argv: Sequence[str]) -> bool:
+    """Whether ``argv`` is one of the GUI app launchers (the Qt dashboard excluded)."""
+    try:
+        return command_path(argv) in _GUI_APP_COMMANDS
+    except RouteError:
+        return False
+
+
+# The network-widening commands that `remote.ssh.network` turns from host
+# commands into container commands. Narrowing (`net strict`, `net egress rm`)
+# is a container command outright.
+_NETWORK_WIDENING_COMMANDS: frozenset[str] = frozenset({"net loose", "net egress add"})
+
+
+@dataclass(frozen=True)
+class RemoteUnlocks:
+    """The `remote.ssh` switches that move host commands to the container side.
+
+    Each switch only reclassifies: an allowlist still has to name the command,
+    and `restrict_host: false` makes the whole question moot.
+    """
+
+    gui: bool = False
+    network: bool = False
+
+    @classmethod
+    def of(cls, config: RemoteSSHConfig | None) -> RemoteUnlocks:
+        """The switches `config` turns on; all off without a config."""
+        if config is None:
+            return cls()
+        return cls(gui=config.gui, network=config.network)
+
+    def commands(self) -> frozenset[str]:
+        """Host commands these switches turn into container commands."""
+        return (_GUI_APP_COMMANDS if self.gui else frozenset()) | (
+            _NETWORK_WIDENING_COMMANDS if self.network else frozenset()
+        )
+
+
+# The default for every `unlocks` parameter: nothing unlocked. A shared
+# immutable value, since a call in a default argument trips ruff B008.
+NO_UNLOCKS = RemoteUnlocks()
 
 _CONTAINER_COMMANDS = frozenset(
     {
@@ -343,7 +374,7 @@ _CONTAINER_COMMANDS = frozenset(
         "litellm status",
         "net egress export",
         "net egress ls",
-        "net loose",
+        "net egress rm",
         "net status",
         "net strict",
         "new",
@@ -382,14 +413,34 @@ _CONTAINER_COMMANDS = frozenset(
 )
 
 
-def is_host_command(path: str, *, gui: bool = False) -> bool:
+def is_host_command(path: str, *, unlocks: RemoteUnlocks = NO_UNLOCKS) -> bool:
     """True when canonical `path` is, or lies under, a `_HOST_COMMANDS` entry.
 
-    With ``gui`` (`remote.ssh.gui`), the GUI app launchers are not.
+    A command `unlocks` turns on (see `RemoteUnlocks`) is not.
     """
-    if gui and path in _GUI_APP_COMMANDS:
+    if path in unlocks.commands():
         return False
     return any(path == entry or path.startswith(entry + " ") for entry in _HOST_COMMANDS)
+
+
+def allowed_command_paths(
+    policy: RemoteCommandPolicy,
+    *,
+    restrict_host: bool = True,
+    scope: RemoteRepoScope | None = None,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
+) -> frozenset[str]:
+    """Return public leaf paths accepted by the common command decision."""
+    allowed: set[str] = set()
+    for path in known_command_paths():
+        try:
+            policy_allows(
+                path.split(), policy, restrict_host=restrict_host, scope=scope, unlocks=unlocks
+            )
+        except RouteError:
+            continue
+        allowed.add(path)
+    return frozenset(allowed)
 
 
 # Parameters a remote caller may never set, by canonical command path, on top
@@ -398,6 +449,9 @@ def is_host_command(path: str, *, gui: bool = False) -> bool:
 #   - `new --mount` bind-mounts the host repo read-write, `.git` included, so
 #     the container could plant a hook or `core.fsmonitor` that the host's own
 #     git later runs;
+#   - `net egress add`/`rm` `--repo` writes the host-local repo layer
+#     (`repos/<prefix>.yaml`) and so changes every container of the repo, not
+#     only the session's own;
 #   - `pr`/`submodule pr` `--web`/`--open` run `gh pr view --web`, a browser
 #     on the host's display;
 #   - `--yes` on the commands that publish to GitHub with the host's own
@@ -410,11 +464,24 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     # capability. A dashboard command inside a console must not forge it.
     "dashboard": frozenset({"remote_policy_json"}),
     "new": frozenset({"mount"}),
+    "net egress add": frozenset({"repo"}),
+    "net egress rm": frozenset({"repo"}),
     "pr": frozenset({"web", "open_only", "yes"}),
     "submodule pr": frozenset({"web", "open_only", "yes"}),
     "review apply": frozenset({"yes"}),
     "issue apply": frozenset({"yes"}),
     "outbox apply": frozenset({"yes"}),
+}
+
+# Parameters a remote caller may set only to a narrowing value unless
+# `remote.ssh.network` is on, by (canonical command path, parameter name). The
+# parameter itself stays usable, so `_REMOTE_DENIED_PARAMS` cannot express it.
+# `new --net loose` creates a container on the wide-egress network: the same
+# widening `net loose` is, which `RemoteUnlocks.network` already gates. Values
+# compare stripped and lower-cased, as the leaf's own `str` option is not
+# normalised by Click.
+_NETWORK_WIDENING_VALUES: dict[tuple[str, str], frozenset[str]] = {
+    ("new", "network"): frozenset({"loose"}),
 }
 
 
@@ -438,8 +505,11 @@ def _host_reaching_params(command: TyperCommand, canonical: str) -> list[Paramet
     ]
 
 
-def check_arguments(argv: Sequence[str]) -> None:
+def check_arguments(argv: Sequence[str], *, unlocks: RemoteUnlocks = NO_UNLOCKS) -> None:
     """Refuse a remote argv that sets a host-reaching parameter of its leaf.
+
+    A parameter in `_NETWORK_WIDENING_VALUES` is refused only when set to a
+    widening value and `unlocks.network` is off.
 
     The argv is parsed by the leaf's own Click command, exactly as the real
     invocation will parse it, and only the resulting parameter sources are
@@ -457,7 +527,12 @@ def check_arguments(argv: Sequence[str]) -> None:
     typed, canonical = _resolve_leaf(argv)
     command = _command_tree().leaf_commands[typed]
     params = _host_reaching_params(command, canonical)
-    if not params:
+    widening = {
+        name: values
+        for (path, name), values in _NETWORK_WIDENING_VALUES.items()
+        if path == canonical and not unlocks.network
+    }
+    if not params and not widening:
         return
     words = typed.split()
     try:
@@ -481,6 +556,16 @@ def check_arguments(argv: Sequence[str]) -> None:
             if ctx.get_parameter_source(param.name) is ParameterSource.COMMANDLINE:
                 shown = param.opts[0] if param.opts else param.name
                 raise RouteError(f"remote Jailbee commands may not set {shown}: {canonical}")
+        for name, values in widening.items():
+            if ctx.get_parameter_source(name) is not ParameterSource.COMMANDLINE:
+                continue
+            value = str(ctx.params.get(name) or "").strip().lower()
+            if value in values:
+                option = next((p.opts[0] for p in command.params if p.name == name), name)
+                raise RouteError(
+                    f"remote Jailbee commands may not set {option}={value} "
+                    f"unless remote.ssh.network is on: {canonical}"
+                )
 
 
 def _help_only_path(argv: Sequence[str]) -> str | None:
@@ -538,7 +623,7 @@ def policy_allows(
     restrict_host: bool = True,
     scope: RemoteRepoScope | None = None,
     allow_scoped_aggregates: bool = True,
-    gui: bool = False,
+    unlocks: RemoteUnlocks = NO_UNLOCKS,
 ) -> str:
     """Return the public command path when the remote policy permits it.
 
@@ -555,9 +640,8 @@ def policy_allows(
     `remote.ssh.restrict_host: false` (``restrict_host``) skips it, and not
     even that inside an already restricted session (`host_restricted`).
 
-    ``gui`` (`remote.ssh.gui`) turns the GUI app launchers into container
-    commands; the Qt dashboard launcher `gui` stays a host command, and an
-    allowlist still has to name the launcher.
+    ``unlocks`` (`RemoteUnlocks`) turns the host commands its `remote.ssh`
+    switches cover into container commands; an allowlist still has to name them.
     """
     from jailbee.cli_outbox import normalize_outbox_argv
 
@@ -581,7 +665,7 @@ def policy_allows(
     if policy.mode == "allowlist" and path not in policy.allow:
         raise RouteError(f"Jailbee command is not allowed: {path}")
     if path == "dashboard":
-        check_arguments(argv)
+        check_arguments(argv, unlocks=unlocks)
     if scope is not None and scope.excluded:
         # Until aggregate sources are individually audited, only commands
         # whose scope is inherently the selected/specified single repo pass.
@@ -656,20 +740,20 @@ def policy_allows(
                         "config show --layer global is unavailable when SSH repository "
                         "exclusions are active"
                     )
-    if path in {"dashboard", "tui"}:
-        raise RouteError(
-            f"`{path}` is reserved; use the remote dashboard route or console navigation"
-        )
+    # `console` runs the unrestricted local console, so a remote policy must
+    # never reach it, however permissive its mode or `restrict_host` is.
+    if path in {"dashboard", "tui", "console"}:
+        raise RouteError(f"`{path}` is reserved; use the dashboard or console navigation")
     # A nested dashboard cannot claim the server-to-child transport option,
     # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):
-        if is_host_command(path, gui=gui):
+        if is_host_command(path, unlocks=unlocks):
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"
             )
-        if path not in _CONTAINER_COMMANDS and not (gui and path in _GUI_APP_COMMANDS):
+        if path not in _CONTAINER_COMMANDS and path not in unlocks.commands():
             raise RouteError(f"remote Jailbee command is not classified: {path}")
-        check_arguments(argv)
+        check_arguments(argv, unlocks=unlocks)
     return path
 
 
@@ -722,9 +806,9 @@ def route(
             raise RouteError("remote dashboard is disabled")
         return Route("dashboard", ("dashboard",), None, None, True)
 
-    if argv[0] == "shell":
-        if not config.shell:
-            raise RouteError("remote shell is disabled")
+    if argv[0] in ("console", "shell"):
+        if not config.console:
+            raise RouteError("remote console is disabled")
         prefix: str | None
         root: Path | None
         console_argv: tuple[str, ...]
@@ -737,7 +821,7 @@ def route(
             root = resolve_repo(prefix, engine=engine, scope=scope)
             console_argv = ("_remote-console", "--repo", prefix)
         else:
-            raise RouteError("remote shell accepts only an optional --repo PREFIX")
+            raise RouteError("remote console accepts only an optional --repo PREFIX")
         return Route("console", console_argv, prefix, root, True)
 
     if not config.exec:
@@ -753,7 +837,7 @@ def route(
         restrict_host=config.restrict_host,
         scope=scope,
         allow_scoped_aggregates=True,
-        gui=config.gui,
+        unlocks=RemoteUnlocks.of(config),
     )
     root = resolve_repo(prefix, engine=engine, scope=scope)
     return Route("command", command_argv, prefix, root, False)
@@ -764,8 +848,8 @@ def help_text(config: RemoteSSHConfig) -> str:
     lines = ["Available remote commands:", "  help"]
     if config.dashboard:
         lines.append("  dashboard")
-    if config.shell:
-        lines.append("  shell [--repo PREFIX]")
+    if config.console:
+        lines.append("  console [--repo PREFIX]")
     if config.exec:
         lines.append("  --repo PREFIX COMMAND [ARGS...]")
     return "\n".join(lines) + "\n"

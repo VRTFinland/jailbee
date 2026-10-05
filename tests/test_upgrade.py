@@ -336,7 +336,10 @@ def test_format_advice_names_the_observed_watermark() -> None:
     lines = format_advice(owed)
     assert lines[0] == "Since this repo last ran `jb base build` (jailbee 1.0.3):"
     assert lines[1] == "    - install.sh installs fd"
-    assert lines[2] == "    Run `jb base build` in this repo to pick these up."
+    assert (
+        lines[2]
+        == "    Run `jb base build` in this repo (or `jb upgrade` for every repo) to pick these up."
+    )
 
 
 def test_format_advice_does_not_claim_a_run_it_never_saw() -> None:

@@ -8,7 +8,7 @@ import io
 import itertools
 import json
 import os
-import time
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,9 +17,11 @@ from rich.console import Console, RenderableType
 
 from jailbee import dashboard
 from jailbee.config.loader import _scratch_prefix
+from jailbee.dashboard_jobs import JobResult, JobRunner
 from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
+from jailbee.state_service.protocol import Snapshot
 
 
 def test_inline_editor_keeps_shortcuts_as_text():
@@ -212,46 +214,6 @@ def test_registered_repo_roots_filters_excluded_prefix_before_loading(db_session
     assert dashboard.registered_repo_roots(scope=scope) == [roots[0]]
 
 
-def test_gather_rows_filters_excluded_orphan_prefix_and_keeps_allowed(tmp_path, mocker, make_cfg):
-    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-
-    root = _repo_dir(tmp_path, "allowed")
-    cfg = make_cfg(root)
-    mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
-    mocker.patch.object(
-        dashboard,
-        "list_containers",
-        side_effect=lambda c, i, **kw: (
-            [_ci("hidden-one", "secret"), _ci("allowed-one", "allowed")]
-            if kw["all_repos"]
-            else [_ci("allowed-one", "allowed")]
-        ),
-    )
-
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(),
-        [root],
-        cwd_root=root,
-        with_git=False,
-        scope=RemoteRepoScope(frozenset({"secret"})),
-    )
-
-    assert [group.prefix for group in groups] == ["allowed"]
-
-
-def test_gather_live_threads_scope_into_roots_and_rows(mocker):
-    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-
-    scope = RemoteRepoScope(frozenset({"secret"}))
-    roots = mocker.patch.object(dashboard, "collect_repo_roots", return_value=[])
-    gather = mocker.patch.object(dashboard, "gather_rows", return_value=[])
-
-    dashboard.gather_live(mocker.MagicMock(), None, with_git=False, scope=scope)
-
-    assert roots.call_args.kwargs["scope"] is scope
-    assert gather.call_args.kwargs["scope"] is scope
-
-
 def _ci(
     name: str,
     repo: str,
@@ -325,9 +287,7 @@ def _dirty(**kw: str) -> GitStatus:
     return GitStatus(**fields)
 
 
-def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_cfg):
-    # cwd is "beta" on purpose: pinning has to beat the alphabetical order,
-    # so a broken cwd match would sort "alpha" first and fail this test.
+def test_gather_rows_sorts_named_repos_alphabetically(tmp_path, mocker, make_cfg):
     cwd_root = _repo_dir(tmp_path, "beta")  # container_prefix == "beta"
     other_root = _repo_dir(tmp_path, "alpha")  # container_prefix == "alpha"
     cwd_cfg = make_cfg(cwd_root)
@@ -336,7 +296,7 @@ def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_c
     def fake_load(root):
         return cwd_cfg if root == cwd_root else other_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return []  # no orphans
         if cfg is cwd_cfg:
@@ -346,13 +306,10 @@ def test_gather_rows_groups_per_repo_and_pins_cwd_first(tmp_path, mocker, make_c
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [other_root, cwd_root], cwd_root=cwd_root, with_git=False
-    )
-    # cwd group ("beta") pinned first despite sorting last alphabetically
-    assert [g.prefix for g in groups] == ["beta", "alpha"]
-    assert groups[0].config_path == cwd_root / ".jailbee" / "config.yaml"
-    assert [c.name for c in groups[0].containers] == ["beta-one"]
+    groups = dashboard.gather_rows(mocker.MagicMock(), [other_root, cwd_root], with_git=False)
+    assert [g.prefix for g in groups] == ["alpha", "beta"]
+    assert groups[1].config_path == cwd_root / ".jailbee" / "config.yaml"
+    assert [c.name for c in groups[1].containers] == ["beta-one"]
 
 
 def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, mocker):
@@ -374,7 +331,7 @@ def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, 
 
     mocker.patch.object(dashboard, "list_containers", return_value=[])
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [repo], cwd_root=repo, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [repo], with_git=False)
 
     assert [g.prefix for g in groups] == [prefix]
     assert groups[0].repo_root == str(repo)
@@ -393,12 +350,12 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default == "45m"
 
@@ -414,12 +371,12 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].optional_mounts == ("aws", "gcloud")
 
@@ -434,12 +391,12 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default is None
 
@@ -453,12 +410,12 @@ def test_gather_rows_carries_the_repos_agent_homes(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [_ci("orphan-x", "orphan")] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     by_prefix = {g.prefix: g for g in groups}
     assert by_prefix[cfg.container_prefix].agent_homes == (
@@ -477,12 +434,12 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].push_action_default == "rebase"
     assert groups[0].push_source_default == "current"
@@ -494,12 +451,12 @@ def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].push_action_default == "ask"
     assert groups[0].push_source_default == "base"
@@ -510,12 +467,12 @@ def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     assert groups[0].loose_ttl_default == "20m"
 
@@ -525,14 +482,14 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
 
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.loose_ttl_default is None
@@ -543,13 +500,13 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.config_path is None
     assert orphan.repo_root is None
@@ -571,7 +528,7 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
     def fake_load(root):
         return alpha if root == alpha_root else beta
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             # one orphan ('zeta') plus the two covered repos
             return [_ci("alpha-1", "alpha"), _ci("beta-1", "beta"), _ci("zeta-x", "zeta")]
@@ -580,9 +537,7 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [beta_root, alpha_root], cwd_root=None, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [beta_root, alpha_root], with_git=False)
     # named repos alpha-sorted first, orphan group ('zeta') last
     assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]
     # A missing repo root — not a missing config file — is what makes a group
@@ -600,7 +555,7 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
     def fake_load(root):
         return empty_cfg if root == empty_root else populated_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return []  # no orphans
         if cfg is empty_cfg:
@@ -610,9 +565,7 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
 
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [empty_root, populated_root], cwd_root=None, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [empty_root, populated_root], with_git=False)
     assert [g.prefix for g in groups] == ["alpha", "beta"]
     alpha = groups[0]
     assert alpha.containers == []
@@ -622,9 +575,32 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
 def test_gather_rows_empty_repo_roots_returns_empty(mocker):
     # No repos -> no base_cfg -> no orphan scan -> empty result, no calls.
     lc = mocker.patch.object(dashboard, "list_containers")
-    result = dashboard.gather_rows(mocker.MagicMock(), [], cwd_root=None, with_git=False)
+    incus = mocker.MagicMock()
+    result = dashboard.gather_rows(incus, [], with_git=False)
     assert result == []
     lc.assert_not_called()
+    incus.list_containers.assert_not_called()
+
+
+def test_gather_rows_lists_incus_once_for_every_repo_and_the_orphan_scan(
+    tmp_path, mocker, make_cfg
+):
+    """Each `incus list` makes the daemon build every instance's full state,
+    and the dashboards gather every few seconds: one listing per repo kept
+    incusd busy for as long as any dashboard was open."""
+    alpha_root, beta_root = tmp_path / "alpha", tmp_path / "beta"
+    cfgs = {alpha_root: make_cfg(alpha_root), beta_root: make_cfg(beta_root)}
+    mocker.patch.object(dashboard, "load_repo_config", side_effect=cfgs.__getitem__)
+    lc = mocker.patch.object(dashboard, "list_containers", return_value=[])
+    incus = mocker.MagicMock()
+
+    dashboard.gather_rows(incus, [alpha_root, beta_root], with_git=False)
+
+    incus.list_containers.assert_called_once_with()
+    assert lc.call_count == 3  # two repos and the orphan scan
+    assert all(
+        call.kwargs["instances"] is incus.list_containers.return_value for call in lc.call_args_list
+    )
 
 
 def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make_cfg):
@@ -637,14 +613,12 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
             raise OSError("gone")
         return good
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "load_repo_config", side_effect=fake_load)
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(
-        mocker.MagicMock(), [good_root, bad_root], cwd_root=good_root, with_git=False
-    )
+    groups = dashboard.gather_rows(mocker.MagicMock(), [good_root, bad_root], with_git=False)
     assert [g.prefix for g in groups] == ["alpha"]
 
 
@@ -763,13 +737,13 @@ def test_gather_live_reresolves_repo_roots_on_every_gather(mocker):
     gr = mocker.patch.object(dashboard, "gather_rows", return_value=[])
     incus = mocker.MagicMock()
 
-    dashboard.gather_live(incus, None, with_git=False)
+    dashboard.gather_live(incus, [], with_git=False)
     assert gr.call_args.args[1] == [a]
 
     registered.append(b)  # a `jailbee new` in repo b just registered it
-    dashboard.gather_live(incus, None, with_git=True)
+    dashboard.gather_live(incus, [], with_git=True)
     assert gr.call_args.args[1] == [a, b]
-    assert gr.call_args.kwargs == {"cwd_root": None, "with_git": True}
+    assert gr.call_args.kwargs == {"with_git": True}
 
 
 def test_carry_forward_git_status_fills_in_from_previous_snapshot():
@@ -1109,7 +1083,7 @@ def test_network_group_keeps_mode_eligibility_and_stopped_egress_view():
     assert dashboard.group_menu_actions(dashboard.menu_actions(_ctx(has_repo=False))) == []
 
 
-def test_egress_view_remote_policy_is_independent_and_restricted_host_read_only():
+def test_egress_view_remote_policy_is_independent():
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])
@@ -1204,7 +1178,7 @@ def _container_egress_keys(group: dashboard.RepoGroup, **menu_kwargs) -> list[by
     """
     menu = dashboard.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1235,7 +1209,7 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     keys = [*_container_egress_keys(group), b"a", *_keys("example.com:8443"), _ENTER, b"\x03"]
     assert _drive_run(mocker, keys, groups=[group]) == 0
 
-    assert rows.call_count == 2  # initial load and post-mutation reload
+    assert rows.call_count == 1  # a change that worked closes the panel: no reload
     assert rows.call_args_list[0].args[0::2] == (tmp_path, "alpha-x")
     prompt.assert_not_called()
     child.assert_called_once_with(
@@ -1254,18 +1228,19 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     # While the question is open the cursor stays on the container the panel
     # is about, not the repo header.
     assert calls[asked[0]].args[1] == dashboard.Row("container", "alpha-x")
-    # After the submit the panel is back, with the reloaded rows.
-    assert isinstance(calls[-1].kwargs.get("overlay"), dashboard.EgressState)
+    # After the submit the whole stack is gone — panel and the menu behind it —
+    # so the next key acts on the table, not on a stale Esc chain.
+    assert calls[-1].kwargs.get("overlay") is None
 
 
-def test_ssh_egress_read_view_is_read_only_even_with_full_policy(mocker, tmp_path):
+def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), restrict_host=True)
     menu = dashboard.open_menu([group], "alpha-x", remote=True, over_ssh=True, ssh_policy=policy)
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1309,13 +1284,49 @@ def test_ssh_egress_read_view_is_read_only_even_with_full_policy(mocker, tmp_pat
     panels = [call.kwargs["overlay"] for call in render.call_args_list]
     egress = next(panel for panel in panels if isinstance(panel, dashboard.EgressState))
     assert egress.can_add is False
-    assert egress.can_rm is False
+    assert egress.can_rm is True
     # A refused add never opens the destination question.
     assert not any(isinstance(panel, dashboard.TextPrompt) for panel in panels)
     assert any(
         "net egress add is not permitted" in str(call.kwargs.get("notice"))
         for call in render.call_args_list
     )
+
+
+@pytest.mark.parametrize("network", [False, True])
+def test_ssh_egress_permission_by_scope_and_network_switch(network: bool) -> None:
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+    from jailbee.dashboard_commands import permitted
+    from jailbee.dashboard_egress import EgressState, egress_argv
+
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), network=network)
+    container = EgressState("alpha", "alpha-1", ())
+    repo = EgressState("alpha", None, ())
+
+    def ok(state: EgressState, action: str) -> bool:
+        return permitted(egress_argv(state, action, "example.com"), policy, over_ssh=True)
+
+    assert ok(container, "add") is network
+    assert ok(container, "rm") is True
+    assert ok(repo, "add") is False
+    assert ok(repo, "rm") is False
+
+
+@pytest.mark.parametrize("network", [False, True])
+def test_ssh_action_menu_offers_loose_only_with_the_network_switch(network: bool) -> None:
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    group = dashboard.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])
+    local = [verb for _, verb in dashboard.actions_for_container([group], "alpha-1")]
+    assert "net loose" in local
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), network=network)
+    verbs = [
+        verb
+        for _, verb in dashboard.actions_for_container(
+            [group], "alpha-1", over_ssh=True, ssh_policy=policy
+        )
+    ]
+    assert ("net loose" in verbs) is network
 
 
 def test_run_removes_only_selected_container_override(mocker, tmp_path):
@@ -1330,7 +1341,7 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
     mocker.patch.object(dashboard, "_wait_for_return")
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1350,12 +1361,13 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
         b"\r",
         b"j",
         b"r",
-        b"\x1b",
         b"\x03",
     ]
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     assert _drive_run(mocker, keys, groups=[group]) == 0
 
-    assert load.call_count == 2
+    assert load.call_count == 1  # a removal that worked closes the panel: no reload
+    assert render.call_args_list[-1].kwargs["overlay"] is None
     child.assert_called_once_with(
         ["jailbee", "net", "egress", "rm", "container-only.example", "alpha-x"],
         check=False,
@@ -1440,7 +1452,7 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     def revoke_add() -> bytes:
@@ -1466,9 +1478,6 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -1507,7 +1516,7 @@ def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
         and call.kwargs["overlay"].error is not None
     ]
     assert [(p.purpose, p.error) for p in rejected] == [
-        ("egress-add", "Destination (host, host:port, IPv4 or CIDR) cannot be empty")
+        ("egress-add", "Destination (host, host:port, *.domain, IPv4, or CIDR) cannot be empty")
     ]
 
 
@@ -1601,7 +1610,7 @@ def test_egress_loader_failure_is_visible_and_does_not_crash(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
-    root = dashboard.group_menu_actions(menu.actions, include_network=True)
+    root = dashboard._menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -1743,7 +1752,7 @@ def test_group_menu_actions_separates_git_and_pr():
 def test_group_menu_actions_collects_registry_launches_at_first_occurrence():
     leaves = [
         ("Attach tmux", "tmux"),
-        ("Launch Chrome (host)", "chrome"),
+        ("Launch Chrome", "chrome"),
         ("Open shell", "shell"),
         ("Launch Figma", "apps run figma --container"),
         ("Create/update PR", "pr"),
@@ -1842,16 +1851,53 @@ def test_menu_actions_omits_pr_refresh_when_the_bridge_is_impossible():
         assert "git push --pr" not in [v for _, v in dashboard.menu_actions(ctx)]
 
 
-@pytest.mark.parametrize("count", [None, 0, 2])
+@pytest.mark.parametrize("count", [None, 2])
 @pytest.mark.parametrize("mode", ["clone", "mount"])
-def test_menu_has_one_outbox_regardless_of_counts(count, mode):
+def test_menu_has_one_outbox_unless_both_outboxes_are_empty(count, mode):
     actions = dashboard.menu_actions(
         _ctx(mode=mode, git_status=_dirty(pending_pr_actions=count, pending_issue_actions=count))
     )
-    assert actions.count(("Outbox", "outbox browse")) == 1
+    assert [v for _, v in actions].count("outbox browse") == 1
     assert not {"review apply", "issue apply"} & {v for _, v in actions}
     for ctx in (_ctx(state="Stopped", mode=mode), _ctx(has_repo=False, mode=mode)):
         assert "outbox browse" not in {v for _, v in dashboard.menu_actions(ctx)}
+
+
+@pytest.mark.parametrize("mode", ["clone", "mount"])
+def test_an_empty_outbox_is_not_offered(mode):
+    empty = _dirty(pending_pr_actions=0, pending_issue_actions=0)
+    actions = dashboard.menu_actions(_ctx(mode=mode, git_status=empty))
+    assert "outbox browse" not in {v for _, v in actions}
+    assert actions[:2] == [("Attach tmux", "tmux"), ("Open shell", "shell")]
+
+
+@pytest.mark.parametrize(("pr", "issue"), [(0, None), (None, 0)])
+def test_one_unknown_outbox_count_still_offers_the_outbox(pr, issue):
+    status = _dirty(pending_pr_actions=pr, pending_issue_actions=issue)
+    assert ("Outbox", "outbox browse") in dashboard.menu_actions(_ctx(git_status=status))
+
+
+@pytest.mark.parametrize("git_status", [None, _dirty()])
+def test_outbox_follows_the_shell_when_the_count_is_unknown(git_status):
+    actions = dashboard.menu_actions(_ctx(git_status=git_status))
+    assert actions[:3] == [
+        ("Attach tmux", "tmux"),
+        ("Open shell", "shell"),
+        ("Outbox", "outbox browse"),
+    ]
+    menu = dashboard.MenuState("alpha-x", actions)
+    assert dashboard._menu_entries(menu)[0] == ("Attach tmux", "tmux")
+
+
+@pytest.mark.parametrize(("pr", "issue", "total"), [(2, None, 2), (None, 1, 1), (2, 1, 3)])
+def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
+    actions = dashboard.menu_actions(
+        _ctx(git_status=_dirty(pending_pr_actions=pr, pending_issue_actions=issue))
+    )
+    lead = (f"Outbox ({total} pending)", "outbox browse")
+    assert actions[:3] == [lead, ("Attach tmux", "tmux"), ("Open shell", "shell")]
+    menu = dashboard.MenuState("alpha-x", actions)
+    assert dashboard._menu_entries(menu)[0] == lead
 
 
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
@@ -2070,6 +2116,241 @@ def test_menu_group_cursor_clamps_within_visible_entries():
     git, _ = dashboard.enter_menu(dashboard.move_menu(root, 2))
     assert dashboard.move_menu(git, 10).index == 0
     assert dashboard.move_menu(git, -10).index == 0
+
+
+def _hotkeys(menu: dashboard.MenuState | dashboard.RepoMenuState) -> dict[str, str | None]:
+    entries = dashboard._menu_entries(menu)
+    labels = [item.label if isinstance(item, dashboard.MenuGroup) else item[0] for item in entries]
+    return dict(zip(labels, dashboard.menu_hotkeys(entries), strict=True))
+
+
+def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
+    ctx = _ctx(pr_number=7, has_job=True, job_clearable=True)
+    menu = dashboard.MenuState("alpha-x", dashboard.menu_actions(ctx))
+
+    assert _hotkeys(menu) == {
+        "Attach tmux": "t",
+        "Outbox": "o",
+        "Clear failed job": "x",
+        "Job log": "b",
+        "Git →": "g",
+        "PR →": "p",
+        "Lifecycle →": "l",
+        "Network →": "w",
+    }
+
+
+def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
+    ctx = _ctx(pr_number=7)
+    root = dashboard.MenuState("alpha-x", dashboard.menu_actions(ctx))
+
+    def submenu(label: str) -> dashboard.MenuState:
+        index = next(
+            i
+            for i, item in enumerate(dashboard._menu_entries(root))
+            if isinstance(item, dashboard.MenuGroup) and item.label == label
+        )
+        child, _ = dashboard.enter_menu(dataclasses.replace(root, index=index))
+        assert isinstance(child, dashboard.MenuState)
+        return child
+
+    assert _hotkeys(submenu("Git →")) == {
+        "Merge into…": "m",
+        "Send commits to host (git pull)": "l",
+        "Update from base (git push)": "u",
+        "Refresh from PR head (git push --pr)": "r",
+        "Change base branch (git retarget)": "b",
+        "Show diff (git diff)": "d",
+    }
+    assert _hotkeys(submenu("PR →")) == {"Open PR": "p", "Create/update PR": "P"}
+    assert _hotkeys(submenu("Lifecycle →")) == {"Restart": "r", "Stop": "s", "Destroy": "D"}
+    assert _hotkeys(submenu("Network →")) == {"Network: loose": "l", "Egress…": "e"}
+
+
+def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
+    menu = dashboard.MenuState("alpha-x", dashboard.menu_actions(_ctx(state="Stopped")))
+
+    assert _hotkeys(menu) == {"Start": "s", "Network →": "w", "Destroy": "D"}
+
+
+def test_menu_hotkeys_cover_the_repo_menu():
+    menu = dashboard.RepoMenuState(
+        "alpha",
+        [
+            ("New container…", "new"),
+            ("New from PR…", "new-pr"),
+            ("Credential group…", "credential-group"),
+            ("Accounts…", "accounts"),
+            dashboard.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
+            ("Apply config…", "apply"),
+            dashboard.MenuGroup(
+                "Diagnostics →", (("Doctor", "doctor"), ("Disk usage", "disk-usage"))
+            ),
+            ("Prune stale containers…", "prune"),
+            ("Fold", "fold"),
+        ],
+    )
+
+    assert _hotkeys(menu) == {
+        "New container…": "n",
+        "New from PR…": "p",
+        "Credential group…": "c",
+        "Accounts…": "a",
+        "Network →": "w",
+        "Apply config…": "y",
+        "Diagnostics →": "d",
+        "Prune stale containers…": "r",
+        "Fold": "f",
+    }
+
+
+def _levels(menu: dashboard.MenuState | dashboard.RepoMenuState):
+    """Every level of ``menu`` as (group label or None, entries)."""
+    root = dashboard._menu_entries(menu)
+    yield None, root
+    for item in root:
+        if isinstance(item, dashboard.MenuGroup):
+            yield item.label, item.actions
+
+
+def _assert_every_key_is_fixed(menu: dashboard.MenuState | dashboard.RepoMenuState) -> None:
+    for group, entries in _levels(menu):
+        if group == "Launch →":
+            continue  # app labels come from the repo's config: the one dynamic level
+        for item, key in zip(entries, dashboard.menu_hotkeys(entries), strict=True):
+            preferred = dashboard._preferred_menu_key(item)
+            assert preferred is not None, f"{item} has no fixed key"
+            assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
+
+
+_LIFECYCLE_SUBSETS = (
+    ("restart", "stop", "destroy"),
+    ("restart",),
+    ("stop",),
+    ("destroy",),
+    (),
+)
+
+
+@pytest.mark.parametrize("state", ["Running", "Stopped"])
+@pytest.mark.parametrize("lifecycle", _LIFECYCLE_SUBSETS)
+def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle):
+    """Every entry keeps its own fixed key in every combination that can co-occur.
+
+    Fails when a new menu entry has no `_MENU_KEYS` letter, or when two entries
+    that can be on one level at once share one — either makes a key depend on
+    which other entries happen to be visible.
+    """
+    autostart = (
+        ("Autostart status", dashboard.dact.AUTOSTART_STATUS),
+        ("Cancel autostart…", dashboard.dact.AUTOSTART_CANCEL),
+    )
+    before = (
+        ("Snapshots…", dashboard.dact.SNAPSHOTS),
+        ("Mount…", dashboard.dact.MOUNT_ADD),
+        ("Unmount…", dashboard.dact.MOUNT_REMOVE),
+    )
+    for pr_number, pr_author, job, network, extras, pending in itertools.product(
+        (None, 7),
+        (False, True),
+        ("none", "running", "failed"),
+        ("strict", None),
+        (False, True),
+        (False, True),
+    ):
+        ctx = _ctx(
+            state=state,
+            pr_number=pr_number,
+            pr_author=pr_author,
+            has_job=job != "none",
+            job_running=job == "running",
+            job_clearable=job == "failed",
+            current_network=network,
+            apps=_apps("ide", "chrome"),
+            git_status=dataclasses.replace(_dirty(), pending_pr_actions=2) if pending else None,
+        )
+        actions = [
+            a
+            for a in dashboard.menu_actions(ctx)
+            if a[1] not in dashboard._CONTAINER_LIFECYCLE_VERBS or a[1] in lifecycle
+        ]
+        if extras:
+            actions = dashboard._insert_after_job(actions, autostart)
+            actions = dashboard._insert_before_network(actions, before)
+        actions = dashboard._with_credential_group(actions)
+        _assert_every_key_is_fixed(dashboard.MenuState("alpha-x", actions))
+
+
+@pytest.mark.parametrize("drop", [None, "credential-group", "accounts", "apply", "prune"])
+def test_repo_menu_keys_never_move_whatever_the_policy_hides(drop):
+    actions: list[dashboard.MenuItem] = [
+        ("New container…", "new"),
+        ("New from PR…", "new-pr"),
+        ("Credential group…", "credential-group"),
+        ("Accounts…", "accounts"),
+        dashboard.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
+        ("Apply config…", dashboard.dact.REPO_APPLY),
+        dashboard.MenuGroup(
+            dashboard.dact.DIAGNOSTICS_LABEL,
+            (
+                ("Doctor", dashboard.dact.REPO_DOCTOR),
+                ("Disk usage", dashboard.dact.REPO_DISK_USAGE),
+            ),
+        ),
+        ("Prune stale containers…", dashboard.dact.REPO_PRUNE),
+        ("Fold", "fold"),
+    ]
+    menu = dashboard.RepoMenuState(
+        "alpha", [a for a in actions if isinstance(a, dashboard.MenuGroup) or a[1] != drop]
+    )
+    _assert_every_key_is_fixed(menu)
+
+
+def test_menu_hotkeys_fall_back_to_a_free_label_letter_then_digits():
+    entries = [
+        ("Attach tmux", "tmux"),
+        ("Tally", "unknown-1"),  # preferred-free: t is taken, a is next
+        ("Hook", "unknown-2"),  # h is the help key: never assigned, o follows
+        ("ttt", "unknown-3"),  # every letter taken: the first digit
+    ]
+
+    assert dashboard.menu_hotkeys(entries) == ["t", "a", "o", "1"]
+
+
+def test_menu_hotkeys_never_take_a_key_the_open_menu_already_handles():
+    reserved = {"j", "k", "q", "h", "?", "S"}
+    entries = [(f"{ch}{ch.upper()}", f"x-{ch}") for ch in "jkqhs"]
+
+    keys = dashboard.menu_hotkeys(entries)
+
+    assert not reserved & {k for k in keys if k}
+    assert len({k for k in keys if k}) == len([k for k in keys if k])
+
+
+def test_menu_hotkeys_preferred_keys_win_over_earlier_fallbacks():
+    # "Tally" sits first, but `t` is Attach tmux's own key: the fallback yields.
+    entries = [("Tally", "unknown"), ("Attach tmux", "tmux")]
+
+    assert dashboard.menu_hotkeys(entries) == ["a", "t"]
+
+
+def test_hotkey_menu_moves_the_cursor_to_the_entry_or_returns_none():
+    root = _grouped_menu()  # Attach tmux, Git →, PR →
+
+    hit = dashboard.hotkey_menu(root, b"p")
+    assert hit is not None and hit.index == 2 and hit.active_group is None
+    assert dashboard.hotkey_menu(root, b"z") is None
+    assert dashboard.hotkey_menu(root, b"\x1b[A") is None
+
+
+def test_render_menu_shows_each_entry_with_its_key():
+    console = Console(width=60, record=True)
+    console.print(dashboard._render_menu(_grouped_menu()))
+    text = console.export_text()
+
+    assert "[t] Attach tmux" in text
+    assert "[g] Git →" in text
+    assert "[p] PR →" in text
 
 
 # --- RepoTarget: how a spawned `jailbee` child is pointed at one repo --------
@@ -2584,11 +2865,11 @@ def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     group = next(g for g in groups if g.prefix == "alpha")
     assert group.apps == [
         dashboard.AppMenuEntry("ide", "JetBrains idea"),
@@ -2601,13 +2882,13 @@ def test_gather_rows_orphan_groups_have_no_apps(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dashboard, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background):
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dashboard, "list_containers", side_effect=fake_list)
-    groups = dashboard.gather_rows(mocker.MagicMock(), [root], cwd_root=root, with_git=False)
+    groups = dashboard.gather_rows(mocker.MagicMock(), [root], with_git=False)
     orphan = next(g for g in groups if g.prefix == "gamma")
     assert orphan.apps == []
 
@@ -2896,7 +3177,7 @@ def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_
     (xdg / "jailbee" / "global.yaml").write_text("dashboard:\n  fields: [name, nosuchfield]\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
 
-    gcfg = dashboard._global_config_or_defaults()
+    gcfg = dashboard.global_config_or_defaults()
 
     assert gcfg.dashboard.fields == ["name"]
 
@@ -3159,6 +3440,67 @@ def _cursor_lines(lines: list[str]) -> list[str]:
         console.print(f"[{dashboard.CURSOR_STYLE}]x[/]", end="")
     sgr = cap.get().split("x", 1)[0]
     return [ln for ln in lines if sgr in ln]
+
+
+def _screen_lines(groups, overlay, height: int) -> list[str]:
+    """One frame as the full-screen dashboard draws it at ``height`` rows."""
+    frame = dashboard.render(
+        groups,
+        dashboard.Row("container", groups[0].containers[0].name),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        overlay=overlay,
+        height=height,
+    )
+    return _render_text(frame, width=100).splitlines()
+
+
+def _tall_group(tmp_path, n: int) -> dashboard.RepoGroup:
+    return dashboard.RepoGroup(
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci(f"alpha-{i}", "alpha") for i in range(n)]
+    )
+
+
+def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
+    lines = _screen_lines([_tall_group(tmp_path, 3)], menu, height=20)
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert re.search(r"▸ (\[\w\]|   ) Action 25\b", text)  # keys run out before 25
+    assert "Action 0 " not in text
+    assert "more" in text
+    assert lines[-1].startswith("╰")  # the frame's bottom border is on screen
+
+
+def test_render_scrolls_a_picker_taller_than_the_screen_to_its_cursor(tmp_path):
+    entries = tuple(dashboard.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
+    picker = dashboard.Picker("x", "Pick one", entries, index=29)
+    lines = _screen_lines([_tall_group(tmp_path, 3)], picker, height=20)
+    assert len(lines) <= 20
+    assert "▸ Entry 29" in "\n".join(lines)
+
+
+def test_render_cuts_a_table_taller_than_the_screen_to_keep_the_menu_visible(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=12)
+    lines = _screen_lines([_tall_group(tmp_path, 40)], menu, height=20)
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert "NAME" in text  # the table is cut from below, keeping its header
+    assert re.search(r"▸ \[\w\] Action 12\b", text)
+    assert "Enter" in lines[-2]  # the hint line, right above the bottom border
+
+
+def test_render_without_height_draws_a_long_menu_whole(tmp_path):
+    menu = dashboard.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
+    frame = dashboard.render(
+        [_tall_group(tmp_path, 3)],
+        None,
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        overlay=menu,
+    )
+    text = _render_text(frame, width=100)
+    assert "Action 0 " in text and "Action 29" in text and "more" not in text
 
 
 def test_render_hides_job_column_until_a_job_exists(tmp_path):
@@ -3605,7 +3947,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
         [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
     )
     menu = dashboard.MenuState(
-        "alpha-one", [("Attach tmux", "tmux"), ("Open shell", "shell")], index=1
+        "alpha-one", [("Attach tmux", "tmux"), ("Outbox", "outbox browse")], index=1
     )
     out = _render_text(
         dashboard.render(
@@ -3620,10 +3962,10 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     assert "one" in out and "two" in out
     assert "NAME" in out
     # The menu lists its actions, titled with the target container.
-    assert "Attach tmux" in out and "Open shell" in out
+    assert "Attach tmux" in out and "Outbox" in out
     assert "alpha-one" in out
     # The highlighted entry (index=1) carries the cursor, the other does not.
-    cursor_line = next(ln for ln in out.splitlines() if "Open shell" in ln)
+    cursor_line = next(ln for ln in out.splitlines() if "Outbox" in ln)
     other_line = next(ln for ln in out.splitlines() if "Attach tmux" in ln)
     assert "▸" in cursor_line
     assert "▸" not in other_line
@@ -4183,6 +4525,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
     assert "offered" in out or "available" in out
     assert "close" in out
     assert "Egress panel: a adds, r removes a scoped override" in out
+    assert "Menus: the key in brackets picks that entry" in out
 
 
 def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
@@ -4199,6 +4542,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
         )
     )
     assert "Enter open/run" in out and "Esc cancel" in out
+    assert "[key] pick" in out
     assert "h/? help" in out.splitlines()[0]
 
 
@@ -4248,85 +4592,6 @@ from typer.testing import CliRunner  # noqa: E402
 from jailbee.cli import app  # noqa: E402
 
 
-def test_refresh_due_schedule():
-    # first tick: always gather, git included when enabled
-    assert dashboard._refresh_due(
-        now=0.0,
-        last_base=0.0,
-        last_full=0.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=True,
-        forced=False,
-    ) == (True, True)
-    # forced: gather + git
-    assert dashboard._refresh_due(
-        now=1.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=True,
-    ) == (True, True)
-    # nothing due
-    assert dashboard._refresh_due(
-        now=2.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (False, False)
-    # base due, git not due
-    assert dashboard._refresh_due(
-        now=5.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (True, False)
-    # git due -> base also true
-    assert dashboard._refresh_due(
-        now=12.0,
-        last_base=11.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=True,
-        first=False,
-        forced=False,
-    ) == (True, True)
-    # git disabled: base due -> (True, False), never git
-    assert dashboard._refresh_due(
-        now=100.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=False,
-        first=False,
-        forced=False,
-    ) == (True, False)
-    assert dashboard._refresh_due(
-        now=100.0,
-        last_base=1.0,
-        last_full=1.0,
-        interval=3.0,
-        git_interval=10.0,
-        git_enabled=False,
-        first=True,
-        forced=False,
-    ) == (True, False)
-
-
 def test_render_shows_memory_used_and_limit(tmp_path):
     c = _ci("alpha-one", "alpha")
     c.memory_usage = 4_000_000_000
@@ -4356,8 +4621,8 @@ def test_dashboard_command_delegates_to_run(mocker):
     result = CliRunner().invoke(app, ["dashboard", "-i", "5", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
-    assert kwargs["interval"] == 5.0
-    assert kwargs["no_git"] is True
+    # The cadence flags no longer reach the TUI: the state service owns it.
+    assert {"interval", "git_interval", "no_git"}.isdisjoint(kwargs)
     assert kwargs["cwd_root"] is None
 
 
@@ -4521,7 +4786,7 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
     child = mocker.patch.object(dashboard.subprocess, "run")
     child.return_value.returncode = 0
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     keys = itertools.chain([b"j", key, b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
@@ -4530,9 +4795,6 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
         dashboard.run(
             mocker.Mock(),
             None,
-            interval=0.5,
-            git_interval=1.0,
-            no_git=True,
             remote=True,
             over_ssh=True,
             ssh_policy=RemoteSSHConfig(),
@@ -4577,9 +4839,7 @@ def test_tui_command_is_an_alias_for_the_dashboard(mocker):
     result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
     assert result.exit_code == 0
     _, kwargs = run.call_args
-    assert kwargs["interval"] == 5.0
-    assert kwargs["git_interval"] == 7.0
-    assert kwargs["no_git"] is True
+    assert {"interval", "git_interval", "no_git"}.isdisjoint(kwargs)
 
 
 def test_menu_actions_clear_job_entry_follows_session_when_clearable():
@@ -4983,6 +5243,24 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+class _SyncJobs(JobRunner):
+    """`JobRunner` that runs the child through the (mocked) `subprocess.run`.
+
+    The real runner spawns a `Popen` and waits on a thread; patching `Popen`
+    is process-wide and breaks every other `subprocess.run`, so these tests
+    keep asserting on the one `subprocess.run` mock and get the result on the
+    next `poll()`, exactly as the real runner delivers it. The mock's
+    `returncode` is the child's exit code; stderr is the mock's `stderr` when it
+    is a string, else empty.
+    """
+
+    def start(self, key, label, argv, cwd, on_done):
+        proc = dashboard.subprocess.run(argv, check=False, cwd=cwd)
+        self._labels[key] = label
+        stderr = proc.stderr if isinstance(proc.stderr, str) else ""
+        self._finished.append((key, on_done, JobResult(proc.returncode, stderr)))
+
+
 def _mock_terminal(mocker):
     """Patch everything ``run()`` touches on a real terminal and the state DB.
 
@@ -4994,6 +5272,7 @@ def _mock_terminal(mocker):
     mocker.patch.object(dashboard, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState())
+    mocker.patch.object(dashboard, "JobRunner", _SyncJobs)
 
     mock_stdin = mocker.Mock()
     mock_stdin.isatty.return_value = True
@@ -5008,6 +5287,46 @@ def _mock_terminal(mocker):
     return mocker.patch.object(dashboard.tty, "setcbreak")
 
 
+class FakeStateClient:
+    """Stands in for `StateClient`: `latest()` returns the *same* groups list
+    every frame, so a test that mutates it changes what the next frame sees."""
+
+    def __init__(self, groups, *, git_enabled=False, status=None, fail=None):
+        self.groups = groups
+        self.git_enabled = git_enabled
+        self._status = status
+        self.fail = fail
+        self.events: list[tuple] = []
+        self.closed = False
+
+    def wait_first_snapshot(self, timeout):
+        self.events.append(("wait",))
+        if self.fail is not None:
+            raise self.fail
+        return self.latest()
+
+    def latest(self):
+        return Snapshot(1, datetime(2026, 10, 4, tzinfo=UTC), self.git_enabled, self.groups)
+
+    def status(self):
+        return self._status
+
+    def refresh(self):
+        self.events.append(("refresh",))
+
+    def set_active(self, value):
+        self.events.append(("active", value))
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_state(mocker, groups, **kw) -> FakeStateClient:
+    fake = FakeStateClient(groups, **kw)
+    mocker.patch.object(dashboard, "open_state_client", return_value=fake)
+    return fake
+
+
 def _drive_run(
     mocker,
     key_sequence: list[bytes],
@@ -5017,6 +5336,7 @@ def _drive_run(
     over_ssh: bool = False,
     ssh_policy=None,
     view_state: dashboard.ViewState | None = None,
+    git_enabled: bool = False,
 ) -> int:
     """Run the real ``dashboard.run()`` key loop with a fake terminal.
 
@@ -5024,16 +5344,15 @@ def _drive_run(
     mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
     always terminates even if a test's own key list doesn't. Everything
     that would touch a real terminal, the state DB, or Incus is mocked;
-    ``gather_live`` returns ``groups`` (empty by default), so most tests
-    exercise overlay and persistence behaviour without depending on the
-    background refresher thread ever publishing a snapshot before the key
-    loop reads it (a real race the tests must not depend on winning). A test
-    that needs a real, dispatchable container passes its own ``groups``.
+    the state service is a `FakeStateClient` serving ``groups`` (empty by
+    default), so most tests exercise overlay and persistence behaviour with
+    nothing selectable. A test that needs a real, dispatchable container
+    passes its own ``groups``.
     """
     _mock_terminal(mocker)
     if view_state is not None:
         mocker.patch.object(dashboard, "seed_view_state", return_value=view_state)
-    mocker.patch.object(dashboard, "gather_live", return_value=groups or [])
+    _fake_state(mocker, groups or [], git_enabled=git_enabled)
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
 
     padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
@@ -5042,26 +5361,33 @@ def _drive_run(
     return dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=remote,
         over_ssh=over_ssh,
         ssh_policy=ssh_policy,
     )
 
 
+@pytest.mark.parametrize("git_enabled", [True, False])
+def test_run_renders_with_the_snapshots_git_enabled(mocker, git_enabled):
+    """The TUI forwards the service's `git_enabled` (it never probes git itself)."""
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(mocker, [], git_enabled=git_enabled)
+    assert render.call_args_list
+    assert all(c.kwargs["git_enabled"] is git_enabled for c in render.call_args_list)
+
+
 def _drive_run_with_reader(mocker, read, groups: list[dashboard.RepoGroup]) -> int:
     """``_drive_run`` with a caller-supplied ``os.read`` side effect.
 
-    ``gather_live`` returns the ``groups`` list object itself, so a reader
-    that mutates it changes what the key loop sees on its next iteration.
+    The fake state client serves the ``groups`` list object itself on every
+    frame, and the real `present` runs on it each frame, so a reader that
+    mutates it changes what the key loop sees on its next iteration.
     """
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=groups)
+    _fake_state(mocker, groups)
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", side_effect=read)
-    return dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True)
+    return dashboard.run(mocker.Mock(), None)
 
 
 def _keys(text: str) -> list[bytes]:
@@ -5084,7 +5410,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     rc = _drive_run(
         mocker,
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\r"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\r"],
         groups=[group],
     )
 
@@ -5097,6 +5423,45 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
     assert any(call.args[0] == ["jailbee", "pr", "alpha-x"] for call in child.call_args_list)
 
 
+def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, [b"j", _ENTER, b"g", b"u"], groups=[group]) == 0
+
+    assert any(
+        call.args[0] == ["jailbee", "git", "push", "alpha-x"] for call in child.call_args_list
+    )
+
+
+def test_run_menu_capital_hotkey_destroys_only_through_lifecycle(mocker, tmp_path):
+    """`D` inside `Lifecycle →` reaches destroy; a lowercase `d` there does nothing."""
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+
+    _drive_run(mocker, [b"j", _ENTER, b"l", b"d"], groups=[group])
+    assert not any("destroy" in call.args[0] for call in child.call_args_list)
+
+    _drive_run(mocker, [b"j", _ENTER, b"l", b"D"], groups=[group])
+    assert any(call.args[0][:2] == ["jailbee", "destroy"] for call in child.call_args_list)
+
+
+def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"z"], groups=[group])
+
+    menus = [c.kwargs["overlay"] for c in render.call_args_list if c.kwargs.get("overlay")]
+    assert menus and isinstance(menus[-1], dashboard.MenuState) and menus[-1].index == 0
+    child.assert_not_called()
+
+
 def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
     group = dashboard.RepoGroup(
         "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)]
@@ -5106,7 +5471,7 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
 
     _drive_run(
         mocker,
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b", b"\r", b"q"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b", b"\r", b"q"],
         groups=[group],
     )
 
@@ -5117,12 +5482,11 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
         None,
         None,
         None,
-        None,
         "PR →",
         None,
         "PR →",
     ]
-    assert menus[6].index == 4
+    assert menus[5].index == 3
     assert overlays[-1] is None
     child.assert_not_called()
 
@@ -5133,24 +5497,24 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
     )
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     turns = 0
 
     def ready(*args, **kwargs):
         nonlocal turns
         turns += 1
-        if turns == 8:
+        if turns == 7:
             group.containers.clear()
         return ([True], [], [])
 
     mocker.patch.object(dashboard.select, "select", side_effect=ready)
     keys = itertools.chain(
-        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\x03"],
+        [b"j", b"\r", b"\x1b[B", b"\x1b[B", b"\x1b[B", b"\r", b"\x1b[B", b"\x03"],
         itertools.repeat(b"\x03"),
     )
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
     assert any(
         isinstance(call.kwargs.get("overlay"), dashboard.MenuState)
         and call.kwargs["overlay"].active_group == "PR →"
@@ -5244,7 +5608,7 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     select_count = 0
 
     def select(*args, **kwargs):
@@ -5267,9 +5631,6 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -5282,66 +5643,41 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
     )
 
 
-def test_run_gathers_a_base_snapshot_before_taking_the_screen(mocker):
+def test_run_waits_for_the_first_snapshot_before_taking_the_screen(mocker):
     """The dashboard must not show an empty table while it works out what to
-    show: the first gather happens before `Live` takes the screen, so the
-    first frame is already populated.
-
-    It is the cheap tier — ``with_git=False`` — because the git probes are
-    what make a full gather slow, and their columns fill in on the next tick
-    exactly as they do after any base refresh. Waiting for them here would
-    just move the empty screen behind a spinner.
-    """
+    show: it waits for the state service's first snapshot before `Live` takes
+    the screen, so the first frame is already populated."""
     setcbreak = _mock_terminal(mocker)
-    gathers: list[tuple[bool, int]] = []
+    fake = _fake_state(mocker, [])
+    waited_at: list[int] = []
+    wait = fake.wait_first_snapshot
 
-    def _gather(incus, cwd_root, *, with_git):
-        gathers.append((with_git, setcbreak.call_count))
-        return []
+    def _wait(timeout):
+        waited_at.append(setcbreak.call_count)
+        return wait(timeout)
 
-    mocker.patch.object(dashboard, "gather_live", side_effect=_gather)
+    fake.wait_first_snapshot = _wait
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert gathers[0] == (False, 0)
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert waited_at == [0]
 
 
 def test_run_reports_a_failed_first_gather_without_taking_the_screen(mocker):
-    """An unreachable incus daemon used to take the screen, render an empty
-    table, and only then hand it back when the worker thread's first gather
-    blew up. Now the gather happens first, so the failure is reported on the
-    user's own terminal and the alternate screen is never entered.
-    """
+    """An unreachable state service is reported on the user's own terminal:
+    taking the alternate screen only to hand it straight back is a worse way
+    to say so."""
+    from jailbee.state_service import StateServiceUnavailable
+
     setcbreak = _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", side_effect=OSError("daemon unreachable"))
+    fake = _fake_state(mocker, [], fail=StateServiceUnavailable("no server"))
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 1
+    assert dashboard.run(mocker.Mock(), None) == 1
     assert setcbreak.call_count == 0
-
-
-def test_run_does_not_repeat_the_seeded_gather_when_git_is_disabled(mocker):
-    """With ``--no-git`` the pre-gather already produced the only tier there
-    is, so the worker must start from that snapshot's timestamp rather than
-    from scratch — otherwise launching the dashboard runs two identical
-    gathers back to back.
-    """
-    _mock_terminal(mocker)
-    gather = mocker.patch.object(dashboard, "gather_live", return_value=[])
-
-    def _blocking_select(*args, **kwargs):
-        # Outlive a worker tick (0.1s) but stay well inside `interval` (0.5s),
-        # so a second gather in this window can only be the redundant one.
-        time.sleep(0.3)
-        return ([True], [], [])
-
-    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert gather.call_count == 1
+    assert fake.closed
 
 
 def test_run_degrades_when_save_view_state_fails(mocker):
@@ -5592,6 +5928,88 @@ def test_run_new_from_pr_prompts_for_a_number_and_dispatches(mocker, tmp_path):
     )
 
 
+_NEW_PR_KEYS = [_ENTER, b"\x1b[B", _ENTER, *_keys("123"), _ENTER]
+
+
+def test_new_container_runs_detached_without_taking_the_terminal(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    child.assert_called_once()
+    wait.assert_not_called()  # `foreground` always ends in the "press Enter" stop
+
+
+def test_new_container_that_wants_an_answer_is_rerun_in_the_foreground(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
+    attended = mocker.Mock(returncode=0, stderr=None)
+    child = mocker.patch.object(dashboard.subprocess, "run", side_effect=[detached, attended])
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    argv = ["jailbee", "new", "--background", "--pr", "123"]
+    assert child.call_args_list == [
+        mocker.call(argv, check=False, cwd=tmp_path),
+        mocker.call(argv, check=False, cwd=tmp_path),
+    ]
+    wait.assert_called_once()  # the second run is the attended one
+
+
+def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    child = mocker.patch.object(
+        dashboard.subprocess,
+        "run",
+        return_value=mocker.Mock(returncode=1, stderr="warning\nerror: git fetch failed\n"),
+    )
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
+
+    child.assert_called_once()
+    wait.assert_not_called()
+    assert any(
+        "jailbee new failed: error: git fetch failed" in str(call.kwargs.get("notice", ""))
+        for call in render.call_args_list
+    )
+
+
+class _PendingJobs(JobRunner):
+    """A runner whose job never finishes, to look at the in-flight state."""
+
+    def start(self, key, label, argv, cwd, on_done):
+        if key in self._labels:
+            raise ValueError(key)
+        self._labels[key] = label
+
+
+def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard, "new_container_base_default", return_value="main")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    typed = [b"n", *_keys("work"), _ENTER, _ENTER, b"n", *_keys("work"), _ENTER, _ENTER]
+    mocker.patch.object(dashboard, "_wait_for_return")
+    mocker.patch.object(dashboard.subprocess, "run")
+
+    _mock_terminal(mocker)  # installs the synchronous fake; swap in the pending one
+    mocker.patch.object(dashboard, "JobRunner", _PendingJobs)
+    _fake_state(mocker, [group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    padded = itertools.chain(typed, [b"\x03"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(padded))
+    dashboard.run(mocker.Mock(), None)
+
+    notices = [str(call.kwargs.get("notice", "")) for call in render.call_args_list]
+    assert any("creating work…" in n for n in notices)
+    assert any("already being created" in n for n in notices)
+
+
 def test_run_new_prompt_whose_repo_vanishes_dispatches_nothing(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     live: list[dashboard.RepoGroup] = [group]
@@ -5680,7 +6098,7 @@ def test_run_cannot_create_from_a_row_hidden_by_visibility_settings(mocker, tmp_
 def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     child = mocker.patch.object(dashboard.subprocess, "run")
     hiding = False
@@ -5706,7 +6124,7 @@ def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
     keys = itertools.chain([b"\x1b[B", b"\r", b"x", b"\r", b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, size: next(keys))
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
 
     overlays = [call.kwargs.get("overlay") for call in render.call_args_list]
     menu_frames = [overlay for overlay in overlays if isinstance(overlay, dashboard.MenuState)]
@@ -5722,7 +6140,7 @@ def test_settings_key_switches_from_another_overlay_instead_of_closing(mocker):
     overlay (the action menu, help) is open switches to settings, not just
     closes whatever was open.
 
-    There is no live group in this harness (``gather_live`` returns
+    There is no live group in this harness (the fake state client serves
     ``[]``), and Space is only handled by the settings overlay. That makes
     ``save_view_state`` firing after ``h`` then ``S`` then `Space` a
     discriminating signal that ``S`` actually opened the settings overlay,
@@ -5743,7 +6161,7 @@ def test_run_dispatches_n_to_start_new_container(mocker):
     "new": overlay = start_new_container()``), not just `parse_key`/the binding shape in
     isolation — a typo in that `elif` arm would be caught by nothing else.
 
-    ``_drive_run``'s ``gather_live`` returns no containers, so nothing is
+    ``_drive_run``'s fake state client serves no containers, so nothing is
     selected and ``start_new_container`` takes its notice path (`new_container_
     reject_note` returning "Select a repo or a container first") without
     prompting or spawning anything. `render` is wrapped rather than replaced
@@ -6408,11 +6826,11 @@ def test_account_command_failure_shows_a_long_notice(mocker, tmp_path, change, s
         return item
 
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     mocker.patch.object(dashboard.os, "read", side_effect=read)
 
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
+    assert dashboard.run(mocker.Mock(), None) == 0
 
     notices = [c.kwargs["notice"] for c in render.call_args_list]
     assert change.message in notices  # shown right after the command
@@ -6464,6 +6882,8 @@ def _open_container_group_picker(group: dashboard.RepoGroup, **menu_kwargs) -> l
 
 
 def test_container_menu_offers_credential_group_just_before_network_and_lifecycle(tmp_path):
+    # The offered leaves keep it before network; the terminal draws it after
+    # the Git/PR/Lifecycle/Network block.
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     menu = dashboard.open_menu([group], "alpha-x")
     assert menu is not None
@@ -6474,8 +6894,8 @@ def test_container_menu_offers_credential_group_just_before_network_and_lifecycl
     assert at < verbs.index("restart")
     # in the drawn menu it sits right above the Network → group
     entries = list(dashboard._menu_entries(menu))
-    after = entries[entries.index(_CREDENTIAL_GROUP_LEAF) + 1]
-    assert isinstance(after, dashboard.MenuGroup) and after.label == "Network →"
+    labels = [i.label if isinstance(i, dashboard.MenuGroup) else i[0] for i in entries]
+    assert labels.index("Network →") < entries.index(_CREDENTIAL_GROUP_LEAF)
 
 
 def test_stopped_container_menu_offers_credential_group_before_egress(tmp_path):
@@ -6719,6 +7139,77 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     assert any(n is not None and str(tmp_path) in n for n in notices)
 
 
+def test_foreground_marks_the_client_inactive_and_refreshes_on_return(mocker, tmp_path):
+    """A dashboard that launched `jb tmux` must stop the shared service
+    gathering on its behalf, and show fresh state when the user comes back."""
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    during: list[list[tuple]] = []
+
+    def child(*args, **kwargs):
+        during.append(list(fake.events))
+        return mocker.Mock(returncode=0)
+
+    fake = _fake_state(mocker, [group])
+    mocker.patch.object(dashboard.subprocess, "run", side_effect=child)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"t"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert during and during[0][-1] == ("active", False)
+    after = fake.events[len(during[0]) :]
+    assert after[:2] == [("active", True), ("refresh",)]
+
+
+def test_a_service_problem_shows_as_a_notice_without_exiting(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    _fake_state(mocker, [group], status="refresh failed: incus is down")
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"j", b"j"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert any(
+        call.kwargs.get("notice") == "refresh failed: incus is down"
+        for call in render.call_args_list
+    )
+
+
+def test_the_r_key_asks_the_service_for_a_refresh(mocker):
+    fake = _fake_state(mocker, [])
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = itertools.chain([b"r"], itertools.repeat(b"\x03"))
+    mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
+
+    assert dashboard.run(mocker.Mock(), None) == 0
+    assert ("refresh",) in fake.events
+    assert fake.closed
+
+
+def test_run_pins_its_own_cwd_and_applies_its_scope(mocker, tmp_path):
+    """Neither is baked into the shared snapshot: every frame, the dashboard
+    hands its own ``cwd_root`` and ``scope`` to `present`."""
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    a = dashboard.RepoGroup("alpha", "/a", None, [])
+    b = dashboard.RepoGroup("beta", str(tmp_path), None, [])
+    s = dashboard.RepoGroup("secret", "/s", None, [])
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    _fake_state(mocker, [a, b, s])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
+
+    dashboard.run(mocker.Mock(), tmp_path, scope=RemoteRepoScope(frozenset({"secret"})))
+
+    shown = render.call_args_list[-1].args[0]
+    assert [g.prefix for g in shown] == ["beta", "alpha"]
+
+
 def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = mocker.patch.object(dashboard.subprocess, "run")
@@ -6786,7 +7277,7 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     wait = mocker.patch.object(dashboard, "_wait_for_return")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[group])
+    _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     keys = itertools.chain([b"j", b"!", b"merge", b"\r", b"\x03"], itertools.repeat(b"\x03"))
     mocker.patch.object(dashboard.os, "read", side_effect=lambda fd, n: next(keys))
@@ -6797,9 +7288,6 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     dashboard.run(
         mocker.Mock(),
         None,
-        interval=0.5,
-        git_interval=1.0,
-        no_git=True,
         remote=True,
         over_ssh=True,
         ssh_policy=policy,
@@ -7012,48 +7500,6 @@ def test_config_edit_reject_note_refuses_the_repo_layer_of_a_synthesized_config(
     assert config_edit_reject_note_for_prefix([group], "demo", global_layer=True) is None
 
 
-def test_run_samples_activity_twice_before_taking_the_screen(mocker):
-    """A rate needs two readings. One sample here would dash the CPU column
-    on the first frame and fill it a tick later — the very symptom the
-    pre-gather exists to prevent."""
-    setcbreak = _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[])
-    # Patch the module's own constant rather than `time.sleep`: patching
-    # `dashboard.time.sleep` reaches the real `time` module and slows every
-    # other test in the process.
-    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
-    calls: list[int] = []
-    mocker.patch.object(
-        dashboard, "sample_activity", side_effect=lambda g, s: calls.append(setcbreak.call_count)
-    )
-    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=1.0, no_git=True) == 0
-    assert calls[:2] == [0, 0]  # both before the screen was taken
-
-
-def test_worker_samples_activity_on_every_gather(mocker):
-    """The columns are live: each refresh re-reads /proc, or the numbers
-    freeze at whatever the pre-gather saw."""
-    _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "gather_live", return_value=[])
-    mocker.patch.object(dashboard, "PRIME_INTERVAL_SECONDS", 0)
-    sampled = mocker.patch.object(dashboard, "sample_activity")
-
-    def _blocking_select(*args, **kwargs):
-        # `run()` floors `interval` at 0.5s, so a shorter wait here would
-        # end the session before the worker's first tick was even due.
-        time.sleep(0.7)
-        return ([True], [], [])
-
-    mocker.patch.object(dashboard.select, "select", side_effect=_blocking_select)
-    mocker.patch.object(dashboard.os, "read", return_value=b"\x03")
-
-    assert dashboard.run(mocker.Mock(), None, interval=0.5, git_interval=0.5, no_git=True) == 0
-    assert sampled.call_count > 2  # two priming samples, plus the worker's
-
-
 def test_sample_activity_flattens_every_group(mocker):
     """One reading covers the whole screen — not one per repo group."""
     annotate = mocker.patch.object(dashboard, "annotate_activity")
@@ -7201,11 +7647,57 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
         leaves[4],
         leaves[7],
         leaves[0],
-        leaves[1],
         dashboard.MenuGroup("Git →", (leaves[5], leaves[6])),
         dashboard.MenuGroup("PR →", (leaves[2], leaves[3])),
         dashboard.MenuGroup("Network →", (leaves[8],)),
     ]
+
+
+def test_terminal_order_running_menu_layout(tmp_path):
+    apps = [dashboard.AppMenuEntry("chrome", "Chrome")]
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)], apps=apps
+    )
+    menu = dashboard.open_menu([group], "alpha-x")
+    assert menu is not None
+    labels = [
+        item.label if isinstance(item, dashboard.MenuGroup) else item[0]
+        for item in dashboard._menu_entries(menu)
+    ]
+    assert labels[:7] == [
+        "Attach tmux",
+        "Launch →",
+        "Outbox",
+        "Git →",
+        "PR →",
+        "Lifecycle →",
+        "Network →",
+    ]
+    assert "Open shell" not in labels
+    lifecycle = next(
+        i
+        for i in dashboard._menu_entries(menu)
+        if isinstance(i, dashboard.MenuGroup) and i.label == "Lifecycle →"
+    )
+    assert [v for _, v in lifecycle.actions] == ["restart", "stop", "destroy"]
+    # Leaves stay offered: the `s` and `D` keys gate on them.
+    assert {"shell", "destroy"} <= {v for _, v in menu.actions}
+
+
+def test_terminal_order_stopped_menu_keeps_a_lone_destroy_leaf(tmp_path):
+    group = dashboard.RepoGroup(
+        "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", "Stopped", pr_number=7)]
+    )
+    menu = dashboard.open_menu([group], "alpha-x")
+    assert menu is not None
+    labels = [
+        item.label if isinstance(item, dashboard.MenuGroup) else item[0]
+        for item in dashboard._menu_entries(menu)
+    ]
+    assert labels[0] == "Start"
+    at = labels.index("PR →")
+    assert labels[at : at + 3] == ["PR →", "Destroy", "Network →"]
+    assert "Lifecycle →" not in labels
 
 
 def test_group_menu_actions_default_order_is_unchanged_for_qt():
@@ -7229,7 +7721,7 @@ def test_terminal_menu_drops_an_empty_pr_group_when_only_apply_remains():
         item.label if isinstance(item, dashboard.MenuGroup) else item[0]
         for item in dashboard._menu_entries(menu)
     ]
-    assert labels[0] == "Outbox"
+    assert labels[0] == "Outbox (2 pending)"
     assert "PR →" not in labels
 
 
@@ -7248,19 +7740,17 @@ _ACCOUNT_ROWS = (
 _ACCOUNT_LS = dashboard.da.account_ls_argv()
 
 
-def _fake_accounts_cli(mocker, *, listings=None, change=None):
+def _fake_accounts_cli(mocker, *, listing=None, change=None):
     """Patch the quiet CLI runner for the Accounts panel.
 
-    Each `account ls` answers the next of ``listings`` (the last one repeats);
-    anything else is a change and answers ``change``.
+    Every `account ls` answers ``listing``; anything else is a change and
+    answers ``change``.
     """
-    answers = list(listings or [_groups_listing(_ACCOUNT_ROWS)])
+    listing = listing or _groups_listing(_ACCOUNT_ROWS)
     change = change or dashboard.da.CliResult(True, "Done.")
 
     def fake(argv, **_kwargs):
-        if argv[:2] == ["account", "ls"]:
-            return answers.pop(0) if len(answers) > 1 else answers[0]
-        return change
+        return listing if argv[:2] == ["account", "ls"] else change
 
     return mocker.patch.object(dashboard.da, "run_cli_quiet", side_effect=fake)
 
@@ -7380,7 +7870,7 @@ def test_key_a_with_no_real_repo_is_a_notice(mocker):
     ids=["command-failed", "garbled-output"],
 )
 def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, reason):
-    run = _fake_accounts_cli(mocker, listings=[listing])
+    run = _fake_accounts_cli(mocker, listing=listing)
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     # j after the failure: the dashboard is still reading keys, not crashed
@@ -7396,7 +7886,7 @@ def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, re
 
 
 def test_accounts_panel_with_an_empty_pool_says_so(mocker, tmp_path):
-    run = _fake_accounts_cli(mocker, listings=[_groups_listing("[]")])
+    run = _fake_accounts_cli(mocker, listing=_groups_listing("[]"))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     assert _drive_run(mocker, [b"A", _ENTER, b"j"], [_alpha(tmp_path)]) == 0
@@ -7451,16 +7941,8 @@ def test_accounts_questions_keep_the_cursor_where_the_key_was_pressed(mocker, tm
     assert frames[-1].args[1] == dashboard.Row("container", "alpha-x")
 
 
-def test_accounts_park_runs_the_scoped_command_and_reloads(mocker, tmp_path):
-    after = _groups_listing(
-        '[{"agent": "claude", "group": "team", "account": null, "state": "empty",'
-        ' "repos": ["alpha"], "containers": []}]'
-    )
-    run = _fake_accounts_cli(
-        mocker,
-        listings=[_groups_listing(_ACCOUNT_ROWS), after],
-        change=dashboard.da.CliResult(True, "Parked a@x.io#org12345."),
-    )
+def test_accounts_park_runs_the_scoped_command_and_closes(mocker, tmp_path):
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Parked a@x.io#org12345."))
     child = mocker.patch.object(dashboard.subprocess, "run")
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7470,12 +7952,11 @@ def test_accounts_park_runs_the_scoped_command_and_reloads(mocker, tmp_path):
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "park", "-a", "claude", "-g", "team"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
     child.assert_not_called()
     last = render.call_args_list[-1].kwargs
-    assert isinstance(last["overlay"], dashboard.da.AccountsState)
-    assert [r.state for r in last["overlay"].rows] == ["empty"]  # the reloaded listing
+    # Done is done: the panel closes, the CLI's own message stays as the notice.
+    assert last["overlay"] is None
     assert last["notice"] == "Parked a@x.io#org12345."
 
 
@@ -7511,9 +7992,8 @@ def test_accounts_use_stored_login_two_step(mocker, tmp_path):
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "use", "b@x.io~2", "-a", "claude", "-g", "team"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    assert isinstance(render.call_args_list[-1].kwargs["overlay"], dashboard.da.AccountsState)
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 @pytest.mark.parametrize(("downs", "group"), [(0, "spare"), (1, "team")])
@@ -7530,11 +8010,8 @@ def test_accounts_use_a_parked_login_in_a_chosen_group(mocker, tmp_path, downs, 
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "use", "b@x.io~2", "-a", "claude", "-g", group], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    last = render.call_args_list[-1].kwargs["overlay"]
-    assert isinstance(last, dashboard.da.AccountsState)
-    assert last.index == 1  # the reload keeps the cursor on the row acted on
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 def test_accounts_panel_closes_when_its_repo_vanishes(mocker, tmp_path):
@@ -7590,9 +8067,7 @@ _OPEN_GROUP_RM_CONFIRM = [b"A", b"j", b"j", _ENTER, b"j", _ENTER]
     ],
     ids=["delete-login", "remove-group"],
 )
-def test_accounts_confirmation_yes_runs_the_removal_and_reloads(
-    mocker, tmp_path, keys, title, argv
-):
+def test_accounts_confirmation_yes_runs_the_removal_and_closes(mocker, tmp_path, keys, title, argv):
     run = _fake_accounts_cli(mocker)
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
@@ -7608,9 +8083,8 @@ def test_accounts_confirmation_yes_runs_the_removal_and_reloads(
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(argv, cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
-    assert isinstance(render.call_args_list[-1].kwargs["overlay"], dashboard.da.AccountsState)
+    assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
 @pytest.mark.parametrize(
@@ -7635,16 +8109,8 @@ def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, key
     assert back is calls[confirm_at].kwargs["overlay"].back  # the same panel, not reloaded
 
 
-def test_accounts_new_group_prompt_creates_the_typed_group_and_reloads(mocker, tmp_path):
-    after = _groups_listing(
-        '[{"agent": "claude", "group": "spare2", "account": null, "state": "empty",'
-        ' "repos": [], "containers": []}]'
-    )
-    run = _fake_accounts_cli(
-        mocker,
-        listings=[_groups_listing(_ACCOUNT_ROWS), after],
-        change=dashboard.da.CliResult(True, "Created group spare2."),
-    )
+def test_accounts_new_group_prompt_creates_the_typed_group_and_closes(mocker, tmp_path):
+    run = _fake_accounts_cli(mocker, change=dashboard.da.CliResult(True, "Created group spare2."))
     render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
 
     assert _drive_run(mocker, [b"A", b"n", *_keys("spare2"), _ENTER], [_alpha(tmp_path)]) == 0
@@ -7659,10 +8125,9 @@ def test_accounts_new_group_prompt_creates_the_typed_group_and_reloads(mocker, t
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
         mocker.call(["account", "group", "create", "spare2"], cwd=tmp_path),
-        mocker.call(_ACCOUNT_LS, cwd=tmp_path),
     ]
     last = render.call_args_list[-1].kwargs
-    assert [r.group for r in last["overlay"].rows] == ["spare2"]
+    assert last["overlay"] is None
     assert last["notice"] == "Created group spare2."
 
 
@@ -8959,6 +9424,238 @@ def test_an_unknown_snapshot_action_spawns_nothing(mocker, tmp_path):
     child.assert_not_called()
 
 
+# --- Outbox: the same picker panels as Snapshots… ------------------------------
+
+_OUTBOX_JSON = json.dumps(
+    {
+        "schema": 1,
+        "containers": [
+            {
+                "name": "alpha-x",
+                "available": True,
+                "error": None,
+                "stores": [],
+                "proposals": [
+                    {
+                        "id": "pr/a.json",
+                        "state": "pending",
+                        "revision": "r1",
+                        "actions": [{"index": 0}],
+                        "error": None,
+                        "edit_block": None,
+                    }
+                ],
+            }
+        ],
+    }
+)
+_OUTBOX_LS = ["outbox", "ls", "alpha-x", "-o", "json"]
+_TO_PROPOSAL = [_ENTER]  # the first entry is the only proposal
+
+
+def _fake_outbox_ls(mocker, result=None):
+    """Patch the quiet runner the outbox listing (and a delete) go through."""
+    return mocker.patch.object(
+        dashboard.da,
+        "run_cli_quiet",
+        return_value=result or dashboard.da.CliResult(True, "done", _OUTBOX_JSON),
+    )
+
+
+@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
+def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_path, over_ssh):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    policy = RemoteSSHConfig() if over_ssh else None
+    listing = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
+
+    keys = _container_menu_keys(group, "outbox browse", **kwargs)
+    assert _drive_run(mocker, keys, [group], **kwargs) == 0
+
+    flags = [] if over_ssh else ["--config", str(group.config_path)]
+    listing.assert_called_once_with([*_OUTBOX_LS, *flags], cwd=tmp_path)
+    picker = _rendered(render, dashboard.Picker)[0]
+    assert picker.title == "Outbox — alpha-x"
+    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
+    child.assert_not_called()  # listing is quiet: the screen never blanked
+
+
+def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    run_cli = mocker.patch.object(dashboard, "_run_cli_foreground", return_value=0)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [*_container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    actions = [
+        p for p in _rendered(render, dashboard.Picker) if p.purpose == "container-outbox-proposal"
+    ]
+    assert [e.value for e in actions[0].entries] == ["show", "publish", "delete"]
+    run_cli.assert_called_once()
+    assert run_cli.call_args.args[1] == ["outbox", "show", "alpha-x", "pr/a.json", "--color"]
+    assert run_cli.call_args.kwargs["style"] == "paged"
+
+
+def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        b"j",  # Publish…
+        _ENTER,
+        b"j",  # "Yes, publish"
+        _ENTER,
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_called_once_with(
+        [
+            "jailbee",
+            "outbox",
+            "apply",
+            "alpha-x",
+            "pr/a.json",
+            "--yes",
+            "--revision",
+            "r1",
+            "--config",
+            str(group.config_path),
+        ],
+        check=False,
+        cwd=tmp_path,
+    )
+    wait.assert_called_once()
+
+
+def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    quiet = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        b"j",
+        b"j",  # Delete…
+        _ENTER,
+        b"j",  # "Yes, delete"
+        _ENTER,
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    flags = ["--config", str(group.config_path)]
+    assert quiet.call_args_list[-1] == mocker.call(
+        ["outbox", "drop", "alpha-x", "pr/a.json", "--yes", "--revision", "r1", *flags],
+        cwd=tmp_path,
+    )
+    child.assert_not_called()
+
+
+@pytest.mark.parametrize("downs", [1, 2], ids=["publish", "delete"])
+def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    quiet = _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [
+        *_container_menu_keys(group, "outbox browse"),
+        *_TO_PROPOSAL,
+        *[b"j"] * downs,
+        _ENTER,
+        _ENTER,  # a stray Enter lands on "No"
+    ]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_not_called()
+    assert quiet.call_count == 1  # only the listing
+    assert "Cancelled" in _notices(render)
+
+
+def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_path):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    keys = [*_container_menu_keys(group, "outbox browse"), b"j", _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    child.assert_called_once_with(
+        ["jailbee", "outbox", "browse", "alpha-x", "--config", str(group.config_path)],
+        check=False,
+        cwd=tmp_path,
+    )
+    wait.assert_not_called()  # interactive: nothing left on screen to read
+
+
+@pytest.mark.parametrize(
+    ("result", "notice"),
+    [
+        (dashboard.da.CliResult(False, "error: boom"), "could not list the outbox: error: boom"),
+        (
+            dashboard.da.CliResult(True, "done", "Container  Proposal"),
+            "could not list the outbox: unexpected output from 'jailbee outbox ls'",
+        ),
+        (
+            dashboard.da.CliResult(
+                False,
+                "exit 2",
+                json.dumps(
+                    {"containers": [{"name": "alpha-x", "available": False, "error": "stopped"}]}
+                ),
+            ),
+            "could not read the outbox: stopped",
+        ),
+        (
+            dashboard.da.CliResult(True, "done", json.dumps({"containers": []})),
+            "Outbox of 'alpha-x' is empty",
+        ),
+    ],
+    ids=["cli-failed", "not-json", "unavailable", "empty"],
+)
+def test_an_outbox_with_nothing_to_offer_is_a_notice(mocker, tmp_path, result, notice):
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    _fake_outbox_ls(mocker, result)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    assert _drive_run(mocker, _container_menu_keys(group, "outbox browse"), [group]) == 0
+
+    assert not _rendered(render, dashboard.Picker)
+    assert notice in _notices(render)
+
+
+def test_outbox_hides_what_the_ssh_allowlist_does_not_permit(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
+    policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["shell", "outbox browse", "outbox ls"]}}
+    )
+    _fake_outbox_ls(mocker)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
+
+    keys = [*_container_menu_keys(group, "outbox browse", **kwargs), *_TO_PROPOSAL]
+    assert _drive_run(mocker, keys, [group], **kwargs) == 0
+
+    picker = _rendered(render, dashboard.Picker)[0]
+    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
+    assert "Nothing can be done to pr/a.json here" in _notices(render)
+
+
 # --- Mount… / Unmount… -------------------------------------------------------
 
 
@@ -9470,6 +10167,30 @@ def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocke
     wait.assert_called_once_with()
 
 
+def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
+    mocker, monkeypatch, tmp_path
+):
+    """A waypipe session has no RDP recipe to read: the window opens on the laptop."""
+    from jailbee.remote_ssh.session import WaypipeSession, child_environment
+
+    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    run = mocker.patch.object(dashboard.subprocess, "run")
+    run.return_value.returncode = 0
+    wait = mocker.patch.object(dashboard, "_wait_for_return")
+
+    dashboard._dispatch_action(
+        _dispatch_target(tmp_path),
+        "chrome",
+        "alpha-x",
+        over_ssh=True,
+        ssh_policy=_gui_dispatch_policy(gui=True),
+    )
+
+    wait.assert_not_called()
+
+
 def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker, tmp_path):
     run = mocker.patch.object(dashboard.subprocess, "run")
     run.return_value.returncode = 0
@@ -9484,3 +10205,365 @@ def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker,
     )
 
     wait.assert_not_called()
+
+
+def test_window_rows_keeps_everything_that_fits():
+    assert dashboard.window_rows([1, 1, 1], 2, 3) == dashboard.TableWindow(0, 3, 0, 0)
+
+
+def test_window_rows_is_top_anchored_while_the_cursor_fits_there():
+    # Four rows plus a "↓ 6 more" marker fill the five-line budget.
+    assert dashboard.window_rows([1] * 10, 1, 5) == dashboard.TableWindow(0, 4, 0, 6)
+
+
+def test_window_rows_is_bottom_anchored_near_the_end():
+    assert dashboard.window_rows([1] * 10, 9, 5) == dashboard.TableWindow(6, 10, 6, 0)
+
+
+def test_window_rows_centres_the_cursor_between_two_markers():
+    w = dashboard.window_rows([1] * 20, 10, 7)
+    assert w.start <= 10 < w.stop
+    assert w.stop - w.start == 5  # seven lines minus two markers
+    assert (w.hidden_above, w.hidden_below) == (w.start, 20 - w.stop)
+
+
+def test_window_rows_counts_wrapped_rows_by_their_height():
+    heights = [1, 2, 2, 2, 2, 2, 2]
+    w = dashboard.window_rows(heights, 6, 6)
+    assert w.start <= 6 < w.stop
+    assert sum(heights[w.start : w.stop]) + (w.hidden_above > 0) + (w.hidden_below > 0) <= 6
+
+
+def test_window_rows_without_a_cursor_starts_at_the_top():
+    assert dashboard.window_rows([1] * 10, None, 5).start == 0
+
+
+def _named_rows_group(tmp_path, n: int) -> dashboard.RepoGroup:
+    """Containers whose short names ("row07") cannot collide with anything else."""
+    return dashboard.RepoGroup(
+        "alpha",
+        "/repos/alpha",
+        tmp_path / "a.yaml",
+        [_ci(f"alpha-row{i:02d}", "alpha") for i in range(n)],
+    )
+
+
+def test_render_scrolls_a_long_table_to_the_cursor(tmp_path):
+    frame = dashboard.render(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row35"),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+        height=20,
+    )
+    lines = _render_text(frame, width=100).splitlines()
+    text = "\n".join(lines)
+    assert len(lines) <= 20
+    assert "NAME" in text  # the column header stays pinned
+    assert "row35" in text
+    assert "row00" not in text
+    assert "↑" in text and "more" in text
+    assert lines[-1].startswith("╰")
+
+
+def test_render_without_height_draws_a_long_table_whole(tmp_path):
+    frame = dashboard.render(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row35"),
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+        git_enabled=True,
+    )
+    text = _render_text(frame, width=100)
+    assert "row00" in text and "row39" in text and "more" not in text
+
+
+_FRAME_NOW = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+
+
+def _frame(groups, selected, *, overlay=None, height=None, width=100, show_details=True):
+    frame = dashboard.render(
+        groups,
+        selected,
+        now=_FRAME_NOW,
+        git_enabled=True,
+        overlay=overlay,
+        height=height,
+        show_details=show_details,
+    )
+    return _render_text(frame, width=width).splitlines()
+
+
+def test_details_panel_shows_under_the_table_for_the_highlighted_container(tmp_path):
+    lines = _frame([_named_rows_group(tmp_path, 3)], dashboard.Row("container", "alpha-row01"))
+    header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
+    title = next(i for i, ln in enumerate(lines) if "╭─ row01" in ln)
+    assert title > header + 3  # under the heading and three container rows
+    text = "\n".join(lines[title:])
+    assert "network" in text and "git" in text and "state" in text
+
+
+def test_details_toggled_off_draws_no_panel(tmp_path):
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        show_details=False,
+    )
+    assert "╭─ row01" not in "\n".join(lines)
+
+
+def test_menu_sits_to_the_right_of_the_details(tmp_path):
+    menu = dashboard.MenuState("alpha-row01", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        overlay=menu,
+        height=30,
+    )
+    shared = next(ln for ln in lines if "alpha-row01 →" in ln)
+    details_at = shared.find("╭─ row01")  # the details title comes first
+    menu_at = shared.find("alpha-row01 →")
+    assert details_at < menu_at
+
+
+def test_other_overlays_hide_the_details(tmp_path):
+    picker = dashboard.Picker("x", "Pick one", (dashboard.PickerEntry("Entry 0", "0"),))
+    lines = _frame(
+        [_named_rows_group(tmp_path, 3)],
+        dashboard.Row("container", "alpha-row01"),
+        overlay=picker,
+        height=30,
+    )
+    text = "\n".join(lines)
+    assert "Pick one" in text
+    assert "╭─ row01" not in text
+
+
+def test_repo_heading_shows_the_repo_summary(tmp_path):
+    text = "\n".join(_frame([_named_rows_group(tmp_path, 3)], dashboard.Row("repo", "alpha")))
+    assert "/repos/alpha" in text and "3 running / 3" in text
+
+
+def test_long_table_keeps_min_rows_and_the_cursor_with_details(tmp_path):
+    lines = _frame(
+        [_named_rows_group(tmp_path, 40)],
+        dashboard.Row("container", "alpha-row39"),
+        height=24,
+    )
+    assert len(lines) <= 24
+    text = "\n".join(lines)
+    assert "row39" in text and "↑" in text
+    header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
+    panel_top = next(i for i, ln in enumerate(lines) if "╭─ row39" in ln)
+    assert panel_top - header - 1 >= dashboard.MIN_TABLE_ROWS
+    assert lines[-1].startswith("╰")
+
+
+def test_short_terminals_never_overflow(tmp_path):
+    menu = dashboard.MenuState(
+        "alpha-row05", [(f"Action {i}", f"v{i}") for i in range(30)], index=20
+    )
+    for height in (8, 10, 12, 16):
+        lines = _frame(
+            [_named_rows_group(tmp_path, 40)],
+            dashboard.Row("container", "alpha-row05"),
+            overlay=menu,
+            height=height,
+        )
+        assert len(lines) <= height, height
+        assert lines[-1].startswith("╰"), height
+
+
+def test_v_parses_to_the_details_toggle():
+    assert dashboard.parse_key(b"v") == "details"
+
+
+def test_v_toggles_the_details_panel_and_persists_it(mocker, tmp_path):
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    render = mocker.spy(dashboard, "render")
+    _drive_run(mocker, [b"v"], [_named_rows_group(tmp_path, 2)], view_state=dashboard.ViewState())
+    assert render.call_args_list[0].kwargs["show_details"] is True
+    assert render.call_args_list[-1].kwargs["show_details"] is False
+    assert saved.call_args.args[2].show_details is False
+
+
+def test_folding_keeps_a_stored_details_preference(mocker, tmp_path):
+    """Every ViewState the loop saves must carry show_details, or a fold
+    silently turns a hidden panel back on."""
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    _drive_run(
+        mocker,
+        [b" "],  # the cursor starts on the repo heading: Space folds it
+        [_named_rows_group(tmp_path, 2)],
+        view_state=dashboard.ViewState(show_details=False),
+    )
+    state = saved.call_args.args[2]
+    assert state.folded == frozenset({"alpha"})
+    assert state.show_details is False
+
+
+@pytest.mark.parametrize("path", ["fold", "settings", "repo-menu"])
+def test_every_saved_view_state_keeps_a_stored_details_preference(mocker, tmp_path, path):
+    """The Space fold, the settings overlay and the repo menu's Fold each save
+    a whole ViewState; none may turn a stored-hidden panel back on."""
+    group = _named_rows_group(tmp_path, 2)
+    keys = {
+        "fold": [b" "],
+        "settings": [b"S", b" "],
+        "repo-menu": _repo_menu_keys(group, "fold"),
+    }[path]
+    saved = mocker.patch.object(dashboard, "save_view_state")
+    _drive_run(mocker, keys, [group], view_state=dashboard.ViewState(show_details=False))
+    assert saved.call_count >= 1
+    assert saved.call_args.args[2].show_details is False
+
+
+def _mixed_group(tmp_path, n=40):
+    """A repo whose containers differ in how much their panels have to say."""
+    containers = [
+        _ci(
+            f"alpha-row{i:02d}",
+            "alpha",
+            git_status=GitStatus(wt="+1 -2", ahead_diff="+3 -4", ahead_count="7", conflict="ok")
+            if i % 2
+            else None,
+        )
+        for i in range(n)
+    ]
+    return dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", containers)
+
+
+def _rows_shown(lines):
+    """How many container rows the table draws (the `rowNN` lines above the panel)."""
+    panel = next((i for i, ln in enumerate(lines) if i and "╭" in ln), len(lines))
+    return sum(1 for ln in lines[:panel] if re.search(r"row\d\d", ln))
+
+
+def test_table_window_does_not_depend_on_the_highlighted_row(tmp_path):
+    group = _mixed_group(tmp_path)
+    shown = set()
+    for selected in (
+        dashboard.Row("repo", "alpha"),
+        dashboard.Row("container", "alpha-row10"),
+        dashboard.Row("container", "alpha-row11"),
+        dashboard.Row("container", "alpha-row12"),
+    ):
+        lines = _frame([group], selected, height=30, width=80)
+        assert len(lines) <= 30 and lines[-1].startswith("╰")
+        shown.add((_rows_shown(lines), next(i for i, ln in enumerate(lines) if i and "╭" in ln)))
+    assert len(shown) == 1, shown
+
+
+@pytest.mark.parametrize("height", [8, 10, 12, 14])
+def test_cursor_row_is_visible_and_the_frame_fits_at_small_heights(tmp_path, height):
+    for row in ("alpha-row00", "alpha-row21", "alpha-row39"):
+        lines = _frame(
+            [_mixed_group(tmp_path)], dashboard.Row("container", row), height=height, width=80
+        )
+        assert len(lines) <= height, (height, row)
+        assert lines[-1].startswith("╰"), (height, row)
+        assert row.removeprefix("alpha-") in "\n".join(lines), (height, row)
+
+
+@pytest.mark.parametrize("height", [8, 10, 12])
+def test_a_panel_too_small_for_two_rows_is_dropped(tmp_path, height):
+    lines = _frame(
+        [_mixed_group(tmp_path)], dashboard.Row("container", "alpha-row21"), height=height
+    )
+    assert "…" not in "\n".join(lines)
+    assert not any(i and "╭" in ln for i, ln in enumerate(lines))
+
+
+def test_a_menu_alone_replaces_a_panel_that_does_not_fit(tmp_path):
+    menu = dashboard.MenuState("alpha-row21", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_mixed_group(tmp_path)],
+        dashboard.Row("container", "alpha-row21"),
+        overlay=menu,
+        height=10,
+    )
+    text = "\n".join(lines)
+    assert "alpha-row21 →" in text and "network" not in text
+    assert "row21" in text and lines[-1].startswith("╰") and len(lines) <= 10
+
+
+def test_the_table_keeps_min_rows_with_the_panel_at_height_14(tmp_path):
+    """Pins MIN_TABLE_ROWS: at 14 the panel gets what is left after the floor."""
+    lines = _frame(
+        [_mixed_group(tmp_path)], dashboard.Row("container", "alpha-row21"), height=14, width=80
+    )
+    # Literal on purpose: MIN_TABLE_ROWS (5) lines under the header, two of
+    # them taken by the "more" markers.
+    assert _rows_shown(lines) >= 3
+
+
+def test_a_narrow_terminal_drops_the_details_beside_a_menu(tmp_path):
+    menu = dashboard.MenuState("alpha-row21", [("Shell", "shell"), ("Tmux", "tmux")])
+    lines = _frame(
+        [_mixed_group(tmp_path)],
+        dashboard.Row("container", "alpha-row21"),
+        overlay=menu,
+        height=30,
+        width=40,
+    )
+    text = "\n".join(lines)
+    assert "alpha-row21 →" in text and "network" not in text
+
+
+def test_a_cursor_row_taller_than_the_window_is_not_cut_away(tmp_path, mocker):
+    mocker.patch.object(
+        dashboard,
+        "container_row",
+        lambda group, c, fields, widths, selected: f"{c.name}\nsecond\nthird\nfourth",
+    )
+    group = _mixed_group(tmp_path, 12)
+    fields = dashboard.visible_fields(_FRAME_NOW, group.containers)[:1]
+    sections = dashboard._RepoSections(
+        [group],
+        fields,
+        (10,),
+        dashboard.Row("container", "alpha-row06"),
+        frozenset(),
+        empty=False,
+    )
+    console = Console(width=60, record=True, file=io.StringIO())
+    for budget in (4, 5, 6):
+        lines = console.render_lines(dataclasses.replace(sections, max_rows=budget), pad=False)
+        text = "\n".join("".join(seg.text for seg in line) for line in lines)
+        assert "alpha-row06" in text, budget
+        assert len(lines) <= budget, budget
+
+
+def test_gather_live_adds_extra_roots_to_the_registered_ones(mocker, tmp_path):
+    registered = tmp_path / "reg"
+    extra = tmp_path / "extra"
+    mocker.patch.object(dashboard, "registered_repo_roots", return_value=[registered, extra])
+    rows = mocker.patch.object(dashboard, "gather_rows", return_value=[])
+    incus = mocker.Mock()
+
+    dashboard.gather_live(incus, [extra], with_git=True)
+
+    rows.assert_called_once_with(incus, [extra, registered], with_git=True)
+
+
+def _group(prefix, root=None):
+    return dashboard.RepoGroup(prefix, root, None, [])
+
+
+def test_present_pins_the_cwd_group_first(tmp_path):
+    groups = [_group("alpha", "/a"), _group("beta", "/b"), _group("zeta")]
+    shown = dashboard.present(groups, Path("/b"))
+    assert [g.prefix for g in shown] == ["beta", "alpha", "zeta"]
+    assert [g.prefix for g in groups] == ["alpha", "beta", "zeta"]  # input untouched
+
+
+def test_present_without_cwd_keeps_the_order():
+    groups = [_group("alpha", "/a"), _group("beta", "/b")]
+    assert dashboard.present(groups, None) == groups
+
+
+def test_present_drops_groups_the_scope_excludes():
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    groups = [_group("alpha", "/a"), _group("secret", "/s"), _group("gamma")]
+    shown = dashboard.present(groups, None, RemoteRepoScope(frozenset({"secret"})))
+    assert [g.prefix for g in shown] == ["alpha", "gamma"]

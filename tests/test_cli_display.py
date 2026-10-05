@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from typer.testing import CliRunner
 
@@ -8,6 +10,7 @@ from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.remote_display import DisplayError, DisplayStatus
+from tests.conftest import make_cfg
 
 
 @pytest.fixture
@@ -114,3 +117,89 @@ def test_status_reports_an_incus_error_and_exits_1(display):
     assert result.exit_code == 1
     assert "incus gone" in result.output
     assert "Traceback" not in result.output
+
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def host(tmp_path, mocker):
+    """A host-side invocation against one running container `c1`."""
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "c1", "status": "Running"}]
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "c1"))
+    return cfg, incus
+
+
+@pytest.mark.parametrize(
+    ("result", "text"),
+    [
+        ("attached", "Attached the host display to c1"),
+        ("unchanged", "already attached"),
+        ("reattached", "compositor restarted"),
+    ],
+)
+def test_attach_reports_what_it_did(host, mocker, result, text) -> None:
+    from jailbee.runtime_mounts import EnsureResult
+
+    cfg, incus = host
+    ensure = mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display", return_value=EnsureResult(result)
+    )
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 0, out.output
+    assert text in out.output
+    ensure.assert_called_once_with(cfg, incus, "c1")
+
+
+def test_attach_refuses_a_stopped_container(host, mocker) -> None:
+    _, incus = host
+    incus.list_containers.return_value = [{"name": "c1", "status": "Stopped"}]
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 1
+    assert "not running" in out.output
+    ensure.assert_not_called()
+
+
+def test_attach_reports_a_missing_host_socket(host, mocker) -> None:
+    mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display",
+        side_effect=DisplayError("cannot attach the host display to c1: not a Wayland session"),
+    )
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 1
+    assert "not a Wayland session" in out.output
+
+
+def test_attach_reports_an_incus_failure(host, mocker) -> None:
+    mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display",
+        side_effect=IncusError("device add failed"),
+    )
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 1
+    assert "device add failed" in out.output
+
+
+def test_attach_is_refused_from_an_ssh_session(host, mocker, monkeypatch) -> None:
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 1
+    assert "host" in out.output
+    ensure.assert_not_called()

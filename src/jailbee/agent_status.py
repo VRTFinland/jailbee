@@ -29,8 +29,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-URGENCY: tuple[str, ...] = ("waiting", "busy", "idle")
-"""Known states, most urgent first. Any other state ranks after all of them."""
+URGENCY: tuple[str, ...] = ("waiting", "busy", "shell", "idle")
+"""Known states, most urgent first. Any other state ranks after all of them.
+
+`shell` is Claude Code's idle with a background shell job still running: the
+agent wants nothing from you yet, but it is not finished either.
+"""
 
 _LATEST = datetime.max.replace(tzinfo=UTC)
 

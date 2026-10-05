@@ -1024,8 +1024,20 @@ def test_submodule_probe_failures_preserve_unknown_fields_and_keep_the_row(
     assert changes[0].behind_commits == behind_commits
 
 
-@pytest.mark.parametrize("gitlink", ["added", "deleted", "raw-failed"])
-def test_probe_gitlink_without_resolvable_endpoints_never_reports_clean(mocker, tmp_path, gitlink):
+@pytest.mark.parametrize(
+    "gitlink,target_diff",
+    [
+        # An added or removed submodule counts as the one gitlink line
+        # `git diff --shortstat` itself reports — never "clean", and never the
+        # "?" that would hide the superproject's own diff.
+        ("added", "+1 -0"),
+        ("deleted", "+0 -1"),
+        ("raw-failed", "?"),
+    ],
+)
+def test_probe_gitlink_without_resolvable_endpoints_never_reports_clean(
+    mocker, tmp_path, gitlink, target_diff
+):
     from jailbee.git_status import _PROBE_SNIPPET
 
     # A fake git supplies real shell output while no real repo, Incus, or git
@@ -1078,7 +1090,7 @@ def test_probe_gitlink_without_resolvable_endpoints_never_reports_clean(mocker, 
     incus.exec.side_effect = exec_snippet
     status = probe_container_git(incus, "c", str(repo), "main", "main", target=target)
 
-    assert status.target_diff == "?"
+    assert status.target_diff == target_diff
     assert status.ahead_count == "2"
     assert status.behind_count == "1"
     assert status.wt == "clean"

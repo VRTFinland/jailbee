@@ -370,7 +370,7 @@ def test_remote_ssh_key_add_dash_reads_stdin(mocker: MockerFixture) -> None:
 def test_remote_ssh_key_add_no_argument_reads_piped_stdin(mocker: MockerFixture) -> None:
     added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(
         app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
@@ -384,7 +384,7 @@ def test_remote_ssh_key_add_no_argument_reads_piped_stdin(mocker: MockerFixture)
 def test_remote_ssh_key_add_no_argument_prompts_on_a_tty(mocker: MockerFixture) -> None:
     added = AuthorizedKey("ssh-ed25519", "ssh-ed25519 AAAA laptop", "laptop", "SHA256:abc")
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key", return_value=added)
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = CliRunner().invoke(
         app, ["remote", "ssh", "key", "add"], input="ssh-ed25519 AAAA laptop\n"
@@ -398,7 +398,7 @@ def test_remote_ssh_key_add_no_argument_prompts_on_a_tty(mocker: MockerFixture) 
 
 def test_remote_ssh_key_add_no_argument_empty_paste_is_an_error(mocker: MockerFixture) -> None:
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
-    mocker.patch("jailbee.cli._is_tty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="\n")
 
@@ -409,7 +409,7 @@ def test_remote_ssh_key_add_no_argument_empty_paste_is_an_error(mocker: MockerFi
 
 def test_remote_ssh_key_add_no_argument_empty_pipe_is_an_error(mocker: MockerFixture) -> None:
     add = mocker.patch("jailbee.remote_ssh.keys.add_authorized_key")
-    mocker.patch("jailbee.cli._is_tty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = CliRunner().invoke(app, ["remote", "ssh", "key", "add"], input="")
 
@@ -524,7 +524,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
             "0.0.0.0",
             "--port",
             "18022",
-            "--shell",
+            "--console",
             "--commands",
             "allowlist",
             "--allow",
@@ -538,7 +538,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
     expected_overrides = ServeOverrides(
         listen="0.0.0.0",
         port=18022,
-        shell=True,
+        console=True,
         commands_mode="allowlist",
         allow=["ls", "new"],
     )
@@ -547,7 +547,7 @@ def test_remote_ssh_serve_flags_are_parsed_and_passed_through(
     assert isinstance(effective, RemoteSSHConfig)
     assert effective.listen == "0.0.0.0"
     assert effective.port == 18022
-    assert effective.shell is True
+    assert effective.console is True
     assert effective.commands.mode == "allowlist"
     assert effective.commands.allow == ["ls", "new"]
     # `dashboard` was not overridden and the base config left it enabled, so
@@ -779,6 +779,60 @@ def test_remote_ssh_serve_no_restrict_host_is_passed_through(mocker: MockerFixtu
     assert serve.call_args.args[0].restrict_host is False
 
 
+def _key(fp: str, comment: str = "laptop"):
+    from jailbee.remote_ssh.keys import AuthorizedKey
+
+    return AuthorizedKey(
+        algorithm="ssh-ed25519", public_text="AAAA", comment=comment, fingerprint=fp
+    )
+
+
+def test_remote_ssh_key_remove_without_fingerprint_asks_even_for_one(
+    mocker: MockerFixture,
+) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value=fp)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 0, result.stdout
+    assert select.call_count == 1
+    remove.assert_called_once_with(fp)
+
+
+def test_remote_ssh_key_remove_off_a_tty_names_the_candidates(mocker: MockerFixture) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 2
+    assert "Candidates:" in flat_output(result.output)
+    assert not remove.called
+
+
+def test_remote_ssh_key_remove_cancel_exits_1_and_removes_nothing(mocker: MockerFixture) -> None:
+    fp = "SHA256:" + "A" * 43
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[_key(fp)])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 1
+    assert not remove.called
+
+
+def test_remote_ssh_key_remove_without_keys_exits_2(mocker: MockerFixture) -> None:
+    mocker.patch("jailbee.remote_ssh.keys.read_authorized_keys", return_value=[])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    remove = mocker.patch("jailbee.remote_ssh.keys.remove_authorized_key")
+    result = CliRunner().invoke(app, ["remote", "ssh", "key", "rm"])
+    assert result.exit_code == 2
+    assert "no authorized keys to remove" in flat_output(result.output)
+    assert not remove.called
+
+
 def test_remote_ssh_serve_files_is_passed_through(mocker: MockerFixture) -> None:
     from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
     from jailbee.global_config import GlobalConfig
@@ -794,3 +848,45 @@ def test_remote_ssh_serve_files_is_passed_through(mocker: MockerFixture) -> None
     assert result.exit_code == 0, result.stdout
     serve.assert_called_once_with(mocker.ANY, ServeOverrides(files=True))
     assert serve.call_args.args[0].files is True
+
+
+def _serve_with(mocker: MockerFixture, *flags: str):
+    from jailbee.config.models_remote import RemoteConfig, RemoteSSHConfig
+    from jailbee.global_config import GlobalConfig
+
+    global_config = GlobalConfig(remote=RemoteConfig(ssh=RemoteSSHConfig()))
+    mocker.patch("jailbee.cli._load_global", return_value=global_config)
+    mocker.patch("jailbee.remote_ssh.keys.ensure_key_files")
+    serve = mocker.patch("jailbee.remote_ssh.server.serve")
+    result = CliRunner().invoke(app, ["remote", "ssh", "serve", *flags])
+    return result, serve
+
+
+def test_remote_ssh_serve_console_flag_sets_override(mocker: MockerFixture) -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    result, serve = _serve_with(mocker, "--console")
+
+    assert result.exit_code == 0, result.output
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(console=True))
+
+
+def test_remote_ssh_serve_legacy_shell_flag_warns_and_sets_console(
+    mocker: MockerFixture,
+) -> None:
+    from jailbee.remote_ssh.overrides import ServeOverrides
+
+    result, serve = _serve_with(mocker, "--no-shell")
+
+    assert result.exit_code == 0, result.output
+    serve.assert_called_once_with(mocker.ANY, ServeOverrides(console=False))
+    assert "--shell/--no-shell is deprecated" in result.output
+
+
+def test_remote_ssh_serve_both_console_and_shell_is_a_usage_error(
+    mocker: MockerFixture,
+) -> None:
+    result, serve = _serve_with(mocker, "--console", "--shell")
+
+    assert result.exit_code == 2
+    assert not serve.called

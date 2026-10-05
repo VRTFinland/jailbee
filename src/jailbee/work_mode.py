@@ -109,3 +109,10 @@ def switch_work_network(
     from jailbee.hosts import sync_hosts
 
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
+
+    # After the mode change has landed: a strict container's IP sits in its
+    # repo's rules and a loose one's in the open scope, so syncing earlier
+    # would leave this one's IP in the scope it just left.
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, name, mode)

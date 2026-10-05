@@ -390,6 +390,10 @@ def run_apply(
 
     containers = _list_containers(cfg, incus)
 
+    from jailbee import egress_proxy
+
+    _ensure_egress_proxy_or_warn(cfg, incus)
+
     from jailbee.ports import PortError, list_forwards, reconcile_config_ports
 
     # One `incus list` for every container's forwards, instead of one per
@@ -479,6 +483,11 @@ def run_apply(
 
             sync_hosts(cfg, incus, ci.name, ci.network, mirror_endpoint=mirror_endpoint)
             hosts_repinned.append(ci.name)
+        # Every running container, whatever its mode or wildcards: with none
+        # left, this unsets a proxy environment an earlier wildcard installed.
+        egress_proxy.sync_container_env_only(
+            cfg, incus, ci.name, ci.network, raws=list(raw_by_name.values())
+        )
         if mirror_endpoint is not None and mirror_ca_pem is not None and mirror_port is not None:
             from jailbee.docker_daemon import apply_docker_proxy
 
@@ -498,6 +507,10 @@ def run_apply(
             warn(
                 f"Could not update LiteLLM settings on {short}: {e}; run `jailbee apply` to retry."
             )
+
+    # The repo's Squid rules once, after every container's environment is set,
+    # instead of a full rebuild per container.
+    egress_proxy.sync_repo(cfg, incus)
 
     orphans = _sweep_orphan_extra_acls(cfg, incus)
     if orphans:
@@ -789,6 +802,21 @@ def _read_mirror_ca_or_warn(gcfg: GlobalConfig) -> str | None:
     return None
 
 
+def _ensure_egress_proxy_or_warn(cfg: Config, incus: Incus) -> None:
+    """Start the Squid proxy when this repo needs it (``egress_proxy.proxy_needed``).
+
+    Otherwise the proxy is left alone (never created for a repo that does not
+    use it). A failure is a warning: apply has profiles, ACLs and ports to
+    finish, and ``sync_container`` reports the missing proxy per container.
+    """
+    from jailbee import egress_proxy
+
+    with Session(get_engine()) as session:
+        needed = egress_proxy.proxy_needed(cfg, incus, session)
+    if needed:
+        egress_proxy.proxy_up_or_warn(incus)
+
+
 def _list_containers(cfg: Config, incus: Incus) -> list[ContainerInfo]:
     """Wrap ``lifecycle.list_containers`` so tests can patch one symbol."""
     from jailbee.lifecycle import list_containers
@@ -811,6 +839,7 @@ def _restart_one(
     shell steps (docker daemon, services, etc.) MUST run, otherwise the
     container comes back from restart with no services and is unusable.
     """
+    from jailbee import egress_proxy
     from jailbee.autostart import (
         AutostartTrigger,
         inject_github_token,
@@ -824,9 +853,9 @@ def _restart_one(
     )
 
     boot_container(cfg, incus, name, restart=True)
-    sync_hosts(
-        cfg, incus, name, current_network_mode(cfg, incus, name), mirror_endpoint=mirror_endpoint
-    )
+    mode = current_network_mode(cfg, incus, name)
+    sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
+    egress_proxy.sync_container(cfg, incus, name, mode)
     repo_dir = container_repo_dir(cfg, incus, name)
     # Re-inject GH_TOKEN (infrastructure, not a user autostart step) so a
     # rotated PAT is picked up on `jailbee apply`.

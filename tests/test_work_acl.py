@@ -223,6 +223,40 @@ def test_removing_last_work_extra_drops_nic_reference_before_acl_delete(make_cfg
     incus.network_acl_delete.assert_any_call(extra_acl_name(name))
 
 
+def test_wildcard_only_extras_after_removing_the_last_plain_one_delete_the_acl(
+    make_cfg, tmp_path, mocker
+):
+    """`egress add 1.2.3.4`, `egress add '*.x.com'`, `egress rm 1.2.3.4` leaves only a
+    wildcard: no ACL extras remain, so the old ACL and its NIC reference must go."""
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-work"
+    nic = {
+        "type": "nic",
+        "network": "jailbee-work",
+        "ipv4.address": "10.42.0.2",
+        "security.ipv4_filtering": "true",
+        "security.acls": f"{cfg.container_prefix}-allowlist,{extra_acl_name(name)}",
+    }
+    raw = {
+        "name": name,
+        "profiles": [f"{cfg.container_prefix}-net-work-strict"],
+        "devices": {"eth0": nic},
+    }
+    incus = MagicMock()
+    incus.network_get.return_value = "jailbee-work-baseline"
+    incus.list_containers.return_value = [raw]
+    incus.network_acl_exists.return_value = True
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["*.x.com"])
+
+    apply_work_container_acl(cfg, incus, name)
+
+    assert incus.config_device_set.call_args.args[2]["security.acls"] == (
+        f"{cfg.container_prefix}-allowlist,jailbee-services"
+    )
+    incus.network_acl_delete.assert_any_call(extra_acl_name(name))
+    incus.network_acl_set_yaml.assert_not_called()
+
+
 def container(name: str, ip: str = "10.42.0.2", mode: str = "loose") -> dict:
     return {
         "name": name,
@@ -437,3 +471,28 @@ def test_reconcile_is_idempotent_and_uses_loose_markers(make_cfg, tmp_path):
     incus.network_set.reset_mock()
     reconcile_work_acl(cfg, incus)
     incus.network_set.assert_not_called()
+
+
+def test_work_occupants_skip_the_egress_proxy(make_cfg, tmp_path):
+    from jailbee.egress_proxy import PROXY_CONTAINER
+    from jailbee.work_acl import _work_occupants
+
+    cfg = make_cfg(tmp_path / "repo")
+    name = f"{cfg.container_prefix}-a"
+    proxy = {
+        "name": PROXY_CONTAINER,
+        "profiles": ["default", "jailbee-egress-proxy-profile"],
+        "devices": {
+            "cl-work": {
+                "type": "nic",
+                "network": "jailbee-work",
+                "name": "eth2",
+                "ipv4.address": "10.42.0.16",
+                "security.ipv4_filtering": "true",
+            }
+        },
+    }
+    incus = MagicMock()
+    incus.list_containers.return_value = [proxy, container(name)]
+
+    assert [item["name"] for item in _work_occupants(incus)] == [name]

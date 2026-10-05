@@ -134,6 +134,11 @@ def parse_value(spec: FieldSpec, text: str) -> tuple[object, str | None]:
             return int(raw), None
         except ValueError:
             return None, f"Expected a whole number, got {raw!r}."
+    if spec.kind is FieldKind.FLOAT:
+        try:
+            return float(raw), None
+        except ValueError:
+            return None, f"Expected a number, got {raw!r}."
     if spec.kind is FieldKind.CHOICE:
         for choice in spec.choices:
             if raw == str(choice):
@@ -173,11 +178,11 @@ def parse_list(spec: FieldSpec, text: str) -> tuple[list[str] | None, str | None
     """
     entries = [line.strip() for line in text.splitlines() if line.strip()]
     if spec.path == ("egress_allow",):
-        from jailbee.egress import parse_egress_entry
+        from jailbee.egress import validate_allow_entry
 
         for lineno, entry in enumerate(entries, start=1):
             try:
-                parse_egress_entry(entry)
+                validate_allow_entry(entry)
             except ValueError as exc:
                 return None, f"Line {lineno}: {exc}"
     return entries, None

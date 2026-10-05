@@ -401,3 +401,72 @@ def test_net_is_quiet_when_no_autostart_run_is_in_flight(tmp_path, mocker) -> No
     assert result.exit_code == 0, out
     assert "autostart" not in out.lower()
     assert switch.call_count == 1
+
+
+# --- missing name -----------------------------------------------------------
+
+
+def test_cancel_without_name_asks_even_for_one(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value="myrepo-feat-a")
+    sig = mocker.patch("jailbee.autostart_status.signal_worker")
+    result = runner.invoke(app, ["autostart", "cancel"])
+    assert result.exit_code == 0, _out(result)
+    assert select.call_count == 1
+    sig.assert_called_once_with(os.getpid())
+
+
+def test_cancel_without_name_cancelled_signals_nothing(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    sig = mocker.patch("jailbee.autostart_status.signal_worker")
+    result = runner.invoke(app, ["autostart", "cancel"])
+    assert result.exit_code == 1
+    sig.assert_not_called()
+
+
+def test_cancel_without_name_off_a_tty_exits_2(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    sig = mocker.patch("jailbee.autostart_status.signal_worker")
+    result = runner.invoke(app, ["autostart", "cancel"])
+    assert result.exit_code == 2
+    assert "feat-a" in _out(result)
+    sig.assert_not_called()
+
+
+def test_cancel_without_name_ignores_a_dead_worker(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(DEAD_PID, "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select")
+    sig = mocker.patch("jailbee.autostart_status.signal_worker")
+    result = runner.invoke(app, ["autostart", "cancel"])
+    assert result.exit_code == 2
+    assert "no running autostart jobs" in _out(result)
+    select.assert_not_called()
+    sig.assert_not_called()
+
+
+def test_status_without_name_takes_the_only_job_on_stderr(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "deps", str(tmp_path / "x.log"))
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["autostart", "status"])
+    assert result.exit_code == 0, _out(result)
+    assert "Using autostart job" in result.stderr
+    assert "Using autostart job" not in result.stdout
+
+
+def test_status_without_name_and_no_autostart_jobs_exits_2(tmp_path, mocker) -> None:
+    _setup(tmp_path, mocker)
+    _insert_job(os.getpid(), "starting", str(tmp_path / "x.log"), kind="create")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = runner.invoke(app, ["autostart", "status"])
+    assert result.exit_code == 2
+    assert "no autostart" in _out(result).lower()

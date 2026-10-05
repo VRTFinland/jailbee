@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from jailbee.cli import _resolve_ff_policy, app
 from jailbee.lifecycle import ContainerInfo, ResolvedContainer
+from tests.conftest import panel_text
 
 
 def _info(name: str, mode: str = "clone", state: str = "Running") -> ContainerInfo:
@@ -34,7 +35,7 @@ def _wire(mocker, tmp_path, *, containers, picked):
         "jailbee.lifecycle.list_containers",
         return_value=containers,
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=picked,
@@ -115,9 +116,8 @@ def test_pull_multi_user_cancels(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "pull"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text(result.stdout + (result.stderr or ""))
     do_pull.assert_not_called()
 
 
@@ -181,8 +181,8 @@ def test_pull_multi_empty_pullable_list_errors(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "pull"])
 
-    assert result.exit_code == 1
-    combined = result.stdout + (result.stderr or "")
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
     assert "No containers eligible for pull" in combined
     do_pull.assert_not_called()
 
@@ -282,7 +282,7 @@ def test_pull_off_tty_prints_the_plan_and_proceeds(mocker, tmp_path):
     """No prompt is possible; the block still lands in the log."""
     cfg_mock = _wire(mocker, tmp_path, containers=[_info("myrepo-feat-only")], picked=None)
     cfg_mock.confirm.auto_target = True
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.lifecycle.resolve_container_for_interactive_detailed",
         return_value=ResolvedContainer(name="myrepo-feat-only", auto_selected=True),
@@ -308,7 +308,7 @@ def test_pull_off_tty_mount_mode_auto_selected_skips_the_confirmation(mocker, tm
         mocker, tmp_path, containers=[_info("myrepo-mount", mode="mount")], picked=None
     )
     cfg_mock.confirm.auto_target = True
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     incus_cls = mocker.patch("jailbee.incus.Incus")
     incus_cls.return_value.config_get.return_value = "mount"
     mocker.patch(

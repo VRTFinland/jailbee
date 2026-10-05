@@ -176,3 +176,50 @@ def test_issue_prose_wraps_bodies_but_not_titles(monkeypatch) -> None:
     assert len(body) > 3 and all(len(line) <= 40 for line in body)
     assert before == ["  body before:", f"    {LONG}"]  # an edit's before/after stay verbatim
     assert title == ["  title:", f"    {LONG}"]
+
+
+def test_render_width_follows_the_color_choice(monkeypatch) -> None:
+    from jailbee.outbox import markdown_view
+
+    monkeypatch.setattr("jailbee.outbox.markdown_view._terminal_width", lambda: 70)
+    assert markdown_view.render_width(None) == 70
+    assert markdown_view.render_width(True) == 70
+    assert markdown_view.render_width(False) is None
+    monkeypatch.setattr("jailbee.outbox.markdown_view._terminal_width", lambda: None)
+    assert markdown_view.render_width(None) is None
+    assert markdown_view.render_width(False) is None
+
+
+def test_forced_render_width_is_the_terminal_stderr_is_on(monkeypatch) -> None:
+    import os
+
+    from jailbee.outbox import markdown_view
+
+    monkeypatch.setattr("jailbee.outbox.markdown_view._terminal_width", lambda: None)
+    monkeypatch.setattr(
+        "jailbee.outbox.markdown_view.os.get_terminal_size",
+        lambda fd: os.terminal_size((55, 20)),
+    )
+    assert markdown_view.render_width(True) == 55
+
+    def no_terminal(fd: int) -> os.terminal_size:
+        raise OSError
+
+    monkeypatch.setattr("jailbee.outbox.markdown_view.os.get_terminal_size", no_terminal)
+    monkeypatch.setenv("COLUMNS", "66")
+    assert markdown_view.render_width(True) == 66
+
+
+def test_print_lines_color_keeps_styling_off_a_terminal(monkeypatch) -> None:
+    from rich.console import Console
+
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    buffer = io.StringIO()
+    monkeypatch.setattr("jailbee.tui.console", Console(file=buffer, force_terminal=False))
+    print_lines([AnsiLine("\x1b[1mstyled\x1b[0m"), "plain \x1b[31mred"])
+    assert "\x1b[1m" not in buffer.getvalue()
+    print_lines([AnsiLine("\x1b[1mstyled\x1b[0m"), "plain \x1b[31mred"], color=True)
+    out = buffer.getvalue()
+    assert "\x1b[1mstyled" in out
+    assert "\x1b[31m" not in out

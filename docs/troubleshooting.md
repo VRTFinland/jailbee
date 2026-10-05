@@ -9,14 +9,16 @@ the sections below expand on the ones that need host changes.
 
 ## Common problems
 
-### "Run `jb base build` in this repo to pick these up"
+### "Run `jb base build` in this repo (or `jb upgrade` for every repo) to pick these up"
 
 `jailbee ls`, `jailbee new` and `jailbee shell` print a short block on stderr,
 and `jailbee doctor` reports the same thing as its `upgrade actions` check,
 when the version of JailBee you just upgraded to changed something a golden
 image or a set of Incus profiles already on your machine does not have yet.
 Neither is rebuilt automatically, so the hint names what changed and the one
-command that picks it up — run it in the repo it appeared in.
+command that picks it up — run it in the repo it appeared in, or run
+`jailbee upgrade` once to bring every registered repo up to date without
+restarting any container (`--dry-run` shows what it would do).
 
 It is only a hint: nothing is blocked, and everything keeps working off the
 old image or profiles meanwhile. But it repeats on every one of those commands
@@ -41,7 +43,8 @@ The same command covers the deprecation notices about `.gie/config.yaml`
 (`legacy-config-dir`), a legacy `chrome:` block (`legacy-chrome-block`), a
 `claude_credentials:` block (`legacy-credentials-block`), per-repo entries
 still kept in `global.yaml` (`legacy-per-repo-map`) and the old
-`agents.claude.ai_pr_*` keys (`legacy-pr-keys`).
+`agents.claude.ai_pr_*` keys (`legacy-pr-keys`), and the old remote SSH
+`shell` spelling of `console` (`legacy-remote-ssh-shell`).
 Those cannot grow a new reason on their own, so they stay dismissed until you
 change the config; `jailbee doctor` lists them under its `dismissed notices`
 check. Warnings that answer the command you just typed — what `jailbee config
@@ -178,19 +181,19 @@ or it clearly didn't.
    `autostart:` prefix drops and it reads just `<stage> (worker gone)` —
    the bare stage name it was on when it died, not `autostart:<stage>
    (worker gone)`.
-2. **`jailbee autostart status <name>`.** One row per step, grouped by
+2. **`jailbee autostart status [<name>]`.** One row per step, grouped by
    stage. A step shown as `running` under a live worker is genuinely in
    flight; the same state under a dead one is rendered `interrupted` — it
    was cut off and will never report a result, since nothing routes an
    aborted step through the normal finish path.
-3. **`jailbee job log <name> [--follow]`.** The supervisor's own output —
+3. **`jailbee job log [<name>] [--follow]`.** The supervisor's own output —
    there is no separate `jailbee autostart log`.
 4. **`(worker gone)`** always means the supervisor process is dead, however
    the run ended. `jailbee job clear <name>` acknowledges the record
    without touching the container, which is left exactly as the run left
    it (network mode, mounts, whatever steps did finish).
 
-`jailbee autostart cancel <name>` stops a run that's still alive rather than
+`jailbee autostart cancel [<name>]` stops a run that's still alive rather than
 waiting it out: SIGTERM unwinds the stage in flight (interrupts the running
 step, detaches the stage's mounts, restores the network) before marking the
 job failed. It refuses once the worker is already gone — `jailbee job

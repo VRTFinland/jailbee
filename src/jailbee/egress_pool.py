@@ -269,12 +269,12 @@ def refresh_pool(
     the next tick would then overwrite the CLI's correct pin with a stale
     one, for up to two cycles.
     """
-    from jailbee.egress import parse_egress_entry
+    from jailbee.egress import acl_raw_entries, parse_egress_entry
     from jailbee.egress_scope import effective_repo_entries
 
     prefix = cfg.container_prefix
 
-    raw_entries = list(effective_repo_entries(cfg, session))
+    raw_entries = acl_raw_entries(effective_repo_entries(cfg, session))
     specs = [parse_egress_entry(raw) for raw in raw_entries]
     hostnames = sorted({s.target for s in specs if not s.is_literal})
 
@@ -316,6 +316,16 @@ def refresh_pool(
         _prune_container_pools(incus, session)
     except Exception as e:
         log.warning("refresh_pool: container-extras phase failed for %s: %s", prefix, e)
+
+    # Independent of `resolved`: a wildcard-only repo resolves nothing but its
+    # Squid rules still follow container IPs. Never starts the proxy (that is
+    # apply's job) and never changes the status above.
+    try:
+        from jailbee import egress_proxy
+
+        egress_proxy.sync_repo_rules(cfg, incus, session)
+    except Exception as e:
+        log.warning("refresh_pool: proxy rule sync failed for %s: %s", prefix, e)
 
     if resolved:
         # Only when something resolved: don't push an ACL/hosts derived from
@@ -474,8 +484,9 @@ def _entries_from_pool(session: Session, key: str, raw_entries: list[str]) -> li
     and the container scope (`_refresh_container_extras`) so both agree on
     one literal-vs-hostname rule.
     """
-    from jailbee.egress import EgressEntry, parse_egress_entry
+    from jailbee.egress import EgressEntry, acl_raw_entries, parse_egress_entry
 
+    raw_entries = acl_raw_entries(raw_entries)
     pool_by_host: dict[str, list[str]] = {}
     for row in session.exec(select(PoolIP).where(PoolIP.container_prefix == key)).all():
         pool_by_host.setdefault(row.hostname, []).append(row.ip)
@@ -520,14 +531,14 @@ def _refresh_container_extras(
     `apply.py` never reclaims because the ACL keeps getting rebuilt.
     """
     from jailbee import egress_scope
-    from jailbee.egress import parse_egress_entry
+    from jailbee.egress import acl_raw_entries, parse_egress_entry
     from jailbee.network import extra_acl_yaml
 
     for container in _list_containers(cfg, incus):
         if container.network != "strict":
             continue
         try:
-            extras = egress_scope.container_extras(incus, container.name)
+            extras = acl_raw_entries(egress_scope.container_extras(incus, container.name))
             if not extras:
                 continue
             key = container_pool_key(container.name)
@@ -678,6 +689,16 @@ def _list_containers(cfg: Config, incus: Incus) -> list[Any]:
     return list(impl(cfg, incus))
 
 
+def _drop_proxy_fragment(incus: Incus, prefix: str) -> None:
+    """Remove a pruned repo's Squid rules; the timer must survive a failure."""
+    from jailbee import egress_proxy
+
+    try:
+        egress_proxy.drop_fragment(incus, prefix)
+    except Exception as e:
+        log.warning("refresh_all: dropping the proxy fragment of %s failed: %s", prefix, e)
+
+
 def refresh_all(
     session: Session,
     gcfg: GlobalConfig,
@@ -712,6 +733,7 @@ def refresh_all(
             )
             session.delete(repo)
             session.commit()
+            _drop_proxy_fragment(incus, repo.container_prefix)
             continue
 
         # "No config file" means two different things now. For a registration
@@ -726,6 +748,7 @@ def refresh_all(
             )
             session.delete(repo)
             session.commit()
+            _drop_proxy_fragment(incus, repo.container_prefix)
             continue
 
         try:

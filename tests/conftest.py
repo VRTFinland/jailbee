@@ -7,7 +7,9 @@ import functools
 import itertools
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
 import weakref
 
 # Qt widget tests run headless in CI; select the offscreen platform plugin
@@ -86,6 +88,19 @@ def flat_output(output: str) -> str:
     through this; assertions on cell content do not need it.
     """
     return " ".join(output.split())
+
+
+_BOX = str.maketrans("", "", "│╭╮╰╯─")
+
+
+def panel_text(output: str) -> str:
+    """`output` with Rich panel borders removed and whitespace collapsed.
+
+    A `prompting.MissingValue` / `Cancelled` is printed by Typer inside an
+    `Error` panel that wraps long lines and draws a border at each line end;
+    assertions on its message go through this.
+    """
+    return flat_output(output.translate(_BOX))
 
 
 def claude_row(
@@ -364,6 +379,75 @@ def _block_update_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_egress_proxy_wiring(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the egress proxy out of every test that is not about it.
+
+    `egress_proxy.sync_container` opens the real state database and reads
+    container config; `proxy_up` creates a container. The callers (apply, new,
+    switch, start) only need to be asserted on, so the two entry points become
+    mocks. The `test_egress_proxy*` modules test the real functions and keep
+    them.
+
+    Global rather than per-module on purpose: the callers are spread over a
+    dozen unrelated modules (apply, lifecycle, work mode, the start/restart
+    CLI, the pool refresh and the egress commands), and each would need the
+    same four-line fixture or it silently opens the real state database.
+    Every test that asserts on one of these calls overrides the attribute
+    itself with `mocker.patch.object(egress_proxy, "<name>")`, which wins over
+    this default and is the only place the assertion is made.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1].startswith("test_egress_proxy"):
+        return
+    from unittest.mock import MagicMock
+
+    from jailbee import egress_proxy
+
+    monkeypatch.setattr(egress_proxy, "sync_container", MagicMock())
+    monkeypatch.setattr(egress_proxy, "proxy_up", MagicMock())
+    monkeypatch.setattr(egress_proxy, "sync_repo_rules", MagicMock())
+    monkeypatch.setattr(egress_proxy, "drop_fragment", MagicMock())
+
+
+@pytest.fixture(autouse=True)
+def _no_host_display_attach(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the host-display attach out of every test that is not about it.
+
+    `apps.launch_env` calls `runtime_mounts.ensure_host_display` for every
+    host-target launch, and the real one reads `$WAYLAND_DISPLAY` and the
+    host filesystem — CI has neither, so every launch test would fail with
+    `DisplayError`. Tests about the attach patch it themselves
+    (`mocker.patch("jailbee.runtime_mounts.ensure_host_display")`), which
+    wins over this default; `test_runtime_mounts` tests the real function.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_runtime_mounts":
+        return
+    from unittest.mock import MagicMock
+
+    from jailbee import runtime_mounts
+
+    monkeypatch.setattr(
+        runtime_mounts,
+        "ensure_host_display",
+        MagicMock(return_value=runtime_mounts.EnsureResult.UNCHANGED),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
+
+    `prompting.is_interactive` reads it, so with it exported in the shell every
+    test that expects a prompt would take the off-TTY branch instead. Tests
+    about the override set it themselves; this runs first.
+    """
+    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.
 
@@ -484,6 +568,7 @@ def _reset_deprecation_notices():
         _warn_legacy_credentials_block,
         _warn_legacy_per_repo_entry,
         _warn_legacy_pr_keys,
+        _warn_legacy_remote_shell,
     )
     from jailbee.paths import _warn_legacy_config_dir
 
@@ -492,6 +577,7 @@ def _reset_deprecation_notices():
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
     _warn_legacy_pr_keys.cache_clear()
+    _warn_legacy_remote_shell.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
     yield
@@ -500,6 +586,7 @@ def _reset_deprecation_notices():
     _warn_legacy_credentials_block.cache_clear()
     _warn_legacy_per_repo_entry.cache_clear()
     _warn_legacy_pr_keys.cache_clear()
+    _warn_legacy_remote_shell.cache_clear()
     _warn_legacy_config_dir.cache_clear()
     notices.reset_caches()
 
@@ -676,3 +763,16 @@ def patch_list_slots(mocker: Any, by_agent: dict[str, list[Any]]) -> Any:
         "jailbee.accounts.engine.list_slots",
         side_effect=lambda adapter, *args, **kwargs: by_agent[adapter.name],
     )
+
+
+@pytest.fixture
+def runtime_dir(monkeypatch):
+    """A short private `$XDG_RUNTIME_DIR` for state-service sockets.
+
+    Not `tmp_path`: a unix socket path must fit in ~104 bytes, and pytest's
+    tmp paths do not reliably.
+    """
+    base = tempfile.mkdtemp(prefix="jb-", dir="/tmp")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", base)
+    yield Path(base) / "jailbee"
+    shutil.rmtree(base, ignore_errors=True)

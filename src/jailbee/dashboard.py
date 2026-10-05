@@ -17,25 +17,27 @@ import shutil
 import subprocess
 import sys
 import termios
-import threading
 import time
 import tty
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NamedTuple, TextIO
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TextIO
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
+from rich.measure import Measurement
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 
 from jailbee import agent_status, table_format
 from jailbee import dashboard_accounts as da
 from jailbee import dashboard_actions as dact
+from jailbee import dashboard_outbox as dob
 from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
@@ -53,6 +55,13 @@ from jailbee.dashboard_commands import (
     insert_options_before_separator,
     permitted,
 )
+from jailbee.dashboard_details import (
+    DETAILS_MAX_ROWS,
+    DETAILS_PAIR_WIDTH,
+    DetailsView,
+    details_for,
+    render_details,
+)
 from jailbee.dashboard_egress import (
     EgressState,
     egress_argv,
@@ -62,7 +71,9 @@ from jailbee.dashboard_egress import (
     replace_egress_rows,
 )
 from jailbee.dashboard_egress_data import load_egress_rows
+from jailbee.dashboard_jobs import JobResult, JobRunner, needs_terminal
 from jailbee.dashboard_overlays import (
+    MIN_LIST_ROWS,
     PICKER_HINT,
     PROMPT_HINT,
     Picker,
@@ -75,6 +86,7 @@ from jailbee.dashboard_overlays import (
     picked,
     render_picker,
     render_prompt,
+    window_lines,
 )
 from jailbee.dashboard_settings import (
     CURSOR_STYLE,
@@ -104,11 +116,11 @@ from jailbee.lifecycle import (
     tracking_notices,
 )
 from jailbee.paths import repo_config_path
-from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
-from jailbee.remote_ssh.session import host_restricted
+from jailbee.remote_ssh.session import host_restricted, waypipe_session
+from jailbee.state_service import StateServiceUnavailable
 from jailbee.tui import console, error
 
 if TYPE_CHECKING:
@@ -120,6 +132,8 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
     from jailbee.incus import Incus
+    from jailbee.procstat import ActivitySampler
+    from jailbee.state_service.client import StateClient
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +157,19 @@ user with no next step — which is what the earlier, single-cause wording
 carried by implication and this one has to say outright.
 """
 
+# How long a dashboard waits for its first snapshot — a cold service's first
+# gather included — before giving up on the user's own terminal.
+STARTUP_TIMEOUT_SECONDS = 30.0
+
+
+def open_state_client(cwd_root: Path | None) -> StateClient:
+    """A started `StateClient` for this dashboard (the tests' seam)."""
+    from jailbee.state_service.client import StateClient
+
+    client = StateClient(cwd_root)
+    client.start()
+    return client
+
 
 class AppMenuEntry(NamedTuple):
     """One registry app as the action menu needs it: a dispatch verb plus
@@ -154,8 +181,8 @@ class AppMenuEntry(NamedTuple):
     real top-level ``jailbee`` command taking the container as a plain
     positional) but ``"apps run <name> --container"`` for a config-sourced
     `apps:` entry. ``label`` is `AppSpec.description` when the repo's config
-    set one (JetBrains sets ``"JetBrains idea"``, a browser sets ``"Chrome
-    (host)"``); it falls back to the bare app name for a user's ``apps:``
+    set one (JetBrains sets ``"JetBrains idea"``, a browser sets
+    ``"Chrome"``); it falls back to the bare app name for a user's ``apps:``
     entry that left ``description`` empty, so the menu never renders a blank
     label.
     """
@@ -297,23 +324,26 @@ def registered_repo_roots(*, scope: RemoteRepoScope | None = None) -> list[Path]
     return out
 
 
-def collect_repo_roots(
-    cwd_root: Path | None, *, scope: RemoteRepoScope | None = None
-) -> list[Path]:
-    """Registered repo roots plus the cwd's, deduped, cwd first."""
-    registered = registered_repo_roots() if scope is None else registered_repo_roots(scope=scope)
-    candidates = ([cwd_root] if cwd_root is not None else []) + registered
+def _dedupe_roots(candidates: Iterable[Path]) -> list[Path]:
+    """Dedupe by resolved path (symlinks, relative forms), keeping the caller's
+    original Path objects and their order."""
     seen: set[Path] = set()
     ordered: list[Path] = []
     for p in candidates:
         rp = p.resolve()
-        # Dedupe by resolved path (handles symlinks / relative forms) but
-        # return the caller's original Path object.
         if rp in seen:
             continue
         seen.add(rp)
         ordered.append(p)
     return ordered
+
+
+def collect_repo_roots(
+    cwd_root: Path | None, *, scope: RemoteRepoScope | None = None
+) -> list[Path]:
+    """Registered repo roots plus the cwd's, deduped, cwd first."""
+    registered = registered_repo_roots() if scope is None else registered_repo_roots(scope=scope)
+    return _dedupe_roots(([cwd_root] if cwd_root is not None else []) + registered)
 
 
 def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
@@ -322,7 +352,7 @@ def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
     return format_loose_after(policy.after) if policy is not None else None
 
 
-def _global_config_or_defaults() -> GlobalConfig:
+def global_config_or_defaults() -> GlobalConfig:
     """Load the global config, falling back to defaults on any error.
 
     The dashboard is a read-only viewer refreshed on a timer; an unreadable
@@ -428,7 +458,7 @@ def seed_view_state(
             )
         )
         return replace(state, columns=filtered or default_columns())
-    gcfg = _global_config_or_defaults()
+    gcfg = global_config_or_defaults()
     seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
     save_view_state(engine, frontend, seeded)
     return seeded
@@ -447,11 +477,12 @@ def gather_rows(
     incus: Incus,
     repo_roots: list[Path],
     *,
-    cwd_root: Path | None,
     with_git: bool,
-    scope: RemoteRepoScope | None = None,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
+
+    Unscoped and unpinned: named repos first, alphabetically, orphans last.
+    `present` applies a client's scope and cwd pin.
 
     Each root's own config drives accurate git-status/base/background-jobs.
     Repos are identified by their root, not by their config file, so a repo
@@ -467,37 +498,28 @@ def gather_rows(
     groups: list[RepoGroup] = []
     covered: set[str] = set()
     base_cfg = None
-    gcfg = _global_config_or_defaults()
-    excluded_roots: set[Path] = set()
-    if scope is not None and scope.excluded:
-        from sqlmodel import Session, select
-
-        from jailbee.db import get_engine
-        from jailbee.db.models import RegisteredRepo
-
-        with Session(get_engine()) as session:
-            excluded_roots = {
-                Path(repo.repo_root).resolve()
-                for repo in session.exec(select(RegisteredRepo)).all()
-                if not scope.allows(repo.container_prefix)
-            }
+    gcfg = global_config_or_defaults()
+    # One `incus list` per gather, shared by every repo and the orphan scan:
+    # each listing makes the daemon build every instance's full state, and
+    # the dashboards gather every few seconds. Fetched on first use, so a
+    # gather with no loadable repo still never calls Incus.
+    instances: list[dict[str, Any]] | None = None
     for root in repo_roots:
-        if root.resolve() in excluded_roots:
-            continue
         try:
             cfg = load_repo_config(root)
         except Exception:  # OSError, YAML parse, Pydantic validation, no scratch
             continue
-        if scope is not None and not scope.allows(cfg.container_prefix):
-            continue
         if base_cfg is None:
             base_cfg = cfg
+        if instances is None:
+            instances = incus.list_containers()
         containers = list_containers(
             cfg,
             incus,
             all_repos=False,
             with_git_status=with_git,
             with_background=True,
+            instances=instances,
         )
         covered.add(cfg.container_prefix)
         groups.append(
@@ -529,39 +551,29 @@ def gather_rows(
             all_repos=True,
             with_git_status=False,
             with_background=False,
+            instances=instances,
         )
         orphans: dict[str, list[ContainerInfo]] = {}
         for c in all_rows:
             # `c.repo is None` is defensive AND narrows str|None -> str for
             # the dict key below (list_containers in practice always sets it).
-            if (
-                c.repo is None
-                or c.repo in covered
-                or (scope is not None and not scope.allows(c.repo))
-            ):
+            if c.repo is None or c.repo in covered:
                 continue
             orphans.setdefault(c.repo, []).append(c)
         for prefix in sorted(orphans):
             groups.append(RepoGroup(prefix, None, None, orphans[prefix]))
 
-    def _sort_key(g: RepoGroup) -> tuple[bool, bool, str]:
+    def _sort_key(g: RepoGroup) -> tuple[bool, str]:
         # Orphan groups are the ones with no repo root — `config_path` is no
         # longer the discriminator, since a scratch repo has a root but no file.
-        is_cwd = cwd_root is not None and g.repo_root == str(cwd_root)
-        return (not is_cwd, g.repo_root is None, g.prefix)
+        return (g.repo_root is None, g.prefix)
 
     groups.sort(key=_sort_key)
     return groups
 
 
-def gather_live(
-    incus: Incus,
-    cwd_root: Path | None,
-    *,
-    with_git: bool,
-    scope: RemoteRepoScope | None = None,
-) -> list[RepoGroup]:
-    """One snapshot for a *live* dashboard: repo roots re-resolved per gather.
+def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) -> list[RepoGroup]:
+    """One snapshot for the state service: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
     underneath them: `jailbee new` registers a repo the first time it is used
@@ -577,15 +589,32 @@ def gather_live(
     The registry read is a single indexed SQLite select against a WAL
     database — cheap next to the `incus list` (and git probes) in the gather
     it precedes.
+
+    ``extra_roots`` are the connected dashboards' cwd repos, which may not be
+    registered. The result is unscoped and unpinned; each dashboard applies
+    its own `present`.
     """
-    kwargs = {} if scope is None else {"scope": scope}
     return gather_rows(
-        incus,
-        collect_repo_roots(cwd_root, scope=scope),
-        cwd_root=cwd_root,
-        with_git=with_git,
-        **kwargs,
+        incus, _dedupe_roots([*extra_roots, *registered_repo_roots()]), with_git=with_git
     )
+
+
+def present(
+    groups: Sequence[RepoGroup],
+    cwd_root: Path | None,
+    scope: RemoteRepoScope | None = None,
+) -> list[RepoGroup]:
+    """A snapshot as one dashboard shows it: its scope applied, its cwd repo first.
+
+    The state service gathers for every dashboard at once, so neither can be
+    baked into the snapshot. Filtering by prefix matches what `gather_rows`
+    used to do with a scope: excluded registered repos and orphan groups are
+    both keyed by their container prefix.
+    """
+    shown = [g for g in groups if scope is None or scope.allows(g.prefix)]
+    if cwd_root is not None:
+        shown.sort(key=lambda g: g.repo_root != str(cwd_root))
+    return shown
 
 
 def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[RepoGroup]) -> None:
@@ -768,8 +797,12 @@ _PR_MENU_VERBS = frozenset({"pr --open", "pr", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
-# Hoist the browser in the terminal; legacy leaves remain groupable for callers.
-_PENDING_APPLY_VERBS = frozenset({"outbox browse", "review apply", "issue apply"})
+# Legacy apply leaves only ever exist with pending work: the terminal hoists
+# them. "Outbox" is offered unless both outboxes are known to be empty, and
+# `menu_actions` places it by its count.
+_PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
+_SHELL_VERB = frozenset({"shell"})
+_TMUX_VERB = frozenset({"tmux"})
 
 
 def group_menu_actions(
@@ -783,9 +816,9 @@ def group_menu_actions(
     Relative order within each submenu and among ungrouped leaves is retained;
     this function never changes eligibility or adds executable verbs.
 
-    ``terminal_order`` is the terminal dashboard's presentation: pending
-    outbox browser leads the menu and ``Git →`` sits above ``PR →``. It is
-    opt-in because the Qt dashboard shares this function and keeps its order.
+    ``terminal_order`` is the terminal dashboard's presentation, see
+    :func:`_terminal_order`. It is opt-in because the Qt dashboard shares this
+    function and keeps its order.
     """
     pr_verbs = _PR_MENU_VERBS - _PENDING_APPLY_VERBS if terminal_order else _PR_MENU_VERBS
     launch_actions = tuple(action for action in actions if action[0].startswith("Launch "))
@@ -814,16 +847,52 @@ def group_menu_actions(
                 seen.add("network")
         else:
             result.append(action)
-    if not terminal_order:
-        return result
-    pending = [i for i in result if isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS]
-    rest = [i for i in result if not (isinstance(i, tuple) and i[1] in _PENDING_APPLY_VERBS)]
-    labels = [i.label if isinstance(i, MenuGroup) else None for i in rest]
-    if "Git →" in labels and "PR →" in labels:
-        git_at, pr_at = labels.index("Git →"), labels.index("PR →")
-        if git_at > pr_at:
-            rest[git_at], rest[pr_at] = rest[pr_at], rest[git_at]
-    return [*pending, *rest]
+    return _terminal_order(result) if terminal_order else result
+
+
+def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
+    """The terminal dashboard's arrangement of already grouped menu items.
+
+    Pending apply leaves lead and ``Launch →`` follows the session entry.
+    ``Git →``, ``PR →``, ``Lifecycle →`` (restart/stop/destroy; a lone Destroy
+    stays a leaf) and ``Network →`` form one block, in that order, where the
+    first of them used to be. "Open shell" is not listed: the ``s`` key and
+    the ``!`` prompt still reach it, and it stays among the offered leaves
+    those gate on. Everything else keeps its relative order.
+    """
+
+    def is_leaf(item: MenuItem, verbs: frozenset[str]) -> bool:
+        return isinstance(item, tuple) and item[1] in verbs
+
+    def group(label: str) -> MenuGroup | None:
+        return next((i for i in items if isinstance(i, MenuGroup) and i.label == label), None)
+
+    pending = [i for i in items if is_leaf(i, _PENDING_APPLY_VERBS)]
+    rest = [
+        i for i in items if not is_leaf(i, _PENDING_APPLY_VERBS) and not is_leaf(i, _SHELL_VERB)
+    ]
+
+    launch = group("Launch →")
+    if launch is not None:
+        rest.remove(launch)
+        session = next((n for n, i in enumerate(rest) if is_leaf(i, _TMUX_VERB)), -1)
+        rest.insert(session + 1, launch)
+
+    lifecycle = [i for i in rest if isinstance(i, tuple) and i[1] in _CONTAINER_LIFECYCLE_VERBS]
+    git, pr, network = group("Git →"), group("PR →"), group("Network →")
+    block: list[MenuItem] = [g for g in (git, pr) if g is not None]
+    block += [MenuGroup("Lifecycle →", tuple(lifecycle))] if len(lifecycle) > 1 else lifecycle
+    block += [network] if network is not None else []
+    members = {id(i) for i in (git, pr, network, *lifecycle) if i is not None}
+
+    arranged: list[MenuItem] = []
+    for item in rest:
+        if id(item) not in members:
+            arranged.append(item)
+        elif block:
+            arranged.extend(block)
+            block = []
+    return [*pending, *arranged]
 
 
 # The GitStatus cell values that mean "there is provably nothing to do". Every
@@ -856,6 +925,21 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
     return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
 
 
+def _outbox_pending(git: GitStatus | None) -> int | None:
+    """Manifests waiting in the PR and issue outboxes, or None when unprobed."""
+    if git is None:
+        return None
+    counts = (git.pending_pr_actions, git.pending_issue_actions)
+    if all(n is None for n in counts):
+        return None
+    return sum(n or 0 for n in counts)
+
+
+def _outbox_empty(git: GitStatus | None) -> bool:
+    """Whether the probe counted no manifest in *both* outboxes; unknown is not empty."""
+    return git is not None and git.pending_pr_actions == 0 and git.pending_issue_actions == 0
+
+
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     """(label, jailbee-subcommand) options for the highlighted container.
 
@@ -871,8 +955,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     other than ``ctx.current_network`` (sourced from ``ContainerInfo.network``),
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
-    Running rows lead with session and app actions, followed by job diagnostics,
-    Outbox, PR leaves, Git leaves, network modes and lifecycle actions.
+    Running rows lead with session actions, Outbox and app actions, followed by
+    job diagnostics, PR leaves, Git leaves, network modes and lifecycle actions.
     Git pull and diff are hidden when status proves they would do nothing;
     unknown status still offers them. Stopped rows lead with Start, followed
     by eligible diagnostics and Open PR, then Destroy.
@@ -884,9 +968,14 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
-    "Outbox" (``outbox browse``) is always available on addressable running
-    containers, including mount mode and unknown/empty counts. Its fixed stores
-    do not require a clone or an existing PR; publication stays in the browser.
+    "Outbox" (``outbox browse``) is offered on addressable running containers,
+    including mount mode, unless the probe counted no manifest in both
+    outboxes; an unknown count still offers it. Its fixed stores do not require
+    a clone or an existing PR. The Qt dashboard opens its own
+    window for it; the terminal dashboard its own pickers (`dashboard_outbox`).
+    With manifests pending in the PR or issue outbox (read from
+    ``ctx.git_status``) it leads the menu and
+    carries the count; with an unknown count it follows "Open shell".
 
     Verbs may carry flags (``"pr --open"``, ``"job log --follow"``,
     ``"apps run <name> --container"`` for a config-sourced app — see
@@ -897,9 +986,14 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         return []
     actions: list[tuple[str, str]] = []
     if ctx.state == "Running":
-        actions.extend(
-            [("Attach tmux", "tmux"), ("Open shell", "shell"), ("Outbox", "outbox browse")]
-        )
+        session = [("Attach tmux", "tmux"), ("Open shell", "shell")]
+        pending = _outbox_pending(ctx.git_status)
+        if pending:
+            actions.extend([(f"Outbox ({pending} pending)", "outbox browse"), *session])
+        elif _outbox_empty(ctx.git_status):
+            actions.extend(session)
+        else:
+            actions.extend([*session, ("Outbox", "outbox browse")])
         for app in [] if (ctx.remote and not ctx.gui_remote) else ctx.apps:
             actions.append((f"Launch {app.label}", app.verb))
     elif ctx.state == "Stopped":
@@ -1167,6 +1261,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         brief="accounts",
     ),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
+    KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View", brief="details"),
     KeyBinding(
         "settings",
         (b"\x1bOQ", b"\x1b[12~", b"S"),
@@ -1483,6 +1578,124 @@ def move_menu(menu: MenuState | RepoMenuState, delta: int) -> MenuState | RepoMe
     return replace(menu, index=max(0, min(last, menu.index + delta)))
 
 
+# Each menu entry's own key, by leaf verb (labels carry counts) or group label.
+# Scoped to the level that is open, so `l` is Lifecycle at the root and `git
+# pull` inside Git. Where a dashboard quick key exists the letter matches it,
+# and Destroy stays a capital as there. Every entry a menu can show has one,
+# unique among the entries that can share its level, so no key moves when
+# another entry comes or goes; the tests enumerate those combinations. Only
+# app launches (`Launch →`, labels from the repo's config) take a free letter
+# of their label (see `menu_hotkeys`).
+_MENU_KEYS: dict[str, str] = {
+    # container root (start and a lone stop never share it)
+    "tmux": "t",
+    "outbox browse": "o",
+    "Launch →": "a",
+    "start": "s",
+    "job log": "b",
+    "job log --follow": "b",
+    "job clear": "x",
+    dact.AUTOSTART_STATUS: "A",
+    dact.AUTOSTART_CANCEL: "C",
+    "Git →": "g",
+    "PR →": "p",
+    "Lifecycle →": "l",
+    dact.SNAPSHOTS: "n",
+    dact.MOUNT_ADD: "m",
+    dact.MOUNT_REMOVE: "u",
+    "credential-group": "c",
+    "Network →": "w",
+    # Git →
+    "merge": "m",
+    "git pull": "l",
+    "git push": "u",
+    "git push --pr": "r",
+    "git retarget": "b",
+    "git diff": "d",
+    # PR →
+    "pr --open": "p",
+    "pr": "P",
+    # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
+    "restart": "r",
+    "stop": "s",
+    "destroy": "D",
+    # Network → (modes take their own initial, see `_preferred_menu_key`)
+    "net egress ls": "e",
+    # repo menu
+    "new": "n",
+    "new-pr": "p",
+    "accounts": "a",
+    dact.REPO_APPLY: "y",
+    dact.DIAGNOSTICS_LABEL: "d",
+    dact.REPO_PRUNE: "r",
+    "fold": "f",
+    # Diagnostics →
+    dact.REPO_DOCTOR: "d",
+    dact.REPO_DISK_USAGE: "u",
+}
+
+# Tokens the open menu already answers (`run`'s overlay branch); their keys
+# can never be an entry's own.
+_MENU_HANDLED_TOKENS = frozenset(
+    {"up", "down", "enter", "cancel", "quit", "help", "settings", "interrupt"}
+)
+_MENU_RESERVED_KEYS = frozenset(
+    key.decode()
+    for b in KEY_BINDINGS
+    if b.token in _MENU_HANDLED_TOKENS
+    for key in b.keys
+    if len(key) == 1 and key.isascii() and key.decode().isprintable()
+)
+
+
+def _preferred_menu_key(item: MenuItem) -> str | None:
+    if isinstance(item, MenuGroup):
+        return _MENU_KEYS.get(item.label)
+    verb = item[1]
+    if verb.startswith("net ") and verb.removeprefix("net ") in _NETWORK_MODES:
+        return verb.removeprefix("net ")[0]
+    return _MENU_KEYS.get(verb)
+
+
+def menu_hotkeys(entries: Sequence[MenuItem]) -> list[str | None]:
+    """Each entry's key at this level, parallel to ``entries``.
+
+    Preferred keys (:data:`_MENU_KEYS`) are handed out first, in entry order,
+    so a fixed key never moves because an entry above it appeared. The rest
+    take the first free letter of their label, then a digit; None once those
+    run out. Keys the open menu already handles are never assigned.
+    """
+    taken = set(_MENU_RESERVED_KEYS)
+    keys: list[str | None] = [None] * len(entries)
+    for i, item in enumerate(entries):
+        key = _preferred_menu_key(item)
+        if key is not None and key not in taken:
+            keys[i] = key
+            taken.add(key)
+    for i, item in enumerate(entries):
+        if keys[i] is not None:
+            continue
+        label = item.label if isinstance(item, MenuGroup) else item[0]
+        candidates = [ch for ch in label.lower() if ch.isascii() and ch.isalpha()]
+        key = next((ch for ch in (*candidates, *"123456789") if ch not in taken), None)
+        keys[i] = key
+        if key is not None:
+            taken.add(key)
+    return keys
+
+
+def hotkey_menu(menu: MenuState | RepoMenuState, data: bytes) -> MenuState | RepoMenuState | None:
+    """``menu`` with the cursor on the entry whose key ``data`` is, else None."""
+    try:
+        typed = data.decode()
+    except UnicodeDecodeError:
+        return None
+    keys = menu_hotkeys(_menu_entries(menu))
+    if typed not in keys:
+        return None
+    return replace(menu, index=keys.index(typed))
+
+
 def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
     """Selected leaf verb, or None for a group or an empty menu."""
     entries = _menu_entries(menu)
@@ -1492,13 +1705,17 @@ def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
     return None if isinstance(entry, MenuGroup) else entry[1]
 
 
-def _render_menu(menu: MenuState | RepoMenuState) -> RenderableType:
+def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
     """The action menu as a bordered panel: one row per action, cursor on the
-    highlighted one."""
+    highlighted one, windowed to ``max_rows`` around the cursor."""
+    entries = _menu_entries(menu)
     lines = [
-        f"[bold cyan]▸[/] [{CURSOR_STYLE}]{label}[/]" if i == menu.index else f"  {label}"
-        for i, item in enumerate(_menu_entries(menu))
+        f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
+        if i == menu.index
+        else f"  {tag} {label}"
+        for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True))
         for label in [item.label if isinstance(item, MenuGroup) else item[0]]
+        for tag in [f"[bold]\\[{key}][/]" if key else "   "]
     ]
     if isinstance(menu, RepoMenuState):
         title = (
@@ -1511,7 +1728,7 @@ def _render_menu(menu: MenuState | RepoMenuState) -> RenderableType:
     else:
         title = f"{menu.container} →"
     return Panel(
-        "\n".join(lines),
+        "\n".join(window_lines(lines, menu.index, max_rows)),
         title=f"[bold]{title}[/]",
         title_align="left",
         box=box.ROUNDED,
@@ -1540,6 +1757,7 @@ def _render_help() -> RenderableType:
         ]
     lines += [
         "",
+        "Menus: the key in brackets picks that entry, like Enter on it.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
@@ -1607,17 +1825,26 @@ def quick_reject_note(
     return f"{what} is not available for '{name}'"
 
 
+_MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
+
+
 def _hint_line(overlay: Overlay | None) -> str:
     """Contextual controls shown only while an overlay is open."""
     if isinstance(overlay, MenuState):
         if overlay.active_group is not None:
             return (
-                "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  "
+                f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] run  ·  "
                 "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
             )
-        return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
+        return (
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
+            "[bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
+        )
     if isinstance(overlay, RepoMenuState):
-        return "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+        return (
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
+            "[bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+        )
     if isinstance(overlay, EgressState):
         return (
             "[bold]↑/↓[/bold] move  ·  [bold]a[/bold] add  ·  "
@@ -1692,6 +1919,22 @@ def column_header(fields: list[FieldSpecCI], widths: tuple[int, ...]) -> Table:
     return _aligned_table(fields, widths, show_header=True)
 
 
+def _container_cells(
+    group: RepoGroup, container: ContainerInfo, fields: list[FieldSpecCI]
+) -> list[str]:
+    cells: list[str] = []
+    for index, field_spec in enumerate(fields):
+        value = (
+            container.name
+            if field_spec.name == "name" and group.repo_root is None
+            else field_spec.cell(container)
+        )
+        if index == 0:
+            value = "  " + value  # indent under the repo heading
+        cells.append(value)
+    return cells
+
+
 def repo_table(
     group: RepoGroup,
     fields: list[FieldSpecCI],
@@ -1702,18 +1945,77 @@ def repo_table(
     table = _aligned_table(fields, widths, show_header=False)
     for container in group.containers:
         is_selected = selected == Row("container", container.name)
-        cells: list[str] = []
-        for index, field_spec in enumerate(fields):
-            value = (
-                container.name
-                if field_spec.name == "name" and group.repo_root is None
-                else field_spec.cell(container)
-            )
-            if index == 0:
-                value = "  " + value  # indent under the repo heading
-            cells.append(value)
-        table.add_row(*cells, style=CURSOR_STYLE if is_selected else None)
+        table.add_row(
+            *_container_cells(group, container, fields),
+            style=CURSOR_STYLE if is_selected else None,
+        )
     return table
+
+
+def container_row(
+    group: RepoGroup,
+    container: ContainerInfo,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    selected: Row | None,
+) -> Table:
+    """One container as a single-row table, so the table can be windowed by row."""
+    return repo_table(replace(group, containers=[container]), fields, widths, selected)
+
+
+@dataclass(frozen=True)
+class TableWindow:
+    """Rows ``[start, stop)`` are drawn; the counts feed the "more" markers."""
+
+    start: int
+    stop: int
+    hidden_above: int
+    hidden_below: int
+
+
+def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> TableWindow:
+    """The rows to draw in ``budget`` lines so that row ``cursor`` is visible.
+
+    ``heights`` are each row's rendered line count (a wrapped row is taller
+    than one). A hidden end costs one marker line. Like
+    :func:`dashboard_overlays.window_lines`, the window is derived from the
+    cursor alone: pinned to the top while the cursor fits there, to the
+    bottom near the end, centred otherwise. A cursor row taller than the
+    whole budget is still drawn; the frame clips it.
+    """
+    count = len(heights)
+    if sum(heights) <= budget:
+        return TableWindow(0, count, 0, 0)
+    anchor = 0 if cursor is None else cursor
+
+    stop, used = 0, 0
+    while stop < count and used + heights[stop] <= budget - 1:
+        used += heights[stop]
+        stop += 1
+    if anchor < stop:
+        return TableWindow(0, stop, 0, count - stop)
+
+    start, used = count, 0
+    while start > 0 and used + heights[start - 1] <= budget - 1:
+        start -= 1
+        used += heights[start]
+    if anchor >= start:
+        return TableWindow(start, count, start, 0)
+
+    inner = budget - 2
+    start, stop, used = anchor, anchor + 1, heights[anchor]
+    grew = True
+    while grew:
+        grew = False
+        if stop < count and used + heights[stop] <= inner:
+            used += heights[stop]
+            stop += 1
+            grew = True
+        if start > 0 and used + heights[start - 1] <= inner:
+            start -= 1
+            used += heights[start]
+            grew = True
+    return TableWindow(start, stop, start, count - stop)
 
 
 def _dashboard_column_widths(
@@ -1831,30 +2133,236 @@ class _RepoSections:
     empty: bool
     hidden_by_preferences: bool = False
     hide_first: Sequence[str] = ()
+    max_rows: int | None = None
+    """Line budget including the column header and the "more" markers; None draws every row."""
+
+    def line_count_floor(self) -> int:
+        """A lower bound on the drawn line count, without rendering anything.
+
+        One line per heading and container row, plus the column header; a
+        wrapped row draws more, so the true count is never smaller.
+        """
+        if self.empty:
+            return 1
+        expanded = [g for g in self.groups if g.containers and g.prefix not in self.folded]
+        return (1 if expanded else 0) + len(self.groups) + sum(len(g.containers) for g in expanded)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         fields, measured = _fit_dashboard_fields(
             self.fields, self.widths, options.max_width, self.hide_first
         )
         widths = _fit_dashboard_column_widths(measured, options.max_width)
-        sections: list[RenderableType] = []
         if self.empty:
-            sections.append(
+            yield (
                 "All repositories are hidden — open Settings > Visibility to show them"
                 if self.hidden_by_preferences
                 else "(no containers found)"
             )
-        else:
-            expanded = {
-                g.prefix for g in self.groups if g.containers and g.prefix not in self.folded
-            }
-            if expanded:
-                sections.append(column_header(fields, widths))
-            for group in self.groups:
-                sections.append(repo_heading(group, self.selected, self.folded))
-                if group.prefix in expanded:
-                    sections.append(repo_table(group, fields, widths, self.selected))
-        yield Group(*sections)
+            return
+        expanded = {g.prefix for g in self.groups if g.containers and g.prefix not in self.folded}
+        header = column_header(fields, widths) if expanded else None
+        blocks: list[tuple[Row, RenderableType]] = []
+        for group in self.groups:
+            blocks.append(
+                (Row("repo", group.prefix), repo_heading(group, self.selected, self.folded))
+            )
+            if group.prefix in expanded:
+                blocks += [
+                    (
+                        Row("container", c.name),
+                        container_row(group, c, fields, widths, self.selected),
+                    )
+                    for c in group.containers
+                ]
+        if self.max_rows is None:
+            yield Group(*([header] if header is not None else []), *(b for _, b in blocks))
+            return
+        free = options.update(height=None)
+        head = console.render_lines(header, free, pad=False) if header is not None else []
+        rendered = [console.render_lines(b, free, pad=False) for _, b in blocks]
+        rows = [row for row, _ in blocks]
+        cursor = rows.index(self.selected) if self.selected in rows else None
+        window = window_rows([len(r) for r in rendered], cursor, max(1, self.max_rows - len(head)))
+        lines = list(head)
+        if window.hidden_above:
+            lines += console.render_lines(
+                Text(f"  ↑ {window.hidden_above} more", style="dim"), free, pad=False
+            )
+        for block in rendered[window.start : window.stop]:
+            lines += block
+        if window.hidden_below:
+            lines += console.render_lines(
+                Text(f"  ↓ {window.hidden_below} more", style="dim"), free, pad=False
+            )
+        if len(lines) > self.max_rows and cursor is not None:
+            # A cursor row taller than the budget overran its window: show that
+            # row alone (its top lines) rather than let the frame cut it.
+            lines = [*head, *rendered[cursor]][: self.max_rows]
+        for index, line in enumerate(lines):
+            if index:
+                yield Segment.line()
+            yield from line
+
+
+def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
+    """The overlay's panel; ``max_rows`` windows the scrollable list overlays."""
+    if isinstance(overlay, EgressState):
+        return render_egress(
+            overlay,
+            can_add=overlay.can_add,
+            can_rm=overlay.can_rm and removable_entry(overlay) is not None,
+        )
+    if isinstance(overlay, (MenuState, RepoMenuState)):
+        return _render_menu(overlay, max_rows)
+    if isinstance(overlay, CommandState):
+        lines = [f"> {overlay.text}▏"]
+        if overlay.suggestions:
+            lines.append("  " + "   ".join(overlay.suggestions))
+        return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
+    if isinstance(overlay, SettingsState):
+        return render_settings(overlay, dynamic=dynamic_column_names())
+    if isinstance(overlay, TextPrompt):
+        return render_prompt(overlay)
+    if isinstance(overlay, Picker):
+        return render_picker(overlay, max_rows)
+    if isinstance(overlay, da.AccountsState):
+        return da.render_accounts(overlay)
+    return _render_help()
+
+
+# Panel border rows: around a windowed overlay's list, and around the frame.
+_OVERLAY_BORDER_ROWS = 2
+_FRAME_BORDER_ROWS = 2
+# Content rows a details panel needs to say anything; with fewer it is left out.
+_MIN_DETAILS_ROWS = 2
+# Table rows (column header not counted) kept on screen under the bottom area.
+MIN_TABLE_ROWS = 5
+
+
+@dataclass(frozen=True)
+class _FrameBody:
+    """The dashboard body, fitted to the screen.
+
+    Top to bottom: the table window, the inline notice, a blank gap, the
+    bottom area, then the hint. The bottom area is the details panel, an
+    overlay, or — for an action menu — the details with the menu on the right.
+
+    Without ``max_height`` (a plain ``console.print``) everything is drawn
+    whole. Under the full-screen ``Live`` anything past the terminal's height
+    would be clipped by the screen, so the table keeps :data:`MIN_TABLE_ROWS`
+    before the bottom area may grow; a menu or picker is windowed to what is
+    left, never below :data:`MIN_LIST_ROWS`; if even that does not fit, lines
+    are dropped from the top so the bottom border and hint stay.
+
+    ``max_height`` is passed in rather than read from ``options.height``:
+    Rich's ``Screen`` wraps its renderable in a ``Group``, which resets the
+    height before anything below it renders.
+    """
+
+    sections: _RepoSections
+    notice: RenderableType | None
+    overlay: Overlay | None
+    details: DetailsView | None = None
+    max_height: int | None = None
+
+    def _bottom(
+        self, list_rows: int | None, details_rows: int | None, *, fixed: bool = False
+    ) -> RenderableType | None:
+        """Details, an overlay, or both side by side with the menu on the right.
+
+        ``details_rows`` caps the panel's content rows; None leaves the panel
+        out. ``fixed`` pads it to exactly that many, so it keeps one shape.
+
+        Only the action menus share the row: every other overlay is a task of
+        its own (a picker, a prompt, a settings page) and gets the full width.
+        """
+        menu = isinstance(self.overlay, (MenuState, RepoMenuState))
+        details = (
+            render_details(self.details, details_rows, fixed=fixed)
+            if self.details is not None
+            and details_rows is not None
+            and (self.overlay is None or menu)
+            else None
+        )
+        if self.overlay is None:
+            return details
+        panel = _render_overlay(self.overlay, list_rows)
+        if details is None:
+            return panel
+        row = Table.grid(expand=True)
+        row.add_column(ratio=1)
+        row.add_column()
+        row.add_row(details, panel)
+        return row
+
+    def _details_fit_beside_menu(self, console: Console, options: ConsoleOptions) -> bool:
+        """Whether the details keep a column wide enough to read next to a menu."""
+        if not isinstance(self.overlay, (MenuState, RepoMenuState)):
+            return True
+        menu = Measurement.get(console, options, _render_overlay(self.overlay)).maximum
+        return options.max_width - menu >= DETAILS_PAIR_WIDTH
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        hint = _hint_line(self.overlay) if self.overlay is not None else None
+        extras: list[RenderableType] = [] if self.notice is None else [self.notice]
+        details_fit = self._details_fit_beside_menu(console, options)
+        if self.max_height is None:
+            bottom = self._bottom(None, DETAILS_MAX_ROWS if details_fit else None)
+            tail: list[RenderableType] = [] if bottom is None else ["", bottom]
+            if hint is not None:
+                tail.append(hint)
+            yield Group(self.sections, *extras, *tail)
+            return
+
+        free = options.update(height=None)
+
+        def lines_of(renderable: RenderableType) -> list[list[Segment]]:
+            return console.render_lines(renderable, free, pad=False)
+
+        notice_lines = lines_of(Group(*extras)) if extras else []
+        hint_lines = lines_of(hint) if hint is not None else []
+        rest = self.max_height - len(notice_lines) - len(hint_lines)
+        has_bottom = self.overlay is not None or self.details is not None
+        gap_lines = lines_of(Text("")) if has_bottom else []
+        bottom_lines: list[list[Segment]] = []
+        if has_bottom:
+            # The table's line count is only needed against thresholds, and a
+            # table with more rows than the floor has at least that many lines.
+            count = self.sections.line_count_floor()
+            full = None if count > MIN_TABLE_ROWS + 1 else len(lines_of(self.sections))
+            natural = count if full is None else full
+            floor = min(natural, MIN_TABLE_ROWS + 1)  # + the column header
+            room = max(0, rest - len(gap_lines) - floor) - _OVERLAY_BORDER_ROWS
+            # A panel with fewer than two content rows says nothing: leave it out.
+            details_rows = min(DETAILS_MAX_ROWS, room)
+            with_details = details_fit and details_rows >= _MIN_DETAILS_ROWS
+            # When the table overflows it is the panel that must keep its shape:
+            # a panel as tall as its content would resize the table window as
+            # the cursor moves between a repo heading and a container.
+            fixed = False
+            if with_details:
+                budget = rest - len(gap_lines) - (details_rows + _OVERLAY_BORDER_ROWS)
+                if full is None and count <= budget:
+                    full = len(lines_of(self.sections))
+                fixed = count > budget or (full or 0) > budget
+            bottom = self._bottom(
+                max(room, MIN_LIST_ROWS), details_rows if with_details else None, fixed=fixed
+            )
+            if bottom is not None:
+                bottom_lines = lines_of(bottom)
+            else:
+                gap_lines = []
+        table_rows = max(0, rest - len(gap_lines) - len(bottom_lines))
+        table_lines = lines_of(replace(self.sections, max_rows=table_rows))
+        out = [*table_lines, *notice_lines, *gap_lines, *bottom_lines, *hint_lines]
+        if len(out) > self.max_height:
+            # Even the minimum bottom area does not fit: lose the top, never
+            # the hint or the frame's bottom border.
+            out = out[len(out) - self.max_height :]
+        for index, line in enumerate(out):
+            if index:
+                yield Segment.line()
+            yield from line
 
 
 def render(
@@ -1869,6 +2377,8 @@ def render(
     folded: frozenset[str] = frozenset(),
     hide_first: Sequence[str] = (),
     hidden_by_preferences: bool = False,
+    height: int | None = None,
+    show_details: bool = False,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -1879,9 +2389,20 @@ def render(
     a short transient notice and nothing else.
 
     ``overlay`` is an open action menu or the keybinding help, drawn *below*
-    the table so the dashboard it acts on stays on screen. ``notice`` is a
-    transient message (a rejected key, a view-only row) shown in the subtitle,
-    or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped right below the table.
+    the table so the dashboard it acts on stays on screen. When the frame is
+    taller than the terminal the table scrolls to its cursor (keeping at least
+    :data:`MIN_TABLE_ROWS` rows) and a menu or picker scrolls with its own
+    (see :class:`_FrameBody`). ``height`` is the terminal's height; None draws
+    everything whole.
+
+    ``show_details`` draws the details panel for ``selected`` under the table
+    — the dashboard's `v` toggle; off by default so plain renders are
+    unchanged. An action menu then sits to the right of it; every other
+    overlay hides it.
+
+    ``notice`` is a transient message (a rejected key, a view-only row) shown
+    in the subtitle, or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped
+    right below the table.
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
@@ -1890,51 +2411,22 @@ def render(
     visible_groups = groups
     visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
     widths = _dashboard_column_widths(fields, visible_rows)
-    body: list[RenderableType] = [
-        _RepoSections(
-            visible_groups,
-            fields,
-            widths,
-            selected,
-            folded,
-            empty=not groups,
-            hidden_by_preferences=hidden_by_preferences,
-            hide_first=hide_first,
-        ),
-    ]
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a
     # CLI message may contain `[...]`.
     inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
-    if inline_notice is not None:
-        body.append(Text(inline_notice, style="yellow"))
-    if overlay is not None:
-        if isinstance(overlay, EgressState):
-            panel = render_egress(
-                overlay,
-                can_add=overlay.can_add,
-                can_rm=overlay.can_rm and removable_entry(overlay) is not None,
-            )
-        elif isinstance(overlay, (MenuState, RepoMenuState)):
-            panel = _render_menu(overlay)
-        elif isinstance(overlay, CommandState):
-            lines = [f"> {overlay.text}▏"]
-            if overlay.suggestions:
-                lines.append("  " + "   ".join(overlay.suggestions))
-            panel = Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
-        elif isinstance(overlay, SettingsState):
-            panel = render_settings(overlay, dynamic=dynamic_column_names())
-        elif isinstance(overlay, TextPrompt):
-            panel = render_prompt(overlay)
-        elif isinstance(overlay, Picker):
-            panel = render_picker(overlay)
-        elif isinstance(overlay, da.AccountsState):
-            panel = da.render_accounts(overlay)
-        else:
-            panel = _render_help()
-        body += ["", panel, _hint_line(overlay)]
-
+    sections = _RepoSections(
+        visible_groups,
+        fields,
+        widths,
+        selected,
+        folded,
+        empty=not groups,
+        hidden_by_preferences=hidden_by_preferences,
+        hide_first=hide_first,
+    )
+    details = details_for(visible_groups, selected, now) if show_details and groups else None
     n_repos = len({g.prefix for g in groups})
     n_ctr = len(all_containers)
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
@@ -1953,7 +2445,13 @@ def render(
         else None
     )
     return Panel(
-        Group(*body),
+        _FrameBody(
+            sections,
+            Text(inline_notice, style="yellow") if inline_notice is not None else None,
+            overlay,
+            details,
+            None if height is None else max(0, height - _FRAME_BORDER_ROWS),
+        ),
         title=title,
         title_align="left",
         subtitle=subtitle,
@@ -2280,8 +2778,9 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     column.
 
     No `--yes`: `jailbee new` asks about reusing an existing branch and about
-    the branch-autostart escalation, and both front-ends give it a terminal to
-    ask in rather than answering for the user. Those questions are asked by the
+    the branch-autostart escalation, and the TUI gives it a terminal to ask in
+    rather than answering for the user — by re-running it in the foreground
+    when a detached attempt stopped to ask. Those questions are asked by the
     foreground parent before it detaches.
 
     Both answers are typed free text, so they follow `--`: a branch named
@@ -2388,6 +2887,24 @@ def pager_argv() -> list[str] | None:
         if shutil.which(candidate[0]):
             return candidate
     return None
+
+
+def _egress_panel(overlay: Overlay | None) -> EgressState | None:
+    """The Egress panel on screen: itself, or the one behind its question."""
+    if isinstance(overlay, EgressState):
+        return overlay
+    if isinstance(overlay, (TextPrompt, Picker)) and isinstance(overlay.back, EgressState):
+        return overlay.back
+    return None
+
+
+def _with_egress_panel(overlay: Overlay | None, panel: EgressState) -> Overlay | None:
+    """``overlay`` with the Egress panel it shows (or sits over) swapped for ``panel``."""
+    if isinstance(overlay, EgressState):
+        return panel
+    if isinstance(overlay, (TextPrompt, Picker)):
+        return replace(overlay, back=panel)
+    return overlay
 
 
 def _wait_for_return() -> None:
@@ -2505,9 +3022,16 @@ def _dispatch_action(
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
-    if over_ssh and ssh_policy is not None and ssh_policy.gui and _is_gui_verb(verb):
-        # The launch prints how to reach the shared display; "plain" would
-        # throw that away the moment the dashboard repaints.
+    if (
+        over_ssh
+        and ssh_policy is not None
+        and ssh_policy.gui
+        and _is_gui_verb(verb)
+        and waypipe_session() is None
+    ):
+        # The launch prints how to reach the shared RDP display; "plain" would
+        # throw that away the moment the dashboard repaints. A waypipe session
+        # has nothing to show: the window simply opens on the laptop.
         style = "output"
     if style == "paged" and remote:
         style = "output"
@@ -2569,36 +3093,10 @@ def _run_cli_foreground(
     return rc
 
 
-def _refresh_due(
-    *,
-    now: float,
-    last_base: float,
-    last_full: float,
-    interval: float,
-    git_interval: float,
-    git_enabled: bool,
-    first: bool,
-    forced: bool,
-) -> tuple[bool, bool]:
-    """Decide whether to gather now and whether to include git status.
-
-    Returns ``(do_base, do_git)``. ``do_base`` is whether to gather at all;
-    ``do_git`` is whether this gather should include the (expensive) git tier.
-    ``now`` is a monotonic timestamp. ``first``/``forced`` force an immediate
-    git-inclusive gather.
-    """
-    do_git = git_enabled and (first or forced or now >= last_full + git_interval)
-    do_base = first or forced or do_git or now >= last_base + interval
-    return do_base, do_git
-
-
 def run(
     incus: Incus,
     cwd_root: Path | None,
     *,
-    interval: float,
-    git_interval: float,
-    no_git: bool,
     remote: bool = False,
     over_ssh: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
@@ -2606,10 +3104,11 @@ def run(
 ) -> int:
     """Main dashboard loop.
 
-    A daemon thread gathers container state on the two-tier schedule and
-    publishes it under a lock; this (main) thread only renders the latest
-    snapshot and handles input on a fast timer, so keystrokes stay responsive
-    even while a gather (which blocks on incus/git) is in flight.
+    Container state comes from the shared state service
+    (`jailbee.state_service`), which gathers once for every open dashboard;
+    this thread only renders the latest snapshot it pushed — with this
+    dashboard's own scope and cwd pin applied — and handles input on a fast
+    timer, so keystrokes stay responsive while a gather is in flight.
 
     ``remote`` is a remote SSH session, whose user may reach containers and
     the repos' git bridge but not the host itself. Everything here that runs
@@ -2623,7 +3122,7 @@ def run(
         error("jailbee dashboard requires an interactive terminal.")
         return 1
 
-    # Launch-time guard only; `gather_live` re-resolves the list per gather.
+    # Launch-time guard only; the state service re-resolves the list per gather.
     roots = (
         collect_repo_roots(cwd_root) if scope is None else collect_repo_roots(cwd_root, scope=scope)
     )
@@ -2647,106 +3146,25 @@ def run(
     folded: frozenset[str] = view_state.folded
     show_empty_repos = view_state.show_empty_repos
     hidden_repos = view_state.hidden_repos
-    hide_first = tuple(_global_config_or_defaults().dashboard.auto_hide.hide_first)
-
-    interval = max(0.5, interval)
-    git_interval = max(git_interval, interval)
-    git_enabled = not no_git
+    show_details = view_state.show_details
+    hide_first = tuple(global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     def now() -> datetime:
         return datetime.now().astimezone()
 
-    # Surveyed before `Live` takes the screen, so the first frame is already
-    # populated: a dashboard that appears empty and fills in a second later is
-    # indistinguishable from a broken one. Only the cheap tier is waited for —
-    # the git probes are what make a full gather slow, and their columns land
-    # on the worker's first tick exactly as they do after any base refresh.
-    #
-    # A failure here is fatal rather than deferred to the worker: taking the
-    # alternate screen only to hand it straight back is a worse way to say
-    # "the incus daemon is unreachable" than saying so on the user's own
-    # terminal.
-    # One sampler for the whole session: a rate needs the previous reading,
-    # and a fresh sampler has none. The pre-gather below primes it, and the
-    # worker thread is the only other user — it starts after this returns,
-    # so the two never touch it at once.
-    sampler = ActivitySampler()
-
+    # Waited for before `Live` takes the screen, so the first frame is already
+    # populated — and so "the state service is unreachable" is said on the
+    # user's own terminal rather than by taking the screen only to hand it back.
+    client = open_state_client(cwd_root)
     try:
         with console.status("⏳ Surveying containers…"):
-            seeded = (
-                gather_live(incus, cwd_root, with_git=False)
-                if scope is None
-                else gather_live(incus, cwd_root, with_git=False, scope=scope)
-            )
-            # Twice: the first call primes the sampler, the second turns it
-            # into a rate. Only the /proc read repeats — never the gather.
-            sample_activity(seeded, sampler)
-            time.sleep(PRIME_INTERVAL_SECONDS)
-            sample_activity(seeded, sampler)
-    except Exception as exc:
+            client.wait_first_snapshot(STARTUP_TIMEOUT_SECONDS)
+    except StateServiceUnavailable as exc:
+        client.close()
         error(f"dashboard refresh failed: {exc}")
         return 1
-    seeded_at = time.monotonic()
 
-    lock = threading.Lock()
-    stop = threading.Event()
-    force = threading.Event()
-    shared_groups: list[RepoGroup] = seeded
-    worker_error: list[BaseException] = []
-
-    def refresher() -> None:
-        nonlocal shared_groups
-        # Continues the schedule from the pre-gather instead of restarting it.
-        # `first` forces an immediate git-inclusive gather, which is exactly
-        # what is still missing — but with `--no-git` there is nothing left to
-        # fetch, and a `first` there would just repeat the gather we already
-        # have.
-        last_base = seeded_at
-        last_full = 0.0
-        first = git_enabled
-        prev_groups: list[RepoGroup] = seeded
-        while not stop.is_set():
-            forced = force.is_set()
-            do_base, do_git = _refresh_due(
-                now=time.monotonic(),
-                last_base=last_base,
-                last_full=last_full,
-                interval=interval,
-                git_interval=git_interval,
-                git_enabled=git_enabled,
-                first=first,
-                forced=forced,
-            )
-            if do_base:
-                if forced:
-                    force.clear()
-                try:
-                    groups = (
-                        gather_live(incus, cwd_root, with_git=do_git)
-                        if scope is None
-                        else gather_live(incus, cwd_root, with_git=do_git, scope=scope)
-                    )
-                except Exception as exc:  # surface any gather failure to the main thread
-                    worker_error.append(exc)
-                    stop.set()
-                    break
-                if not do_git:
-                    # A base gather has no git status; fill it in from the
-                    # last git-tier snapshot so the columns don't flicker
-                    # blank until the next git-tier refresh lands.
-                    carry_forward_git_status(groups, prev_groups)
-                sample_activity(groups, sampler)
-                ts = time.monotonic()
-                with lock:
-                    shared_groups = groups
-                prev_groups = groups
-                last_base = ts
-                if do_git:
-                    last_full = ts
-                first = False
-            # sleep until the next tick, waking early on a forced refresh or stop
-            force.wait(timeout=0.1)
+    jobs = JobRunner()
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
@@ -2803,11 +3221,9 @@ def run(
             hidden_repos=hidden_repos,
         )
 
-    worker = threading.Thread(target=refresher, name="jailbee-dashboard-refresh", daemon=True)
     last_title: str | None = None
     try:
         tty.setcbreak(fd)
-        worker.start()
         # Pushed before Live takes the screen and popped after it gives it
         # back, so the terminal's own title is saved and restored intact.
         with (
@@ -2825,6 +3241,9 @@ def run(
                 dashboard on screen behind it.
                 """
                 nonlocal last_title
+                # Nothing of this dashboard is on screen while `fn` runs: let
+                # the shared service stop gathering on its behalf.
+                client.set_active(False)
                 live.stop()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
                 try:
@@ -2832,6 +3251,9 @@ def run(
                 finally:
                     tty.setcbreak(fd)
                     live.start(refresh=True)
+                    # The snapshot is as old as the command was long.
+                    client.set_active(True)
+                    client.refresh()
                     # `fn` (jailbee shell / tmux) may have set its own OSC 2
                     # title; forget the last one we wrote so the next frame's
                     # title-changed check doesn't compare against it and skip
@@ -2849,7 +3271,7 @@ def run(
                 took the whole TUI down.
                 """
                 set_notice(f"'{repo.repo_root}' no longer exists")
-                force.set()
+                client.refresh()
 
             def dispatch(target: str, verb: str) -> None:
                 nonlocal notice, notice_until
@@ -2903,7 +3325,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {verb} {target}' exited {rc}")
-                force.set()  # an action likely changed state — refresh ASAP
+                client.refresh()  # an action likely changed state — refresh ASAP
 
             def open_egress(prefix: str, container: str | None) -> EgressState | None:
                 """Load one scoped view after checking the read permission."""
@@ -2966,7 +3388,7 @@ def run(
                 return TextPrompt(
                     "egress-add",
                     "Add egress override",
-                    "Destination (host, host:port, IPv4 or CIDR)",
+                    "Destination (host, host:port, *.domain, IPv4, or CIDR)",
                     target=state.prefix,
                     back=state,
                 )
@@ -2974,10 +3396,14 @@ def run(
             def mutate_egress(
                 state: EgressState, action: Literal["add", "rm"], entry: str | None = None
             ) -> EgressState | None:
-                """Reauthorize and run one scoped mutation; reload rows.
+                """Reauthorize and start one scoped mutation, detached.
 
                 ``add`` takes its destination from the inline prompt
                 (:func:`begin_egress_add`); ``rm`` acts on the selected row.
+                The panel stays up while the change runs. When it ends,
+                ``finish`` closes the panel *and* the menu it was opened from
+                after a success; a failure keeps the panel up, reloaded, for
+                a retry.
                 """
                 target = egress_target(state)
                 if target is None:
@@ -3004,41 +3430,69 @@ def run(
                     set_notice(str(exc))
                     return state
 
-                def run_scoped() -> int:
-                    rc = subprocess.run(
-                        ["jailbee", *argv], check=False, cwd=target.cwd()
-                    ).returncode
-                    _wait_for_return()
-                    return rc
+                key = f"egress:{state.prefix}:{state.container or ''}"
+                if jobs.busy(key):
+                    set_notice("An egress change is still running here")
+                    return state
+
+                def finish(result: JobResult) -> None:
+                    """Report the change and refresh the panel, if it is still open."""
+                    nonlocal overlay
+                    if result.returncode != 0:
+                        reason = result.failure_line() or f"exited {result.returncode}"
+                        set_notice(
+                            f"net egress {action} {entry} failed: {reason}",
+                            seconds=_FAILURE_NOTICE_SECONDS,
+                        )
+                    else:
+                        client.refresh()
+                        set_notice(f"net egress {action} {entry}: done")
+                    panel = _egress_panel(overlay)
+                    if panel is None or (panel.prefix, panel.container) != (
+                        state.prefix,
+                        state.container,
+                    ):
+                        return
+                    if result.returncode == 0:
+                        # Done is done: the panel and the menu it was opened
+                        # from close, as every other menu action does.
+                        overlay = None
+                        return
+                    try:
+                        rows = load_egress_rows(target.repo_root, incus, state.container)
+                    except Exception as exc:
+                        set_notice(f"could not refresh egress entries: {exc}")
+                        return
+                    overlay = _with_egress_panel(overlay, replace_egress_rows(panel, rows))
 
                 try:
-                    rc = foreground(run_scoped)
+                    jobs.start(
+                        key,
+                        f"egress {action} {entry}…",
+                        ["jailbee", *argv],
+                        target.cwd(),
+                        finish,
+                    )
                 except OSError:
                     _report_vanished_repo(target)
                     return None
-                if rc != 0:
-                    set_notice(f"'jailbee net egress {action}' exited {rc}")
-                else:
-                    force.set()
-                try:
-                    rows = load_egress_rows(target.repo_root, incus, state.container)
-                except Exception as exc:
-                    set_notice(f"could not refresh egress entries: {exc}")
-                    return state
-                return replace_egress_rows(state, rows)
+                return state
 
             def start_new_container(*, from_pr: bool = False) -> TextPrompt | None:
                 """Open the first question of `jailbee new`, or explain why not.
 
-                The questions are inline overlays; only the final `jailbee new`
-                gets the real terminal, via `foreground` — it asks its own
-                questions: confirming reuse of an existing branch, and the
-                branch-autostart escalation gate. The argv carries
-                `--background`, which does not avoid those questions — the
-                escalation question is asked by the foreground parent before it
-                detaches (`lifecycle._autostart_approved`). The only other
-                option is `--yes`, i.e. accepting a network-widening branch
-                config unseen.
+                The questions are inline overlays. The final `jailbee new` runs
+                detached (`JobRunner`), so the dashboard stays usable through
+                its foreground pre-flight (egress DNS, fetch, ref resolution).
+                `jailbee new` asks its own questions: confirming reuse of an
+                existing branch, and the branch-autostart escalation gate.
+                The argv carries `--background`, which does not avoid those
+                questions — the escalation question is asked by the foreground
+                parent before it detaches (`lifecycle._autostart_approved`) —
+                and a detached run has no terminal to ask on. When it stops
+                for that reason the command is re-run through `foreground`
+                (`needs_terminal`). The only other option is `--yes`, i.e.
+                accepting a network-widening branch config unseen.
                 """
                 try:
                     check_dashboard_command(["new"], ssh_policy, over_ssh=over_ssh)
@@ -3065,7 +3519,7 @@ def run(
                 )
 
             def run_new_container(
-                prefix: str, build_argv: Callable[[RepoTarget], list[str]]
+                prefix: str, what: str, build_argv: Callable[[RepoTarget], list[str]]
             ) -> None:
                 """Re-resolve the repo (it may have vanished while the prompt was open) and run."""
                 group = next((g for g in groups if g.prefix == prefix), None)
@@ -3085,14 +3539,35 @@ def run(
                     _wait_for_return()
                     return rc
 
+                def run_in_foreground() -> None:
+                    try:
+                        rc = foreground(spawn)
+                    except OSError:
+                        _report_vanished_repo(repo)
+                        return
+                    if rc != 0:
+                        set_notice(f"'jailbee new' exited {rc}")
+                    client.refresh()  # the new container should appear on the next frame
+
+                def finish(result: JobResult) -> None:
+                    if needs_terminal(result):
+                        # It stopped to ask something; the question needs the
+                        # real terminal, so ask it there, as before.
+                        run_in_foreground()
+                        return
+                    if result.returncode != 0:
+                        reason = result.failure_line() or f"exited {result.returncode}"
+                        set_notice(f"jailbee new failed: {reason}", seconds=_FAILURE_NOTICE_SECONDS)
+                    client.refresh()
+
                 try:
-                    rc = foreground(spawn)
+                    jobs.start(
+                        f"new:{prefix}:{what}", f"creating {what}…", argv, repo.cwd(), finish
+                    )
+                except ValueError:
+                    set_notice("That container is already being created")
                 except OSError:
                     _report_vanished_repo(repo)
-                    return
-                if rc != 0:
-                    set_notice(f"'jailbee new' exited {rc}")
-                force.set()  # the new container should appear on the next frame
 
             def run_dashboard_command(
                 target: str,
@@ -3136,7 +3611,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {dact.command_label(argv)}' exited {rc}")
-                force.set()  # the command likely changed state: refresh now
+                client.refresh()  # the command likely changed state: refresh now
 
             def open_container_entry(container: str, verb: str) -> Overlay | None:
                 """The first step of a terminal-only container entry; None once it has run."""
@@ -3205,6 +3680,129 @@ def run(
                     set_notice(f"No snapshots of '{container}'")
                     return None
                 return picker
+
+            # The last listing per container, so a proposal step needs no second one.
+            outbox_rows: dict[str, tuple[dob.ProposalRow, ...]] = {}
+
+            def open_outbox(container: str) -> Picker | None:
+                """List the container's staged proposals quietly and offer them, or notice why not.
+
+                Each entry is gated on its own argv, as for snapshots.
+                """
+                repo = repo_for(container, "container")
+                if repo is None:
+                    set_notice(f"'{container}' is gone")
+                    return None
+                argv = dact.addressed(
+                    dob.outbox_ls_argv(container), repo.flags(), over_ssh=over_ssh
+                )
+                try:
+                    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
+                    # `outbox ls` exits 2 for an unavailable container but still
+                    # prints the listing, whose error says why; parse it first.
+                    result = da.run_cli_quiet(argv, cwd=repo.cwd())
+                    try:
+                        listing = dob.parse_outbox_listing(result.stdout, container)
+                    except dob.OutboxLoadError:
+                        if result.ok:
+                            raise
+                        raise dob.OutboxLoadError(result.message) from None
+                except (RouteError, dob.OutboxLoadError) as exc:
+                    set_notice(f"could not list the outbox: {exc}", seconds=_FAILURE_NOTICE_SECONDS)
+                    return None
+                if listing.error is not None:
+                    set_notice(
+                        f"could not read the outbox: {listing.error}",
+                        seconds=_FAILURE_NOTICE_SECONDS,
+                    )
+                    return None
+                if not listing.rows:
+                    set_notice(
+                        listing.warnings[0]
+                        if listing.warnings
+                        else f"Outbox of '{container}' is empty",
+                        seconds=_FAILURE_NOTICE_SECONDS if listing.warnings else _NOTICE_SECONDS,
+                    )
+                    return None
+                outbox_rows[container] = listing.rows
+                return dob.outbox_picker(
+                    container,
+                    listing.rows,
+                    can_browse=permitted(
+                        dob.outbox_browse_argv(container), ssh_policy, over_ssh=over_ssh
+                    ),
+                )
+
+            def submit_outbox_picker(picker: Picker, entry: PickerEntry) -> Overlay | None:
+                """The `container-outbox*` steps. Show and Publish run in the terminal.
+
+                Publishing talks to GitHub and may outlast the quiet runner's
+                60 s cutoff; a delete is local and runs quietly.
+                """
+                container = picker.target
+                if picker.purpose == "container-outbox":
+                    if entry.value == dob.BROWSE:
+                        run_dashboard_command(
+                            container, "container", dob.outbox_browse_argv(container), style="plain"
+                        )
+                        return None
+                    pid = dob.proposal_id(entry.value)
+                    row = next((r for r in outbox_rows.get(container, ()) if r.id == pid), None)
+                    if row is None:
+                        return None
+                    actions = dob.proposal_picker(
+                        container,
+                        row,
+                        can_show=permitted(
+                            dob.outbox_show_argv(container, row.id), ssh_policy, over_ssh=over_ssh
+                        ),
+                        can_publish=permitted(
+                            dob.outbox_apply_argv(container, row.id, row.revision),
+                            ssh_policy,
+                            over_ssh=over_ssh,
+                        ),
+                        can_delete=permitted(
+                            dob.outbox_drop_argv(container, row.id, row.revision),
+                            ssh_policy,
+                            over_ssh=over_ssh,
+                        ),
+                    )
+                    if not actions.entries:
+                        set_notice(f"Nothing can be done to {row.id} here")
+                        return None
+                    return actions
+                if picker.purpose == "container-outbox-proposal":
+                    pid, revision, count = picker.carry
+                    if entry.value == dob.SHOW:
+                        run_dashboard_command(
+                            container,
+                            "container",
+                            dob.outbox_show_argv(container, pid),
+                            style="paged",
+                        )
+                        return None
+                    if entry.value in (dob.PUBLISH, dob.DELETE):
+                        return dob.outbox_confirm_picker(
+                            container, entry.value, pid, revision, int(count)
+                        )
+                    return None
+                if picker.purpose == "container-outbox-confirm":
+                    if entry.value != "yes":
+                        set_notice("Cancelled")
+                        return None
+                    action, pid, revision = picker.carry
+                    if action == dob.PUBLISH:
+                        run_dashboard_command(
+                            container, "container", dob.outbox_apply_argv(container, pid, revision)
+                        )
+                    elif action == dob.DELETE:
+                        repo = repo_for(container, "container")
+                        if repo is None:
+                            set_notice(f"'{container}' is gone")
+                        elif run_quiet_cli(repo, dob.outbox_drop_argv(container, pid, revision)):
+                            client.refresh()
+                    return None
+                return None
 
             def submit_snapshot_picker(picker: Picker, entry: PickerEntry) -> Overlay | None:
                 """The `container-snapshot*` steps. Every change runs in the terminal.
@@ -3294,7 +3892,7 @@ def run(
                     result.message,
                     seconds=_NOTICE_SECONDS if result.ok else _FAILURE_NOTICE_SECONDS,
                 )
-                force.set()  # a group or mount change shows in the next gather
+                client.refresh()  # a group or mount change shows in the next gather
                 return result.ok
 
             def load_listing(
@@ -3379,8 +3977,8 @@ def run(
                     return prefix
                 return next((g.prefix for g in groups if RepoTarget.of(g) is not None), None)
 
-            def load_accounts(prefix: str, index: int = 0) -> da.AccountsState | None:
-                """The Accounts panel for ``prefix``'s repo, the cursor clamped to ``index``."""
+            def load_accounts(prefix: str) -> da.AccountsState | None:
+                """The Accounts panel for ``prefix``'s repo."""
                 repo = repo_for(prefix)
                 if repo is None:
                     set_notice(f"'{prefix}' is gone", seconds=_FAILURE_NOTICE_SECONDS)
@@ -3388,7 +3986,7 @@ def run(
                 rows = load_listing(repo, da.account_ls_argv(), "accounts")
                 if rows is None:
                     return None
-                return da.AccountsState(rows, max(0, min(index, len(rows) - 1)), prefix)
+                return da.AccountsState(rows, 0, prefix)
 
             def open_accounts() -> da.AccountsState | None:
                 """Open the Accounts panel, or notice why not."""
@@ -3420,25 +4018,23 @@ def run(
                 )
 
             def run_account_change(state: da.AccountsState, argv: list[str]) -> Overlay | None:
-                """Run one change from the panel, then show the listing reloaded.
+                """Run one change from the panel; a change that worked closes it.
 
-                The repo is re-resolved first — it may have vanished while a
-                picker was open. A refused change keeps the old listing up
-                under its notice; a listing that fails after a change that
-                worked keeps the old rows too, under the listing's notice.
+                Done is done: the CLI's own message stays up as the notice, so
+                there is nothing left to Esc out of. The repo is re-resolved
+                first — it may have vanished while a picker was open. A refused
+                change keeps the listing up under its notice, for a retry.
                 """
                 repo = repo_for(state.prefix)
                 if repo is None:
                     set_notice(f"'{state.prefix}' is gone", seconds=_FAILURE_NOTICE_SECONDS)
                     return None
-                if not run_quiet_cli(repo, argv):
-                    return state
-                return load_accounts(state.prefix, state.index) or state
+                return None if run_quiet_cli(repo, argv) else state
 
             def submit_account_picker(
                 picker: Picker, entry: PickerEntry, state: da.AccountsState
             ) -> Overlay | None:
-                """The `acct-*` steps: every one lands back on the panel ``state``."""
+                """The `acct-*` steps: a cancel or a refusal lands back on the panel ``state``."""
                 if picker.purpose == "acct-action":
                     agent, group, ref = picker.carry
                     if entry.value == "use":
@@ -3518,7 +4114,7 @@ def run(
                             return ["jailbee", "new", "--background", "--pr", str(number)]
                         return new_pr_container_argv(repo, number)
 
-                    run_new_container(prompt.target, pr_argv)
+                    run_new_container(prompt.target, f"PR #{number}", pr_argv)
                     return None
                 if prompt.purpose == "new-branch":
                     return TextPrompt(
@@ -3537,7 +4133,7 @@ def run(
                             return ["jailbee", "new", "--background", "--", branch, answer]
                         return new_container_argv(repo, branch, answer)
 
-                    run_new_container(prompt.target, branch_argv)
+                    run_new_container(prompt.target, branch, branch_argv)
                     return None
                 if prompt.purpose == "egress-add":
                     # begin_egress_add always sets it
@@ -3609,6 +4205,8 @@ def run(
                     return None
                 if picker.purpose.startswith("container-snapshot"):
                     return submit_snapshot_picker(picker, entry)
+                if picker.purpose.startswith("container-outbox"):
+                    return submit_outbox_picker(picker, entry)
                 if picker.purpose in ("container-mount-add", "container-mount-remove"):
                     build = (
                         dact.unmount_argv
@@ -3658,7 +4256,7 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee config edit' exited {rc}")
-                force.set()  # config may have changed under every row
+                client.refresh()  # config may have changed under every row
 
             def run_command(command: CommandState) -> None:
                 """Authorize and run the edited argv in the selected repo."""
@@ -3707,15 +4305,22 @@ def run(
                     return
                 if rc != 0:
                     set_notice(f"'jailbee {' '.join(argv)}' exited {rc}")
-                force.set()
+                client.refresh()
 
-            all_groups: list[RepoGroup] = seeded
+            # Before the loop too: the closures above read `all_groups`.
+            snapshot = client.latest()
+            assert snapshot is not None  # `wait_first_snapshot` returned
+            all_groups: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
+            git_enabled = snapshot.git_enabled
             groups: list[RepoGroup] = visible_repo_groups(
                 all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
             )
-            while not stop.is_set():
-                with lock:
-                    all_groups = shared_groups
+            while True:
+                jobs.poll()
+                snapshot = client.latest()
+                assert snapshot is not None  # `wait_first_snapshot` returned
+                all_groups = present(snapshot.groups, cwd_root, scope)
+                git_enabled = snapshot.git_enabled
                 groups = visible_repo_groups(
                     all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
                 )
@@ -3828,10 +4433,15 @@ def run(
                         git_enabled=git_enabled,
                         enabled=enabled,
                         overlay=overlay,
-                        notice=notice or ("; ".join(tracking) if tracking else None),
+                        notice=notice
+                        or client.status()
+                        or "; ".join(jobs.active())
+                        or ("; ".join(tracking) if tracking else None),
                         folded=folded,
                         hide_first=hide_first,
                         hidden_by_preferences=bool(all_groups) and not groups,
+                        height=console.height,
+                        show_details=show_details,
                     ),
                     refresh=True,
                 )
@@ -3876,7 +4486,7 @@ def run(
                                     ssh_policy.commands,
                                     restrict_host=ssh_policy.restrict_host,
                                     scope=scope,
-                                    gui=ssh_policy.gui,
+                                    unlocks=ssh_router.RemoteUnlocks.of(ssh_policy),
                                 )
                         candidates = completion_candidates(
                             overlay.text,
@@ -3889,7 +4499,7 @@ def run(
                                 and ssh_policy is not None
                                 and host_restricted(ssh_policy.restrict_host)
                             ),
-                            gui=bool(over_ssh and ssh_policy is not None and ssh_policy.gui),
+                            unlocks=ssh_router.RemoteUnlocks.of(ssh_policy if over_ssh else None),
                         )
                         overlay = edit_command(replace(overlay, suggestions=candidates), data)
                     continue
@@ -3960,7 +4570,13 @@ def run(
                             show_empty_repos = overlay.show_empty_repos
                             hidden_repos = overlay.hidden_repos
                             persist_view_state(
-                                ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                                ViewState(
+                                    columns=enabled,
+                                    folded=folded,
+                                    show_empty_repos=show_empty_repos,
+                                    hidden_repos=hidden_repos,
+                                    show_details=show_details,
+                                )
                             )
                     elif isinstance(overlay, EgressState):
                         if key in ("up", "down"):
@@ -3994,8 +4610,12 @@ def run(
                     elif isinstance(overlay, (MenuState, RepoMenuState)):
                         if key in ("up", "down"):
                             overlay = move_menu(overlay, -1 if key == "up" else 1)
-                        elif key == "enter":
-                            next_menu, verb = enter_menu(overlay)
+                        # An entry's own key is Enter on that entry, so both
+                        # take this one path to its group or verb.
+                        elif (
+                            chosen_menu := overlay if key == "enter" else hotkey_menu(overlay, data)
+                        ) is not None:
+                            next_menu, verb = enter_menu(chosen_menu)
                             if verb is None:
                                 overlay = next_menu
                                 continue
@@ -4024,7 +4644,13 @@ def run(
                                 elif verb == "fold":
                                     folded = toggle_folded(folded, target)
                                     persist_view_state(
-                                        ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                                        ViewState(
+                                            columns=enabled,
+                                            folded=folded,
+                                            show_empty_repos=show_empty_repos,
+                                            hidden_repos=hidden_repos,
+                                            show_details=show_details,
+                                        )
                                     )
                                 elif verb == "net egress ls":
                                     egress_parent = repo_parent
@@ -4043,6 +4669,10 @@ def run(
                                     overlay = open_group_picker("container-group", target)
                                 elif verb in dact.CONTAINER_VERBS:
                                     overlay = open_container_entry(target, verb)
+                                elif verb == "outbox browse":
+                                    # Qt hands the terminal to the browser; here
+                                    # it is the dashboard's own picker panels.
+                                    overlay = open_outbox(target)
                                 else:
                                     dispatch(target, verb)
                     continue
@@ -4111,7 +4741,18 @@ def run(
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "refresh":
-                    force.set()
+                    client.refresh()
+                elif key == "details":
+                    show_details = not show_details
+                    persist_view_state(
+                        ViewState(
+                            columns=enabled,
+                            folded=folded,
+                            show_empty_repos=show_empty_repos,
+                            hidden_repos=hidden_repos,
+                            show_details=show_details,
+                        )
+                    )
                 elif key == "space":
                     prefix = fold_target(groups, selected)
                     if prefix is not None:
@@ -4121,16 +4762,17 @@ def run(
                         # reconcile_selection pick a neighbour repo.
                         selected = Row("repo", prefix)
                         persist_view_state(
-                            ViewState(enabled, folded, show_empty_repos, hidden_repos)
+                            ViewState(
+                                columns=enabled,
+                                folded=folded,
+                                show_empty_repos=show_empty_repos,
+                                hidden_repos=hidden_repos,
+                                show_details=show_details,
+                            )
                         )
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()
-        force.set()  # wake the worker so it notices stop and exits promptly
+        client.close()
         termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
-    worker.join(timeout=2.0)
-    if worker_error:
-        error(f"dashboard refresh failed: {worker_error[0]}")
-        return 1
     return 0

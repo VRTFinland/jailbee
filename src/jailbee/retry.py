@@ -25,21 +25,15 @@ Design rules this module obeys:
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Callable
 
+from jailbee import prompting
 from jailbee.tui import error
-
-
-def _stdin_is_interactive() -> bool:
-    """Return True if stdin is a TTY (and JAILBEE_NONINTERACTIVE is unset)."""
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
 
 
 def _ask(label: str) -> bool:
     """Ask `Retry <label>?` on a TTY; False off-TTY without prompting."""
-    if not _stdin_is_interactive():
+    if not prompting.is_interactive():
         return False
     return input(f"Retry {label}? [y/N]: ").strip().lower() in ("y", "yes")
 

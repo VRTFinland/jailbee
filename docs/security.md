@@ -116,12 +116,20 @@ While `restrict_host` is on, the commands that manage the host itself are
 refused in every mode, `full` and an allowlist naming them included:
 `config edit`/`init`/`migrate`, every `remote ...` command, `setup`, `init`,
 `apply`, `base build`/`prune`, `net install`/`migrate`/`refresh`/`unregister`,
-`net egress add`/`rm` (which accept the host's own and its LAN's addresses),
-`registry up`/`down`, `display up`/`down`, `litellm
+`net loose` and `net egress add` (either can open the host's own and its
+LAN's addresses to the container), `registry up`/`down`, `display up`/`down`,
+`litellm
 up`/`down`/`login`/`logout`/`logs`, the `account` commands that write, `mount`,
 `port to-container`, and the GUI launchers (`gui`, `ide`, the browsers, `apps
 run`). With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
 permitted and draw on the shared display instead; `gui` stays host-only.
+With `remote.ssh.network` on, `net loose` and container-scope
+`net egress add` are permitted too, and so is `new --net loose` (which
+creates a container in loose mode); without it `new` is refused only when
+`--net` names `loose`, in any spelling of the case. `net strict` and container-scope
+`net egress rm` only narrow a container and are always permitted; `--repo` on
+`net egress add`/`rm` is refused regardless, because it writes the host-local
+repo layer.
 The startup log names any allowlisted command that stays refused this way, and every
 public command is classified one way or the other by the test suite, so a
 new one cannot land unclassified.
@@ -148,16 +156,21 @@ The SSH protocol surface is also fail-closed:
 - public-key authentication is the only authentication method; password,
   keyboard-interactive, host-based and GSS authentication are disabled;
 - agent forwarding, X11 forwarding, Unix-socket forwarding and remote
-  listeners are disabled, and so is TCP forwarding, with one exception:
-  while `remote.ssh.gui` is on, `127.0.0.1:13389` (the shared display, see
-  [Remote GUI](#remote-gui)), for any authorized key;
+  listeners are disabled, and so is TCP forwarding, with two exceptions, both
+  only while `remote.ssh.gui` is on (see [Remote GUI](#remote-gui)):
+  `127.0.0.1:13389` (the shared display), for any authorized key; and one
+  reverse unix forward per connection, for `waypipe ssh`, requested by a
+  connection authenticated by an authorized key. JailBee listens for that
+  forward at its own path under the state directory (the client never chooses
+  a host path), and the listener's directory is mounted into `jailbee-display`
+  only;
 - SFTP and SCP are disabled unless `remote.ssh.files` is on. When it is, they
   serve one thing only (see [File transfer](#file-transfer)) and every other
   subsystem is still refused;
 - client environment requests, including `SendEnv`, are accepted by the
   protocol but ignored: the client's environment never reaches the child
   process, which is built from the service's own environment;
-- the interactive `shell` entry point is a restricted JailBee console, not a
+- the interactive `console` entry point is a restricted JailBee console, not a
   POSIX shell, and implements no pipes, redirection, expansion or executable
   lookup;
 - one-shot commands are parsed into an argv without invoking a shell, and
@@ -194,7 +207,8 @@ enter one: `shell`, `tmux`, `exec` and the GUI app launchers refuse a
 mount-mode container, and clone-mode containers are unaffected.
 
 One host resource stays reachable from inside a container on purpose: the
-Wayland display socket, attached whenever the host session is Wayland. Any
+Wayland display socket, attached on a container's first GUI launch (or every
+boot with `gui.wayland: always`; [`gui`](config.md#gui)). Once attached, any
 process in the container — a remote session's shell included — can open a
 window on the host's screen with it, and JailBee's own GUI launchers are
 withheld remotely (unless `remote.ssh.gui` is on) only because a window there
@@ -293,6 +307,14 @@ display (see [Remote GUI over SSH](remote-gui.md)):
   isolated from each other on this screen.
 - The display container uses the dev user's idmap, like the client containers,
   so the shared socket is owned by the same host user.
+- Each `waypipe ssh` session (see [Native windows with
+  waypipe](remote-gui.md#native-windows-with-waypipe-linux)) runs one waypipe
+  server per container inside `jailbee-display`. Their sockets live in the same
+  shared directory, so any container can open a window through another
+  container's server; that window carries the other container's title prefix.
+  No two containers share a server process. Untrusted Wayland traffic is
+  parsed in `jailbee-display`, and the laptop's waypipe client only ever talks
+  to those servers.
 - With SSH repository exclusions active, the GUI launchers (`ide`, the
   browsers, `apps run`) are refused over SSH regardless of this setting.
   `exec -d --gui` is not: it is admitted as a command scoped to one container
@@ -499,6 +521,65 @@ the `branch_config` escalation gate, which weighs what a branch's
 *committed* autostart configuration is allowed to grant itself on
 `jailbee new`; `jailbee net egress` is the operator, at a host shell,
 typing a command.
+
+## Egress proxy
+
+Wildcard `egress_allow` entries (`*.example.com`) are enforced by Squid in a
+`jailbee-egress-proxy` container rather than by the NIC ACL. See
+[`egress_allow`](config.md#wildcards-go-through-the-egress-proxy) for the
+user-facing behaviour. The security properties:
+
+- **The proxy is trusted infrastructure.** It sits on `jailbee-loose`, which has
+  no egress ACL, so its own upstream traffic is unrestricted. Anyone who can
+  run code inside it, or change its Squid configuration, can reach anything.
+  Containers cannot: they hold no Incus access and reach the proxy only on
+  port 3128.
+- **Identity is the source IP.** Squid decides per client address. The proxy has
+  one NIC on each client bridge (`incusbr0`, and `jailbee-work` when it
+  exists) so it sees each container's own address; a single leg on another
+  network would show every client as the router's masqueraded gateway address
+  and make the per-container rules meaningless. The client NICs carry an
+  address and no route, so upstream traffic can only leave through `eth0`.
+- **Legacy network: repo scope only.** Container-scope wildcards are refused
+  there, since a legacy container's address is a DHCP lease that can change.
+  Repo-scope rules are rebuilt from the live addresses on each sync, and the
+  window between a lease change and the next sync is a limitation of that
+  generation. The work network reserves a fixed address per container.
+  The legacy network has a second, sharper limit: its NICs carry no
+  `security.ipv4_filtering`, and port 3128 is reachable from every strict
+  container (see the services rule below). A process with root in one strict
+  container can therefore assign itself another container's address and
+  inherit that repo's whole Squid allowlist, wildcards and hostname entries
+  alike. The address can be a stopped container's (it stays in the fragment for
+  up to the 60 s refresh interval) or a live one's, if the impostor wins the
+  ARP race. Repos that use wildcards should run `jailbee net migrate`: the work
+  network filters spoofed source addresses at the NIC.
+- **Always-on on the work network.** With
+  [`egress_proxy_always`](config.md#egress_proxy_always) (default), every
+  work-network container is a proxy client. Strict sources get their repo's and
+  their own entries as rules; loose sources get an unconditional allow,
+  matching the loose NIC rule. A source is in exactly one of the two at a time,
+  and the mode switch moves it. If a loose-to-strict switch's proxy-rule sync fails,
+  the container stays in the open proxy scope until the next 60 s refresh.
+- **Blast radius.** A stopped or broken proxy now fails every proxy-honouring
+  HTTP(S) client of every always-on container, Claude Code's API traffic
+  included, not only wildcard destinations. `jailbee doctor` reports it
+  (`jailbee net status` too when the proxy is stopped or a wildcard is
+  configured) and `jailbee apply` repairs it; starting or restarting an
+  always-on container also restarts a stopped proxy. The environment is
+  deliberately not cleared on failure: an always-on container whose proxy
+  cannot be found, or whose network mode is unknown, keeps its variables.
+- **Proxy-bypassing tools fail closed.** The environment variables are advice
+  (set on every always-on container even without wildcards); the NIC ACL is the
+  enforcement. A tool that ignores them connects directly and is rejected
+  unless the destination is in the ACL.
+- **The services rule is host-wide.** Reaching the proxy needs a rule in the
+  host-global `jailbee-services` ACL, so every strict container on the host can
+  open a connection to port 3128. Squid then denies any source that no repo
+  fragment lists (`http_access deny all`), so an unknown client gets a 403.
+- **No TLS interception.** HTTPS is tunnelled with `CONNECT`; the match is on
+  the requested host name and port. Squid keeps no cache and logs requests to
+  `/var/log/squid/access.log` in the proxy container.
 
 ## Limitations
 

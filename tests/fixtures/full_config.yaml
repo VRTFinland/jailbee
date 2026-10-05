@@ -8,6 +8,7 @@ gpg:
 gui:
   dbus: true
   audio: true
+  wayland: always
 
 ssh:
   enabled: true

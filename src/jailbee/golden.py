@@ -333,7 +333,10 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
         warn(f"Removing leftover {build_container} from a previous failed build")
         incus.delete(build_container, force=True)
 
-    info(f"Launching {image} as {build_container} on {LOOSE_BRIDGE}")
+    info(
+        f"Building {cfg.golden.alias} from {image} "
+        f"(throwaway build container {build_container} on {LOOSE_BRIDGE})"
+    )
     # security.nesting=true is required for systemd-networkd to start in
     # the container: on Ubuntu 24.04+ hosts that set
     # kernel.apparmor_restrict_unprivileged_userns=1, the unprivileged user

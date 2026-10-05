@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Provision the jailbee-display container: weston, a self-signed TLS pair and
-# the systemd unit. Idempotent. Expects JAILBEE_UID, JAILBEE_GID and
-# JAILBEE_USER.
+# Provision the jailbee-display container: weston, waypipe (the per-session
+# servers of `waypipe ssh`), a self-signed TLS pair and the systemd unit.
+# Idempotent. Expects JAILBEE_UID, JAILBEE_GID and JAILBEE_USER.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 : "${JAILBEE_UID:?}" "${JAILBEE_GID:?}" "${JAILBEE_USER:?}"
@@ -24,7 +24,7 @@ if [ -z "$network_up" ]; then
 fi
 
 apt-get update -qq
-apt-get install -y -qq weston openssl
+apt-get install -y -qq weston openssl waypipe
 
 if ! getent passwd "$JAILBEE_UID" >/dev/null; then
   getent group "$JAILBEE_GID" >/dev/null || groupadd -g "$JAILBEE_GID" "$JAILBEE_USER"

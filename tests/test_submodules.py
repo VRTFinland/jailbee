@@ -274,8 +274,31 @@ def test_init_single_submodule_runs_config_update_sync():
 
     joined = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
     assert any("config submodule.lib.url /mnt/host-source/lib" in j for j in joined)
-    assert any("protocol.file.allow=always submodule update --init -- lib" in j for j in joined)
+    assert any(
+        "protocol.file.allow=always submodule update --init --checkout -- lib" in j for j in joined
+    )
     assert any("submodule sync -- lib" in j for j in joined)
+
+
+def test_init_forces_checkout_past_update_none():
+    """`submodule.<name>.update = none` makes a plain `update --init` print
+    "Skipping submodule" and leave an empty directory; `--checkout` overrides
+    the configured mode, so such a submodule is initialized like any other."""
+    incus = MagicMock()
+    incus.exec.side_effect = _exec_router(
+        [
+            ("config -f /home/dev/repo/.gitmodules --get-regexp", "submodule.lib.path lib\n"),
+            ("config -f /home/dev/repo/lib/.gitmodules --get-regexp", IncusError("none")),
+        ]
+    )
+
+    submodules.init_submodules_in_container(
+        incus, "c1", repo_dir="/home/dev/repo", uid=1000, gid=1000
+    )
+
+    updates = [c.args[1] for c in incus.exec.call_args_list if "update" in c.args[1]]
+    assert updates
+    assert all("--checkout" in argv for argv in updates)
 
 
 def test_init_hard_fails_when_host_submodule_uninitialized():
@@ -330,7 +353,10 @@ def test_init_two_level_recursion():
 
     # Nested level: config/update/sync must target the inner submodule
     assert any("config submodule.inner.url /mnt/host-source/lib/inner" in j for j in joined)
-    assert any("protocol.file.allow=always submodule update --init -- inner" in j for j in joined)
+    assert any(
+        "protocol.file.allow=always submodule update --init --checkout -- inner" in j
+        for j in joined
+    )
     assert any("submodule sync -- inner" in j for j in joined)
 
     # Nested commands must run with -C /home/dev/repo/lib
@@ -338,7 +364,8 @@ def test_init_two_level_recursion():
         "git -C /home/dev/repo/lib" in j and "config submodule.inner.url" in j for j in joined
     )
     assert any(
-        "git -C /home/dev/repo/lib" in j and "submodule update --init -- inner" in j for j in joined
+        "git -C /home/dev/repo/lib" in j and "submodule update --init --checkout -- inner" in j
+        for j in joined
     )
     assert any("git -C /home/dev/repo/lib" in j and "submodule sync -- inner" in j for j in joined)
 
@@ -351,8 +378,22 @@ def test_update_in_container_runs_recursive_update():
     )
     joined_calls = [" ".join(c.args[1]) for c in incus.exec.call_args_list]
     assert any(
-        "protocol.file.allow=always submodule update --init --recursive" in j for j in joined_calls
+        "protocol.file.allow=always submodule update --init --checkout --recursive" in j
+        for j in joined_calls
     )
+
+
+def test_update_in_container_forces_checkout_past_update_none():
+    """Without `--checkout` a `submodule.<name>.update = none` submodule is
+    skipped, so a pushed gitlink bump never reaches its working tree."""
+    incus = MagicMock()
+    incus.exec.return_value = ""
+    submodules.update_submodules_in_container(
+        incus, "c1", repo_dir="/home/dev/repo", uid=1000, env={"HOME": "/home/dev"}
+    )
+    updates = [c.args[1] for c in incus.exec.call_args_list if "update" in c.args[1]]
+    assert len(updates) == 1
+    assert "--checkout" in updates[0]
 
 
 def test_update_in_container_hard_fails_on_error():
@@ -901,7 +942,7 @@ def test_place_one_clean_no_local_branch_checks_out():
         }
     )
 
-    submodules._place_one(run, "/repo/lib", "master")
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")
 
     assert run.checkouts() == [("/repo/lib", ["checkout", "-B", "master", "deadbeef"])]
 
@@ -916,7 +957,7 @@ def test_place_one_ff_ancestor_checks_out():
         }
     )
 
-    submodules._place_one(run, "/repo/lib", "master")
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")
 
     assert run.checkouts() == [("/repo/lib", ["checkout", "-B", "master", "deadbeef"])]
 
@@ -934,7 +975,7 @@ def test_place_one_diverged_skips_and_warns(mocker):
         }
     )
 
-    submodules._place_one(run, "/repo/lib", "master")
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")
 
     assert run.checkouts() == []
     warn.assert_called_once()
@@ -962,7 +1003,7 @@ def test_place_one_branch_ahead_keeps_branch_and_warns(mocker):
         }
     )
 
-    submodules._place_one(run, "/repo/lib", "master")
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")
 
     # keeps the existing (ahead) branch checked out: plain checkout, never -B
     assert run.checkouts() == [("/repo/lib", ["checkout", "master"])]
@@ -973,15 +1014,102 @@ def test_place_one_dirty_skips_and_warns(mocker):
     warn = mocker.patch("jailbee.submodules._warn")
     run = _FakeRun({"status": (True, " M file.txt\n")})  # dirty working tree
 
-    submodules._place_one(run, "/repo/lib", "master")
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")
 
     assert run.checkouts() == []
     warn.assert_called_once()
 
 
-def test_place_one_rev_parse_fails_does_not_crash():
-    run = _FakeRun({"status": (True, ""), "rev-parse": (False, "")})
-    submodules._place_one(run, "/repo/lib", "master")  # must not raise
+def test_place_one_gitlink_commit_missing_leaves_alone_and_warns(mocker):
+    """`git submodule update` skipped the submodule (e.g. `update = none`) and
+    never fetched the gitlink commit: nothing to place, the working tree stays."""
+    warn = mocker.patch("jailbee.submodules._warn")
+    run = _FakeRun({"status": (True, ""), "cat-file": (False, "")})
+
+    submodules._place_one(run, "/repo/lib", "master", "deadbeef")  # must not raise
+
+    assert run.checkouts() == []
+    warn.assert_called_once()
+    assert "deadbee" in warn.call_args.args[0]
+
+
+def test_place_one_places_against_gitlink_not_submodule_head(mocker):
+    """`git submodule update` skipped the submodule, so its HEAD is a stale
+    commit while the local branch sits exactly at the superproject's gitlink.
+    Placement must compare against the gitlink: check the branch out silently,
+    without calling the stale HEAD "the gitlink"."""
+    warn = mocker.patch("jailbee.submodules._warn")
+
+    def merge_base(cwd, args):
+        ancestor, descendant = args[2], args[3]
+        # The local branch equals the gitlink: each is an ancestor of the other.
+        return ({ancestor, descendant} <= {"master", "fresh"}, "")
+
+    run = _FakeRun(
+        {
+            "status": (True, ""),
+            "rev-parse": (True, "stale\n"),  # the submodule's own HEAD
+            "show-ref": (True, ""),
+            "merge-base": merge_base,
+        }
+    )
+
+    submodules._place_one(run, "/repo/lib", "master", "fresh")
+
+    assert run.checkouts() == [("/repo/lib", ["checkout", "-B", "master", "fresh"])]
+    warn.assert_not_called()
+
+
+def test_walk_reads_gitlink_from_parent_tree():
+    """The walker hands `_place_one` the gitlink recorded in the parent's HEAD
+    tree, not the submodule's HEAD."""
+
+    def config(cwd, args):
+        if "--get-regexp" in args:
+            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+        return (False, "")
+
+    def ls_tree(cwd, args):
+        if cwd == "/repo" and args[1:] == ["HEAD", "--", "lib"]:
+            return (True, "160000 commit fresh\tlib\n")
+        return (True, "")
+
+    run = _FakeRun(
+        {
+            "config": config,
+            "status": (True, ""),
+            "rev-parse": (True, "stale\n"),
+            "ls-tree": ls_tree,
+            "show-ref": (False, ""),
+        }
+    )
+
+    submodules._place_submodule_branches(run, "/repo", "feat/foo")
+
+    assert run.checkouts() == [("/repo/lib", ["checkout", "-B", "feat/foo", "fresh"])]
+
+
+def test_walk_skips_submodule_without_gitlink():
+    """No gitlink for the path in the parent tree (lookup failed, or not a
+    gitlink): nothing to place against, so the submodule is not touched."""
+
+    def config(cwd, args):
+        if "--get-regexp" in args:
+            return (True, "submodule.lib.path lib\n") if cwd == "/repo" else (False, "")
+        return (False, "")
+
+    run = _FakeRun(
+        {
+            "config": config,
+            "status": (True, ""),
+            "rev-parse": (True, "stale\n"),
+            "ls-tree": (False, ""),
+            "show-ref": (False, ""),
+        }
+    )
+
+    submodules._place_submodule_branches(run, "/repo", "feat/foo")
+
     assert run.checkouts() == []
 
 
@@ -996,6 +1124,7 @@ def test_walk_no_branch_declared_does_not_check_out():
             "config": config,
             "status": (True, ""),
             "rev-parse": (True, "sha\n"),
+            "ls-tree": (True, "160000 commit sha\tlib\n"),
             "show-ref": (False, ""),
         }
     )
@@ -1016,6 +1145,7 @@ def test_walk_branch_dot_is_skipped():
             "config": config,
             "status": (True, ""),
             "rev-parse": (True, "sha\n"),
+            "ls-tree": (True, "160000 commit sha\tlib\n"),
             "show-ref": (False, ""),
         }
     )
@@ -1045,6 +1175,7 @@ def test_walk_places_branch_per_level():
             "config": config,
             "status": (True, ""),
             "rev-parse": (True, "sha\n"),
+            "ls-tree": (True, "160000 commit sha\tlib\n"),
             "show-ref": (False, ""),
         }
     )
@@ -1072,6 +1203,7 @@ def test_walk_with_branch_places_all_recursively():
             "config": config,
             "status": (True, ""),
             "rev-parse": (True, "sha\n"),
+            "ls-tree": (True, "160000 commit sha\tlib\n"),
             "show-ref": (False, ""),
         }
     )
@@ -1096,6 +1228,7 @@ def test_walk_none_branch_keeps_legacy_gitmodules_behaviour():
             "config": config,
             "status": (True, ""),
             "rev-parse": (True, "sha\n"),
+            "ls-tree": (True, "160000 commit sha\tlib\n"),
             "show-ref": (False, ""),
         }
     )

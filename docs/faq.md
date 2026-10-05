@@ -35,13 +35,15 @@ Toolbox are needed only for the GUI passthrough features.
 
 ### Can I use it from a Mac?
 
-Only by running JailBee *inside* a Linux VM (Colima/Lima) with the repo shared
-from macOS — the Incus daemon is Linux-only, and a native macOS client cannot
-make the Linux daemon bind-mount macOS paths. That path is **experimental and
-not yet verified on real Apple hardware**, and `jailbee ide`, `jailbee chrome`
-and GPG signing are unavailable there.
+Yes, as a client. JailBee itself needs Linux — the Incus daemon is Linux-only,
+and a native macOS client cannot make the Linux daemon bind-mount macOS paths —
+so it runs either on a Linux host you SSH into (recommended) or in a Linux VM
+on the Mac (Colima; **experimental, not yet verified on real Apple hardware**).
+In both, the Mac uses the optional SSH service for the dashboard, commands and
+files, and Windows App to see the containers' GUI apps on the shared RDP
+display. GPG signing with a key held on the Mac is not bridged.
 
-→ [Running JailBee on macOS](macos.md), [Limitations](security.md#limitations)
+→ [Using JailBee from a Mac](macos.md), [Limitations](security.md#limitations)
 
 ### What does it cost me compared to `git worktree` + `docker compose -p`?
 

@@ -62,7 +62,14 @@ _UNSAVED = "Unsaved changes — press q again to discard, or s to save."
 _ENTRY_INVALID = "This entry is incomplete — press Esc again to discard it. "
 
 _TEXT_KINDS = frozenset(
-    {FieldKind.STR, FieldKind.INT, FieldKind.PATH, FieldKind.CHOICE, FieldKind.SCALAR_UNION}
+    {
+        FieldKind.STR,
+        FieldKind.INT,
+        FieldKind.FLOAT,
+        FieldKind.PATH,
+        FieldKind.CHOICE,
+        FieldKind.SCALAR_UNION,
+    }
 )
 _MAP_KINDS = frozenset({FieldKind.STR_MAP, FieldKind.BOOL_MAP})
 """`STR_LIST` is deliberately absent: both dispatches below check it first

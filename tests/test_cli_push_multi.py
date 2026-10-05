@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from jailbee.cli import app
 from jailbee.lifecycle import ContainerInfo
+from tests.conftest import panel_text
 
 
 def _info(name: str, mode: str = "clone", state: str = "Running") -> ContainerInfo:
@@ -34,7 +35,7 @@ def _wire(mocker, tmp_path, *, containers, picked, action="plain", source="defau
         "jailbee.lifecycle.list_containers",
         return_value=containers,
     )
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=picked,
@@ -147,8 +148,8 @@ def test_push_pr_without_name_reports_when_no_eligible_pr_containers(mocker, tmp
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code == 1
-    assert "No running clone-mode PR containers" in result.output
+    assert result.exit_code == 2
+    assert "No running clone-mode PR containers" in panel_text(result.output)
     refresh.assert_not_called()
 
 
@@ -164,8 +165,8 @@ def test_push_pr_without_name_excludes_nonpositive_pr_numbers(mocker, tmp_path, 
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code == 1
-    assert "No running clone-mode PR containers" in result.output
+    assert result.exit_code == 2
+    assert "No running clone-mode PR containers" in panel_text(result.output)
     refresh.assert_not_called()
 
 
@@ -186,8 +187,31 @@ def test_push_pr_without_name_cancel_does_not_fetch_or_push(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "push", "--pr"])
 
-    assert result.exit_code != 0
-    assert "Aborted" in result.output
+    assert result.exit_code == 1
+    assert "cancelled" in result.output
+    refresh.assert_not_called()
+
+
+@pytest.mark.parametrize("several", [False, True])
+def test_push_pr_without_name_off_a_tty_exits_2_naming_candidates(mocker, tmp_path, several):
+    names = ["myrepo-pr-one", "myrepo-pr-two"][: 2 if several else 1]
+    _wire(mocker, tmp_path, containers=[_info(n) for n in names], picked=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.pr": "21",
+        "user.jailbee.branch": "feat/x",
+    }.get(key)
+    pick = mocker.patch("jailbee.tui.pick_container")
+    refresh = mocker.patch("jailbee.cli._refresh_pr_source")
+
+    result = CliRunner().invoke(app, ["push", "--pr"])
+
+    assert result.exit_code == 2
+    text = panel_text(result.output)
+    assert "PR container" in text
+    assert "pr-one" in text
+    pick.assert_not_called()
     refresh.assert_not_called()
 
 
@@ -291,9 +315,52 @@ def test_push_multi_user_cancels(mocker, tmp_path):
 
     result = CliRunner().invoke(app, ["git", "push"])
 
-    assert result.exit_code != 0
-    combined = result.stdout + (result.stderr or "")
-    assert "Aborted" in combined
+    assert result.exit_code == 1
+    assert "cancelled" in panel_text(result.stdout + (result.stderr or ""))
+    do_push.assert_not_called()
+
+
+def test_push_without_name_off_a_tty_lists_the_candidates(mocker, tmp_path):
+    _wire(
+        mocker,
+        tmp_path,
+        containers=[_info("myrepo-feat-a"), _info("myrepo-feat-b"), _info("myrepo-mount", "mount")],
+        picked=None,
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    picker = mocker.patch("jailbee.tui.pick_containers_multi")
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    combined = panel_text(result.stdout + (result.stderr or ""))
+    assert "Candidates: feat-a, feat-b" in combined
+    assert "mount" not in combined.split("Candidates:")[1]
+    picker.assert_not_called()
+    do_push.assert_not_called()
+
+
+def test_push_without_name_off_a_tty_never_auto_takes_a_single_container(mocker, tmp_path):
+    _wire(mocker, tmp_path, containers=[_info("myrepo-feat-a")], picked=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    assert "Candidates: feat-a" in panel_text(result.stdout + (result.stderr or ""))
+    do_push.assert_not_called()
+
+
+def test_push_without_name_and_no_pushable_container_is_a_missing_value(mocker, tmp_path):
+    _wire(mocker, tmp_path, containers=[_info("myrepo-mount", "mount")], picked=None)
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push"])
+
+    assert result.exit_code == 2
+    assert "No pushable containers" in panel_text(result.stdout + (result.stderr or ""))
     do_push.assert_not_called()
 
 

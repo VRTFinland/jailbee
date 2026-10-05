@@ -23,14 +23,14 @@ def test_empty_overrides_is_a_no_op_and_returns_the_same_object() -> None:
         ("listen", "0.0.0.0"),
         ("port", 2222),
         ("dashboard", False),
-        ("shell", True),
+        ("console", True),
         ("exec", True),
         ("restrict_host", False),
         ("files", True),
     ],
 )
 def test_each_given_flag_overrides_its_field(field: str, value: object) -> None:
-    base = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+    base = RemoteSSHConfig(console=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
     overrides = ServeOverrides(**{field: value})
 
     result = apply_ssh_overrides(base, overrides)
@@ -42,7 +42,7 @@ def test_unflagged_fields_keep_following_the_base_config() -> None:
     base = RemoteSSHConfig(
         listen="192.0.2.1",
         port=2200,
-        shell=True,
+        console=True,
         exec=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -51,7 +51,7 @@ def test_unflagged_fields_keep_following_the_base_config() -> None:
 
     assert result.listen == "192.0.2.1"
     assert result.port == 2200
-    assert result.shell is True
+    assert result.console is True
     assert result.exec is True
     assert result.commands.mode == "full"
     assert result.dashboard is False
@@ -87,7 +87,7 @@ def test_invalid_empty_allowlist_raises_config_error_not_a_traceback_worthy_exce
 def test_disabled_commands_override_preserves_enabled_routes() -> None:
     result = apply_ssh_overrides(RemoteSSHConfig(), ServeOverrides(commands_mode="disabled"))
 
-    assert (result.dashboard, result.shell, result.exec) == (True, True, True)
+    assert (result.dashboard, result.console, result.exec) == (True, True, True)
     assert result.commands.mode == "disabled"
 
 
@@ -120,11 +120,11 @@ def test_describe_overrides_returns_none_when_empty() -> None:
 
 
 def test_describe_overrides_lists_only_given_flags() -> None:
-    overrides = ServeOverrides(shell=True, commands_mode="allowlist", allow=["ls", "new"])
+    overrides = ServeOverrides(console=True, commands_mode="allowlist", allow=["ls", "new"])
 
     summary = describe_overrides(overrides)
 
-    assert summary == "overrides (not from global.yaml): shell=on, commands=allowlist [ls, new]"
+    assert summary == "overrides (not from global.yaml): console=on, commands=allowlist [ls, new]"
 
 
 def test_describe_overrides_reports_off_and_bind_fields() -> None:

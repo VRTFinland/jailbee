@@ -28,6 +28,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `pooled_caches` | dict of `name` → bool | `{}` | repo, or global for a personal override |
 | `share_local` | bool | `true` | repo |
 | `egress_allow` | list of strings | `[]` | global for cross-cutting, repo appends |
+| `egress_proxy_always` | bool | `true` | global or repo; on the work network every container gets the `HTTP(S)_PROXY` variables from first boot, strict and loose, so no new shell is needed; `false` limits them to strict containers with a wildcard |
 | `defaults` | `{memory, cpu, network, storage_pool}` | `16GiB/8/strict/default` | repo |
 | `golden` | see below | see below | repo |
 | `autostart` | see below | empty triggers | repo |
@@ -233,7 +234,7 @@ mount until it next restarts.
 
 ## `egress_allow` — strict-mode allowlist
 
-Entry forms (six variants):
+Entry forms (eight variants):
 
 | Form | Meaning |
 |---|---|
@@ -243,6 +244,10 @@ Entry forms (six variants):
 | `<ipv4>:<port>` | Single TCP port to that IPv4 |
 | `<cidr>` | All TCP ports to that CIDR |
 | `<cidr>:<port>` | Single TCP port to that CIDR |
+| `*.<domain>` | The domain and all subdomains (apex included), ports 80 and 443, via the egress proxy |
+| `*.<domain>:<port>` | Same, single TCP port |
+
+Wildcards are enforced by a Squid proxy container (`jailbee-egress-proxy`), not an ACL: they apply only to tools honouring `HTTP_PROXY`/`HTTPS_PROXY` (on the work network with `egress_proxy_always`, default `true`, set in every container's environment from first boot; on a legacy container, or with the key off, set in strict containers with a wildcard and a **new shell** is needed to see them), there is no TLS interception, and `*` is only allowed as the leading label with at least two labels after it. Loose mode keeps the variables on an always-on container (the proxy passes it unfiltered) and clears them elsewhere. LiteLLM route `egress` lists do not accept wildcards (validation rejects them).
 
 Resolution: hostname entries are DNS-resolved to IPv4 at `jailbee init` / `jailbee apply` time. All A records returned are inserted. If a CDN rotates, `jailbee apply --no-restart` re-resolves and updates the ACL live.
 
@@ -914,7 +919,7 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, unless `claude.seed_onboarding` adopts a login the repo's credential group already holds. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `platform.claude.com:443` (the `/login` token exchange) + `mcp-proxy.anthropic.com:443` (claude.ai connectors) + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state, unless `claude.seed_onboarding` adopts a login the repo's credential group already holds. |
 | `claude.plugins_enabled` | bool | `true` | When `true`, `effective_egress_allow` also opens the Claude plugin-marketplace hosts so the in-container CLI can install plugins. |
 | `claude.autostart` | bool | `false` | When `true` (and `enabled`), `run_autostart` launches the `claude` CLI as an autostart step. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |

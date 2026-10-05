@@ -142,7 +142,7 @@ That file is where the genericity above is actually spent:
 
 - **Bind mounts.** `host_mounts` declares what the container sees of the host,
   read-only by default. `optional_mounts` are declared but detached until you
-  ask (`jailbee mount <kind> <name>`), so sensitive things like `~/.aws` stay out
+  ask (`jailbee mount [<kind>] [<name>]`), so sensitive things like `~/.aws` stay out
   of an unattended agent's reach unless you attach them deliberately.
 - **Devices** (`host_devices`), **egress allowlist**, **shared caches** that
   every one of the repo's containers mounts at once and that survive

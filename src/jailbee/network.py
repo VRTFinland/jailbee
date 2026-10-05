@@ -19,10 +19,15 @@ parser and resolver.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import yaml
 
 from jailbee.config import Config
 from jailbee.egress import EgressEntry
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ALLOWLIST_DESC_PREFIX = "allowlisted: "
 SERVICES_ACL = "jailbee-services"
@@ -234,21 +239,23 @@ def allowlist_acl_yaml(
     return yaml.safe_dump(acl, sort_keys=False)
 
 
-def services_acl_yaml(endpoint: tuple[str, list[int]] | None) -> str:
+def services_acl_yaml(services: Mapping[str, tuple[list[str], list[int]]]) -> str:
+    """Render the services ACL: one rule per ip and port, described by its service label."""
     egress: list[dict[str, str]] = []
-    if endpoint is not None:
-        ip, ports = endpoint
-        for port in ports:
-            egress.append(
-                {
-                    "action": "allow",
-                    "destination": f"{ip}/32",
-                    "destination_port": str(port),
-                    "protocol": "tcp",
-                    "description": "jailbee LiteLLM proxy",
-                    "state": "enabled",
-                }
-            )
+    for label in sorted(services):
+        ips, ports = services[label]
+        for ip in ips:
+            for port in ports:
+                egress.append(
+                    {
+                        "action": "allow",
+                        "destination": f"{ip}/32",
+                        "destination_port": str(port),
+                        "protocol": "tcp",
+                        "description": label,
+                        "state": "enabled",
+                    }
+                )
     acl = {
         "name": SERVICES_ACL,
         "description": "jailbee service containers reachable from strict containers",

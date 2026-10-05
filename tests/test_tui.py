@@ -789,7 +789,7 @@ def test_choose_shared_credential_returns_none_without_a_tty(mocker):
 
     from jailbee.tui import choose_shared_credential
 
-    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     select = mocker.patch("questionary.select")
 
     assert choose_shared_credential(Path("/creds/work"), Path("/shared/claude"), "app") is None
@@ -806,7 +806,7 @@ def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(
     from jailbee.tui import choose_shared_credential
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     select = mocker.patch("questionary.select")
     select.return_value.ask.return_value = "group"
 
@@ -833,7 +833,7 @@ def test_choose_shared_credential_maps_both_cancel_answers_to_none(mocker, answe
 
     from jailbee.tui import choose_shared_credential
 
-    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     select = mocker.patch("questionary.select")
     select.return_value.ask.return_value = answer
 

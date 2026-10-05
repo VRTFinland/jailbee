@@ -2144,7 +2144,7 @@ def test_prepare_config_home_without_a_tty_is_refused(tmp_path: Path, monkeypatc
     from jailbee.config import ConfigError
 
     cfg, holder_cred, repo_cred = _two_credentials(tmp_path, monkeypatch)
-    mocker.patch("jailbee.tui.sys.stdin.isatty", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     select = mocker.patch("questionary.select")
 
     with pytest.raises(ConfigError, match="already holds a credential"):

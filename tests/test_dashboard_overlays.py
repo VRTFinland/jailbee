@@ -136,3 +136,40 @@ def test_pending_bytes_followed_by_ascii_do_not_wedge_the_prompt():
     assert (p.text, p.pending_utf8) == ("b", b"")
     p, _ = ov.handle_prompt_key(p, b"c")
     assert p.text == "bc"
+
+
+def _rows(n: int) -> list[str]:
+    return [f"row {i}" for i in range(n)]
+
+
+def test_window_lines_keeps_a_list_that_fits_or_has_no_limit():
+    assert ov.window_lines(_rows(5), 4, 5) == _rows(5)
+    assert ov.window_lines(_rows(50), 49, None) == _rows(50)
+
+
+def test_window_lines_marks_only_the_hidden_end_near_either_edge():
+    assert ov.window_lines(_rows(10), 0, 4) == [*_rows(3), "[dim]  ↓ 7 more[/dim]"]
+    assert ov.window_lines(_rows(10), 9, 4) == ["[dim]  ↑ 7 more[/dim]", *_rows(10)[7:]]
+
+
+def test_window_lines_keeps_the_cursor_in_view_with_both_markers_in_the_middle():
+    window = ov.window_lines(_rows(20), 10, 5)
+    assert window == ["[dim]  ↑ 9 more[/dim]", "row 9", "row 10", "row 11", "[dim]  ↓ 8 more[/dim]"]
+
+
+def test_window_lines_always_fits_its_budget_and_shows_the_cursor():
+    for count in range(1, 15):
+        for index in range(count):
+            for limit in range(1, 12):
+                window = ov.window_lines(_rows(count), index, limit)
+                assert len(window) <= max(limit, ov.MIN_LIST_ROWS)
+                assert f"row {index}" in window
+
+
+def test_render_picker_windows_its_entries_to_max_rows():
+    entries = tuple(ov.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
+    console = Console(width=80, record=True)
+    console.print(ov.render_picker(ov.Picker("x", "Pick one", entries, index=20), max_rows=5))
+    text = console.export_text()
+    assert "Entry 20" in text and "Entry 0" not in text and "Entry 29" not in text
+    assert "↑" in text and "↓" in text

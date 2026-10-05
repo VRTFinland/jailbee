@@ -69,6 +69,7 @@ def test_launch_allocates_the_pool_slot_before_starting(tmp_path, mocker):
     calls: list[str] = []
     mocker.patch("jailbee.pool.allocate", side_effect=lambda *a, **k: calls.append("allocate"))
     mocker.patch("jailbee.pool.ensure_pool_dirs")
+    mocker.patch("jailbee.app_instance.ensure_on_this_display", return_value=False)
     mocker.patch(
         "jailbee.gui.launch_detached", side_effect=lambda *a, **k: calls.append("launch_detached")
     )
@@ -315,7 +316,7 @@ def test_launch_autostart_apps_continues_after_one_raises(tmp_path, mocker):
         },
     )
 
-    def fake_launch(cfg, incus, container, spec, args=None):
+    def fake_launch(cfg, incus, container, spec, args=None, **kwargs):
         if spec.name == "a":
             raise ValueError("No launcher found for 'a'")
 
@@ -418,7 +419,7 @@ def test_launch_autostart_apps_stops_after_the_first_display_error(tmp_path, moc
     )
     seen: list[str] = []
 
-    def fake_launch(cfg, incus, container, spec, args=None):
+    def fake_launch(cfg, incus, container, spec, args=None, **kwargs):
         seen.append(spec.name)
         raise DisplayError("no client")
 
@@ -431,3 +432,276 @@ def test_launch_autostart_apps_stops_after_the_first_display_error(tmp_path, moc
     messages = [c.args[0] for c in error_mock.call_args_list]
     assert messages[0] == "no client"
     assert sum("Skipping the remaining autostart apps" in m for m in messages) == 1
+
+
+def _waypipe_env(monkeypatch, *, attach: bool) -> None:
+    from jailbee.remote_ssh.session import WaypipeSession, child_environment
+
+    env = child_environment(
+        {}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"), waypipe_attach=attach
+    )
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_launch_env_in_a_waypipe_session_starts_the_containers_server(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+    from jailbee.remote_ssh.session import WaypipeSession
+
+    cfg = make_cfg(tmp_path)
+    _waypipe_env(monkeypatch, attach=False)
+    start = mocker.patch(
+        "jailbee.remote_ssh.waypipe.start_container_server",
+        return_value="/run/jailbee-display/wp-0a1b2c3d-c",
+    )
+    shared = mocker.patch("jailbee.remote_display.prepare_shared_display")
+
+    env = launch_env(cfg, MagicMock(), "c")
+
+    assert env["WAYLAND_DISPLAY"] == "/run/jailbee-display/wp-0a1b2c3d-c"
+    assert start.call_args.args[1:3] == (WaypipeSession("0a1b2c3d", "lz4"), "c")
+    assert start.call_args.kwargs == {}
+    shared.assert_not_called()
+
+
+def test_the_sessions_own_gui_command_runs_attached(tmp_path, mocker, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+
+    _waypipe_env(monkeypatch, attach=True)
+    mocker.patch.object(apps, "launch_env", return_value={})
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    attached = mocker.patch("jailbee.gui.launch_attached", return_value=0)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+
+    attached.assert_called_once()
+    detached.assert_not_called()
+
+
+def test_a_waypipe_session_without_attach_still_launches_detached(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+
+    _waypipe_env(monkeypatch, attach=False)
+    mocker.patch.object(apps, "launch_env", return_value={})
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    attached = mocker.patch("jailbee.gui.launch_attached", return_value=0)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+
+    detached.assert_called_once()
+    attached.assert_not_called()
+
+
+def test_launch_env_on_the_host_attaches_the_host_display(tmp_path, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+
+    launch_env(cfg, incus, "c")
+
+    ensure.assert_called_once_with(cfg, incus, "c")
+
+
+def test_launch_env_in_a_waypipe_session_does_not_attach_the_host_display(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    _waypipe_env(monkeypatch, attach=False)
+    mocker.patch(
+        "jailbee.remote_ssh.waypipe.start_container_server",
+        return_value="/run/jailbee-display/wp-0a1b2c3d-c",
+    )
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    launch_env(make_cfg(tmp_path), MagicMock(), "c")
+
+    ensure.assert_not_called()
+
+
+def test_launch_env_on_a_shared_display_does_not_attach_the_host_display(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    mocker.patch("jailbee.remote_display.prepare_shared_display")
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    launch_env(make_cfg(tmp_path), MagicMock(), "c")
+
+    ensure.assert_not_called()
+
+
+def test_a_launch_without_a_host_display_launches_nothing(tmp_path, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+    from jailbee.remote_display import DisplayError
+
+    mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display",
+        side_effect=DisplayError("this is not a Wayland session"),
+    )
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    with pytest.raises(DisplayError):
+        apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+    detached.assert_not_called()
+
+
+def test_autostart_reports_a_missing_host_display_without_blaming_the_shared_one(
+    tmp_path, mocker
+) -> None:
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+    from jailbee.remote_display import DisplayError
+
+    spec = _plain_spec()
+    mocker.patch.object(apps, "resolve_apps", return_value=[replace(spec, autostart=True)] * 2)
+    launch = mocker.patch.object(
+        apps, "launch", side_effect=DisplayError("this is not a Wayland session")
+    )
+    error = mocker.patch("jailbee.tui.error")
+
+    apps.launch_autostart_apps(make_cfg(tmp_path), MagicMock(), "c")
+
+    assert launch.call_count == 1
+    messages = " ".join(c.args[0] for c in error.call_args_list)
+    assert "not a Wayland session" in messages
+    assert "shared display" not in messages
+
+
+def _chrome_cfg(tmp_path):
+    return make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "url": "https://cfg.test"}})
+
+
+def _launch_mocks(mocker):
+    mocker.patch("jailbee.pool.allocate")
+    mocker.patch("jailbee.pool.ensure_pool_dirs")
+    return mocker.patch("jailbee.gui.launch_detached")
+
+
+def test_a_moved_chrome_restores_its_session_before_the_url(tmp_path, mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import get_app, launch
+
+    cfg = _chrome_cfg(tmp_path)
+    detached = _launch_mocks(mocker)
+    ensure = mocker.patch("jailbee.app_instance.ensure_on_this_display", return_value=True)
+    launch(cfg, MagicMock(), "c1", get_app(cfg, "chrome"), move=True)
+    assert ensure.call_args.kwargs["move"] is True
+    inner = detached.call_args.args[3]
+    assert inner.endswith("--restore-last-session https://cfg.test")
+
+
+def test_an_unmoved_chrome_gets_no_restore_flag(tmp_path, mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import get_app, launch
+
+    cfg = _chrome_cfg(tmp_path)
+    detached = _launch_mocks(mocker)
+    mocker.patch("jailbee.app_instance.ensure_on_this_display", return_value=False)
+    launch(cfg, MagicMock(), "c1", get_app(cfg, "chrome"))
+    assert "--restore-last-session" not in detached.call_args.args[3]
+
+
+def test_the_running_check_sees_the_launch_environment(tmp_path, mocker, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import get_app, launch
+
+    for name in _SESSION_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    cfg = _chrome_cfg(tmp_path)
+    _launch_mocks(mocker)
+    ensure = mocker.patch("jailbee.app_instance.ensure_on_this_display", return_value=False)
+    launch(cfg, MagicMock(), "c1", get_app(cfg, "chrome"))
+    assert ensure.call_args.args[4]["WAYLAND_DISPLAY"] == "wayland-1"
+
+
+def test_apps_without_a_singleton_are_never_checked(tmp_path, mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch
+
+    mocker.patch("jailbee.gui.launch_detached")
+    ensure = mocker.patch("jailbee.app_instance.ensure_on_this_display")
+    launch(make_cfg(tmp_path), MagicMock(), "c1", _plain_spec())
+    ensure.assert_not_called()
+
+
+def test_autostart_never_checks_or_moves(tmp_path, mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_autostart_apps
+
+    cfg = make_cfg(tmp_path, browsers={"chrome": {"enabled": True, "autostart": True}})
+    detached = _launch_mocks(mocker)
+    ensure = mocker.patch("jailbee.app_instance.ensure_on_this_display")
+    launch_autostart_apps(cfg, MagicMock(), "c1")
+    ensure.assert_not_called()
+    assert detached.called
+
+
+def test_a_failed_move_launches_nothing(tmp_path, mocker):
+    from unittest.mock import MagicMock
+
+    from jailbee.app_instance import AppMoveError
+    from jailbee.apps import get_app, launch
+
+    cfg = _chrome_cfg(tmp_path)
+    detached = _launch_mocks(mocker)
+    mocker.patch("jailbee.app_instance.ensure_on_this_display", side_effect=AppMoveError("x"))
+    with pytest.raises(AppMoveError):
+        launch(cfg, MagicMock(), "c1", get_app(cfg, "chrome"))
+    detached.assert_not_called()
+
+
+def test_a_waypipe_attached_launch_after_a_move_restores_the_session(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+
+    cfg = _chrome_cfg(tmp_path)
+    _waypipe_env(monkeypatch, attach=True)
+    _launch_mocks(mocker)
+    mocker.patch.object(apps, "launch_env", return_value={})
+    mocker.patch("jailbee.app_instance.ensure_on_this_display", return_value=True)
+    attached = mocker.patch("jailbee.gui.launch_attached", return_value=0)
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    apps.launch(cfg, MagicMock(), "c1", apps.get_app(cfg, "chrome"))
+
+    detached.assert_not_called()
+    assert "--restore-last-session" in attached.call_args.args[3]

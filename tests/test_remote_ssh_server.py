@@ -23,6 +23,7 @@ from jailbee.remote_ssh import overrides as overrides_module
 from jailbee.remote_ssh import server
 from jailbee.remote_ssh.keys import ssh_paths
 from jailbee.remote_ssh.pty import ChildSpec, PTYError
+from jailbee.remote_ssh.session import WaypipeSession
 
 PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsz47IcK4hPdHS7xOXNGafb/Uw3epmEsD7xIJn434n6"
 FINGERPRINT = "SHA256:qLBHzrI/tje39Belv8gH7aaz1iprjQMjKh4sbnQnFT4"
@@ -199,7 +200,7 @@ def test_connection_audit_identifies_source_key_and_safe_disconnect_reason(
     assert "private disconnect message" not in caplog.text
 
 
-def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem=None):
+def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem=None, extra=None):
     """Keep AsyncSSH process/stream APIs real and mock only the transport channel."""
     channel = Mock(spec=asyncssh.SSHServerChannel)
     channel.get_encoding.return_value = (None, "strict")
@@ -216,6 +217,7 @@ def actual_process(command=None, *, term=None, env=None, raw_env=None, subsystem
     channel.get_extra_info.side_effect = {
         "peername": SOURCE,
         "jailbee_key_fingerprint": FINGERPRINT,
+        **(extra or {}),
     }.get
     process = asyncssh.SSHServerProcess(lambda _: None, None, 3, False)
     process.connection_made(channel)
@@ -257,7 +259,7 @@ def child(mocker):
 
 @pytest.fixture
 def configured(mocker):
-    ssh = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+    ssh = RemoteSSHConfig(console=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
     config = GlobalConfig(remote=RemoteConfig(ssh=ssh))
     return mocker.patch.object(server, "load_global_config", return_value=(config, []))
 
@@ -283,7 +285,7 @@ def repo(tmp_path, db_engine, monkeypatch):
 def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child):
     _, channel = session(command)
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     assert output(channel, 1) == b""
@@ -302,7 +304,7 @@ def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
     """
     _, channel = session(None, term="xterm")
     assert output(channel) == (
-        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  shell [--repo PREFIX]\r\n"
+        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  console [--repo PREFIX]\r\n"
         b"  --repo PREFIX COMMAND [ARGS...]\r\n"
     )
     channel.exit.assert_called_once_with(0)
@@ -312,7 +314,7 @@ def test_commandless_help_stays_bare_lf_without_a_pty(child):
     """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
     _, channel = session(None)
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     assert b"\r\n" not in output(channel)
@@ -325,12 +327,12 @@ def test_each_process_loads_fresh_config_for_help_and_policy(child, repo):
     _, first = session("--repo project ls")
     first.exit.assert_called_once_with(7)
     path.write_text(
-        "remote:\n  ssh:\n    dashboard: false\n    shell: true\n    exec: false\n"
+        "remote:\n  ssh:\n    dashboard: false\n    console: true\n    exec: false\n"
         "    commands:\n      mode: full\n"
     )
     _, help_channel = session()
     assert output(help_channel) == (
-        b"Available remote commands:\n  help\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  console [--repo PREFIX]\n"
     )
     _, last = session("--repo project ls")
     last.exit.assert_called_once_with(2)
@@ -349,7 +351,7 @@ def test_commandless_login_uses_configured_dashboard_and_explicit_help(child, mo
 
     _, help_channel = session("help")
     assert output(help_channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     help_channel.exit.assert_called_once_with(0)
@@ -397,7 +399,7 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
         # `configured`'s own ssh policy, serialized: see
         # test_console_receives_the_session_effective_policy for the
         # dedicated regression test on this argument's *content*.
-        policy = RemoteSSHConfig(shell=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
+        policy = RemoteSSHConfig(console=True, exec=True, commands=RemoteCommandPolicy(mode="full"))
         expected_argv = (*expected_argv, "--policy-json", policy.model_dump_json())
     elif arguments[0] == "dashboard":
         expected_argv = (
@@ -431,14 +433,14 @@ def test_console_receives_the_session_effective_policy_including_overrides(child
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     raw = RemoteSSHConfig(
-        dashboard=True, shell=False, commands=RemoteCommandPolicy(mode="disabled")
+        dashboard=True, console=False, commands=RemoteCommandPolicy(mode="disabled")
     )
     mocker.patch.object(
         server,
         "load_global_config",
         return_value=(GlobalConfig(remote=RemoteConfig(ssh=raw)), []),
     )
-    overrides = ServeOverrides(shell=True, commands_mode="full")
+    overrides = ServeOverrides(console=True, commands_mode="full")
 
     session("shell", term="xterm", overrides=overrides)
 
@@ -446,7 +448,7 @@ def test_console_receives_the_session_effective_policy_including_overrides(child
     assert argv[:4] == (sys.executable, "-m", "jailbee", "_remote-console")
     assert argv[4] == "--policy-json"
     sent = RemoteSSHConfig.model_validate_json(argv[5])
-    assert sent.shell is True
+    assert sent.console is True
     assert sent.commands.mode == "full"
 
 
@@ -522,8 +524,8 @@ def test_unknown_command_is_rejected_by_router(child, configured, repo):
 @pytest.mark.parametrize(
     ("command", "settings", "message"),
     [
-        ("dashboard", {"dashboard": False, "shell": True}, b"dashboard is disabled"),
-        ("shell", {"shell": False}, b"shell is disabled"),
+        ("dashboard", {"dashboard": False, "console": True}, b"dashboard is disabled"),
+        ("console", {"console": False}, b"console is disabled"),
         ("--repo project ls", {"exec": False}, b"execution is disabled"),
     ],
 )
@@ -556,10 +558,10 @@ def test_overrides_are_reapplied_after_a_per_session_global_config_reload(child,
 
     overrides = ServeOverrides(dashboard=True)
     first_raw = RemoteSSHConfig(
-        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=True, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     second_raw = RemoteSSHConfig(
-        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=False, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     load = mocker.patch.object(
         server,
@@ -583,7 +585,7 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     raw = RemoteSSHConfig(
-        shell=True,
+        console=True,
         commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
     )
     mocker.patch.object(
@@ -606,10 +608,10 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
 def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):
     """The `overrides=None` default must not change today's reload behaviour."""
     first_raw = RemoteSSHConfig(
-        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=True, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     second_raw = RemoteSSHConfig(
-        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=False, console=True, commands=RemoteCommandPolicy(mode="full")
     )
     mocker.patch.object(
         server,
@@ -673,7 +675,7 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
     assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  shell [--repo PREFIX]\n"
+        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
         b"  --repo PREFIX COMMAND [ARGS...]\n"
     )
     channel.exit.assert_called_once_with(0)
@@ -1117,7 +1119,7 @@ def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count
         listen="198.51.100.7",
         port=8123,
         dashboard=True,
-        shell=True,
+        console=True,
         exec=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -1126,7 +1128,7 @@ def test_startup_announces_real_port_entry_points_mode_fingerprint_and_key_count
     text = caplog.text
     assert "198.51.100.7:19999" in text
     assert "198.51.100.7:8123" not in text
-    assert "entry points: dashboard, shell, exec" in text
+    assert "entry points: dashboard, console, exec" in text
     assert "commands: full" in text
     assert f"host key fingerprint: {expected_fingerprint}" in text
     assert "2 authorized client keys" in text
@@ -1145,19 +1147,19 @@ def test_startup_prints_the_overrides_line_only_when_overrides_are_given(
     paths.data_dir.mkdir(parents=True)
     host_key = asyncssh.generate_private_key("ssh-ed25519")
     paths.host_key.write_bytes(host_key.export_private_key("openssh"))
-    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
-    overrides = ServeOverrides(shell=True, commands_mode="allowlist", allow=["ls", "new"])
+    config = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
+    overrides = ServeOverrides(console=True, commands_mode="allowlist", allow=["ls", "new"])
     with caplog.at_level(logging.INFO, logger=server.__name__):
         asyncio.run(server.serve_async(config, overrides))
     text = caplog.text
-    assert "overrides (not from global.yaml): shell=on, commands=allowlist [ls, new]" in text
+    assert "overrides (not from global.yaml): console=on, commands=allowlist [ls, new]" in text
 
 
 def test_listener_uses_a_closure_process_factory_when_overrides_are_given(listener):
     from jailbee.remote_ssh.overrides import ServeOverrides
 
     overrides = ServeOverrides(dashboard=False)
-    config = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    config = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     asyncio.run(server.serve_async(config, overrides))
     _, listen = listener
     factory = listen.call_args.kwargs["process_factory"]
@@ -1371,6 +1373,29 @@ def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, c
         asyncio.run(server.serve_async(config))
 
     assert "allowlisted but refused while host restrictions are on: gui" in caplog.text
+
+
+def test_startup_reports_network_widening_when_on(listener, caplog, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, network=True)))
+
+    assert "network widening: on (net loose, net egress add)" in caplog.text
+
+
+def test_startup_does_not_call_net_loose_refused_when_network_is_on(listener, caplog, monkeypatch):
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    config = RemoteSSHConfig(
+        exec=True,
+        network=True,
+        commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "net loose", "setup"]),
+    )
+
+    with caplog.at_level(logging.INFO, logger=server.__name__):
+        asyncio.run(server.serve_async(config))
+
+    assert "allowlisted but refused while host restrictions are on: setup" in caplog.text
 
 
 def test_process_factory_passes_the_run_update_watch(listener, mocker):
@@ -1609,7 +1634,9 @@ def test_server_factory_hands_the_live_gui_flag_to_the_server(listener, mocker, 
     """A dropped `remote_gui_enabled` wiring leaves forwarding on or off for good."""
     _, listen = listener
     seen = mocker.patch.object(server, "remote_gui_enabled", return_value=enabled)
+    mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
     asyncio.run(server.serve_async(RemoteSSHConfig()))
+    seen.reset_mock()  # startup also asks, to decide on pruning waypipe leftovers
 
     instance = listen.call_args.kwargs["server_factory"]()
 
@@ -1687,3 +1714,198 @@ def test_startup_summary_names_the_file_transfer_scope_only_when_on():
     off = server._startup_summary(RemoteSSHConfig(), SimpleNamespace(get_port=lambda: 8022), None)
     assert "sftp/scp: on (container repo directories only)" in on
     assert "sftp/scp" not in off
+
+
+WP_SOCK = "/tmp/waypipe-server-6dCPSslHnp.sock"
+
+
+def test_the_waypipe_forward_listens_at_jailbees_own_path(connection):
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    connection.forward_local_path = Mock(return_value="listener-coro")
+
+    result = _gui_server(connection).unix_server_requested(WP_SOCK)
+
+    assert result == "listener-coro"
+    own, dest = connection.forward_local_path.call_args.args
+    listen, session_id = connection.get_extra_info("jailbee_waypipe")
+    assert dest == listen == WP_SOCK
+    from jailbee.remote_ssh.waypipe import links_socket
+
+    assert own == str(links_socket(session_id))
+    assert links_socket(session_id).parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    "setup",
+    ["feature-off", "unauthenticated", "second-forward", "bad-shape", "path-too-long"],
+)
+def test_the_waypipe_forward_is_refused(connection, monkeypatch, tmp_path, setup):
+    connection.forward_local_path = Mock(return_value="listener-coro")
+    enabled = setup != "feature-off"
+    if setup != "unauthenticated":
+        connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    instance = _gui_server(connection, enabled=enabled)
+    path = WP_SOCK
+    if setup == "second-forward":
+        assert instance.unix_server_requested(WP_SOCK) == "listener-coro"
+        path = "/tmp/waypipe-server-AAAAAAAAAA.sock"
+    if setup == "bad-shape":
+        path = "/run/user/1000/bus"
+    if setup == "path-too-long":
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ("d" * 120)))
+
+    assert instance.unix_server_requested(path) is False
+
+
+def test_unix_connections_stay_refused_even_in_a_waypipe_session(connection):
+    connection.set_extra_info(jailbee_key_fingerprint=FINGERPRINT)
+    connection.forward_local_path = Mock(return_value="listener-coro")
+    instance = _gui_server(connection)
+    instance.unix_server_requested(WP_SOCK)
+
+    assert instance.unix_connection_requested(WP_SOCK) is False
+
+
+WP_CMD = (
+    f"waypipe --unlink-socket --threads 0 --compress zstd --socket {WP_SOCK} "
+    "--display wayland-x server dashboard"
+)
+WP_FORWARD = {"jailbee_waypipe": (WP_SOCK, "0a1b2c3d")}
+
+
+@pytest.fixture
+def gui_config(mocker):
+    ssh = RemoteSSHConfig(
+        console=True, exec=True, dashboard=True, gui=True, commands=RemoteCommandPolicy(mode="full")
+    )
+    return mocker.patch.object(
+        server, "load_global_config", return_value=(GlobalConfig(remote=RemoteConfig(ssh=ssh)), [])
+    )
+
+
+@pytest.fixture
+def waypipe_ops(mocker):
+    return {
+        "ensure": mocker.patch("jailbee.remote_display.ensure_waypipe_display"),
+        "stop": mocker.patch("jailbee.remote_ssh.waypipe.stop_session"),
+    }
+
+
+def test_a_waypipe_session_runs_its_command_with_the_session_markers(
+    child, gui_config, waypipe_ops
+):
+    session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    spec = child.call_args.args[1]
+    assert spec.argv[3] == "dashboard"
+    assert spec.waypipe == WaypipeSession("0a1b2c3d", "zstd")
+    assert spec.waypipe_attach is False
+    waypipe_ops["ensure"].assert_called_once()
+    waypipe_ops["stop"].assert_called_once()
+    assert waypipe_ops["stop"].call_args.args[1] == "0a1b2c3d"
+
+
+def test_a_direct_gui_command_runs_attached(child, gui_config, waypipe_ops, repo):
+    cmd = WP_CMD.replace("server dashboard", "server --repo project chrome c")
+
+    session(cmd, extra=WP_FORWARD)
+
+    assert child.call_args.args[1].waypipe_attach is True
+
+
+def test_a_direct_non_gui_command_is_not_attached(child, gui_config, waypipe_ops, repo):
+    session(WP_CMD.replace("server dashboard", "server --repo project ls"), extra=WP_FORWARD)
+
+    assert child.call_args.args[1].waypipe_attach is False
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"jailbee_waypipe": ("/tmp/waypipe-server-OTHEROTHER.sock", "0a1b2c3d")}],
+)
+def test_waypipe_without_its_forward_is_refused_before_anything_runs(
+    child, gui_config, waypipe_ops, extra
+):
+    _, channel = session(WP_CMD, extra=extra)
+
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()
+    assert b"waypipe" in output(channel, 1)
+
+
+def test_waypipe_with_the_feature_off_is_refused_naming_the_key(child, configured, waypipe_ops):
+    _, channel = session(WP_CMD, extra=WP_FORWARD)
+
+    child.assert_not_called()
+    assert b"remote.ssh.gui" in output(channel, 1)
+
+
+def test_a_display_that_cannot_start_refuses_the_session(child, gui_config, waypipe_ops):
+    from jailbee.remote_display import DisplayError
+
+    waypipe_ops["ensure"].side_effect = DisplayError("weston is 'failed'")
+
+    _, channel = session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    child.assert_not_called()
+    assert b"weston is 'failed'" in output(channel, 1)
+    waypipe_ops["stop"].assert_called_once()
+
+
+def test_the_session_is_stopped_even_when_the_child_fails(child, gui_config, waypipe_ops):
+    child.side_effect = ConnectionResetError()
+
+    session(WP_CMD, term="xterm", extra=WP_FORWARD)
+
+    waypipe_ops["stop"].assert_called_once()
+
+
+def test_an_empty_waypipe_command_takes_the_no_command_route(child, gui_config, waypipe_ops):
+    cmd = (
+        f"waypipe --login-shell --unlink-socket --compress lz4 --socket {WP_SOCK} "
+        "--display w server"
+    )
+
+    _, channel = session(cmd, term="xterm", extra=WP_FORWARD)
+
+    # default_entrypoint is "help" in this config: help text, no child.
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()
+    assert b"Available remote commands" in output(channel)
+
+
+@pytest.mark.parametrize("gui", [True, False])
+def test_serve_async_prunes_dead_waypipe_sessions_only_with_gui_on_and_after_listening(
+    listener, mocker, gui
+):
+    _, listen = listener
+    mocker.patch.object(server, "remote_gui_enabled", return_value=gui)
+    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
+    listening_at_prune = []
+    prune.side_effect = lambda incus: listening_at_prune.append(bool(listen.await_count))
+
+    asyncio.run(server.serve_async(RemoteSSHConfig()))
+
+    assert prune.call_count == (1 if gui else 0)
+    assert listening_at_prune == ([True] if gui else [])
+
+
+def test_a_failed_listen_prunes_nothing(listener, mocker):
+    _, listen = listener
+    listen.side_effect = OSError("Address already in use")
+    mocker.patch.object(server, "remote_gui_enabled", return_value=True)
+    prune = mocker.patch("jailbee.remote_ssh.waypipe.prune_dead")
+
+    with pytest.raises(OSError):
+        asyncio.run(server.serve_async(RemoteSSHConfig()))
+
+    prune.assert_not_called()
+
+
+def test_a_refused_waypipe_command_never_provisions_the_display(child, gui_config, waypipe_ops):
+    cmd = WP_CMD.replace("server dashboard", "server definitely-not-a-command")
+
+    session(cmd, extra=WP_FORWARD)
+
+    child.assert_not_called()
+    waypipe_ops["ensure"].assert_not_called()

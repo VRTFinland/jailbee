@@ -6,7 +6,7 @@ systemd unit never passes any of it (see
 `templates/systemd/jailbee-ssh.service`). `apply_ssh_overrides` merges a
 `ServeOverrides` onto a loaded `RemoteSSHConfig` and revalidates the result
 through the very same pydantic model `global.yaml` uses, so an invalid
-combination (e.g. `--shell` with `commands.mode: disabled`, or an
+combination (e.g. `--console` with `commands.mode: disabled`, or an
 `--allow` leaf outside the current public CLI) is rejected exactly like a
 bad config file would be.
 """
@@ -38,7 +38,7 @@ class ServeOverrides:
     listen: str | None = None
     port: int | None = None
     dashboard: bool | None = None
-    shell: bool | None = None
+    console: bool | None = None
     exec: bool | None = None
     commands_mode: CommandMode | None = None
     allow: list[str] | None = None
@@ -51,7 +51,7 @@ class ServeOverrides:
             self.listen is None
             and self.port is None
             and self.dashboard is None
-            and self.shell is None
+            and self.console is None
             and self.exec is None
             and self.commands_mode is None
             and self.allow is None
@@ -70,7 +70,7 @@ def apply_ssh_overrides(config: RemoteSSHConfig, overrides: ServeOverrides) -> R
 
     Validation goes through `RemoteSSHConfig.model_validate` on a merged
     dict, never a bare `model_copy(update=...)`, which would skip the
-    model's cross-field validators (e.g. `shell`/`exec` requiring an
+    model's cross-field validators (e.g. `console`/`exec` requiring an
     enabled `commands.mode`). An `--allow` leaf is additionally checked
     against `known_command_paths()`, mirroring the check
     `global_config.validate_global_raw` applies to `global.yaml` itself.
@@ -85,8 +85,8 @@ def apply_ssh_overrides(config: RemoteSSHConfig, overrides: ServeOverrides) -> R
         merged["port"] = overrides.port
     if overrides.dashboard is not None:
         merged["dashboard"] = overrides.dashboard
-    if overrides.shell is not None:
-        merged["shell"] = overrides.shell
+    if overrides.console is not None:
+        merged["console"] = overrides.console
     if overrides.exec is not None:
         merged["exec"] = overrides.exec
     if overrides.restrict_host is not None:
@@ -134,8 +134,8 @@ def describe_overrides(overrides: ServeOverrides) -> str | None:
         parts.append(f"port={overrides.port}")
     if overrides.dashboard is not None:
         parts.append(f"dashboard={'on' if overrides.dashboard else 'off'}")
-    if overrides.shell is not None:
-        parts.append(f"shell={'on' if overrides.shell else 'off'}")
+    if overrides.console is not None:
+        parts.append(f"console={'on' if overrides.console else 'off'}")
     if overrides.exec is not None:
         parts.append(f"exec={'on' if overrides.exec else 'off'}")
     if overrides.restrict_host is not None:

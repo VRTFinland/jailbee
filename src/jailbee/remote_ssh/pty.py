@@ -16,7 +16,7 @@ from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from jailbee.remote_ssh.session import child_environment
+from jailbee.remote_ssh.session import WaypipeSession, child_environment
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -48,6 +48,10 @@ class ChildSpec:
     # `remote.ssh.gui`: the server's port when GUI apps belong on the shared
     # RDP display, else None.
     gui_port: int | None = None
+    # A `waypipe ssh` session (`server.handle_process`), else None; `waypipe_attach`
+    # when the session's own command is a GUI launcher.
+    waypipe: WaypipeSession | None = None
+    waypipe_attach: bool = False
 
 
 class _Reader(Protocol):
@@ -363,6 +367,8 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
         restricted=spec.restrict_host,
         excluded_repos=spec.excluded_repos,
         gui_port=spec.gui_port,
+        waypipe=spec.waypipe,
+        waypipe_attach=spec.waypipe_attach,
     )
     pid, master = pty.fork()
     if pid == 0:
@@ -435,6 +441,8 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
                 restricted=spec.restrict_host,
                 excluded_repos=spec.excluded_repos,
                 gui_port=spec.gui_port,
+                waypipe=spec.waypipe,
+                waypipe_attach=spec.waypipe_attach,
             ),
             start_new_session=True,
         )

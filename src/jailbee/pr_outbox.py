@@ -475,6 +475,15 @@ class StaleError(GateError):
     """
 
 
+class ForeignPrError(GateError):
+    """Gate 2 specifically: the manifest names a PR the container does not own.
+
+    A subclass for the same reason as `StaleError`: it is the refusal
+    ``allow_foreign`` (``--foreign``) relaxes, and each caller names that
+    remedy in its own terms.
+    """
+
+
 @dataclass(frozen=True)
 class Target:
     """What one manifest resolves to, once the gates have run."""
@@ -483,10 +492,19 @@ class Target:
     pr: PrInfo | None
     stale: bool
     scope: PrScope
+    # The manifest names a PR the container does not own, admitted only
+    # because the caller passed `allow_foreign` (see `resolve_target`).
+    foreign: bool = False
 
 
 def resolve_target(
-    cfg: Config, incus: Incus, container: str, manifest: Manifest, *, force: bool
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    manifest: Manifest,
+    *,
+    force: bool,
+    allow_foreign: bool = False,
 ) -> Target:
     """Run the validation gates for `manifest` and resolve what it targets.
 
@@ -501,6 +519,11 @@ def resolve_target(
        number is recorded. Ownership is unioned across matching scopes.
        A ``pr: null`` manifest resolves only when exactly one unique PR is
        recorded; otherwise it stays unresolved for the publishing command.
+       ``allow_foreign`` admits a numbered manifest for any other PR of the
+       same repository, marked ``foreign`` so the plan can warn about it: the
+       user publishing it has to see that it lands on a PR this container was
+       not bound to. It never binds a ``pr: null`` manifest — that one still
+       means "this container's PR" — and gates 1 and 3 hold regardless.
     3. Staleness: computed for every manifest with a PR, but it only raises
        (as `StaleError`, the one refusal `force` relaxes) when the manifest
        carries a `ReviewAction` and `force` was not given — a moved head
@@ -567,12 +590,13 @@ def resolve_target(
             return Target(manifest=manifest, pr=None, stale=False, scope=scope)
         number = next(iter(owned_numbers))
     else:
-        if manifest.pr not in owned_numbers:
-            raise GateError(
+        if manifest.pr not in owned_numbers and not allow_foreign:
+            raise ForeignPrError(
                 f"manifest {manifest.name} references PR #{manifest.pr}, which "
                 f"container {container} does not own"
             )
         number = manifest.pr
+    foreign = number not in owned_numbers
 
     info = pr.resolve_pr(scope.repo_root, number, remote=scope.remote, repo=manifest.repo)
     stale = manifest.head_sha not in (None, info.head_sha)
@@ -583,7 +607,21 @@ def resolve_target(
             "(ask the agent to re-read the diff) or pass --force"
         )
 
-    return Target(manifest=manifest, pr=info, stale=stale, scope=scope)
+    return Target(manifest=manifest, pr=info, stale=stale, scope=scope, foreign=foreign)
+
+
+def foreign_warning(target: Target, short: str) -> str | None:
+    """The plan's warning for a PR the container does not own, or None.
+
+    Plain text, no markup: the caller decides how loud to print it.
+    """
+    if not target.foreign or target.pr is None:
+        return None
+    author = f" by @{target.pr.author_login}" if target.pr.author_login else ""
+    return (
+        f"PR #{target.pr.number}{author} is not bound to container {short}: "
+        "check that this is the PR you mean to publish to"
+    )
 
 
 def _first_line(body: str, width: int = 68) -> str:
@@ -1823,6 +1861,9 @@ def _print_plan(
         f"head {escape(target.pr.head_sha)}"
     )
     console.print(f"container {escape(short)} · manifest {escape(manifest.name)}")
+    warning = foreign_warning(target, short)
+    if warning is not None:
+        console.print(f"[bold yellow]⚠ {escape(warning)}[/bold yellow]")
     if target.stale:
         console.print("[yellow]the PR head has moved since this was written[/yellow]")
     already = [i for i in sorted(progress.applied) if i < len(manifest.actions)]
@@ -1900,7 +1941,7 @@ def _held_out(manifest: Manifest, progress: Progress, indices: frozenset[int] | 
     return [i for i in pending_indices(manifest, progress) if i not in indices]
 
 
-def _held_back(reason: str, short: str, *, stale: bool) -> str:
+def _held_back(reason: str, short: str, *, stale: bool, foreign: bool = False) -> str:
     """A gate failure on the offer path, phrased as something to act on.
 
     The interesting case is staleness: `jailbee pr` has just pushed, so on the
@@ -1909,10 +1950,13 @@ def _held_back(reason: str, short: str, *, stale: bool) -> str:
     `StaleError`, because that is the only refusal `resolve_target` relaxes
     under it — offering it for a non-GitHub remote, a wrong repo slug, a PR the
     container does not own, or a `gh` that would not answer would send the user
-    back for the identical refusal.
+    back for the identical refusal. A PR the container does not own is the
+    other relaxable refusal, under `--foreign`.
     """
     if stale:
         remedy = f"`jailbee review apply --force {short}` posts them as outdated comments."
+    elif foreign:
+        remedy = f"`jailbee review apply --foreign {short}` publishes to it anyway."
     else:
         remedy = f"`jailbee review apply {short}` deals with it separately."
     return f"held back: {reason}\n  {remedy}"
@@ -1929,6 +1973,7 @@ def _gate_manifests(
     comments_only: bool,
     manifest_names: Sequence[str] | None = None,
     raise_errors: bool = False,
+    allow_foreign: bool = False,
 ) -> tuple[list[Target], list[str], list[str]]:
     """Gate every pending manifest: (publishable targets, refusals, notes).
 
@@ -1985,14 +2030,25 @@ def _gate_manifests(
                     )
                 continue
         try:
-            target = resolve_target(cfg, incus, container, manifest, force=force)
+            target = resolve_target(
+                cfg, incus, container, manifest, force=force, allow_foreign=allow_foreign
+            )
         except GateError as e:
+            foreign = isinstance(e, ForeignPrError)
             if raise_errors:
+                if foreign:
+                    raise ForeignPrError(f"{e}; pass --foreign to publish to it anyway") from e
                 raise
             if comments_only:
-                # `StaleError` is the only refusal `--force` relaxes; every
-                # other `GateError` would refuse again identically.
-                notes.append(_held_back(str(e), short, stale=isinstance(e, StaleError)))
+                # `--force` relaxes only `StaleError` and `--foreign` only
+                # `ForeignPrError`; every other `GateError` would refuse again
+                # identically.
+                notes.append(
+                    _held_back(str(e), short, stale=isinstance(e, StaleError), foreign=foreign)
+                )
+            elif foreign:
+                # Two lines, so the flag is never split across a wrap.
+                refusals.append(f"{e}.\n  Re-run with --foreign to publish to it anyway.")
             else:
                 refusals.append(str(e))
             continue
@@ -2065,6 +2121,7 @@ def offer_pending_comments(
     management: PrManagement | None = None,
     expected_revision: str | None = None,
     raise_errors: bool = False,
+    allow_foreign: bool = False,
 ) -> int:
     """Serialize fresh PR inspection, confirmation, revalidation and publication.
 
@@ -2072,6 +2129,8 @@ def offer_pending_comments(
     an integer pr_number chooses comments-only mode, never a PR-number filter.
     Supplied previews are validated, not replaced with a different proposal.
     expected_revision is the shared inspection token for a single selected manifest.
+    allow_foreign is the caller's consent to publish to a PR the container does
+    not own (see `resolve_target`); the plan then warns about each such target.
     """
     from jailbee.outbox import io as store_io
     from jailbee.outbox.inspect import pr_progress_evidence
@@ -2137,6 +2196,7 @@ def offer_pending_comments(
                 management=manager,
                 selected_publication=explicit and pr_number is None,
                 raise_errors=raise_errors,
+                allow_foreign=allow_foreign,
             )
     except (
         OutboxReadError,
@@ -2173,6 +2233,7 @@ def _offer_locked(
     management: PrManagement,
     selected_publication: bool = False,
     raise_errors: bool = False,
+    allow_foreign: bool = False,
 ) -> int:
     """Show what `container` wants to publish, ask once, publish it.
 
@@ -2231,6 +2292,7 @@ def _offer_locked(
         comments_only=for_offer,
         manifest_names=manifest_names,
         raise_errors=raise_errors,
+        allow_foreign=allow_foreign,
     )
     for message in refusals:
         error_plain(message)
@@ -2276,6 +2338,9 @@ def _offer_locked(
             )
             console.print(f"Container: {safe_text(container)}", markup=False, highlight=False)
             console.print(f"Head: {safe_text(target.pr.head_sha)}", markup=False, highlight=False)
+            warning = foreign_warning(target, short)
+            if warning is not None:
+                console.print(f"Warning: {safe_text(warning)}", markup=False, highlight=False)
             print_lines(show_lines(displayed))
             if progress.applied:
                 console.print(f"Already published (skipped): {sorted(progress.applied)}")
@@ -2312,12 +2377,15 @@ def _offer_locked(
     _compare_preview(identity, outbox, fresh_store, [t.manifest.name for t, _, _ in plans])
     refreshed_plans = []
     for target, progress, idx in plans:
-        refreshed = resolve_target(cfg, incus, container, target.manifest, force=force)
+        refreshed = resolve_target(
+            cfg, incus, container, target.manifest, force=force, allow_foreign=allow_foreign
+        )
         if (
             refreshed.pr is None
             or target.pr is None
             or refreshed.pr.number != target.pr.number
             or refreshed.scope != target.scope
+            or refreshed.foreign != target.foreign
         ):
             raise OutboxChanged("PR target changed; refresh required")
         refreshed_plans.append((refreshed, progress, idx))

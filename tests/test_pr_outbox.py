@@ -864,13 +864,69 @@ def test_resolve_target_refuses_a_foreign_repo(mocker, make_cfg, tmp_path):
 
 
 def test_resolve_target_refuses_a_pr_the_container_does_not_own(mocker, make_cfg, tmp_path):
-    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+    from jailbee.pr_outbox import ForeignPrError, parse_manifest, resolve_target
 
     incus = _target_setup(mocker, tmp_path, labels={"user.jailbee.pr": "1234"})
     manifest = parse_manifest("001-x.json", _manifest_text(pr=999), {})
 
-    with pytest.raises(GateError, match="#999"):
+    with pytest.raises(ForeignPrError, match="#999"):
         resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False)
+
+
+def test_resolve_target_admits_a_foreign_pr_when_allowed_and_marks_it(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(
+        mocker, tmp_path, labels={"user.jailbee.pr": "1234"}, pr=_pr_info(number=999)
+    )
+    manifest = parse_manifest("001-x.json", _manifest_text(pr=999), {})
+
+    target = resolve_target(
+        make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign=True
+    )
+
+    assert target.pr is not None and target.pr.number == 999
+    assert target.foreign is True
+
+
+def test_resolve_target_does_not_mark_the_containers_own_pr_foreign(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(), {})
+
+    target = resolve_target(
+        make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign=True
+    )
+
+    assert target.foreign is False
+
+
+def test_allow_foreign_keeps_the_repo_lock(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import GateError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path)
+    manifest = parse_manifest("001-x.json", _manifest_text(repo="evil/other", pr=999), {})
+
+    with pytest.raises(GateError, match="evil/other"):
+        resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign=True)
+
+
+def test_allow_foreign_keeps_the_stale_review_refusal(mocker, make_cfg, tmp_path):
+    from jailbee.pr_outbox import StaleError, parse_manifest, resolve_target
+
+    incus = _target_setup(mocker, tmp_path, pr=_pr_info(number=999, head_sha="def5678"))
+    manifest = parse_manifest(
+        "001-x.json",
+        _manifest_text(
+            pr=999,
+            actions=[{"type": "review", "body": "s", "comments": []}],
+        ),
+        {},
+    )
+
+    with pytest.raises(StaleError):
+        resolve_target(make_cfg(tmp_path), incus, "c", manifest, force=False, allow_foreign=True)
 
 
 def test_resolve_target_falls_back_to_the_branchs_pr_without_a_label(mocker, make_cfg, tmp_path):
@@ -1013,6 +1069,49 @@ def test_plan_lines_show_anchors_truncated_bodies_and_a_description_diff():
     assert "shifts every total" not in joined  # truncated to one line
     assert "reply to general comment #4455" in joined
     assert "-Old body." in joined and "+New body." in joined  # unified diff
+
+
+def _foreign_target(*, foreign: bool, author: str | None = "octocat"):
+    from jailbee.pr import PrInfo
+    from jailbee.pr_outbox import Target, parse_manifest
+
+    return Target(
+        manifest=parse_manifest("001-x.json", _manifest_text(pr=999), {}),
+        pr=PrInfo(
+            number=999,
+            head_ref="feat/x",
+            head_sha="abc1234",
+            state="OPEN",
+            base_ref="main",
+            author_login=author,
+        ),
+        stale=False,
+        scope=PrScope(Path("/repo"), "origin", "", None),
+        foreign=foreign,
+    )
+
+
+def test_foreign_warning_names_the_pr_the_container_and_the_author():
+    from jailbee.pr_outbox import foreign_warning
+
+    warning = foreign_warning(_foreign_target(foreign=True), "feat-a")
+
+    assert warning is not None
+    assert "#999" in warning and "feat-a" in warning and "@octocat" in warning
+
+
+def test_foreign_warning_without_a_known_author_still_warns():
+    from jailbee.pr_outbox import foreign_warning
+
+    warning = foreign_warning(_foreign_target(foreign=True, author=None), "feat-a")
+
+    assert warning is not None and "#999" in warning and "@" not in warning
+
+
+def test_foreign_warning_is_none_for_the_containers_own_pr():
+    from jailbee.pr_outbox import foreign_warning
+
+    assert foreign_warning(_foreign_target(foreign=False), "feat-a") is None
 
 
 # --------------------------------------------------------------------------

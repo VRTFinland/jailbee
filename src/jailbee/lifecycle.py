@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -291,6 +289,7 @@ def list_containers(
     fast: bool = False,
     timeout: int | None = None,
     scope: RemoteRepoScope | None = None,
+    instances: list[dict[str, Any]] | None = None,
 ) -> list[ContainerInfo]:
     """Return container infos for jailbee-managed containers.
 
@@ -303,9 +302,15 @@ def list_containers(
     ``fast=True`` leaves ``ip`` and ``memory_usage`` as None because the
     per-instance state is not fetched; callers that only need names (shell
     completion) use it.
+
+    ``instances`` is an ``Incus.list_containers()`` result fetched by the
+    caller; when given, Incus is not listed again (``fast`` and ``timeout``
+    are then unused). A caller that reads several repos from one snapshot
+    — the dashboards, every refresh tick — passes it so the daemon builds
+    the full instance state once instead of once per repo.
     """
     from jailbee.accounts import groups
-    from jailbee.mounts import DEVICE_NAME_PREFIX
+    from jailbee.mounts import attached_kinds
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
 
@@ -313,7 +318,9 @@ def list_containers(
     own_net_to_mode = {v: k for k, v in own_names.net_by_mode.items()}
 
     out: list[ContainerInfo] = []
-    for raw in incus.list_containers(fast=fast, timeout=timeout):
+    if instances is None:
+        instances = incus.list_containers(fast=fast, timeout=timeout)
+    for raw in instances:
         # A container mid-destroy can be reported with "profiles": null, so the
         # `.get(..., [])` default is bypassed (key present, value None) — same
         # trap the state/network chain below guards against with `or {}`.
@@ -423,14 +430,7 @@ def list_containers(
                 # clean the corrupt label on its next pass.
                 loose_until = None
 
-        devices = raw.get("devices") or {}
-        attached = tuple(
-            sorted(
-                device.removeprefix(DEVICE_NAME_PREFIX)
-                for device in devices
-                if device.startswith(DEVICE_NAME_PREFIX)
-            )
-        )
+        attached = attached_kinds(raw.get("devices") or {})
 
         out.append(
             ContainerInfo(
@@ -1635,6 +1635,10 @@ def new_container(
 
     sync_hosts(cfg, incus, name, opts.network, mirror_endpoint=opts.mirror_endpoint)
 
+    from jailbee import egress_proxy
+
+    egress_proxy.sync_container(cfg, incus, name, opts.network)
+
     # Wire dockerd to the registry mirror via HTTPS_PROXY. Strict
     # mode needs the proxy to reach upstreams under its ACL; loose mode
     # gets it too for caching. None endpoint OR None CA path means caller
@@ -2119,9 +2123,10 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
     happens after the boot returns, by which time PID 1 + logind are
     running. See the runtime_mounts module docstring.
 
-    ``restart=True`` falls back to `incus start` on a stopped container,
-    where `incus restart` would error out ("The instance is already
-    stopped"): `jailbee restart` means "ensure running, then run autostart".
+    ``restart=True`` stops a running container through
+    `stopping.stop_container` (bounded, diagnosed) and starts it again; a
+    stopped one is just started: `jailbee restart` means "ensure running,
+    then run autostart".
     ``restart=False`` never reboots — a running container reaching
     `incus start` fails, which is what `jailbee start` should report.
     After boot and attachment, its AHEAD base anchor is caught up forward-only.
@@ -2159,9 +2164,19 @@ def boot_container(cfg: Config, incus: Incus, name: str, *, restart: bool) -> No
 
     detach_runtime_devices(cfg, incus, name)
     if restart and state == "Running":
-        incus.restart(name)
-    else:
-        incus.start(name)
+        # A stop plus a start rather than `incus restart`, which has no way
+        # to bound the clean shutdown: incusd waits its silent 600s default
+        # and then fails with "context deadline exceeded". `stop_container`
+        # gives up sooner and says what is holding the container up. No
+        # force fallback — this container holds the user's work.
+        try:
+            stop_container(incus, name, label=short_name(cfg, name))
+        except IncusError:
+            # Still running: put back the devices the reboot was going to
+            # re-create, so a failed restart does not also strand the GUI.
+            attach_runtime_devices(cfg, incus, name)
+            raise
+    incus.start(name)
     attach_runtime_devices(cfg, incus, name)
 
     # After the start, not before: see `agent_private.attach`. Re-adding the
@@ -2452,9 +2467,11 @@ def switch_network(
 
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
 
+    # Last, with the new mode: the profile and ACL switch above have landed,
+    # so the proxy rules and environment now match the container's real mode.
+    from jailbee import egress_proxy
 
-def _stdin_is_interactive() -> bool:
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
+    egress_proxy.sync_container(cfg, incus, name, mode)
 
 
 def _default_picker(containers: list[ContainerInfo]) -> str | None:
@@ -2484,7 +2501,7 @@ def resolve_container_for_interactive_detailed(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> ResolvedContainer:
@@ -2498,12 +2515,20 @@ def resolve_container_for_interactive_detailed(
     container falls back to an in-flight ``jailbee new --background`` op of the
     same name, and the picker includes in-flight-only rows.
 
-    ``always_prompt`` suppresses the single-container short-circuit on a TTY,
-    so the picker runs even when there is only one candidate. Off a TTY it is
-    inert — a script must not be made to hang for a choice it cannot make.
-    Used by ``jailbee submodule pr``, which mutates a GitHub repository and
-    therefore shows the user its target rather than settling on one silently.
+    No containers, or several off a TTY, raise ``prompting.MissingValue``
+    (exit 2); a cancelled picker raises ``prompting.Cancelled``. A single
+    container is taken with a ``Using container <short>`` note on stderr.
+
+    ``always_prompt`` marks the choice destructive: the picker runs even for
+    a single candidate, and off a TTY that single candidate is a
+    ``MissingValue`` too — a script must name the target of a destructive
+    action. Used by commands that mutate something and therefore show the
+    user their target rather than settling on one silently.
     """
+    from jailbee import prompting
+
+    interactive = is_interactive if is_interactive is not None else prompting.is_interactive
+
     if name is not None:
         try:
             return ResolvedContainer(
@@ -2517,19 +2542,25 @@ def resolve_container_for_interactive_detailed(
             raise
 
     containers = list_containers(cfg, incus, with_git_status=True, with_background=with_background)
-    if not containers:
-        raise ValueError(f"no managed containers found for repo '{cfg.container_prefix}'")
-    if len(containers) == 1 and not (always_prompt and is_interactive()):
-        return ResolvedContainer(name=containers[0].name, auto_selected=True)
-    if is_interactive():
-        chosen = picker(containers)
-        if chosen is None:
-            raise ValueError("cancelled")
-        return ResolvedContainer(name=chosen, auto_selected=False)
-    names = ", ".join(c.display_name for c in containers)
-    raise ValueError(
-        f"multiple containers exist; specify <name> explicitly (or run in a TTY): {names}"
+    by_name = {c.name: c for c in containers}
+    answers: list[bool] = []
+
+    def tty() -> bool:
+        # Asked at most once, and only when a choice may need a terminal.
+        if not answers:
+            answers.append(interactive())
+        return answers[0]
+
+    asks = always_prompt and tty()
+    chosen = prompting.choose_one(
+        "container",
+        [prompting.Option(c.name, c.display_name, c.display_name) for c in containers],
+        destructive=always_prompt,
+        empty_reason=f"no managed containers found for repo '{cfg.container_prefix}'",
+        picker=lambda _opts: picker(list(by_name.values())),
+        is_interactive=tty,
     )
+    return ResolvedContainer(name=chosen, auto_selected=len(containers) == 1 and not asks)
 
 
 def resolve_container_for_interactive(
@@ -2538,7 +2569,7 @@ def resolve_container_for_interactive(
     name: str | None,
     *,
     picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
-    is_interactive: Callable[[], bool] = _stdin_is_interactive,
+    is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
 ) -> str:
@@ -2605,6 +2636,7 @@ def format_duration_coarse(delta: timedelta) -> str:
 _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "waiting": ("◆", "yellow"),
     "busy": ("●", "green"),
+    "shell": ("◐", "cyan"),
     "idle": ("○", "dim"),
 }
 """The `agent_compact` mark and Rich style per known state."""

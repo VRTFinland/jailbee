@@ -2971,6 +2971,39 @@ def test_work_bridge_reports_foreign_unfiltered_and_duplicate_occupants(tmp_path
     assert "loose TTL but its mode marker is strict" in policy.detail
 
 
+def test_work_bridge_does_not_report_the_egress_proxy_as_foreign(tmp_path, mocker):
+    from jailbee.egress_proxy import PROXY_CONTAINER
+
+    cfg = _cfg(tmp_path)
+    incus = _baseline_incus()
+    incus.network_exists.side_effect = lambda name: name == "jailbee-work"
+    incus.list_containers.return_value = [
+        {
+            "name": PROXY_CONTAINER,
+            "status": "Running",
+            "profiles": ["default", "jailbee-egress-proxy-profile"],
+            "devices": {
+                "cl-work": {
+                    "type": "nic",
+                    "network": "jailbee-work",
+                    "name": "eth2",
+                    "ipv4.address": "10.20.0.16",
+                    "security.ipv4_filtering": "true",
+                }
+            },
+        }
+    ]
+    # No eth0 in the listed devices makes doctor ask for the expanded config;
+    # a MagicMock fed to yaml.safe_load would allocate without bound.
+    incus.config_show.return_value = "devices: {}\n"
+    mocker.patch("jailbee.doctor.default_generation", return_value="work")
+
+    results = run_checks(cfg, incus)
+
+    policy = next(row for row in results if row.name == "network jailbee-work policy")
+    assert PROXY_CONTAINER not in policy.detail, policy.detail
+
+
 def test_marker_recovers_work_nic_when_list_omits_device_fields(tmp_path, mocker):
     cfg = _cfg(tmp_path)
     incus = _baseline_incus()
@@ -3560,6 +3593,44 @@ def test_the_running_row_renders_its_spinner_and_progress(tmp_path):
     assert "11.2" in out
 
 
+def _live_view_output(rows: int, height: int, running: int, *, terminal: bool = True) -> str:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jailbee.cli import _DeferredDetail, _DoctorLiveView
+    from jailbee.doctor import CheckResult
+
+    results = [CheckResult(f"check-{i}", True, "fine") for i in range(rows)]
+    console = Console(force_terminal=terminal, width=80, height=height, file=StringIO())
+    console.print(_DoctorLiveView(results, (running, _DeferredDetail())))
+    return console.file.getvalue()
+
+
+def test_live_view_keeps_the_running_row_on_a_short_terminal() -> None:
+    out = _live_view_output(rows=40, height=12, running=30)
+
+    assert "check-30" in out
+    assert "more above" in out
+    assert "more below" in out
+    assert "check-0 " not in out
+    assert len(out.splitlines()) <= 12
+
+
+def test_live_view_draws_everything_when_it_fits() -> None:
+    out = _live_view_output(rows=3, height=40, running=1)
+
+    assert all(f"check-{i}" in out for i in range(3))
+    assert "more" not in out
+
+
+def test_live_view_does_not_window_off_a_terminal() -> None:
+    out = _live_view_output(rows=40, height=12, running=30, terminal=False)
+
+    assert "check-0 " in out
+    assert "more above" not in out
+
+
 def test_doctor_reports_the_optional_qt_extra_without_failing(tmp_path: Path, mocker) -> None:
     """`jailbee setup` cannot install it — that would mean reinstalling the
     tool jailbee is running from — so doctor reports it and never fails on it."""
@@ -3947,3 +4018,97 @@ def test_run_checks_includes_agent_instructions_without_incus(
     with patch("jailbee.doctor.shutil.which", return_value=None):
         results = run_checks(make_cfg(tmp_path / "repo"), mocker.MagicMock())
     assert any(r.name == "agent instructions" and r.ok for r in results)
+
+
+def _proxy_rows(mocker, tmp_path, *, entries=(), extras=(), status=None, missing=()):
+    from jailbee import egress_proxy
+    from jailbee.doctor import _check_egress_proxy
+
+    cfg = _cfg(tmp_path).model_copy(update={"egress_allow": list(entries)})
+    mocker.patch.object(type(cfg), "effective_egress_allow", return_value=list(entries))
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
+    info = MagicMock()
+    info.name = "c1"
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[info])
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=list(extras))
+    if isinstance(status, Exception):
+        mocker.patch("jailbee.egress_proxy.proxy_status", side_effect=status)
+    elif status is not None:
+        mocker.patch("jailbee.egress_proxy.proxy_status", return_value=status)
+    mocker.patch("jailbee.litellm.bridges_missing_services_acl", return_value=list(missing))
+    return _check_egress_proxy(cfg, _baseline_incus()), egress_proxy
+
+
+def test_egress_proxy_not_needed_without_wildcards(mocker, tmp_path):
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"])
+    assert [(r.name, r.ok, r.detail) for r in rows] == [
+        ("egress proxy", True, "not needed — no wildcard entries or always-on containers")
+    ]
+
+
+def test_proxy_needed_for_an_always_on_container_alone(mocker, tmp_path):
+    from jailbee.egress_proxy import ProxyStatus
+
+    mocker.patch("jailbee.egress_proxy.proxy_needed", return_value=True)
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"], status=ProxyStatus.STOPPED)
+    assert rows[0].ok is False
+    assert rows[0].detail == "status: stopped — run 'jailbee apply'"
+
+
+@pytest.mark.parametrize("kwargs", [{"entries": ["*.example.com"]}, {"extras": ["*.example.com"]}])
+def test_egress_proxy_running(mocker, tmp_path, kwargs):
+    from jailbee.egress_proxy import ProxyStatus
+
+    rows, _ = _proxy_rows(mocker, tmp_path, status=ProxyStatus.RUNNING, **kwargs)
+    assert [(r.name, r.ok, r.detail) for r in rows] == [("egress proxy", True, "status: running")]
+
+
+@pytest.mark.parametrize("name", ["DEGRADED", "STOPPED", "MISSING"])
+def test_egress_proxy_not_running_is_a_failure(mocker, tmp_path, name):
+    from jailbee.egress_proxy import ProxyStatus
+
+    status = ProxyStatus[name]
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["*.example.com"], status=status)
+    assert rows[0].ok is False
+    assert rows[0].detail == f"status: {status.value} — run 'jailbee apply'"
+
+
+def test_egress_proxy_query_error(mocker, tmp_path):
+    from jailbee.incus import IncusError
+
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["*.example.com"], status=IncusError("boom"))
+    assert rows[0].ok is False
+    assert rows[0].detail.startswith("error querying: ")
+
+
+def test_egress_proxy_flags_a_bridge_without_the_services_acl(mocker, tmp_path):
+    from jailbee.egress_proxy import ProxyStatus
+
+    rows, _ = _proxy_rows(
+        mocker,
+        tmp_path,
+        entries=["*.example.com"],
+        status=ProxyStatus.RUNNING,
+        missing=["incusbr0"],
+    )
+    assert rows[0].ok is True
+    assert rows[1].ok is False
+    assert "incusbr0" in rows[1].detail
+    assert "services ACL" in rows[1].detail
+
+
+def test_egress_proxy_ignores_the_services_acl_when_not_needed(mocker, tmp_path):
+    rows, _ = _proxy_rows(mocker, tmp_path, entries=["github.com"], missing=["incusbr0"])
+    assert len(rows) == 1
+
+
+def test_egress_proxy_unexpected_probe_failure_is_not_reported_as_not_needed(mocker, tmp_path):
+    _proxy_rows(mocker, tmp_path, entries=["github.com"])
+    mocker.patch("jailbee.lifecycle.list_containers", side_effect=RuntimeError("boom"))
+    from jailbee.doctor import _check_egress_proxy
+
+    cfg = _cfg(tmp_path)
+    mocker.patch("jailbee.egress_scope.effective_repo_entries", return_value=["github.com"])
+    out = _check_egress_proxy(cfg, _baseline_incus())
+    assert out[0].ok is False
+    assert out[0].detail == "error querying: boom"

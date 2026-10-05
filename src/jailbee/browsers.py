@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jailbee.apps import AppSpec
+from jailbee.apps import AppSpec, SingletonSpec
 from jailbee.gui import display_target, host_is_wayland
 
 if TYPE_CHECKING:
@@ -31,6 +31,20 @@ package installs to.
 
 BROWSER_POOLS: dict[str, str] = {"chrome": "chrome-profile", "firefox": "firefox-profile"}
 
+BROWSER_SINGLETONS: dict[str, SingletonSpec] = {
+    "chrome": SingletonSpec(
+        lock="~/.config/google-chrome/SingletonLock",
+        # google-chrome is a wrapper script that execs the `chrome` binary.
+        exe_names=("chrome",),
+        restore_args=("--restore-last-session",),
+    ),
+    "firefox": SingletonSpec(
+        lock="~/.mozilla/firefox/*/lock",
+        exe_names=("firefox", "firefox-bin"),
+        # No CLI equivalent: restoring needs `browser.startup.page = 3`.
+    ),
+}
+
 
 def builtin_specs(cfg: Config) -> list[AppSpec]:
     """One `AppSpec` per enabled browser, in registry order."""
@@ -40,7 +54,7 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
         command = [BROWSER_BINARIES[(name, browser.source)]]
         env: dict[str, str] = {}
         if name == "chrome":
-            if host_is_wayland() or display_target() == "shared":
+            if host_is_wayland() or display_target() != "host":
                 # Chrome defaults to X11 even with WAYLAND_DISPLAY set; the
                 # Ozone backend has to be named explicitly. The shared RDP
                 # compositor is Wayland whatever the host runs.
@@ -56,10 +70,13 @@ def builtin_specs(cfg: Config) -> list[AppSpec]:
                 cwd="home",
                 env=env,
                 pool=BROWSER_POOLS[name],
+                singleton=BROWSER_SINGLETONS[name],
                 top_level=True,
                 autostart=browser.autostart,
                 source="builtin",
-                description=f"{name.capitalize()} ({browser.source})",
+                # The browser only: a container has one per name, and a source
+                # suffix read as the display the window opens on.
+                description=name.capitalize(),
                 accepts_url=True,
                 # Not baked into `command`: `apps.launch` appends this only
                 # when no explicit URL is given at launch time, so a caller

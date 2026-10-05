@@ -207,7 +207,7 @@ def _entrypoints(config: RemoteSSHConfig) -> tuple[str, ...]:
         name
         for name, available in (
             ("dashboard", config.dashboard),
-            ("shell", config.shell),
+            ("console", config.console),
             ("exec", config.exec),
         )
         if available

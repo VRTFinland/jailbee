@@ -117,6 +117,25 @@ def group_dir(agent: str, name: str) -> Path:
     return _dir(agent, name)
 
 
+def list_groups(agents: Sequence[str]) -> list[str]:
+    """Every credential group that exists on this host for `agents`.
+
+    A group is a directory in an adapter's holder root; `_`-prefixed entries
+    are jailbee's own bookkeeping. `none` is a value, not a group, so it is
+    never listed — callers that accept it add it themselves. A missing root
+    is an empty pool; any other `OSError` propagates.
+    """
+    names: set[str] = set()
+    for agent in agents:
+        root = group_dir(agent, "x").parent
+        try:
+            entries = list(root.iterdir())
+        except FileNotFoundError:
+            continue
+        names.update(p.name for p in entries if p.is_dir() and not p.name.startswith("_"))
+    return sorted(names)
+
+
 def container_override(incus: Incus, container: str) -> Override | None:
     """The container's own group setting, or None when it inherits.
 

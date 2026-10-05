@@ -269,3 +269,223 @@ def test_prepare_without_a_client_prints_the_recipe_waits_and_fails():
 
     assert any("ssh -N -L" in line for line in said)
     assert clock.sleeps == [rd.CLIENT_POLL_SECONDS, rd.CLIENT_POLL_SECONDS]
+
+
+def test_provisioning_installs_waypipe():
+    script = rd._read_provision_text("install.sh")
+
+    assert "waypipe" in script.split("apt-get install", 1)[1].splitlines()[0]
+
+
+def test_a_display_without_waypipe_counts_as_incompletely_provisioned():
+    incus = MagicMock()
+    incus.exec.return_value = "absent\n"
+    assert rd._provisioning_incomplete(incus) is True
+
+    incus.exec.return_value = "present\n"
+    assert rd._provisioning_incomplete(incus) is False
+    script = incus.exec.call_args.args[1][-1]
+    assert "command -v waypipe" in script
+    assert rd._UNIT_PATH in script
+
+
+def test_up_mounts_the_links_directory_writable_and_creates_it_privately(tmp_path):
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    incus.profile_exists.return_value = False
+    incus.exec.return_value = "active\n"
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    devices = {c.args[1]: c.args[3] for c in incus.config_device_add.call_args_list}
+    assert devices[rd.LINKS_DEVICE] == {
+        "source": str(links_dir()),
+        "path": rd.WAYPIPE_LINKS_CONTAINER_DIR,
+    }
+    assert links_dir().stat().st_mode & 0o777 == 0o700
+
+
+def test_ensure_links_device_tolerates_an_existing_device():
+    incus = MagicMock()
+    incus.config_device_add.side_effect = IncusError("Device already exists")
+
+    rd.ensure_links_device(incus)
+
+
+def test_ensure_waypipe_display_starts_a_stopped_display_and_never_waits_for_rdp(mocker):
+    incus = MagicMock()
+    up = mocker.patch.object(rd, "display_up")
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.STOPPED)
+    waited = mocker.patch.object(rd, "wait_for_client")
+
+    rd.ensure_waypipe_display(incus)
+
+    up.assert_called_once()
+    waited.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_ensure_waypipe_display_leaves_a_running_display_alone(mocker):
+    incus = MagicMock()
+    up = mocker.patch.object(rd, "display_up")
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.RUNNING)
+
+    rd.ensure_waypipe_display(incus)
+
+    up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_remove_waypipe_sockets_for_one_session_or_all(tmp_path):
+    from jailbee.gui import display_state_dir
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    display_state_dir().mkdir(parents=True)
+    links_dir().mkdir(parents=True)
+    for name in ("wp-aaaaaaaa-c1", "wp-aaaaaaaa-c2", "wp-bbbbbbbb-c1", "wayland-0"):
+        (display_state_dir() / name).touch()
+    for name in ("aaaaaaaa.sock", "bbbbbbbb.sock"):
+        (links_dir() / name).touch()
+
+    rd.remove_waypipe_sockets("aaaaaaaa")
+    assert sorted(p.name for p in display_state_dir().iterdir()) == ["wayland-0", "wp-bbbbbbbb-c1"]
+    assert [p.name for p in links_dir().iterdir()] == ["bbbbbbbb.sock"]
+
+    rd.remove_waypipe_sockets()
+    assert [p.name for p in display_state_dir().iterdir()] == ["wayland-0"]
+    assert list(links_dir().iterdir()) == []
+
+
+def test_remove_waypipe_sockets_can_leave_the_links_alone():
+    from jailbee.gui import display_state_dir
+    from jailbee.remote_ssh.waypipe import links_dir
+
+    display_state_dir().mkdir(parents=True)
+    links_dir().mkdir(parents=True)
+    (display_state_dir() / "wp-aaaaaaaa-c1").touch()
+    (links_dir() / "aaaaaaaa.sock").touch()
+
+    rd.remove_waypipe_sockets(links=False)
+
+    assert list(display_state_dir().iterdir()) == []
+    assert [p.name for p in links_dir().iterdir()] == ["aaaaaaaa.sock"]
+
+
+def test_remove_waypipe_sockets_survives_a_path_that_cannot_be_removed(mocker):
+    from pathlib import Path
+
+    from jailbee.gui import display_state_dir
+
+    display_state_dir().mkdir(parents=True)
+    for name in ("wp-aaaaaaaa-c1", "wp-aaaaaaaa-c2"):
+        (display_state_dir() / name).touch()
+    real = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self.name == "wp-aaaaaaaa-c1":
+            raise PermissionError("denied")
+        real(self, missing_ok=missing_ok)
+
+    mocker.patch.object(Path, "unlink", unlink)
+
+    rd.remove_waypipe_sockets()  # must not raise
+
+    assert [p.name for p in display_state_dir().iterdir()] == ["wp-aaaaaaaa-c1"]
+
+
+def test_remove_waypipe_sockets_without_directories_is_a_no_op():
+    rd.remove_waypipe_sockets()
+
+
+def test_down_removes_the_display_sockets_but_not_the_ssh_servers_links(mocker):
+    incus = MagicMock()
+    incus.list_containers.return_value = _running()
+    mocker.patch.object(rd, "stop_container")
+    removed = mocker.patch.object(rd, "remove_waypipe_sockets")
+
+    rd.display_down(incus)
+
+    removed.assert_called_once_with(links=False)
+
+
+def _existing(status, exec_out):
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": rd.DISPLAY_CONTAINER, "status": status}]
+    incus.profile_exists.return_value = True
+    incus.exec.return_value = exec_out
+    return incus
+
+
+@pytest.mark.parametrize("status", ["Running", "Stopped"])
+def test_up_adds_the_links_device_to_an_existing_display(mocker, status):
+    incus = _existing(status, "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=False)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    incus.init.assert_not_called()
+    assert [c.args[1] for c in incus.config_device_add.call_args_list] == [rd.LINKS_DEVICE]
+
+
+def _provisioning_scripts(incus):
+    scripts = [c.args[1][2] for c in incus.exec.call_args_list if c.args[1][:2] == ["bash", "-c"]]
+    return [s for s in scripts if "JAILBEE_INSTALL_EOF" in s]
+
+
+def test_up_reprovisions_an_existing_display_that_lacks_waypipe(mocker):
+    incus = _existing("Running", "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=True)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    assert len(_provisioning_scripts(incus)) == 1
+    incus.init.assert_not_called()
+
+
+def test_up_leaves_a_fully_provisioned_existing_display_alone(mocker):
+    incus = _existing("Running", "active\n")
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=False)
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    assert _provisioning_scripts(incus) == []
+
+
+def _running_display(mocker, *, incomplete):
+    incus = MagicMock()
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.RUNNING)
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=incomplete)
+    return incus, mocker.patch.object(rd, "_provision"), mocker.patch.object(rd, "display_up")
+
+
+def test_ensure_waypipe_display_reprovisions_a_running_display_lacking_waypipe(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=True)
+
+    rd.ensure_waypipe_display(incus)
+
+    provision.assert_called_once_with(incus)
+    up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_ensure_waypipe_display_does_not_reprovision_a_complete_running_display(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=False)
+
+    rd.ensure_waypipe_display(incus)
+
+    provision.assert_not_called()
+    up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_ensure_waypipe_display_stopped_path_goes_through_display_up_only(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=True)
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.STOPPED)
+
+    rd.ensure_waypipe_display(incus)
+
+    up.assert_called_once()
+    provision.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE

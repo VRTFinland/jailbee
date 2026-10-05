@@ -272,6 +272,19 @@ def test_resolving_a_legacy_credentials_block_does_not_rewrite_the_stored_raw(tm
     assert layers.raw_for(got, "global") == {"claude_credentials": {"group": "work"}}
 
 
+def test_a_legacy_remote_ssh_shell_still_resolves_its_origin(tmp_path, capsys):
+    """A 1.6.0 `remote.ssh.shell: false` must show as `console` set in global,
+    not as the default."""
+    _write(tmp_path / "global.yaml", "remote:\n  ssh:\n    shell: false\n")
+    got = layers.read_layers(tmp_path / "repo.yaml", tmp_path / "global.yaml")
+
+    origins = layers.resolve(global_specs(), got)
+
+    assert origins[("remote", "ssh", "console")] == layers.Origin("global", False)
+    assert capsys.readouterr().err == ""
+    assert layers.raw_for(got, "global") == {"remote": {"ssh": {"shell": False}}}
+
+
 def test_an_explicit_null_in_the_repo_layer_is_also_a_set_value(tmp_path):
     """`browsers.chrome.url: null` in the repo layer is the twin of the
     global test.
@@ -478,6 +491,16 @@ def test_validate_migrates_a_legacy_credentials_block(opened):
     assert got.global_path.read_text() == "claude_credentials:\n  group: work\n", (
         "validation must not write the migration"
     )
+
+
+def test_validate_migrates_a_legacy_remote_ssh_shell(opened):
+    """An unrelated staged `remote.ssh.port` over `shell:` must validate."""
+    got = opened("remote:\n  ssh:\n    shell: false\n")
+
+    error = layers.validate(got, "global", [YamlChange(("remote", "ssh", "port"), 9000)])
+
+    assert error is None
+    assert got.global_path.read_text() == "remote:\n  ssh:\n    shell: false\n"
 
 
 def test_validate_catches_a_cross_field_rule_not_just_the_schema(opened):

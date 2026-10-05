@@ -38,7 +38,13 @@ def _manifest_text(**overrides) -> str:
     return json.dumps(payload)
 
 
-def _a_target(name: str = "001-x.json", *, text: str | None = None, stale: bool = False):
+def _a_target(
+    name: str = "001-x.json",
+    *,
+    text: str | None = None,
+    stale: bool = False,
+    foreign: bool = False,
+):
     """A resolved `Target` for `_manifest_text()`, as `resolve_target` returns."""
     from jailbee.pr import PrInfo
     from jailbee.pr_outbox import Target, parse_manifest
@@ -50,12 +56,14 @@ def _a_target(name: str = "001-x.json", *, text: str | None = None, stale: bool 
         head_sha="abc1234",
         state="OPEN",
         base_ref="main",
+        author_login="someone-else" if foreign else None,
     )
     return Target(
         manifest=manifest,
         pr=info,
         stale=stale,
         scope=PrScope(Path("/repo"), "origin", "", None),
+        foreign=foreign,
     )
 
 
@@ -128,7 +136,7 @@ def _setup(mocker, tmp_path, *, files=None, rejected=(), warnings=()):
     # confirmation is impossible off a TTY — both patched so every test below
     # exercises the interactive path deliberately.
     mocker.patch("jailbee.pr.gh_login", return_value="octocat")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _mock_store(mocker, files or {}, rejected=rejected, warnings=warnings)
     import subprocess
 
@@ -379,7 +387,7 @@ def test_apply_omits_the_identity_clause_when_gh_login_is_unknown(mocker, tmp_pa
 
 def test_apply_refuses_off_a_tty_without_yes(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
 
@@ -394,7 +402,7 @@ def test_apply_publishes_without_a_prompt_off_a_tty_with_yes(mocker, tmp_path):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
     apply_mock = mocker.patch(
         "jailbee.pr_outbox.apply_manifest",
@@ -498,6 +506,70 @@ def test_apply_without_force_does_not_relax_the_gate(mocker, tmp_path):
     assert resolve.call_args.kwargs["force"] is False
 
 
+@pytest.mark.parametrize(
+    ("interactive", "flags", "allowed"),
+    [
+        # Asked at a terminal: the plan's warning and the prompt are the consent.
+        (True, [], True),
+        # `-y` skips the prompt, so nobody would read the warning.
+        (True, ["-y"], False),
+        (False, ["-y"], False),
+        (False, ["-y", "--foreign"], True),
+        (True, ["-y", "--foreign"], True),
+    ],
+)
+def test_apply_admits_a_foreign_pr_only_when_someone_consents(
+    mocker, tmp_path, interactive, flags, allowed
+):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    resolve = mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    runner.invoke(app, ["review", "apply", "feat-foo", "--dry-run", *flags])
+
+    assert resolve.call_args.kwargs["allow_foreign"] is allowed
+
+
+def test_apply_warns_about_a_foreign_pr_before_asking(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(foreign=True))
+    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo"], input="n\n")
+
+    assert result.exit_code == 0, result.output
+    assert "not bound to container feat-foo" in result.output
+    assert "@someone-else" in result.output
+    assert result.output.index("not bound") < result.output.index("Proceed?")
+    apply_mock.assert_not_called()
+
+
+def test_apply_says_nothing_about_ownership_for_the_containers_own_pr(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "--dry-run"])
+
+    assert "not bound" not in result.output
+
+
+def test_apply_names_foreign_as_the_remedy_for_an_unowned_pr(mocker, tmp_path):
+    from jailbee.pr_outbox import ForeignPrError
+
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=ForeignPrError("manifest 001-x.json references PR #999"),
+    )
+
+    result = runner.invoke(app, ["review", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 1
+    assert "#999" in result.output
+    assert "--foreign" in result.output
+
+
 def test_dry_run_still_exits_1_when_a_manifest_was_refused(mocker, tmp_path):
     """A refusal means something written will not be published — on every path."""
     from jailbee.pr_outbox import GateError
@@ -585,7 +657,7 @@ def test_apply_asks_which_container_when_several_may_be_pending(mocker, tmp_path
 def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path):
     """`tui.pick_container` renders unconditionally; a scripted run must not reach it."""
     _setup(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-feat-a"), _running_ci(name="acme-feat-b")],
@@ -788,6 +860,22 @@ def test_ls_reports_staleness_instead_of_failing_on_it(mocker, tmp_path):
     # `ls` reports, never refuses: it asks for the forcing resolution so a
     # moved head is a column value rather than a GateError.
     assert resolve.call_args.kwargs["force"] is True
+
+
+@pytest.mark.parametrize(("stale", "state"), [(False, "not bound"), (True, "stale, not bound")])
+def test_ls_lists_a_foreign_pr_manifest_instead_of_refusing_it(mocker, tmp_path, stale, state):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    resolve = mocker.patch(
+        "jailbee.pr_outbox.resolve_target", return_value=_a_target(stale=stale, foreign=True)
+    )
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
+
+    result = runner.invoke(app, ["review", "ls", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    row = json.loads(result.stdout)[0]
+    assert (row["pr"], row["state"], row["error"]) == (1234, state, None)
+    assert resolve.call_args.kwargs["allow_foreign"] is True
 
 
 def test_ls_notes_containers_it_could_not_read(mocker, tmp_path):

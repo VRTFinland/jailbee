@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 class PublishOptions:
     dry_run: bool = False
     force: bool = False
+    # Consent to publish to a PR the container does not own; the plan warns.
+    foreign: bool = False
 
 
 def _checked(
@@ -148,8 +150,8 @@ def publish_selected(
     the default retains legacy printed diagnostics and integer failure counts.
     """
     try:
-        if proposal.kind == "issue" and options.force:
-            raise OutboxError("force is only valid for PR publication")
+        if proposal.kind == "issue" and (options.force or options.foreign):
+            raise OutboxError("force and foreign are only valid for PR publication")
         identity = _identity(incus, container)
         manager = PrManagement() if proposal.kind == "pr" else None
         lock = (
@@ -184,6 +186,7 @@ def publish_selected(
                     management=manager,
                     expected_revision=revision,
                     raise_errors=raise_errors,
+                    allow_foreign=options.foreign,
                 )
 
             batch = issue_outbox.prepare_batch(

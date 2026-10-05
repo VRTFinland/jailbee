@@ -4,12 +4,15 @@ import json
 
 import pytest
 import typer
+from rich.text import Text
 from typer.testing import CliRunner
 
 from jailbee.cli import app
 from jailbee.incus import Incus
 from jailbee.outbox import service
+from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox_io import JournalStore
+from tests.conftest import panel_text
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
@@ -355,6 +358,57 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
     if mode == "yes":
         assert "001.json" not in env[2][kind].as_dict()
         assert "002.json" in env[2][kind].as_dict()
+
+
+def _unowned(env):
+    env[1].config_get.side_effect = lambda c, key: "43" if key == "user.jailbee.pr" else None
+
+
+def test_apply_refuses_an_unowned_pr_with_yes_and_names_foreign(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "-y"])
+
+    assert result.exit_code == 2, result.output
+    assert "--foreign" in result.output
+    review.assert_not_called()
+
+
+def test_apply_publishes_to_an_unowned_pr_with_foreign(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "pr/001.json", "-y", "--foreign"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not bound to container" in result.output
+    review.assert_called_once()
+
+
+def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env, mocker):
+    env, _create, _comment, review = publication_env
+    _unowned(env)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index("not bound to container") < result.output.index("Publish 1")
+    review.assert_called_once()
+
+
+def test_apply_rejects_foreign_for_an_issue(publication_env):
+    result = CliRunner().invoke(
+        app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--foreign"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "foreign" in result.output
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
@@ -800,3 +854,232 @@ def test_colliding_container_uses_public_browse_leaf(env, name):
     result = CliRunner().invoke(app, ["outbox", "browse", name])
     assert result.exit_code == 0, result.output
     assert f"acme-{name}" in result.output
+
+
+# --- omitted container / proposal -------------------------------------------
+
+_ISSUE = ProposalId("issue", "001.json")
+
+
+def _only_issue(env):
+    """Leave the issue proposal as the single pending one in the single container."""
+    env[2]["pr"] = store("pr", {})
+
+
+def _off_tty(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+
+def _on_tty(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+
+def test_show_without_arguments_takes_the_only_proposal(env, mocker):
+    _off_tty(mocker)
+    _only_issue(env)
+    result = CliRunner().invoke(app, ["outbox", "show", "-o", "json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["proposal"]["actions"][0]["index"] == 0
+    assert "Using container acme-feature" in result.stderr
+    assert "Using proposal issue/001.json" in result.stderr
+
+
+def test_show_with_several_proposals_off_a_tty_names_them(env, mocker):
+    _off_tty(mocker)
+    result = CliRunner().invoke(app, ["outbox", "show", "feature"])
+    assert result.exit_code == 2
+    text = panel_text(result.output)
+    assert "issue/001.json" in text and "pr/001.json" in text
+
+
+def test_drop_without_arguments_asks_even_for_one(env, mocker):
+    _on_tty(mocker)
+    _only_issue(env)
+    select = mocker.patch("jailbee.prompting._select", side_effect=[IDENTITY.full_name, _ISSUE])
+    result = CliRunner().invoke(app, ["outbox", "drop", "-y"])
+    assert result.exit_code == 0, result.output
+    assert [c.args[0] for c in select.call_args_list] == ["container", "proposal"]
+    env[4].assert_called_once()
+
+
+def test_drop_with_a_named_container_asks_only_for_the_proposal(env, mocker):
+    _on_tty(mocker)
+    select = mocker.patch("jailbee.prompting._select", return_value=_ISSUE)
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 0, result.output
+    assert [c.args[0] for c in select.call_args_list] == ["proposal"]
+    env[4].assert_called_once()
+
+
+def test_drop_with_both_given_never_asks(env, mocker):
+    _on_tty(mocker)
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("asked"))
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "issue/001.json", "-y"])
+    assert result.exit_code == 0, result.output
+    select.assert_not_called()
+
+
+@pytest.mark.parametrize("answers", [[None], [IDENTITY.full_name, None]])
+def test_drop_cancel_at_either_prompt_drops_nothing(env, mocker, answers):
+    _on_tty(mocker)
+    _only_issue(env)
+    mocker.patch("jailbee.prompting._select", side_effect=answers)
+    result = CliRunner().invoke(app, ["outbox", "drop", "-y"])
+    assert result.exit_code == 1, result.output
+    env[4].assert_not_called()
+
+
+@pytest.mark.parametrize("answers", [[None], [IDENTITY.full_name, None]])
+def test_apply_cancel_at_either_prompt_applies_nothing(env, mocker, answers):
+    _on_tty(mocker)
+    _only_issue(env)
+    mocker.patch("jailbee.prompting._select", side_effect=answers)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, ["outbox", "apply", "-y"])
+    assert result.exit_code == 1, result.output
+    applied.assert_not_called()
+
+
+def test_apply_asks_even_for_one_and_passes_the_choice(env, mocker):
+    _on_tty(mocker)
+    _only_issue(env)
+    select = mocker.patch("jailbee.prompting._select", side_effect=[IDENTITY.full_name, _ISSUE])
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, ["outbox", "apply", "-y"])
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 2
+    assert applied.call_args.args[2:4] == (IDENTITY.full_name, _ISSUE)
+
+
+def test_apply_without_arguments_off_a_tty_names_candidates(env, mocker):
+    _off_tty(mocker)
+    _only_issue(env)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, ["outbox", "apply"])
+    assert result.exit_code == 2
+    assert "acme-feature" in panel_text(result.output)
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize("leaf", ["show", "drop", "apply"])
+def test_no_pending_proposals_is_a_reason_with_no_side_effect(env, mocker, leaf):
+    _on_tty(mocker)
+    env[2]["pr"] = store("pr", {})
+    env[2]["issue"] = store("issue", {})
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("asked"))
+    result = CliRunner().invoke(app, ["outbox", leaf])
+    assert result.exit_code == 2, result.output
+    assert "no container has pending proposals" in panel_text(result.output)
+    select.assert_not_called()
+    env[4].assert_not_called()
+
+
+def test_drop_named_container_without_proposals_is_a_reason(env, mocker):
+    _on_tty(mocker)
+    env[2]["pr"] = store("pr", {})
+    env[2]["issue"] = store("issue", {})
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("asked"))
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 2, result.output
+    assert "no pending proposals in feature" in panel_text(result.output)
+    select.assert_not_called()
+    env[4].assert_not_called()
+
+
+def test_drop_named_unavailable_container_reports_the_error_not_none(env, mocker):
+    _on_tty(mocker)
+    broken = ContainerView(
+        None, "acme-feature", False, "container acme-feature is not running", (), ()
+    )
+    mocker.patch("jailbee.outbox.commands.discover", return_value=(broken,))
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("asked"))
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 2, result.output
+    text = panel_text(result.output)
+    assert "acme-feature is not running" in text
+    assert "no pending proposals" not in text
+    select.assert_not_called()
+    env[4].assert_not_called()
+
+
+def test_drop_named_container_with_one_proposal_still_asks(env, mocker):
+    """`destructive=True` must hold on the named path: a lone proposal is not auto-taken."""
+    _on_tty(mocker)
+    _only_issue(env)
+    select = mocker.patch("jailbee.prompting._select", return_value=_ISSUE)
+    result = CliRunner().invoke(app, ["outbox", "drop", "feature", "-y"])
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 1
+    env[4].assert_called_once()
+
+
+@pytest.mark.parametrize(("kind", "foreign"), [("pr", True), ("issue", False)])
+def test_browse_publish_consents_to_a_foreign_pr_only_for_pr_proposals(env, mocker, kind, foreign):
+    """The browser always asks under the plan, so its consent covers a PR the
+    container does not own; an issue proposal must not carry the PR-only flag."""
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.cli_outbox.browser_read_only", return_value=False)
+    actions = {}
+    mocker.patch(
+        "jailbee.outbox.browser.run_browser",
+        side_effect=lambda a, _container: actions.setdefault("a", a) and 0,
+    )
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+
+    result = CliRunner().invoke(app, ["outbox", "browse", "feature"])
+    assert result.exit_code == 0, result.output
+    actions["a"].publish("feature", ProposalId(kind, "001.json"), "a" * 64)
+
+    assert applied.call_args.kwargs["options"].foreign is foreign
+
+
+def _description_store():
+    manifest = {
+        "version": 1,
+        "repo": ".",
+        "pr": 42,
+        "head_sha": "a" * 40,
+        "actions": [
+            {
+                "type": "description",
+                "title": "**Not** bold",
+                "body": "## Summary\n\n- **first** item\n- second item\n",
+            }
+        ],
+    }
+    return store("pr", {"001.json": json.dumps(manifest)})
+
+
+def test_show_pipe_keeps_markdown_bodies_verbatim(env):
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json"])
+    assert result.exit_code == 0, result.output
+    assert "## Summary" in result.stdout and "- **first** item" in result.stdout
+    assert "\x1b[" not in result.stdout
+
+
+def test_show_color_renders_markdown_bodies_into_a_pipe(env, mocker, monkeypatch):
+    # The dashboard's pager reads a pipe; the width comes from stderr's terminal.
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    mocker.patch("jailbee.outbox.markdown_view.os.get_terminal_size").return_value.columns = 60
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json", "--color"])
+    assert result.exit_code == 0, result.output
+    shown, raw = result.stdout.split("Raw manifest:")
+    assert "\x1b[" in shown
+    plain = Text.from_ansi(shown).plain
+    assert "## Summary" not in plain and "**first**" not in plain
+    assert "Summary" in plain and "first item" in plain
+    # A title is published as plain text, so it is shown as one.
+    assert "Title: **Not** bold" in plain
+    # The raw manifest stays the exact input to compare the rendering against.
+    assert "\x1b[" not in raw and "**first** item" in raw
+
+
+def test_show_no_color_keeps_bodies_verbatim_on_a_terminal(env, mocker):
+    mocker.patch("jailbee.outbox.markdown_view._terminal_width", return_value=60)
+    env[2]["pr"] = _description_store()
+    result = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json", "--no-color"])
+    assert result.exit_code == 0, result.output
+    assert "- **first** item" in result.stdout.split("Raw manifest:")[0]

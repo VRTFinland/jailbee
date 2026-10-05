@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 
 def state_dir() -> Path:
@@ -236,6 +236,15 @@ def _migrate_to_v14(conn: Connection) -> None:
         conn.exec_driver_sql("ALTER TABLE view_prefs ADD COLUMN hidden_repos VARCHAR")
 
 
+def _migrate_to_v15(conn: Connection) -> None:
+    """v14 -> v15 adds the terminal dashboard's details-panel preference."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(view_prefs)")}
+    if "show_details" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE view_prefs ADD COLUMN show_details BOOLEAN NOT NULL DEFAULT 1"
+        )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -251,6 +260,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     12: _migrate_to_v12,
     13: _migrate_to_v13,
     14: _migrate_to_v14,
+    15: _migrate_to_v15,
 }
 
 

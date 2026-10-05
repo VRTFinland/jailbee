@@ -32,8 +32,6 @@ def load_gui_state(engine: Engine) -> GuiState:
             id=row.id,
             layout=row.layout,
             table_header_state=row.table_header_state,
-            refresh_interval=row.refresh_interval,
-            refresh_paused=row.refresh_paused,
             card_style=row.card_style,
         )
 
@@ -47,7 +45,5 @@ def save_gui_state(engine: Engine, state: GuiState) -> None:
             session.add(row)
         row.layout = state.layout
         row.table_header_state = state.table_header_state
-        row.refresh_interval = state.refresh_interval
-        row.refresh_paused = state.refresh_paused
         row.card_style = state.card_style
         session.commit()

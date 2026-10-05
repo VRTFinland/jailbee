@@ -52,15 +52,23 @@ isolated per-branch development environments using Incus system containers. See
   start Jailbee itself, not `incus` — `console.py` via `subprocess.run` on a
   re-exec (`python -m jailbee ...`), `pty.py` via `pty.fork()`/`os.execvpe`
   for the PTY case and `asyncio.create_subprocess_exec` for the non-PTY case.
+  `state_service/client.py` is a third: `spawn_server` starts
+  `python -m jailbee _state-service` detached (`subprocess.Popen`), the shared
+  dashboard state service.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
-  `subprocess.Popen` of `incus exec`, so a GUI app outlives the CLI.
+  `subprocess.Popen` of `incus exec` (`launch_detached`), so a GUI app outlives
+  the CLI, or — for a `waypipe ssh` session's own command — `launch_attached`,
+  a foreground `subprocess.run` that waits for the app.
   `apps.py` / `browsers.py` / `ide.py` — the GUI application registry — call
   no `subprocess` of their own: they resolve an `AppSpec` and hand it to
-  `gui.launch_detached`, deliberately not adding a second exception to the
+  `gui.launch_detached` / `gui.launch_attached`, deliberately not adding a second exception to the
   "one module runs `incus` outside `incus.py`" rule above.
   `registry.py` runs the mirror through the `Incus` wrapper and calls no
   `subprocess` of its own. `litellm.py` likewise runs the proxy through the
   `Incus` wrapper and calls no `subprocess` of its own.
+- **The dashboards gather nothing themselves.** `state_service/` holds the only
+  gather loop (`gatherer.Gatherer`), run by one on-demand per-user server;
+  `dashboard.run` and the Qt app render what `StateClient` holds.
 - **`accounts/` is the agent account pool: the engine knows no agent, an
   adapter knows one.** `accounts/engine.py` is the generic store —
   park/switch/remove, slot naming, member resolution — driven only through
@@ -155,6 +163,23 @@ guide to article metadata, images, links, previewing, and publishing.
 The wrapper method is named `list_containers()` to avoid shadowing Python's
 builtin `list` in type annotations (mypy strict catches this). The original
 plan called it `list()`; we deviated.
+
+### Missing required values are asked for, never usage errors
+Every command runs with no arguments. A value the command needs but was not
+given is resolved through `jailbee.prompting`: on an interactive terminal it
+is picked from the candidates (`choose_one`) or typed (`ask_text`);
+otherwise the command exits 2 naming the missing value and its candidates. A
+single candidate is taken with an info line on stderr, except for destructive
+actions (`destructive=True`; for a container, `_resolve_existing(...,
+always_prompt=True)`), which always show the picker. Listing commands (`ls`,
+`export`, …) treat an omitted value as "all" and never prompt. Positional
+order is unchanged — only trailing omitted values are asked. Declare such a
+positional `= None` and resolve it in the body, container first.
+`prompting.is_interactive()` is the only TTY test for prompts (it honours
+`JAILBEE_NONINTERACTIVE`); tests patch `jailbee.prompting.is_interactive`,
+`jailbee.prompting._select` and `jailbee.prompting._ask`.
+`tests/test_cli_prompt_policy.py` fails on any required positional and on any
+`stdin.isatty` outside `prompting.py` (bar the few non-prompt uses it names).
 
 ### Follow the existing import style
 - Lazy imports inside command functions in `cli.py` keep `jailbee --help` fast.

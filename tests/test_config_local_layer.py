@@ -76,6 +76,7 @@ def test_broken_yaml_local_file_names_the_file():
         "scratch",
         "config_edit",
         "update_check",
+        "default_command",
         "remote",
         "install_host_skills",
     ],

@@ -1498,3 +1498,203 @@ def test_refresh_pool_reconciles_shared_acl_on_both_bridges_after_db_default_los
             "security.acls": f"{acl_name(cfg)},{work_extra_acl},jailbee-services",
         },
     )
+
+
+def test_refresh_pool_keeps_wildcards_out_of_the_resolver(
+    db_session: Session,
+    cfg: Any,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool
+
+    cfg.effective_egress_allow.return_value = ["*.vendor.com", "github.com:443"]
+    rws = mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    mocker.patch.object(egress_pool, "_write_acl", autospec=True)
+    mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
+    mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
+
+    result = egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"
+    assert rws.call_args_list[0].args == (["github.com"],)
+
+
+def test_refresh_container_extras_keeps_wildcards_out_of_dns_and_acl(
+    db_session: Session, make_cfg: Any, tmp_path: Path, mocker: MockerFixture, frozen_now: datetime
+) -> None:
+    from jailbee.egress_pool import _refresh_container_extras
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path / "myrepo", egress_allow=[])
+    rws = mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"b.com": ["2.2.2.2"]}, {}),
+    )
+    mocker.patch("jailbee.egress_scope.container_extras", return_value=["*.foo.com", "b.com"])
+    mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    mocker.patch(
+        "jailbee.egress_pool._list_containers",
+        return_value=[
+            ContainerInfo(
+                name="myrepo-feat", state="Running", network="strict", ip=None, memory_limit=None
+            )
+        ],
+    )
+    acl = mocker.patch("jailbee.egress_pool._apply_acl_with_nft_quirk")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = []
+
+    _refresh_container_extras(
+        cfg, incus, db_session, now=frozen_now, ttl=timedelta(hours=1), max_per_host=8
+    )
+
+    rws.assert_called_once_with(["b.com"])
+    yaml_text = acl.call_args.args[2]
+    assert "*" not in yaml_text
+    assert "2.2.2.2" in yaml_text
+
+
+def test_entries_from_pool_drops_wildcards(db_session: Session) -> None:
+    from jailbee.egress_pool import _entries_from_pool
+
+    entries = _entries_from_pool(db_session, "X", ["*.vendor.com", "10.0.0.0/8"])
+
+    assert [e.description for e in entries] == ["10.0.0.0/8"]
+
+
+# ---- egress proxy wiring ----------------------------------------------------
+
+
+def _quiet_refresh(mocker: MockerFixture) -> None:
+    from jailbee import egress_pool
+
+    mocker.patch.object(egress_pool, "_write_acl", autospec=True)
+    mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
+    mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
+
+
+def test_refresh_pool_syncs_the_proxy_rules_once_and_never_starts_the_proxy(
+    db_session: Session,
+    cfg: Any,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool, egress_proxy
+
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    _quiet_refresh(mocker)
+    sync = mocker.patch.object(egress_proxy, "sync_repo_rules")
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+
+    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+
+    sync.assert_called_once_with(cfg, incus, db_session)
+    up.assert_not_called()
+
+
+def test_refresh_pool_syncs_the_proxy_rules_for_a_wildcard_only_repo(
+    db_session: Session,
+    cfg: Any,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    """Nothing resolves, so the `if resolved:` block is skipped; the sync is not."""
+    from jailbee import egress_pool, egress_proxy
+
+    cfg.effective_egress_allow.return_value = ["*.example.com"]
+    mocker.patch("jailbee.egress_pool.resolve_with_status", return_value=({}, {}))
+    _quiet_refresh(mocker)
+    sync = mocker.patch.object(egress_proxy, "sync_repo_rules")
+
+    egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+
+    sync.assert_called_once()
+
+
+def test_refresh_pool_status_survives_a_proxy_rule_sync_failure(
+    db_session: Session,
+    cfg: Any,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool, egress_proxy
+
+    mocker.patch(
+        "jailbee.egress_pool.resolve_with_status",
+        return_value=({"github.com": ["1.1.1.1"]}, {}),
+    )
+    write_acl = mocker.patch.object(egress_pool, "_write_acl", autospec=True)
+    mocker.patch.object(egress_pool, "_update_container_hosts", autospec=True)
+    mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
+    mocker.patch.object(egress_proxy, "sync_repo_rules", side_effect=RuntimeError("boom"))
+
+    result = egress_pool.refresh_pool(cfg, gcfg, incus, db_session, now=frozen_now)
+
+    assert result.status == "ok"
+    write_acl.assert_called_once()
+
+
+def test_refresh_all_drops_the_proxy_fragment_of_a_pruned_repo(
+    db_session: Session, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from datetime import UTC, datetime
+
+    from jailbee import egress_proxy
+    from jailbee.egress_pool import refresh_all
+    from jailbee.global_config import GlobalConfig
+
+    db_session.add(
+        RegisteredRepo(
+            container_prefix="ghost",
+            repo_root=str(tmp_path / "gone"),
+            registered_at=datetime.now(UTC),
+        )
+    )
+    db_session.commit()
+    drop = mocker.patch.object(egress_proxy, "drop_fragment")
+    incus = mocker.MagicMock()
+
+    refresh_all(db_session, GlobalConfig(), incus, now=datetime.now(UTC))
+
+    drop.assert_called_once_with(incus, "ghost")
+
+
+def test_refresh_all_survives_a_failing_fragment_drop(
+    db_session: Session, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from datetime import UTC, datetime
+
+    from jailbee import egress_proxy
+    from jailbee.egress_pool import refresh_all
+    from jailbee.global_config import GlobalConfig
+
+    for prefix in ("ghost-a", "ghost-b"):
+        db_session.add(
+            RegisteredRepo(
+                container_prefix=prefix,
+                repo_root=str(tmp_path / prefix),
+                registered_at=datetime.now(UTC),
+            )
+        )
+    db_session.commit()
+    drop = mocker.patch.object(egress_proxy, "drop_fragment", side_effect=RuntimeError("x"))
+
+    refresh_all(db_session, GlobalConfig(), mocker.MagicMock(), now=datetime.now(UTC))
+
+    assert drop.call_count == 2
+    assert db_session.exec(select(RegisteredRepo)).all() == []

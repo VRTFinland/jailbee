@@ -1217,7 +1217,7 @@ def test_cleanup_destroys_container_with_flag_non_tty(mocker, make_cfg, tmp_path
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1245,7 +1245,7 @@ def test_cleanup_skipped_in_non_tty_without_flag(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1271,7 +1271,7 @@ def test_cleanup_destroy_prompts_in_tty_yes(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
 
     result = run_post_merge_cleanup(
@@ -1298,7 +1298,7 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="")
 
     result = run_post_merge_cleanup(
@@ -1373,7 +1373,7 @@ def test_cleanup_destroy_guard_skips_second_prompt_when_clean(mocker, make_cfg, 
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
@@ -1439,7 +1439,7 @@ def test_cleanup_destroy_guard_declines_second_prompt_keeps_container(mocker, ma
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
@@ -1476,7 +1476,7 @@ def test_cleanup_destroy_guard_accepts_second_prompt_destroys(mocker, make_cfg, 
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
@@ -1516,7 +1516,7 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mocker.patch(
         "jailbee.lifecycle.list_containers",
@@ -1554,7 +1554,7 @@ def test_cleanup_destroy_guard_notes_unknown_when_container_missing_from_listing
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
@@ -1595,7 +1595,7 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     full_name = f"{cfg.container_prefix}-feat-foo"
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=full_name)
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     mount_info = ContainerInfo(
         name=full_name,
@@ -1642,7 +1642,7 @@ def test_cleanup_destroy_failure_is_warning_not_fatal(mocker, make_cfg, tmp_path
         "jailbee.lifecycle.destroy_container",
         side_effect=RuntimeError("incus exploded"),
     )
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1671,7 +1671,7 @@ def test_cleanup_deletes_merged_host_branch(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1698,7 +1698,7 @@ def test_cleanup_skips_branch_delete_when_host_lacks_branch(mocker, make_cfg, tm
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1726,7 +1726,7 @@ def test_cleanup_skips_branch_delete_when_branch_is_current_head(mocker, make_cf
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1754,7 +1754,7 @@ def test_cleanup_skips_branch_delete_when_not_merged_into_head(mocker, make_cfg,
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1823,7 +1823,7 @@ def test_cleanup_runs_when_fetch_added_no_commits_but_merge_moved_head(mocker, m
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1861,7 +1861,7 @@ def test_cleanup_branch_delete_failure_is_warning_not_fatal(mocker, make_cfg, tm
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1897,7 +1897,7 @@ def test_cleanup_branch_delete_checks_merged_into_into_branch_not_head(mocker, m
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1933,7 +1933,7 @@ def test_cleanup_branch_delete_skipped_when_into_branch_is_none(mocker, make_cfg
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -4720,7 +4720,7 @@ def test_should_run_step_runs_when_always(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
     mock_input = mocker.patch("builtins.input")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="always")
 
@@ -4732,7 +4732,7 @@ def test_should_run_step_never_skips(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
     mock_input = mocker.patch("builtins.input")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="never")
 
@@ -4744,7 +4744,7 @@ def test_should_run_step_prompt_skips_in_non_tty(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
     mock_input = mocker.patch("builtins.input")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="prompt")
 
@@ -4768,7 +4768,7 @@ def test_should_run_step_prompt_skips_in_non_tty(mocker):
 def test_should_run_step_prompt_in_tty_uses_input(mocker, answer, expected):
     from jailbee.sync import _should_run_cleanup_step
 
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value=answer)
 
     assert _should_run_cleanup_step(prompt="x? ", policy="prompt") is expected
@@ -4788,7 +4788,7 @@ def test_cleanup_destroy_only_branch_never(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -4819,7 +4819,7 @@ def test_cleanup_branch_only_destroy_never(mocker, make_cfg, tmp_path):
         return_value=f"{cfg.container_prefix}-feat-foo",
     )
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    mocker.patch("jailbee.sync._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -5953,7 +5953,7 @@ def test_publish_retries_the_push_when_the_user_accepts(mocker, make_cfg, tmp_pa
         "jailbee.sync.git.push_to_remote",
         side_effect=[GitError("git push failed (exit 128)"), None],
     )
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("builtins.input", return_value="y")
     reported = mocker.patch("jailbee.retry.error")
 
@@ -5982,7 +5982,7 @@ def test_publish_push_retry_is_not_offered_off_tty(mocker, make_cfg, tmp_path):
         "jailbee.sync.git.push_to_remote",
         side_effect=GitError("git push failed (exit 128)"),
     )
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch("builtins.input")
 
     with pytest.raises(SyncError, match="force-with-lease"):
@@ -6009,7 +6009,7 @@ def test_publish_push_failure_hint_has_no_device_specific_wording(mocker, make_c
         "jailbee.sync.git.push_to_remote",
         side_effect=GitError("git push failed (exit 128)"),
     )
-    mocker.patch("jailbee.retry._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     with pytest.raises(SyncError) as excinfo:
         publish_branch_from_container(cfg, incus, "feat-foo")

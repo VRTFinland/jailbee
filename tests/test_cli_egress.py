@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -42,7 +43,7 @@ def test_add_without_entry_prompts_and_stores_for_repo_scope(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
 
@@ -61,7 +62,7 @@ def test_rm_without_entry_noninteractive_fails_before_prompt(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     prompt = mocker.patch.object(interaction, "pick_remove_entry")
 
     result = runner.invoke(app, ["net", "egress", "rm"])
@@ -73,7 +74,7 @@ def test_rm_without_entry_noninteractive_fails_before_prompt(tmp_path, mocker):
 
 def test_add_without_entry_noninteractive_fails_before_loading_config(mocker):
     load = mocker.patch("jailbee.cli._load_or_exit", side_effect=AssertionError("config loaded"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = runner.invoke(app, ["net", "egress", "add"])
 
@@ -84,7 +85,7 @@ def test_add_without_entry_noninteractive_fails_before_loading_config(mocker):
 
 def test_rm_without_entry_noninteractive_fails_before_loading_config(mocker):
     load = mocker.patch("jailbee.cli._load_or_exit", side_effect=AssertionError("config loaded"))
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = runner.invoke(app, ["net", "egress", "rm"])
 
@@ -97,7 +98,7 @@ def test_add_without_entry_prompts_for_container_scope(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -115,7 +116,7 @@ def test_add_without_entry_accepts_explicit_container_option(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch.object(interaction, "prompt_add_entry", return_value="example.com")
     mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -134,7 +135,7 @@ def test_rm_without_entry_accepts_explicit_container_option(tmp_path, mocker):
 
     _cfg, incus = _repo(tmp_path, mocker)
     incus.list_containers.return_value = []
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["stored.example"])
     pick = mocker.patch.object(interaction, "pick_remove_entry", return_value="stored.example")
     setc = mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -164,7 +165,7 @@ def test_rm_without_entry_picks_only_container_overrides(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker, egress_allow=["config.example"])
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.egress_scope.container_extras", return_value=["stored.example"])
     pick = mocker.patch.object(interaction, "pick_remove_entry", return_value="stored.example")
     mocker.patch("jailbee.egress_scope.set_container_extras")
@@ -179,7 +180,7 @@ def test_add_without_entry_cancelled_does_not_mutate(tmp_path, mocker):
     import jailbee.egress_interaction as interaction
 
     _repo(tmp_path, mocker)
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch.object(interaction, "prompt_add_entry", return_value=None)
     resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
 
@@ -902,3 +903,344 @@ def test_export_for_a_configured_repo_still_names_the_repo_file(tmp_path, mocker
 
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(result.stdout) == {"egress_allow": ["github.com", "nexus.corp:443"]}
+
+
+def test_egress_add_wildcard_skips_dns(tmp_path, mocker, monkeypatch):
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.vendor.com", "--repo"])
+
+    assert result.exit_code == 0, result.output
+    resolve.assert_not_called()
+
+
+def test_egress_add_container_wildcard_refused_on_legacy(tmp_path, mocker):
+    _cfg, incus = _repo(tmp_path, mocker)
+    incus.list_containers.return_value = [{"name": "myrepo-feat", "profiles": []}]
+    resolve = mocker.patch("jailbee.egress_scope.resolve_entries")
+    set_extras = mocker.patch("jailbee.egress_scope.set_container_extras")
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.vendor.com", "myrepo-feat"])
+
+    assert result.exit_code == 2
+    assert "jailbee net migrate" in result.output
+    resolve.assert_not_called()
+    set_extras.assert_not_called()
+
+
+# --- egress proxy wiring -------------------------------------------------
+
+
+def _work_container(cfg, incus, mode="strict"):
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat", "profiles": [f"{cfg.container_prefix}-net-work-{mode}"]}
+    ]
+    mocker_targets = (
+        "jailbee.work_acl.apply_work_container_acl",
+        "jailbee.work_acl.reconcile_work_acl",
+    )
+    return mocker_targets
+
+
+def test_add_repo_wildcard_starts_the_proxy_and_keeps_the_apply_hint(tmp_path, mocker, monkeypatch):
+    from jailbee import egress_proxy
+
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    result = runner.invoke(
+        app, ["net", "egress", "add", "--repo", "*.example.com"], env={"COLUMNS": "250"}
+    )
+
+    assert result.exit_code == 0, result.output
+    up.assert_called_once()
+    sync.assert_not_called()
+    assert "Run `jailbee apply` to push it." in result.output
+
+
+def test_add_repo_non_wildcard_does_not_start_the_proxy(tmp_path, mocker, monkeypatch):
+    from jailbee import egress_proxy
+
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+
+    result = runner.invoke(app, ["net", "egress", "add", "--repo", "nexus.corp:443"])
+
+    assert result.exit_code == 0, result.output
+    up.assert_not_called()
+
+
+def test_add_wildcard_on_a_work_container_starts_proxy_then_syncs_after_storing(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker)
+    for target in _work_container(cfg, incus):
+        mocker.patch(target)
+    order: list[str] = []
+    mocker.patch(
+        "jailbee.egress_scope.set_container_extras", side_effect=lambda *_a: order.append("store")
+    )
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=lambda *_a, **_k: order.append("up"))
+    sync = mocker.patch.object(
+        egress_proxy,
+        "sync_container",
+        side_effect=lambda *_a, **_k: order.append("sync") or True,
+    )
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert order == ["store", "up", "sync"]
+    sync.assert_called_once_with(cfg, incus, "myrepo-feat", "strict")
+    assert "Open a new shell (or tmux window) to pick up the proxy settings." in result.output
+
+
+def test_add_keeps_the_entry_but_fails_when_the_proxy_cannot_start(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker)
+    for target in _work_container(cfg, incus):
+        mocker.patch(target)
+    store = mocker.patch("jailbee.egress_scope.set_container_extras")
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=RuntimeError("squid down"))
+    sync = mocker.patch.object(egress_proxy, "sync_container")
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"], env={"COLUMNS": "250"})
+
+    assert result.exit_code == 1, result.output
+    assert "squid down" in result.output
+    store.assert_called_once()
+    sync.assert_called_once()
+    assert "may now reach" not in result.output
+    assert "Open a new shell" not in result.output
+    assert "not reachable until the egress proxy runs" in result.output
+
+
+def test_add_repo_wildcard_has_no_success_line_when_the_proxy_cannot_start(
+    tmp_path, mocker, monkeypatch
+):
+    from jailbee import egress_proxy
+
+    _repo(tmp_path, mocker)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    mocker.patch.object(egress_proxy, "proxy_up", side_effect=RuntimeError("squid down"))
+
+    result = runner.invoke(
+        app, ["net", "egress", "add", "--repo", "*.example.com"], env={"COLUMNS": "250"}
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "squid down" in result.output
+    assert "✓" not in result.output
+    assert "not reachable until the egress proxy runs: run `jailbee apply`" in result.output
+
+
+def test_add_non_wildcard_on_a_container_syncs_but_does_not_start_the_proxy(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    _repo(tmp_path, mocker)
+    mocker.patch("jailbee.egress_scope.resolve_entries", return_value=[])
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    up = mocker.patch.object(egress_proxy, "proxy_up")
+    sync = mocker.patch.object(egress_proxy, "sync_container", return_value=False)
+
+    result = runner.invoke(app, ["net", "egress", "add", "10.0.0.0/8:443"])
+
+    assert result.exit_code == 0, result.output
+    up.assert_not_called()
+    sync.assert_called_once()
+    assert "Open a new shell" not in result.output
+
+
+def test_rm_on_a_container_syncs_the_proxy_after_the_removal(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker, extras=["*.example.com"])
+    for target in _work_container(cfg, incus, "loose"):
+        mocker.patch(target)
+    mocker.patch("jailbee.cli._egress_container_mode", return_value="loose")
+    order: list[str] = []
+    mocker.patch(
+        "jailbee.egress_scope.set_container_extras", side_effect=lambda *_a: order.append("store")
+    )
+    sync = mocker.patch.object(
+        egress_proxy, "sync_container", side_effect=lambda *_a, **_k: order.append("sync")
+    )
+
+    result = runner.invoke(app, ["net", "egress", "rm", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert order == ["store", "sync"]
+    sync.assert_called_once_with(cfg, incus, "myrepo-feat", "loose")
+
+
+def test_add_says_nothing_about_a_new_shell_when_the_env_did_not_change(tmp_path, mocker):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker)
+    for target in _work_container(cfg, incus):
+        mocker.patch(target)
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    mocker.patch.object(egress_proxy, "proxy_up")
+    mocker.patch.object(egress_proxy, "sync_container", return_value=False)
+
+    result = runner.invoke(app, ["net", "egress", "add", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert "Open a new shell" not in result.output
+    assert "may now reach *.example.com" in result.output
+
+
+@pytest.mark.parametrize(("changed", "shown"), [(True, True), (False, False)])
+def test_rm_says_open_a_new_shell_only_when_the_env_changed(tmp_path, mocker, changed, shown):
+    from jailbee import egress_proxy
+
+    cfg, incus = _repo(tmp_path, mocker, extras=["*.example.com"])
+    for target in _work_container(cfg, incus, "loose"):
+        mocker.patch(target)
+    mocker.patch("jailbee.cli._egress_container_mode", return_value="loose")
+    mocker.patch("jailbee.egress_scope.set_container_extras")
+    mocker.patch.object(egress_proxy, "sync_container", return_value=changed)
+
+    result = runner.invoke(app, ["net", "egress", "rm", "*.example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert ("Open a new shell" in result.output) is shown
+    assert "can no longer reach *.example.com" in result.output
+
+
+# --- the proxy path in `ls` and `net status` ---------------------------------
+
+
+def test_ls_without_a_wildcard_has_no_via_column(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls"])
+
+    assert result.exit_code == 0, result.output
+    assert "VIA" not in result.stdout
+    assert "ENTRY" in result.stdout
+    assert "SOURCE" in result.stdout
+
+
+def test_ls_with_a_wildcard_shows_the_via_column(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com", "*.example.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls"])
+
+    assert result.exit_code == 0, result.output
+    assert "VIA" in result.stdout
+    assert "acl+proxy" in result.stdout
+    cells = [line.replace("│", " ").split() for line in result.stdout.splitlines()]
+    rows = {c[0]: c for c in cells if c}
+    assert rows["*.example.com"][-1] == "proxy"
+    assert rows["github.com"][-1] == "acl+proxy"
+
+
+def test_ls_json_always_carries_via(tmp_path, mocker):
+    _repo(tmp_path, mocker, egress_allow=["github.com", "*.example.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    via = {row["entry"]: row["via"] for row in json.loads(result.stdout)}
+    assert via == {"github.com": "acl+proxy", "*.example.com": "proxy"}
+
+
+def test_ls_json_without_a_wildcard_still_carries_via(tmp_path, mocker):
+    """`emit` JSON includes hidden (show_if) columns, so `via` is always present."""
+    _repo(tmp_path, mocker, egress_allow=["github.com"])
+
+    result = runner.invoke(app, ["net", "egress", "ls", "--format", "json"])
+
+    assert [row["via"] for row in json.loads(result.stdout)] == ["acl+proxy"]
+
+
+def _proxy_status_rig(tmp_path, mocker, *, entries, status="running", endpoints=None):
+    from jailbee import egress_proxy
+
+    cfg, _incus = _repo(tmp_path, mocker, egress_allow=entries)
+    mocker.patch("jailbee.cli.load_config", return_value=cfg)
+    mocker.patch("jailbee.cli.find_repo_config", return_value=tmp_path / "unused.yaml")
+    mocker.patch("jailbee.egress_scope.legacy_repo_extras", return_value=[])
+    mocker.patch("jailbee.egress_scope.local_entries", return_value=[])
+    mocker.patch("jailbee.egress_proxy.proxy_status", return_value=egress_proxy.ProxyStatus(status))
+    mocker.patch(
+        "jailbee.egress_proxy.client_endpoints",
+        return_value=endpoints if endpoints is not None else {"incusbr0": "10.0.0.5"},
+    )
+
+
+def test_net_status_proxy_line_is_silent_without_wildcards(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["github.com"], status="missing")
+
+    _print_egress_proxy_status()
+
+    assert capsys.readouterr().out == ""
+
+
+def test_net_status_proxy_line_shows_an_existing_proxy_without_wildcards(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["github.com"])
+
+    _print_egress_proxy_status()
+
+    assert "Egress proxy: running (incusbr0 10.0.0.5)" in capsys.readouterr().out
+
+
+def test_net_status_proxy_line_running(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+
+    _print_egress_proxy_status()
+
+    out = capsys.readouterr().out
+    assert "Egress proxy: running (incusbr0 10.0.0.5)" in out
+    assert "jailbee apply" not in out
+
+
+@pytest.mark.parametrize("status", ["degraded", "stopped", "missing"])
+def test_net_status_proxy_line_other_states_point_at_apply(tmp_path, mocker, capsys, status):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"], status=status, endpoints={})
+
+    _print_egress_proxy_status()
+
+    out = capsys.readouterr().out
+    assert f"Egress proxy: {status}" in out
+    assert "— run 'jailbee apply'" in out
+
+
+def test_net_status_proxy_line_failure_is_reported_not_silent(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+    mocker.patch("jailbee.egress_proxy.proxy_status", side_effect=RuntimeError("boom"))
+
+    _print_egress_proxy_status()
+
+    captured = capsys.readouterr()
+    assert "Egress proxy:" not in captured.out
+    assert "Could not gather egress-proxy status" in captured.err
+
+
+def test_net_status_proxy_line_honours_the_remote_scope(tmp_path, mocker, capsys):
+    from jailbee.cli import _print_egress_proxy_status
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    _proxy_status_rig(tmp_path, mocker, entries=["*.example.com"])
+
+    _print_egress_proxy_status(RemoteRepoScope(frozenset({"myrepo"})))
+
+    assert capsys.readouterr().out == ""

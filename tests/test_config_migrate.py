@@ -7,7 +7,13 @@ import pytest
 import yaml
 
 from jailbee.config.local_layer import local_config_path
-from jailbee.config_migrate import MigrationInputs, apply_plan, plan_migrations, render_diff
+from jailbee.config_migrate import (
+    MigrationInputs,
+    apply_plan,
+    plan_migrations,
+    render_diff,
+    validate_plan,
+)
 from jailbee.global_config import default_global_config_path
 
 
@@ -77,6 +83,22 @@ def test_legacy_claude_credentials_is_renamed_before_its_repos_move():
     assert ids.index("claude-credentials-key") < ids.index("credentials-repos")
     assert _load(plan, local_config_path("a")) == {"credentials": {"group": "team"}}
     assert "claude_credentials" not in _load(plan, inputs.global_path)
+
+
+def test_legacy_remote_ssh_shell_is_renamed_to_console():
+    inputs = _inputs({"remote": {"ssh": {"shell": True, "default_entrypoint": "shell"}}})
+    plan = plan_migrations(inputs)
+    assert [s.migration_id for s in plan.steps] == ["remote-ssh-console"]
+    ssh = _load(plan, inputs.global_path)["remote"]["ssh"]
+    assert ssh == {"console": True, "default_entrypoint": "console"}
+    validate_plan(inputs, plan)
+
+
+def test_legacy_remote_ssh_shell_false_survives_the_migration():
+    inputs = _inputs({"remote": {"ssh": {"shell": False}}})
+    plan = plan_migrations(inputs)
+    assert _load(plan, inputs.global_path)["remote"]["ssh"] == {"console": False}
+    validate_plan(inputs, plan)
 
 
 def test_chrome_block_folds_into_browsers():

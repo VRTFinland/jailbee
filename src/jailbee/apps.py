@@ -22,6 +22,22 @@ AppSource = Literal["builtin", "config"]
 
 
 @dataclass(frozen=True)
+class SingletonSpec:
+    """How to find an app's one running instance per profile, and restart it.
+
+    An app with a profile lock forwards a second launch to the running
+    process, which draws on whatever display it started on. `lock` is the
+    lock's container path (`~`-relative glob), `exe_names` the executable
+    basenames that make a PID really this app's, `restore_args` what a
+    restart after a move adds to bring the session back.
+    """
+
+    lock: str
+    exe_names: tuple[str, ...]
+    restore_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AppSpec:
     """One launchable application, whatever declared it."""
 
@@ -58,6 +74,9 @@ class AppSpec:
     binary is found by searching the container at launch time. `None` means
     `command` is already the final argv.
     """
+    singleton: SingletonSpec | None = None
+    """Set for apps whose second launch is forwarded to a running instance;
+    `apps.launch` then moves that instance to the launching display."""
 
 
 def app_log_path(name: str) -> str:
@@ -184,16 +203,26 @@ def launch_env(
 ) -> dict[str, str]:
     """The environment for a GUI launch in ``container``.
 
-    On the host this is `gui_env(cfg)`. From an SSH session whose server has
+    On the host the host compositor socket is attached to ``container`` (or a
+    stale one replaced) first — see `runtime_mounts.ensure_host_display` — and
+    the environment is `gui_env(cfg)`. From an SSH session whose server has
     `remote.ssh.gui` on, the shared RDP display is prepared first (started,
     mounted into ``container``, an RDP client awaited) and the app is pointed
-    at it. `DisplayError` propagates: nothing is launched.
+    at it. From a `waypipe ssh` session, the container's waypipe server is
+    started in jailbee-display and the app is pointed at it; no RDP client is
+    involved. `DisplayError` propagates: nothing is launched.
     """
     from jailbee.gui import display_target, gui_env
-    from jailbee.remote_ssh.session import shared_display_port
+    from jailbee.remote_ssh.session import shared_display_port, waypipe_session
     from jailbee.tui import info
 
     target = display_target()
+    session = waypipe_session()
+    if target == "waypipe" and session is not None:
+        from jailbee.remote_ssh.waypipe import start_container_server
+
+        display = start_container_server(incus, session, container)
+        return {**gui_env(cfg, target, wayland_display=display), **(extra or {})}
     port = shared_display_port()
     # `display_target() == "shared"` already implies a port; checking it here
     # narrows the type for `prepare_shared_display` without a fallback value.
@@ -206,6 +235,10 @@ def launch_env(
             ssh_port=port,
             say=info,
         )
+    if target == "host":
+        from jailbee.runtime_mounts import ensure_host_display
+
+        ensure_host_display(cfg, incus, container)
     return {**gui_env(cfg, target), **(extra or {})}
 
 
@@ -215,11 +248,22 @@ def launch(
     container: str,
     spec: AppSpec,
     args: list[str] | None = None,
+    *,
+    move: bool | None = None,
+    check_running: bool = True,
 ) -> None:
-    """Start `spec` in `container`, detached, logging inside the container."""
+    """Start `spec` in `container`, logging inside the container.
+
+    Detached, unless the `waypipe ssh` session's own command is this launch:
+    then it runs attached, so the session lasts as long as the app.
+
+    ``move`` and ``check_running``: see `app_instance.ensure_on_this_display`;
+    autostart passes ``check_running=False`` and never moves an app.
+    """
     import shlex as _shlex
 
-    from jailbee.gui import launch_detached
+    from jailbee.gui import launch_attached, launch_detached
+    from jailbee.remote_ssh.session import waypipe_attach
     from jailbee.tui import info
 
     if spec.pool is not None:
@@ -239,6 +283,18 @@ def launch(
 
     cwd = _container_cwd(cfg, incus, container, spec.cwd)
 
+    # Before the "Launching" line: a failed display preparation must print
+    # nothing about launching.
+    env = launch_env(cfg, incus, container, spec.env)
+
+    moved = False
+    if spec.singleton is not None and check_running:
+        from jailbee.app_instance import ensure_on_this_display
+
+        moved = ensure_on_this_display(cfg, incus, container, spec, env, move=move)
+    if moved and spec.singleton is not None:
+        argv += spec.singleton.restore_args
+
     call_args = list(args or [])
     if call_args:
         argv += call_args
@@ -254,17 +310,28 @@ def launch(
         # says which would win if one ever did.
         argv.append(cwd)
 
-    # Before the "Launching" line: a failed display preparation must print
-    # nothing about launching.
-    env = launch_env(cfg, incus, container, spec.env)
     log_path = app_log_path(spec.name)
+    inner = " ".join(_shlex.quote(a) for a in argv)
+    if waypipe_attach():
+        info(f"Running {spec.name} in {container} until it exits (logs in container: {log_path})")
+        launch_attached(
+            container,
+            cfg.container_user.uid,
+            env,
+            inner,
+            log_path,
+            gid=cfg.container_user.gid,
+            cwd=cwd,
+        )
+        return
     info(f"Launching {spec.name} in {container} (background, logs in container: {log_path})")
     launch_detached(
         container,
         cfg.container_user.uid,
         env,
-        " ".join(_shlex.quote(a) for a in argv),
+        inner,
         log_path,
+        gid=cfg.container_user.gid,
         cwd=cwd,
     )
 
@@ -285,8 +352,9 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
     exit non-zero from; skipping the rest of the list would also silently
     drop every app after the failing one, which is worse than one warning.
 
-    A `DisplayError` (a GUI-enabled SSH session whose shared display could not
-    be prepared, e.g. no RDP client connected within the wait) is different:
+    A `DisplayError` (no host Wayland socket to attach, or a GUI-enabled SSH
+    session whose shared display could not be prepared, e.g. no RDP client
+    connected within the wait) is different:
     every later app would wait out the same budget and fail the same way, so
     the first one is reported and the remaining apps are skipped, once.
     """
@@ -297,10 +365,10 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
         if not spec.autostart:
             continue
         try:
-            launch(cfg, incus, container, spec)
+            launch(cfg, incus, container, spec, check_running=False)
         except DisplayError as e:
             error(str(e))
-            error("Skipping the remaining autostart apps: the shared display is not ready.")
+            error("Skipping the remaining autostart apps: the display is not ready.")
             return
         except ValueError as e:
             error(str(e))

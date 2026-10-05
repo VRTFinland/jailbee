@@ -62,7 +62,7 @@ def console_env(tmp_path: Path, mocker) -> ConsoleEnv:
     config = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
-                shell=True,
+                console=True,
                 commands=RemoteCommandPolicy(mode="full"),
             )
         )
@@ -243,7 +243,7 @@ def test_console_with_a_single_registered_repo_skips_the_menu(tmp_path: Path, mo
     mocker.patch("jailbee.remote_ssh.console.state_dir", return_value=tmp_path)
     config = GlobalConfig(
         remote=RemoteConfig(
-            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+            ssh=RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
         )
     )
     mocker.patch("jailbee.global_config.load_global_config", return_value=(config, []))
@@ -372,7 +372,7 @@ def test_console_empty_state_uses_union_of_policy_and_snapshot_exclusions(
     monkeypatch.setenv(SSH_SESSION_ENV, "1")
     monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
     policy = RemoteSSHConfig(
-        shell=True,
+        console=True,
         excluded_repos=["project"],
         commands=RemoteCommandPolicy(mode="full"),
     ).model_dump_json()
@@ -445,7 +445,7 @@ def test_help_lists_only_the_allowed_commands_in_allowlist_mode(
     config = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
-                shell=True,
+                console=True,
                 commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
             )
         )
@@ -490,7 +490,7 @@ def test_help_hides_the_dashboard_row_when_dashboard_is_disabled(
     config = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
-                shell=True,
+                console=True,
                 dashboard=False,
                 commands=RemoteCommandPolicy(mode="full"),
             )
@@ -527,7 +527,7 @@ def test_dashboard_runs_and_returns_to_prompt(console_env: ConsoleEnv, mocker) -
             "dashboard",
             "--remote-policy-json",
             RemoteSSHConfig(
-                shell=True, commands=RemoteCommandPolicy(mode="full")
+                console=True, commands=RemoteCommandPolicy(mode="full")
             ).model_dump_json(),
         ],
         cwd=console_env.repo_root,
@@ -541,7 +541,7 @@ def test_disabled_dashboard_is_rejected_locally(console_env: ConsoleEnv, mocker,
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
                 dashboard=False,
-                shell=True,
+                console=True,
                 commands=RemoteCommandPolicy(mode="full"),
             )
         )
@@ -561,7 +561,7 @@ def test_console_uses_the_policy_snapshot_without_loading_global_config(
     config = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
-                shell=True,
+                console=True,
                 commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]),
             )
         )
@@ -602,7 +602,7 @@ def test_policy_json_wins_over_a_stricter_global_yaml(console_env: ConsoleEnv, m
             GlobalConfig(
                 remote=RemoteConfig(
                     ssh=RemoteSSHConfig(
-                        shell=True,
+                        console=True,
                         dashboard=True,
                         commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
                     )
@@ -612,7 +612,7 @@ def test_policy_json_wins_over_a_stricter_global_yaml(console_env: ConsoleEnv, m
         ),
     )
     policy = RemoteSSHConfig(
-        dashboard=True, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=True, console=True, commands=RemoteCommandPolicy(mode="full")
     ).model_dump_json()
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run",
@@ -641,7 +641,7 @@ def test_policy_json_dashboard_check_also_uses_the_passed_policy(
                 remote=RemoteConfig(
                     ssh=RemoteSSHConfig(
                         dashboard=True,
-                        shell=True,
+                        console=True,
                         commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
                     )
                 )
@@ -650,7 +650,7 @@ def test_policy_json_dashboard_check_also_uses_the_passed_policy(
         ),
     )
     policy = RemoteSSHConfig(
-        dashboard=False, shell=True, commands=RemoteCommandPolicy(mode="full")
+        dashboard=False, console=True, commands=RemoteCommandPolicy(mode="full")
     ).model_dump_json()
     run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
     console_env.lines(["dashboard", "exit"])
@@ -665,14 +665,14 @@ def test_dashboard_child_receives_effective_policy_json(console_env: ConsoleEnv,
     global_policy = GlobalConfig(
         remote=RemoteConfig(
             ssh=RemoteSSHConfig(
-                shell=True,
+                console=True,
                 commands=RemoteCommandPolicy(mode="allowlist", allow=["repos"]),
             )
         )
     )
     mocker.patch("jailbee.global_config.load_global_config", return_value=(global_policy, []))
     effective = RemoteSSHConfig(
-        shell=True,
+        console=True,
         restrict_host=False,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -970,7 +970,7 @@ def test_console_refuses_a_host_path_argument_without_running_anything(
 ) -> None:
     config = GlobalConfig(
         remote=RemoteConfig(
-            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+            ssh=RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
         )
     )
     mocker.patch("jailbee.global_config.load_global_config", return_value=(config, []))
@@ -993,7 +993,7 @@ def test_console_with_restrict_host_false_runs_host_arguments(
 ) -> None:
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     policy = RemoteSSHConfig(
-        shell=True, commands=RemoteCommandPolicy(mode="full"), restrict_host=False
+        console=True, commands=RemoteCommandPolicy(mode="full"), restrict_host=False
     )
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run",
@@ -1025,7 +1025,7 @@ def test_console_refuses_a_host_command_in_full_mode(
 ) -> None:
     config = GlobalConfig(
         remote=RemoteConfig(
-            ssh=RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+            ssh=RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
         )
     )
     mocker.patch("jailbee.global_config.load_global_config", return_value=(config, []))
@@ -1109,12 +1109,16 @@ def test_full_help_keeps_generic_cli_help_without_exclusions(mocker, capsys, tmp
 
 
 def test_gui_flag_adds_the_launchers_to_completion_and_help(capsys, tmp_path) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     allow = RemoteCommandPolicy(mode="allowlist", allow=["ls", "chrome"])
 
     assert "chrome" not in console._allowed_paths(allow)
-    assert "chrome" in console._allowed_paths(allow, gui=True)
+    assert "chrome" in console._allowed_paths(allow, unlocks=RemoteUnlocks(gui=True))
 
-    console._print_help(allow, dashboard_enabled=False, repo_root=tmp_path, gui=True)
+    console._print_help(
+        allow, dashboard_enabled=False, repo_root=tmp_path, unlocks=RemoteUnlocks(gui=True)
+    )
     assert "chrome" in capsys.readouterr().out
 
 
@@ -1122,7 +1126,7 @@ def test_console_runs_a_gui_launcher_only_when_the_gui_flag_is_on(
     console_env: ConsoleEnv, mocker, capsys
 ) -> None:
     def run_with(gui: bool) -> Mock:
-        ssh = RemoteSSHConfig(shell=True, gui=gui, commands=RemoteCommandPolicy(mode="full"))
+        ssh = RemoteSSHConfig(console=True, gui=gui, commands=RemoteCommandPolicy(mode="full"))
         run = mocker.patch(
             "jailbee.remote_ssh.console.subprocess.run",
             return_value=CompletedProcess([], 0),
@@ -1134,3 +1138,86 @@ def test_console_runs_a_gui_launcher_only_when_the_gui_flag_is_on(
     run_with(False).assert_not_called()
     assert "manages the host itself" in capsys.readouterr().err
     run_with(True).assert_called_once()
+
+
+def test_local_policy_is_unrestricted() -> None:
+    policy = console.local_policy()
+    assert policy.commands.mode == "full"
+    assert policy.restrict_host is False
+    assert policy.excluded_repos == []
+    assert policy.dashboard is True
+
+
+def test_cwd_repo_picks_deepest_containing_root(tmp_path: Path) -> None:
+    outer = tmp_path / "outer"
+    inner = outer / "vendor" / "inner"
+    inner.mkdir(parents=True)
+    repos = [console.RepoChoice("outer", outer), console.RepoChoice("inner", inner)]
+    assert console.cwd_repo(repos, inner / "src") == repos[1]
+    assert console.cwd_repo(repos, outer / "docs") == repos[0]
+    assert console.cwd_repo(repos, tmp_path) is None
+
+
+def test_run_local_starts_in_cwd_repo(console_env: ConsoleEnv, monkeypatch) -> None:
+    monkeypatch.chdir(console_env.other_root)
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    assert console_env.prompt.prompt.call_args.args[0] == "jb[other]> "
+
+
+def test_run_local_outside_any_repo_uses_picker(console_env: ConsoleEnv, mocker, tmp_path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    mocker.patch("jailbee.remote_ssh.console.Path.cwd", return_value=elsewhere)
+    picker = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("project", console_env.repo_root),
+    )
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    picker.assert_called_once()
+
+
+def test_run_local_refuses_inside_a_remote_session(
+    console_env: ConsoleEnv, monkeypatch, capsys
+) -> None:
+    from jailbee.remote_ssh.session import SSH_SESSION_ENV
+
+    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    console_env.lines(["exit"])
+    assert console.run_local("project") != 0
+    assert "remote" in capsys.readouterr().err
+    console_env.prompt.prompt.assert_not_called()
+
+
+def test_run_local_with_a_deleted_cwd_uses_the_picker(console_env: ConsoleEnv, mocker) -> None:
+    mocker.patch("jailbee.remote_ssh.console.Path.cwd", side_effect=FileNotFoundError)
+    picker = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("project", console_env.repo_root),
+    )
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    picker.assert_called_once()
+
+
+def test_run_local_dashboard_has_no_remote_policy(console_env: ConsoleEnv, mocker) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
+    )
+    console_env.lines(["dashboard", "exit"])
+    assert console.run_local("project") == 0
+    run.assert_called_once_with(
+        [sys.executable, "-m", "jailbee", "dashboard"],
+        cwd=console_env.repo_root,
+        check=False,
+    )
+
+
+def test_run_local_allows_host_commands(console_env: ConsoleEnv, mocker) -> None:
+    run = mocker.patch(
+        "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
+    )
+    console_env.lines(["config edit", "exit"])
+    assert console.run_local("project") == 0
+    assert run.call_args.args[0] == [sys.executable, "-m", "jailbee", "config", "edit"]

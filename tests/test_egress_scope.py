@@ -482,6 +482,23 @@ def test_apply_container_acl_with_no_extras_removes_acl_and_override(make_cfg, t
     assert not warn.called
 
 
+def test_apply_container_acl_with_only_wildcard_extras_tears_the_acl_down(
+    make_cfg, tmp_path, mocker
+):
+    """add 1.2.3.4, add '*.x.com', rm 1.2.3.4: only a wildcard is left, so no ACL extras."""
+    cfg = make_cfg(tmp_path / "myrepo")
+    incus = _incus_with(mocker, extras=["*.x.com"], local_eth0={"type": "nic"})
+    incus.network_acl_exists.return_value = True
+    mocker.patch("jailbee.tui.warn")
+
+    egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict")
+
+    incus.config_device_remove.assert_called_once_with("myrepo-feat", "eth0", missing_ok=True)
+    deleted = [call.args[0] for call in incus.network_acl_delete.call_args_list]
+    assert "myrepo-feat-extra" in deleted
+    incus.network_acl_set_yaml.assert_not_called()
+
+
 def test_apply_container_acl_warns_when_teardown_leaves_a_local_eth0_behind(
     make_cfg, tmp_path, mocker
 ):
@@ -931,3 +948,12 @@ def test_apply_container_acl_can_skip_the_bridge_sync(make_cfg, tmp_path, mocker
     egress_scope.apply_container_acl(cfg, incus, "myrepo-feat", mode="strict", sync_bridge=False)
 
     sync.assert_not_called()
+
+
+def test_resolve_entries_tolerant_skips_wildcards(mocker):
+    rws = mocker.patch(
+        "jailbee.egress.resolve_with_status", return_value=({"a.com": ["1.1.1.1"]}, {})
+    )
+    out = egress_scope._resolve_entries_tolerant("ct", ["*.vendor.com", "a.com"])
+    rws.assert_called_once_with(["a.com"])
+    assert [e.description for e in out] == ["a.com"]

@@ -48,6 +48,7 @@ def _spec(kind, *, secret=False):
         (bool, Classified(FieldKind.BOOL)),
         (str, Classified(FieldKind.STR)),
         (int, Classified(FieldKind.INT)),
+        (float, Classified(FieldKind.FLOAT)),
         (Path, Classified(FieldKind.PATH)),
         (str | None, Classified(FieldKind.STR, optional=True)),
         (Path | None, Classified(FieldKind.PATH, optional=True)),
@@ -264,7 +265,7 @@ def test_build_specs_covers_every_config_leaf():
     them without anything being added to `schema.py` for them. The remote
     fields come from `remote.ssh`, a `RemoteSSHConfig` recursed into `listen`,
     `port`, `dashboard`, `shell`, `exec`, `default_entrypoint`,
-    `restrict_host`, `gui`, `excluded_repos`, and its nested `commands` policy's
+    `restrict_host`, `gui`, `files`, `network`, `excluded_repos`, and its nested `commands` policy's
     `mode` and `allow`.
     `dashboard.auto_hide.hide_first` adds one editable global leaf.
     The five `litellm` leaves (`enabled`, `version`, `default_profile`,
@@ -272,16 +273,20 @@ def test_build_specs_covers_every_config_leaf():
     Phase 2 of LiteLLM adds `accounts`, `egress` and `extra`: 33 + 3 = 36.
     Phase 3 of LiteLLM adds `autostart`: 36 + 1 = 37. The host-level
     `agent_instructions` field makes 38, `remote.ssh.gui` makes 39, and
-    `remote.ssh.files` the final 40.
+    `remote.ssh.files` 40.
     The `pr` block (`agent`, `ai_description`, `ai_branch`, `prompt`, `model`,
     `timeout`) adds six repo-level leaves: 95 + 6 = 101. The Claude agent's
     old `ai_pr_*` fields were not counted, since `agents` is a map the editor
     does not recurse into.
+    The `egress_proxy_always` bool (always-on egress proxy control) adds one:
+    101 + 1 = 102. `gui.wayland` (on-demand or always socket attach) adds one: 102 + 1 = 103.
+    `dashboard.refresh` (`interval`, `git_interval`, `git`) adds three: 40 + 3 = 43.
+    `remote.ssh.network` makes 44. `default_command` makes 45.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 101
-    assert len(build_specs(GlobalConfig)) == 40
+    assert len(build_specs(Config)) == 103
+    assert len(build_specs(GlobalConfig)) == 45
 
 
 def test_a_default_factory_field_reports_its_real_default():

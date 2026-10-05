@@ -415,7 +415,10 @@ objects travel over the same `ext::` transport the superproject uses. A
 sub-repo the peer is missing is created there first, so adding a submodule on
 one side and syncing works without preparing the other side by hand. Failures
 are loud: a `SubmoduleError` stops the operation rather than leaving the peer
-with a superproject whose gitlinks point at objects it doesn't have. `fetch`
+with a superproject whose gitlinks point at objects it doesn't have. Every
+`submodule update` JailBee runs passes `--checkout`, so a submodule declared
+`update = none` is checked out and transported like any other, and a
+configured `merge` or `rebase` mode is replaced by a checkout too. `fetch`
 additionally points each submodule's branch of the same name at the
 container's state, exactly as it does for the superproject branch — without
 switching any working tree.
@@ -1067,10 +1070,32 @@ confirmation, receipts, resume and cleanup rules remain authoritative.
 `--yes` skips confirmation only; `--dry-run` publishes nothing but publication
 preflight can still read GitHub, unlike inspection.
 
+A PR manifest normally names a PR the container owns: the one it was created
+from (`jb new --pr`), opened (`jb pr`), adopted (`jb pr --pr N`) or stacked
+(`--stacked`). It may also name **any other PR of the same repository** — a
+description fix or a reply on a neighbouring PR, say. The repository lock
+still holds; only the ownership check is relaxed, and never silently. The plan
+then opens with a warning naming the PR, its author and the container, and on
+a terminal the confirmation under it is the consent. With `-y` nobody reads
+that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
+`jb outbox apply` and `jb review apply`; invalid for issues). The terminal
+browser and the Qt dashboard's terminal both ask under the plan, so they need
+no flag. The terminal dashboard's Publish runs with `--yes` and therefore
+refuses, naming `--foreign`. `jb pr`'s post-push offer never publishes to
+another PR: it holds such a manifest back and names
+`jb review apply --foreign <container>`. `jb review ls` lists it with the state
+`not bound`.
+
 The terminal browser offers containers, proposals, actions and comments,
 with Back, Refresh and Exit at each level. Without a TTY, the shorthand
-prints an overview rather than prompting. Dashboard **Outbox...** opens this
-browser; the local Qt dashboard instead opens a native non-modal tree with
+prints an overview rather than prompting. The terminal dashboard's
+**Outbox** entry lists the container's proposals in the same picker panels as
+its other menus: a proposal offers Show (paged), Publish… and Delete…, each
+change confirmed with "No" first and run as the explicit `outbox apply` or
+`outbox drop` pinned to the listed revision, and **Browse actions &
+comments…** opens this browser for deleting a single action or comment. Over
+remote SSH each entry appears only when the session's policy permits its
+command. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication
 opens a host terminal running the exact selected `outbox apply` with its
 revision; that terminal owns the authoritative approval. Launching it is
@@ -1136,10 +1161,10 @@ the paths it does recognize.
 
 ```bash
 jailbee issue ls [<name>] [-o table|json] [--fields …]
-jailbee issue show <name> [<manifest>]
+jailbee issue show [<name>] [<manifest>]
 jailbee issue apply [<name>] [--manifest <name>] [--yes] [--dry-run]
-jailbee issue drop <name> [<manifest>] [--archive-journal] [--yes]
-jailbee issue resolve <name> <manifest> <action> (--applied --url <url> [--issue <n>] | --retry) [--yes]
+jailbee issue drop [<name>] [<manifest>] [--archive-journal] [--yes]
+jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
 ```
 
 `jailbee issue ls` lists every pending manifest across this repo's
@@ -1213,8 +1238,10 @@ the run actually stopped.
 A GitHub mutation whose outcome could not be determined for certain — a
 dropped connection, a timeout — is journaled `uncertain` rather than
 `applied` or left `pending`, and **`jailbee issue apply` refuses to touch
-that manifest again until it is resolved.** `jailbee issue resolve <name>
-<manifest> <action>` takes exactly one of:
+that manifest again until it is resolved.** `jailbee issue resolve [<name>]
+[<manifest>] [<action>]` takes exactly one of (on a terminal, whatever you leave out —
+container, manifest, action, mode, URL — is asked for; off one it must be given
+as arguments and flags, or the command exits 2):
 
 - `--applied --url <github-issue-url> [--issue <n>]` — the human's own
   confirmation, read off GitHub's UI, of what the mutation actually did.

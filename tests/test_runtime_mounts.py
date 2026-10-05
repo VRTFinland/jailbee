@@ -14,8 +14,10 @@ from jailbee.runtime_mounts import (
     GPG_DEVICES,
     SOCKET_DEVICES,
     WAYLAND_DEVICE,
+    EnsureResult,
     attach_runtime_devices,
     detach_runtime_devices,
+    ensure_host_display,
 )
 from tests.conftest import make_cfg
 
@@ -229,7 +231,7 @@ def test_attach_reports_a_config_skip_as_a_note_next_to_the_display_warning(
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     warn = mocker.patch("jailbee.runtime_mounts.warn")
     info = mocker.patch("jailbee.runtime_mounts.info")
-    cfg = make_cfg(tmp_path, gpg={"enabled": False})
+    cfg = make_cfg(tmp_path, gpg={"enabled": False}, gui={"wayland": "always"})
     incus = MagicMock()
     incus.exec.return_value = f"{cfg.container_user.uid}\n"
 
@@ -251,7 +253,9 @@ def test_attach_skips_gpg_socket_when_gpg_disabled(wayland_session, tmp_path):
     which case /run/user/<uid>/gnupg doesn't exist and Incus rejects the
     device add — breaking `jailbee start` for everyone who opted out.
     """
-    cfg = make_cfg(tmp_path, gpg={"enabled": False}, gui={"dbus": True, "audio": True})
+    cfg = make_cfg(
+        tmp_path, gpg={"enabled": False}, gui={"dbus": True, "audio": True, "wayland": "always"}
+    )
     incus = MagicMock()
     incus.exec.return_value = f"{cfg.container_user.uid}\n"
     sleep_fn = MagicMock()
@@ -561,7 +565,7 @@ def _attached(cfg) -> set[str]:
 def test_dbus_and_audio_are_not_attached_by_default(wayland_session, tmp_path):
     """The session bus is the host desktop's control channel and the pulse
     socket its microphone; drawing a window needs neither."""
-    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}))
+    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}, gui={"wayland": "always"}))
 
     assert "wayland-socket" in attached
     assert "gpg-socket" in attached
@@ -578,7 +582,7 @@ def test_dbus_and_audio_are_not_attached_by_default(wayland_session, tmp_path):
     ],
 )
 def test_dbus_and_audio_are_each_opt_in(wayland_session, tmp_path, gui, expected):
-    attached = _attached(make_cfg(tmp_path, gui=gui))
+    attached = _attached(make_cfg(tmp_path, gui={**gui, "wayland": "always"}))
 
     assert attached & {"dbus-socket", "pulse-socket"} == expected
 
@@ -654,3 +658,209 @@ def test_display_socket_is_not_reported_as_disabled_in_config(
     _attached(make_cfg(tmp_path))
 
     assert "display-socket" not in capsys.readouterr().out
+
+
+# --- gui.wayland: on-demand (the default) ---------------------------------
+# The compositor socket is attached by `ensure_host_display` when something
+# needs a display, never at boot.
+
+
+def test_on_demand_boot_attaches_no_wayland_socket(wayland_session, tmp_path):
+    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}))
+
+    assert WAYLAND_DEVICE not in attached
+    assert "gpg-socket" in attached
+
+
+def test_on_demand_boot_sets_no_wayland_display_pin(wayland_session, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
+
+
+@pytest.mark.parametrize("display", [None, "wayland-0"])
+def test_on_demand_boot_neither_stats_nor_warns_about_the_socket(
+    monkeypatch, mocker, tmp_path, display
+):
+    """Whether the host has a usable socket is asked at attach time; at boot
+    in on-demand mode it is not this function's question, so an X11 host
+    gets no "will not display" warning on every start. With WAYLAND_DISPLAY
+    set the stat would be tempting, so that variant makes the check real."""
+    if display is None:
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("WAYLAND_DISPLAY", display)
+    exists = mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=False)
+    warn = mocker.patch("jailbee.runtime_mounts.warn")
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    exists.assert_not_called()
+    warn.assert_not_called()
+
+
+def test_on_demand_boot_with_nothing_to_attach_claims_no_attach(wayland_session, mocker, tmp_path):
+    info = mocker.patch("jailbee.runtime_mounts.info")
+    cfg = make_cfg(tmp_path, gpg={"enabled": False})
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_device_add.assert_not_called()
+    assert not any("Attached" in c.args[0] for c in info.call_args_list)
+
+
+# --- ensure_host_display ---------------------------------------------------
+
+SOURCE = "/run/user/53023/wayland-0"  # full_config.yaml's uid, WAYLAND_DISPLAY=wayland-0
+
+
+def _ensure_incus(*, mounted: str | None, inside_inode: str | Exception = "77\n") -> MagicMock:
+    incus = MagicMock()
+    incus.config_device_get.return_value = mounted
+    if isinstance(inside_inode, Exception):
+        incus.exec.side_effect = inside_inode
+    else:
+        incus.exec.return_value = inside_inode
+    return incus
+
+
+def test_ensure_attaches_and_pins_a_missing_socket(wayland_session):
+    incus = _ensure_incus(mounted=None)
+
+    result = ensure_host_display(_cfg(), incus, "c")
+
+    assert result is EnsureResult.ATTACHED
+    incus.config_device_add.assert_called_once_with(
+        "c", WAYLAND_DEVICE, "disk", {"source": SOURCE, "path": SOURCE}
+    )
+    incus.config_set.assert_called_once_with("c", "environment.WAYLAND_DISPLAY", "wayland-0")
+    incus.config_device_remove.assert_not_called()
+
+
+def test_ensure_leaves_a_current_socket_alone(wayland_session, mocker):
+    mocker.patch("jailbee.runtime_mounts._host_inode", return_value=77)
+    incus = _ensure_incus(mounted=SOURCE, inside_inode="77\n")
+
+    result = ensure_host_display(_cfg(), incus, "c")
+
+    assert result is EnsureResult.UNCHANGED
+    incus.config_device_add.assert_not_called()
+    incus.config_device_remove.assert_not_called()
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_not_called()
+    incus.exec.assert_called_once_with("c", ["stat", "-c", "%i", SOURCE])
+
+
+def test_ensure_replaces_a_socket_the_session_renamed(monkeypatch, mocker):
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=True)
+    incus = _ensure_incus(mounted=SOURCE)
+
+    result = ensure_host_display(_cfg(), incus, "c")
+
+    new = "/run/user/53023/wayland-1"
+    assert result is EnsureResult.REATTACHED
+    incus.config_device_remove.assert_called_once_with("c", WAYLAND_DEVICE, missing_ok=True)
+    incus.config_device_add.assert_called_once_with(
+        "c", WAYLAND_DEVICE, "disk", {"source": new, "path": new}
+    )
+    incus.config_set.assert_called_once_with("c", "environment.WAYLAND_DISPLAY", "wayland-1")
+
+
+def test_ensure_replaces_a_socket_whose_compositor_restarted(wayland_session, mocker):
+    """Same name, new inode: the bind mount still pins the dead socket."""
+    mocker.patch("jailbee.runtime_mounts._host_inode", return_value=78)
+    incus = _ensure_incus(mounted=SOURCE, inside_inode="77\n")
+
+    result = ensure_host_display(_cfg(), incus, "c")
+
+    assert result is EnsureResult.REATTACHED
+    incus.config_device_remove.assert_called_once_with("c", WAYLAND_DEVICE, missing_ok=True)
+    incus.config_device_add.assert_called_once()
+
+
+def test_ensure_replaces_a_socket_it_cannot_stat_inside(wayland_session, mocker):
+    mocker.patch("jailbee.runtime_mounts._host_inode", return_value=77)
+    incus = _ensure_incus(mounted=SOURCE, inside_inode=IncusError("stat: No such file"))
+
+    assert ensure_host_display(_cfg(), incus, "c") is EnsureResult.REATTACHED
+    incus.config_device_add.assert_called_once()
+
+
+def test_ensure_replaces_a_socket_when_the_host_inode_is_gone(wayland_session, mocker):
+    """The host socket vanished between the mount and now: never "current"."""
+    mocker.patch("jailbee.runtime_mounts._host_inode", return_value=None)
+    incus = _ensure_incus(mounted=SOURCE, inside_inode="77\n")
+
+    assert ensure_host_display(_cfg(), incus, "c") is EnsureResult.REATTACHED
+    incus.config_device_remove.assert_called_once_with("c", WAYLAND_DEVICE, missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "failing", ["config_device_add", "config_device_remove", "config_set", "config_device_get"]
+)
+def test_ensure_reports_an_incus_failure_as_a_display_error(wayland_session, failing):
+    """Launchers catch DisplayError only; a raw IncusError would be a traceback."""
+    from jailbee.remote_display import DisplayError
+
+    incus = _ensure_incus(mounted=SOURCE if failing == "config_device_remove" else None)
+    if failing == "config_device_remove":
+        incus.exec.return_value = "1\n"  # stale inode, so the mount is replaced
+    getattr(incus, failing).side_effect = IncusError("boom")
+
+    with pytest.raises(DisplayError, match=r"cannot attach the host display to c: .*boom"):
+        ensure_host_display(_cfg(), incus, "c")
+
+
+@pytest.mark.parametrize(
+    ("display", "exists", "reason"),
+    [
+        (None, True, "not a Wayland session"),
+        ("wayland-9", False, "/run/user/53023/wayland-9"),
+    ],
+)
+def test_ensure_refuses_without_a_usable_host_socket(monkeypatch, mocker, display, exists, reason):
+    from jailbee.remote_display import DisplayError
+
+    if display is None:
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("WAYLAND_DISPLAY", display)
+    mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=exists)
+    incus = _ensure_incus(mounted=None)
+
+    with pytest.raises(DisplayError, match=reason):
+        ensure_host_display(_cfg(), incus, "c")
+    incus.config_device_add.assert_not_called()
+
+
+def test_ensure_clears_the_pin_when_container_env_names_the_display(wayland_session):
+    """`container.env` wins over jailbee's choice (see `_pin_wayland_display`)."""
+    cfg = _cfg()
+    cfg = cfg.model_copy(
+        update={
+            "container": cfg.container.model_copy(update={"env": {"WAYLAND_DISPLAY": "wayland-7"}})
+        }
+    )
+    incus = _ensure_incus(mounted=None)
+
+    ensure_host_display(cfg, incus, "c")
+
+    incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("c", "environment.WAYLAND_DISPLAY")

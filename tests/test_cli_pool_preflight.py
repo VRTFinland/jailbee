@@ -144,7 +144,7 @@ def test_preflight_declines_to_prompt_without_a_terminal(tmp_path, mocker):
     from jailbee.cli import _preflight_cache_pools
 
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=False)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     preflight = mocker.patch("jailbee.pool.preflight_pools", return_value=[])
 
     _preflight_cache_pools(cfg)
@@ -156,7 +156,7 @@ def test_preflight_prompts_on_a_terminal(tmp_path, mocker):
     from jailbee.cli import _preflight_cache_pools
 
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     preflight = mocker.patch("jailbee.pool.preflight_pools", return_value=[])
 
     _preflight_cache_pools(cfg)
@@ -173,7 +173,7 @@ def test_preflight_names_the_pool_and_the_way_out(tmp_path, mocker):
     from jailbee.cli import _preflight_cache_pools
 
     cfg = make_cfg(tmp_path, shared_dir=tmp_path / "shared")
-    mocker.patch("jailbee.lifecycle._stdin_is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pool.preflight_pools", return_value=["gradle", "m2"])
 
     with pytest.raises(typer.Exit) as exc:

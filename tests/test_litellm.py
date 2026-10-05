@@ -19,6 +19,7 @@ from jailbee.egress import EgressEntry
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.litellm_inputs import LiteLLMInputError
+from jailbee.network import services_acl_yaml
 
 
 @pytest.fixture(autouse=True)
@@ -469,7 +470,14 @@ def _services_acl_with_rule() -> str:
     return yaml.safe_dump(
         {
             "name": "jailbee-services",
-            "egress": [{"action": "allow", "destination": "10.79.115.3/32", "protocol": "tcp"}],
+            "egress": [
+                {
+                    "action": "allow",
+                    "destination": "10.79.115.3/32",
+                    "protocol": "tcp",
+                    "description": "jailbee LiteLLM proxy",
+                }
+            ],
         }
     )
 
@@ -481,6 +489,30 @@ def test_reconcile_drops_a_rule_whose_container_is_gone():
     written = incus.network_acl_set_yaml.call_args
     assert written.args[0] == "jailbee-services"
     assert yaml.safe_load(written.args[1])["egress"] == []
+
+
+def test_reconcile_services_acl_keeps_the_egress_proxy_rule():
+    incus = _incus(present=False)
+    incus.network_acl_show.return_value = services_acl_yaml(
+        {
+            "jailbee LiteLLM proxy": (["10.79.115.3"], [4000]),
+            "jailbee egress proxy": (["10.1.0.2"], [3128]),
+        }
+    )
+    assert ll.reconcile_services_acl(incus) is True
+    written = yaml.safe_load(incus.network_acl_set_yaml.call_args.args[1])
+    assert [(r["description"], r["destination"]) for r in written["egress"]] == [
+        ("jailbee egress proxy", "10.1.0.2/32")
+    ]
+
+
+def test_reconcile_ignores_an_acl_holding_only_the_egress_proxy_rule():
+    incus = _incus(present=False)
+    incus.network_acl_show.return_value = services_acl_yaml(
+        {"jailbee egress proxy": (["10.1.0.2"], [3128])}
+    )
+    assert ll.reconcile_services_acl(incus) is False
+    incus.network_acl_set_yaml.assert_not_called()
 
 
 def test_reconcile_keeps_the_rule_while_the_container_exists():

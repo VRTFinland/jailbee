@@ -94,7 +94,7 @@ replacement subset.
 The local file is a per-repo overlay, not another host-global config. It
 rejects `container_prefix`, computed fields such as `credential_group` and
 `claude_credentials_dir`, the host-only keys `scratch`, `config_edit`,
-`update_check`, `install_host_skills`, `agent_instructions`, `remote`, and
+`update_check`, `default_command`, `install_host_skills`, `agent_instructions`, `remote`, and
 `claude_credentials`, and `github.api_tokens`. Other `Config` fields—including `ls`, `dashboard`, and
 `docker_registry_mirror`—are allowed in the local overlay. Refused keys either
 describe the file/repo identity, apply to the whole host, or are legacy
@@ -183,11 +183,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Eleven top-level keys are read from `~/.config/jailbee/global.yaml` into
+Twelve top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
 `credentials`, `scratch`, `config_edit`, `update_check`,
-`install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
+`default_command`, `install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -200,7 +200,7 @@ merged this way — see
 `config_edit` describe this host rather than any one repo — what a directory
 with no config file gets, and how jailbee writes your files — so there is no
 repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
-[`config_edit`](#config_edit). `update_check`, `remote` and `litellm` are likewise
+[`config_edit`](#config_edit). `update_check`, `default_command`, `remote` and `litellm` are likewise
 properties of this host, not a repo: they are validated directly against
 `GlobalConfig`; explicitly configured values override their schema defaults,
 omitted fields retain their defaults, and no repo layer can augment or
@@ -452,8 +452,9 @@ User entries also win over JailBee's own GUI/SSH defaults
 only if you know why you want to.
 
 `WAYLAND_DISPLAY` is the exception to "profile changes need `jailbee apply`":
-unless you pin it here, JailBee re-points it at the compositor socket it
-bind-mounts on every container start, so a host whose socket is renumbered
+unless you pin it here, JailBee re-points it at the compositor socket each
+time it attaches that socket (on the first GUI launch, or every boot with
+`gui.wayland: always`), so a host whose socket is renumbered
 (`wayland-1`) needs no re-apply. That is why `incus config show <container>`
 lists the key on the instance and not only on the profile.
 
@@ -867,7 +868,7 @@ with `jailbee net migrate`, not in this file. See
 #### `egress_allow`
 
 List of allowed egress destinations for **strict** mode. `loose` ignores
-this list. Each entry takes one of six forms:
+this list. Each entry takes one of eight forms:
 
 | Form | Meaning | Example |
 |---|---|---|
@@ -877,6 +878,8 @@ this list. Each entry takes one of six forms:
 | `<ipv4>:<port>` | Allow only TCP/`<port>` | `192.168.1.5:5432` |
 | `<cidr>` | Allow any protocol and port | `10.0.0.0/8` |
 | `<cidr>:<port>` | Allow only TCP/`<port>` | `10.0.0.0/8:5432` |
+| `*.<domain>` | The domain **and every subdomain**, on ports 80 and 443, through the [egress proxy](#wildcards-go-through-the-egress-proxy) | `*.github.com` |
+| `*.<domain>:<port>` | Same, on TCP/`<port>` only | `*.example.org:8443` |
 
 The port-less forms emit an ACL rule with **no `protocol` field at all**,
 which Incus reads as "any protocol" — UDP and ICMP to that destination
@@ -908,6 +911,64 @@ TCP-only — there is no way to allow a *specific* UDP port, so UDP to a
 destination is all-or-nothing via the port-less form (DNS and DHCP are
 allowed unconditionally, independent of this list).
 
+##### Wildcards go through the egress proxy
+
+A `*.<domain>` entry cannot be an ACL rule, because an ACL names addresses and
+a wildcard names none. It is enforced by a small Squid proxy instead, in a
+`jailbee-egress-proxy` container that `jailbee apply` and `jailbee net egress add`
+bring up on demand, once some entry is a wildcard **or** the repo has a
+work-network container with [`egress_proxy_always`](#egress_proxy_always) on.
+Every start, restart, network-mode switch and egress change of such an
+always-on container (one whose network mode is known) also starts the proxy if
+it is stopped, or adds the missing NIC if it was created on another network;
+`jailbee new` and `jailbee restart` therefore bring it back on their own. If it
+cannot be started, they warn to run `jailbee apply` and leave the container's
+environment as it is. Things to know:
+
+- **The apex is included.** `*.github.com` matches `github.com` itself as well
+  as `api.github.com` and every deeper subdomain. It needs at least two labels
+  after `*.`; a `*` anywhere but the leading label is rejected.
+- **Ports 80 and 443 by default.** A wildcard without `:<port>` allows exactly
+  those two, not "any port" as a port-less hostname does. `*.example.org:8443`
+  allows only 8443.
+- **Only proxy-honouring tools.** A strict container gets `HTTP_PROXY`,
+  `HTTPS_PROXY` (and lower-case twins) pointing at the proxy. `curl`, `git`
+  over HTTPS, `pip`, `npm`, `apt` and most language runtimes honour them. A
+  tool that ignores them connects directly and the NIC ACL rejects it, so it
+  fails closed rather than escaping the allowlist. TLS is not intercepted: the
+  proxy sees the host in the `CONNECT` request, never the traffic.
+- **Open a new shell.** On the work network with `egress_proxy_always` (the
+  default) the variables are already set and no new shell is needed. Otherwise
+  they are container environment, so only processes started after the change
+  see them. The change is also copied into a tmux server already running in
+  the container, so a new tmux window picks it up; a shell, window or agent
+  that is already open needs to be restarted.
+- **Plain entries still work.** Hostname, IP and CIDR entries keep their ACL
+  rules; the proxy also lets a container reach them through the proxy. IP literals
+  are added to `NO_PROXY` so they go direct only on legacy containers or with
+  `egress_proxy_always: false`; always-on containers send them through the
+  proxy, which allows them by address.
+- **Loose mode.** On the work network with `egress_proxy_always`, a loose
+  container keeps the variables and the proxy passes it through unfiltered.
+  Elsewhere `jailbee net loose <container>` clears them.
+- **Container scope needs the work network.** `jailbee net egress add
+  '*.example.org' <container>` is refused (exit 2) on a legacy-network
+  container, because the proxy tells containers apart by source address and
+  only the work network gives each one a fixed address. Use `--repo` there
+  (it covers every container of the repo, whose addresses are read at sync
+  time). See [Egress proxy](security.md#egress-proxy) for the security trade-offs.
+  On the legacy network a root process in one strict container can impersonate
+  another container's address and borrow its allowlist, so repos that use
+  wildcards should run `jailbee net migrate`.
+
+`jailbee net egress ls` adds a `VIA` column (`proxy` for a wildcard,
+`acl+proxy` for the rest) once any entry is a wildcard; `jailbee net status`
+and `jailbee doctor` report the proxy's state when a wildcard is in use, or when
+the proxy container exists.
+`jailbee net egress add` does not DNS-resolve a wildcard (there is nothing to
+resolve). The LiteLLM gateway's own per-route `egress` list (under `litellm:`
+routes) does **not** accept wildcards: config validation rejects them.
+
 **`github.com` and strict-mode push:** `github.com` is
 intentionally **not** in the base `egress_allow`. Only HTTPS is added
 automatically — `api.github.com:443` with [`github.enabled`](#github), and
@@ -937,6 +998,16 @@ report. `jailbee net egress export` prints the whole key back with the
 promotable overrides folded in, for when a temporary entry has earned its
 place here. See [Egress overrides](security.md#egress-overrides) for the
 security posture and [Commands](commands.md) for the flags.
+
+#### `egress_proxy_always`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `egress_proxy_always` | bool | `true` | On the work network (`jailbee net migrate`), every container gets `HTTP_PROXY`/`HTTPS_PROXY` (and lower-case twins) from its first boot, in strict and loose mode alike, and the values never change with `egress_allow`. Adding or removing an entry therefore takes effect in shells and agents that are already running. A strict container's proxy rules are its egress entries (hostnames, IPs, CIDRs and wildcards); a loose container is not filtered by the proxy. The NIC ACL still filters every direct connection, as before. `jailbee new` starts the proxy if it is not running yet (the first time downloads an image and installs Squid). Legacy-network containers ignore this key. Set `false` to give the variables only to strict containers with a wildcard entry. |
+
+If an always-on container's network mode is unknown, or its proxy cannot be
+found, its proxy environment is left as it is rather than cleared; clearing it
+would bring back the new-shell problem this key removes.
 
 #### `loose_auto_revert`
 
@@ -1096,18 +1167,27 @@ no gpg-agent.
 |---|---|---|---|
 | `dbus` | bool | `false` | Attach the host's session D-Bus socket (`/run/user/<uid>/bus`) as the `dbus-socket` device. |
 | `audio` | bool | `false` | Attach the host's PulseAudio socket dir (`/run/user/<uid>/pulse`) as the read-only `pulse-socket` device. |
+| `wayland` | `on-demand` \| `always` | `on-demand` | When the host's Wayland display socket is attached as the `wayland-socket` device: on the first GUI launch or `jailbee display attach` (`on-demand`), or on every boot (`always`). |
 
-The Wayland display socket is attached whenever the host session is
-Wayland, with or without this block: it is what `jailbee chrome`, `jailbee
-ide` and `apps run` draw through, and a window is all it gives the
-container. The other two came in alongside it as a desktop bundle but do
+The Wayland display socket is what `jailbee chrome`, `jailbee ide` and `apps
+run` draw through. By default (`wayland: on-demand`) it is attached when the
+first of them — or `jailbee exec -d --gui`, or `jailbee display attach` — runs
+in the container, so a container that never opens a window cannot reach the
+host compositor at all. Each such launch also replaces a socket that a
+restarted compositor (a re-login) left dead. A GUI app started some other way
+— from `jailbee shell`, an agent — needs `jailbee display attach` first. One
+started at boot, such as an autostart step, runs before anyone can attach, so
+it needs `wayland: always`, which attaches the socket on every boot as before. A window is all the socket gives the container.
+
+`dbus` and `audio` came in alongside it as a desktop bundle but do
 more than draw. The session bus is the host desktop's control channel —
 with it, anything in the container can talk to the host user's session
 services — and the pulse socket is the host's speakers and microphone. So
 both are opt-in, per repo or in `global.yaml`. GUI apps run without them;
 what they lose is desktop notifications, portals and sound. A change takes
 effect on the container's next start (every boot detaches and re-attaches
-the socket devices), no `jailbee apply` needed.
+the socket devices; with `wayland: on-demand` the Wayland socket follows at
+the next GUI launch), no `jailbee apply` needed.
 
 ### `ssh`
 
@@ -1397,8 +1477,8 @@ out.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` adopts a login the repo's credential group already holds), and subsequent containers in the same repo inherit that state via the shared cache. |
-| `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
+| `claude.enabled` | bool | `false` | Master switch. When `true`, JailBee mounts `<shared_dir>/claude` → `~/.claude` and `<shared_dir>/claude-install` → `~/.local/share/claude` as shared caches, auto-extends strict-mode `egress_allow` with `api.anthropic.com:443` + `platform.claude.com:443` (the `/login` token exchange) + `mcp-proxy.anthropic.com:443` (claude.ai connectors) + `code.claude.com:443` + `claude.ai:443` + `downloads.claude.ai:443` (the last two cover the `install.sh` bootstrap and the native CLI's self-update), creates an empty `<shared_dir>/claude` on `jailbee init`, and includes it in `jailbee doctor` checks. Claude Code's global config (`.claude.json`) lives **inside** the shared `~/.claude` mount: the golden image exports `CLAUDE_CONFIG_DIR=$HOME/.claude`, and Claude Code reads `(CLAUDE_CONFIG_DIR || $HOME)/.claude.json`. Host `~/.claude` is **not** read — Claude Code runs its onboarding flow inside the first container from a clean state (unless `claude.seed_onboarding` adopts a login the repo's credential group already holds), and subsequent containers in the same repo inherit that state via the shared cache. |
+| `claude.plugins_enabled` | bool | `true` | When `true` (and `claude.enabled` is `true`), also auto-extends `egress_allow` with the GitHub + npm hosts Claude Code's plugin marketplace, skills and SessionStart hooks reach (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `codeload.github.com`, `registry.npmjs.org`). Set to `false` to keep the API reachable while blocking marketplace traffic. Has no effect when `claude.enabled: false`. |
 | `claude.autostart` | bool | `false` | When `true` (requires `claude.enabled: true`), `jailbee` appends a synthetic `claude` window to the `autostart` tmux session on every container start; the first `jailbee tmux <c>` lands in that window (later attaches keep the window you detached from). `validate_runtime` rejects `autostart: true` with `enabled: false`. |
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart window — override to pass flags (e.g. `claude --dangerously-skip-permissions`) or an env-prefix wrapper. Ignored when `claude.autostart` is `false`. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the shared install advances to the latest release. When `false`, an existing install is left untouched, but a missing one is still installed. Has no effect when `claude.enabled: false`. |
@@ -2256,6 +2336,24 @@ a folded `wt`/`target_diff`/`ahead_count`/`behind_count`/`conflict` summary — 
 configured column outside that set (`local_diff`, say) reaches the tree and
 the Grid card style but never Compact. Switch card style to see it.
 
+### `dashboard.refresh` — how often the dashboards update
+
+Global config only. Every open dashboard — `jailbee dashboard`, `jailbee tui`,
+`jailbee gui` — shows what one shared background service gathers, so this sets
+the pace for all of them at once:
+
+```yaml
+dashboard:
+  refresh:
+    interval: 3        # seconds between base-state gathers (floor 0.5)
+    git_interval: 10   # seconds between git-status probes (never below interval)
+    git: true          # false: skip the git probes entirely
+```
+
+The service reads it when it starts, and exits once no dashboard has been open
+for 30 seconds — close every dashboard to apply a change. The dashboards'
+`--interval`, `--git-interval` and `--no-git` flags are deprecated and ignored.
+
 ## Computed attributes
 
 The `Config` object exposes four attributes set at load time, not from YAML,
@@ -2552,7 +2650,7 @@ remote:
     listen: 127.0.0.1
     port: 8022
     dashboard: true
-    shell: true
+    console: true
     exec: true
     default_entrypoint: help
     commands:
@@ -2605,12 +2703,13 @@ remote:
 | `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
 | `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
-| `shell` | bool | `true` | Permit the reserved `shell [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
+| `console` | bool | `true` | Permit the reserved `console [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
 | `exec` | bool | `true` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. This switch affects only the one-shot entry point. |
-| `default_entrypoint` | `help` \| `dashboard` \| `shell` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `shell` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
+| `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
-| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
+| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
+| `network` | bool | `false` | Let remote sessions widen a container's network: `net loose`, `new --net loose` and container-scope `net egress add`. Either can open the host's LAN to the container, which is why it is opt-in. Narrowing (`net strict`, `net egress rm`) is always allowed; `--repo` on `net egress add`/`rm` never is, since it writes the host-local repo layer and affects every container of the repo. See [Security](security.md#remote-ssh). |
 | `files` | bool | `false` | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
 | `excluded_repos` | list[string] | `[]` | Host-controlled exact registered `container_prefix` values unavailable through SSH. Filters repo routes, dashboard/console listings and supported aggregate views. Requires `restrict_host: true`; see [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
@@ -2650,8 +2749,8 @@ commands remain refused while restrictions apply.
 
 Validation rejects all of these combinations:
 
-- `dashboard: false`, `shell: false`, and `exec: false` together;
-- `default_entrypoint: dashboard` or `shell` while that entry point is disabled;
+- `dashboard: false`, `console: false`, and `exec: false` together;
+- `default_entrypoint: dashboard` or `console` while that entry point is disabled;
 - `commands.mode: allowlist` with an empty `allow` list;
 - duplicate, malformed, or unknown command paths; unknown fields; a non-IP
   `listen` value; and a port outside `1..65535`.
@@ -2663,9 +2762,11 @@ switch back to `allowlist` does not discard policy. Listener address and port
 are fixed until `jb remote ssh restart`. Entry-point and command policy are
 loaded for each new SSH session; an already-running dashboard or console keeps
 the policy snapshot it started with. Upgrading to a release with these defaults
-enables shell and one-shot command entry points on an already-enabled SSH
+enables console and one-shot command entry points on an already-enabled SSH
 service unless its host-global configuration explicitly disables them; review
 `global.yaml` and authorized client keys before upgrading.
+
+The old `shell` spelling of the remote entry point (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
 
 `jb remote ssh serve` accepts command-line flags that override any of the
 above for that one foreground run, for trying out a different policy without
@@ -2777,7 +2878,7 @@ repo's host-local file and shared by every container of that repo. A single cont
 carry a **temporary** override, stored in its own
 `user.jailbee.credential_group` instance label rather than in any file:
 
-* `jailbee account group use <name>|none [<container>]` sets it — `<name>`
+* `jailbee account group use [<name>|none] [<container>]` sets it — `<name>`
   moves that one container into another group (creating the group directory
   if needed), `none` opts it out of grouping entirely, for as long as the
   container lives.
@@ -2815,8 +2916,8 @@ runs — `jailbee account group` names them.
 the host-wide picture is `jailbee account ls`, per-container labels are
 `jailbee ls`'s `GROUP` column, and `jailbee doctor` reports an override that
 only repeats this repo's group. `jailbee account group ls` lists the groups
-themselves and what each holds, `jailbee account group create <name>` creates
-an empty group, and `jailbee account group rm <name>` removes one nothing uses
+themselves and what each holds, `jailbee account group create [<name>]` creates
+an empty group, and `jailbee account group rm [<name>]` removes one nothing uses
 (parking any login it holds rather than deleting it). `jailbee account
 group set <name>|none` and `jailbee account group unset` are the permanent,
 repo-wide equivalents of `use`/`reset` — they write `credentials.group` in
@@ -3015,6 +3116,19 @@ config_edit:
 `jailbee config edit --write patch|regenerate` overrides the key for one run.
 A `regenerate` that would drop hand-written comment lines always shows the
 diff and asks first — that confirmation cannot be turned off.
+
+### `default_command`
+
+What `jailbee` (or `jb`) run with no arguments opens. Host-level only: it
+describes how you like to work, not a repo.
+
+```yaml
+default_command: dashboard   # dashboard (default) | gui | console | help
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `default_command` | `dashboard` | `dashboard` opens the TUI, `gui` the Qt dashboard, `console` the interactive console, `help` prints the help text. Without a terminal (a pipe, a script, `JAILBEE_NONINTERACTIVE`) bare `jailbee` always prints help, whatever this says. A broken `global.yaml` falls back to `dashboard` with a warning. |
 
 ### `update_check`
 

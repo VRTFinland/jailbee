@@ -8,17 +8,17 @@ def prompt_add_entry() -> str | None:
     import questionary
 
     answer = questionary.text(
-        "Destination (host, host:port, IPv4, or CIDR):",
+        "Destination (host, host:port, *.domain, IPv4, or CIDR):",
         validate=lambda value: _validate_entry(value),
     ).ask()
     return answer if isinstance(answer, str) else None
 
 
 def _validate_entry(value: str) -> bool | str:
-    from jailbee.egress import parse_egress_entry
+    from jailbee.egress import validate_allow_entry
 
     try:
-        parse_egress_entry(value)
+        validate_allow_entry(value)
     except ValueError as exc:
         return str(exc)
     return True

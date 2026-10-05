@@ -10,6 +10,7 @@ from sqlmodel import Session
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.db.models import RegisteredRepo
+from jailbee.remote_ssh import router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import (
     Route,
@@ -51,7 +52,7 @@ def repo(tmp_path, engine: Engine):
 @pytest.fixture
 def configured_ssh() -> RemoteSSHConfig:
     return RemoteSSHConfig(
-        shell=True,
+        console=True,
         exec=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
@@ -70,16 +71,16 @@ def test_configured_default_routes_to_dashboard(raw: str | None) -> None:
 
 def test_configured_default_routes_to_console() -> None:
     cfg = RemoteSSHConfig(
-        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+        default_entrypoint="console", console=True, commands=RemoteCommandPolicy(mode="full")
     )
     assert route(None, cfg) == Route("console", ("_remote-console",), None, None, True)
 
 
-@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "shell"])
+@pytest.mark.parametrize("default_entrypoint", ["help", "dashboard", "console"])
 def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str) -> None:
     cfg = RemoteSSHConfig(
         default_entrypoint=default_entrypoint,
-        shell=True,
+        console=True,
         commands=RemoteCommandPolicy(mode="full"),
     )
     assert route("help", cfg) == Route("help", (), None, None, False)
@@ -87,7 +88,7 @@ def test_explicit_help_always_routes_to_entrypoint_list(default_entrypoint: str)
 
 def test_explicit_entrypoint_overrides_default() -> None:
     cfg = RemoteSSHConfig(
-        default_entrypoint="shell", shell=True, commands=RemoteCommandPolicy(mode="full")
+        default_entrypoint="console", console=True, commands=RemoteCommandPolicy(mode="full")
     )
     assert route("dashboard", cfg) == Route("dashboard", ("dashboard",), None, None, True)
 
@@ -146,7 +147,10 @@ def test_one_shot_resolves_repo_and_drops_remote_selector(engine, repo) -> None:
 @pytest.mark.parametrize("raw", ["--repo project ls", "shell --repo project"])
 def test_excluded_repo_is_indistinguishable_from_unknown(raw: str, engine, repo) -> None:
     cfg = RemoteSSHConfig(
-        exec=True, shell=True, excluded_repos=["project"], commands=RemoteCommandPolicy(mode="full")
+        exec=True,
+        console=True,
+        excluded_repos=["project"],
+        commands=RemoteCommandPolicy(mode="full"),
     )
     with pytest.raises(RouteError) as excluded:
         route(raw, cfg, engine=engine)
@@ -187,7 +191,7 @@ def test_disabled_dashboard_and_extra_arguments_are_rejected() -> None:
 
 
 def test_console_routes_with_optional_registered_repo(engine, repo) -> None:
-    cfg = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     assert route("shell", cfg) == Route("console", ("_remote-console",), None, None, True)
     assert route("shell --repo project", cfg, engine=engine) == Route(
         "console",
@@ -200,16 +204,16 @@ def test_console_routes_with_optional_registered_repo(engine, repo) -> None:
 
 @pytest.mark.parametrize("raw", ["shell now", "shell --repo", "shell --repo project extra"])
 def test_invalid_console_shapes_are_rejected(raw: str, engine) -> None:
-    cfg = RemoteSSHConfig(shell=True, commands=RemoteCommandPolicy(mode="full"))
+    cfg = RemoteSSHConfig(console=True, commands=RemoteCommandPolicy(mode="full"))
     with pytest.raises(RouteError):
         route(raw, cfg, engine=engine)
 
 
 def test_disabled_shell_and_exec_entrypoints_are_rejected(engine, repo) -> None:
-    cfg = RemoteSSHConfig(shell=False, exec=False, commands=RemoteCommandPolicy(mode="full"))
-    with pytest.raises(RouteError, match="shell is disabled"):
+    cfg = RemoteSSHConfig(console=False, exec=False, commands=RemoteCommandPolicy(mode="full"))
+    with pytest.raises(RouteError, match="console is disabled"):
         route("shell", cfg)
-    with pytest.raises(RouteError, match="shell is disabled"):
+    with pytest.raises(RouteError, match="console is disabled"):
         route("shell --repo unregistered", cfg, engine=engine)
     with pytest.raises(RouteError, match="execution is disabled"):
         route("--repo project ls", cfg, engine=engine)
@@ -357,6 +361,7 @@ def test_command_path_still_rejects_hidden_commands_with_no_public_twin() -> Non
         ("_destroy-worker",),
         ("_boot-worker",),
         ("_autostart-worker",),
+        ("_state-service",),
         ("submodule", "checkout"),
         ("claude", "ls"),
         ("chrome-pool", "ls"),
@@ -445,20 +450,20 @@ def test_one_shot_exec_rejects_an_unknown_command(engine, repo) -> None:
 
 
 def test_help_lists_only_configured_entrypoints() -> None:
-    dashboard_only = help_text(RemoteSSHConfig(shell=False, exec=False))
+    dashboard_only = help_text(RemoteSSHConfig(console=False, exec=False))
     assert "  dashboard" in dashboard_only
-    assert "  shell [--repo PREFIX]" not in dashboard_only
+    assert "  console [--repo PREFIX]" not in dashboard_only
     assert "  --repo PREFIX COMMAND [ARGS...]" not in dashboard_only
 
     all_entrypoints = help_text(
         RemoteSSHConfig(
-            shell=True,
+            console=True,
             exec=True,
             commands=RemoteCommandPolicy(mode="full"),
         )
     )
     assert "  dashboard" in all_entrypoints
-    assert "  shell [--repo PREFIX]" in all_entrypoints
+    assert "  console [--repo PREFIX]" in all_entrypoints
     assert "  --repo PREFIX COMMAND [ARGS...]" in all_entrypoints
 
 
@@ -642,6 +647,14 @@ def test_nested_dashboard_and_tui_are_never_commands() -> None:
     for path in ("dashboard", "tui"):
         with pytest.raises(RouteError, match="reserved"):
             policy_allows([path], FULL, restrict_host=False)
+
+
+def test_local_console_is_never_a_remote_command() -> None:
+    """`jb console` runs unrestricted, so no remote policy may let it through."""
+    allowlist = RemoteCommandPolicy(mode="allowlist", allow=["console"])
+    for policy in (FULL, allowlist):
+        with pytest.raises(RouteError, match="reserved"):
+            policy_allows(["console"], policy, restrict_host=False)
 
 
 @pytest.mark.parametrize(
@@ -935,6 +948,7 @@ def test_display_up_and_down_manage_the_host_and_status_does_not():
 
     assert is_host_command("display up") is True
     assert is_host_command("display down") is True
+    assert is_host_command("display attach") is True
     assert is_host_command("display status") is False
 
 
@@ -943,39 +957,58 @@ GUI_APPS = ["ide", "chrome", "firefox", "browser"]
 
 @pytest.mark.parametrize("path", GUI_APPS)
 def test_gui_apps_are_host_commands_unless_the_feature_is_on(path: str) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
         policy_allows([path], policy, restrict_host=True)
-    assert policy_allows([path], policy, restrict_host=True, gui=True) == path
+    assert (
+        policy_allows([path], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True)) == path
+    )
 
 
 def test_apps_run_follows_the_same_rule() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
         policy_allows(["apps", "run", "x"], policy, restrict_host=True)
-    assert policy_allows(["apps", "run", "x"], policy, restrict_host=True, gui=True) == "apps run"
+    assert (
+        policy_allows(
+            ["apps", "run", "x"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True)
+        )
+        == "apps run"
+    )
 
 
 def test_the_qt_dashboard_launcher_stays_a_host_command_even_with_gui_on() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="full")
 
     with pytest.raises(RouteError, match="manages the host"):
-        policy_allows(["gui"], policy, restrict_host=True, gui=True)
+        policy_allows(["gui"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True))
 
 
 def test_gui_apps_still_respect_an_allowlist() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
     policy = RemoteCommandPolicy(mode="allowlist", allow=["ls"])
 
     with pytest.raises(RouteError, match="not allowed"):
-        policy_allows(["chrome"], policy, restrict_host=True, gui=True)
+        policy_allows(["chrome"], policy, restrict_host=True, unlocks=RemoteUnlocks(gui=True))
 
 
 def test_every_leaf_is_classified_with_gui_on_too() -> None:
     from jailbee.remote_ssh import router
 
-    gui_paths = {p for p in known_command_paths() if not router.is_host_command(p, gui=True)}
+    gui_paths = {
+        p
+        for p in known_command_paths()
+        if not router.is_host_command(p, unlocks=router.RemoteUnlocks(gui=True))
+    }
     assert {"ide", "chrome", "firefox", "browser", "apps run"} <= gui_paths
     assert gui_paths <= (router._CONTAINER_COMMANDS | router._GUI_APP_COMMANDS)
 
@@ -987,3 +1020,223 @@ def test_route_threads_the_gui_flag_to_the_command_policy(repo, engine: Engine) 
     with pytest.raises(RouteError, match="manages the host"):
         route("--repo project chrome feat", off, engine=engine)
     assert route("--repo project chrome feat", on, engine=engine).kind == "command"
+
+
+def test_remote_unlocks_default_unlocks_nothing() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    assert RemoteUnlocks().commands() == frozenset()
+    assert RemoteUnlocks.of(None) == RemoteUnlocks()
+
+
+def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    unlocks = RemoteUnlocks.of(RemoteSSHConfig(gui=True))
+    assert unlocks.commands() == frozenset({"ide", "chrome", "firefox", "browser", "apps run"})
+    assert "gui" not in unlocks.commands()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "loose", "box"),
+        ("net", "egress", "add", "pypi.org", "box"),
+        ("egress", "add", "pypi.org", "box"),  # hidden alias
+    ],
+)
+def test_network_widening_is_a_host_command_unless_the_feature_is_on(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match="manages the host itself"):
+        policy_allows(argv, FULL)
+    assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True)) in {
+        "net loose",
+        "net egress add",
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "strict", "box"),
+        ("net", "egress", "rm", "pypi.org", "box"),
+        ("egress", "rm", "pypi.org", "box"),  # hidden alias
+    ],
+)
+def test_network_narrowing_is_always_allowed(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(argv, FULL) in {"net strict", "net egress rm"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("net", "egress", "add", "pypi.org", "--repo"),
+        ("net", "egress", "add", "--repo", "pypi.org"),
+        ("egress", "add", "pypi.org", "--repo"),
+        ("egress", "rm", "pypi.org", "--repo"),
+        ("net", "egress", "rm", "pypi.org", "--repo"),
+        ("net", "egress", "rm", "--repo", "pypi.org"),
+    ],
+)
+def test_repo_scope_egress_is_refused_even_with_network_on(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match="may not set --repo"):
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True))
+
+
+def test_network_widening_still_respects_an_allowlist(monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["net strict"])
+    with pytest.raises(RouteError, match="not allowed"):
+        policy_allows(("net", "loose", "box"), allow, unlocks=RemoteUnlocks(network=True))
+
+
+def test_unrestricted_sessions_keep_every_network_command(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(("net", "loose", "box"), FULL, restrict_host=False) == "net loose"
+    assert (
+        policy_allows(("net", "egress", "add", "x.org", "--repo"), FULL, restrict_host=False)
+        == "net egress add"
+    )
+
+
+def test_allowed_command_paths_follow_the_network_switch() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks, allowed_command_paths
+
+    off = allowed_command_paths(FULL)
+    on = allowed_command_paths(FULL, unlocks=RemoteUnlocks(network=True))
+    assert {"net loose", "net egress add"}.isdisjoint(off)
+    assert {"net strict", "net egress rm"} <= off
+    assert {"net loose", "net egress add", "net strict", "net egress rm"} <= on
+
+
+def test_remote_unlocks_network_unlocks_widening_only() -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    assert RemoteUnlocks.of(RemoteSSHConfig(network=True)).commands() == frozenset(
+        {"net loose", "net egress add"}
+    )
+    both = RemoteUnlocks(gui=True, network=True).commands()
+    assert {"chrome", "net loose"} <= both
+
+
+def test_route_threads_the_network_flag_to_the_command_policy(repo, engine: Engine) -> None:
+    off = RemoteSSHConfig(exec=True, commands=RemoteCommandPolicy(mode="full"))
+    on = off.model_copy(update={"network": True})
+
+    with pytest.raises(RouteError, match="manages the host"):
+        route("--repo project net loose feat", off, engine=engine)
+    assert route("--repo project net loose feat", on, engine=engine).kind == "command"
+
+
+def test_every_leaf_is_classified_with_network_on_too() -> None:
+    from jailbee.remote_ssh import router
+
+    unlocks = router.RemoteUnlocks(network=True)
+    paths = {p for p in known_command_paths() if not router.is_host_command(p, unlocks=unlocks)}
+    assert {"net loose", "net egress add"} <= paths
+    assert paths <= (router._CONTAINER_COMMANDS | router._NETWORK_WIDENING_COMMANDS)
+
+
+_NEW_LOOSE = [
+    ("new", "feat", "--net", "loose"),
+    ("new", "--net", "loose", "feat"),  # leading position
+    ("new", "feat", "--net=loose"),
+    ("new", "--net=loose", "feat"),
+    ("new", "feat", "--net", "Loose"),
+    ("new", "feat", "--net=LOOSE"),
+    ("new", "feat", "--net", " loose "),
+]
+
+
+@pytest.mark.parametrize("argv", _NEW_LOOSE)
+def test_new_net_loose_needs_the_network_switch(argv, monkeypatch) -> None:
+    from jailbee.remote_ssh.router import RemoteUnlocks
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    with pytest.raises(RouteError, match=r"--net=loose unless remote\.ssh\.network is on: new"):
+        policy_allows(argv, FULL)
+    with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
+        policy_allows(argv, FULL, unlocks=RemoteUnlocks(gui=True))
+    assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True)) == "new"
+
+
+@pytest.mark.parametrize("argv", _NEW_LOOSE)
+def test_new_net_loose_is_refused_in_allowlist_mode_too(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    allow = RemoteCommandPolicy(mode="allowlist", allow=["new"])
+    with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
+        policy_allows(argv, allow)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("new", "feat"),
+        ("new", "feat", "--net", "strict"),
+        ("new", "feat", "--net=strict"),
+        ("new", "feat", "--net", "loosest"),
+        ("new", "--", "--net", "loose"),  # branch names, not the option
+    ],
+)
+def test_new_without_a_widening_net_value_is_allowed(argv, monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    assert policy_allows(argv, FULL) == "new"
+
+
+def test_new_net_loose_is_unchanged_when_the_host_is_unrestricted(monkeypatch) -> None:
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    argv = ("new", "feat", "--net", "loose")
+    assert policy_allows(argv, FULL, restrict_host=False) == "new"
+
+
+def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None:
+    from jailbee.dashboard_commands import permitted
+
+    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    off = RemoteSSHConfig(commands=FULL)
+    on = off.model_copy(update={"network": True})
+    argv = ["new", "feat", "--net", "loose"]
+    assert not permitted(argv, off, over_ssh=True)
+    assert permitted(argv, on, over_ssh=True)
+    assert permitted(["new", "feat", "--net", "strict"], off, over_ssh=True)
+    assert permitted(argv, off, over_ssh=False)
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (("chrome", "c"), True),
+        (("apps", "run", "foot", "c"), True),
+        (("ide", "c"), True),
+        (("gui",), False),
+        (("ls",), False),
+        (("nonsense",), False),
+    ],
+)
+def test_is_gui_app_command(argv, expected):
+    assert router.is_gui_app_command(argv) is expected
+
+
+def test_console_is_a_host_command() -> None:
+    from jailbee.remote_ssh.router import is_host_command
+
+    assert is_host_command("console")
+
+
+@pytest.mark.parametrize("word", ["console", "shell"])
+def test_console_entry_point_accepts_both_names(word: str, engine) -> None:
+    cfg = RemoteSSHConfig(console=True)
+    assert route(word, cfg, engine=engine).kind == "console"
+
+
+def test_help_text_names_console() -> None:
+    assert "  console [--repo PREFIX]" in help_text(RemoteSSHConfig())
+    assert "shell" not in help_text(RemoteSSHConfig())

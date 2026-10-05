@@ -22,6 +22,12 @@ install:
 	@if command -v systemctl >/dev/null 2>&1; then \
 		systemctl --user try-restart jailbee-ssh.service; \
 	fi
+	@# So does the dashboards' state service, and a reinstall of the same
+	@# version never replaces it (the handshake compares versions only). Open
+	@# dashboards reconnect and respawn it from the new code. The pattern is
+	@# the service's whole argv tail (`spawn_server`), so a shell or editor that
+	@# merely mentions it survives; `[_]` keeps it off this recipe's own shell.
+	@pkill -u "$$(id -u)" -f -- ' -m jailbee [_]state-service$$' || true
 
 # Alias for `make install` — kept for back-compat and discoverability now that
 # `make install` includes the optional Qt GUI and SSH extras by default.
