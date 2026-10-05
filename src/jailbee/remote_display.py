@@ -185,10 +185,14 @@ def _provisioning_incomplete(incus: Incus) -> bool:
     try:
         out = incus.exec(
             DISPLAY_CONTAINER,
-            ["bash", "-c", (
+            [
+                "bash",
+                "-c",
+                (
                     f"test -f {_UNIT_PATH} && command -v waypipe >/dev/null "
                     "&& echo present || echo absent"
-                )],
+                ),
+            ],
             timeout=10,
         )
     except IncusError:
