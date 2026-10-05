@@ -648,6 +648,14 @@ def test_nested_dashboard_and_tui_are_never_commands() -> None:
             policy_allows([path], FULL, restrict_host=False)
 
 
+def test_local_console_is_never_a_remote_command() -> None:
+    """`jb console` runs unrestricted, so no remote policy may let it through."""
+    allowlist = RemoteCommandPolicy(mode="allowlist", allow=["console"])
+    for policy in (FULL, allowlist):
+        with pytest.raises(RouteError, match="reserved"):
+            policy_allows(["console"], policy, restrict_host=False)
+
+
 @pytest.mark.parametrize(
     "argv",
     [

@@ -37,6 +37,7 @@ from jailbee.remote_ssh.router import (
     policy_allows,
     resolve_repo,
 )
+from jailbee.remote_ssh.session import is_ssh_session
 
 _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
 
@@ -384,8 +385,23 @@ def cwd_repo(repos: Sequence[RepoChoice], cwd: Path) -> RepoChoice | None:
     return max(matches, key=lambda r: len(r.root.resolve().parts), default=None)
 
 
+def _cwd_repo_or_none(repos: Sequence[RepoChoice]) -> RepoChoice | None:
+    """`cwd_repo` for the process's cwd; none when the cwd was deleted."""
+    try:
+        return cwd_repo(repos, Path.cwd())
+    except FileNotFoundError:
+        return None
+
+
 def run_local(initial_repo: str | None = None) -> int:
-    """Run the console in the user's own terminal (`jb console`)."""
+    """Run the console in the user's own terminal (`jb console`).
+
+    Refused inside any SSH session: this console applies no `remote.ssh`
+    policy, so a remote user reaching it would escape theirs.
+    """
+    if is_ssh_session():
+        _error("`console` runs without the remote policy; use the remote console entry point")
+        return 1
     return run_console(local_policy(), initial_repo, local=True)
 
 
@@ -410,7 +426,7 @@ def run_console(policy: RemoteSSHConfig, initial_repo: str | None, *, local: boo
         unlocks=RemoteUnlocks.of(policy),
     )
     if initial_repo is None:
-        here = cwd_repo(repos, Path.cwd()) if local else None
+        here = _cwd_repo_or_none(repos) if local else None
         if here is not None:
             current = here
         elif len(repos) == 1:

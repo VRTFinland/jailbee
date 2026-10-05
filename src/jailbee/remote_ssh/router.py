@@ -730,10 +730,10 @@ def policy_allows(
                         "config show --layer global is unavailable when SSH repository "
                         "exclusions are active"
                     )
-    if path in {"dashboard", "tui"}:
-        raise RouteError(
-            f"`{path}` is reserved; use the remote dashboard route or console navigation"
-        )
+    # `console` runs the unrestricted local console, so a remote policy must
+    # never reach it, however permissive its mode or `restrict_host` is.
+    if path in {"dashboard", "tui", "console"}:
+        raise RouteError(f"`{path}` is reserved; use the dashboard or console navigation")
     # A nested dashboard cannot claim the server-to-child transport option,
     # even when host access is deliberately unrestricted.
     if host_restricted(restrict_host):

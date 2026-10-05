@@ -1178,6 +1178,29 @@ def test_run_local_outside_any_repo_uses_picker(console_env: ConsoleEnv, mocker,
     picker.assert_called_once()
 
 
+def test_run_local_refuses_inside_a_remote_session(
+    console_env: ConsoleEnv, monkeypatch, capsys
+) -> None:
+    from jailbee.remote_ssh.session import SSH_SESSION_ENV
+
+    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    console_env.lines(["exit"])
+    assert console.run_local("project") != 0
+    assert "remote" in capsys.readouterr().err
+    console_env.prompt.prompt.assert_not_called()
+
+
+def test_run_local_with_a_deleted_cwd_uses_the_picker(console_env: ConsoleEnv, mocker) -> None:
+    mocker.patch("jailbee.remote_ssh.console.Path.cwd", side_effect=FileNotFoundError)
+    picker = mocker.patch(
+        "jailbee.remote_ssh.console._select_repo",
+        return_value=console.RepoChoice("project", console_env.repo_root),
+    )
+    console_env.lines(["exit"])
+    assert console.run_local(None) == 0
+    picker.assert_called_once()
+
+
 def test_run_local_dashboard_has_no_remote_policy(console_env: ConsoleEnv, mocker) -> None:
     run = mocker.patch(
         "jailbee.remote_ssh.console.subprocess.run", return_value=CompletedProcess([], 0)
