@@ -196,7 +196,7 @@ def test_fold_renames_shell_and_entrypoint() -> None:
     }
     out, folded = normalize_remote_ssh_keys(raw, "g.yaml")
     assert folded
-    assert out["remote"]["ssh"] == {  # type: ignore[index]
+    assert out["remote"]["ssh"] == {  # type: ignore[index]  # JSON-shaped dict, indexed untyped
         "console": False,
         "default_entrypoint": "console",
         "port": 1,
