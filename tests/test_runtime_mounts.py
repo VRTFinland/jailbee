@@ -229,7 +229,7 @@ def test_attach_reports_a_config_skip_as_a_note_next_to_the_display_warning(
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     warn = mocker.patch("jailbee.runtime_mounts.warn")
     info = mocker.patch("jailbee.runtime_mounts.info")
-    cfg = make_cfg(tmp_path, gpg={"enabled": False})
+    cfg = make_cfg(tmp_path, gpg={"enabled": False}, gui={"wayland": "always"})
     incus = MagicMock()
     incus.exec.return_value = f"{cfg.container_user.uid}\n"
 
@@ -251,7 +251,9 @@ def test_attach_skips_gpg_socket_when_gpg_disabled(wayland_session, tmp_path):
     which case /run/user/<uid>/gnupg doesn't exist and Incus rejects the
     device add — breaking `jailbee start` for everyone who opted out.
     """
-    cfg = make_cfg(tmp_path, gpg={"enabled": False}, gui={"dbus": True, "audio": True})
+    cfg = make_cfg(
+        tmp_path, gpg={"enabled": False}, gui={"dbus": True, "audio": True, "wayland": "always"}
+    )
     incus = MagicMock()
     incus.exec.return_value = f"{cfg.container_user.uid}\n"
     sleep_fn = MagicMock()
@@ -561,7 +563,7 @@ def _attached(cfg) -> set[str]:
 def test_dbus_and_audio_are_not_attached_by_default(wayland_session, tmp_path):
     """The session bus is the host desktop's control channel and the pulse
     socket its microphone; drawing a window needs neither."""
-    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}))
+    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}, gui={"wayland": "always"}))
 
     assert "wayland-socket" in attached
     assert "gpg-socket" in attached
@@ -578,7 +580,7 @@ def test_dbus_and_audio_are_not_attached_by_default(wayland_session, tmp_path):
     ],
 )
 def test_dbus_and_audio_are_each_opt_in(wayland_session, tmp_path, gui, expected):
-    attached = _attached(make_cfg(tmp_path, gui=gui))
+    attached = _attached(make_cfg(tmp_path, gui={**gui, "wayland": "always"}))
 
     assert attached & {"dbus-socket", "pulse-socket"} == expected
 
@@ -654,3 +656,60 @@ def test_display_socket_is_not_reported_as_disabled_in_config(
     _attached(make_cfg(tmp_path))
 
     assert "display-socket" not in capsys.readouterr().out
+
+
+# --- gui.wayland: on-demand (the default) ---------------------------------
+# The compositor socket is attached by `ensure_host_display` when something
+# needs a display, never at boot.
+
+
+def test_on_demand_boot_attaches_no_wayland_socket(wayland_session, tmp_path):
+    attached = _attached(make_cfg(tmp_path, gpg={"enabled": True}))
+
+    assert WAYLAND_DEVICE not in attached
+    assert "gpg-socket" in attached
+
+
+def test_on_demand_boot_sets_no_wayland_display_pin(wayland_session, tmp_path):
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_set.assert_not_called()
+
+
+def test_on_demand_boot_neither_stats_nor_warns_about_the_socket(monkeypatch, mocker, tmp_path):
+    """Whether the host has a usable socket is asked at attach time; at boot
+    in on-demand mode it is not this function's question, so an X11 host
+    gets no "will not display" warning on every start."""
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    exists = mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=False)
+    warn = mocker.patch("jailbee.runtime_mounts.warn")
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    exists.assert_not_called()
+    warn.assert_not_called()
+
+
+def test_on_demand_boot_with_nothing_to_attach_claims_no_attach(wayland_session, mocker, tmp_path):
+    info = mocker.patch("jailbee.runtime_mounts.info")
+    cfg = make_cfg(tmp_path, gpg={"enabled": False})
+    incus = MagicMock()
+    incus.exec.return_value = f"{cfg.container_user.uid}\n"
+
+    attach_runtime_devices(
+        cfg, incus, "feat-smoke", timeout_s=1.0, poll_interval_s=0.01, sleep_fn=MagicMock()
+    )
+
+    incus.config_device_add.assert_not_called()
+    assert not any("Attached" in c.args[0] for c in info.call_args_list)

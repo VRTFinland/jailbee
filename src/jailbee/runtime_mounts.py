@@ -271,8 +271,12 @@ def attach_runtime_devices(
         )
         return False
 
-    wayland_skip_reason = _wayland_skip_reason(runtime_dir)
-    devices = _devices_for_host(cfg, skip_wayland=wayland_skip_reason is not None)
+    # In on-demand mode the compositor socket is `ensure_host_display`'s job;
+    # whether the host has one is asked there, not on every boot.
+    on_demand = cfg.gui.wayland == "on-demand"
+    wayland_skip_reason = None if on_demand else _wayland_skip_reason(runtime_dir)
+    skip_wayland = on_demand or wayland_skip_reason is not None
+    devices = _devices_for_host(cfg, skip_wayland=skip_wayland)
     for device_name, basename in devices.items():
         path = f"{runtime_dir}/{basename}"
         device_config = {"source": path, "path": path}
@@ -287,7 +291,7 @@ def attach_runtime_devices(
         cfg,
         incus,
         name,
-        socket=None if wayland_skip_reason is not None else host_wayland_socket(),
+        socket=None if skip_wayland else host_wayland_socket(),
     )
 
     config_skipped = sorted(set(SOCKET_DEVICES) - set(devices) - {WAYLAND_DEVICE})
@@ -299,7 +303,7 @@ def attach_runtime_devices(
             f"Attached GUI sockets to {name}, minus {WAYLAND_DEVICE} — "
             f"{wayland_skip_reason}, so GUI launches will not display."
         )
-    else:
+    elif devices:
         info(f"Attached GUI sockets to {name}")
     if config_skipped:
         # Config-driven omissions are what the user asked for, so they

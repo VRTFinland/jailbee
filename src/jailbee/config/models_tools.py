@@ -51,6 +51,17 @@ class GuiConfig(BaseModel):
             "it the host's speakers and microphone. Off by default."
         ),
     )
+    wayland: Literal["on-demand", "always"] = Field(
+        default="on-demand",
+        description=(
+            "When the host's Wayland display socket is attached. `on-demand` "
+            "(default): on the first GUI launch in the container (`jailbee "
+            "ide`/`chrome`/`firefox`/`browser`/`apps run`, `jailbee exec -d "
+            "--gui`) or `jailbee display attach`, so a container that never "
+            "opens a window cannot reach the host compositor. `always`: on "
+            "every boot, for GUI apps started from a shell or an autostart step."
+        ),
+    )
 
 
 class SshConfig(BaseModel):

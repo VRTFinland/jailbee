@@ -4957,3 +4957,24 @@ def test_ff_policy_rejects_unknown_value(make_cfg, tmp_path):
 
     with pytest.raises(pydantic.ValidationError):
         make_cfg(tmp_path, push={"ff": "maybe"})
+
+
+def test_gui_wayland_defaults_to_on_demand(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path).gui.wayland == "on-demand"
+
+
+def test_gui_wayland_accepts_always(tmp_path):
+    from tests.conftest import make_cfg
+
+    assert make_cfg(tmp_path, gui={"wayland": "always"}).gui.wayland == "always"
+
+
+def test_gui_wayland_rejects_other_values(tmp_path):
+    import pydantic
+
+    from tests.conftest import make_cfg
+
+    with pytest.raises(pydantic.ValidationError):
+        make_cfg(tmp_path, gui={"wayland": "never"})

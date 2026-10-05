@@ -279,13 +279,13 @@ def test_build_specs_covers_every_config_leaf():
     old `ai_pr_*` fields were not counted, since `agents` is a map the editor
     does not recurse into.
     The `egress_proxy_always` bool (always-on egress proxy control) adds one:
-    101 + 1 = 102.
+    101 + 1 = 102. `gui.wayland` (on-demand or always socket attach) adds one: 102 + 1 = 103.
     `dashboard.refresh` (`interval`, `git_interval`, `git`) adds three: 40 + 3 = 43.
     `remote.ssh.network` makes 44. `default_command` makes 45.
     """
     from jailbee.config_edit.schema import build_specs
 
-    assert len(build_specs(Config)) == 102
+    assert len(build_specs(Config)) == 103
     assert len(build_specs(GlobalConfig)) == 45
 
 
