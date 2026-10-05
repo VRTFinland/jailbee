@@ -309,3 +309,12 @@ def test_extra_flags_come_after_the_force_flag():
     and its container name would be a parse hazard, so pin it."""
     ac = a.build_action("destroy", "alpha-x", _t("/c.yaml"), extra_flags=["--quiet"])
     assert ac.argv[-2:] == ["--force", "--quiet"]
+
+
+def test_retarget_runs_as_output_with_the_base_last():
+    cmd = a.build_action(
+        "git retarget", "alpha-x", _t("/repo/.gie/config.yaml"), extra_flags=["develop"]
+    )
+    assert cmd.launch == "output"
+    assert cmd.argv[:4] == ["jailbee", "git", "retarget", "alpha-x"]
+    assert cmd.argv[-1] == "develop"

@@ -1433,6 +1433,7 @@ def test_on_new_container_launches_in_a_terminal(mocker):
     from jailbee.qtui.prompts import NewContainerAnswers
 
     mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    mocker.patch("jailbee.qtui.app.host_branches", return_value=("main",))
     dialog = mocker.Mock()
     dialog.exec.return_value = QDialog.DialogCode.Accepted
     dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")
@@ -1472,6 +1473,7 @@ def test_on_new_container_omits_config_and_runs_a_scratch_repo_in_its_root(mocke
     from jailbee.qtui.prompts import NewContainerAnswers
 
     mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    mocker.patch("jailbee.qtui.app.host_branches", return_value=("main",))
     dialog = mocker.Mock()
     dialog.exec.return_value = QDialog.DialogCode.Accepted
     dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")
@@ -1494,6 +1496,7 @@ def test_on_new_container_omits_config_and_runs_a_scratch_repo_in_its_root(mocke
 
 def test_on_new_container_does_nothing_when_the_dialog_is_cancelled(mocker):
     mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    mocker.patch("jailbee.qtui.app.host_branches", return_value=("main",))
     dialog = mocker.Mock()
     dialog.exec.return_value = QDialog.DialogCode.Rejected
     mocker.patch("jailbee.qtui.app.NewContainerDialog", return_value=dialog)
@@ -1511,6 +1514,7 @@ def test_on_new_container_reports_a_missing_terminal(mocker):
     from jailbee.qtui.prompts import NewContainerAnswers
 
     mocker.patch("jailbee.qtui.app.new_container_base_default", return_value="main")
+    mocker.patch("jailbee.qtui.app.host_branches", return_value=("main",))
     dialog = mocker.Mock()
     dialog.exec.return_value = QDialog.DialogCode.Accepted
     dialog.answers.return_value = NewContainerAnswers(branch="feat-x", base="main")

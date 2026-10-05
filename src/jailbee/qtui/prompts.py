@@ -13,10 +13,13 @@ showing a dialog; the dialogs below only collect answers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -25,6 +28,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -222,6 +228,28 @@ class PrOptionsDialog(QDialog):
         )
 
 
+def branch_combo(
+    branches: Sequence[str], default: str | None, parent: QWidget | None = None
+) -> QComboBox:
+    """An editable branch field: type any name, or complete one from ``branches``.
+
+    The completer matches anywhere in the name, case-insensitively, so a long
+    branch list is searched rather than scrolled. Typed text is never added to
+    the list.
+    """
+    combo = QComboBox(parent)
+    combo.setEditable(True)
+    combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+    combo.addItems(list(branches))
+    completer = QCompleter(list(branches), combo)
+    completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+    combo.setCompleter(completer)
+    combo.setEditText(default or "")  # addItems selected the first branch
+    return combo
+
+
 @dataclass(frozen=True)
 class NewContainerAnswers:
     """The two positionals `jailbee new` needs. Both are already stripped."""
@@ -241,6 +269,8 @@ class NewContainerDialog(QDialog):
     is not what "branch off what I am on" means. That is also why OK stays
     disabled on an empty base: blank would not mean "use the default", it would
     mean forking off the wrong branch.
+
+    The base suggests the repo's host branches but stays free text.
     """
 
     def __init__(
@@ -248,12 +278,13 @@ class NewContainerDialog(QDialog):
         repo: str,
         *,
         base_default: str | None,
+        branches: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"New container in '{repo}'")
         self._branch = QLineEdit(self)
-        self._base = QLineEdit(base_default or "", self)
+        self._base = branch_combo(branches, base_default, self)
         form = QFormLayout()
         form.addRow("Branch", self._branch)
         form.addRow("Base branch", self._base)
@@ -267,7 +298,7 @@ class NewContainerDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(self._buttons)
         self._branch.textChanged.connect(self._sync_ok)
-        self._base.textChanged.connect(self._sync_ok)
+        self._base.editTextChanged.connect(self._sync_ok)
         self._sync_ok()
 
     def _sync_ok(self) -> None:
@@ -285,5 +316,55 @@ class NewContainerDialog(QDialog):
         """What the user typed, stripped."""
         return NewContainerAnswers(
             branch=self._branch.text().strip(),
-            base=self._base.text().strip(),
+            base=self._base.currentText().strip(),
         )
+
+
+class RetargetDialog(QDialog):
+    """Asks for a container's new base branch: typed, completed from the host's branches.
+
+    OK needs a name from ``branches`` — `jailbee git retarget` refuses any other.
+    With no branches to offer (an unreadable repo) any name is accepted and the
+    CLI is the check.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        current_base: str | None,
+        branches: Sequence[str],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Change base branch — {name}")
+        self._branches = frozenset(branches)
+        self._base = branch_combo(branches, None, self)
+        form = QFormLayout()
+        form.addRow(QLabel(f"Current base: {current_base or 'unset'}", self))
+        form.addRow("New base", self._base)
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(self._buttons)
+        self._base.editTextChanged.connect(self._sync_ok)
+        self._sync_ok()
+
+    def _sync_ok(self) -> None:
+        base = self.answer()
+        valid = bool(base) and (not self._branches or base in self._branches)
+        self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(valid)
+
+    @property
+    def ok_enabled(self) -> bool:
+        """Whether OK is currently clickable."""
+        return bool(self._buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled())
+
+    def answer(self) -> str:
+        """The typed base, stripped."""
+        return self._base.currentText().strip()
