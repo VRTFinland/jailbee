@@ -258,6 +258,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "registry up",
         "registry down",
         "display up",
+        "display attach",
         "display down",
         "litellm up",
         "litellm down",

@@ -948,6 +948,7 @@ def test_display_up_and_down_manage_the_host_and_status_does_not():
 
     assert is_host_command("display up") is True
     assert is_host_command("display down") is True
+    assert is_host_command("display attach") is True
     assert is_host_command("display status") is False
 
 

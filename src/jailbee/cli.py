@@ -11091,7 +11091,10 @@ def registry_status_cmd(config: ConfigOption = None) -> None:
 
 display_app = typer.Typer(
     name="display",
-    help="Shared RDP display for GUI apps launched over SSH.",
+    help=(
+        "The display GUI apps draw on: attach the host's, "
+        "or run the shared RDP display for SSH sessions."
+    ),
     no_args_is_help=True,
 )
 app.add_typer(display_app)
@@ -11170,6 +11173,48 @@ def display_status_cmd(config: ConfigOption = None) -> None:
     if status is DisplayStatus.RUNNING:
         for line in format_connection_info(connection_info(gcfg.remote.ssh.port)):
             info(line)
+
+
+@display_app.command("attach")
+def display_attach_cmd(name: ContainerArg = None, config: ConfigOption = None) -> None:
+    """Attach the host's Wayland display to a running container.
+
+    For GUI apps started from `jailbee shell` or an autostart step: the GUI
+    launchers (`ide`, `chrome`, `firefox`, `browser`, `apps run`, `exec -d
+    --gui`) attach it themselves. Also replaces a socket a restarted host
+    compositor left dead. Not needed with `gui.wayland: always`.
+    """
+    from jailbee.gui import display_target
+    from jailbee.incus import IncusError
+    from jailbee.remote_display import DisplayError
+    from jailbee.runtime_mounts import EnsureResult, ensure_host_display
+
+    cfg = _load_or_exit(config)
+    if display_target() != "host":
+        error(
+            "`jailbee display attach` attaches the host's own display; over SSH, "
+            "GUI launches prepare their display themselves."
+        )
+        raise typer.Exit(1)
+    incus, resolved = _resolve_existing(cfg, name)
+    running = any(
+        raw["name"] == resolved and raw.get("status") == "Running"
+        for raw in incus.list_containers()
+    )
+    if not running:
+        error(f"{resolved} is not running; start it first (`jailbee start {resolved}`).")
+        raise typer.Exit(1)
+    try:
+        result = ensure_host_display(cfg, incus, resolved)
+    except (DisplayError, IncusError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    if result is EnsureResult.ATTACHED:
+        success(f"Attached the host display to {resolved}")
+    elif result is EnsureResult.REATTACHED:
+        success(f"Re-attached the host display to {resolved} (the host compositor restarted)")
+    else:
+        info(f"The host display is already attached to {resolved}")
 
 
 litellm_app = typer.Typer(
