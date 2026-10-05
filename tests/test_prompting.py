@@ -248,3 +248,30 @@ def test_confirm_cancel_raises_cancelled(mocker):
     mocker.patch("jailbee.prompting._confirm", return_value=None)
     with pytest.raises(Cancelled):
         prompting.confirm("Move it?")
+
+
+def test_ask_with_completions_uses_autocomplete(mocker):
+    auto = mocker.patch("questionary.autocomplete")
+    auto.return_value.ask.return_value = "develop"
+    assert prompting._ask("base branch", None, ["main", "develop"]) == "develop"
+    assert auto.call_args.args[0] == "Base branch:"
+    assert auto.call_args.kwargs["choices"] == ["main", "develop"]
+    assert auto.call_args.kwargs["match_middle"] is True
+
+
+def test_ask_with_no_completions_falls_back_to_plain_text(mocker):
+    """questionary.autocomplete refuses an empty choice list."""
+    auto = mocker.patch("questionary.autocomplete")
+    text = mocker.patch("questionary.text")
+    text.return_value.ask.return_value = "x"
+    assert prompting._ask("base branch", None, []) == "x"
+    auto.assert_not_called()
+
+
+def test_ask_text_passes_completions_through(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="main")
+    assert (
+        prompting.ask_text("base branch", validate=lambda _t: None, completions=["main"]) == "main"
+    )
+    ask.assert_called_once_with("base branch", None, ["main"])

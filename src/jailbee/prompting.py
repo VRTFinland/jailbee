@@ -109,13 +109,18 @@ def _select(noun: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
 
 
-def _ask(noun: str, default: str | None) -> str | None:
-    """The default text prompt. None on Ctrl-C / Esc."""
+def _ask(noun: str, default: str | None, completions: Sequence[str] | None = None) -> str | None:
+    """The default text prompt; Tab completes from `completions`. None on Ctrl-C / Esc."""
     import questionary
 
     # Not str.capitalize(): it lowercases the rest ("GitHub" -> "Github").
     label = noun[:1].upper() + noun[1:]
-    result = questionary.text(f"{label}:", default=default or "").ask()
+    if completions:  # autocomplete refuses an empty choice list
+        result = questionary.autocomplete(
+            f"{label}:", choices=list(completions), default=default or "", match_middle=True
+        ).ask()
+    else:
+        result = questionary.text(f"{label}:", default=default or "").ask()
     return None if result is None else str(result)
 
 
@@ -166,16 +171,19 @@ def ask_text(
     default: str | None = None,
     alternative: str | None = None,
     is_interactive: Callable[[], bool] | None = None,
+    completions: Sequence[str] | None = None,
 ) -> str:
     """Resolve a missing free-text value; re-ask while `validate` objects.
 
     `validate` returns an error message, or None when the text is acceptable.
+    `completions` are offered for Tab completion; the answer is still free
+    text, so `validate` decides whether it must be one of them.
     """
     interactive = is_interactive if is_interactive is not None else globals()["is_interactive"]
     if not interactive():
         raise MissingValue(noun, alternative=alternative, free_text=True)
     while True:
-        answer = _ask(noun, default)
+        answer = _ask(noun, default, completions)
         if answer is None:
             raise Cancelled()
         problem = validate(answer)
