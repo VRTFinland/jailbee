@@ -281,12 +281,12 @@ def test_build_specs_covers_every_config_leaf():
     The `egress_proxy_always` bool (always-on egress proxy control) adds one:
     101 + 1 = 102.
     `dashboard.refresh` (`interval`, `git_interval`, `git`) adds three: 40 + 3 = 43.
-    `remote.ssh.network` makes 44.
+    `remote.ssh.network` makes 44. `default_command` makes 45.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 102
-    assert len(build_specs(GlobalConfig)) == 44
+    assert len(build_specs(GlobalConfig)) == 45
 
 
 def test_a_default_factory_field_reports_its_real_default():

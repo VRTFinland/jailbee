@@ -94,7 +94,7 @@ replacement subset.
 The local file is a per-repo overlay, not another host-global config. It
 rejects `container_prefix`, computed fields such as `credential_group` and
 `claude_credentials_dir`, the host-only keys `scratch`, `config_edit`,
-`update_check`, `install_host_skills`, `agent_instructions`, `remote`, and
+`update_check`, `default_command`, `install_host_skills`, `agent_instructions`, `remote`, and
 `claude_credentials`, and `github.api_tokens`. Other `Config` fields—including `ls`, `dashboard`, and
 `docker_registry_mirror`—are allowed in the local overlay. Refused keys either
 describe the file/repo identity, apply to the whole host, or are legacy
@@ -183,11 +183,11 @@ If you need per-user defaults for `extra_registries`, set them per-repo. There i
 
 ### Keys that bypass the deep-merge pipeline
 
-Eleven top-level keys are read from `~/.config/jailbee/global.yaml` into
+Twelve top-level keys are read from `~/.config/jailbee/global.yaml` into
 `GlobalConfig` and are **not** merged into the Config layer:
 `docker_registry_mirror` (see above), `ls`, `dashboard`,
 `credentials`, `scratch`, `config_edit`, `update_check`,
-`install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
+`default_command`, `install_host_skills`, `agent_instructions`, `remote` and `litellm`. `ls`'s column block is
 merged field-by-field instead
 (repo block over global block) — the generic pipeline would *append* its
 `fields`/`hide` lists and concatenate the two layers' column lists rather
@@ -200,7 +200,7 @@ merged this way — see
 `config_edit` describe this host rather than any one repo — what a directory
 with no config file gets, and how jailbee writes your files — so there is no
 repo-layer counterpart to merge them with; see [`scratch`](#scratch) and
-[`config_edit`](#config_edit). `update_check`, `remote` and `litellm` are likewise
+[`config_edit`](#config_edit). `update_check`, `default_command`, `remote` and `litellm` are likewise
 properties of this host, not a repo: they are validated directly against
 `GlobalConfig`; explicitly configured values override their schema defaults,
 omitted fields retain their defaults, and no repo layer can augment or
@@ -3104,6 +3104,19 @@ config_edit:
 `jailbee config edit --write patch|regenerate` overrides the key for one run.
 A `regenerate` that would drop hand-written comment lines always shows the
 diff and asks first — that confirmation cannot be turned off.
+
+### `default_command`
+
+What `jailbee` (or `jb`) run with no arguments opens. Host-level only: it
+describes how you like to work, not a repo.
+
+```yaml
+default_command: dashboard   # dashboard (default) | gui | console | help
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `default_command` | `dashboard` | `dashboard` opens the TUI, `gui` the Qt dashboard, `console` the interactive console, `help` prints the help text. Without a terminal (a pipe, a script, `JAILBEE_NONINTERACTIVE`) bare `jailbee` always prints help, whatever this says. A broken `global.yaml` falls back to `dashboard` with a warning. |
 
 ### `update_check`
 

@@ -39,7 +39,7 @@ from jailbee.tui import (
 app = typer.Typer(
     name="jailbee",
     help="Manage isolated development environments using Incus.",
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 
 app.add_typer(outbox_app)
@@ -839,6 +839,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -858,6 +859,26 @@ def main(
     except RepoScopeError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
+
+    if ctx.invoked_subcommand is not None or ctx.resilient_parsing:
+        return
+    from jailbee import default_command, prompting
+    from jailbee.global_config import default_global_config_path, load_global_config
+
+    choice, warning = default_command.resolve(
+        interactive=prompting.is_interactive(),
+        load=lambda: load_global_config(default_global_config_path())[0],
+    )
+    if warning is not None:
+        warn_plain(warning)
+    if choice == "help":
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+    if choice == "console":
+        from jailbee.remote_ssh.console import run_local
+
+        raise typer.Exit(run_local(None))
+    raise typer.Exit(_run_dashboard(gui=choice == "gui", foreground=False))
 
 
 @app.command()

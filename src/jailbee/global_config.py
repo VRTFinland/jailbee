@@ -275,6 +275,15 @@ class GlobalConfig(BaseModel):
             "is not a repo's decision."
         ),
     )
+    default_command: Literal["dashboard", "gui", "console", "help"] = Field(
+        default="dashboard",
+        description=(
+            "What `jailbee` run with no arguments opens on a terminal: the TUI "
+            "`dashboard`, the Qt `gui`, the interactive `console`, or `help`. "
+            "Without a terminal (a pipe, a script, `JAILBEE_NONINTERACTIVE`) it "
+            "always prints help. Host-level only (`common.py`'s `_HOST_LEVEL_KEYS`)."
+        ),
+    )
     install_host_skills: bool = Field(
         default=False,
         description=(
