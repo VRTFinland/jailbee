@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from jailbee.incus import IncusError
+from jailbee.remote_display import DisplayError
 from jailbee.remote_ssh import waypipe as wp
 from jailbee.remote_ssh.router import RouteError
+from jailbee.remote_ssh.session import WaypipeSession
 
 SOCK = "/tmp/waypipe-server-6dCPSslHnp.sock"
 # Captured from waypipe 0.11.0 `waypipe ssh` (spec, spike item 1).
@@ -118,3 +123,151 @@ def test_links_live_outside_the_shared_display_directory(tmp_path, monkeypatch):
 def test_names():
     assert wp.server_name("0a1b2c3d", "app-main") == "wp-0a1b2c3d-app-main"
     assert wp.unit_name("0a1b2c3d", "app-main") == "jailbee-wp-0a1b2c3d-app-main"
+
+
+WPS = WaypipeSession(id="0a1b2c3d", compress="zstd=5")
+
+
+def _socket_appears(name="wp-0a1b2c3d-app-main"):
+    from jailbee.gui import display_state_dir
+
+    def run(container, cmd, **kwargs):
+        if cmd[0] == "systemd-run":
+            display_state_dir().mkdir(parents=True, exist_ok=True)
+            (display_state_dir() / name).touch()
+            return ""
+        return "inactive\n"
+
+    return run
+
+
+def test_start_runs_one_unit_with_the_clients_compression_and_the_container_title():
+    incus = MagicMock()
+    incus.exec.side_effect = _socket_appears()
+
+    path = wp.start_container_server(
+        incus, WPS, "app-main", uid=1000, gid=1001, sleep_fn=lambda _s: None
+    )
+
+    assert path == "/run/jailbee-display/wp-0a1b2c3d-app-main"
+    run = next(c for c in incus.exec.call_args_list if c.args[1][0] == "systemd-run")
+    assert run.args[0] == "jailbee-display"
+    argv = run.args[1]
+    assert "--unit=jailbee-wp-0a1b2c3d-app-main" in argv
+    assert "--uid=1000" in argv and "--gid=1001" in argv and "--collect" in argv
+    tail = argv[argv.index("waypipe") :]
+    assert tail == [
+        "waypipe",
+        "--no-gpu",
+        "--compress",
+        "zstd=5",
+        "--title-prefix",
+        "[app-main] ",
+        "--socket",
+        "/srv/jailbee-waypipe-links/0a1b2c3d.sock",
+        "--display",
+        "/srv/jailbee-display/wp-0a1b2c3d-app-main",
+        "server",
+        "--",
+        "sleep",
+        "infinity",
+    ]
+
+
+def test_start_mounts_the_shared_directory_into_the_client_container(mocker):
+    incus = MagicMock()
+    incus.exec.side_effect = _socket_appears()
+    mount = mocker.patch("jailbee.remote_display.ensure_display_mount")
+
+    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+
+    mount.assert_called_once_with(incus, "app-main")
+
+
+def test_a_running_server_is_reused():
+    from jailbee.gui import display_state_dir
+
+    display_state_dir().mkdir(parents=True, exist_ok=True)
+    (display_state_dir() / "wp-0a1b2c3d-app-main").touch()
+    incus = MagicMock()
+    incus.exec.return_value = "active\n"
+
+    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+
+    assert all(c.args[1][0] != "systemd-run" for c in incus.exec.call_args_list)
+
+
+def test_a_concurrent_start_that_lost_the_race_is_success():
+    from jailbee.gui import display_state_dir
+
+    incus = MagicMock()
+
+    def run(container, cmd, **kwargs):
+        if cmd[0] == "systemd-run":
+            display_state_dir().mkdir(parents=True, exist_ok=True)
+            (display_state_dir() / "wp-0a1b2c3d-app-main").touch()
+            raise IncusError(
+                "Failed to start transient service unit: Unit "
+                "jailbee-wp-0a1b2c3d-app-main.service already exists."
+            )
+        return "inactive\n"
+
+    incus.exec.side_effect = run
+
+    wp.start_container_server(incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None)
+
+
+def test_a_socket_that_never_appears_fails_and_stops_the_unit():
+    incus = MagicMock()
+    incus.exec.return_value = "inactive\n"
+
+    with pytest.raises(DisplayError, match="waypipe"):
+        wp.start_container_server(
+            incus, WPS, "app-main", uid=1, gid=1, sleep_fn=lambda _s: None, wait_seconds=1
+        )
+
+    stops = [c.args[1] for c in incus.exec.call_args_list if c.args[1][:2] == ["systemctl", "stop"]]
+    assert stops == [["systemctl", "stop", "jailbee-wp-0a1b2c3d-app-main.service"]]
+
+
+@pytest.mark.parametrize("container", ["../x", "a b", "A", "", "x" * 64, "-x", "a;b"])
+def test_an_unsafe_container_name_never_reaches_systemd(container):
+    incus = MagicMock()
+
+    with pytest.raises(DisplayError):
+        wp.start_container_server(incus, WPS, container, uid=1, gid=1, sleep_fn=lambda _s: None)
+
+    incus.exec.assert_not_called()
+
+
+def test_stop_session_stops_by_glob_so_a_unit_still_starting_is_caught(mocker):
+    incus = MagicMock()
+    removed = mocker.patch("jailbee.remote_display.remove_waypipe_sockets")
+
+    wp.stop_session(incus, "0a1b2c3d")
+
+    incus.exec.assert_called_once_with(
+        "jailbee-display", ["systemctl", "stop", "jailbee-wp-0a1b2c3d-*.service"], timeout=30
+    )
+    removed.assert_called_once_with("0a1b2c3d")
+
+
+def test_stop_session_never_raises(mocker):
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("display container is gone")
+    removed = mocker.patch("jailbee.remote_display.remove_waypipe_sockets")
+
+    wp.stop_session(incus, "0a1b2c3d")
+
+    removed.assert_called_once_with("0a1b2c3d")
+
+
+def test_prune_all_stops_every_session_unit_and_removes_every_socket(mocker):
+    incus = MagicMock()
+    incus.exec.side_effect = IncusError("not running")
+    removed = mocker.patch("jailbee.remote_display.remove_waypipe_sockets")
+
+    wp.prune_all(incus)
+
+    assert incus.exec.call_args.args[1] == ["systemctl", "stop", "jailbee-wp-*.service"]
+    removed.assert_called_once_with()

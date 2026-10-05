@@ -14,13 +14,18 @@ from __future__ import annotations
 import re
 import secrets
 import shlex
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jailbee.remote_ssh.router import RouteError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from jailbee.incus import Incus
+    from jailbee.remote_ssh.session import WaypipeSession
 
 SUN_PATH_MAX = 107
 """Usable bytes of a unix socket path (108 including the terminator)."""
@@ -128,3 +133,134 @@ def server_name(session_id: str, container: str) -> str:
 
 def unit_name(session_id: str, container: str) -> str:
     return f"jailbee-{server_name(session_id, container)}"
+
+
+SERVER_WAIT_SECONDS = 15.0
+_POLL_SECONDS = 0.25
+# Incus instance names: what `incus` itself accepts, so a container name that
+# reaches a unit or socket name is already one of these. Checked anyway: the
+# name comes from the command line of a remote session.
+_CONTAINER_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62})$")
+
+
+def start_container_server(
+    incus: Incus,
+    session: WaypipeSession,
+    container: str,
+    *,
+    uid: int,
+    gid: int,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    wait_seconds: float = SERVER_WAIT_SECONDS,
+) -> str:
+    """Make sure ``container`` has its waypipe server in this session; return its display.
+
+    The server runs in jailbee-display as a transient systemd unit: stopping
+    the unit takes its per-connection children and so the apps' connections
+    with it, which killing waypipe's main process does not (spec, spike
+    item 4). Its Wayland socket lands in the shared display directory, which
+    ``container`` mounts read-only at `SHARED_DISPLAY_DIR`.
+    """
+    from jailbee.gui import SHARED_DISPLAY_DIR, display_state_dir
+    from jailbee.incus import IncusError
+    from jailbee.remote_display import (
+        DISPLAY_CONTAINER,
+        DISPLAY_CONTAINER_DIR,
+        WAYPIPE_LINKS_CONTAINER_DIR,
+        DisplayError,
+        ensure_display_mount,
+    )
+
+    if not _CONTAINER_RE.fullmatch(container):
+        raise DisplayError(f"Cannot open a waypipe display for container {container!r}.")
+    if not _COMPRESS_RE.fullmatch(session.compress):
+        raise DisplayError(f"Invalid compression setting {session.compress!r}.")
+    name = server_name(session.id, container)
+    unit_base = unit_name(session.id, container)
+    unit = f"{unit_base}.service"
+    ensure_display_mount(incus, container)
+    host_socket = display_state_dir() / name
+    if _unit_state(incus, unit) != "active":
+        try:
+            incus.exec(
+                DISPLAY_CONTAINER,
+                [
+                    "systemd-run",
+                    f"--unit={unit_base}",
+                    f"--uid={uid}",
+                    f"--gid={gid}",
+                    "--collect",
+                    f"--setenv=XDG_RUNTIME_DIR={DISPLAY_CONTAINER_DIR}",
+                    "waypipe",
+                    "--no-gpu",
+                    "--compress",
+                    session.compress,
+                    "--title-prefix",
+                    f"[{container}] ",
+                    "--socket",
+                    f"{WAYPIPE_LINKS_CONTAINER_DIR}/{session.id}.sock",
+                    "--display",
+                    f"{DISPLAY_CONTAINER_DIR}/{name}",
+                    "server",
+                    "--",
+                    "sleep",
+                    "infinity",
+                ],
+                timeout=30,
+            )
+        except IncusError as e:
+            # Two launches into one container at once: the loser finds the
+            # winner's unit. Anything else is a real failure.
+            if "already exists" not in str(e):
+                raise DisplayError(f"Could not start the waypipe server: {e}") from e
+    deadline = wait_seconds
+    while not host_socket.exists():
+        if deadline <= 0:
+            _stop(incus, unit)
+            raise DisplayError(
+                f"The waypipe server for {container} did not start within "
+                f"{int(wait_seconds)}s; see `journalctl -u {unit}` in {DISPLAY_CONTAINER}."
+            )
+        sleep_fn(_POLL_SECONDS)
+        deadline -= _POLL_SECONDS
+    return f"{SHARED_DISPLAY_DIR}/{name}"
+
+
+def stop_session(incus: Incus, session_id: str) -> None:
+    """Stop every server of one session and remove its sockets. Never raises.
+
+    By glob, so a unit whose start is still in flight when the session ends
+    is stopped too (a list built at session end could miss it).
+    """
+    from jailbee.remote_display import remove_waypipe_sockets
+
+    _stop(incus, f"jailbee-wp-{session_id}-*.service")
+    remove_waypipe_sockets(session_id)
+
+
+def prune_all(incus: Incus) -> None:
+    """Remove every session's leftovers; for a server start, when none is live."""
+    from jailbee.remote_display import remove_waypipe_sockets
+
+    _stop(incus, "jailbee-wp-*.service")
+    remove_waypipe_sockets()
+
+
+def _unit_state(incus: Incus, unit: str) -> str:
+    from jailbee.incus import IncusError
+    from jailbee.remote_display import DISPLAY_CONTAINER
+
+    try:
+        return incus.exec(DISPLAY_CONTAINER, ["systemctl", "is-active", unit], timeout=10).strip()
+    except IncusError:
+        return "inactive"
+
+
+def _stop(incus: Incus, pattern: str) -> None:
+    from jailbee.incus import IncusError
+    from jailbee.remote_display import DISPLAY_CONTAINER
+
+    try:
+        incus.exec(DISPLAY_CONTAINER, ["systemctl", "stop", pattern], timeout=30)
+    except IncusError:
+        pass
