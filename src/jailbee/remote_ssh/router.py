@@ -876,7 +876,9 @@ def route(
         unlocks=RemoteUnlocks.of(config),
     )
     if prefix is None:
-        return Route("command", command_argv, None, None, False, pick_repo=not _is_help_request(command_argv))
+        return Route(
+            "command", command_argv, None, None, False, pick_repo=not _is_help_request(command_argv)
+        )
     root = resolve_repo(prefix, engine=engine, scope=scope)
     return Route("command", command_argv, prefix, root, False)
 
@@ -890,13 +892,20 @@ def help_text(config: RemoteSSHConfig) -> str:
         lines.append("  console [--repo PREFIX]")
     if not config.exec:
         return "\n".join(lines) + "\n"
-    lines += ["  repos", "  COMMAND [ARGS...] [--repo PREFIX]", "", "Commands this session may run:"]
-    paths = sorted(allowed_command_paths(
-        config.commands,
-        restrict_host=config.restrict_host,
-        scope=RemoteRepoScope(frozenset(config.excluded_repos)),
-        unlocks=RemoteUnlocks.of(config),
-    ))
+    lines += [
+        "  repos",
+        "  COMMAND [ARGS...] [--repo PREFIX]",
+        "",
+        "Commands this session may run:",
+    ]
+    paths = sorted(
+        allowed_command_paths(
+            config.commands,
+            restrict_host=config.restrict_host,
+            scope=RemoteRepoScope(frozenset(config.excluded_repos)),
+            unlocks=RemoteUnlocks.of(config),
+        )
+    )
     short = known_command_short_help()
     width = max((len(path) for path in paths), default=0)
     lines += [f"  {path.ljust(width)}  {short.get(path, '')}".rstrip() for path in paths]
@@ -908,4 +917,6 @@ def repos_text(config: RemoteSSHConfig, *, engine: Engine | None = None) -> str:
     from jailbee.remote_ssh.repo_scope import registered_repos
 
     scope = RemoteRepoScope(frozenset(config.excluded_repos))
-    return "".join(f"{repo.prefix}\t{repo.root}\n" for repo in registered_repos(engine=engine, scope=scope))
+    return "".join(
+        f"{repo.prefix}\t{repo.root}\n" for repo in registered_repos(engine=engine, scope=scope)
+    )
