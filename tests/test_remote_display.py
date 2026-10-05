@@ -414,3 +414,41 @@ def test_up_leaves_a_fully_provisioned_existing_display_alone(mocker):
     rd.display_up(incus, sleep_fn=lambda _s: None)
 
     assert _provisioning_scripts(incus) == []
+
+
+def _running_display(mocker, *, incomplete):
+    incus = MagicMock()
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.RUNNING)
+    mocker.patch.object(rd, "_provisioning_incomplete", return_value=incomplete)
+    return incus, mocker.patch.object(rd, "_provision"), mocker.patch.object(rd, "display_up")
+
+
+def test_ensure_waypipe_display_reprovisions_a_running_display_lacking_waypipe(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=True)
+
+    rd.ensure_waypipe_display(incus)
+
+    provision.assert_called_once_with(incus)
+    up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_ensure_waypipe_display_does_not_reprovision_a_complete_running_display(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=False)
+
+    rd.ensure_waypipe_display(incus)
+
+    provision.assert_not_called()
+    up.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_ensure_waypipe_display_stopped_path_goes_through_display_up_only(mocker):
+    incus, provision, up = _running_display(mocker, incomplete=True)
+    mocker.patch.object(rd, "display_status", return_value=rd.DisplayStatus.STOPPED)
+
+    rd.ensure_waypipe_display(incus)
+
+    up.assert_called_once()
+    provision.assert_not_called()
+    assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE

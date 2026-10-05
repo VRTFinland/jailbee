@@ -370,6 +370,10 @@ def ensure_waypipe_display(
     """
     if display_status(incus) is not DisplayStatus.RUNNING:
         display_up(incus, on_step=on_step, sleep_fn=sleep_fn)
+    elif _provisioning_incomplete(incus):
+        # A running RDP-era display lacks waypipe; display_up is skipped for it.
+        on_step("finishing provisioning")
+        _provision(incus)
     ensure_links_device(incus)
 
 
