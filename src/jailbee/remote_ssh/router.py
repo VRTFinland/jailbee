@@ -224,8 +224,8 @@ def command_path(argv: Sequence[str]) -> str:
 #     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
 #     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
-#     `net migrate`, `registry up`/`down`, `display up`/`down`, `litellm up`/`down`/`login`/
-#     `logout`/`logs`;
+#     `net migrate`, `registry up`/`down`, `display up`/`down`/`attach`,
+#     `litellm up`/`down`/`login`/`logout`/`logs`;
 #   - widening a container's network: `net loose` and `net egress add`
 #     can open the host's own and its LAN's addresses to it, so both are
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);

@@ -682,13 +682,21 @@ def test_on_demand_boot_sets_no_wayland_display_pin(wayland_session, tmp_path):
     )
 
     incus.config_set.assert_not_called()
+    incus.config_unset.assert_called_once_with("feat-smoke", "environment.WAYLAND_DISPLAY")
 
 
-def test_on_demand_boot_neither_stats_nor_warns_about_the_socket(monkeypatch, mocker, tmp_path):
+@pytest.mark.parametrize("display", [None, "wayland-0"])
+def test_on_demand_boot_neither_stats_nor_warns_about_the_socket(
+    monkeypatch, mocker, tmp_path, display
+):
     """Whether the host has a usable socket is asked at attach time; at boot
     in on-demand mode it is not this function's question, so an X11 host
-    gets no "will not display" warning on every start."""
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    gets no "will not display" warning on every start. With WAYLAND_DISPLAY
+    set the stat would be tempting, so that variant makes the check real."""
+    if display is None:
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("WAYLAND_DISPLAY", display)
     exists = mocker.patch("jailbee.runtime_mounts._host_path_exists", return_value=False)
     warn = mocker.patch("jailbee.runtime_mounts.warn")
     cfg = make_cfg(tmp_path)
@@ -793,6 +801,31 @@ def test_ensure_replaces_a_socket_it_cannot_stat_inside(wayland_session, mocker)
 
     assert ensure_host_display(_cfg(), incus, "c") is EnsureResult.REATTACHED
     incus.config_device_add.assert_called_once()
+
+
+def test_ensure_replaces_a_socket_when_the_host_inode_is_gone(wayland_session, mocker):
+    """The host socket vanished between the mount and now: never "current"."""
+    mocker.patch("jailbee.runtime_mounts._host_inode", return_value=None)
+    incus = _ensure_incus(mounted=SOURCE, inside_inode="77\n")
+
+    assert ensure_host_display(_cfg(), incus, "c") is EnsureResult.REATTACHED
+    incus.config_device_remove.assert_called_once_with("c", WAYLAND_DEVICE, missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "failing", ["config_device_add", "config_device_remove", "config_set", "config_device_get"]
+)
+def test_ensure_reports_an_incus_failure_as_a_display_error(wayland_session, failing):
+    """Launchers catch DisplayError only; a raw IncusError would be a traceback."""
+    from jailbee.remote_display import DisplayError
+
+    incus = _ensure_incus(mounted=SOURCE if failing == "config_device_remove" else None)
+    if failing == "config_device_remove":
+        incus.exec.return_value = "1\n"  # stale inode, so the mount is replaced
+    getattr(incus, failing).side_effect = IncusError("boom")
+
+    with pytest.raises(DisplayError, match=r"cannot attach the host display to c: .*boom"):
+        ensure_host_display(_cfg(), incus, "c")
 
 
 @pytest.mark.parametrize(

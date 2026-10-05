@@ -280,24 +280,27 @@ def ensure_host_display(cfg: Config, incus: Incus, name: str) -> EnsureResult:
 
     Raises `DisplayError` when the host has no socket to attach.
     """
+    # Lazy: remote_display imports this module at module level.
+    from jailbee.remote_display import DisplayError
+
     runtime_dir = f"/run/user/{cfg.container_user.uid}"
     reason = _wayland_skip_reason(runtime_dir)
     if reason is not None:
-        # Lazy: remote_display imports this module at module level.
-        from jailbee.remote_display import DisplayError
-
         raise DisplayError(f"cannot attach the host display to {name}: {reason}")
     source = f"{runtime_dir}/{host_wayland_socket()}"
-    mounted = incus.config_device_get(name, WAYLAND_DEVICE, "source")
-    if mounted is None:
-        result = EnsureResult.ATTACHED
-    elif mounted == source and _same_inode(incus, name, source):
-        return EnsureResult.UNCHANGED
-    else:
-        incus.config_device_remove(name, WAYLAND_DEVICE, missing_ok=True)
-        result = EnsureResult.REATTACHED
-    _add_device(incus, name, WAYLAND_DEVICE, {"source": source, "path": source})
-    _pin_wayland_display(cfg, incus, name, socket=host_wayland_socket())
+    try:
+        mounted = incus.config_device_get(name, WAYLAND_DEVICE, "source")
+        if mounted is None:
+            result = EnsureResult.ATTACHED
+        elif mounted == source and _same_inode(incus, name, source):
+            return EnsureResult.UNCHANGED
+        else:
+            incus.config_device_remove(name, WAYLAND_DEVICE, missing_ok=True)
+            result = EnsureResult.REATTACHED
+        _add_device(incus, name, WAYLAND_DEVICE, {"source": source, "path": source})
+        _pin_wayland_display(cfg, incus, name, socket=host_wayland_socket())
+    except IncusError as e:
+        raise DisplayError(f"cannot attach the host display to {name}: {e}") from e
     return result
 
 

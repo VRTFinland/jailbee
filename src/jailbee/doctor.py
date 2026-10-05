@@ -1318,7 +1318,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
             CheckResult(
                 "graphical session",
                 False,
-                "no WAYLAND_DISPLAY set — GUI launches will skip",
+                "no WAYLAND_DISPLAY set — GUI launches will fail until one is available",
             )
         )
 

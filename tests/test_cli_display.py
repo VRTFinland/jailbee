@@ -180,6 +180,18 @@ def test_attach_reports_a_missing_host_socket(host, mocker) -> None:
     assert "not a Wayland session" in out.output
 
 
+def test_attach_reports_an_incus_failure(host, mocker) -> None:
+    mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display",
+        side_effect=IncusError("device add failed"),
+    )
+
+    out = runner.invoke(app, ["display", "attach", "c1"])
+
+    assert out.exit_code == 1
+    assert "device add failed" in out.output
+
+
 def test_attach_is_refused_from_an_ssh_session(host, mocker, monkeypatch) -> None:
     monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
     monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")

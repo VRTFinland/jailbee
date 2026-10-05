@@ -263,8 +263,10 @@ def test_exec_detach_without_gui_never_attaches_the_display(tmp_path, mocker) ->
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
     ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
-    mocker.patch("jailbee.gui.launch_detached")
+    launch = mocker.patch("jailbee.gui.launch_detached")
 
-    runner.invoke(app, ["exec", "-d", "c1", "--", "make", "test"])
+    result = runner.invoke(app, ["exec", "-d", "c1", "--", "make", "test"])
 
+    assert result.exit_code == 0, result.output
+    launch.assert_called_once()
     ensure.assert_not_called()

@@ -11179,10 +11179,11 @@ def display_status_cmd(config: ConfigOption = None) -> None:
 def display_attach_cmd(name: ContainerArg = None, config: ConfigOption = None) -> None:
     """Attach the host's Wayland display to a running container.
 
-    For GUI apps started from `jailbee shell` or an autostart step: the GUI
+    For GUI apps started from `jailbee shell`: the GUI
     launchers (`ide`, `chrome`, `firefox`, `browser`, `apps run`, `exec -d
     --gui`) attach it themselves. Also replaces a socket a restarted host
-    compositor left dead. Not needed with `gui.wayland: always`.
+    compositor left dead. Not needed with `gui.wayland: always`, which a
+    boot-time start (an autostart step) requires.
     """
     from jailbee.gui import display_target
     from jailbee.incus import IncusError
