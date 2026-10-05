@@ -184,7 +184,9 @@ def launch_env(
 ) -> dict[str, str]:
     """The environment for a GUI launch in ``container``.
 
-    On the host this is `gui_env(cfg)`. From an SSH session whose server has
+    On the host the host compositor socket is attached to ``container`` (or a
+    stale one replaced) first — see `runtime_mounts.ensure_host_display` — and
+    the environment is `gui_env(cfg)`. From an SSH session whose server has
     `remote.ssh.gui` on, the shared RDP display is prepared first (started,
     mounted into ``container``, an RDP client awaited) and the app is pointed
     at it. From a `waypipe ssh` session, the container's waypipe server is
@@ -214,6 +216,10 @@ def launch_env(
             ssh_port=port,
             say=info,
         )
+    if target == "host":
+        from jailbee.runtime_mounts import ensure_host_display
+
+        ensure_host_display(cfg, incus, container)
     return {**gui_env(cfg, target), **(extra or {})}
 
 
@@ -296,8 +302,9 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
     exit non-zero from; skipping the rest of the list would also silently
     drop every app after the failing one, which is worse than one warning.
 
-    A `DisplayError` (a GUI-enabled SSH session whose shared display could not
-    be prepared, e.g. no RDP client connected within the wait) is different:
+    A `DisplayError` (no host Wayland socket to attach, or a GUI-enabled SSH
+    session whose shared display could not be prepared, e.g. no RDP client
+    connected within the wait) is different:
     every later app would wait out the same budget and fail the same way, so
     the first one is reported and the remaining apps are skipped, once.
     """
@@ -311,7 +318,7 @@ def launch_autostart_apps(cfg: Config, incus: Incus, container: str) -> None:
             launch(cfg, incus, container, spec)
         except DisplayError as e:
             error(str(e))
-            error("Skipping the remaining autostart apps: the shared display is not ready.")
+            error("Skipping the remaining autostart apps: the display is not ready.")
             return
         except ValueError as e:
             error(str(e))

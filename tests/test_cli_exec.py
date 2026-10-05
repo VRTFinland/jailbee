@@ -239,3 +239,32 @@ def test_exec_without_command_off_a_tty_exits_2(tmp_path, mocker):
     result = runner.invoke(app, ["exec", "c1"])
     assert result.exit_code == 2
     assert "missing command" in panel_text(result.output)
+
+
+def test_exec_detach_gui_on_the_host_attaches_the_host_display(tmp_path, mocker) -> None:
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+    mocker.patch("jailbee.gui.launch_detached")
+
+    result = runner.invoke(app, ["exec", "-d", "--gui", "c1", "--", "firefox"])
+
+    assert result.exit_code == 0
+    assert ensure.call_args.args[2] == "c1"
+
+
+def test_exec_detach_without_gui_never_attaches_the_display(tmp_path, mocker) -> None:
+    from tests.conftest import make_cfg
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+    mocker.patch("jailbee.gui.launch_detached")
+
+    runner.invoke(app, ["exec", "-d", "c1", "--", "make", "test"])
+
+    ensure.assert_not_called()

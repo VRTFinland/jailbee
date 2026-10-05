@@ -411,6 +411,32 @@ def _no_egress_proxy_wiring(
 
 
 @pytest.fixture(autouse=True)
+def _no_host_display_attach(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the host-display attach out of every test that is not about it.
+
+    `apps.launch_env` calls `runtime_mounts.ensure_host_display` for every
+    host-target launch, and the real one reads `$WAYLAND_DISPLAY` and the
+    host filesystem — CI has neither, so every launch test would fail with
+    `DisplayError`. Tests about the attach patch it themselves
+    (`mocker.patch("jailbee.runtime_mounts.ensure_host_display")`), which
+    wins over this default; `test_runtime_mounts` tests the real function.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_runtime_mounts":
+        return
+    from unittest.mock import MagicMock
+
+    from jailbee import runtime_mounts
+
+    monkeypatch.setattr(
+        runtime_mounts,
+        "ensure_host_display",
+        MagicMock(return_value=runtime_mounts.EnsureResult.UNCHANGED),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
 

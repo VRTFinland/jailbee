@@ -501,3 +501,96 @@ def test_a_waypipe_session_without_attach_still_launches_detached(
 
     detached.assert_called_once()
     attached.assert_not_called()
+
+
+def test_launch_env_on_the_host_attaches_the_host_display(tmp_path, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock()
+
+    launch_env(cfg, incus, "c")
+
+    ensure.assert_called_once_with(cfg, incus, "c")
+
+
+def test_launch_env_in_a_waypipe_session_does_not_attach_the_host_display(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    _waypipe_env(monkeypatch, attach=False)
+    mocker.patch(
+        "jailbee.remote_ssh.waypipe.start_container_server",
+        return_value="/run/jailbee-display/wp-0a1b2c3d-c",
+    )
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    launch_env(make_cfg(tmp_path), MagicMock(), "c")
+
+    ensure.assert_not_called()
+
+
+def test_launch_env_on_a_shared_display_does_not_attach_the_host_display(
+    tmp_path, mocker, monkeypatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.apps import launch_env
+
+    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    mocker.patch("jailbee.remote_display.prepare_shared_display")
+    ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
+
+    launch_env(make_cfg(tmp_path), MagicMock(), "c")
+
+    ensure.assert_not_called()
+
+
+def test_a_launch_without_a_host_display_launches_nothing(tmp_path, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+    from jailbee.remote_display import DisplayError
+
+    mocker.patch(
+        "jailbee.runtime_mounts.ensure_host_display",
+        side_effect=DisplayError("this is not a Wayland session"),
+    )
+    mocker.patch.object(apps, "_container_cwd", return_value="/w")
+    detached = mocker.patch("jailbee.gui.launch_detached")
+
+    with pytest.raises(DisplayError):
+        apps.launch(make_cfg(tmp_path), MagicMock(), "c", _plain_spec())
+    detached.assert_not_called()
+
+
+def test_autostart_reports_a_missing_host_display_without_blaming_the_shared_one(
+    tmp_path, mocker
+) -> None:
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    from jailbee import apps
+    from jailbee.remote_display import DisplayError
+
+    spec = _plain_spec()
+    mocker.patch.object(apps, "resolve_apps", return_value=[replace(spec, autostart=True)] * 2)
+    launch = mocker.patch.object(
+        apps, "launch", side_effect=DisplayError("this is not a Wayland session")
+    )
+    error = mocker.patch("jailbee.tui.error")
+
+    apps.launch_autostart_apps(make_cfg(tmp_path), MagicMock(), "c")
+
+    assert launch.call_count == 1
+    messages = " ".join(c.args[0] for c in error.call_args_list)
+    assert "not a Wayland session" in messages
+    assert "shared display" not in messages

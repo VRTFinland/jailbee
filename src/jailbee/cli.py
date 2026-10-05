@@ -16112,9 +16112,9 @@ def exec_cmd(
         bool,
         typer.Option(
             "--gui",
-            help="With --detach: the command is a GUI app. In a GUI-enabled SSH session "
-            "it draws on the shared RDP display (started and awaited first); elsewhere "
-            "this changes nothing.",
+            help="With --detach: the command is a GUI app. On the host, the host "
+            "display is attached to the container first; in a GUI-enabled SSH "
+            "session it draws on the shared RDP display (started and awaited first).",
         ),
     ] = False,
     config: ConfigOption = None,
@@ -16185,9 +16185,8 @@ def exec_cmd(
         # timing.
         # Only an explicit `--gui` launch prepares the shared display: a
         # detached `make test` is not a GUI app and must neither start the
-        # display nor wait for an RDP client. Outside a GUI-enabled SSH session
-        # `launch_env` returns the plain host environment, so `--gui` is
-        # harmless there.
+        # display nor wait for an RDP client. On the host, `launch_env`
+        # attaches the host display, which a non-GUI command has no use for.
         if gui:
             try:
                 env = launch_env(cfg, incus, resolved)
