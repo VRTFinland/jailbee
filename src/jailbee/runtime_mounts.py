@@ -11,12 +11,16 @@ invisible at directory listing level.
 
 The fix is to attach the socket devices *after* logind has
 provisioned ``/run/user/<uid>`` for the dev user — so the bind mounts
-land on logind's live tmpfs, not on a parent that gets shadowed.
+land on logind's live tmpfs, not on a parent that gets shadowed. In
+`gui.wayland: on-demand` mode the compositor socket is not attached at boot
+but by `ensure_host_display`, when something first needs a display.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from enum import StrEnum
 from pathlib import Path
 
 from jailbee.config import Config
@@ -232,6 +236,69 @@ def _add_device(incus: Incus, name: str, device_name: str, device_config: dict[s
         if "already exists" in str(e).lower():
             return
         raise
+
+
+class EnsureResult(StrEnum):
+    """What `ensure_host_display` did."""
+
+    ATTACHED = "attached"
+    REATTACHED = "reattached"
+    UNCHANGED = "unchanged"
+
+
+def _host_inode(path: str) -> int | None:
+    """Inode of a host path, or None if it is gone. Separate so tests can say."""
+    try:
+        return os.stat(path).st_ino
+    except OSError:
+        return None
+
+
+def _same_inode(incus: Incus, name: str, path: str) -> bool:
+    """Whether the container's bind mount at ``path`` is the host's current socket.
+
+    A single-file bind mount pins the inode it was made from. A restarted
+    compositor creates a new socket at the same path, and the container
+    keeps seeing the dead one. A failing ``stat`` inside counts as stale.
+    """
+    host = _host_inode(path)
+    try:
+        inside = incus.exec(name, ["stat", "-c", "%i", path]).strip()
+    except IncusError:
+        return False
+    return host is not None and inside == str(host)
+
+
+def ensure_host_display(cfg: Config, incus: Incus, name: str) -> EnsureResult:
+    """Attach the host compositor socket to ``name``, or replace a stale one.
+
+    The one place the socket is attached after boot: every host-display GUI
+    launch (`apps.launch_env`) and `jailbee display attach` come here, in
+    both `gui.wayland` modes, so a socket a restarted compositor left dead
+    is replaced on the next launch. Idempotent; a current socket costs one
+    ``config device get`` and one ``stat`` and writes nothing.
+
+    Raises `DisplayError` when the host has no socket to attach.
+    """
+    runtime_dir = f"/run/user/{cfg.container_user.uid}"
+    reason = _wayland_skip_reason(runtime_dir)
+    if reason is not None:
+        # Lazy: remote_display imports this module at module level.
+        from jailbee.remote_display import DisplayError
+
+        raise DisplayError(f"cannot attach the host display to {name}: {reason}")
+    source = f"{runtime_dir}/{host_wayland_socket()}"
+    mounted = incus.config_device_get(name, WAYLAND_DEVICE, "source")
+    if mounted is None:
+        result = EnsureResult.ATTACHED
+    elif mounted == source and _same_inode(incus, name, source):
+        return EnsureResult.UNCHANGED
+    else:
+        incus.config_device_remove(name, WAYLAND_DEVICE, missing_ok=True)
+        result = EnsureResult.REATTACHED
+    _add_device(incus, name, WAYLAND_DEVICE, {"source": source, "path": source})
+    _pin_wayland_display(cfg, incus, name, socket=host_wayland_socket())
+    return result
 
 
 def attach_runtime_devices(

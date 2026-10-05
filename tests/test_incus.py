@@ -672,6 +672,25 @@ def test_config_get_invokes_cli(incus, mocker):
     assert args == ["incus", "config", "get", "feat-foo", "user.jailbee.branch"]
 
 
+def test_config_device_get_returns_the_value(incus, mocker):
+    run = _mock_run(mocker, stdout="/run/user/1000/wayland-0\n")
+
+    assert incus.config_device_get("c", "wayland-socket", "source") == "/run/user/1000/wayland-0"
+    assert run.call_args.args[0][-5:] == ["device", "get", "c", "wayland-socket", "source"]
+
+
+def test_config_device_get_is_none_without_the_device(incus, mocker):
+    _mock_run(mocker, stderr="Error: Device doesn't exist", returncode=1)
+
+    assert incus.config_device_get("c", "wayland-socket", "source") is None
+
+
+def test_config_device_get_is_none_for_an_empty_value(incus, mocker):
+    _mock_run(mocker, stdout="\n")
+
+    assert incus.config_device_get("c", "wayland-socket", "source") is None
+
+
 def test_config_show_expanded_includes_effective_profile_devices(incus, mocker):
     run = _mock_run(mocker, stdout="devices: {}\n")
 

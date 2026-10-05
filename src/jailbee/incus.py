@@ -690,6 +690,18 @@ class Incus:
         value = result.stdout.strip()
         return value or None
 
+    def config_device_get(self, name: str, device: str, key: str) -> str | None:
+        """Return one key of an instance-local device, or None.
+
+        None when the device (or the key) is absent — Incus exits non-zero —
+        or the value is empty. Mirrors `config_get`.
+        """
+        result = self._run(["config", "device", "get", name, device, key], check=False)
+        if result.returncode != 0:
+            return None
+        value = result.stdout.strip()
+        return value or None
+
     def config_show(self, name: str, *, expanded: bool = False) -> str:
         """Return an instance's config YAML, optionally including profile devices."""
         args = ["config", "show", name]
