@@ -1953,7 +1953,10 @@ def test_xai_login_forwards_the_callback_port_for_the_login_only():
     removes = [c for c in incus.config_device_remove.call_args_list if c.args[1] == "xai-login"]
     assert len(removes) == 2  # a stale one first (missing_ok), then ours
     script = incus.exec_interactive.call_args.args[1][-1]
-    assert "XAIOAuthAuthenticator().login(no_browser=True)" in script
+    assert "/usr/local/lib/jailbee-xai-login.py" in script
+    deployment = incus.exec_with_input.call_args.args[2]
+    assert "chmod 0644 /usr/local/lib/jailbee-xai-login.py" in deployment
+    assert ll._read("xai_login.py") in deployment
     assert 'test "${XAI_OAUTH_TOKEN_DIR:-}" = /var/lib/jailbee-litellm/default/xai-auth' in script
 
 
