@@ -158,10 +158,10 @@ Then, with the `jb` entry from step 2:
 
 ```bash
 cwaypipe -t jb dashboard                         # launch apps from the menu
-cwaypipe jb --repo PREFIX chrome <container>     # or one app directly
+cwaypipe jb chrome <container> --repo PREFIX     # or one app directly
 ```
 
-The direct form takes no `--` before `--repo`, unlike plain `ssh`, and stays
+With `--repo` after the command, no client `--` separator is needed. It stays
 open until the app exits. Window titles carry a `[<container>] ` prefix. The
 rest of [Native windows with waypipe](remote-gui.md#native-windows-with-waypipe)
 applies unchanged, including `-o ControlMaster=no` if your ssh config shares
@@ -307,16 +307,19 @@ With the `jb` entry from setup A (or B), from a macOS terminal:
 |---|---|
 | Open the dashboard | `ssh -t jb dashboard` |
 | Open a JailBee console (pick a repo, run commands) | `ssh -t jb console`, or `ssh -t jb console --repo PREFIX` |
-| Run one command | `ssh jb -- --repo PREFIX ls` |
-| Get a shell inside a container | `ssh -t jb -- --repo PREFIX shell feat-x` |
-| Open the IDE or a browser on the shared display | `ssh jb -- --repo PREFIX ide feat-x`, `... chrome feat-x [url]`, `... apps run APP --container feat-x` |
-| Open them as native macOS windows instead ([step 4](#4-on-the-mac-native-windows-optional)) | `cwaypipe -t jb dashboard`, or `cwaypipe jb --repo PREFIX chrome feat-x` |
+| Run one command | `ssh jb ls --repo PREFIX` |
+| Get a shell inside a container | `ssh -t jb shell feat-x --repo PREFIX` |
+| Open the IDE or a browser on the shared display | `ssh jb ide feat-x --repo PREFIX`, `ssh jb chrome feat-x [url] --repo PREFIX`, `ssh jb apps run APP --container feat-x --repo PREFIX` |
+| Open them as native macOS windows instead ([step 4](#4-on-the-mac-native-windows-optional)) | `cwaypipe -t jb dashboard`, or `cwaypipe jb chrome feat-x --repo PREFIX` |
 | Copy files in or out (`files: true`) | `sftp jb` (the top level lists the running containers), or `scp ./notes.md jb:/<container>/docs/` |
 | Copy and paste | Works between the Mac and the shared display through Windows App |
 
 `PREFIX` is the repo's `container_prefix`; the console and dashboard let you
-pick it instead. The `--` keeps OpenSSH from reading `--repo` as its own
-option. If no RDP client is connected when a GUI app is launched, the command
+pick it instead. `ssh jb repos` lists visible repos and `ssh jb help` lists
+allowed commands. One-shot commands without `--repo` use the only visible repo,
+or ask with `ssh -t` when there are several (without a PTY: exit 2 lists them).
+The old `ssh jb -- --repo PREFIX COMMAND` form still works; its `--` keeps
+OpenSSH from reading `--repo` as its own option. If no RDP client is connected when a GUI app is launched, the command
 prints the connection recipe and waits up to two minutes for one, so you can
 launch first and open Windows App second.
 

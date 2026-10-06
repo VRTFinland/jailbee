@@ -19,6 +19,18 @@ Common conventions:
 - Container names derive from branches by replacing `/` with `-`
   (`feat/foo` → `feat-foo`).
 
+## Global repository option
+
+`--repo PREFIX` runs a command in an exact registered repo (never a path)
+instead of the cwd's repo. It works before the command (`jb --repo x chrome
+feat`), inside its path (`jb net --repo x egress add pypi.org feat`) or after
+its arguments (`jb chrome feat --repo x`), but never after `--` (opaque
+payload). Only one global selector is accepted; it cannot be combined with
+`-c` / `--config`. Without it, local cwd / scratch behaviour is unchanged.
+A leaf's own `--repo` keeps its meaning after its name: `net egress add` / `rm`,
+`net refresh`, `net unregister`, `console`. Put the global selector before
+that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
+
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `display`)](#setup--host)
@@ -111,6 +123,8 @@ grammar is exactly:
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
+ssh -p 8022 jailbee@localhost repos
+ssh -p 8022 jailbee@localhost COMMAND [ARGS...] [--repo PREFIX]
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
@@ -118,17 +132,30 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-The old `shell` spelling (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+Only the exact `ssh … shell` and `ssh … shell --repo PREFIX` forms mean the
+legacy console until 2.0.0; `ssh -t … shell NAME --repo PREFIX` runs `jb shell
+NAME` in a container. The old config/serve spellings (`remote.ssh.shell`,
+`default_entrypoint: shell`, `serve --shell`) also still work until 2.0.0;
+`jailbee config migrate --apply` renames them.
 
-A commandless login prints help listing only configured entry points and exits
+A commandless login prints help listing enabled forms and allowed command paths and exits
 zero by default. `remote.ssh.default_entrypoint` in the host's `global.yaml`
 can select `dashboard` or `console` instead (the selected entry point must be
 enabled). Explicit `help` always prints the list. `dashboard` and the
 restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
-Every one-shot request starts with `--repo PREFIX`; it is an exact registered
-repository prefix, never a path, and its registered root becomes cwd. Text
-this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
+One-shot SSH execution accepts every JailBee command the remote console does,
+under the same policy and host restrictions. The global `--repo PREFIX`
+follows the placement rules above; the old `-- --repo PREFIX COMMAND` form
+still works. A prefix is exact and registered, never a path; its root becomes
+cwd. Without it, one visible repo is used automatically; with several,
+`ssh -t` shows a picker and a non-PTY call exits 2 naming the candidates.
+Command help needs no repo or picker. `repos` lists visible prefixes and roots
+(requires `exec: true`); excluded repos are unavailable to listings, pickers
+and selectors. A console line's global selector affects only that command,
+not the selected repo: use `use` to switch persistently.
+
+Text this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
 was negotiated, LF otherwise; JailBee child command output is unaffected.
 
 The console either takes `--repo PREFIX`, or shows an arrow-key menu of live
@@ -151,7 +178,7 @@ confused with the JailBee command aliases below.
 Policy lives only in host-global `remote.ssh`. Defaults are
 `127.0.0.1:8022`, with dashboard, console and one-shot execution enabled,
 `commands.mode: full`, and host restrictions on. Entry-point switches are
-separate from command policy: `exec: false` disables one-shot execution only.
+separate from command policy: `exec: false` disables one-shot execution and `repos`, not console navigation.
 `commands.mode: disabled` blocks dashboard actions that run commands, while
 dashboard navigation and console-local navigation remain available. An
 allowlist names exact public leaves (`git pull`, not `git`); in restricted
@@ -840,7 +867,7 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | Command | Notes |
 |---|---|
 | `jailbee shell [NAME]` | Interactive shell, lands in `~/<container_prefix>` (the clone); falls back to `$HOME` if there's no clone. Waits if the container is being created in the background. |
-| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `repos` lists the registered repos, `use [PREFIX]` switches repo, `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
+| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `repos` lists the registered repos, `use [PREFIX]` switches repo; a line's global `--repo` runs only that command elsewhere without changing the selection. `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec [NAME] -- CMD...` | Run a command as the dev user. `NAME` comes first, so the command must follow it (`jailbee exec NAME -- cmd`); both are asked for on a terminal and are required arguments for you (exit 2 otherwise). `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 

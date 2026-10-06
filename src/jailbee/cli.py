@@ -539,6 +539,13 @@ def _resolve_config_path(path: Path | None) -> Path:
     short on purpose, and every entry on it carries the guard.
     """
     if path is not None:
+        from jailbee import repo_option
+
+        try:
+            repo_option.check_config_selection(path)
+        except repo_option.RepoOptionError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
         return path
     return find_repo_config()
 
@@ -877,6 +884,23 @@ def main(
             help="Show the jailbee version and exit.",
         ),
     ] = False,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            metavar="PREFIX",
+            help="Run in this registered repository instead of the current directory's "
+            "(may also follow the command).",
+        ),
+    ] = None,
+    pick_repo: Annotated[
+        bool,
+        typer.Option(
+            "--pick-repo",
+            hidden=True,
+            help="Internal: pick the repository, set only by `jb remote ssh serve`.",
+        ),
+    ] = False,
 ) -> None:
     # No docstring: `help=` on the Typer() above is the command's help text,
     # and a docstring here would silently replace it.
@@ -887,6 +911,15 @@ def main(
     except RepoScopeError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
+
+    if (repo is not None or pick_repo) and not ctx.resilient_parsing:
+        from jailbee import repo_option
+
+        try:
+            ctx.meta[repo_option.CTX_KEY] = repo_option.enter_repo(repo, pick=pick_repo)
+        except repo_option.RepoOptionError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
 
     if ctx.invoked_subcommand is not None or ctx.resilient_parsing:
         return

@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `--repo PREFIX` works anywhere on the command line (`jb chrome feat --repo x`),
+  and the remote SSH top level accepts every command the remote console does,
+  with `repos` and a `help` that lists the allowed commands.
 - **`jailbee upgrade`.** After upgrading jailbee, runs `base build` and `apply`
   in every registered repo without restarting any container, dockerd or LiteLLM
   instance. A repo runs only what the release's upgrade notes owe it; `--force`

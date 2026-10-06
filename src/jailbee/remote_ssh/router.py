@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from typer._click.core import Parameter
     from typer.core import TyperCommand
 
-RouteKind = Literal["help", "dashboard", "console", "command"]
+RouteKind = Literal["help", "repos", "dashboard", "console", "command"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,8 @@ class Route:
     repo_prefix: str | None
     repo_root: Path | None
     requires_pty: bool
+    # The child resolves an omitted repository through the scoped picker.
+    pick_repo: bool = False
 
 
 class RouteError(ValueError):
@@ -188,6 +190,17 @@ def known_command_aliases() -> dict[str, str]:
 def known_command_short_help() -> dict[str, str]:
     """Return each public command path's Click short help text."""
     return _command_tree().public_short_help
+
+
+def routable_leaf_paths() -> frozenset[str]:
+    """Every leaf path a command may be typed as: public leaves and their aliases."""
+    return frozenset(_command_tree().leaf_commands)
+
+
+def leaf_owns_option(path: str, option: str) -> bool:
+    """Whether the leaf typed as `path` declares `option` itself."""
+    command = _command_tree().leaf_commands[path]
+    return any(option in (*param.opts, *param.secondary_opts) for param in command.params)
 
 
 def _resolve_leaf(argv: Sequence[str]) -> tuple[str, str]:
@@ -780,6 +793,17 @@ def _parse(raw: str) -> tuple[str, ...]:
         raise RouteError(f"cannot parse remote command: {error}") from error
 
 
+def _is_legacy_console(argv: Sequence[str]) -> bool:
+    """Keep only `shell` / `shell --repo X` as console aliases until 2.0.0."""
+    return argv[0] == "shell" and (len(argv) == 1 or (len(argv) == 3 and argv[1] == "--repo"))
+
+
+def _is_help_request(argv: Sequence[str]) -> bool:
+    """Recognise pure help or --help before the opaque argument payload."""
+    end = list(argv).index("--") if "--" in argv else len(argv)
+    return _help_only_path(argv) is not None or "--help" in argv[:end]
+
+
 def route(
     raw: str | None,
     config: RemoteSSHConfig,
@@ -788,8 +812,6 @@ def route(
 ) -> Route:
     """Route one remote SSH command according to the restricted grammar."""
     argv = _parse(raw) if raw is not None else ()
-    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-
     scope = RemoteRepoScope(frozenset(config.excluded_repos))
     if not argv:
         if config.default_entrypoint != "help":
@@ -806,7 +828,12 @@ def route(
             raise RouteError("remote dashboard is disabled")
         return Route("dashboard", ("dashboard",), None, None, True)
 
-    if argv[0] in ("console", "shell"):
+    if argv == ("repos",):
+        if not config.exec:
+            raise RouteError("remote command execution is disabled")
+        return Route("repos", (), None, None, False)
+
+    if argv[0] == "console" or _is_legacy_console(argv):
         if not config.console:
             raise RouteError("remote console is disabled")
         prefix: str | None
@@ -826,11 +853,20 @@ def route(
 
     if not config.exec:
         raise RouteError("remote command execution is disabled")
-    if len(argv) < 3 or argv[0] != "--repo":
-        raise RouteError("remote commands require --repo PREFIX followed by a command")
+    from jailbee.repo_option import RepoOptionError, lift_repo
 
-    prefix = argv[1]
-    command_argv = argv[2:]
+    # Click accepts equals-form long options too. Never trust client-supplied
+    # picker transport, even on help requests; payload after -- stays opaque.
+    end = argv.index("--") if "--" in argv else len(argv)
+    if any(token == "--pick-repo" or token.startswith("--pick-repo=") for token in argv[:end]):
+        raise RouteError("--pick-repo is internal to the SSH server")
+    try:
+        prefix, lifted = lift_repo(argv)
+    except RepoOptionError as error:
+        raise RouteError(str(error)) from error
+    if not lifted:
+        raise RouteError("remote commands need a command, e.g. `ls --repo PREFIX`")
+    command_argv = tuple(lifted)
     policy_allows(
         command_argv,
         config.commands,
@@ -839,17 +875,48 @@ def route(
         allow_scoped_aggregates=True,
         unlocks=RemoteUnlocks.of(config),
     )
+    if prefix is None:
+        return Route(
+            "command", command_argv, None, None, False, pick_repo=not _is_help_request(command_argv)
+        )
     root = resolve_repo(prefix, engine=engine, scope=scope)
     return Route("command", command_argv, prefix, root, False)
 
 
 def help_text(config: RemoteSSHConfig) -> str:
-    """Describe only the remote entry points enabled by ``config``."""
+    """Describe enabled entry points and commands this session may run."""
     lines = ["Available remote commands:", "  help"]
     if config.dashboard:
         lines.append("  dashboard")
     if config.console:
         lines.append("  console [--repo PREFIX]")
-    if config.exec:
-        lines.append("  --repo PREFIX COMMAND [ARGS...]")
+    if not config.exec:
+        return "\n".join(lines) + "\n"
+    lines += [
+        "  repos",
+        "  COMMAND [ARGS...] [--repo PREFIX]",
+        "",
+        "Commands this session may run:",
+    ]
+    paths = sorted(
+        allowed_command_paths(
+            config.commands,
+            restrict_host=config.restrict_host,
+            scope=RemoteRepoScope(frozenset(config.excluded_repos)),
+            unlocks=RemoteUnlocks.of(config),
+        )
+    )
+    short = known_command_short_help()
+    width = max((len(path) for path in paths), default=0)
+    lines += [f"  {path.ljust(width)}  {short.get(path, '')}".rstrip() for path in paths]
     return "\n".join(lines) + "\n"
+
+
+def repos_text(config: RemoteSSHConfig, *, engine: Engine | None = None) -> str:
+    """List prefix<TAB>root for registered repositories this session may reach."""
+    from jailbee.remote_ssh.repo_scope import registered_repos
+
+    scope = RemoteRepoScope(frozenset(config.excluded_repos))
+    return "".join(
+        f"{repo.prefix}\t{repo.root}\n" for repo in registered_repos(engine=engine, scope=scope)
+    )

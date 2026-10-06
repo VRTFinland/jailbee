@@ -36,6 +36,18 @@ def _isolate_data_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
 
+@pytest.fixture(autouse=True)
+def _mock_egress_dns(mocker):
+    """Keep init/ACL orchestration real, but never resolve fixture hosts online.
+
+    Resolver behavior is covered separately in test_egress.py.
+    """
+    mocker.patch(
+        "jailbee.egress.resolve_hostnames",
+        side_effect=lambda names: {name: ["192.0.2.1"] for name in names},
+    )
+
+
 def _group_dir(group: str = "work") -> Path:
     """The holder directory `credential_group=group` resolves to."""
     from jailbee.accounts import engine
@@ -43,9 +55,11 @@ def _group_dir(group: str = "work") -> Path:
     return engine.group_dir("claude", group)
 
 
-def test_init_creates_shared_dirs(tmp_path):
+def test_init_creates_shared_dirs(tmp_path, mocker):
     """With claude and jetbrains disabled, neither claude nor jetbrains
     subdirs are created. Other shared subdirs are always created."""
+    # A missing resolver mock must fail deterministically, never reach real DNS.
+    mocker.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS lookup"))
     cfg = load_config(FIXTURES / "full_config.yaml")
     cfg = cfg.model_copy(update={"shared_dir": tmp_path / "shared"})
     # Drop the fixture's claude.enabled + jetbrains.enabled flags for this test.
