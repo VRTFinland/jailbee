@@ -1084,7 +1084,7 @@ Per-container defaults.
 | `memory` | string | `16GiB` | Memory limit for new containers. |
 | `cpu` | int | `8` | CPU limit for new containers. |
 | `network` | enum | `strict` | Initial network mode: `strict` \| `loose`. |
-| `storage_pool` | string | `default` | Incus storage pool for new containers. |
+| `storage_pool` | string | unset | Incus storage pool new containers are created on. Unset leaves it to the root disk of Incus's `default` profile. Pool names are per-host, so set it in `global.yaml` (or a repo's local layer), not in a committed `.jailbee/config.yaml`; `jailbee new --storage <pool>` overrides it for one container. Existing containers stay on the pool they were created on. A pool that does not exist is an error (exit 2) listing the pools that do. See [Storage](storage.md). |
 
 ### `golden`
 

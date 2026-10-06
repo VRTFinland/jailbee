@@ -62,7 +62,6 @@ defaults:
   memory: 16GiB
   cpu: 8
   network: strict
-  storage_pool: default
 
 golden:
   ubuntu_version: "26.04"

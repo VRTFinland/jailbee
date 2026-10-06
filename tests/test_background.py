@@ -579,6 +579,46 @@ def test_credential_group_survives_the_job_round_trip():
     assert back.credential_group == "personal"
 
 
+def test_storage_pool_survives_the_job_round_trip():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+        storage_pool="cow",
+    )
+    job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    assert job["opts"]["storage_pool"] == "cow"
+    back, _, _ = job_to_opts(job)
+    assert back.storage_pool == "cow"
+
+
+def test_job_file_without_storage_pool_loads_as_none():
+    """An in-flight background `jailbee new` written before the key existed."""
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+    )
+    job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    del job["opts"]["storage_pool"]
+    back, _, _ = job_to_opts(job)
+    assert back.storage_pool is None
+
+
 def test_legacy_claude_group_key_loads_into_credential_group():
     """An in-flight background `jailbee new` written before the rename must
     still load its group."""

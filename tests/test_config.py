@@ -4994,3 +4994,33 @@ def test_gui_wayland_rejects_other_values(tmp_path):
 
     with pytest.raises(pydantic.ValidationError):
         make_cfg(tmp_path, gui={"wayland": "never"})
+
+
+def test_defaults_storage_pool_is_unset_by_default(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    assert load_config(repo / ".jailbee" / "config.yaml").defaults.storage_pool is None
+
+
+def test_defaults_storage_pool_comes_from_global_yaml(tmp_path, monkeypatch, mocker):
+    """The pool is per-host, so `global.yaml` (the lowest layer) must be able to set it."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo")
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("defaults:\n  storage_pool: cow\n")
+    monkeypatch.setattr("jailbee.global_config.default_global_config_path", lambda: global_path)
+
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+
+    assert cfg.defaults.storage_pool == "cow"
+    assert cfg.defaults.memory == "16GiB"  # the rest of `defaults` is untouched
+
+
+def test_repo_defaults_storage_pool_overrides_global_yaml(tmp_path, monkeypatch, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="defaults:\n  storage_pool: ssd\n")
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("defaults:\n  storage_pool: cow\n")
+    monkeypatch.setattr("jailbee.global_config.default_global_config_path", lambda: global_path)
+
+    assert load_config(repo / ".jailbee" / "config.yaml").defaults.storage_pool == "ssd"

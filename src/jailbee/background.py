@@ -372,6 +372,7 @@ def op_to_job(
             "autofetch_done": opts.autofetch_done,
             "credential_group": opts.credential_group,
             "autostart_override": opts.autostart_override,
+            "storage_pool": opts.storage_pool,
         },
     }
 
@@ -418,6 +419,9 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         # worker would re-plan with no override and silently lose every
         # stage the operator asked to defer.
         autostart_override=o.get("autostart_override"),
+        # Dropped here (or in `op_to_job`) the worker would create the container
+        # on the profile's pool, not the one the operator chose.
+        storage_pool=o.get("storage_pool"),
     )
     return opts, job["container_name"], job["log_path"]
 

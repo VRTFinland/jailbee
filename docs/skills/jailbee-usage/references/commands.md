@@ -366,6 +366,7 @@ use `jailbee git retarget`.
 | `--name <n>` | Override the derived container name. |
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
+| `--storage <pool>` | Incus storage pool the container is created on (else `defaults.storage_pool`, else the `default` profile's pool). Exit 2 listing the pools if it does not exist. |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
 | `--credential-group <name>\|none` | Put this container in a credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee account group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `account group set`. See `jailbee account group` below. Hidden legacy alias: `--claude-group`. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |

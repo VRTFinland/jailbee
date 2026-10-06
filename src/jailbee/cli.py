@@ -2002,6 +2002,17 @@ def new_cmd(
             help="CPU core limit for the container. Overrides `defaults.cpu`.",
         ),
     ] = None,
+    storage: Annotated[
+        str | None,
+        typer.Option(
+            "--storage",
+            help=(
+                "Incus storage pool to create the container on. Overrides "
+                "`defaults.storage_pool`; with neither, the `default` profile's "
+                "root pool is used. Existing containers stay where they are."
+            ),
+        ),
+    ] = None,
     from_base: Annotated[
         str | None,
         typer.Option(
@@ -2495,6 +2506,15 @@ def new_cmd(
 
     net_mode = network or cfg.defaults.network
 
+    storage_pool = storage or cfg.defaults.storage_pool
+    from jailbee.lifecycle import check_storage_pool
+
+    try:
+        check_storage_pool(incus, storage_pool)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
     mirror_endpoint: tuple[str, int] | None = None
     mirror_ca_path: Path | None = None
     if mirror_wanted(cfg, gcfg):
@@ -2593,6 +2613,7 @@ def new_cmd(
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
+            storage_pool=storage_pool,
         )
     else:
         opts = NewContainerOptions(
@@ -2617,6 +2638,7 @@ def new_cmd(
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
+            storage_pool=storage_pool,
         )
 
     # The shared scratch base image is built once per host, not per directory.

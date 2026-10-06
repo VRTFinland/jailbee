@@ -906,6 +906,28 @@ class NewContainerOptions:
     # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
+    # Incus storage pool the container's root disk is created on
+    # (`jailbee new --storage`, else `defaults.storage_pool`). None leaves it to
+    # the `default` profile. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    storage_pool: str | None = None
+
+
+def check_storage_pool(incus: Incus, pool: str | None) -> None:
+    """Raise `ValueError` naming the pools that exist when `pool` is not one.
+
+    Checked before anything is created, so a repo config that names a pool
+    this host does not have fails with the candidates rather than half-way
+    through `incus init`. None means the profile decides and needs no check.
+    """
+    if not pool:
+        return
+    names = sorted(str(p.get("name", "")) for p in incus.list_storage_pools())
+    if pool not in names:
+        raise ValueError(
+            f"Incus storage pool '{pool}' does not exist. Pools on this host: "
+            f"{', '.join(n for n in names if n) or '(none)'}."
+        )
 
 
 @dataclass(frozen=True)
@@ -1444,7 +1466,7 @@ def new_container(
                 ensure_work_bridge(incus)
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
-                incus.init(opts.from_base, name)
+                incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
                 fresh = True
                 incus.profile_assign(
                     name,
@@ -1469,7 +1491,7 @@ def new_container(
                         pass
                 raise
     else:
-        incus.init(opts.from_base, name)
+        incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
     try:
         if generation == "legacy":
             incus.profile_assign(

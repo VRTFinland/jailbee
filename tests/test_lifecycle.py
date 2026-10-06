@@ -1359,6 +1359,28 @@ def _cfg_for_new(tmp_path, *, clone_from="local", autofetch=False):
     return cfg
 
 
+def test_new_container_creates_on_the_requested_storage_pool(tmp_path, mocker):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=True,
+        autostart=False,
+        storage_pool="cow",
+    )
+    new_container(cfg, incus, opts)
+
+    incus.init.assert_called_once_with("gisgro-base", "repo-feat-x", storage_pool="cow")
+
+
 def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -1380,7 +1402,7 @@ def test_new_container_calls_init_assign_set_start(tmp_path, mocker):
     )
     new_container(cfg, incus, opts)
 
-    incus.init.assert_called_once_with("gisgro-base", "repo-feat-x")
+    incus.init.assert_called_once_with("gisgro-base", "repo-feat-x", storage_pool=None)
     incus.profile_assign.assert_called_once_with(
         "repo-feat-x",
         ["default", "repo-base", "repo-binds", "repo-net-strict"],
@@ -6395,7 +6417,7 @@ def test_new_container_syncs_instructions_before_init(make_cfg, tmp_path, mocker
         "jailbee.agent_instructions.sync_global_instructions",
         side_effect=lambda cfg: events.append("sync"),
     )
-    incus.init.side_effect = lambda *a: events.append("init")
+    incus.init.side_effect = lambda *a, **kw: events.append("init")
 
     new_container(cfg, incus, _new_opts())
 

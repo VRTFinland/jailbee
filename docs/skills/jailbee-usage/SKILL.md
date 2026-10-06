@@ -208,7 +208,7 @@ for the full diff format.
 
 Useful flags: `--no-autostart` (skip the repo's autostart steps — fastest, lowest
 risk), `--no-clone` (bare container, no repo), `--name` (override the derived
-container name), `--memory`/`--cpu`/`--net` (one-off resource/network overrides),
+container name), `--memory`/`--cpu`/`--net`/`--storage` (one-off resource/network/storage-pool overrides),
 `--background`/`-b` (provision detached, see below), `--tmux`/`--shell` (attach
 to tmux / a shell once it's up; forces foreground), `--wait`/`--no-wait`
 (override an `autostart` stage's `detach: true` for this run — see
