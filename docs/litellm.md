@@ -204,7 +204,35 @@ mapped tier.
 Profile selection order is `claude-jb --profile NAME`, then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (default `codex`).
 `--profile` is consumed by the wrapper, not passed to Claude Code. Use plain
-`claude` for native access, not `--profile native`.
+`claude` for native access, not `--profile native`. `claude-jb --help` prints the
+wrapper's own options and the profiles with their windows, then Claude Code's help.
+
+### Choosing the context window
+
+`claude-jb -C 1m` (or `--context 1m`, `--context=1m`) sets the session's window.
+The value is `272k`, `1m` (1,000,000), a token count, `max` (the profile's
+ceiling) or `default`; the last flag wins. It is `-C`, not `-c`: lowercase is
+Claude Code's `--continue`, which passes through. Without the flag the session
+uses the profile's default window, so a larger one is always a choice.
+
+A larger window costs more per request, and `claude-jb` says so on stderr. The
+ceiling is each route's `max_context_window`: 1,050,000 for the built-in
+`chatgpt/gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna` routes, and for any other
+route its `context_window` unless you set one. A profile's ceiling is the smallest
+of its routes', since Claude Code takes one window per session; a value above it
+is refused with the ceiling named. Set `max_context_window` on a route to allow
+more or fewer tokens than the built-in table says:
+
+```yaml
+litellm:
+  routes:
+    nova: {model: chatgpt/gpt-7-nova, context_window: 272000, max_context_window: 400000}
+```
+
+`jailbee litellm ls` shows `272000 tokens (up to 1050000)` for a route that can be
+raised. The ceiling reaches containers with `jailbee apply`; the flag itself needs
+`jailbee base build`. Until then `claude-jb` accepts only the default and tells you
+to re-run `jailbee apply`.
 
 ### Profile instructions
 
@@ -521,6 +549,8 @@ back on; that is your choice.
 | `cannot read ... (not valid JSON)` or `cannot read the proxy key` | Run `jailbee apply` in the repo on the host. |
 | `unknown profile` | Check the names in `litellm.profiles`, in `global.yaml` and in this repo's override (`jailbee litellm ls` lists both); select a valid `--profile` or fix `JAILBEE_LITELLM_PROFILE`. |
 | `--profile needs a name` | Pass `--profile NAME` or remove the flag. |
+| `--context needs a value` or `... is not a size` | Pass `272k`, `1m`, a token count, `max` or `default`. |
+| `--context ... above the ...-token ceiling of profile` | Choose a smaller window or `max`; to allow more, raise `max_context_window` on the profile's routes and run `jailbee apply` on the host. |
 | `proxy key ... is empty` | Run `jailbee apply` on the host to resync the key. |
 | `proxy ... is unreachable` | Run `jailbee litellm up` on the host, then `jailbee apply` in this repo. |
 

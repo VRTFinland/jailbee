@@ -51,7 +51,13 @@ def _block(title: str, cfg: LiteLLMConfig, scope: str | None) -> list[str]:
         widths = [max(len(row[i]) for row in rows) for i in range(5)]
         for row in rows:
             cells = "  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True))
-            lines.append(f"    {cells}  {routes[row[2]].context_window} tokens")
+            route = routes[row[2]]
+            raisable = (
+                f" (up to {route.max_context_window})"
+                if route.max_context_window > route.context_window
+                else ""
+            )
+            lines.append(f"    {cells}  {route.context_window} tokens{raisable}")
     return lines
 
 

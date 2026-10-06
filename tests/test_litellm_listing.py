@@ -24,6 +24,24 @@ def test_host_block_lists_the_builtin_profile_and_its_efforts():
     assert "high (fixed)" in text and "272000 tokens" in text
 
 
+def test_a_raisable_route_shows_its_ceiling_and_a_fixed_one_does_not():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {
+                "fixed": {
+                    "model": "openai/x",
+                    "context_window": 100_000,
+                    "api_base": "https://llm.example.com/v1",
+                }
+            },
+            "profiles": {"p": {"account": "default", "opus": "fixed", "haiku": "luna-high"}},
+        }
+    )
+    lines = listing_lines(cfg.model_copy(update={"enabled": True}), [], global_origin="/c/g.yaml")
+    assert any("luna-high" in x and x.endswith("272000 tokens (up to 1050000)") for x in lines)
+    assert any("fixed" in x and x.endswith("100000 tokens") for x in lines)
+
+
 def test_each_repo_block_shows_its_own_scope_and_settings():
     repo = _view(
         "myrepo",

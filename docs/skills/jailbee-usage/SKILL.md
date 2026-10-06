@@ -757,7 +757,10 @@ an omitted `ACCOUNT` or `--provider` is asked for on a terminal, exit 2 without 
 (ChatGPT device code; xAI in the host's browser, experimental), `jailbee litellm up` again (the first leaves an unlogged account
 stopped), `jailbee base build` per repo and `jailbee apply` per repo. Inside a
 container, `claude-jb` runs Claude Code through the proxy while plain `claude`
-remains native. Choose a gateway profile with `claude-jb --profile NAME`, then
+remains native. `claude-jb -C 1m` (or `--context 272k|1m|max|<tokens>`) picks the
+session's context window up to the profile's ceiling — a larger one costs more, and
+lowercase `-c` is still Claude's `--continue`; `claude-jb --help` lists the options.
+Choose a gateway profile with `claude-jb --profile NAME`, then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (`codex`), which a
 repo's host-local override may change for its own containers. The host also
 supports `jailbee litellm ls` (profiles and routes as `claude-jb` uses them,
