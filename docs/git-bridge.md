@@ -1079,9 +1079,10 @@ then opens with a warning naming the PR, its author and the container, and on
 a terminal the confirmation under it is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
 `jb outbox apply` and `jb review apply`; invalid for issues). The terminal
-browser and the Qt dashboard's terminal both ask under the plan, so they need
-no flag. The terminal dashboard's Publish runs with `--yes` and therefore
-refuses, naming `--foreign`. `jb pr`'s post-push offer never publishes to
+browser and both dashboards' publication terminals ask under the plan, so
+they need no flag. The terminal dashboard's initial "Yes, publish" opens the
+plan; publication still needs the confirmation below it. `jb pr`'s post-push
+offer never publishes to
 another PR: it holds such a manifest back and names
 `jb review apply --foreign <container>`. `jb review ls` lists it with the state
 `not bound`.

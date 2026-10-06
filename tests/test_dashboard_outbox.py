@@ -167,14 +167,17 @@ def _parsed(argv: list[str]) -> dict[str, object]:
         return dict(ctx.params)
 
 
-def test_change_argv_pins_the_listed_revision_and_confirms():
-    for argv in (
-        dob.outbox_apply_argv("alpha-x", "pr/a.json", "r1"),
-        dob.outbox_drop_argv("alpha-x", "pr/a.json", "r1"),
-    ):
-        params = _parsed(argv)
-        assert (params["container"], params["proposal"]) == ("alpha-x", "pr/a.json")
-        assert (params["revision"], params["yes"]) == ("r1", True)
+@pytest.mark.parametrize(
+    ("build_argv", "yes"),
+    [(dob.outbox_apply_argv, False), (dob.outbox_drop_argv, True)],
+    ids=["publish-asks-under-plan", "delete-already-confirmed"],
+)
+def test_change_argv_pins_revision_and_preserves_domain_consent(build_argv, yes):
+    params = _parsed(build_argv("alpha-x", "pr/a.json", "r1"))
+    assert (params["container"], params["proposal"]) == ("alpha-x", "pr/a.json")
+    assert (params["revision"], params["yes"]) == ("r1", yes)
+    if not yes:
+        assert params["foreign"] is False
 
 
 def test_listing_argv_asks_for_json():

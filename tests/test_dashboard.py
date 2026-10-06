@@ -9635,7 +9635,7 @@ def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
     assert run_cli.call_args.kwargs["style"] == "paged"
 
 
-def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
+def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
     child = mocker.patch.object(dashboard.subprocess, "run")
@@ -9659,7 +9659,6 @@ def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
             "apply",
             "alpha-x",
             "pr/a.json",
-            "--yes",
             "--revision",
             "r1",
             "--config",

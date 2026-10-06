@@ -147,8 +147,8 @@ def outbox_show_argv(name: str, proposal: str) -> list[str]:
 
 
 def outbox_apply_argv(name: str, proposal: str, revision: str) -> list[str]:
-    """Confirmed in the dashboard; `--revision` refuses a manifest changed since it was listed."""
-    return ["outbox", "apply", name, proposal, "--yes", "--revision", revision]
+    """Ask under the plan (including foreign-PR warnings), pinned to the listed revision."""
+    return ["outbox", "apply", name, proposal, "--revision", revision]
 
 
 def outbox_drop_argv(name: str, proposal: str, revision: str) -> list[str]:
