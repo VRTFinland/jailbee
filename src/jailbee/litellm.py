@@ -1104,6 +1104,15 @@ def litellm_login_xai(incus: Incus, cfg: LiteLLMConfig, account: str) -> int:
             f"xAI moved its token endpoint to {token_host or '(none)'}, which the proxy may "
             "not reach; please report this to jailbee."
         )
+    helper = "/usr/local/lib/jailbee-xai-login.py"
+    incus.exec_with_input(
+        LITELLM_CONTAINER,
+        ["bash", "-s"],
+        f"set -e; umask 0022; install -d -m 0755 /usr/local/lib\n"
+        f"cat > {helper} <<'JAILBEE_XAI_LOGIN'\n{_read('xai_login.py')}\n"
+        f"JAILBEE_XAI_LOGIN\nchown root:root {helper}\nchmod 0644 {helper}\n",
+        timeout=30,
+    )
     env_file = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/instance.env")
     auth_dir = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/{_AUTH_DIRS['xai']}")
     script = (
@@ -1112,8 +1121,7 @@ def litellm_login_xai(incus: Incus, cfg: LiteLLMConfig, account: str) -> int:
         "XAI_OAUTH_API_BASE; "
         f"set -a; . {env_file}; set +a; "
         f'test "${{XAI_OAUTH_TOKEN_DIR:-}}" = {auth_dir}; '
-        f"exec {_PY} -c 'from litellm.llms.xai.oauth import XAIOAuthAuthenticator; "
-        f'XAIOAuthAuthenticator().login(no_browser=True); print("Logged in.")\''
+        f"exec {_PY} {helper}"
     )
     endpoint = f"tcp:127.0.0.1:{XAI_CALLBACK_PORT}"
     incus.config_device_remove(LITELLM_CONTAINER, XAI_LOGIN_DEVICE, missing_ok=True)

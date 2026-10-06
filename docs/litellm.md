@@ -147,7 +147,14 @@ its profiles use.
 Run `jailbee litellm up`, then `jailbee litellm login --provider xai` on the
 host: it prints a URL; open it in a browser on the same machine and approve.
 For the length of the login, jailbee forwards the host's `127.0.0.1:56121` to
-the proxy, where LiteLLM waits for the browser's callback (180 seconds). The
+the proxy, where LiteLLM waits for the browser's callback (180 seconds). If the
+browser shows an authorization code instead, paste that bare code into the
+waiting terminal and press Enter; input is hidden. A complete callback URL is
+also accepted, but only for this login's loopback address and matching state.
+Do not paste tokens or put the code in a command argument. Ctrl-C cancels the
+login; cancellation and timeout restore the terminal and remove the temporary
+forwarding. This keeps LiteLLM's PKCE exchange and token storage unchanged;
+a real xAI subscription login has not been verified for this fallback. The
 token is stored in the state volume beside the account's ChatGPT login, so one
 account and one profile can use both.
 
