@@ -2346,6 +2346,10 @@ class _FrameBody:
         row.add_row(details, panel)
         return row
 
+    def _details_cap(self) -> int:
+        """Content rows the details panel may take: its grid plus any activity reservation."""
+        return DETAILS_MAX_ROWS if self.details is None else self.details.max_rows
+
     def _details_fit_beside_menu(self, console: Console, options: ConsoleOptions) -> bool:
         """Whether the details keep a column wide enough to read next to a menu."""
         if not isinstance(self.overlay, (MenuState, RepoMenuState)):
@@ -2358,7 +2362,7 @@ class _FrameBody:
         extras: list[RenderableType] = [] if self.notice is None else [self.notice]
         details_fit = self._details_fit_beside_menu(console, options)
         if self.max_height is None:
-            bottom = self._bottom(None, DETAILS_MAX_ROWS if details_fit else None)
+            bottom = self._bottom(None, self._details_cap() if details_fit else None)
             tail: list[RenderableType] = [] if bottom is None else ["", bottom]
             if hint is not None:
                 tail.append(hint)
@@ -2385,7 +2389,7 @@ class _FrameBody:
             floor = min(natural, MIN_TABLE_ROWS + 1)  # + the column header
             room = max(0, rest - len(gap_lines) - floor) - _OVERLAY_BORDER_ROWS
             # A panel with fewer than two content rows says nothing: leave it out.
-            details_rows = min(DETAILS_MAX_ROWS, room)
+            details_rows = min(self._details_cap(), room)
             with_details = details_fit and details_rows >= _MIN_DETAILS_ROWS
             # When the table overflows it is the panel that must keep its shape:
             # a panel as tall as its content would resize the table window as

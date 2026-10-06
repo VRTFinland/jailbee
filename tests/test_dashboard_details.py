@@ -11,6 +11,7 @@ from rich.text import Text
 
 from jailbee import dashboard
 from jailbee import dashboard_details as dd
+from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
@@ -202,3 +203,114 @@ def test_render_flows_pairs_by_width_and_caps_rows() -> None:
     assert len(capped) == 4 + 2
     assert "…" in capped[-2]
     assert "k11" not in "\n".join(capped)
+
+
+def _with_activity(**kw: Any) -> ContainerInfo:
+    activity = AgentActivity("Bash  uv run pytest -x", "all [red]green[/red] <b>", 2, 1)
+    summary = AgentSummary(
+        "claude", "busy", NOW - timedelta(minutes=2), None, 1, activity=activity, **kw
+    )
+    return _c(agent_status=(summary,))
+
+
+def test_activity_lines_are_escaped_and_the_message_is_dim() -> None:
+    lines = dd.activity_lines(_with_activity(), NOW)
+
+    assert [_plain(line) for line in lines] == [
+        "busy 2m · ~2 subagents · 1 shell",
+        "↳ Bash  uv run pytest -x",
+        "“all [red]green[/red] <b>”",  # markup is shown, not interpreted
+    ]
+    assert lines[2].startswith("[dim]")
+
+
+def test_no_activity_is_no_lines() -> None:
+    assert dd.activity_lines(_c(), NOW) == ()
+    s = AgentSummary("claude", "busy", None, None, 1)
+    assert dd.activity_lines(_c(agent_status=(s,)), NOW) == ()
+
+
+def test_the_first_agent_that_has_activity_speaks() -> None:
+    quiet = AgentSummary("claude", "waiting", None, None, 1)
+    loud = AgentSummary("codex", "busy", None, None, 1, activity=AgentActivity("Edit  x", None))
+    lines = dd.activity_lines(_c(agent_status=(quiet, loud)), NOW)
+
+    assert [_plain(line) for line in lines] == ["busy", "↳ Edit  x"]
+
+
+def _group(*containers: ContainerInfo) -> dashboard.RepoGroup:
+    return dashboard.RepoGroup("alpha", "/a", None, list(containers))
+
+
+def test_rows_are_reserved_for_every_view_once_any_container_has_activity() -> None:
+    busy, idle = _with_activity(), _c(name="alpha-idle")
+    groups = [_group(busy, idle)]
+
+    on_busy = dd.details_for(groups, dashboard.Row("container", busy.name), NOW)
+    on_idle = dd.details_for(groups, dashboard.Row("container", idle.name), NOW)
+    on_repo = dd.details_for(groups, dashboard.Row("repo", "alpha"), NOW)
+
+    assert on_busy is not None and on_idle is not None and on_repo is not None
+    assert (on_busy.reserve_rows, on_idle.reserve_rows, on_repo.reserve_rows) == (3, 3, 3)
+    assert len(on_busy.activity) == 3
+    assert on_idle.activity == () and on_repo.activity == ()
+    assert on_busy.max_rows == dd.DETAILS_MAX_ROWS + 3
+
+
+def test_nothing_is_reserved_when_no_container_has_activity() -> None:
+    plain = _c()
+    view = dd.details_for([_group(plain)], dashboard.Row("container", plain.name), NOW)
+
+    assert view is not None
+    assert (view.reserve_rows, view.max_rows) == (0, dd.DETAILS_MAX_ROWS)
+
+
+def _view(activity: tuple[str, ...], reserve: int = 3) -> dd.DetailsView:
+    items = tuple(dd.DetailItem(f"k{i}", f"v{i}") for i in range(6))
+    return dd.DetailsView("t", items, activity, reserve)
+
+
+def _body(view: dd.DetailsView, max_rows: int | None, *, fixed: bool = False) -> list[str]:
+    """The panel's content lines, borders removed."""
+    lines = _text(dd.render_details(view, max_rows, fixed=fixed), width=120).splitlines()
+    return [ln[2:-2].rstrip() for ln in lines[1:-1]]
+
+
+LINES = ("busy 2m", "↳ Bash  ls", "[dim]“done”[/dim]")
+
+
+def test_activity_follows_the_grid_under_the_panel() -> None:
+    body = _body(_view(LINES), None)
+
+    assert body[-3:] == ["busy 2m", "↳ Bash  ls", "“done”"]
+    assert "k0" in body[0]
+
+
+def test_a_fixed_panel_is_padded_to_exactly_its_rows_even_without_activity() -> None:
+    with_lines = _body(_view(LINES), 11, fixed=True)
+    without = _body(_view(()), 11, fixed=True)
+
+    assert len(with_lines) == len(without) == 11
+    assert with_lines[-3:] == ["busy 2m", "↳ Bash  ls", "“done”"]  # share kept at the bottom
+    assert without[-3:] == ["", "", ""]
+
+
+def test_a_cramped_panel_cuts_the_message_first_then_the_tool_and_keeps_two_grid_rows() -> None:
+    four = _body(_view(LINES), 4)
+    assert four[-2:] == ["busy 2m", "↳ Bash  ls"]  # message cut, grid cut to 2 rows
+    assert len(four) == 4
+
+    three = _body(_view(LINES), 3)
+    assert three[-1] == "busy 2m"  # only the state line survives
+    assert len(three) == 3
+
+    two = _body(_view(LINES), 2)
+    assert len(two) == 2
+    assert "busy 2m" not in " ".join(two)  # the grid keeps its two rows
+
+
+def test_a_panel_without_a_reservation_renders_as_before() -> None:
+    old = _text(dd.render_details(dd.DetailsView("t", _view(()).items), 8), width=120)
+    new = _text(dd.render_details(_view((), reserve=0), 8), width=120)
+
+    assert new == old
