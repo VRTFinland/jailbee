@@ -39,10 +39,20 @@ def _attached(incus: Incus) -> list[str]:
 
 
 def _write_attached(incus: Incus, names: list[str]) -> None:
+    """Make the bridge's attached ACLs exactly ``names`` plus the baseline.
+
+    Compared as a set and written in the current order, new names last: Incus
+    restarts the bridge's dnsmasq on every ``network set``, and each repo's
+    caller lists its own ACL first, so an order-sensitive check rewrote the
+    list on every repo's refresh and cut DNS for every work container.
+    """
     current = _attached(incus)
-    updated = list(dict.fromkeys(["jailbee-work-baseline", *names]))
-    if current != updated:
-        incus.network_set(WORK_BRIDGE, "security.acls", ",".join(updated))
+    wanted = {"jailbee-work-baseline", *names}
+    if set(current) == wanted:
+        return
+    kept = [name for name in current if name in wanted]
+    updated = list(dict.fromkeys(["jailbee-work-baseline", *kept, *names]))
+    incus.network_set(WORK_BRIDGE, "security.acls", ",".join(updated))
 
 
 def _work_occupants(incus: Incus) -> list[dict[str, Any]]:

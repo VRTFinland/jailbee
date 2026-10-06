@@ -314,7 +314,8 @@ def test_ensure_repo_acl_attaches_allowlist_extras_and_preserves_other_repos(mak
     incus.network_set.assert_called_once_with(
         "jailbee-work",
         "security.acls",
-        f"jailbee-work-baseline,{cfg.container_prefix}-allowlist,jailbee-services,{union_name},other-repo-allowlist",
+        f"jailbee-work-baseline,other-repo-allowlist,{cfg.container_prefix}-allowlist,"
+        f"jailbee-services,{union_name}",
     )
     incus.network_acl_set_yaml.assert_called_once()
     union = yaml.safe_load(incus.network_acl_set_yaml.call_args.args[1])
@@ -323,6 +324,41 @@ def test_ensure_repo_acl_attaches_allowlist_extras_and_preserves_other_repos(mak
         "203.0.113.8",
         "203.0.113.9",
     ]
+
+
+def test_two_repos_alternating_do_not_rewrite_the_bridge_acl_list(make_cfg, tmp_path):
+    # Every `network set` on the bridge restarts its dnsmasq, so a list that
+    # flips order between repos' refreshes cuts DNS for every work container.
+    base = make_cfg(tmp_path / "repo")
+    alpha = base.model_copy(update={"container_prefix": "alpha"})
+    beta = base.model_copy(update={"container_prefix": "beta"})
+    incus = MagicMock()
+    attached = ["jailbee-work-baseline"]
+    incus.network_get.side_effect = lambda _bridge, _key: ",".join(attached)
+    incus.network_set.side_effect = lambda _bridge, _key, value: attached.__setitem__(
+        slice(None), value.split(",")
+    )
+    incus.list_containers.return_value = [
+        container("alpha-a", "10.42.0.2"),
+        container("beta-a", "10.42.0.3"),
+    ]
+    incus.network_acl_exists.side_effect = lambda acl: (
+        acl.endswith("-allowlist") or acl == "jailbee-services"
+    )
+
+    ensure_work_repo_acl(alpha, incus)
+    ensure_work_repo_acl(beta, incus)
+    incus.network_set.reset_mock()
+    ensure_work_repo_acl(alpha, incus)
+    ensure_work_repo_acl(beta, incus)
+
+    incus.network_set.assert_not_called()
+    assert set(attached) == {
+        "jailbee-work-baseline",
+        "alpha-allowlist",
+        "beta-allowlist",
+        "jailbee-services",
+    }
 
 
 def test_work_bridge_ensures_services_acl_before_attachment(make_cfg, tmp_path):
