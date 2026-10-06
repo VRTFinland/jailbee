@@ -40,8 +40,11 @@ committed `.jailbee/config.yaml`. See [Configuration](config.md#litellm) and
    with Claude Code's `--model` flag, for example `claude-jb --model haiku`.
    Use `jailbee litellm status` on the host to inspect health and login state.
 
-`jailbee litellm down` deletes the proxy container but keeps its state volume
-(logins and settings); `jailbee litellm down --purge` deletes the volume too.
+`jailbee litellm down` stops the proxy and withdraws its dev-container ACL
+allowance; the container and its state volume (logins and settings) are kept, and
+`jailbee litellm up` starts it again. `jailbee litellm up --recreate` deletes the
+container and builds it again with the volume attached; `jailbee litellm down
+--purge` deletes the container and the volume.
 Run `jailbee apply` in each affected repo afterward: it
 removes stale dev-container proxy settings, and `claude-jb` then fails clearly
 instead of silently falling back to native Claude. Bring the proxy back with
@@ -508,7 +511,7 @@ back on; that is your choice.
   host filesystem, and the proxy container maps no host user (`raw.idmap`).
   Jailbee writes the rendered files into the volume through `incus exec`'s
   standard input. `jailbee litellm down` keeps the volume, so logins survive a
-  rebuild; `jailbee litellm down --purge` deletes it. On the host, only
+  stop or a `--recreate`; `jailbee litellm down --purge` deletes it. On the host, only
   `~/.local/share/jailbee/litellm/` remains, holding the port map, each
   account's proxy key (`0600`) and its `applied.sha256` and `applied-hot.sha256` stamps. Dev containers get only the proxy keys, one
   `/etc/jailbee/litellm-<account>.key` (`0640`, readable by the dev group) per

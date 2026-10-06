@@ -561,14 +561,55 @@ def test_version_mismatch_reinstalls():
     assert result.installed is True
 
 
-def test_down_empties_services_rule_and_deletes_container():
-    incus = _incus(present=True)
-    ll.litellm_down(incus)
-    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+def _services_egress(incus):
     services = [
         c for c in incus.network_acl_set_yaml.call_args_list if c.args[0] == "jailbee-services"
     ]
-    assert yaml.safe_load(services[-1].args[1])["egress"] == []
+    return yaml.safe_load(services[-1].args[1])["egress"]
+
+
+def test_down_empties_services_rule_and_stops_the_container(mocker):
+    stop = mocker.patch("jailbee.litellm.stop_container")
+    incus = _incus(present=True)
+    ll.litellm_down(incus)
+    stop.assert_called_once()
+    assert stop.call_args.args[:2] == (incus, ll.LITELLM_CONTAINER)
+    incus.delete.assert_not_called()
+    assert _services_egress(incus) == []
+
+
+def test_down_leaves_a_stopped_container_alone(mocker):
+    stop = mocker.patch("jailbee.litellm.stop_container")
+    incus = _incus(present=True, running=False)
+    ll.litellm_down(incus)
+    stop.assert_not_called()
+    incus.delete.assert_not_called()
+
+
+def test_down_purge_deletes_the_container_and_empties_the_services_rule():
+    incus = _incus(present=True)
+    ll.litellm_down(incus, purge=True)
+    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+    assert _services_egress(incus) == []
+
+
+def test_up_recreate_deletes_the_container_and_creates_it_again_keeping_the_volume():
+    incus = _incus(present=True)
+    incus.storage_volume_exists.return_value = True
+    ll.litellm_up(incus, _gcfg(), recreate=True)
+    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+    incus.init.assert_called_once()
+    incus.storage_volume_create.assert_not_called()
+    incus.storage_volume_delete.assert_not_called()
+    names = [c[0] for c in incus.mock_calls]
+    assert names.index("delete") < names.index("init")
+
+
+def test_up_recreate_with_no_container_is_a_plain_create():
+    incus = _incus(present=False)
+    ll.litellm_up(incus, _gcfg(), recreate=True)
+    incus.delete.assert_not_called()
+    incus.init.assert_called_once()
 
 
 def test_status_missing():
@@ -1199,7 +1240,8 @@ def test_logout_requires_a_running_proxy(present: bool, running: bool):
         ll.litellm_logout(_incus(present=present, running=running), "default")
 
 
-def test_down_keeps_the_volume_and_purge_deletes_it_after_the_container():
+def test_down_keeps_the_volume_and_purge_deletes_it_after_the_container(mocker):
+    mocker.patch("jailbee.litellm.stop_container")
     incus = _incus(present=True)
     ll.litellm_down(incus)
     incus.storage_volume_delete.assert_not_called()

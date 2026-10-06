@@ -46,6 +46,7 @@ from jailbee.loose_bridge import (
 )
 from jailbee.network import SERVICES_ACL, service_container_acl_yaml
 from jailbee.services_acl import LITELLM_LABEL, set_service
+from jailbee.stopping import stop_container
 
 if TYPE_CHECKING:
     from jailbee.config.models_litellm import LiteLLMConfig, LiteLLMRepoView
@@ -607,6 +608,7 @@ def litellm_up(
     gcfg: GlobalConfig,
     *,
     reinstall: bool = False,
+    recreate: bool = False,
     on_step: Callable[[str], None] = _no_steps,
 ) -> UpResult:
     cfg = gcfg.litellm
@@ -638,6 +640,12 @@ def litellm_up(
     _check_static_ip(incus, ip, containers)
     pool = _ensure_state_volume(incus, gcfg.service_storage_pool)
     info = next((c for c in containers if c.get("name") == LITELLM_CONTAINER), None)
+    if recreate and info is not None:
+        # The state volume is a separate object and survives: logins and secrets
+        # carry over, only the container (and so its pool) is made again.
+        on_step(f"deleting {LITELLM_CONTAINER}")
+        incus.delete(LITELLM_CONTAINER, force=True)
+        info = None
     needs_install = reinstall or info is None
     if info is None:
         _set_egress(incus, _resolve_egress(list(_PACKAGE_ENDPOINTS)), listen)
@@ -733,18 +741,25 @@ def litellm_up(
 
 
 def litellm_down(incus: Incus, *, purge: bool = False) -> None:
-    """Delete the proxy container; with `purge`, also every login and secret it held."""
+    """Stop the proxy and close its dev-container ACL allowance; container and state persist.
+
+    `purge` deletes the container and every login and secret it held instead.
+    """
     set_service(incus, LITELLM_LABEL, None)
-    if _container(incus) is not None:
+    info = _container(incus)
+    if not purge:
+        if info is not None and info.get("status") == "Running":
+            stop_container(incus, LITELLM_CONTAINER, force_fallback=True, label="the LiteLLM proxy")
+        return
+    if info is not None:
         incus.delete(LITELLM_CONTAINER, force=True)
-    if purge:
-        # Wherever it lives: the pool it was created in may no longer be the
-        # profile's, nor the one `defaults.storage_pool` names today.
-        listed = (str(p.get("name")) for p in incus.list_storage_pools())
-        pools = [_profile_root_pool(incus), *listed]
-        for pool in dict.fromkeys(p for p in pools if p):
-            if incus.storage_volume_exists(pool, STATE_VOLUME):
-                incus.storage_volume_delete(pool, STATE_VOLUME)
+    # Wherever it lives: the pool it was created in may no longer be the
+    # profile's, nor the one `defaults.storage_pool` names today.
+    listed = (str(p.get("name")) for p in incus.list_storage_pools())
+    pools = [_profile_root_pool(incus), *listed]
+    for pool in dict.fromkeys(p for p in pools if p):
+        if incus.storage_volume_exists(pool, STATE_VOLUME):
+            incus.storage_volume_delete(pool, STATE_VOLUME)
 
 
 @dataclass(frozen=True)

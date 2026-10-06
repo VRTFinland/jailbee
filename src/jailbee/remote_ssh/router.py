@@ -237,7 +237,8 @@ def command_path(argv: Sequence[str]) -> str:
 #     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
 #     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
-#     `net migrate`, `registry up`/`down`, `display up`/`down`/`attach`,
+#     `net migrate`, `net egress proxy up`/`down`, `registry up`/`down`,
+#     `display up`/`down`/`attach`,
 #     `litellm up`/`down`/`login`/`logout`/`logs`;
 #   - widening a container's network: `net loose` and `net egress add`
 #     can open the host's own and its LAN's addresses to it, so both are
@@ -267,6 +268,8 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "net refresh",
         "net unregister",
         "net egress add",
+        "net egress proxy up",
+        "net egress proxy down",
         "net loose",
         "registry up",
         "registry down",
@@ -387,6 +390,7 @@ _CONTAINER_COMMANDS = frozenset(
         "litellm status",
         "net egress export",
         "net egress ls",
+        "net egress proxy status",
         "net egress rm",
         "net status",
         "net strict",

@@ -1496,3 +1496,11 @@ def test_route_config_looking_title_is_not_a_config(restrict, value, engine, rep
     assert result.argv == ("pr", "feat", "--title", value)
     assert result.repo_root == repo
     assert result.repo_prefix == "project"
+
+
+def test_egress_proxy_up_and_down_manage_the_host_and_status_does_not():
+    from jailbee.remote_ssh.router import is_host_command
+
+    assert is_host_command("net egress proxy up") is True
+    assert is_host_command("net egress proxy down") is True
+    assert is_host_command("net egress proxy status") is False

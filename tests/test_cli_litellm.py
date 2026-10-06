@@ -65,6 +65,19 @@ def test_up_prints_endpoint_and_next_steps(mocker, context):
     assert callable(up.call_args.kwargs["on_step"])
 
 
+def test_up_recreate_is_passed_through(mocker, context):
+    up = mocker.patch(
+        "jailbee.litellm.litellm_up",
+        return_value=ll.UpResult(
+            ip="10.0.0.3", ports={"default": 4100}, restarted=[], retired=[], installed=True
+        ),
+    )
+    result = runner.invoke(app, ["litellm", "up", "--recreate"])
+    assert result.exit_code == 0, result.output
+    assert up.call_args.kwargs["recreate"] is True
+    assert up.call_args.kwargs["reinstall"] is False
+
+
 def test_up_says_when_routes_were_reloaded_without_a_restart(mocker, context):
     mocker.patch(
         "jailbee.litellm.litellm_up",
@@ -154,10 +167,11 @@ def test_up_reports_a_missing_secret_as_a_clean_error(mocker, context):
     assert "Traceback" not in result.output
 
 
-def test_down_removes_proxy_but_keeps_login(mocker, context):
+def test_down_stops_proxy_but_keeps_login(mocker, context):
     down = mocker.patch("jailbee.litellm.litellm_down")
     result = runner.invoke(app, ["litellm", "down"])
     assert result.exit_code == 0, result.output
+    assert "stopped" in result.output
     assert "logins and settings are kept" in " ".join(result.output.split())
     down.assert_called_once_with(context.return_value[0], purge=False)
 

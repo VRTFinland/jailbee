@@ -169,11 +169,18 @@ The host-wide helper containers (`jailbee-egress-proxy`, `jailbee-litellm`, the
 registry mirror, the shared display) and the LiteLLM state volume follow the
 `defaults.storage_pool` of **`global.yaml` only**: they belong to no repo, so a
 repo's own override does not move them. They are created on that pool when they
-do not exist yet; an existing helper stays where it is until it is deleted and
-recreated (`jailbee apply`, `jailbee litellm up`, `jailbee display up
---recreate`). An existing LiteLLM state volume likewise stays in the pool it is
-in, so a newly set pool never silently replaces it with an empty volume: copy it
-(see below) and the configured pool wins.
+do not exist yet; an existing helper stays where it is until it is recreated:
+
+| Helper | Recreate on the configured pool |
+|---|---|
+| egress proxy | `jailbee net egress proxy up --recreate` |
+| registry mirror | `jailbee registry up --recreate` (cache and CA live on the host and survive) |
+| shared display | `jailbee display up --recreate` |
+| LiteLLM | `jailbee litellm up --recreate` (the state volume is kept) |
+
+An existing LiteLLM state volume stays in the pool it is in, so a newly set pool
+never silently replaces it with an empty volume: copy it (see below) and the
+configured pool wins.
 
 To retire the old pool entirely, the `default` profile must stop pointing at it
 too, otherwise Incus will not delete it:
@@ -208,7 +215,8 @@ switch are clones. For disposable branch containers it is simplest to start over
    the helper containers (`jailbee-egress-proxy`, `jailbee-litellm`, the
    registry mirror, `jailbee-display`). The helpers must go before the profile
    can be switched, since they take their root disk from it. `incus list`
-   should then be empty.
+   should then be empty. (The `up --recreate` commands above do the same one
+   helper at a time, for a host that is not switching its profile.)
 4. Set `defaults.storage_pool` in `global.yaml` and switch the profile (above).
 5. Remove the old pool, which frees its space:
    ```bash
@@ -218,9 +226,10 @@ switch are clones. For disposable branch containers it is simplest to start over
 6. Prune dated image archives: `jailbee base prune --all --days 14`. Golden
    images live outside any pool, so the current ones keep working; Incus unpacks
    each into the new pool the first time it is used.
-7. Re-apply and verify: `jailbee apply` recreates the helpers on the new pool
-   (`jailbee litellm up` and `jailbee display up` do the same for theirs), then
-   `jailbee doctor` and `jailbee new`.
+7. Re-apply and verify: `jailbee apply` recreates the egress proxy on the new
+   pool when a repo needs it; `jailbee registry up`, `jailbee litellm up` and
+   `jailbee display up` do the same for theirs. Then `jailbee doctor` and
+   `jailbee new`.
 
 ### Moving a container you want to keep
 

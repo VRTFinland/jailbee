@@ -11067,6 +11067,70 @@ def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, in
         return None
 
 
+egress_proxy_app = typer.Typer(
+    name="proxy",
+    help=(
+        "The shared Squid egress proxy that serves wildcard allowlist entries and "
+        "the work network. `jailbee apply` and `egress add` start it when a repo "
+        "needs it; these commands run it by hand."
+    ),
+    no_args_is_help=True,
+)
+egress_app.add_typer(egress_proxy_app)
+
+
+@egress_proxy_app.command("up")
+def egress_proxy_up_cmd(
+    recreate: Annotated[
+        bool,
+        typer.Option(
+            "--recreate",
+            help="Delete the proxy container and create it again, e.g. on another storage pool.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Start the egress proxy container; repairs it in place."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus, IncusError
+    from jailbee.tui import status_with_elapsed
+
+    cfg = _load_or_exit(config)
+    try:
+        with status_with_elapsed("starting the egress proxy") as status:
+            egress_proxy.proxy_up(
+                Incus(),
+                storage_pool=cfg.service_storage_pool(),
+                recreate=recreate,
+                on_step=status.update,
+            )
+    except (IncusError, RuntimeError, ValueError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success("Egress proxy running")
+
+
+@egress_proxy_app.command("down")
+def egress_proxy_down_cmd(config: ConfigOption = None) -> None:
+    """Stop the egress proxy; the container persists. Containers lose its allowance meanwhile."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus
+
+    _load_or_exit(config)
+    egress_proxy.proxy_down(Incus())
+    success("Egress proxy stopped")
+
+
+@egress_proxy_app.command("status")
+def egress_proxy_status_cmd(config: ConfigOption = None) -> None:
+    """Show the egress proxy's state."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus
+
+    _load_or_exit(config)
+    info(f"Egress proxy: {egress_proxy.proxy_status(Incus()).value}")
+
+
 registry_app = typer.Typer(
     name="registry",
     help="Docker registry mirror control.",
@@ -11349,6 +11413,13 @@ def litellm_up_cmd(
     reinstall: Annotated[
         bool, typer.Option("--reinstall", help="Reinstall LiteLLM in the container.")
     ] = False,
+    recreate: Annotated[
+        bool,
+        typer.Option(
+            "--recreate",
+            help="Delete the container and create it again; the state volume (logins) is kept.",
+        ),
+    ] = False,
 ) -> None:
     """Create or repair the LiteLLM container and start the proxy."""
     from jailbee import litellm as ll
@@ -11360,7 +11431,9 @@ def litellm_up_cmd(
         warn(f"litellm.version={gcfg.litellm.version} bypasses jailbee's hash-locked install.")
     try:
         with status_with_elapsed("starting the LiteLLM proxy") as status:
-            result = ll.litellm_up(incus, gcfg, reinstall=reinstall, on_step=status.update)
+            result = ll.litellm_up(
+                incus, gcfg, reinstall=reinstall, recreate=recreate, on_step=status.update
+            )
     except (ValueError, RuntimeError, IncusError) as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
@@ -11411,12 +11484,13 @@ def litellm_down_cmd(
         typer.Option(
             "--purge",
             help=(
-                "Also delete the state volume: every login, the rendered configs and their secrets."
+                "Delete the container too, and the state volume: every login, the "
+                "rendered configs and their secrets."
             ),
         ),
     ] = False,
 ) -> None:
-    """Remove the proxy container; its state volume (logins, settings) is kept."""
+    """Stop the proxy; the container and its state volume (logins, settings) are kept."""
     from jailbee import litellm as ll
     from jailbee.incus import IncusError
 
@@ -11429,7 +11503,7 @@ def litellm_down_cmd(
     if purge:
         success("LiteLLM proxy and its state volume removed; logins are gone.")
     else:
-        success("LiteLLM proxy removed; logins and settings are kept.")
+        success("LiteLLM proxy stopped; logins and settings are kept.")
 
 
 @litellm_app.command("status")
