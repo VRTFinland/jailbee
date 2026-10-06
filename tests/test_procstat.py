@@ -21,17 +21,18 @@ def write_stat(
     utime: int = 0,
     stime: int = 0,
     starttime: int = 1000,
+    ppid: int = 1,
 ) -> None:
     """Write a /proc/<pid>/stat line with the fields the reader parses.
 
-    Field numbering follows proc(5): 1 pid, 2 comm, 3 state, 14 utime,
+    Field numbering follows proc(5): 1 pid, 2 comm, 3 state, 4 ppid, 14 utime,
     15 stime, 22 starttime. The filler keeps every parsed field at its real
     offset, which is the whole point — an off-by-one here would make the
     tests agree with a broken parser.
     """
     d = proc_root / str(pid)
     d.mkdir(parents=True, exist_ok=True)
-    before = ["S", "1", "1", "0", "-1", "4194304", "0", "0", "0", "0", "0"]  # fields 3-13
+    before = ["S", str(ppid), "1", "0", "-1", "4194304", "0", "0", "0", "0", "0"]  # fields 3-13
     middle = ["0", "0", "20", "0", "1", "0"]  # fields 16-21
     parts = [*before, str(utime), str(stime), *middle, str(starttime)]
     (d / "stat").write_text(f"{pid} ({comm}) " + " ".join(parts) + "\n")
@@ -72,6 +73,32 @@ def test_read_process_returns_none_for_a_truncated_stat_line(tmp_path):
     (d / "stat").write_text("8 (claude) S 1 1\n")
 
     assert procstat.read_process(8, proc_root=tmp_path) is None
+
+
+def test_read_process_reads_the_parent_pid(tmp_path):
+    write_stat(tmp_path, 42, comm="bash", ppid=7)
+
+    sample = procstat.read_process(42, proc_root=tmp_path)
+
+    assert sample is not None
+    assert sample.ppid == 7
+
+
+def test_count_children_counts_direct_shell_children_only():
+    procs = {
+        10: procstat.ProcSample("claude", 0, 1, ppid=1),
+        11: procstat.ProcSample("bash", 0, 2, ppid=10),
+        12: procstat.ProcSample("bash", 0, 3, ppid=10),
+        13: procstat.ProcSample("node", 0, 4, ppid=10),  # a child, not a shell
+        14: procstat.ProcSample("bash", 0, 5, ppid=11),  # a grandchild
+        15: procstat.ProcSample("bash", 0, 6, ppid=99),  # another claude's
+    }
+
+    assert procstat.count_children(procs, 10) == 2
+
+
+def test_count_children_with_no_children_is_zero():
+    assert procstat.count_children({}, 10) == 0
 
 
 def write_cgroup(proc_root: Path, pid: int, path: str) -> None:

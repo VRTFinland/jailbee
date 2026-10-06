@@ -52,6 +52,22 @@ class ProcSample:
     # times are two different processes: the pid was recycled, and the
     # counter went backwards rather than forwards.
     starttime: int
+    ppid: int = 0  # proc(5) field 4; 0 when unknown
+
+
+SHELL_COMMS = frozenset({"bash", "sh", "dash", "zsh", "fish"})
+"""Process names that count as a shell for `count_children`."""
+
+
+def count_children(
+    procs: Mapping[int, ProcSample], parent: int, comms: frozenset[str] = SHELL_COMMS
+) -> int:
+    """How many direct children of host pid `parent` are one of `comms`.
+
+    A session's background commands and its running foreground command are
+    shell children of the agent process; deeper descendants are not counted.
+    """
+    return sum(1 for sample in procs.values() if sample.ppid == parent and sample.comm in comms)
 
 
 def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
@@ -75,13 +91,14 @@ def read_process(pid: int, *, proc_root: Path = PROC_ROOT) -> ProcSample | None:
         return None
     comm = raw[open_at + 1 : close_at]
     # `rest` starts at field 3, so field N sits at index N - 3:
-    # utime (14) -> 11, stime (15) -> 12, starttime (22) -> 19.
+    # ppid (4) -> 1, utime (14) -> 11, stime (15) -> 12, starttime (22) -> 19.
     rest = raw[close_at + 2 :].split()
     try:
         return ProcSample(
             comm=comm,
             ticks=int(rest[11]) + int(rest[12]),
             starttime=int(rest[19]),
+            ppid=int(rest[1]),
         )
     except (IndexError, ValueError):
         return None
