@@ -3829,7 +3829,16 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
 
 
 def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))])
+    group = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [
+            dataclasses.replace(
+                _ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+            )
+        ],
+    )
     frame = dashboard.render(
         [group],
         selected=None,
@@ -3849,7 +3858,16 @@ def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
 
 
 def test_render_uses_configured_auto_hide_order(tmp_path):
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))])
+    group = dashboard.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [
+            dataclasses.replace(
+                _ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+            )
+        ],
+    )
     frame = dashboard.render(
         [group],
         selected=None,
@@ -3920,7 +3938,14 @@ def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path)
 def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     g = dashboard.RepoGroup(
-        "alpha", "/repos/alpha", tmp_path / "a.yaml", [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))]
+        "alpha",
+        "/repos/alpha",
+        tmp_path / "a.yaml",
+        [
+            dataclasses.replace(
+                _ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+            )
+        ],
     )
     out = _render_text(
         dashboard.render(
@@ -5233,7 +5258,12 @@ def test_folded_groups_retain_enabled_conditional_columns(tmp_path):
         dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [with_pr]),
         dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-one", "beta")]),
     ]
-    kwargs = dict(selected=None, now=now, git_enabled=True, shown_columns=dashboard.nonempty_columns(groups, now=now))
+    kwargs = dict(
+        selected=None,
+        now=now,
+        git_enabled=True,
+        shown_columns=dashboard.nonempty_columns(groups, now=now),
+    )
     unfolded = _render_text(dashboard.render(groups, **kwargs))
     folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
 
@@ -10998,7 +11028,9 @@ def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path)
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _mock_terminal(mocker)
-    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState(columns=("name", "pr")))
+    mocker.patch.object(
+        dashboard, "seed_view_state", return_value=dashboard.ViewState(columns=("name", "pr"))
+    )
     _fake_state(mocker, [group])
     mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
     keys = iter([b"r", b"o", b"\x03"])
@@ -11029,9 +11061,7 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
     assert initial.kwargs["shown_columns"] == optimized.kwargs["shown_columns"] == ("name",)
     assert unfolded.kwargs["shown_columns"] == ("name", "state", "network")
     assert unfolded.kwargs["column_widths"] == optimized.kwargs["column_widths"]
-    output = _render_text(
-        dashboard.render(*unfolded.args, **unfolded.kwargs)
-    )
+    output = _render_text(dashboard.render(*unfolded.args, **unfolded.kwargs))
     assert "STATE" in output and "NETWORK" in output
     assert "strict" in output
 

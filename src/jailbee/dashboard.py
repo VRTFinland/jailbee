@@ -2099,7 +2099,8 @@ def nonempty_columns(
     containers = [c for g in groups if g.prefix not in folded for c in g.containers]
     fields = _select_visible_fields(now, containers, enabled, apply_conditions=True)
     shown = tuple(
-        f.name for f in fields
+        f.name
+        for f in fields
         if any(Text.from_markup(f.cell(c)).plain.strip() not in ("", "-", "—") for c in containers)
     )
     if shown:
@@ -2119,7 +2120,9 @@ def optimize_column_widths(
     expanded = [g for g in groups if g.prefix not in folded]
     containers = [c for g in expanded for c in g.containers]
     fields = _select_visible_fields(
-        now, containers, nonempty_columns(groups, now=now, enabled=enabled, folded=folded),
+        now,
+        containers,
+        nonempty_columns(groups, now=now, enabled=enabled, folded=folded),
         apply_conditions=False,
     )
     widths: dict[str, int] = {}
@@ -2530,9 +2533,11 @@ def render(
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
     fields = _select_visible_fields(
-        now, visible,
+        now,
+        visible,
         nonempty_columns(groups, now=now, enabled=enabled, folded=folded)
-        if shown_columns is None else shown_columns,
+        if shown_columns is None
+        else shown_columns,
         apply_conditions=False,
     )
 
@@ -4758,7 +4763,9 @@ def run(
                             show_empty_repos = overlay.show_empty_repos
                             hidden_repos = overlay.hidden_repos
                             groups = visible_repo_groups(
-                                all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
+                                all_groups,
+                                show_empty_repos=show_empty_repos,
+                                hidden_repos=hidden_repos,
                             )
                             shown_columns = nonempty_columns(
                                 groups, now=now(), enabled=enabled, folded=folded
@@ -4938,7 +4945,9 @@ def run(
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "optimize":
-                    shown_columns = nonempty_columns(groups, now=now(), enabled=enabled, folded=folded)
+                    shown_columns = nonempty_columns(
+                        groups, now=now(), enabled=enabled, folded=folded
+                    )
                     column_widths = optimize_column_widths(
                         groups, now=now(), enabled=enabled, folded=folded
                     )
