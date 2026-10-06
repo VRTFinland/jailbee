@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 
@@ -106,12 +108,17 @@ def card_content(c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]]) -> Ca
         else:
             card_fields.append(CardField(field.name, field.header, cell))
     reasons = [f"{s.agent}: {s.waiting_for}" for s in c.agent_status if s.waiting_for]
+    tooltip = "\n".join(reasons)
+    now = datetime.now(UTC)
+    activity = next((text for s in c.agent_status if (text := describe(s, now)) is not None), None)
+    if activity is not None:
+        tooltip = "\n\n".join(part for part in (tooltip, "\n".join(activity.lines())) if part)
     return CardContent(
         name=name,
         state=state,
         fields=card_fields,
         job_error=c.job_error,
-        agent_tooltip="\n".join(reasons) or None,
+        agent_tooltip=tooltip or None,
         agent_waiting=any(s.state == "waiting" for s in c.agent_status),
     )
 

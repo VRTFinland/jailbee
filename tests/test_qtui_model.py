@@ -348,3 +348,48 @@ def test_card_content_without_agents_has_no_tooltip():
     cc = m.card_content(c, dashboard.visible_fields(datetime.now().astimezone(), [c]))
 
     assert (cc.agent_tooltip, cc.agent_waiting) == (None, False)
+
+
+def _agent_container(summary):
+    return ContainerInfo(
+        name="p-foo",
+        state="Running",
+        network="strict",
+        ip=None,
+        memory_limit=None,
+        repo="p",
+        agent_status=(summary,),
+    )
+
+
+def test_the_agent_tooltip_carries_the_activity_lines():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.agent_status import AgentSummary
+
+    activity = AgentActivity("Bash  ls", "done <b>", subagents=1, shells=0)
+    summary = AgentSummary("claude", "waiting", None, "permission", 1, activity=activity)
+
+    content = m.card_content(_agent_container(summary), [])
+
+    assert content.agent_tooltip == (
+        "claude: permission\n\nwaiting · ~1 subagent\n↳ Bash  ls\n“done <b>”"
+    )
+
+
+def test_activity_alone_is_the_whole_tooltip():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.agent_status import AgentSummary
+
+    summary = AgentSummary(
+        "claude", "busy", None, None, 1, activity=AgentActivity("Bash  ls", None)
+    )
+
+    assert m.card_content(_agent_container(summary), []).agent_tooltip == "busy\n↳ Bash  ls"
+
+
+def test_no_reason_and_no_activity_is_no_tooltip():
+    from jailbee.agent_status import AgentSummary
+
+    summary = AgentSummary("claude", "idle", None, None, 1)
+
+    assert m.card_content(_agent_container(summary), []).agent_tooltip is None
