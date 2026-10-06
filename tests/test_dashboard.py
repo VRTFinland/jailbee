@@ -10941,9 +10941,11 @@ def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_pat
 
 def test_optimize_key_is_documented_and_parsed():
     assert dashboard.parse_key(b"o") == "optimize"
-    out = _render_text(dashboard.render(
-        [], None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay="help"
-    ))
+    out = _render_text(
+        dashboard.render(
+            [], None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay="help"
+        )
+    )
     assert "optimize" in out.lower() and "width" in out.lower()
 
 
@@ -10955,10 +10957,17 @@ def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
     widths = dashboard.optimize_column_widths([short], now=now, enabled=enabled)
 
     def frame(group, budgets, width=200):
-        return _render_text(dashboard.render(
-            [group], None, now=now, git_enabled=False, enabled=enabled,
-            column_widths=budgets,
-        ), width=width)
+        return _render_text(
+            dashboard.render(
+                [group],
+                None,
+                now=now,
+                git_enabled=False,
+                enabled=enabled,
+                column_widths=budgets,
+            ),
+            width=width,
+        )
 
     before = next(line for line in frame(short, widths).splitlines() if "strict" in line)
     after = next(line for line in frame(long, widths).splitlines() if "strict" in line)

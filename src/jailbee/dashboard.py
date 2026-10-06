@@ -2103,9 +2103,13 @@ def optimize_column_widths(
     widths: dict[str, int] = {}
     for spec in fields:
         cells = max(
-            (Text.from_markup(c.name if spec.name == "name" and g.repo_root is None
-                              else spec.cell(c)).cell_len
-             for g in expanded for c in g.containers),
+            (
+                Text.from_markup(
+                    c.name if spec.name == "name" and g.repo_root is None else spec.cell(c)
+                ).cell_len
+                for g in expanded
+                for c in g.containers
+            ),
             default=0,
         )
         cells = max(cells, spec.dashboard_min_width)
