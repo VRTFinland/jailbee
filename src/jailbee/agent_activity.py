@@ -134,9 +134,15 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
     activity = summary.activity
     if activity is None:
         return None
-    head = summary.state
-    if summary.since is not None and summary.since <= now:
-        head += f" {format_duration_short(now - summary.since)}"
+    # A supplied state identifies the selected session, even when it has no date.
+    state, since = (
+        (summary.state, summary.since)
+        if activity.state is None
+        else (activity.state, activity.since)
+    )
+    head = state
+    if since is not None and since <= now:
+        head += f" {format_duration_short(now - since)}"
     if activity.subagents:
         head += f" · {_counted(activity.subagents, 'subagent', estimate=True)}"
     if activity.shells:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ import pytest
 from jailbee import agent_activity as aa
 from jailbee.accounts.adapters import base
 from jailbee.accounts.models import ActivityPaths, AgentActivity, AgentSession
-from jailbee.agent_status import AgentSummary
+from jailbee.agent_status import AgentSummary, match_sessions
 from jailbee.procstat import ProcSample
 
 NOW = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
@@ -241,3 +242,53 @@ def test_describe_a_state_without_a_date_or_from_the_future_has_no_duration() ->
     assert undated is not None and future is not None
     assert undated.head == "busy · ~2 subagents · 1 shell"
     assert future.head == "busy · ~2 subagents · 1 shell"
+
+
+def test_describe_head_uses_the_activitys_own_session_state_and_since() -> None:
+    mine = AgentActivity(
+        "Bash  ls", None, state="idle", since=NOW - timedelta(hours=1), modified=1.0
+    )
+    text = aa.describe(_summary(state="waiting", activity=mine), NOW)
+
+    assert text is not None
+    assert text.head == "idle 1h"
+
+
+def test_describe_does_not_borrow_the_summary_date_for_an_undated_activity() -> None:
+    text = aa.describe(_summary(activity=AgentActivity("t", None, state="idle")), NOW)
+
+    assert text is not None
+    assert text.head == "idle"
+
+
+def test_all_live_sessions_stay_cached_and_missing_transcripts_are_retried(
+    adapter: _Adapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def locate(home: Path, session: AgentSession) -> ActivityPaths | None:
+        if session.session_id == "missing":
+            return None
+        return ActivityPaths(home / f"{session.session_id}.jsonl", home / "sub")
+
+    monkeypatch.setattr(adapter, "locate_activity", locate)
+    reader = aa.ActivityReader()
+    lookup = _lookup(reader)
+    live = [replace(_session(sid), pid=pid, proc_start=pid) for pid, sid in enumerate(
+        ("a", "b", "missing"), start=10
+    )]
+
+    def tick(sessions: list[AgentSession]) -> None:
+        reader.begin()
+        match_sessions(
+            {"c": sessions}, {"c": {s.pid: s.proc_start for s in sessions}}, lambda p: p, lookup
+        )
+        reader.finish()
+
+    tick(live)
+    assert reader.cached == 2  # both readable sessions, not just the rank top
+    tick(live)
+    assert reader.cached == 2
+    tick(live[1:])
+    assert reader.cached == 1  # only the dead session is evicted
+    monkeypatch.setattr(adapter, "locate_activity", lambda home, session: ActivityPaths(home / "t", home))
+    tick(live[1:])
+    assert reader.cached == 2  # the missing transcript is retried without a new session

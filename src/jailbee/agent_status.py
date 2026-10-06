@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -48,7 +48,7 @@ class AgentSummary:
 
     `state`, `since` and `waiting_for` belong to the most urgent session;
     `count` is how many live sessions this agent has in the container.
-    `activity` is what the most urgent session is doing, when it was asked for.
+    `activity` comes from the live session with the most recently written readable transcript.
     """
 
     agent: str
@@ -86,25 +86,26 @@ def _updated(session: AgentSession) -> int:
 
 def summarize(
     live: Iterable[AgentSession],
-    activity_for: Callable[[AgentSession], AgentActivity | None] | None = None,
+    activity_for: Callable[[Sequence[AgentSession]], AgentActivity | None] | None = None,
 ) -> tuple[AgentSummary, ...]:
     """One summary per agent, most urgent first, agent name as the tiebreak.
 
-    `activity_for` is asked once per agent, about its most urgent session.
+    `activity_for` receives all live sessions of an agent, ordered by urgency.
     """
     by_agent: dict[str, list[AgentSession]] = {}
     for session in live:
         by_agent.setdefault(session.agent, []).append(session)
     ranked: list[tuple[tuple[int, bool, datetime], str, AgentSummary]] = []
     for agent, items in by_agent.items():
-        top = min(items, key=_rank)
+        ordered = sorted(items, key=_rank)
+        top = ordered[0]
         summary = AgentSummary(
             agent=agent,
             state=top.state,
             since=top.since,
             waiting_for=top.waiting_for,
             count=len(items),
-            activity=None if activity_for is None else activity_for(top),
+            activity=None if activity_for is None else activity_for(ordered),
         )
         ranked.append((_rank(top), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))
@@ -113,12 +114,23 @@ def summarize(
 
 def _lookup_for(
     container: str, host_pids: Mapping[tuple[int, int], int], activity: ActivityLookup | None
-) -> Callable[[AgentSession], AgentActivity | None] | None:
+) -> Callable[[Sequence[AgentSession]], AgentActivity | None] | None:
     if activity is None:
         return None
 
-    def lookup(session: AgentSession) -> AgentActivity | None:
-        return activity(container, session, host_pids[(session.pid, session.proc_start)])
+    def lookup(sessions: Sequence[AgentSession]) -> AgentActivity | None:
+        chosen: AgentActivity | None = None
+        for session in sessions:
+            found = activity(container, session, host_pids[(session.pid, session.proc_start)])
+            if found is None:
+                continue
+            # Strict comparison preserves rank order for equal or unknown mtimes.
+            if chosen is None or (
+                found.modified is not None
+                and (chosen.modified is None or found.modified > chosen.modified)
+            ):
+                chosen = replace(found, state=session.state, since=session.since)
+        return chosen
 
     return lookup
 
@@ -138,8 +150,8 @@ def match_sessions(
     the process has in its own namespace, and is called only for a process
     whose start time one of the container's sessions claims: about one read
     per live session, not one per process. Every container in `processes`
-    gets an entry. `activity`, when given, is asked about each agent's most
-    urgent live session with the container name and the session's host pid;
+    gets an entry. `activity`, when given, is asked about every live session
+    with the container name and the session's host pid;
     it must not raise.
     """
     out: dict[str, tuple[AgentSummary, ...]] = {}

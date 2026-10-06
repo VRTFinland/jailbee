@@ -276,6 +276,8 @@ def test_read_activity_combines_the_tail_and_the_subagent_count(tmp_path: Path) 
     assert (activity.last_tool, activity.last_message) == ("Edit  /x.py", "done")
     assert activity.subagents == 1
     assert activity.shells is None  # not the adapter's to know
+    assert activity.modified == paths.transcript.stat().st_mtime
+    assert (activity.state, activity.since) == (None, None)  # the summary's job
 
 
 def test_read_activity_without_a_readable_transcript_is_none(tmp_path: Path) -> None:
@@ -322,3 +324,37 @@ def test_locate_refuses_ids_whose_path_would_really_resolve(tmp_path: Path) -> N
         assert ca.locate(tmp_path, hostile) is None, hostile
 
     assert ca.locate(tmp_path, SID) is None  # no `<SID>.jsonl` itself
+
+
+def test_read_activity_mtime_failure_is_unknown_not_an_exception(tmp_path, monkeypatch):
+    transcript = _transcript(tmp_path)
+    paths = ActivityPaths(transcript, tmp_path / "sub")
+
+    def gone(path):
+        raise OSError("gone")
+
+    monkeypatch.setattr(Path, "lstat", gone)
+    activity = ca.read_activity(paths, now=1.0)
+
+    assert activity is not None
+    assert activity.modified is None
+
+
+def test_read_activity_does_not_follow_a_replacement_symlink_for_mtime(tmp_path, monkeypatch):
+    transcript = _transcript(tmp_path)
+    target = tmp_path / "target.jsonl"
+    target.write_text("", encoding="utf-8")
+    paths = ActivityPaths(transcript, tmp_path / "sub")
+    read_tail = ca.read_tail
+
+    def swapped(path):
+        tail = read_tail(path)
+        path.unlink()
+        path.symlink_to(target)
+        return tail
+
+    monkeypatch.setattr(ca, "read_tail", swapped)
+    activity = ca.read_activity(paths, now=1.0)
+
+    assert activity is not None
+    assert activity.modified is None

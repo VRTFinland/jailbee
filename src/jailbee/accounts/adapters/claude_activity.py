@@ -205,9 +205,15 @@ def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
     tail = read_tail(paths.transcript)
     if tail is None:
         return None
+    try:
+        info = paths.transcript.lstat()
+        modified = info.st_mtime if stat.S_ISREG(info.st_mode) else None
+    except OSError:
+        modified = None
     last_tool, last_message = parse_tail(tail)
     return AgentActivity(
         last_tool=last_tool,
         last_message=last_message,
         subagents=count_fresh_subagents(paths.subagents, now),
+        modified=modified,
     )

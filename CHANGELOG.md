@@ -11,7 +11,8 @@ before editing `## Unreleased`.
 ### Added
 
 - **Agent activity in the dashboard's details panel.** For a container with a
-  live Claude session, the panel shows up to three lines: the session's state
+  live Claude session, the panel picks the session with the most recently written
+  readable transcript and shows up to three lines: the session's state
   with how many subagents and shell commands are running, its last tool call
   and its last message. The Qt dashboard shows the same in the agent tooltip.
   `dashboard.refresh.agent_activity: false` turns it off (no transcript is read).

@@ -100,7 +100,18 @@ def _full_snapshot() -> Snapshot:
                     T0,
                     "permission",
                     2,
-                    AgentActivity("Bash  ls <b>", "[red]done[/red]", subagents=2, shells=1),
+                    AgentActivity(
+                        **_non_defaults(
+                            AgentActivity,
+                            last_tool="Bash  ls <b>",
+                            last_message="[red]done[/red]",
+                            subagents=2,
+                            shells=1,
+                            modified=123.5,
+                            state="idle",
+                            since=T0 - timedelta(hours=1),
+                        )
+                    ),
                 ),
             ),
             git_status=git,

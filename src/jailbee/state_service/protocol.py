@@ -25,7 +25,7 @@ from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity
 
 # Bumped on any change a client of another version could misread.
-PROTOCOL = 2
+PROTOCOL = 3
 
 
 class ProtocolError(ValueError):

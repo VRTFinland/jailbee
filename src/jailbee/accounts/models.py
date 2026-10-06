@@ -274,6 +274,9 @@ class AgentActivity:
     last_message: str | None
     subagents: int | None = None
     shells: int | None = None
+    modified: float | None = None
+    state: str | None = None
+    since: datetime | None = None
 
 
 @dataclass(frozen=True)

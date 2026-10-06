@@ -6,6 +6,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from jailbee import agent_status
 from jailbee.accounts.adapters import base
 from jailbee.accounts.models import AgentActivity, AgentSession
@@ -272,23 +274,113 @@ def test_summary_has_no_activity_without_a_lookup():
     assert out["a"][0].activity is None
 
 
-def test_the_lookup_is_asked_once_per_agent_for_its_most_urgent_session_and_host_pid():
+def test_the_lookup_is_asked_about_every_live_session_in_rank_order_with_its_host_pid():
     calls: list[tuple[str, int, int]] = []
-    found = AgentActivity("Bash  ls", "hi")
 
     def lookup(container, session, host_pid):
         calls.append((container, session.pid, host_pid))
-        return found
+        return None
 
-    out = agent_status.match_sessions(
+    agent_status.match_sessions(
         {"a": [_s(10, 500, "idle"), _s(11, 600, "waiting")]},
         {"a": {1010: 500, 1111: 600}},
         {1010: 10, 1111: 11}.get,
         lookup,
     )
 
-    assert calls == [("a", 11, 1111)]  # the waiting one, with its own host pid
-    assert out["a"][0].activity == found
+    assert calls == [("a", 11, 1111), ("a", 10, 1010)]  # the waiting one first
+
+
+def _two_sessions(lookup):
+    """`claude` and `claude-jb`: same state, the first has the longer-standing one."""
+    return agent_status.match_sessions(
+        {
+            "a": [
+                _s(10, 500, "idle", since=T0 - timedelta(hours=1)),
+                _s(11, 600, "idle", since=T0),
+            ]
+        },
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )
+
+
+def test_a_session_without_a_transcript_does_not_hide_the_one_with():
+    """The bug: the long-idle session wins `_rank` and has nothing to show."""
+    found = AgentActivity("Bash  ls", "hi", modified=100.0)
+
+    def lookup(container, session, host_pid):
+        return found if session.pid == 11 else None
+
+    (summary,) = _two_sessions(lookup)["a"]
+
+    assert summary.activity is not None
+    assert (summary.activity.last_tool, summary.activity.last_message) == ("Bash  ls", "hi")
+
+
+def test_the_most_recently_written_transcript_wins_regardless_of_state_or_rank():
+    def lookup(container, session, host_pid):
+        return AgentActivity(f"pid{session.pid}", None, modified={10: 100.0, 11: 200.0}[session.pid])
+
+    out = agent_status.match_sessions(
+        {"a": [_s(10, 500, "waiting"), _s(11, 600, "idle")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )
+
+    (summary,) = out["a"]
+    assert summary.activity is not None
+    assert summary.activity.last_tool == "pid11"  # idle, but written more recently
+    assert summary.state == "waiting"  # the AGENT column is still the rank top
+
+
+def test_the_activity_carries_its_own_sessions_state_and_since():
+    def lookup(container, session, host_pid):
+        return AgentActivity("t", None, modified=1.0) if session.pid == 11 else None
+
+    (summary,) = agent_status.match_sessions(
+        {"a": [_s(10, 500, "waiting", since=T0), _s(11, 600, "idle", since=T0 - timedelta(hours=2))]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )["a"]
+
+    assert summary.activity is not None
+    assert (summary.activity.state, summary.activity.since) == ("idle", T0 - timedelta(hours=2))
+    assert (summary.state, summary.since) == ("waiting", T0)
+
+
+@pytest.mark.parametrize("modified", [None, 100.0])
+def test_equal_or_unknown_mtimes_fall_back_to_rank_order(modified):
+    def lookup(container, session, host_pid):
+        return AgentActivity(f"pid{session.pid}", None, modified=modified)
+
+    (summary,) = _two_sessions(lookup)["a"]
+
+    assert summary.activity is not None
+    assert summary.activity.last_tool == "pid10"  # the longer-standing idle one
+
+
+def test_the_agent_column_is_unchanged_by_the_activity_choice():
+    def lookup(container, session, host_pid):
+        return AgentActivity("t", None, modified=1.0) if session.pid == 11 else None
+
+    (summary,) = _two_sessions(lookup)["a"]
+
+    assert (summary.state, summary.since, summary.waiting_for, summary.count) == (
+        "idle",
+        T0 - timedelta(hours=1),
+        None,
+        2,
+    )
+
+
+def test_no_readable_session_means_no_activity():
+    (summary,) = _two_sessions(lambda c, s, p: None)["a"]
+
+    assert summary.activity is None
 
 
 def test_the_lookup_is_not_asked_for_a_container_with_no_live_session():

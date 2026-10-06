@@ -2351,8 +2351,8 @@ dashboard:
     agent_activity: true   # false: never read an agent's transcript (no activity lines)
 ```
 
-For the container's most urgent live agent session, the dashboard's details
-panel shows up to three lines: the state with its duration and `~N subagents` /
+For the live agent session with the most recently written readable transcript,
+the dashboard's details panel shows up to three lines: the state with its duration and `~N subagents` /
 `N shells`, the last tool call, and the last assistant message. The Qt
 dashboard puts them in the agent tooltip. They come from the session
 transcript, which contains prompts and code, so turn `agent_activity` off on a
