@@ -166,3 +166,26 @@ def test_a_failure_after_a_recovery_is_logged_again(mocker, caplog):
             clock.t += 3.0
     assert len(_failures(caplog)) == 2
     assert sum("gather recovered" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_cadence_carries_the_activity_setting():
+    assert Cadence.from_config(DashboardRefresh(agent_activity=False)).activity is False
+    assert Cadence.from_config(DashboardRefresh()).activity is True
+
+
+def test_the_gatherer_reads_activity_only_when_the_setting_is_on(mocker):
+    sample = mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    on = Gatherer(mocker.Mock(), CAD, gather=lambda *a, **k: [], sleep=lambda _s: None)
+    off = Gatherer(
+        mocker.Mock(),
+        Cadence(3.0, 10.0, True, activity=False),
+        gather=lambda *a, **k: [],
+        sleep=lambda _s: None,
+    )
+
+    on.tick(active=True, refresh=False, roots=[])
+    off.tick(active=True, refresh=False, roots=[])
+
+    readers = [c.args[2] if len(c.args) > 2 else None for c in sample.call_args_list]
+    assert readers[0] is not None  # `on`
+    assert readers[-1] is None  # `off`

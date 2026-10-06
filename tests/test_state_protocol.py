@@ -124,6 +124,7 @@ def _full_snapshot() -> Snapshot:
             push_source_default="branch",
             column_notice="note",
             agent_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
+            agent_config_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             optional_mounts=("ssh", "gpg"),
         )
     )

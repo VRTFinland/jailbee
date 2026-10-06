@@ -46,7 +46,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.accounts.models import AgentSession
-    from jailbee.agent_status import AgentSummary
+    from jailbee.agent_status import ActivityLookup, AgentSummary
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
     from jailbee.db.models import BackgroundJob
@@ -575,6 +575,8 @@ def annotate_agent_status(
     containers: Sequence[ContainerInfo],
     sessions: Mapping[str, Sequence[AgentSession]],
     sampler: ActivitySampler,
+    *,
+    activity: ActivityLookup | None = None,
 ) -> None:
     """Fill ``agent_status`` from the sampler's latest reading.
 
@@ -584,7 +586,8 @@ def annotate_agent_status(
 
     Needs no second reading, unlike ``annotate_activity``: a state is a fact,
     not a rate. Rows it did not answer for are cleared. With no sessions at
-    all it reads nothing.
+    all it reads nothing. `activity`, when given, is asked what each agent's
+    most urgent live session is doing.
     """
     if not any(sessions.values()):
         for c in containers:
@@ -594,7 +597,7 @@ def annotate_agent_status(
         c.name: {pid: sample.starttime for pid, sample in sampler.processes(c.name).items()}
         for c in containers
     }
-    results = agent_status.match_sessions(sessions, processes, sampler.nspid)
+    results = agent_status.match_sessions(sessions, processes, sampler.nspid, activity)
     for c in containers:
         c.agent_status = results.get(c.name, ())
 
@@ -611,6 +614,24 @@ def agent_homes(cfg: Config, containers: Iterable[str]) -> tuple[tuple[str, str,
     adapters = base.pooled_adapters(cfg)
     return tuple(
         (name, adapter.name, adapter.session_home(cfg, name))
+        for name in containers
+        for adapter in adapters
+    )
+
+
+def agent_config_homes(cfg: Config, containers: Iterable[str]) -> tuple[tuple[str, str, Path], ...]:
+    """``(container, agent, shared config home)`` for each container and pooled agent.
+
+    Where the agent keeps what is *shared* across the repo's containers — for
+    Claude the transcripts under ``projects/``. Unlike ``agent_homes`` it names
+    no container's private state, so what is read from it must be found by an
+    identifier the container's own session file gave.
+    """
+    from jailbee.accounts.adapters import base
+
+    adapters = base.pooled_adapters(cfg)
+    return tuple(
+        (name, adapter.name, adapter.config_home(cfg))
         for name in containers
         for adapter in adapters
     )

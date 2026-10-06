@@ -9607,6 +9607,42 @@ def test_annotate_agent_status_never_gives_one_containers_session_to_another(moc
     assert [s.state for s in b.agent_status] == ["busy"]
 
 
+def test_annotate_agent_status_hands_the_lookup_to_the_match(mocker):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.lifecycle import annotate_agent_status
+    from jailbee.procstat import ProcSample
+
+    a = _running(name="myrepo-a")
+    sampler = mocker.Mock()
+    sampler.processes.side_effect = {"myrepo-a": {1010: ProcSample("claude", 0, 500)}}.__getitem__
+    sampler.nspid.side_effect = {1010: 10}.get
+    session = AgentSession("claude", 10, 500, "busy", None, _AGENT_NOW, None)
+    seen: list[tuple[str, int]] = []
+
+    def lookup(container, found, host_pid):
+        seen.append((container, host_pid))
+        return AgentActivity("Bash  ls", None)
+
+    annotate_agent_status([a], {"myrepo-a": [session]}, sampler, activity=lookup)
+
+    assert seen == [("myrepo-a", 1010)]
+    assert a.agent_status[0].activity == AgentActivity("Bash  ls", None)
+
+
+def test_agent_config_homes_is_the_shared_home_per_container_and_pooled_agent(tmp_path):
+    from jailbee.lifecycle import agent_config_homes
+    from tests.conftest import make_cfg, with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared"), "claude", enabled=True
+    )
+
+    assert agent_config_homes(cfg, ["demo-a", "demo-b"]) == (
+        ("demo-a", "claude", tmp_path / "shared" / "claude"),
+        ("demo-b", "claude", tmp_path / "shared" / "claude"),
+    )
+
+
 def test_agent_homes_names_each_containers_overlay_for_every_pooled_agent(tmp_path):
     from jailbee.lifecycle import agent_homes
     from tests.conftest import make_cfg, with_agent

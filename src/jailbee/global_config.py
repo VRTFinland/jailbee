@@ -180,6 +180,14 @@ class DashboardRefresh(BaseModel):
         ),
     )
     git: bool = Field(default=True, description="Probe git status at all.")
+    agent_activity: bool = Field(
+        default=True,
+        description=(
+            "Read each live agent session's transcript for the details panel's "
+            "activity lines: last tool, last message, subagent and shell counts. "
+            "Off: no transcript is ever read."
+        ),
+    )
 
 
 class DashboardConfig(ColumnConfig):

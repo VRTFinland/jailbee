@@ -7674,6 +7674,73 @@ def test_sample_activity_matches_agents_per_group_never_across_repos(mocker):
     ]
 
 
+def test_sample_activity_gives_each_group_a_lookup_over_its_own_config_homes(mocker):
+    from jailbee.agent_activity import ActivityReader
+
+    mocker.patch.object(dashboard, "annotate_activity")
+    agents = mocker.patch.object(dashboard, "annotate_agent_status")
+    mocker.patch("jailbee.agent_status.read_sessions", return_value={})
+    reader = mocker.Mock(spec=ActivityReader)
+    reader.lookup_for.side_effect = lambda homes, processes: ("lookup", dict(homes))
+    p_homes = (("p-a", "claude", Path("/s/p/claude")),)
+    groups = [
+        dashboard.RepoGroup("p", "/p", None, [_ci("p-a", "p")], agent_config_homes=p_homes),
+        dashboard.RepoGroup("q", "/q", None, [_ci("q-b", "q")]),
+    ]
+    sampler = mocker.Mock()
+
+    dashboard.sample_activity(groups, sampler, reader)
+
+    assert [c.kwargs["activity"] for c in agents.call_args_list] == [
+        ("lookup", {("p-a", "claude"): Path("/s/p/claude")}),
+        ("lookup", {}),
+    ]
+    reader.begin.assert_called_once_with()
+    reader.finish.assert_called_once_with()
+    assert reader.lookup_for.call_args_list[0].args[1] == sampler.processes
+
+
+def test_sample_activity_without_a_reader_asks_for_no_activity(mocker):
+    mocker.patch.object(dashboard, "annotate_activity")
+    agents = mocker.patch.object(dashboard, "annotate_agent_status")
+    mocker.patch("jailbee.agent_status.read_sessions", return_value={})
+    groups = [dashboard.RepoGroup("p", "/p", None, [_ci("p-a", "p")])]
+
+    dashboard.sample_activity(groups, mocker.Mock())
+
+    assert agents.call_args.kwargs == {"activity": None}
+
+
+def test_a_failing_group_still_lets_the_reader_finish(mocker):
+    from jailbee.agent_activity import ActivityReader
+
+    mocker.patch.object(dashboard, "annotate_activity")
+    mocker.patch.object(dashboard, "annotate_agent_status", side_effect=RuntimeError("boom"))
+    mocker.patch("jailbee.agent_status.read_sessions", return_value={})
+    reader = mocker.Mock(spec=ActivityReader)
+    groups = [dashboard.RepoGroup("p", "/p", None, [_ci("p-a", "p")])]
+
+    dashboard.sample_activity(groups, mocker.Mock(), reader)
+
+    reader.finish.assert_called_once_with()
+
+
+def test_a_failing_lookup_still_lets_the_reader_finish(mocker):
+    """`lookup_for` runs outside the per-group guard, so only `finally` closes the tick."""
+    from jailbee.agent_activity import ActivityReader
+
+    mocker.patch.object(dashboard, "annotate_activity")
+    mocker.patch.object(dashboard, "annotate_agent_status")
+    reader = mocker.Mock(spec=ActivityReader)
+    reader.lookup_for.side_effect = RuntimeError("boom")
+    groups = [dashboard.RepoGroup("p", "/p", None, [_ci("p-a", "p")])]
+
+    with pytest.raises(RuntimeError):
+        dashboard.sample_activity(groups, mocker.Mock(), reader)
+
+    reader.finish.assert_called_once_with()
+
+
 def test_sample_activity_survives_a_group_whose_agent_reading_fails(mocker):
     """One group's failure clears that group's AGENT and leaves the others."""
     mocker.patch.object(dashboard, "annotate_activity")
@@ -7701,7 +7768,7 @@ def test_sample_activity_reads_the_agent_state_after_the_activity_reading(mocker
         dashboard, "annotate_activity", side_effect=lambda *a: order.append("activity")
     )
     mocker.patch.object(
-        dashboard, "annotate_agent_status", side_effect=lambda *a: order.append("agent")
+        dashboard, "annotate_agent_status", side_effect=lambda *a, **k: order.append("agent")
     )
     groups = [dashboard.RepoGroup("p", "/p", None, [_ci("p-a", "p")])]
 

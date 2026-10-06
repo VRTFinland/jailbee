@@ -108,6 +108,7 @@ from jailbee.global_config import (
 )
 from jailbee.lifecycle import (
     ContainerInfo,
+    agent_config_homes,
     agent_homes,
     annotate_activity,
     annotate_agent_status,
@@ -129,6 +130,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
+    from jailbee.agent_activity import ActivityReader
     from jailbee.apps import AppSpec
     from jailbee.config import Config
     from jailbee.git_status import GitStatus
@@ -246,6 +248,9 @@ class RepoGroup:
     containers and the repo's pooled agents (``lifecycle.agent_homes``);
     `sample_activity` matches each container against its own. Orphan groups
     keep ``()``.
+    ``agent_config_homes`` are the matching shared config homes
+    (``lifecycle.agent_config_homes``), where an agent's transcripts live;
+    orphan groups keep ``()``.
     ``optional_mounts`` lists the repo config's `optional_mounts:` kinds, which
     the terminal menu's Mount…/Unmount… pickers choose from. Orphan groups keep
     it empty."""
@@ -260,6 +265,7 @@ class RepoGroup:
     push_source_default: str = "base"
     column_notice: str | None = None
     agent_homes: tuple[tuple[str, str, Path], ...] = ()
+    agent_config_homes: tuple[tuple[str, str, Path], ...] = ()
     optional_mounts: tuple[str, ...] = ()
 
 
@@ -544,6 +550,7 @@ def gather_rows(
                 )
                 or None,
                 agent_homes=agent_homes(cfg, [c.name for c in containers]),
+                agent_config_homes=agent_config_homes(cfg, [c.name for c in containers]),
                 optional_mounts=tuple(cfg.optional_mounts),
             )
         )
@@ -638,7 +645,11 @@ def carry_forward_git_status(new_groups: list[RepoGroup], prev_groups: list[Repo
                 c.git_status = prev_status[c.name]
 
 
-def sample_activity(groups: list[RepoGroup], sampler: ActivitySampler) -> None:
+def sample_activity(
+    groups: list[RepoGroup],
+    sampler: ActivitySampler,
+    reader: ActivityReader | None = None,
+) -> None:
     """Fill every container's CPU/DOING/AGENT fields from one sampler reading.
 
     One reading per screen, not one per repo group: the sampler stamps the
@@ -647,17 +658,39 @@ def sample_activity(groups: list[RepoGroup], sampler: ActivitySampler) -> None:
 
     AGENT is then read per group from its containers' own session homes,
     from the same reading. One group's failure clears that group only.
+    With a `reader`, each group's AGENT summaries also carry what the
+    agent is doing, read from the repo's shared config home; the reader
+    forgets sessions that were not live this tick.
 
     Shared with the Qt worker, which owns its own sampler.
     """
     annotate_activity([c for g in groups for c in g.containers], sampler)
-    for g in groups:
-        try:
-            annotate_agent_status(g.containers, agent_status.read_sessions(g.agent_homes), sampler)
-        except Exception:  # one group's reading must not end the tick for the rest
-            log.debug("failed to read agent state for %s", g.prefix, exc_info=True)
-            for c in g.containers:
-                c.agent_status = ()
+    if reader is not None:
+        reader.begin()
+    try:
+        for g in groups:
+            lookup = (
+                None
+                if reader is None
+                else reader.lookup_for(
+                    {(name, agent): home for name, agent, home in g.agent_config_homes},
+                    sampler.processes,
+                )
+            )
+            try:
+                annotate_agent_status(
+                    g.containers,
+                    agent_status.read_sessions(g.agent_homes),
+                    sampler,
+                    activity=lookup,
+                )
+            except Exception:  # one group's reading must not end the tick for the rest
+                log.debug("failed to read agent state for %s", g.prefix, exc_info=True)
+                for c in g.containers:
+                    c.agent_status = ()
+    finally:
+        if reader is not None:
+            reader.finish()
 
 
 @dataclass(frozen=True)

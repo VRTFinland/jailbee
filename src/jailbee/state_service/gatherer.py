@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from jailbee.agent_activity import ActivityReader
 from jailbee.dashboard import carry_forward_git_status, gather_live, sample_activity
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
@@ -34,12 +35,15 @@ class Cadence:
     interval: float
     git_interval: float
     git: bool
+    activity: bool = True
 
     @classmethod
     def from_config(cls, refresh: DashboardRefresh) -> Cadence:
         """The configured cadence, floored: 0.5 s, and git no faster than base."""
         interval = max(0.5, refresh.interval)
-        return cls(interval, max(refresh.git_interval, interval), refresh.git)
+        return cls(
+            interval, max(refresh.git_interval, interval), refresh.git, refresh.agent_activity
+        )
 
 
 def refresh_due(
@@ -93,6 +97,9 @@ class Gatherer:
         self._wall_clock = wall_clock
         # One sampler for the service's lifetime: a rate needs the previous reading.
         self._sampler = ActivitySampler()
+        # Owned for the service's lifetime: it remembers where each live
+        # session's transcript is.
+        self._reader = ActivityReader() if cadence.activity else None
         self._primed = False
         self._last_base: float | None = None
         self._last_full: float | None = None
@@ -129,10 +136,10 @@ class Gatherer:
                 carry_forward_git_status(groups, self._prev)
             if not self._primed:
                 # A rate needs two readings; only the /proc read repeats.
-                sample_activity(groups, self._sampler)
+                sample_activity(groups, self._sampler, self._reader)
                 self._sleep(PRIME_INTERVAL_SECONDS)
                 self._primed = True
-            sample_activity(groups, self._sampler)
+            sample_activity(groups, self._sampler, self._reader)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
             if message != self._failing:

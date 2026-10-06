@@ -535,6 +535,14 @@ def test_config_edit_is_rejected_in_a_repo_config(tmp_path):
 def test_dashboard_refresh_defaults():
     refresh = GlobalConfig().dashboard.refresh
     assert (refresh.interval, refresh.git_interval, refresh.git) == (3.0, 10.0, True)
+    assert refresh.agent_activity is True
+
+
+def test_dashboard_refresh_agent_activity_loads_from_the_global_file(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  refresh:\n    agent_activity: false\n")
+    gcfg, _ = load_global_config(path)
+    assert gcfg.dashboard.refresh.agent_activity is False
 
 
 def test_dashboard_refresh_loads_from_the_global_file(tmp_path):
