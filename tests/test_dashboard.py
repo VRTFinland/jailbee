@@ -16,6 +16,9 @@ import pytest
 from rich.console import Console, RenderableType
 
 from jailbee import dashboard
+from jailbee import dashboard_details as dd
+from jailbee.accounts.models import AgentActivity
+from jailbee.agent_status import AgentSummary
 from jailbee.config.loader import _scratch_prefix
 from jailbee.dashboard_jobs import JobResult, JobRunner
 from jailbee.egress_scope import EntryRow
@@ -10535,6 +10538,39 @@ def test_other_overlays_hide_the_details(tmp_path):
     text = "\n".join(lines)
     assert "Pick one" in text
     assert "╭─ row01" not in text
+
+
+def _with_activity(group: dashboard.RepoGroup, *, activity: bool) -> dashboard.RepoGroup:
+    summary = AgentSummary(
+        "claude",
+        "busy",
+        None,
+        None,
+        1,
+        activity=AgentActivity("Bash  ls", "done") if activity else None,
+    )
+    return dataclasses.replace(
+        group,
+        containers=[dataclasses.replace(c, agent_status=(summary,)) for c in group.containers],
+    )
+
+
+def _details_content_rows(lines: list[str]) -> int:
+    top = next(i for i, ln in enumerate(lines) if "╭─ row01" in ln)
+    bottom = next(i for i in range(top + 1, len(lines)) if "╰" in lines[i])
+    return bottom - top - 1
+
+
+def test_the_details_panel_grows_by_the_activity_reservation(tmp_path):
+    """A long table makes the panel fixed-height, so its rows are its cap."""
+    selected = dashboard.Row("container", "alpha-row01")
+    for activity, expected in (
+        (True, dd.DETAILS_MAX_ROWS + dd.DETAILS_ACTIVITY_ROWS),
+        (False, dd.DETAILS_MAX_ROWS),
+    ):
+        group = _with_activity(_named_rows_group(tmp_path, 40), activity=activity)
+        lines = _frame([group], selected, height=40)
+        assert _details_content_rows(lines) == expected, activity
 
 
 def test_repo_heading_shows_the_repo_summary(tmp_path):

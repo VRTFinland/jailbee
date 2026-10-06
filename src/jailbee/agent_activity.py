@@ -76,12 +76,12 @@ class ActivityReader:
             self._seen.add(key)
             try:
                 activity = self._read(key, home, session)
+                if activity is None:
+                    return None
+                return replace(activity, shells=count_children(processes(container), host_pid))
             except Exception:  # an undocumented format: never fail the tick over it
                 log.debug("reading %s activity failed", session.agent, exc_info=True)
                 return None
-            if activity is None:
-                return None
-            return replace(activity, shells=count_children(processes(container), host_pid))
 
         return lookup
 
@@ -97,7 +97,10 @@ class ActivityReader:
             if paths is None:  # not cached: the transcript may appear on the next message
                 return None
             self._paths[key] = paths
-        return adapter.read_activity(paths, now=self._clock())
+        activity = adapter.read_activity(paths, now=self._clock())
+        if activity is None:  # the file may have moved or been rotated: locate it again
+            del self._paths[key]
+        return activity
 
 
 @dataclass(frozen=True)

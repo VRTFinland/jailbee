@@ -108,11 +108,39 @@ def test_an_unlocatable_transcript_is_retried_next_tick(adapter: _Adapter) -> No
     reader.begin()
     assert lookup("c", _session(), 1010) is None
     reader.finish()
+    assert reader.cached == 0
 
     adapter.locatable = True
     reader.begin()
     assert lookup("c", _session(), 1010) is not None
     assert adapter.locates == 2
+
+
+def test_a_transcript_that_reads_as_nothing_is_located_again_next_tick(
+    adapter: _Adapter,
+) -> None:
+    reader = aa.ActivityReader()
+    lookup = _lookup(reader)
+    adapter.activity = None
+    reader.begin()
+    assert lookup("c", _session(), 1010) is None
+    reader.finish()
+    assert reader.cached == 0
+
+    adapter.activity = _CANNED
+    reader.begin()
+    assert lookup("c", _session(), 1010) is not None
+    assert adapter.locates == 2
+
+
+def test_a_processes_callable_that_raises_never_ends_the_tick(adapter: _Adapter) -> None:
+    def boom(container: str) -> dict[int, ProcSample]:
+        raise OSError("proc gone")
+
+    reader = aa.ActivityReader()
+    lookup = reader.lookup_for({("c", "claude"): HOME}, boom)
+
+    assert lookup("c", _session(), 1010) is None
 
 
 def test_two_containers_with_one_session_id_are_cached_apart(adapter: _Adapter) -> None:
