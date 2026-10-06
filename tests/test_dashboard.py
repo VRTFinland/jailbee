@@ -3029,6 +3029,7 @@ def test_rendered_columns_do_not_follow_conditional_cell_presence():
                     now=now,
                     git_enabled=True,
                     enabled=("name", "pr", "state"),
+                    shown_columns=("name", "pr", "state"),
                 ),
                 width=width,
             )
@@ -3601,17 +3602,17 @@ def test_render_without_height_draws_a_long_menu_whole(tmp_path):
     assert "Action 0 " in text and "Action 29" in text and "more" not in text
 
 
-def test_render_retains_enabled_job_column_without_a_job(tmp_path):
+def test_render_hides_enabled_job_column_without_a_job(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    # Enabled columns retain their space even when all their cells are empty.
+    # A fresh snapshot omits enabled columns with no meaningful values.
     g_noop = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     out = _render_text(dashboard.render([g_noop], selected=None, now=now, git_enabled=True))
     # Check the header, not the empty cells.
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
-    assert " JOB " in header_line
+    assert " JOB " not in header_line
     # The cell value "cloning" must also be absent when no job is in flight.
     assert "cloning" not in out
 
@@ -3828,7 +3829,7 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
 
 
 def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))])
     frame = dashboard.render(
         [group],
         selected=None,
@@ -3848,7 +3849,7 @@ def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
 
 
 def test_render_uses_configured_auto_hide_order(tmp_path):
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))])
     frame = dashboard.render(
         [group],
         selected=None,
@@ -3919,7 +3920,7 @@ def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path)
 def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     g = dashboard.RepoGroup(
-        "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
+        "alpha", "/repos/alpha", tmp_path / "a.yaml", [dataclasses.replace(_ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))]
     )
     out = _render_text(
         dashboard.render(
@@ -5232,7 +5233,7 @@ def test_folded_groups_retain_enabled_conditional_columns(tmp_path):
         dashboard.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [with_pr]),
         dashboard.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-one", "beta")]),
     ]
-    kwargs = dict(selected=None, now=now, git_enabled=True)
+    kwargs = dict(selected=None, now=now, git_enabled=True, shown_columns=dashboard.nonempty_columns(groups, now=now))
     unfolded = _render_text(dashboard.render(groups, **kwargs))
     folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
 
@@ -10980,6 +10981,59 @@ def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
     renewed = next(line for line in frame(long, updated).splitlines() if "strict" in line)
     assert "abcdefghijklmnop" in renewed
     assert renewed.index("strict") > after.index("strict")
+
+
+def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_path):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    enabled = ("name", "pr", "job", "network", "created")
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    out = _render_text(dashboard.render([group], None, now=now, git_enabled=False, enabled=enabled))
+    header = next(line for line in out.splitlines() if "NAME" in line)
+    assert "PR" not in header and "JOB" not in header and "CREATED" not in header
+    assert "strict" in out
+    assert enabled == ("name", "pr", "job", "network", "created")
+
+
+def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _mock_terminal(mocker)
+    mocker.patch.object(dashboard, "seed_view_state", return_value=dashboard.ViewState(columns=("name", "pr")))
+    _fake_state(mocker, [group])
+    mocker.patch.object(dashboard.select, "select", return_value=([True], [], []))
+    keys = iter([b"r", b"o", b"\x03"])
+
+    def read(fd, size):
+        group.containers[0].pr_number = 42
+        return next(keys)
+
+    mocker.patch.object(dashboard.os, "read", side_effect=read)
+    dashboard.run(mocker.Mock(), None)
+    shown = [call.kwargs["shown_columns"] for call in frames.call_args_list]
+    assert shown[0] == shown[1] == ("name",)
+    assert "pr" in shown[2]
+
+
+def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(
+        mocker,
+        [b"o", b" "],
+        [group],
+        view_state=dashboard.ViewState(
+            columns=("name", "state", "network"), folded=frozenset({"alpha"})
+        ),
+    )
+    initial, optimized, unfolded = frames.call_args_list[:3]
+    assert initial.kwargs["shown_columns"] == optimized.kwargs["shown_columns"] == ("name",)
+    assert unfolded.kwargs["shown_columns"] == ("name", "state", "network")
+    assert unfolded.kwargs["column_widths"] == optimized.kwargs["column_widths"]
+    output = _render_text(
+        dashboard.render(*unfolded.args, **unfolded.kwargs)
+    )
+    assert "STATE" in output and "NETWORK" in output
+    assert "strict" in output
 
 
 def test_optimized_widths_are_named_without_first_column_indent(tmp_path):

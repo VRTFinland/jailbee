@@ -678,8 +678,9 @@ only offer Fold/Unfold; on a container, its action menu),
 `Space` fold/unfold the selected repo (in the settings overlay: toggle the
 selected setting), `v` show/hide the details panel (the highlighted row's full
 details under the table; the action menu opens to its right; persisted),
-`F2`/`S` settings overlay (columns + folding), `o` optimize column widths once
-from visible data (session-only; retained on refresh and refitted, not remeasured,
+`F2`/`S` settings overlay (columns + folding), `o` recompute nonempty selected columns and optimize widths once
+from unfolded visible data (also snapshotted on opening and recomputed on settings
+changes; enabled preferences unchanged; session-only; retained on refresh and refitted, not remeasured,
 on resize; press again to recompute), `r` force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible; `↑/↓` then move the

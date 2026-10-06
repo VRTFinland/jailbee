@@ -1179,9 +1179,9 @@ def _select_visible_fields(
     be turned on here — and the field-spec list's own order decides
     rendering order, so a stored list's order is not significant.
 
-    Qt's :func:`visible_fields` applies ``show_if`` to omit empty dynamic
-    columns. The terminal renderer disables these conditions so changing
-    cell contents cannot change the column selection.
+    Qt's :func:`visible_fields` applies ``show_if`` on each render. The
+    terminal applies it when taking a nonempty-column snapshot, then renders
+    that snapshot without reevaluating conditions on refresh.
 
     Unknown names are skipped rather than rejected — a stored set can outlive
     a renamed column, and view state must not break the view.
@@ -1190,8 +1190,7 @@ def _select_visible_fields(
     folds the loose TTL inline (e.g. ``"loose (12m)"``); that is why the
     standalone TTL column is not in the default set.
 
-    Shared by the terminal renderer and both Qt views; only Qt applies
-    data-presence conditions.
+    Shared by the terminal's snapshot selection and both Qt views.
     """
 
     def _network_cell(c: ContainerInfo) -> str:
@@ -2089,6 +2088,26 @@ _DASHBOARD_COLUMN_BUDGETS = {
 }
 
 
+def nonempty_columns(
+    groups: list[RepoGroup],
+    *,
+    now: datetime,
+    enabled: Sequence[str] | None = None,
+    folded: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
+    """Snapshot meaningful selected fields in the currently unfolded repos."""
+    containers = [c for g in groups if g.prefix not in folded for c in g.containers]
+    fields = _select_visible_fields(now, containers, enabled, apply_conditions=True)
+    shown = tuple(
+        f.name for f in fields
+        if any(Text.from_markup(f.cell(c)).plain.strip() not in ("", "-", "—") for c in containers)
+    )
+    if shown:
+        return shown
+    selected = _select_visible_fields(now, containers, enabled, apply_conditions=False)
+    return ("name",) if selected else ()
+
+
 def optimize_column_widths(
     groups: list[RepoGroup],
     *,
@@ -2099,7 +2118,10 @@ def optimize_column_widths(
     """Snapshot visible cell budgets, keyed by field with no row indentation."""
     expanded = [g for g in groups if g.prefix not in folded]
     containers = [c for g in expanded for c in g.containers]
-    fields = _select_visible_fields(now, containers, enabled, apply_conditions=False)
+    fields = _select_visible_fields(
+        now, containers, nonempty_columns(groups, now=now, enabled=enabled, folded=folded),
+        apply_conditions=False,
+    )
     widths: dict[str, int] = {}
     for spec in fields:
         cells = max(
@@ -2479,6 +2501,7 @@ def render(
     height: int | None = None,
     show_details: bool = False,
     column_widths: Mapping[str, int] | None = None,
+    shown_columns: Sequence[str] | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -2506,7 +2529,12 @@ def render(
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
-    fields = _select_visible_fields(now, visible, enabled, apply_conditions=False)
+    fields = _select_visible_fields(
+        now, visible,
+        nonempty_columns(groups, now=now, enabled=enabled, folded=folded)
+        if shown_columns is None else shown_columns,
+        apply_conditions=False,
+    )
 
     visible_groups = groups
     widths = _dashboard_column_widths(fields, column_widths)
@@ -4472,6 +4500,7 @@ def run(
             groups: list[RepoGroup] = visible_repo_groups(
                 all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
             )
+            shown_columns = nonempty_columns(groups, now=now(), enabled=enabled, folded=folded)
             while True:
                 jobs.poll()
                 snapshot = client.latest()
@@ -4600,6 +4629,7 @@ def run(
                         height=console.height,
                         show_details=show_details,
                         column_widths=column_widths,
+                        shown_columns=shown_columns,
                     ),
                     refresh=True,
                 )
@@ -4727,6 +4757,13 @@ def run(
                             folded = overlay.folded
                             show_empty_repos = overlay.show_empty_repos
                             hidden_repos = overlay.hidden_repos
+                            groups = visible_repo_groups(
+                                all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
+                            )
+                            shown_columns = nonempty_columns(
+                                groups, now=now(), enabled=enabled, folded=folded
+                            )
+                            column_widths = None
                             persist_view_state(
                                 ViewState(
                                     columns=enabled,
@@ -4901,6 +4938,7 @@ def run(
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
                 elif key == "optimize":
+                    shown_columns = nonempty_columns(groups, now=now(), enabled=enabled, folded=folded)
                     column_widths = optimize_column_widths(
                         groups, now=now(), enabled=enabled, folded=folded
                     )
@@ -4921,6 +4959,9 @@ def run(
                     prefix = fold_target(groups, selected)
                     if prefix is not None:
                         folded = toggle_folded(folded, prefix)
+                        shown_columns = nonempty_columns(
+                            groups, now=now(), enabled=enabled, folded=folded
+                        )
                         # The container rows just vanished under the cursor;
                         # park it on the header rather than letting
                         # reconcile_selection pick a neighbour repo.
