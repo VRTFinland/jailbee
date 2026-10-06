@@ -291,3 +291,34 @@ def test_the_adapter_locates_by_the_sessions_own_id(tmp_path: Path) -> None:
     paths = ClaudeAdapter().locate_activity(tmp_path, session)
 
     assert paths is not None and paths.transcript == transcript
+
+
+def test_locate_refuses_ids_whose_path_would_really_resolve(tmp_path: Path) -> None:
+    """Positive controls: each hostile id points at a file that exists, so only
+    the UUID check (not a missing file) can refuse it."""
+    project = tmp_path / "projects" / "-home-dev-repo"
+    (project / SID).mkdir(parents=True)
+    (project / "x.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "passwd.jsonl").write_text("{}\n", encoding="utf-8")
+    absolute = tmp_path / "abs"
+    (tmp_path / "abs.jsonl").write_text("{}\n", encoding="utf-8")
+    (project / f"{SID}x.jsonl").write_text("{}\n", encoding="utf-8")
+    (project / f"{SID}\n.jsonl").write_text("{}\n", encoding="utf-8")
+    extended = f"{SID}-0000"
+    (project / f"{extended}.jsonl").write_text("{}\n", encoding="utf-8")
+    upper_z = SID.upper() + "z"
+    (project / f"{upper_z}.jsonl").write_text("{}\n", encoding="utf-8")
+
+    for hostile in (
+        f"{SID}/../x",
+        "../../etc/passwd",
+        str(absolute),
+        f"{SID}x",
+        f"{SID}\n",
+        extended,
+        upper_z,
+    ):
+        assert ca.locate(tmp_path, hostile) is None, hostile
+
+    assert ca.locate(tmp_path, SID) is None  # no `<SID>.jsonl` itself
