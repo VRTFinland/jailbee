@@ -193,6 +193,7 @@ def test_container_profiles():
                 "haiku": "jb.codex.cheap",
             },
             "context_window": 272_000,
+            "max_context_window": 1_050_000,
         }
     }
 
@@ -207,6 +208,18 @@ def test_profile_context_window_is_the_smallest_of_the_profiles_routes():
     profiles = container_profiles(cfg, base_urls={"default": "u"})
     assert profiles["wide"]["context_window"] == 1_050_000
     assert profiles["codex"]["context_window"] == 272_000
+
+
+def test_profile_ceiling_is_the_smallest_ceiling_of_the_profiles_routes():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {"luna-high": {"max_context_window": 400_000}},
+            "profiles": {"mixed": {"account": "default", "opus": "sol-high", "haiku": "luna-high"}},
+        }
+    )
+    profiles = container_profiles(cfg, base_urls={"default": "u"})
+    assert profiles["mixed"]["max_context_window"] == 400_000
+    assert profiles["codex"]["max_context_window"] == 400_000  # codex maps luna-high too
 
 
 def test_container_profiles_carry_the_profile_instructions():

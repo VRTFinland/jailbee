@@ -89,8 +89,12 @@ security and the `claude-jb` wrapper are described in [LiteLLM](../../../litellm
 | `jailbee litellm logout [ACCOUNT] [--provider chatgpt\|xai]` | Delete that account's token for the provider in the proxy's state volume (the proxy must be running). |
 | `jailbee litellm logs [ACCOUNT] [-f]` | Show the instance's last 200 journal lines; optionally follow. |
 
-In a dev container, `claude-jb [--profile NAME] [Claude Code args…]` selects
-the gateway. Plain `claude` remains native. Profile selection: flag, then
+In a dev container, `claude-jb [--profile NAME] [-C SIZE] [Claude Code args…]` selects
+the gateway. Plain `claude` remains native. `-C`/`--context SIZE` (`272k`, `1m`, a
+token count, `max`, `default`) sets the session's context window up to the profile's
+`max_context_window` ceiling (1,050,000 for the built-in codex routes) and costs more
+when larger; lowercase `-c` is Claude's `--continue`. `claude-jb --help` lists these
+options and the profiles, then Claude's help. Profile selection: flag, then
 `JAILBEE_LITELLM_PROFILE`, then `default_profile` (`codex`; the repo's
 host-local `litellm:` override may change it for that repo's containers).
 Overrides are edited on the host (`jailbee config edit --local`) and take effect
