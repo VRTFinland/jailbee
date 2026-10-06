@@ -1,15 +1,15 @@
 """The waiter must not bypass state checks or leave terminal/socket resources open."""
 
-import importlib
 import fcntl
-import struct
-import threading
-import time
+import importlib
 import os
 import pty
 import socket
+import struct
 import termios
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -63,7 +63,8 @@ def test_callback_beats_eof_and_preserves_state():
     os.close(write)
     try:
         assert helper().wait_for_callback(s, read, timeout=0.2) == {
-            "code": "c", "state": "session-state"
+            "code": "c",
+            "state": "session-state",
         }
     finally:
         client.close()
@@ -106,9 +107,11 @@ def test_interrupt_restores_terminal_and_closes_server(monkeypatch):
     s = server()
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
+
     def interrupt(*args):
         assert not termios.tcgetattr(slave)[3] & termios.ECHO
         raise KeyboardInterrupt
+
     monkeypatch.setattr(helper().selectors.DefaultSelector, "select", interrupt)
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -125,6 +128,7 @@ def test_main_sanitizes_upstream_errors(capsys):
     class Auth:
         def login(self, **kwargs):
             raise ValueError("SECRET-CODE SECRET-TOKEN")
+
     assert helper().main(Auth) == 1
     captured = capsys.readouterr()
     assert "SECRET" not in captured.out + captured.err
@@ -149,15 +153,18 @@ def test_waiter_supports_high_numbered_descriptors():
 def test_main_hides_input_before_vendor_login_and_restores_it(monkeypatch, capsys, cancel):
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
+
     class Input:
         def fileno(self):
             return slave
+
     class Auth:
         def login(self, **kwargs):
             assert kwargs == {"no_browser": True}
             assert not termios.tcgetattr(slave)[3] & termios.ECHO
             if cancel:
                 raise KeyboardInterrupt
+
     monkeypatch.setattr(helper().sys, "stdin", Input())
     try:
         assert helper().main(Auth) == (130 if cancel else 0)
@@ -171,7 +178,10 @@ def test_main_hides_input_before_vendor_login_and_restores_it(monkeypatch, capsy
 def test_valid_pasted_callback_url():
     s = server()
     read, write = os.pipe()
-    os.write(write, f"http://127.0.0.1:{s.server_port}/callback?code=url-code&state=session-state\n".encode())
+    os.write(
+        write,
+        f"http://127.0.0.1:{s.server_port}/callback?code=url-code&state=session-state\n".encode(),
+    )
     try:
         assert helper().wait_for_callback(s, read, timeout=0.1)["code"] == "url-code"
     finally:
@@ -183,11 +193,13 @@ def test_valid_pasted_callback_url():
 def test_oversize_paste_rejected():
     s = server()
     read, write = os.pipe()
+
     def feed():
         try:
             os.write(write, b"a" * 9000 + b"\n")
         except BrokenPipeError:
             pass
+
     worker = threading.Thread(target=feed)
     worker.start()
     try:
@@ -203,6 +215,7 @@ def test_oversize_paste_rejected():
 def test_fragmented_callback_survives_a_reset_connection():
     s = server()
     read, write = os.pipe()
+
     def feed():
         bad = socket.create_connection(s.server_address)
         bad.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
@@ -213,6 +226,7 @@ def test_fragmented_callback_survives_a_reset_connection():
             good.sendall(b"GET /callback?code=fragmented&state=session-state HTTP/1.1\r\n")
             time.sleep(0.02)
             good.sendall(b"Host: localhost\r\n\r\n")
+
     worker = threading.Thread(target=feed)
     worker.start()
     try:
@@ -228,7 +242,10 @@ def test_denied_callback_fails_immediately_without_error_description():
     s = server()
     read, write = os.pipe()
     client = socket.create_connection(s.server_address)
-    client.sendall(b"GET /callback?error=access_denied&state=session-state&error_description=SECRET HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    client.sendall(
+        b"GET /callback?error=access_denied&state=session-state&error_description=SECRET "
+        b"HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    )
     try:
         with pytest.raises(helper().LoginError, match="authorization failed") as error:
             helper().wait_for_callback(s, read, timeout=0.1)

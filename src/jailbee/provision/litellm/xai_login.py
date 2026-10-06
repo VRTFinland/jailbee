@@ -22,7 +22,7 @@ class LoginError(Exception):
     """A deliberately secret-free local login failure."""
 
 
-class AuthorizationDenied(LoginError):
+class AuthorizationDeniedError(LoginError):
     """A validated callback reports a failed authorization."""
 
 
@@ -76,8 +76,12 @@ def _callback(
         valid = False
     if not valid:
         raise LoginError("Invalid xAI callback or state mismatch.")
-    if allow_error and set(params) <= {"state", "error", "error_description"} and params.get("error", [""])[0]:
-        raise AuthorizationDenied("xAI authorization failed.")
+    if (
+        allow_error
+        and set(params) <= {"state", "error", "error_description"}
+        and params.get("error", [""])[0]
+    ):
+        raise AuthorizationDeniedError("xAI authorization failed.")
     if set(params) != {"code", "state"} or not params["code"][0]:
         raise LoginError("Invalid xAI callback.")
     return {"code": params["code"][0], "state": params["state"][0]}
@@ -94,7 +98,10 @@ def wait_for_callback(
         with hidden_input(input_fd), selectors.DefaultSelector() as selector:
             selector.register(server.socket, selectors.EVENT_READ)
             selector.register(input_fd, selectors.EVENT_READ)
-            sys.stderr.write("Waiting for xAI callback; or paste the code here (hidden), then Enter. Ctrl-C cancels.\n")
+            sys.stderr.write(
+                "Waiting for xAI callback; or paste the code here (hidden), then Enter. "
+                "Ctrl-C cancels.\n"
+            )
             sys.stderr.flush()
 
             def close(connection: socket.socket) -> None:
@@ -136,18 +143,29 @@ def wait_for_callback(
                     if b"\r\n\r\n" not in data:
                         continue
                     try:
-                        method, target, version = data.split(b"\r\n", 1)[0].decode("ascii").split(" ")
-                        if method != "GET" or not target.startswith("/") or version not in ("HTTP/1.0", "HTTP/1.1"):
+                        method, target, version = (
+                            data.split(b"\r\n", 1)[0].decode("ascii").split(" ")
+                        )
+                        if (
+                            method != "GET"
+                            or not target.startswith("/")
+                            or version not in ("HTTP/1.0", "HTTP/1.1")
+                        ):
                             raise LoginError("Invalid xAI callback.")
                         host, port = server.server_address
-                        result = _callback(f"http://{host}:{port}{target}", server, allow_error=True)
-                    except AuthorizationDenied:
+                        result = _callback(
+                            f"http://{host}:{port}{target}", server, allow_error=True
+                        )
+                    except AuthorizationDeniedError:
                         raise
                     except (ValueError, LoginError):
                         close(connection)
                         continue
                     try:
-                        connection.send(b"HTTP/1.1 200 OK\r\nContent-Length: 23\r\nConnection: close\r\n\r\nAuthorization received.")
+                        connection.send(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 23\r\nConnection: close\r\n\r\n"
+                            b"Authorization received."
+                        )
                     except OSError:
                         pass
                     return result
@@ -165,7 +183,9 @@ def wait_for_callback(
                             raise LoginError("Invalid xAI code.") from None
                         if "://" in value:
                             return _callback(value, server)
-                        if not value or any(c.isspace() or ord(c) < 33 or ord(c) > 126 for c in value):
+                        if not value or any(
+                            c.isspace() or ord(c) < 33 or ord(c) > 126 for c in value
+                        ):
                             raise LoginError("Invalid xAI code.")
                         # A bare code is explicitly provided for this pending PKCE session.
                         return {"code": value, "state": server.expected_state}
@@ -182,7 +202,9 @@ def authenticator() -> Any:
         return wait_for_callback(server)
 
     # Override only the transport: inherited login keeps PKCE, state and atomic storage.
-    cls = type("InteractiveXAIAuthenticator", (vendor.XAIOAuthAuthenticator,), {"_wait_for_callback": wait})
+    cls = type(
+        "InteractiveXAIAuthenticator", (vendor.XAIOAuthAuthenticator,), {"_wait_for_callback": wait}
+    )
     return cls()
 
 
