@@ -72,6 +72,20 @@ def test_init_calls_incus_init(incus, mocker):
     assert "feat-foo" in args
 
 
+def test_init_passes_storage_pool_when_given(incus, mocker):
+    run = _mock_run(mocker)
+    incus.init("gisgro-base", "feat-foo", storage_pool="cow")
+    args = run.call_args[0][0]
+    assert args[:5] == ["incus", "init", "gisgro-base", "feat-foo", "-s"]
+    assert args[5] == "cow"
+
+
+def test_init_without_storage_pool_leaves_the_profile_to_decide(incus, mocker):
+    run = _mock_run(mocker)
+    incus.init("gisgro-base", "feat-foo")
+    assert "-s" not in run.call_args[0][0]
+
+
 def test_copy_calls_incus_copy(incus, mocker):
     run = _mock_run(mocker)
     incus.copy("source", "dest")

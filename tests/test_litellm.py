@@ -69,7 +69,7 @@ def _incus(
     *,
     present: bool,
     running: bool = True,
-    installed: str | None = "1.103.1",
+    installed: str | None = "1.104.0",
     login: str = "present",
     ack: str = "auto",
 ) -> MagicMock:
@@ -156,7 +156,9 @@ def test_up_refuses_when_disabled():
 def test_up_creates_provisions_and_opens_services_rule():
     incus = _incus(present=False)
     result = ll.litellm_up(incus, _gcfg())
-    incus.init.assert_called_once_with("images:ubuntu/26.04/cloud", ll.LITELLM_CONTAINER)
+    incus.init.assert_called_once_with(
+        "images:ubuntu/26.04/cloud", ll.LITELLM_CONTAINER, storage_pool=None
+    )
     assert "/root/install.sh" in _install_script(incus)
     assert result.ip == "10.79.115.3" and result.ports == {"default": 4100}
     assert result.installed is True
@@ -210,11 +212,11 @@ def test_provision_streams_real_lock_at_subprocess_boundary(mocker):
 
     run = mocker.patch("jailbee.incus.subprocess.run")
     run.return_value = subprocess.CompletedProcess([], 0, "", "")
-    ll._provision(Incus(), "1.103.1", True)
+    ll._provision(Incus(), "1.104.0", True)
     args, kwargs = run.call_args
     assert args[0][-2:] == ["bash", "-s"]
     assert len(kwargs["input"]) > 200_000
-    assert "litellm==1.103.1" in kwargs["input"]
+    assert "litellm==1.104.0" in kwargs["input"]
     assert all(len(arg) < 4096 for arg in args[0])
 
 
@@ -226,9 +228,9 @@ def test_provision_failure_does_not_echo_install_script_in_error(mocker):
         return_value=subprocess.CompletedProcess([], 1, "", "apt failed"),
     )
     with pytest.raises(IncusError) as caught:
-        ll._provision(Incus(), "1.103.1", True)
+        ll._provision(Incus(), "1.104.0", True)
     assert "apt failed" in str(caught.value)
-    assert "litellm==1.103.1" not in str(caught.value)
+    assert "litellm==1.104.0" not in str(caught.value)
 
 
 def test_reinstall_detaches_auth_before_package_egress_and_reattaches_after():
@@ -559,14 +561,55 @@ def test_version_mismatch_reinstalls():
     assert result.installed is True
 
 
-def test_down_empties_services_rule_and_deletes_container():
-    incus = _incus(present=True)
-    ll.litellm_down(incus)
-    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+def _services_egress(incus):
     services = [
         c for c in incus.network_acl_set_yaml.call_args_list if c.args[0] == "jailbee-services"
     ]
-    assert yaml.safe_load(services[-1].args[1])["egress"] == []
+    return yaml.safe_load(services[-1].args[1])["egress"]
+
+
+def test_down_empties_services_rule_and_stops_the_container(mocker):
+    stop = mocker.patch("jailbee.litellm.stop_container")
+    incus = _incus(present=True)
+    ll.litellm_down(incus)
+    stop.assert_called_once()
+    assert stop.call_args.args[:2] == (incus, ll.LITELLM_CONTAINER)
+    incus.delete.assert_not_called()
+    assert _services_egress(incus) == []
+
+
+def test_down_leaves_a_stopped_container_alone(mocker):
+    stop = mocker.patch("jailbee.litellm.stop_container")
+    incus = _incus(present=True, running=False)
+    ll.litellm_down(incus)
+    stop.assert_not_called()
+    incus.delete.assert_not_called()
+
+
+def test_down_purge_deletes_the_container_and_empties_the_services_rule():
+    incus = _incus(present=True)
+    ll.litellm_down(incus, purge=True)
+    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+    assert _services_egress(incus) == []
+
+
+def test_up_recreate_deletes_the_container_and_creates_it_again_keeping_the_volume():
+    incus = _incus(present=True)
+    incus.storage_volume_exists.return_value = True
+    ll.litellm_up(incus, _gcfg(), recreate=True)
+    incus.delete.assert_called_once_with(ll.LITELLM_CONTAINER, force=True)
+    incus.init.assert_called_once()
+    incus.storage_volume_create.assert_not_called()
+    incus.storage_volume_delete.assert_not_called()
+    names = [c[0] for c in incus.mock_calls]
+    assert names.index("delete") < names.index("init")
+
+
+def test_up_recreate_with_no_container_is_a_plain_create():
+    incus = _incus(present=False)
+    ll.litellm_up(incus, _gcfg(), recreate=True)
+    incus.delete.assert_not_called()
+    incus.init.assert_called_once()
 
 
 def test_status_missing():
@@ -579,7 +622,7 @@ def test_status_running_reports_instance_and_login(xdg):
     ll.litellm_up(incus, _gcfg())
     status = ll.litellm_status(incus, _gcfg())
     assert status.container == ll.ContainerState.RUNNING
-    assert status.version == "1.103.1"
+    assert status.version == "1.104.0"
     assert status.instances == [
         ll.InstanceStatus(account="default", port=4100, active=True, healthy=True, login="present")
     ]
@@ -610,10 +653,10 @@ def test_install_uses_only_hash_locked_requirements_by_default():
 
 def test_unlocked_version_is_shell_quoted():
     incus = _incus(present=False)
-    malicious = "1.103.1; touch /root/unwanted"
+    malicious = "1.104.0; touch /root/unwanted"
     ll._provision(incus, malicious, pinned=False)
     command = incus.exec_with_input.call_args.args[2]
-    assert "JAILBEE_LITELLM_UNLOCKED_VERSION='1.103.1; touch /root/unwanted'" in command
+    assert "JAILBEE_LITELLM_UNLOCKED_VERSION='1.104.0; touch /root/unwanted'" in command
 
 
 def test_up_fails_closed_to_dev_containers_on_install_error():
@@ -1197,7 +1240,8 @@ def test_logout_requires_a_running_proxy(present: bool, running: bool):
         ll.litellm_logout(_incus(present=present, running=running), "default")
 
 
-def test_down_keeps_the_volume_and_purge_deletes_it_after_the_container():
+def test_down_keeps_the_volume_and_purge_deletes_it_after_the_container(mocker):
+    mocker.patch("jailbee.litellm.stop_container")
     incus = _incus(present=True)
     ll.litellm_down(incus)
     incus.storage_volume_delete.assert_not_called()
@@ -1673,7 +1717,7 @@ def test_reconcile_leaves_structural_changes_to_up(xdg):
 
     stale = _incus(present=True, installed="1.0.0")
     result = ll.litellm_reconcile(stale, _gcfg())
-    assert result.needs_up is not None and "1.103.1" in result.needs_up
+    assert result.needs_up is not None and "1.104.0" in result.needs_up
 
 
 def test_reconcile_reports_a_broken_override_and_still_applies_the_rest(xdg):
@@ -1956,3 +2000,47 @@ def test_xai_login_script_refuses_a_foreign_token_dir(tmp_path: Path):
     script = script.split("exec ", 1)[0] + f"exec touch {marker}"
     result = subprocess.run(["bash", "-c", script], check=False, capture_output=True)
     assert result.returncode != 0 and not marker.exists()
+
+
+def _pooled_gcfg(pool: str) -> GlobalConfig:
+    gcfg = _gcfg()
+    gcfg._service_storage_pool = pool
+    return gcfg
+
+
+def test_the_proxy_container_is_created_on_the_configured_service_pool():
+    incus = _incus(present=False)
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.init.assert_called_once_with(ll._IMAGE, ll.LITELLM_CONTAINER, storage_pool="cow")
+
+
+def test_a_new_state_volume_goes_to_the_configured_pool():
+    incus = _incus(present=False)
+    incus.storage_volume_exists.return_value = False
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.storage_volume_create.assert_called_once_with("cow", ll.STATE_VOLUME)
+    assert incus.config_device_add.call_args.args[3]["pool"] == "cow"
+
+
+def test_an_existing_state_volume_stays_in_the_profile_pool_when_a_pool_is_configured():
+    """Creating an empty volume in the newly configured pool would drop every login."""
+    incus = _incus(present=False)
+    incus.storage_volume_exists.side_effect = lambda pool, _name: pool == "default"
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.storage_volume_create.assert_not_called()
+    assert incus.config_device_add.call_args.args[3]["pool"] == "default"
+
+
+def test_the_configured_pool_wins_once_the_volume_has_been_copied_there():
+    incus = _incus(present=False)
+    incus.storage_volume_exists.return_value = True  # in both pools
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    assert incus.config_device_add.call_args.args[3]["pool"] == "cow"
+
+
+def test_purge_deletes_the_state_volume_from_whichever_pool_holds_it():
+    incus = _incus(present=True)
+    incus.list_storage_pools.return_value = [{"name": "default"}, {"name": "cow"}]
+    incus.storage_volume_exists.side_effect = lambda pool, _name: pool == "cow"
+    ll.litellm_down(incus, purge=True)
+    incus.storage_volume_delete.assert_called_once_with("cow", ll.STATE_VOLUME)

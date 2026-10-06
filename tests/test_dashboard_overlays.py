@@ -173,3 +173,120 @@ def test_render_picker_windows_its_entries_to_max_rows():
     text = console.export_text()
     assert "Entry 20" in text and "Entry 0" not in text and "Entry 29" not in text
     assert "↑" in text and "↓" in text
+
+
+_DOWN = b"\x1b[B"
+_UP = b"\x1b[A"
+_BRANCHES = ("main", "feat/maint", "release/main-fix", "develop")
+
+
+def _branch_prompt(text: str = "", **kw) -> ov.TextPrompt:
+    return ov.TextPrompt(
+        "new-base", "New container", "Base branch", text=text, suggestions=_BRANCHES, **kw
+    )
+
+
+def test_filter_suggestions_puts_prefix_matches_first_case_insensitively():
+    assert ov.filter_suggestions(_BRANCHES, "MAIN") == ["main", "feat/maint", "release/main-fix"]
+    assert ov.filter_suggestions(_BRANCHES, "") == list(_BRANCHES)
+    assert ov.filter_suggestions(_BRANCHES, "zzz") == []
+
+
+def test_down_then_enter_submits_the_highlighted_row():
+    p, out = ov.handle_prompt_key(_branch_prompt("ma"), _DOWN)
+    assert (p.highlight, out) == (0, "editing")
+    p, out = ov.handle_prompt_key(p, _DOWN)
+    assert p.highlight == 1
+    p, out = ov.handle_prompt_key(p, b"\r")
+    assert out == "submit"
+    assert p.text == "feat/maint"
+
+
+def test_application_cursor_arrows_move_the_highlight_too():
+    p, _ = ov.handle_prompt_key(_branch_prompt(), b"\x1bOB")
+    assert p.highlight == 0
+    p, _ = ov.handle_prompt_key(p, b"\x1bOA")
+    assert p.highlight is None
+
+
+def test_down_stops_at_the_last_match_and_up_from_the_first_leaves_the_list():
+    p = _branch_prompt("dev")
+    for _ in range(3):
+        p, _ = ov.handle_prompt_key(p, _DOWN)
+    assert p.highlight == 0
+    p, _ = ov.handle_prompt_key(p, _UP)
+    assert p.highlight is None
+
+
+def test_tab_completes_the_first_match_without_a_highlight():
+    p, out = ov.handle_prompt_key(_branch_prompt("dev"), b"\t")
+    assert (p.text, p.highlight, out) == ("develop", None, "editing")
+
+
+def test_tab_completes_the_highlighted_row():
+    p, _ = ov.handle_prompt_key(_branch_prompt("ma"), _DOWN)
+    p, _ = ov.handle_prompt_key(p, _DOWN)
+    p, _ = ov.handle_prompt_key(p, b"\t")
+    assert (p.text, p.highlight) == ("feat/maint", None)
+
+
+def test_typing_after_arrowing_resets_the_highlight_so_enter_takes_the_text():
+    p, _ = ov.handle_prompt_key(_branch_prompt("ma"), _DOWN)
+    p, _ = ov.handle_prompt_key(p, b"i")
+    assert p.highlight is None
+    p, out = ov.handle_prompt_key(p, b"\r")
+    assert (out, p.text) == ("submit", "mai")  # free text is fine for new-base
+
+
+def test_backspace_also_resets_the_highlight():
+    p, _ = ov.handle_prompt_key(_branch_prompt("ma"), _DOWN)
+    p, _ = ov.handle_prompt_key(p, b"\x7f")
+    assert (p.text, p.highlight) == ("m", None)
+
+
+def test_require_suggestion_rejects_an_unlisted_name_and_keeps_editing():
+    p, out = ov.handle_prompt_key(_branch_prompt("nope", require_suggestion=True), b"\r")
+    assert out == "editing"
+    assert p.error == "'nope' is not one of the listed branches"
+    p, out = ov.handle_prompt_key(replace(p, text="develop"), b"\r")
+    assert out == "submit"
+
+
+def test_empty_suggestions_keep_a_plain_prompt():
+    p = ov.TextPrompt(
+        "container-retarget", "t", "Base branch", text="x", suggestions=(), require_suggestion=True
+    )
+    for key in (_DOWN, b"\t"):
+        p, out = ov.handle_prompt_key(p, key)
+        assert (p.text, p.highlight, out) == ("x", None, "editing")
+    _, out = ov.handle_prompt_key(p, b"\r")
+    assert out == "submit"  # nothing to check against: the CLI is the backstop
+
+
+def _text(renderable) -> str:
+    console = Console(width=60, record=True)
+    console.print(renderable)
+    return console.export_text()
+
+
+def test_render_lists_matches_under_the_input_and_marks_the_highlight():
+    out = _text(ov.render_prompt(replace(_branch_prompt("ma"), highlight=1)))
+    assert "> ma" in out
+    assert "▸ feat/maint" in out
+    assert "  main" in out
+    assert "develop" not in out
+
+
+def test_render_keeps_markup_in_branch_names_literal():
+    p = ov.TextPrompt("new-base", "t", "Base branch", suggestions=("feat/[wip]",))
+    assert "feat/[wip]" in _text(ov.render_prompt(p))
+
+
+def test_render_says_when_nothing_matches():
+    assert "(no matching branch)" in _text(ov.render_prompt(_branch_prompt("zzz")))
+
+
+def test_render_without_suggestions_is_unchanged():
+    out = _text(ov.render_prompt(ov.TextPrompt("new-branch", "t", "New branch", text="ab")))
+    assert "no matching" not in out
+    assert "▸" not in out

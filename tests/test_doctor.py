@@ -85,11 +85,11 @@ def test_litellm_doctor_disabled_does_not_probe(mocker):
 @pytest.mark.parametrize(
     "healthy,version,login,reachable,expected",
     [
-        (True, "1.103.1", "present", True, "running on 10.79.115.3:4100"),
-        (False, "1.103.1", "present", True, "unhealthy"),
+        (True, "1.104.0", "present", True, "running on 10.79.115.3:4100"),
+        (False, "1.104.0", "present", True, "unhealthy"),
         (True, "0.1.0", "present", True, "installed 0.1.0"),
-        (True, "1.103.1", "missing", True, "not logged in"),
-        (True, "1.103.1", "present", False, "cannot reach auth.openai.com:443"),
+        (True, "1.104.0", "missing", True, "not logged in"),
+        (True, "1.104.0", "present", False, "cannot reach auth.openai.com:443"),
     ],
 )
 def test_litellm_doctor_running_branches(mocker, healthy, version, login, reachable, expected):
@@ -122,7 +122,7 @@ def test_litellm_doctor_flags_an_account_without_an_instance(mocker):
     status = litellm.LiteLLMStatus(
         litellm.ContainerState.RUNNING,
         "10.79.115.3",
-        "1.103.1",
+        "1.104.0",
         [litellm.InstanceStatus("default", None, False, False, "unknown")],
     )
     mocker.patch("jailbee.litellm.litellm_status", return_value=status)
@@ -140,7 +140,7 @@ def test_litellm_doctor_flags_a_bridge_without_the_services_acl(mocker):
     status = litellm.LiteLLMStatus(
         litellm.ContainerState.RUNNING,
         "10.79.115.3",
-        "1.103.1",
+        "1.104.0",
         [litellm.InstanceStatus("default", 4100, True, True, "present")],
     )
     mocker.patch("jailbee.litellm.litellm_status", return_value=status)
@@ -156,7 +156,7 @@ def _litellm_up(mocker, instances, **litellm):
     from jailbee import litellm as ll
 
     gcfg = GlobalConfig.model_validate({"litellm": {"enabled": True, **litellm}})
-    status = ll.LiteLLMStatus(ll.ContainerState.RUNNING, "10.79.115.3", "1.103.1", instances)
+    status = ll.LiteLLMStatus(ll.ContainerState.RUNNING, "10.79.115.3", "1.104.0", instances)
     mocker.patch("jailbee.litellm.litellm_status", return_value=status)
     mocker.patch("jailbee.litellm.bridges_missing_services_acl", return_value=[])
     mocker.patch("jailbee.litellm_inputs.load_host_inputs")
@@ -349,7 +349,7 @@ def test_the_version_row_appears_once_for_several_instances(mocker):
         ],
         accounts=["personal", "work"],
         profiles={"codex": {"account": "personal"}},
-        version="1.104.0",
+        version="1.103.1",
     )
     mocker.patch("jailbee.litellm.upstream_reachable", return_value=True)
     names = [r.name for r in _check_litellm(_baseline_incus(), gcfg)]

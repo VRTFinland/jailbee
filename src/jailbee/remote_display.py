@@ -164,8 +164,8 @@ def _links_device_config() -> dict[str, str]:
     return {"source": str(links_dir()), "path": WAYPIPE_LINKS_CONTAINER_DIR}
 
 
-def _create(incus: Incus, shared_dir: str) -> None:
-    incus.init(_IMAGE, DISPLAY_CONTAINER)
+def _create(incus: Incus, shared_dir: str, storage_pool: str | None) -> None:
+    incus.init(_IMAGE, DISPLAY_CONTAINER, storage_pool=storage_pool)
     incus.profile_assign(DISPLAY_CONTAINER, ["default", DISPLAY_PROFILE])
     incus.config_set(DISPLAY_CONTAINER, "boot.autostart", "true")
     incus.config_device_add(
@@ -220,10 +220,15 @@ def display_up(
     incus: Incus,
     *,
     recreate: bool = False,
+    storage_pool: str | None = None,
     on_step: Callable[[str], None] = _no_steps,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Create, start and provision the display container; idempotent."""
+    """Create, start and provision the display container; idempotent.
+
+    `storage_pool` is where a container that does not exist yet is created; an
+    existing one stays on its pool. None leaves it to the `default` profile.
+    """
     on_step("preparing the shared display directory and profile")
     directory = display_state_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -241,7 +246,7 @@ def display_up(
     entry = _present(incus)
     if entry is None:
         on_step("creating the display container")
-        _create(incus, str(directory))
+        _create(incus, str(directory), storage_pool)
         on_step("installing weston (this can take a minute)")
         _provision(incus)
     else:
@@ -363,6 +368,7 @@ def ensure_links_device(incus: Incus) -> None:
 def ensure_waypipe_display(
     incus: Incus,
     *,
+    storage_pool: str | None = None,
     on_step: Callable[[str], None] = _no_steps,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -372,7 +378,7 @@ def ensure_waypipe_display(
     stay unconnected for the whole session.
     """
     if display_status(incus) is not DisplayStatus.RUNNING:
-        display_up(incus, on_step=on_step, sleep_fn=sleep_fn)
+        display_up(incus, storage_pool=storage_pool, on_step=on_step, sleep_fn=sleep_fn)
     elif _provisioning_incomplete(incus):
         # A running RDP-era display lacks waypipe; display_up is skipped for it.
         on_step("finishing provisioning")
@@ -411,6 +417,7 @@ def prepare_shared_display(
     *,
     ssh_port: int,
     say: Callable[[str], None],
+    storage_pool: str | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     wait_seconds: float = CLIENT_WAIT_SECONDS,
     clock: Callable[[], float] = time.monotonic,
@@ -423,7 +430,7 @@ def prepare_shared_display(
     """
     if display_status(incus) is not DisplayStatus.RUNNING:
         say("Starting the shared display...")
-        display_up(incus, on_step=say, sleep_fn=sleep_fn)
+        display_up(incus, storage_pool=storage_pool, on_step=say, sleep_fn=sleep_fn)
     ensure_display_mount(incus, container)
     if client_ready(incus, sleep_fn):
         return

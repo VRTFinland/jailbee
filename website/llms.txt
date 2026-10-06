@@ -75,6 +75,7 @@ scope.
 
 - [FAQ](https://jailbee.gisgro.io/docs/faq/): short answers to the common questions, indexed into the rest of the documentation
 - [Installation](https://jailbee.gisgro.io/docs/installation/): one-time host setup — Incus, UID delegation, installing the CLI
+- [Storage: use btrfs](https://jailbee.gisgro.io/docs/storage/): why a copy-on-write btrfs pool beats the default dir pool, and how to set one up
 - [Getting started](https://jailbee.gisgro.io/docs/getting-started/): concepts, configuring a repo, building the image, a typical day
 - [Commands](https://jailbee.gisgro.io/docs/commands/): full command and flag reference
 - [Git bridge](https://jailbee.gisgro.io/docs/git-bridge/): host↔container git bridge, stacked PRs, PR review

@@ -1059,7 +1059,9 @@ def test_up_recreate_deletes_and_reprovisions_a_healthy_mirror(tmp_path):
     registry_up(incus, gcfg, recreate=True)
 
     incus.delete.assert_called_once_with(MIRROR_CONTAINER_NAME, force=True)
-    incus.init.assert_called_once_with("images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME)
+    incus.init.assert_called_once_with(
+        "images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME, storage_pool=None
+    )
     assert _install_sh_was_run(incus)
 
 
@@ -1099,7 +1101,9 @@ def test_up_recreate_is_fine_when_no_container_exists(tmp_path):
     registry_up(incus, gcfg, recreate=True)
 
     incus.delete.assert_not_called()
-    incus.init.assert_called_once_with("images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME)
+    incus.init.assert_called_once_with(
+        "images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME, storage_pool=None
+    )
 
 
 def test_up_failure_message_points_at_recreate(tmp_path, mocker):
@@ -1262,3 +1266,21 @@ def test_wait_for_service_counts_down_with_the_service_state(mocker):
     assert len(steps) == 2  # reported on each poll that was not yet active
     assert "activating" in steps[0]
     assert "s left" in steps[0]
+
+
+def test_up_creates_the_mirror_on_the_configured_service_pool(tmp_path):
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    incus.profile_exists.return_value = True
+    incus.network_exists.return_value = True
+    incus.exec.return_value = "active\n"
+    gcfg = GlobalConfig.model_validate(
+        {"docker_registry_mirror": {"data_dir": str(tmp_path / "registry")}}
+    )
+    gcfg._service_storage_pool = "cow"
+
+    registry_up(incus, gcfg)
+
+    incus.init.assert_called_once_with(
+        "images:ubuntu/26.04/cloud", MIRROR_CONTAINER_NAME, storage_pool="cow"
+    )

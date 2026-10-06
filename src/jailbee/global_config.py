@@ -15,7 +15,15 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    model_validator,
+)
 
 from jailbee.config import (
     DASHBOARD_DEFAULT_HIDE,
@@ -27,7 +35,7 @@ from jailbee.config import (
     _split_host_keys,
     normalize_credentials_key,
 )
-from jailbee.config.common import normalize_remote_ssh_keys
+from jailbee.config.common import normalize_remote_ssh_keys, service_storage_pool_from_raw
 from jailbee.config.models_litellm import LiteLLMConfig
 from jailbee.config.models_remote import RemoteConfig
 from jailbee.paths import expand_path, xdg_data_home
@@ -332,6 +340,17 @@ class GlobalConfig(BaseModel):
             "routes name this host's proxy and subscription login."
         ),
     )
+    # Not a field: `defaults:` is a repo-layer key and is discarded from the
+    # host-level model, so there is nothing to validate or edit here. It is
+    # lifted out of the raw `global.yaml` by `validate_global_raw` for the
+    # host-wide service containers (egress proxy, registry mirror, LiteLLM,
+    # display), which belong to no repo and so cannot read a repo's config.
+    _service_storage_pool: str | None = PrivateAttr(default=None)
+
+    @property
+    def service_storage_pool(self) -> str | None:
+        """`defaults.storage_pool` from `global.yaml`; None leaves the pool to the profile."""
+        return self._service_storage_pool
 
 
 _LS_DEFAULT = ColumnConfig()
@@ -411,6 +430,7 @@ def validate_global_raw(
             if unknown:
                 joined = ", ".join(unknown)
                 raise ValueError(f"unknown remote Jailbee command path(s): {joined}")
+        config._service_storage_pool = service_storage_pool_from_raw(raw)
         return config
     except ValidationError as e:
         # Unchained: the ValidationError carries `input_value`, a pasted key

@@ -5278,7 +5278,7 @@ attached after boot and keep `/run/jailbee-display`.
 Host-only checks. The host needs `remote.ssh.gui: true`, the SSH service
 running and `jb display up` done; the laptop is Linux with a Wayland session
 and waypipe 0.10 or newer. Background:
-[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe-linux).
+[Native windows with waypipe](remote-gui.md#native-windows-with-waypipe).
 
 1. `waypipe ssh -t -p <port> jailbee@<host> dashboard`. From the menu launch
    Chrome in container A and a terminal in container B. Expected: both windows
@@ -5333,6 +5333,15 @@ deviation; the setup B results decide whether its "experimental" banner goes.
     the dev user.
 12. Windows App display settings: try Retina / scaled resolution and a full
     screen window. Note what looks sharp and what is slow.
+13. Native windows: install Cocoa-Way and waypipe-darwin, start
+    `COCOA_WAY_PRESENTATION=rootless cocoa-way` and add the `cwaypipe`
+    function, all as in the guide's step 4. Then `cwaypipe -t jb dashboard`
+    and launch Chrome from the menu. Expected: Chrome opens as a macOS window
+    of its own (not inside a Cocoa-Way window), titled `[<container>] ...`.
+14. `cwaypipe jb --repo PREFIX chrome <container>`. Expected: Chrome opens as
+    in step 13, and the command stays open until Chrome is closed.
+15. Close the session from step 13. Expected: its windows close.
+16. Record the Cocoa-Way, waypipe-darwin and macOS versions tested.
 
 ### Setup B: Colima VM on the Mac
 

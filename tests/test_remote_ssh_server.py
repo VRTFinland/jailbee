@@ -23,6 +23,7 @@ from jailbee.remote_ssh import overrides as overrides_module
 from jailbee.remote_ssh import server
 from jailbee.remote_ssh.keys import ssh_paths
 from jailbee.remote_ssh.pty import ChildSpec, PTYError
+from jailbee.remote_ssh.router import help_text
 from jailbee.remote_ssh.session import WaypipeSession
 
 PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsz47IcK4hPdHS7xOXNGafb/Uw3epmEsD7xIJn434n6"
@@ -278,15 +279,17 @@ def repo(tmp_path, db_engine, monkeypatch):
         )
         db.commit()
     monkeypatch.setattr("jailbee.remote_ssh.router.get_engine", lambda: db_engine)
+    monkeypatch.setattr("jailbee.remote_ssh.repo_scope.get_engine", lambda: db_engine)
     return root
 
 
 @pytest.mark.parametrize("command", [None, "", "  "])
 def test_missing_command_prints_enabled_binary_help_and_succeeds(command, child):
     _, channel = session(command)
-    assert output(channel) == (
+    assert output(channel) == help_text(RemoteSSHConfig()).encode()
+    assert output(channel).startswith(
         b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
-        b"  --repo PREFIX COMMAND [ARGS...]\n"
+        b"  repos\n  COMMAND [ARGS...] [--repo PREFIX]\n\nCommands this session may run:\n"
     )
     assert output(channel, 1) == b""
     channel.exit.assert_called_once_with(0)
@@ -303,20 +306,14 @@ def test_commandless_help_uses_crlf_when_a_pty_was_negotiated(child):
     gets CRLF for free.
     """
     _, channel = session(None, term="xterm")
-    assert output(channel) == (
-        b"Available remote commands:\r\n  help\r\n  dashboard\r\n  console [--repo PREFIX]\r\n"
-        b"  --repo PREFIX COMMAND [ARGS...]\r\n"
-    )
+    assert output(channel) == help_text(RemoteSSHConfig()).replace("\n", "\r\n").encode()
     channel.exit.assert_called_once_with(0)
 
 
 def test_commandless_help_stays_bare_lf_without_a_pty(child):
     """`ssh -T ...` (no PTY at all): output must remain byte-exact."""
     _, channel = session(None)
-    assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
-        b"  --repo PREFIX COMMAND [ARGS...]\n"
-    )
+    assert output(channel) == help_text(RemoteSSHConfig()).encode()
     assert b"\r\n" not in output(channel)
 
 
@@ -350,10 +347,7 @@ def test_commandless_login_uses_configured_dashboard_and_explicit_help(child, mo
     dashboard.exit.assert_called_once_with(7)
 
     _, help_channel = session("help")
-    assert output(help_channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
-        b"  --repo PREFIX COMMAND [ARGS...]\n"
-    )
+    assert output(help_channel) == help_text(ssh).encode()
     help_channel.exit.assert_called_once_with(0)
     assert child.await_count == 1
 
@@ -417,6 +411,85 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
     )
     configured.assert_called_once_with(default_global_config_path())
     channel.exit.assert_called_once_with(7)
+
+
+def test_trailing_repo_dispatches_like_the_leading_form(child, configured, repo):
+    process, channel = session("ls --all --repo project")
+    child.assert_awaited_once_with(
+        process,
+        ChildSpec(
+            argv=(sys.executable, "-m", "jailbee", "ls", "--all"), cwd=repo, requires_pty=False
+        ),
+    )
+    channel.exit.assert_called_once_with(7)
+
+
+@pytest.mark.parametrize("term", [None, "xterm"])
+@pytest.mark.parametrize("arguments, excluded", [("chrome feat", []), ("ls", ["secret"])])
+def test_missing_repo_spawns_a_picking_child_in_the_state_dir(
+    child, configured, tmp_path, mocker, term, arguments, excluded
+):
+    fallback = tmp_path / "state"
+    mocker.patch.object(server, "state_dir", return_value=fallback)
+    configured.return_value[0].remote.ssh = configured.return_value[0].remote.ssh.model_copy(
+        update={"gui": True, "excluded_repos": excluded, "restrict_host": False}
+    )
+    process, channel = session(arguments, term=term, env={"LD_PRELOAD": "client-secret"})
+    child.assert_awaited_once_with(
+        process,
+        ChildSpec(
+            argv=(sys.executable, "-m", "jailbee", "--pick-repo", *arguments.split()),
+            cwd=fallback,
+            requires_pty=False,
+            restrict_host=False,
+            excluded_repos=tuple(excluded),
+            gui_port=8022,
+        ),
+    )
+    assert fallback.is_dir()
+    channel.exit.assert_called_once_with(7)
+
+
+@pytest.mark.parametrize("term, newline", [(None, "\n"), ("xterm", "\r\n")])
+def test_repos_is_written_by_the_server(child, configured, repo, term, newline, caplog):
+    with caplog.at_level(logging.INFO):
+        _, channel = session("repos", term=term)
+    assert output(channel) == f"project\t{repo}{newline}".encode()
+    assert output(channel, 1) == b""
+    channel.exit.assert_called_once_with(0)
+    child.assert_not_awaited()
+    assert "route=repos repo=None command='repos' decision=allowed" in caplog.text
+
+
+@pytest.mark.parametrize("command", ["ls --repo project", "ls", "git pull --repo project"])
+def test_audit_names_commands_without_a_leading_repo(child, configured, repo, caplog, command):
+    path = "git pull" if command.startswith("git") else "ls"
+    prefix = "'project'" if "--repo" in command else "None"
+    with caplog.at_level(logging.INFO):
+        session(command)
+    assert f"route=command repo={prefix} command='{path}'" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ("shell", ("console", None, "console")),
+        ("shell --repo project", ("console", "project", "console")),
+        ("shell feat --repo project", ("command", "project", "shell")),
+        ("--repo project shell feat", ("command", "project", "shell")),
+        ("ls --repo", ("unknown", None, None)),
+        ("ls --repo project --repo other", ("unknown", None, None)),
+        ("secret-unknown-command", ("unknown", None, None)),
+    ],
+)
+def test_request_audit_matches_legacy_shell_shapes_and_invalid_repo_options(command, expected):
+    assert server._request_fields(command) == expected
+
+
+@pytest.mark.parametrize("command", ["ls --help", "git --help"])
+def test_help_child_does_not_pick_a_repo(child, configured, command):
+    session(command)
+    assert child.await_args.args[1].argv == (sys.executable, "-m", "jailbee", *command.split())
 
 
 def test_console_receives_the_session_effective_policy_including_overrides(child, mocker):
@@ -674,10 +747,7 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
 
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
-    assert output(channel) == (
-        b"Available remote commands:\n  help\n  dashboard\n  console [--repo PREFIX]\n"
-        b"  --repo PREFIX COMMAND [ARGS...]\n"
-    )
+    assert output(channel) == help_text(RemoteSSHConfig()).encode()
     channel.exit.assert_called_once_with(0)
     child.assert_not_awaited()
 
@@ -685,7 +755,7 @@ def test_client_environment_requests_do_not_block_commandless_help(child):
 @pytest.mark.parametrize(
     ("command", "message"),
     [
-        ("arbitrary-host-shell", b"require --repo"),
+        ("arbitrary-host-shell", b"unknown Jailbee command"),
         ("--repo project _new-worker", b"unknown Jailbee command"),
         ('--repo project ls "unterminated', b"cannot parse"),
         ("--repo project ls\n", b"control character"),
@@ -1811,6 +1881,16 @@ def test_a_direct_gui_command_runs_attached(child, gui_config, waypipe_ops, repo
     session(cmd, extra=WP_FORWARD)
 
     assert child.call_args.args[1].waypipe_attach is True
+
+
+def test_a_gui_command_without_repo_stays_attached_with_picker_transport(
+    child, gui_config, waypipe_ops
+):
+    session(WP_CMD.replace("server dashboard", "server chrome feat"), extra=WP_FORWARD)
+    spec = child.await_args.args[1]
+    assert spec.argv == (sys.executable, "-m", "jailbee", "--pick-repo", "chrome", "feat")
+    assert spec.waypipe_attach is True
+    assert spec.waypipe == WaypipeSession("0a1b2c3d", "zstd")
 
 
 def test_a_direct_non_gui_command_is_not_attached(child, gui_config, waypipe_ops, repo):

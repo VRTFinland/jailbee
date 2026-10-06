@@ -474,6 +474,12 @@ class Config(BaseModel):
     # key. Private for the reason `_synthetic` is: no YAML key on the repo
     # layer, no `config show` entry. `model_copy` carries it.
     _agent_instructions: bool = PrivateAttr(default=True)
+    # Set by `load_config_from_layers` from `global.yaml`'s own
+    # `defaults.storage_pool`, *before* the repo layers merge over it: the pool
+    # of the host-wide service containers, which no repo owns. Private for the
+    # reason `_synthetic` is. Distinct from `defaults.storage_pool`, which is the
+    # merged value that decides where this repo's branch containers go.
+    _service_storage_pool: str | None = PrivateAttr(default=None)
 
     def column_warnings(self) -> list[str]:
         """Column-block fixes `load_config()` made, for the caller to surface.
@@ -503,6 +509,13 @@ class Config(BaseModel):
     def agent_instructions_enabled(self) -> bool:
         """Whether host-wide agent instructions are mounted (see agent_instructions.py)."""
         return self._agent_instructions
+
+    def service_storage_pool(self) -> str | None:
+        """Pool for the host-wide service containers; None leaves it to the profile.
+
+        A method, not a property: a property would shadow `model_copy(update=...)`.
+        """
+        return self._service_storage_pool
 
     @field_validator("egress_allow")
     @classmethod

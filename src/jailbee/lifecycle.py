@@ -906,6 +906,28 @@ class NewContainerOptions:
     # config. MUST be mirrored in `background.op_to_job`/`job_to_opts` — see
     # `assume_yes`.
     autostart_override: Literal["wait", "no_wait"] | None = None
+    # Incus storage pool the container's root disk is created on
+    # (`jailbee new --storage`, else `defaults.storage_pool`). None leaves it to
+    # the `default` profile. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    storage_pool: str | None = None
+
+
+def check_storage_pool(incus: Incus, pool: str | None) -> None:
+    """Raise `ValueError` naming the pools that exist when `pool` is not one.
+
+    Checked before anything is created, so a repo config that names a pool
+    this host does not have fails with the candidates rather than half-way
+    through `incus init`. None means the profile decides and needs no check.
+    """
+    if not pool:
+        return
+    names = sorted(str(p.get("name", "")) for p in incus.list_storage_pools())
+    if pool not in names:
+        raise ValueError(
+            f"Incus storage pool '{pool}' does not exist. Pools on this host: "
+            f"{', '.join(n for n in names if n) or '(none)'}."
+        )
 
 
 @dataclass(frozen=True)
@@ -1444,7 +1466,7 @@ def new_container(
                 ensure_work_bridge(incus)
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
-                incus.init(opts.from_base, name)
+                incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
                 fresh = True
                 incus.profile_assign(
                     name,
@@ -1469,7 +1491,7 @@ def new_container(
                         pass
                 raise
     else:
-        incus.init(opts.from_base, name)
+        incus.init(opts.from_base, name, storage_pool=opts.storage_pool)
     try:
         if generation == "legacy":
             incus.profile_assign(
@@ -3002,6 +3024,9 @@ def ls_field_specs(
             header="STATE",
             cell=lambda c: c.state,
             json=lambda c: c.state,
+            # Running / Stopped / Frozen: a container changing state must
+            # not shift the columns after it.
+            dashboard_min_width=7,
         ),
         table_format.FieldSpec(
             name="created",
@@ -3016,6 +3041,10 @@ def ls_field_specs(
             json=_job_json,
             default_json=False,
             show_if=lambda rows: any(c.job_phase is not None for c in rows),
+            # A stage name is the user's own text; past the cap it ends in an
+            # ellipsis, the colour still telling a dead job from a live one.
+            dashboard_min_width=10,
+            dashboard_max_width=22,
         ),
         table_format.FieldSpec(
             name="network",
@@ -3032,6 +3061,7 @@ def ls_field_specs(
             # TTL column shows when at least one container is in loose mode —
             # this also lets `--no-revert` users see the explicit "—" indicator.
             show_if=lambda rows: any(c.network == "loose" for c in rows),
+            dashboard_min_width=6,
         ),
         table_format.FieldSpec(
             name="loose_until",
@@ -3076,6 +3106,8 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=True,
             default_json=False,
+            # "1023.9M / 16GiB": room for the usage at its widest.
+            dashboard_min_width=15,
         ),
         table_format.FieldSpec(
             name="cpu",
@@ -3090,6 +3122,8 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=True,
             default_json=False,
+            # "100%·16": a single core's full load on a 16-CPU limit.
+            dashboard_min_width=7,
         ),
         table_format.FieldSpec(
             name="doing",
@@ -3101,6 +3135,10 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=True,
             default_json=False,
+            # Process names change every refresh; the column holds its width
+            # and an ellipsis takes what does not fit.
+            dashboard_min_width=20,
+            dashboard_max_width=32,
         ),
         table_format.FieldSpec(
             name="agent",
@@ -3113,6 +3151,8 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=False,
             default_json=False,
+            dashboard_min_width=16,
+            dashboard_max_width=40,
         ),
         table_format.FieldSpec(
             name="agent_compact",
@@ -3122,6 +3162,7 @@ def ls_field_specs(
             default_table=False,
             default_dashboard=True,
             default_json=False,
+            dashboard_min_width=6,
         ),
         table_format.FieldSpec(
             name="wt",

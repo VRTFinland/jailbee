@@ -259,7 +259,7 @@ def test_job_label_names_the_phase_a_dead_worker_died_in(mocker) -> None:
     from jailbee import background
 
     mocker.patch.object(background, "worker_alive", return_value=False)
-    assert background.job_label(background.PHASE_CLONING, 1234) == "cloning (worker gone)"
+    assert background.job_label(background.PHASE_CLONING, 1234) == "cloning (dead)"
 
 
 def test_job_label_live_worker_is_the_bare_phase(mocker) -> None:
@@ -284,8 +284,7 @@ def test_job_label_dead_destroy_job_in_starting_keeps_worker_gone_suffix(mocker)
 
     mocker.patch.object(background, "worker_alive", return_value=False)
     assert (
-        background.job_label(background.PHASE_STARTING, 1234, kind=JOB_DESTROY)
-        == "starting (worker gone)"
+        background.job_label(background.PHASE_STARTING, 1234, kind=JOB_DESTROY) == "starting (dead)"
     )
 
 
@@ -304,7 +303,7 @@ def test_job_label_dead_autostart_job_keeps_the_worker_gone_suffix(mocker) -> No
     from jailbee.db.models import JOB_AUTOSTART
 
     mocker.patch.object(background, "worker_alive", return_value=False)
-    assert background.job_label("deps", 1234, kind=JOB_AUTOSTART) == "deps (worker gone)"
+    assert background.job_label("deps", 1234, kind=JOB_AUTOSTART) == "deps (dead)"
 
 
 def test_job_label_failed_autostart_job_is_the_bare_phase(mocker) -> None:
@@ -361,7 +360,7 @@ def test_job_label_or_empty_delegates_to_job_label(mocker) -> None:
     from jailbee import background
 
     mocker.patch.object(background, "worker_alive", return_value=False)
-    assert background.job_label_or_empty(background.PHASE_CLONING, 1234) == "cloning (worker gone)"
+    assert background.job_label_or_empty(background.PHASE_CLONING, 1234) == "cloning (dead)"
 
 
 def _seed(session, name: str, *, phase: str, pid: int = 1234) -> None:
@@ -578,6 +577,46 @@ def test_credential_group_survives_the_job_round_trip():
     assert "claude_group" not in job["opts"]
     back, _, _ = job_to_opts(job)
     assert back.credential_group == "personal"
+
+
+def test_storage_pool_survives_the_job_round_trip():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+        storage_pool="cow",
+    )
+    job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    assert job["opts"]["storage_pool"] == "cow"
+    back, _, _ = job_to_opts(job)
+    assert back.storage_pool == "cow"
+
+
+def test_job_file_without_storage_pool_loads_as_none():
+    """An in-flight background `jailbee new` written before the key existed."""
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+    )
+    job = op_to_job(opts, container_name="myrepo-feat-x", log_path="/tmp/l")
+    del job["opts"]["storage_pool"]
+    back, _, _ = job_to_opts(job)
+    assert back.storage_pool is None
 
 
 def test_legacy_claude_group_key_loads_into_credential_group():

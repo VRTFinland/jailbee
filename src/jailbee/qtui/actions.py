@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 LaunchMode = Literal["terminal", "output", "detached"]
 
 _TERMINAL_VERBS: frozenset[str] = frozenset(
-    {"shell", "tmux", "merge", "git retarget", "review apply", "issue apply", "outbox browse"}
+    {"shell", "tmux", "merge", "review apply", "issue apply", "outbox browse"}
 )
 
 # Verbs that warrant a confirmation dialog before dispatching.
@@ -129,7 +129,8 @@ def build_action(
 
     ``extra_flags`` are the answers the GUI collected for the questions the CLI
     would have prompted for — `net loose`'s ``--for <duration>``, `git push`'s
-    merge/rebase choice, `pr`'s draft state (see :mod:`jailbee.qtui.prompts`).
+    merge/rebase choice, `pr`'s draft state, `git retarget`'s base positional
+    (see :mod:`jailbee.qtui.prompts`).
     They go last, so nothing lands between the verb and its container name.
 
     The resolved ``launch`` mode comes from :func:`launch_mode`, so the caller

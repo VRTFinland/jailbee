@@ -108,10 +108,20 @@ def test_claude_jb_upgrade_note_advises_base_build_only() -> None:
 
     owed = pending("1.6.0", {"base_build": Watermark((1, 5, 0), observed=True)})
     assert any("claude-jb" in reason for item in owed.actions for reason in item.reasons)
-    notes = [note for note in UPGRADE_NOTES if "claude-jb" in note.reason]
+    notes = [n for n in UPGRADE_NOTES if n.version == (1, 6, 0) and "claude-jb" in n.reason]
     assert len(notes) == 1
-    assert notes[0].version == (1, 6, 0)
     assert notes[0].actions == frozenset({"base_build"})
+
+
+def test_upcoming_context_flag_has_one_note_per_action() -> None:
+    """The wrapper is in the image (`base build`); the ceiling is in `litellm.json` (`apply`)."""
+    from jailbee.upgrade import UPGRADE_NOTES
+
+    upcoming = [n for n in UPGRADE_NOTES if n.version == (1, 7, 0)]
+    wrapper = [n for n in upcoming if "`-C`" in n.reason]
+    ceiling = [n for n in upcoming if "max_context_window" in n.reason]
+    assert [n.actions for n in wrapper] == [frozenset({"base_build"})]
+    assert [n.actions for n in ceiling] == [frozenset({"apply"})]
 
 
 def test_upcoming_claude_runtime_isolation_upgrade_note_advises_apply():

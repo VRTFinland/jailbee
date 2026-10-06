@@ -814,7 +814,7 @@ def _ensure_egress_proxy_or_warn(cfg: Config, incus: Incus) -> None:
     with Session(get_engine()) as session:
         needed = egress_proxy.proxy_needed(cfg, incus, session)
     if needed:
-        egress_proxy.proxy_up_or_warn(incus)
+        egress_proxy.proxy_up_or_warn(incus, storage_pool=cfg.service_storage_pool())
 
 
 def _list_containers(cfg: Config, incus: Incus) -> list[ContainerInfo]:

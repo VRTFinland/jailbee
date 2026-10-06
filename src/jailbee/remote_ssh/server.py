@@ -37,6 +37,7 @@ from jailbee.remote_ssh.router import (
     help_text,
     is_gui_app_command,
     is_host_command,
+    repos_text,
     route,
 )
 from jailbee.remote_ssh.running import clear_running, installed_version, record_running
@@ -246,16 +247,21 @@ def _request_fields(raw: str | None) -> tuple[str, str | None, str | None]:
         return "help", None, None
     if argv[0] == "dashboard":
         return "dashboard", None, "dashboard"
-    if argv[0] in ("console", "shell"):
+    if argv[0] == "console" or (
+        argv[0] == "shell" and (len(argv) == 1 or (len(argv) == 3 and argv[1] == "--repo"))
+    ):
         prefix = argv[2] if len(argv) >= 3 and argv[1] == "--repo" else None
         return "console", prefix, "console"
-    if len(argv) >= 3 and argv[0] == "--repo":
-        try:
-            path = command_path(argv[2:])
-        except RouteError:
-            path = None
-        return "command", argv[1], path
-    return "unknown", None, None
+    if argv == ["repos"]:
+        return "repos", None, "repos"
+    from jailbee.repo_option import RepoOptionError, lift_repo
+
+    try:
+        prefix, lifted = lift_repo(argv)
+        path = command_path(lifted)
+    except (RepoOptionError, RouteError):
+        return "unknown", None, None
+    return "command", prefix, path
 
 
 async def handle_process(
@@ -373,12 +379,26 @@ async def handle_process(
             process.stdout.write(_server_text(help_text(config), pty=pty))
             process.exit(0)
             return
+        if selected.kind == "repos":
+            process.stdout.write(_server_text(repos_text(config), pty=pty))
+            process.exit(0)
+            return
         if waypipe_session is not None:
             # Only an allowed command gets the display provisioned.
             from jailbee.remote_display import ensure_waypipe_display
 
-            await asyncio.to_thread(ensure_waypipe_display, Incus())
-        argv = (sys.executable, "-m", "jailbee", *selected.argv)
+            await asyncio.to_thread(
+                ensure_waypipe_display,
+                Incus(),
+                storage_pool=global_config.service_storage_pool,
+            )
+        argv = (
+            sys.executable,
+            "-m",
+            "jailbee",
+            *(("--pick-repo",) if selected.pick_repo else ()),
+            *selected.argv,
+        )
         if selected.kind == "console":
             # The console child re-validates this itself (never trusting it
             # as-is) via `RemoteSSHConfig.model_validate_json` — see

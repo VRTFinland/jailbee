@@ -402,6 +402,42 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
     review.assert_called_once()
 
 
+@pytest.mark.parametrize("accepted", [False, True], ids=["decline", "approve"])
+def test_dashboard_description_publish_warns_before_consent(publication_env, mocker, accepted):
+    from jailbee import dashboard_outbox, pr
+
+    env = publication_env[0]
+    _unowned(env)
+    files = env[2]["pr"].as_dict()
+    payload = json.loads(files["001.json"])
+    payload["actions"] = [{"type": "description", "body": "Updated PR description"}]
+    files["001.json"] = json.dumps(payload)
+    env[2]["pr"] = store("pr", files)
+    edit = mocker.patch.object(pr, "edit_pr")
+    mocker.patch.object(pr, "pr_body", return_value="Old description")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    shown = CliRunner().invoke(app, ["outbox", "show", "feature", "pr/001.json", "-o", "json"])
+    assert shown.exit_code == 0, shown.output
+    revision = json.loads(shown.stdout)["proposal"]["revision"]
+
+    result = CliRunner().invoke(
+        app,
+        dashboard_outbox.outbox_apply_argv("feature", "pr/001.json", revision),
+        input="y\n" if accepted else "n\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index("not bound to container") < result.output.index("Publish 1")
+    if accepted:
+        edit.assert_called_once_with(
+            env[0].repo_root, 42, title=None, body="Updated PR description", repo="acme/repo"
+        )
+        assert "001.json" not in env[2]["pr"].as_dict()
+    else:
+        edit.assert_not_called()
+        assert "001.json" in env[2]["pr"].as_dict()
+
+
 def test_apply_rejects_foreign_for_an_issue(publication_env):
     result = CliRunner().invoke(
         app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--foreign"]

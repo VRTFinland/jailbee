@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `--repo PREFIX` works anywhere on the command line (`jb chrome feat --repo x`),
+  and the remote SSH top level accepts every command the remote console does,
+  with `repos` and a `help` that lists the allowed commands.
 - **`jailbee upgrade`.** After upgrading jailbee, runs `base build` and `apply`
   in every registered repo without restarting any container, dockerd or LiteLLM
   instance. A repo runs only what the release's upgrade notes owe it; `--force`
@@ -110,6 +113,12 @@ before editing `## Unreleased`.
   and `push`, `pull` and `checkout` never moved its working tree to the new
   gitlink. Every `submodule update` jailbee runs now passes `--checkout`, which
   overrides the configured update mode.
+- **DNS on the work network no longer drops out every few seconds.** With
+  work containers from more than one repo, each repo's egress refresh
+  rewrote `jailbee-work`'s attached ACL list just to put its own allowlist
+  first, and every rewrite restarted the bridge's dnsmasq. Downloads and
+  `docker build` steps in those containers failed at random with "Could not
+  resolve host". The list is now rewritten only when its members change.
 
 ## 1.6.0 - 2026-10-02
 

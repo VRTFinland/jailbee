@@ -259,9 +259,17 @@ class Defaults(BaseModel):
             "allowlist) or `loose` (wider egress for debugging)."
         ),
     )
-    storage_pool: str = Field(
-        default="default",
-        description="Incus storage pool new containers are created on.",
+    storage_pool: str | None = Field(
+        default=None,
+        description=(
+            "Incus storage pool new containers are created on. Unset leaves it to the "
+            "root disk of Incus's `default` profile. Existing containers stay on the pool "
+            "they were created on. Put it in `global.yaml` (or a repo's local layer), "
+            "not in a committed `.jailbee/config.yaml`: pool names are per-host. "
+            "Set in `global.yaml`, it also decides where the host-wide helper containers "
+            "(egress proxy, registry mirror, LiteLLM, display) are created. "
+            "Overridable per-invocation with `jailbee new --storage`."
+        ),
     )
 
     @field_validator("network", mode="before")

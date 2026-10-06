@@ -40,8 +40,11 @@ committed `.jailbee/config.yaml`. See [Configuration](config.md#litellm) and
    with Claude Code's `--model` flag, for example `claude-jb --model haiku`.
    Use `jailbee litellm status` on the host to inspect health and login state.
 
-`jailbee litellm down` deletes the proxy container but keeps its state volume
-(logins and settings); `jailbee litellm down --purge` deletes the volume too.
+`jailbee litellm down` stops the proxy and withdraws its dev-container ACL
+allowance; the container and its state volume (logins and settings) are kept, and
+`jailbee litellm up` starts it again. `jailbee litellm up --recreate` deletes the
+container and builds it again with the volume attached; `jailbee litellm down
+--purge` deletes the container and the volume.
 Run `jailbee apply` in each affected repo afterward: it
 removes stale dev-container proxy settings, and `claude-jb` then fails clearly
 instead of silently falling back to native Claude. Bring the proxy back with
@@ -204,7 +207,35 @@ mapped tier.
 Profile selection order is `claude-jb --profile NAME`, then
 `JAILBEE_LITELLM_PROFILE`, then `litellm.default_profile` (default `codex`).
 `--profile` is consumed by the wrapper, not passed to Claude Code. Use plain
-`claude` for native access, not `--profile native`.
+`claude` for native access, not `--profile native`. `claude-jb --help` prints the
+wrapper's own options and the profiles with their windows, then Claude Code's help.
+
+### Choosing the context window
+
+`claude-jb -C 1m` (or `--context 1m`, `--context=1m`) sets the session's window.
+The value is `272k`, `1m` (1,000,000), a token count, `max` (the profile's
+ceiling) or `default`; the last flag wins. It is `-C`, not `-c`: lowercase is
+Claude Code's `--continue`, which passes through. Without the flag the session
+uses the profile's default window, so a larger one is always a choice.
+
+A larger window costs more per request, and `claude-jb` says so on stderr. The
+ceiling is each route's `max_context_window`: 1,050,000 for the built-in
+`chatgpt/gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna` routes, and for any other
+route its `context_window` unless you set one. A profile's ceiling is the smallest
+of its routes', since Claude Code takes one window per session; a value above it
+is refused with the ceiling named. Set `max_context_window` on a route to allow
+more or fewer tokens than the built-in table says:
+
+```yaml
+litellm:
+  routes:
+    nova: {model: chatgpt/gpt-7-nova, context_window: 272000, max_context_window: 400000}
+```
+
+`jailbee litellm ls` shows `272000 tokens (up to 1050000)` for a route that can be
+raised. The ceiling reaches containers with `jailbee apply`; the flag itself needs
+`jailbee base build`. Until then `claude-jb` accepts only the default and tells you
+to re-run `jailbee apply`.
 
 ### Profile instructions
 
@@ -257,13 +288,14 @@ for `/model` and for sessions started before tier names existed. Profile names
 follow the same rule as route names (`[a-z0-9][a-z0-9_-]{0,63}`).
 
 The built-in models default to a **272,000-token context window** (`astra`,
-`sol-*`) and **1,050,000 tokens** (`luna-high`). For the sol and astra models
-that is the ChatGPT subscription backend's maximum input, not the API's 1.05M
-total. Claude Code compacts a fixed reserve below the window it is told about, so a
-larger value would compact only after the backend had refused the prompt. A new
-model needs an explicit `context_window`; the wrapper exports
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the largest window among the selected
-profile's mapped routes.
+`sol-*`, `luna-high`): the ChatGPT subscription backend's maximum input, not
+the API's 1.05M total. Claude Code compacts a fixed reserve below the window it
+is told about, so a larger value would compact only after the backend had
+refused the prompt. A new model needs an explicit `context_window`. Claude Code
+takes one window for the whole session, whichever tier answers, so the wrapper
+exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the **smallest** window among the
+selected profile's mapped routes; a larger window on one route takes effect
+only in a profile whose every route has it.
 
 ## Adding a new model
 
@@ -479,7 +511,7 @@ back on; that is your choice.
   host filesystem, and the proxy container maps no host user (`raw.idmap`).
   Jailbee writes the rendered files into the volume through `incus exec`'s
   standard input. `jailbee litellm down` keeps the volume, so logins survive a
-  rebuild; `jailbee litellm down --purge` deletes it. On the host, only
+  stop or a `--recreate`; `jailbee litellm down --purge` deletes it. On the host, only
   `~/.local/share/jailbee/litellm/` remains, holding the port map, each
   account's proxy key (`0600`) and its `applied.sha256` and `applied-hot.sha256` stamps. Dev containers get only the proxy keys, one
   `/etc/jailbee/litellm-<account>.key` (`0640`, readable by the dev group) per
@@ -492,7 +524,7 @@ back on; that is your choice.
   the state volume is detached until package access is removed.
   Dev containers can reach its static address through the
   `jailbee-services` ACL; a proxy key is not a provider token.
-- The default LiteLLM installation is pinned to version `1.103.1` and a
+- The default LiteLLM installation is pinned to version `1.104.0` and a
   hash-locked requirements file. Setting `litellm.version` bypasses the hash
   lock and emits a warning. Prompt/message logging and the remote model-cost
   map fetch are disabled. Treat this as risk reduction, not a guarantee that
@@ -520,6 +552,8 @@ back on; that is your choice.
 | `cannot read ... (not valid JSON)` or `cannot read the proxy key` | Run `jailbee apply` in the repo on the host. |
 | `unknown profile` | Check the names in `litellm.profiles`, in `global.yaml` and in this repo's override (`jailbee litellm ls` lists both); select a valid `--profile` or fix `JAILBEE_LITELLM_PROFILE`. |
 | `--profile needs a name` | Pass `--profile NAME` or remove the flag. |
+| `--context needs a value` or `... is not a size` | Pass `272k`, `1m`, a token count, `max` or `default`. |
+| `--context ... above the ...-token ceiling of profile` | Choose a smaller window or `max`; to allow more, raise `max_context_window` on the profile's routes and run `jailbee apply` on the host. |
 | `proxy key ... is empty` | Run `jailbee apply` on the host to resync the key. |
 | `proxy ... is unreachable` | Run `jailbee litellm up` on the host, then `jailbee apply` in this repo. |
 

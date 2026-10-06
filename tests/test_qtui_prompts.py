@@ -2,6 +2,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+
 from jailbee.qtui.prompts import (
     NewContainerAnswers,
     NewContainerDialog,
@@ -9,6 +12,8 @@ from jailbee.qtui.prompts import (
     PrOptionsDialog,
     PushAnswers,
     PushOptionsDialog,
+    RetargetDialog,
+    branch_combo,
     confirm_text,
     pr_flags,
     push_flags,
@@ -170,7 +175,7 @@ def test_new_container_dialog_ok_needs_a_base(qtbot):
     dialog = NewContainerDialog("alpha", base_default="main")
     qtbot.addWidget(dialog)
     dialog._branch.setText("dashboard-fixes")
-    dialog._base.setText("")
+    dialog._base.setEditText("")
     assert dialog.ok_enabled is False
 
 
@@ -185,7 +190,57 @@ def test_new_container_dialog_strips_surrounding_whitespace(qtbot):
     dialog = NewContainerDialog("alpha", base_default=None)
     qtbot.addWidget(dialog)
     dialog._branch.setText("  dashboard-fixes  ")
-    dialog._base.setText("  config-improvements ")
+    dialog._base.setEditText("  config-improvements ")
     assert dialog.answers() == NewContainerAnswers(
         branch="dashboard-fixes", base="config-improvements"
     )
+
+
+def test_branch_combo_is_editable_and_completes_anywhere_in_the_name(qtbot):
+    combo = branch_combo(["main", "feat/maint"], "main")
+    qtbot.addWidget(combo)
+    assert combo.isEditable()
+    assert combo.currentText() == "main"
+    completer = combo.completer()
+    assert completer.filterMode() == Qt.MatchFlag.MatchContains
+    assert completer.caseSensitivity() == Qt.CaseSensitivity.CaseInsensitive
+
+
+def test_branch_combo_without_a_default_starts_empty(qtbot):
+    combo = branch_combo(["main"], None)
+    qtbot.addWidget(combo)
+    assert combo.currentText() == ""
+
+
+def test_new_container_dialog_offers_the_branches_for_the_base(qtbot):
+    dialog = NewContainerDialog("alpha", base_default="main", branches=["main", "dev"])
+    qtbot.addWidget(dialog)
+    assert [dialog._base.itemText(i) for i in range(dialog._base.count())] == ["main", "dev"]
+    assert dialog.answers().base == "main"
+
+
+def test_new_container_dialog_still_takes_a_free_base(qtbot):
+    dialog = NewContainerDialog("alpha", base_default=None, branches=["main"])
+    qtbot.addWidget(dialog)
+    dialog._branch.setText("x")
+    dialog._base.setEditText("not-listed")
+    assert dialog.ok_enabled is True
+
+
+def test_retarget_dialog_ok_needs_a_listed_branch(qtbot):
+    dialog = RetargetDialog("alpha-x", current_base="feat/a", branches=["main", "dev"])
+    qtbot.addWidget(dialog)
+    assert dialog.ok_enabled is False
+    dialog._base.setEditText("nope")
+    assert dialog.ok_enabled is False
+    dialog._base.setEditText(" dev ")
+    assert dialog.ok_enabled is True
+    assert dialog.answer() == "dev"
+    assert "feat/a" in dialog.findChild(QLabel).text()
+
+
+def test_retarget_dialog_with_no_branches_takes_any_name(qtbot):
+    dialog = RetargetDialog("alpha-x", current_base=None, branches=[])
+    qtbot.addWidget(dialog)
+    dialog._base.setEditText("whatever")
+    assert dialog.ok_enabled is True

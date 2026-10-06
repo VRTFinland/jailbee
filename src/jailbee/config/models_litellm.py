@@ -35,7 +35,7 @@ from pydantic import (
 
 from jailbee.egress import parse_egress_entry
 
-PINNED_LITELLM_VERSION = "1.103.1"
+PINNED_LITELLM_VERSION = "1.104.0"
 """The version `provision/litellm/requirements.lock` was compiled for."""
 
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
@@ -84,12 +84,20 @@ An `oauth: true` route needs it besides `PROVIDER_HOSTS["xai"]`."""
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     "chatgpt/gpt-6-astra": 272_000,
     "chatgpt/gpt-6.1-sol": 272_000,
-    "chatgpt/gpt-6-luna": 1_050_000,
+    "chatgpt/gpt-6-luna": 272_000,
 }
 """Window Claude Code manages per model. Claude Code compacts a fixed reserve
 below this value, so one above what the subscription backend accepts would
-compact after the backend has already refused the prompt. The sol and astra
-windows are the subscription backend's input limit, not the API's 1.05M."""
+compact after the backend has already refused the prompt. These are the
+subscription backend's input limit, not the API's 1.05M."""
+
+KNOWN_MAX_CONTEXT_WINDOWS: dict[str, int] = {
+    "chatgpt/gpt-6-astra": 1_050_000,
+    "chatgpt/gpt-6.1-sol": 1_050_000,
+    "chatgpt/gpt-6-luna": 1_050_000,
+}
+"""The most `claude-jb --context` may raise a model's window to: the API's
+total. Costs more per request, so it is opt-in per session, never the default."""
 
 PARAMS_DENYLIST: frozenset[str] = frozenset(
     {
@@ -254,10 +262,23 @@ class LiteLLMRoute(BaseModel):
         default=None,
         gt=0,
         description=(
-            "Context window in tokens that Claude Code manages (use the backend's "
-            "maximum input). Passed to Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
-            "Defaults to 272000 for `chatgpt/gpt-6-astra` and `chatgpt/gpt-6.1-sol`, "
-            "1050000 for `chatgpt/gpt-6-luna`; required for any other model."
+            "This route's context window in tokens (use the backend's maximum input), "
+            "published to the proxy as the model's `max_input_tokens`. Claude Code takes "
+            "one window per session, so `claude-jb` passes the smallest among the "
+            "profile's routes as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. "
+            "Defaults to 272000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` and "
+            "`chatgpt/gpt-6-luna`; required for any other model."
+        ),
+    )
+    max_context_window: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The largest window `claude-jb --context` may select for this route, in tokens "
+            "(never below `context_window`). A profile's ceiling is the smallest among its "
+            "routes'. Defaults to 1050000 for `chatgpt/gpt-6-astra`, `chatgpt/gpt-6.1-sol` "
+            "and `chatgpt/gpt-6-luna`, and otherwise to `context_window`: such a route "
+            "cannot be raised."
         ),
     )
     api_key: str | None = Field(
@@ -413,6 +434,7 @@ class ResolvedRoute:
     effort: str | None
     min_effort: str | None
     context_window: int
+    max_context_window: int
     params: dict[str, object]
     api_key: str | None = None
     api_base: str | None = None
@@ -639,6 +661,17 @@ class LiteLLMConfig(BaseModel):
             window = raw.get("context_window") or KNOWN_CONTEXT_WINDOWS.get(model)
             if not isinstance(window, int):
                 raise ValueError(f"route '{name}' needs `context_window` (unknown model {model!r})")
+            explicit_max = raw.get("max_context_window")
+            if isinstance(explicit_max, int) and explicit_max < window:
+                raise ValueError(
+                    f"route '{name}': `max_context_window` ({explicit_max}) is below "
+                    f"`context_window` ({window})"
+                )
+            ceiling = (
+                explicit_max
+                if isinstance(explicit_max, int)
+                else max(window, KNOWN_MAX_CONTEXT_WINDOWS.get(model, 0))
+            )
             params = raw.get("params") or {}
             assert isinstance(params, dict)
             forbidden = sorted(k for k in params if str(k).lower() in PARAMS_DENYLIST)
@@ -653,6 +686,7 @@ class LiteLLMConfig(BaseModel):
                 effort=_optional_str(effort),
                 min_effort=_optional_str(min_effort),
                 context_window=window,
+                max_context_window=ceiling,
                 params=dict(params),
                 api_key=api_key,
                 api_base=api_base,

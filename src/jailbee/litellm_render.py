@@ -386,7 +386,11 @@ def container_profiles(
             "effort": profile.effort,
             "instructions": profile.instructions,
             "tiers": {t: tier_alias(scope, name, t) for t in profile.tiers},
-            "context_window": max(routes[r].context_window for r in profile.tiers.values()),
+            # One value for the whole session, whichever tier is in use: the
+            # smallest, so no tier is filled past what its backend accepts.
+            "context_window": min(routes[r].context_window for r in profile.tiers.values()),
+            # What `claude-jb --context` may raise it to, by the same rule.
+            "max_context_window": min(routes[r].max_context_window for r in profile.tiers.values()),
         }
     return out
 

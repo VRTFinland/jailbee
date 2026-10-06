@@ -114,13 +114,15 @@ def _run(
     from jailbee.outbox.inspect import safe_text
     from jailbee.outbox.models import OutboxError, OutboxExecutionError
     from jailbee.remote_ssh.repo_scope import RepoScopeError
+    from jailbee.repo_option import RepoOptionError, check_config_selection
     from jailbee.tui import error_plain
 
     try:
         path = config if config is not None else ctx.obj
+        check_config_selection(path)
         cfg = load_config(path) if path is not None else load_repo_config(Path.cwd())
         status = operation(cfg, Incus())
-    except (ConfigError, OutboxError, RepoScopeError) as exc:
+    except (ConfigError, OutboxError, RepoScopeError, RepoOptionError) as exc:
         error_plain(safe_text(str(exc)))
         raise typer.Exit(2) from exc
     except (OutboxExecutionError, IncusError, OSError) as exc:

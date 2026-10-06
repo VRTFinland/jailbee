@@ -20,6 +20,8 @@ from rich.panel import Panel
 from jailbee.dashboard_settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rich.console import RenderableType
 
     from jailbee.dashboard_accounts import AccountsState
@@ -28,6 +30,15 @@ if TYPE_CHECKING:
 PromptOutcome = Literal["editing", "submit", "cancel"]
 
 PROMPT_HINT = "[bold]Enter[/bold] confirm  ·  [bold]Esc[/bold] cancel"
+SUGGEST_HINT = (
+    "[bold]Tab[/bold] complete  ·  [bold]↑/↓[/bold] choose  ·  "
+    "[bold]Enter[/bold] confirm  ·  [bold]Esc[/bold] cancel"
+)
+# Rows of suggestions shown under a prompt; longer lists scroll with the highlight.
+SUGGESTION_ROWS = 8
+# Both cursor-key encodings: normal (CSI) and application mode (SS3).
+_UP_KEYS = (b"\x1b[A", b"\x1bOA")
+_DOWN_KEYS = (b"\x1b[B", b"\x1bOB")
 PICKER_HINT = "[bold]↑/↓[/bold] move  ·  [bold]Enter[/bold] choose  ·  [bold]Esc[/bold] cancel"
 
 
@@ -76,6 +87,9 @@ class TextPrompt:
     re-resolved at submit time because the row can vanish while the prompt is
     open; ``carry`` holds the answers of earlier steps of a multi-step flow.
     ``back`` is the overlay Esc (or a finished submit) returns to.
+    ``suggestions`` turns the prompt into a typed choice: the matches are listed under the input,
+    ``highlight`` indexes the filtered list (None until the user arrows into it), and
+    ``require_suggestion`` refuses a name not in the list.
     """
 
     purpose: str
@@ -87,6 +101,9 @@ class TextPrompt:
     error: str | None = None
     pending_utf8: bytes = b""
     back: EgressState | AccountsState | None = None
+    suggestions: tuple[str, ...] = ()
+    highlight: int | None = None
+    require_suggestion: bool = False
 
 
 def parse_pr_number(text: str) -> int | None:
@@ -101,12 +118,61 @@ def parse_pr_number(text: str) -> int | None:
     return number if number >= 1 else None
 
 
+def filter_suggestions(suggestions: Sequence[str], text: str) -> list[str]:
+    """The suggestions containing ``text``, case-insensitively; prefix matches first.
+
+    Each group keeps the suggestions' own order. Blank text matches everything.
+    """
+    needle = text.strip().casefold()
+    if not needle:
+        return list(suggestions)
+    starts = [s for s in suggestions if s.casefold().startswith(needle)]
+    inside = [
+        s for s in suggestions if needle in s.casefold() and not s.casefold().startswith(needle)
+    ]
+    return starts + inside
+
+
+def highlighted(prompt: TextPrompt) -> str | None:
+    """The suggestion under the highlight, or None when there is none to take."""
+    if prompt.highlight is None:
+        return None
+    matches = filter_suggestions(prompt.suggestions, prompt.text)
+    return matches[prompt.highlight] if 0 <= prompt.highlight < len(matches) else None
+
+
+def _suggestion_key(prompt: TextPrompt, data: bytes) -> TextPrompt | None:
+    """Apply an arrow or Tab to a prompt with suggestions; None for any other key."""
+    matches = filter_suggestions(prompt.suggestions, prompt.text)
+    if data in _DOWN_KEYS:
+        if not matches:
+            return prompt
+        index = 0 if prompt.highlight is None else min(prompt.highlight + 1, len(matches) - 1)
+        return replace(prompt, highlight=index)
+    if data in _UP_KEYS:
+        if prompt.highlight is None:
+            return prompt
+        return replace(prompt, highlight=prompt.highlight - 1 if prompt.highlight > 0 else None)
+    if data == b"\t":
+        if not matches:
+            return prompt
+        chosen = highlighted(prompt) or matches[0]
+        return replace(prompt, text=chosen, highlight=None, error=None)
+    return None
+
+
 def validate_answer(prompt: TextPrompt) -> str | None:
     """Why the current answer cannot be submitted, or None when it can."""
     if not prompt.text.strip():
         return f"{prompt.label} cannot be empty"
     if prompt.purpose == "new-pr" and parse_pr_number(prompt.text) is None:
         return "PR number must be a positive whole number"
+    if (
+        prompt.require_suggestion
+        and prompt.suggestions
+        and prompt.text.strip() not in prompt.suggestions
+    ):
+        return f"'{prompt.text.strip()}' is not one of the listed branches"
     return None
 
 
@@ -116,26 +182,53 @@ def handle_prompt_key(prompt: TextPrompt, data: bytes) -> tuple[TextPrompt, Prom
     Esc, Ctrl-C and EOF cancel *the prompt* — the caller decides where that
     lands (never out of the dashboard). Arrow keys arrive as ``ESC [ …`` and
     are non-printable, so they are ignored rather than typed.
+    With suggestions, ↑/↓ (either cursor-key encoding) move the highlight and Tab completes;
+    any edit drops the highlight.
     """
     if data in (b"\x1b", b"\x03", b""):
         return prompt, "cancel"
+    if prompt.suggestions:
+        moved = _suggestion_key(prompt, data)
+        if moved is not None:
+            return moved, "editing"
     if data in (b"\r", b"\n"):
+        chosen = highlighted(prompt)
+        if chosen is not None:
+            prompt = replace(prompt, text=chosen, highlight=None)
         error = validate_answer(prompt)
         if error is not None:
             return replace(prompt, error=error), "editing"
         return prompt, "submit"
     if data in (b"\x7f", b"\x08"):
         if prompt.pending_utf8:
-            return replace(prompt, pending_utf8=b"", error=None), "editing"
-        return replace(prompt, text=prompt.text[:-1], error=None), "editing"
+            return replace(prompt, pending_utf8=b"", highlight=None, error=None), "editing"
+        return replace(prompt, text=prompt.text[:-1], highlight=None, error=None), "editing"
     appended, pending = decode_input(prompt.pending_utf8, data)
     if not appended:
-        return replace(prompt, pending_utf8=pending), "editing"
-    return replace(prompt, text=prompt.text + appended, pending_utf8=pending, error=None), "editing"
+        return replace(prompt, pending_utf8=pending, highlight=None), "editing"
+    return (
+        replace(
+            prompt,
+            text=prompt.text + appended,
+            pending_utf8=pending,
+            highlight=None,
+            error=None,
+        ),
+        "editing",
+    )
 
 
 def render_prompt(prompt: TextPrompt) -> RenderableType:
     lines: list[RenderableType] = [f"{escape(prompt.label)}", f"> {escape(prompt.text)}▏"]
+    if prompt.suggestions:
+        matches = filter_suggestions(prompt.suggestions, prompt.text)
+        rows = [
+            f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(m)}[/]"
+            if i == prompt.highlight
+            else f"  {escape(m)}"
+            for i, m in enumerate(matches)
+        ] or ["[dim](no matching branch)[/dim]"]
+        lines.extend(window_lines(rows, prompt.highlight or 0, SUGGESTION_ROWS))
     if prompt.error:
         lines.append(f"[red]{escape(prompt.error)}[/red]")
     return Panel(

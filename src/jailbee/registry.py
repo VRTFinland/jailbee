@@ -359,7 +359,9 @@ def _delete_mirror(incus: Incus) -> None:
     incus.delete(MIRROR_CONTAINER_NAME, force=True)
 
 
-def _create_mirror(incus: Incus, cache_dir: Path, ca_dir: Path) -> None:
+def _create_mirror(
+    incus: Incus, cache_dir: Path, ca_dir: Path, *, storage_pool: str | None = None
+) -> None:
     """Create, configure and start the mirror container. Does not provision it.
 
     Split out of ``registry_up`` because ``--recreate`` needs the same
@@ -367,7 +369,7 @@ def _create_mirror(incus: Incus, cache_dir: Path, ca_dir: Path) -> None:
     bind-mount the host-side cache and CA directories that outlive any
     single container.
     """
-    incus.init(_MIRROR_IMAGE, MIRROR_CONTAINER_NAME)
+    incus.init(_MIRROR_IMAGE, MIRROR_CONTAINER_NAME, storage_pool=storage_pool)
     incus.profile_assign(MIRROR_CONTAINER_NAME, ["default", MIRROR_PROFILE_NAME])
     incus.config_set(MIRROR_CONTAINER_NAME, "boot.autostart", "true")
     incus.config_device_add(
@@ -509,7 +511,7 @@ def registry_up(
         # captured, so Incus's own progress bar never reaches the terminal.
         # Saying how long this can take is the next best thing.
         on_step(f"creating {MIRROR_CONTAINER_NAME} from {_MIRROR_IMAGE} (first run downloads it)")
-        _create_mirror(incus, cache_dir, ca_dir)
+        _create_mirror(incus, cache_dir, ca_dir, storage_pool=gcfg.service_storage_pool)
         on_step("installing the registry proxy in the container (apt + podman, up to 10 min)")
         # A first install failing is not a recovery scenario — its apt
         # stderr is the whole diagnosis — so this propagates raw rather than

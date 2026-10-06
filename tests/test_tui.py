@@ -368,7 +368,7 @@ def test_account_picker_returns_none_when_cancelled(mocker) -> None:
 
 
 def test_choice_widths_size_the_job_column_to_the_full_label(mocker) -> None:
-    """The job column must widen for the '(worker gone)' suffix, not just the
+    """The job column must widen for the '(dead)' suffix, not just the
     bare phase — otherwise `_format_choice_title` truncates the label it's
     asked to render."""
     from jailbee import background
@@ -387,9 +387,9 @@ def test_choice_widths_size_the_job_column_to_the_full_label(mocker) -> None:
         job_kind="create",
     )
     widths = _choice_widths([c])
-    assert widths["job"] == len("cloning (worker gone)")
+    assert widths["job"] == len("cloning (dead)")
     title = _format_choice_title(c, widths)
-    assert "cloning (worker gone)" in title
+    assert "cloning (dead)" in title
 
 
 # --- checkbox() wrapper: drive a real prompt_toolkit Application via a pipe ---
@@ -489,7 +489,7 @@ def test_pick_container_label_names_the_phase_a_dead_worker_died_in(mocker):
     pick_container([ready, dead])
 
     choices = select.call_args.kwargs["choices"]
-    assert "cloning (worker gone)" in choices[1].title
+    assert "cloning (dead)" in choices[1].title
 
 
 def _plan(**overrides):

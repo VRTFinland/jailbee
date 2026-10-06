@@ -22,14 +22,24 @@ PAYLOAD = {
             "key_file": "KEYFILE",
             "effort": None,
             "tiers": {"opus": "jb-default-sol-high", "haiku": "jb-default-luna-high"},
-            "context_window": 1050000,
+            "context_window": 272000,
+            "max_context_window": 1050000,
         },
         "deep": {
             "base_url": "http://10.0.0.3:4100",
             "key_file": "KEYFILE",
             "effort": "max",
             "tiers": {"opus": "jb-default-astra"},
-            "context_window": 1050000,
+            "context_window": 272000,
+            "max_context_window": 272000,
+        },
+        # Written by a jailbee that predates `max_context_window`.
+        "old": {
+            "base_url": "http://10.0.0.3:4100",
+            "key_file": "KEYFILE",
+            "effort": None,
+            "tiers": {"opus": "jb-default-astra"},
+            "context_window": 272000,
         },
     },
 }
@@ -88,7 +98,7 @@ def test_default_profile_env(script, env):
     assert "ANTHROPIC_DEFAULT_OPUS_MODEL=jb-default-sol-high" in lines
     assert "ANTHROPIC_DEFAULT_HAIKU_MODEL=jb-default-luna-high" in lines
     assert not any(line.startswith("ANTHROPIC_DEFAULT_SONNET_MODEL=") for line in lines)
-    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS=1050000" in lines
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000" in lines
     assert "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1" in lines
     assert [line for line in lines if line.startswith("ARGV:")] == ["ARGV:-p", "ARGV:hi"]
 
@@ -336,3 +346,102 @@ def test_profile_text_plus_user_text_over_the_limit_is_refused(script, argv_env)
     _set_instructions(argv_env, "a" * 100_000)
     r = _run(script, argv_env, APPEND, "b" * 40_000)
     assert r.returncode == 2 and "128 KiB" in r.stderr
+
+
+def _window(r: subprocess.CompletedProcess[str]) -> str:
+    assert r.returncode == 0, r.stderr
+    [line] = [x for x in _lines(r.stdout) if x.startswith("CLAUDE_CODE_MAX_CONTEXT_TOKENS=")]
+    return line.split("=", 1)[1]
+
+
+@pytest.mark.parametrize(
+    ("args", "window"),
+    [
+        (["--context", "1m"], "1000000"),
+        (["--context=1m"], "1000000"),
+        (["-C", "272k"], "272000"),
+        (["-C", "500000"], "500000"),
+        (["--context", "max"], "1050000"),
+        (["--context", "default"], "272000"),
+        (["--context", "1M"], "1000000"),
+    ],
+)
+def test_context_flag_sets_the_window(script, env, args, window):
+    assert _window(_run(script, env, *args)) == window
+
+
+def test_context_flag_is_stripped_from_claude_argv(script, env):
+    r = _run(script, env, "-C", "1m", "-p", "hi", "--context=272k")
+    assert [x for x in _lines(r.stdout) if x.startswith("ARGV:")] == ["ARGV:-p", "ARGV:hi"]
+
+
+def test_the_last_context_flag_wins(script, env):
+    assert _window(_run(script, env, "-C", "272k", "-C", "1m")) == "1000000"
+
+
+def test_lowercase_c_is_claudes_continue_and_passes_through(script, argv_env):
+    assert _argv(_run(script, argv_env, "-c", "-p", "hi")) == ["-c", "-p", "hi"]
+
+
+def test_a_value_above_the_profile_ceiling_is_refused(script, env):
+    r = _run(script, env, "--profile", "deep", "-C", "1m")
+    assert r.returncode == 2 and r.stdout == ""
+    assert "272000" in r.stderr and "deep" in r.stderr
+
+
+def test_the_ceiling_itself_is_allowed(script, env):
+    assert _window(_run(script, env, "-C", "1050000")) == "1050000"
+    r = _run(script, env, "-C", "1050001")
+    assert r.returncode == 2 and r.stdout == ""
+
+
+@pytest.mark.parametrize("value", ["banana", "0", "-5", "1g", "k", "", "1 m"])
+def test_an_unparseable_context_is_refused(script, env, value):
+    r = _run(script, env, "--context", value)
+    assert r.returncode == 2 and r.stdout == ""
+    assert "--context" in r.stderr
+
+
+def test_a_context_flag_without_a_value_is_refused(script, env):
+    r = _run(script, env, "-p", "hi", "--context")
+    assert r.returncode == 2 and "--context needs a value" in r.stderr
+
+
+def test_a_profile_without_a_ceiling_allows_only_its_default(script, env):
+    assert _window(_run(script, env, "--profile", "old", "-C", "272k")) == "272000"
+    r = _run(script, env, "--profile", "old", "-C", "1m")
+    assert r.returncode == 2 and "jailbee apply" in r.stderr and r.stdout == ""
+
+
+def test_context_flag_after_double_dash_is_not_ours(script, argv_env):
+    tail = ["--", "-C", "1m"]
+    assert _argv(_run(script, argv_env, *tail)) == tail
+
+
+def test_a_larger_window_prints_a_cost_note_on_stderr(script, env):
+    r = _run(script, env, "-C", "1m")
+    assert "1000000" in r.stderr and "cost" in r.stderr
+    assert r.stderr == _run(script, env, "-C", "max").stderr.replace("1050000", "1000000")
+    assert _run(script, env, "-C", "272k").stderr == ""
+    assert _run(script, env).stderr == ""
+
+
+def test_help_prints_claude_jb_options_then_claudes_own_help(script, env):
+    r = _run(script, env, "--help")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert out.index("claude-jb") < out.index("ARGV:--help")
+    for needle in ("--profile", "--context", "-C", "codex", "deep", "272000", "1050000"):
+        assert needle in out
+    assert "(default)" in out  # the profile in use is marked
+
+
+def test_help_works_without_a_proxy_config(script, env, tmp_path):
+    r = _run(script, {**env, "JAILBEE_LITELLM_CONFIG": str(tmp_path / "absent.json")}, "-h")
+    assert r.returncode == 0, r.stderr
+    assert "--context" in r.stdout and "ARGV:-h" in r.stdout
+
+
+def test_help_after_double_dash_is_not_ours(script, env):
+    r = _run(script, env, "--", "--help")
+    assert "--context" not in r.stdout

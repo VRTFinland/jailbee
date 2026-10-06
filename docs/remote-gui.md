@@ -71,13 +71,15 @@ display, so they can wait for the RDP client in the same way. If the display
 cannot be prepared, the first failure is reported and the remaining autostart
 apps are skipped, so `jb new` waits at most once.
 
-## Native windows with waypipe (Linux)
+## Native windows with waypipe
 
 On a Linux laptop with a Wayland session and
 [waypipe](https://gitlab.freedesktop.org/mstoeckl/waypipe) installed, a
 `waypipe ssh` session carries the apps' windows to your own desktop as native
-windows. They close with the session. Choose RDP instead on macOS or Windows,
-and for windows that must survive a disconnect.
+windows. They close with the session. A Mac can do the same with the
+Cocoa-Way compositor; see
+[Using JailBee from a Mac](macos.md#4-on-the-mac-native-windows-optional).
+Choose RDP instead on Windows, and for windows that must survive a disconnect.
 
 Needs `remote.ssh.gui: true` (a waypipe session is refused without it) and a
 stock waypipe client; the SSH server needs nothing else. Open the dashboard
@@ -92,11 +94,13 @@ shows only the exit-code notice, not the launcher's message. To run one app
 directly:
 
 ```bash
-waypipe ssh -p <ssh port> jailbee@<host> --repo <prefix> chrome <container>
+waypipe ssh -p <ssh port> jailbee@<host> chrome <container> --repo <prefix>
 ```
 
 The direct command waits until the app exits, and the session ends with it.
-`--repo <prefix>` is required for it.
+`--repo <prefix>` selects a registered repo explicitly. Without it, a single
+visible repo is used automatically; several need `-t` for a picker (otherwise
+exit 2 lists them).
 
 - The direct form is for the GUI launchers (`chrome`, `firefox`, `browser`,
   `ide`, `apps run`). `exec --gui` detaches, so its window closes as soon as

@@ -369,9 +369,17 @@ class Incus:
 
     # ---- Container lifecycle ------------------------------------------------
 
-    def init(self, image: str, name: str) -> None:
-        """Create an instance from an image without starting it."""
-        self._run(["init", image, name])
+    def init(self, image: str, name: str, *, storage_pool: str | None = None) -> None:
+        """Create an instance from an image without starting it.
+
+        `storage_pool` gives the instance its own root disk on that pool, which
+        pins it there whatever the `default` profile's root disk says later. None
+        leaves the pool to the profile.
+        """
+        args = ["init", image, name]
+        if storage_pool:
+            args += ["-s", storage_pool]
+        self._run(args)
 
     def copy(self, source: str, dest: str) -> None:
         self._run(["copy", source, dest])

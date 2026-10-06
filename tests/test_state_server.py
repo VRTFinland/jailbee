@@ -87,13 +87,81 @@ class Running:
     """A StateServer on its own event loop thread."""
 
     def __init__(self, gatherer, path, **kw):
+        self.path = path
         self.server = StateServer(gatherer, version="v1", **kw)
         self.thread = threading.Thread(
             target=lambda: asyncio.run(self.server.serve(path)), daemon=True
         )
         self.thread.start()
         track_server(self.server, self.thread)
-        wait_until(path.exists, "the server to bind")
+        wait_until(self._socket_accepts_connections, "the server to listen")
+
+    def _socket_accepts_connections(self) -> bool:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.1)
+                probe.connect(str(self.path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+        return True
+
+
+def test_running_waits_until_socket_listens(sock_path, monkeypatch):
+    listen_entered = threading.Event()
+    release_listen = threading.Event()
+    readiness_checked = threading.Event()
+    readiness_results = []
+    running_instances = []
+    startup_errors = []
+    original_listen = socket.socket.listen
+    original_wait_until = wait_until
+
+    def gated_listen(sock, backlog):
+        if sock.family == socket.AF_UNIX and sock.getsockname() == str(sock_path):
+            listen_entered.set()
+            if not release_listen.wait(timeout=10):
+                raise TimeoutError("timed out waiting to release the listen gate")
+        return original_listen(sock, backlog)
+
+    def observe_wait_until(predicate, what, timeout=5.0):
+        if what == "the server to listen":
+
+            def observed_predicate():
+                if not listen_entered.wait(timeout=5):
+                    raise AssertionError("the server never reached the listen gate")
+                result = predicate()
+                readiness_results.append(result)
+                readiness_checked.set()
+                return result
+
+            return original_wait_until(observed_predicate, what, timeout)
+        return original_wait_until(predicate, what, timeout)
+
+    def start_server():
+        try:
+            running_instances.append(Running(FakeGatherer(), sock_path))
+        except BaseException as exc:
+            startup_errors.append(exc)
+
+    monkeypatch.setattr(socket.socket, "listen", gated_listen)
+    monkeypatch.setitem(globals(), "wait_until", observe_wait_until)
+    startup = threading.Thread(target=start_server)
+    startup.start()
+    try:
+        assert listen_entered.wait(timeout=5), "the server never reached listen"
+        assert readiness_checked.wait(timeout=5), "Running never checked socket readiness"
+        assert readiness_results and not readiness_results[0], (
+            "Running accepted a bound but non-listening socket"
+        )
+    finally:
+        release_listen.set()
+        startup.join(timeout=5)
+
+    assert not startup.is_alive(), "the startup thread outlived the test"
+    assert not startup_errors, f"server startup failed: {startup_errors!r}"
+    assert len(running_instances) == 1
+    conn = Conn(sock_path)
+    assert conn.hello == Hello(PROTOCOL, "v1")
 
 
 class Conn:

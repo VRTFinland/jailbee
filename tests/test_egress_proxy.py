@@ -94,7 +94,7 @@ class Rig:
         incus.profile_exists.return_value = False
         incus.list_containers.side_effect = self._list
         incus.start.side_effect = lambda n: self._rec("start")
-        incus.init.side_effect = lambda *a: self._rec("init")
+        incus.init.side_effect = lambda *a, **kw: self._rec("init")
         incus.profile_set_yaml.side_effect = lambda *a: self._rec("profile_set_yaml")
         incus.config_device_add.side_effect = self._dev_add
         incus.exec_with_input.side_effect = self._exec_input
@@ -1068,7 +1068,7 @@ def test_sync_container_starts_the_proxy_for_an_always_on_container(make_cfg, tm
     mocker.patch.object(egress_proxy, "sync_repo_rules")
     mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
     egress_proxy.sync_container(cfg, incus, "myrepo-new", "loose")
-    up.assert_called_once_with(incus)
+    up.assert_called_once_with(incus, storage_pool=None)
 
 
 def test_sync_container_restarts_a_proxy_without_a_nic_on_the_containers_bridge(
@@ -1088,7 +1088,7 @@ def test_sync_container_restarts_a_proxy_without_a_nic_on_the_containers_bridge(
     mocker.patch.object(egress_proxy, "sync_repo_rules")
     mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
     egress_proxy.sync_container(cfg, incus, "myrepo-new", "strict")
-    up.assert_called_once_with(incus)
+    up.assert_called_once_with(incus, storage_pool=None)
 
 
 def test_sync_container_keeps_a_proxy_with_the_right_nic(make_cfg, tmp_path, mocker):
@@ -1398,3 +1398,53 @@ def test_proxy_needed(make_cfg, tmp_path, mocker, always, raws, extras, expected
     incus.list_containers.return_value = [raw]
     _patch_entries(mocker, ["plain.com"], {"myrepo-new": extras})
     assert egress_proxy.proxy_needed(cfg, incus, MagicMock()) is expected
+
+
+def test_proxy_up_creates_the_container_on_the_given_pool():
+    rig = Rig()
+    proxy_up(rig.incus, storage_pool="cow")
+    rig.incus.init.assert_called_once()
+    assert rig.incus.init.call_args.kwargs == {"storage_pool": "cow"}
+
+
+def test_proxy_up_without_a_pool_leaves_it_to_the_profile():
+    rig = Rig()
+    proxy_up(rig.incus)
+    assert rig.incus.init.call_args.kwargs == {"storage_pool": None}
+
+
+def test_proxy_up_recreate_deletes_the_existing_container_first(set_service):
+    rig = Rig(exists=True)
+    rig.incus.delete.side_effect = lambda *a, **kw: setattr(rig, "exists", False)
+
+    proxy_up(rig.incus, recreate=True)
+
+    rig.incus.delete.assert_called_once_with(PROXY_CONTAINER, force=True)
+    rig.incus.init.assert_called_once()
+    names = [c[0] for c in rig.incus.mock_calls]
+    assert names.index("delete") < names.index("init")
+
+
+def test_proxy_up_recreate_with_no_container_is_a_plain_create(set_service):
+    rig = Rig()
+    proxy_up(rig.incus, recreate=True)
+    rig.incus.delete.assert_not_called()
+    rig.incus.init.assert_called_once()
+
+
+def test_proxy_down_stops_a_running_container_and_closes_the_services_rule(mocker, set_service):
+    stop = mocker.patch("jailbee.egress_proxy.stop_container")
+    rig = Rig(exists=True)
+
+    egress_proxy.proxy_down(rig.incus)
+
+    stop.assert_called_once()
+    assert stop.call_args.args[:2] == (rig.incus, PROXY_CONTAINER)
+    rig.incus.delete.assert_not_called()
+    set_service.assert_called_once_with(rig.incus, egress_proxy.EGRESS_PROXY_LABEL, None)
+
+
+def test_proxy_down_with_no_container_changes_nothing(mocker, set_service):
+    stop = mocker.patch("jailbee.egress_proxy.stop_container")
+    egress_proxy.proxy_down(Rig().incus)
+    stop.assert_not_called()

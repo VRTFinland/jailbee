@@ -19,6 +19,18 @@ Common conventions:
 - Container names derive from branches by replacing `/` with `-`
   (`feat/foo` → `feat-foo`).
 
+## Global repository option
+
+`--repo PREFIX` runs a command in an exact registered repo (never a path)
+instead of the cwd's repo. It works before the command (`jb --repo x chrome
+feat`), inside its path (`jb net --repo x egress add pypi.org feat`) or after
+its arguments (`jb chrome feat --repo x`), but never after `--` (opaque
+payload). Only one global selector is accepted; it cannot be combined with
+`-c` / `--config`. Without it, local cwd / scratch behaviour is unchanged.
+A leaf's own `--repo` keeps its meaning after its name: `net egress add` / `rm`,
+`net refresh`, `net unregister`, `console`. Put the global selector before
+that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
+
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `display`)](#setup--host)
@@ -57,7 +69,7 @@ speculatively.
 | `jailbee base usage [--all]` | Show disk usage of golden base images: each live base image and dated archive with its size, a per-repo subtotal, a prunable figure (archives only, i.e. what `jailbee base prune` would reclaim), and a grand total across images shown. `--all` includes every registered repo, not just the current one. |
 | `jailbee doctor` | Host- and repo-level diagnostics: Incus running, bridges, `uid delegation` (the `/etc/subuid` + `/etc/subgid` lines `raw.idmap` needs — without them containers are created but stay `STOPPED`), `network <bridge> reachability` (probes each bridge's DHCP lease, DNS and egress from a running container, to tell a host firewall's three missing openings apart; silent when no container runs on that bridge), keyring limits, registry mirror, registry cache integrity (every digest-keyed cache entry hashed against its digest — minutes on a large cache, with live progress; Ctrl+C skips just that row, which then shows SKIPPED and does not fail doctor), GitHub token perms, agent setup, port forwards, the `jailbee setup` steps (`shell completions`, `agent skills (host)`), `qt dashboard (optional)` (whether PySide6 is present for `jailbee gui` — reported, never a failure, since `jailbee setup` cannot install an extra into the environment it is running from), and `upgrade actions` — whether this repo still owes a `jailbee base build` / `jailbee apply` after a jailbee upgrade. Exits non-zero if any check fails, a pending upgrade action included. Not purely read-only: the first run in a repo inserts that repo's upgrade-watermark row. |
 | `jailbee registry up [--recreate]\|down\|status\|verify [--purge]` | Control the Incus-hosted Docker registry mirror (rpardini proxy; caches all upstreams). `up` is idempotent and self-repairing: if an earlier provisioning run died partway (a network drop during `apt-get install`), it reinstalls the proxy rather than failing forever. `--recreate` deletes and rebuilds the container for damage reinstalling can't fix; the host-side cache and CA survive. `status`: `running`/`stopped`/`degraded`/`missing`. `verify` checks cached blobs/manifests against their digests and removes corrupt ones on confirmation (`--purge`: without asking) — the fix when a pull fails with `unexpected commit digest`. Host-only: the container has no `jailbee`. |
-| `jailbee display up [--recreate]\|down\|status\|attach [name]` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.gui: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. `attach` (host only) attaches the host's Wayland display to a running container, for GUI apps started from a shell; the GUI launchers do it themselves (see `gui.wayland` in `docs/config.md`). On a Linux laptop, `waypipe ssh` gives native windows instead (needs `remote.ssh.gui: true`; titles carry a `[<container>] ` prefix); see `docs/remote-gui.md`. |
+| `jailbee display up [--recreate]\|down\|status\|attach [name]` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.gui: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. `attach` (host only) attaches the host's Wayland display to a running container, for GUI apps started from a shell; the GUI launchers do it themselves (see `gui.wayland` in `docs/config.md`). On a Linux laptop or a Mac (Cocoa-Way), `waypipe ssh` gives native windows instead (needs `remote.ssh.gui: true`; titles carry a `[<container>] ` prefix); see `docs/remote-gui.md`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
 | `jailbee version` / `jailbee --version` | Print the version. |
 
@@ -70,15 +82,20 @@ security and the `claude-jb` wrapper are described in [LiteLLM](../../../litellm
 | Command | What it does |
 |---|---|
 | `jailbee litellm up [--reinstall]` | Create/repair the proxy, render the configuration, and start it — except for an account with no ChatGPT login yet, which stays stopped until `login` and a second `up`. `--reinstall` forces package installation. Requires `litellm.enabled: true` in the host's `global.yaml`. |
-| `jailbee litellm down [--purge]` | Delete the proxy container; keep its state volume (logins, settings) unless `--purge`. Run `jailbee apply` per repo afterward. |
+| `jailbee litellm down [--purge]` | Stop the proxy; the container and its state volume (logins, settings) are kept. `--purge` deletes both. Run `jailbee apply` per repo afterward. |
+| `jailbee litellm up --recreate` | Delete the proxy container and build it again (e.g. on another storage pool); the state volume is kept. |
 | `jailbee litellm status` | Show container, IP, version, and per account the service health and login presence; nonzero when absent or unhealthy. |
 | `jailbee litellm ls` | List profiles as `claude-jb` uses them (default profile, autostart, aliases, per tier route/model/effort/context window), globally and for each repo with a LiteLLM override. Read-only; allowed over remote SSH in the default commands mode, but refused when `remote.ssh.excluded_repos` is set (it lists every repo). |
 | `jailbee litellm login [ACCOUNT] [--provider chatgpt\|xai]` | Login for an account in `litellm.accounts` (`ACCOUNT` is asked for on a terminal when omitted and there is more than one; exit 2 without one — pass it): ChatGPT by device code, xAI (experimental) in the host's browser. `--provider` is optional while the account's routes need one kind. |
 | `jailbee litellm logout [ACCOUNT] [--provider chatgpt\|xai]` | Delete that account's token for the provider in the proxy's state volume (the proxy must be running). |
 | `jailbee litellm logs [ACCOUNT] [-f]` | Show the instance's last 200 journal lines; optionally follow. |
 
-In a dev container, `claude-jb [--profile NAME] [Claude Code args…]` selects
-the gateway. Plain `claude` remains native. Profile selection: flag, then
+In a dev container, `claude-jb [--profile NAME] [-C SIZE] [Claude Code args…]` selects
+the gateway. Plain `claude` remains native. `-C`/`--context SIZE` (`272k`, `1m`, a
+token count, `max`, `default`) sets the session's context window up to the profile's
+`max_context_window` ceiling (1,050,000 for the built-in codex routes) and costs more
+when larger; lowercase `-c` is Claude's `--continue`. `claude-jb --help` lists these
+options and the profiles, then Claude's help. Profile selection: flag, then
 `JAILBEE_LITELLM_PROFILE`, then `default_profile` (`codex`; the repo's
 host-local `litellm:` override may change it for that repo's containers).
 Overrides are edited on the host (`jailbee config edit --local`) and take effect
@@ -111,6 +128,8 @@ grammar is exactly:
 ssh -t -p 8022 jailbee@localhost dashboard
 ssh -t -p 8022 jailbee@localhost console [--repo PREFIX]
 ssh -p 8022 jailbee@localhost help
+ssh -p 8022 jailbee@localhost repos
+ssh -p 8022 jailbee@localhost COMMAND [ARGS...] [--repo PREFIX]
 ssh -p 8022 jailbee@localhost -- --repo PREFIX COMMAND [ARGS...]
 ```
 
@@ -118,17 +137,30 @@ The `--` is for the client: OpenSSH keeps parsing its own options after the
 destination while the next word starts with `-`, so a bare `--repo` fails with
 `unknown option -- -`.
 
-The old `shell` spelling (`remote.ssh.shell`, `default_entrypoint: shell`, `ssh … shell`, `serve --shell`) still works until 2.0.0; `jailbee config migrate --apply` renames it.
+Only the exact `ssh … shell` and `ssh … shell --repo PREFIX` forms mean the
+legacy console until 2.0.0; `ssh -t … shell NAME --repo PREFIX` runs `jb shell
+NAME` in a container. The old config/serve spellings (`remote.ssh.shell`,
+`default_entrypoint: shell`, `serve --shell`) also still work until 2.0.0;
+`jailbee config migrate --apply` renames them.
 
-A commandless login prints help listing only configured entry points and exits
+A commandless login prints help listing enabled forms and allowed command paths and exits
 zero by default. `remote.ssh.default_entrypoint` in the host's `global.yaml`
 can select `dashboard` or `console` instead (the selected entry point must be
 enabled). Explicit `help` always prints the list. `dashboard` and the
 restricted console require a PTY. One-shot commands
 do not require one at the SSH layer, though a selected JailBee command may.
-Every one-shot request starts with `--repo PREFIX`; it is an exact registered
-repository prefix, never a path, and its registered root becomes cwd. Text
-this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
+One-shot SSH execution accepts every JailBee command the remote console does,
+under the same policy and host restrictions. The global `--repo PREFIX`
+follows the placement rules above; the old `-- --repo PREFIX COMMAND` form
+still works. A prefix is exact and registered, never a path; its root becomes
+cwd. Without it, one visible repo is used automatically; with several,
+`ssh -t` shows a picker and a non-PTY call exits 2 naming the candidates.
+Command help needs no repo or picker. `repos` lists visible prefixes and roots
+(requires `exec: true`); excluded repos are unavailable to listings, pickers
+and selectors. A console line's global selector affects only that command,
+not the selected repo: use `use` to switch persistently.
+
+Text this server writes itself (help, rejections) is CRLF-terminated whenever a PTY
 was negotiated, LF otherwise; JailBee child command output is unaffected.
 
 The console either takes `--repo PREFIX`, or shows an arrow-key menu of live
@@ -151,7 +183,7 @@ confused with the JailBee command aliases below.
 Policy lives only in host-global `remote.ssh`. Defaults are
 `127.0.0.1:8022`, with dashboard, console and one-shot execution enabled,
 `commands.mode: full`, and host restrictions on. Entry-point switches are
-separate from command policy: `exec: false` disables one-shot execution only.
+separate from command policy: `exec: false` disables one-shot execution and `repos`, not console navigation.
 `commands.mode: disabled` blocks dashboard actions that run commands, while
 dashboard navigation and console-local navigation remain available. An
 allowlist names exact public leaves (`git pull`, not `git`); in restricted
@@ -335,6 +367,7 @@ use `jailbee git retarget`.
 | `--name <n>` | Override the derived container name. |
 | `--net <mode>` | Initial network mode for this container (`strict`/`loose`). |
 | `--memory <m>` / `--cpu <n>` | One-off resource overrides (else `defaults.memory`/`defaults.cpu`). |
+| `--storage <pool>` | Incus storage pool the container is created on (else `defaults.storage_pool`, else the `default` profile's pool). Exit 2 listing the pools if it does not exist. |
 | `--from-base <alias>` | Clone from a non-default golden image alias. |
 | `--credential-group <name>\|none` | Put this container in a credential group other than the repo's default (or, with `none`, no group at all), for the container's lifetime. Same effect as `jailbee account group use` run right after creation — naming the repo's *own* group creates no override, since one that repeats the repo would outrank a later `account group set`. See `jailbee account group` below. Hidden legacy alias: `--claude-group`. |
 | `--no-clone` | Bare container, no repo clone (`jailbee shell` then falls back to `$HOME`). Same as `--mount`: no target branch, so autostart comes from your checkout. |
@@ -438,8 +471,8 @@ Inspect and stop a container's **detached** autostart run — the part of
 
 `jailbee ls`'s **JOB** column renders a live detached run as
 `autostart:<stage>`. Once the supervisor has died the `autostart:` prefix
-drops — it reads the bare `<stage> (worker gone)`, the stage it was on when
-it died, not `autostart:<stage> (worker gone)`. `jailbee job log <name>
+drops — it reads the bare `<stage> (dead)`, the stage it was on when
+it died, not `autostart:<stage> (dead)`. `jailbee job log <name>
 [--follow]` prints its output — there is no separate `jailbee autostart
 log`. `jailbee net <mode> <name>` only warns while a detached run is live,
 since its own restore is compare-and-swap and therefore cannot undo a mode
@@ -840,7 +873,7 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | Command | Notes |
 |---|---|
 | `jailbee shell [NAME]` | Interactive shell, lands in `~/<container_prefix>` (the clone); falls back to `$HOME` if there's no clone. Waits if the container is being created in the background. |
-| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `repos` lists the registered repos, `use [PREFIX]` switches repo, `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
+| `jailbee console [--repo PREFIX]` | Interactive `jb[<prefix>]>` prompt on your own terminal: run jailbee commands without the prefix, with completion and history. Starts in the registered repo containing the cwd (or asks); `repos` lists the registered repos, `use [PREFIX]` switches repo; a line's global `--repo` runs only that command elsewhere without changing the selection. `dashboard` opens the dashboard, `help` lists commands, `exit` leaves. Unrestricted locally; not runnable as a one-shot over remote SSH. Bare `jailbee` on a terminal opens `default_command` (`dashboard` default, or `gui`/`console`/`help`) from `global.yaml`; off a terminal it prints help, exit 0. |
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec [NAME] -- CMD...` | Run a command as the dev user. `NAME` comes first, so the command must follow it (`jailbee exec NAME -- cmd`); both are asked for on a terminal and are required arguments for you (exit 2 otherwise). `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 

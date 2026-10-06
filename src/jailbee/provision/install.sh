@@ -167,11 +167,18 @@ args=()          # what the user passed, minus --profile
 plain=()         # the same without the append flags that are merged below
 append_parts=()  # one "t<text>" or "f<path>" per --append-system-prompt[-file], in order
 user_effort=0
+have_context=0   # --context/-C given; $context holds its raw value
+context=""
+want_help=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --) args+=("$@"); plain+=("$@"); break ;;
         --profile) [ $# -ge 2 ] && [ -n "$2" ] || die "--profile needs a name"; profile="$2"; shift 2 ;;
         --profile=*) profile="${1#--profile=}"; [ -n "$profile" ] || die "--profile needs a name"; shift ;;
+        # -C, never -c: that is Claude's own --continue and passes through.
+        --context|-C) [ $# -ge 2 ] || die "--context needs a value"; have_context=1; context="$2"; shift 2 ;;
+        --context=*) have_context=1; context="${1#--context=}"; shift ;;
+        --help|-h) want_help=1; args+=("$1"); plain+=("$1"); shift ;;
         --effort|--effort=*) user_effort=1; args+=("$1"); plain+=("$1"); shift ;;
         --append-system-prompt|--append-system-prompt-file)
             if [ $# -lt 2 ]; then args+=("$1"); plain+=("$1"); shift; continue; fi
@@ -183,6 +190,31 @@ while [ $# -gt 0 ]; do
         *) args+=("$1"); plain+=("$1"); shift ;;
     esac
 done
+
+# claude-jb's own options first, then Claude's help. Needs no proxy, key or
+# profile: the profile list is a courtesy, shown only when the config reads.
+if [ "$want_help" -eq 1 ]; then
+    cat <<'HELP'
+claude-jb: Claude Code through the jailbee LiteLLM proxy.
+Everything not listed here is passed to claude unchanged.
+
+claude-jb options:
+  --profile NAME      gateway profile (default: $JAILBEE_LITELLM_PROFILE,
+                      then the config's default profile)
+  -C, --context SIZE  context window for this session: 272k, 1m, a token
+                      count, 'max' (the profile's ceiling) or 'default'.
+                      A larger window costs more per request. (-c is
+                      Claude's --continue and is not touched.)
+  -h, --help          this text, then claude's own help
+HELP
+    if [ -r "$config" ] && jq -e . "$config" >/dev/null 2>&1; then
+        printf '\nProfiles (context window in tokens):\n'
+        jq -r '. as $c | .profiles | to_entries[]
+            | "  \(.key)\(if .key == $c.default_profile then " (default)" else "" end): window \(.value.context_window), up to \(.value.max_context_window // .value.context_window)"' "$config"
+    fi
+    printf '\n--- claude --help ---\n'
+    exec claude "${args[@]}"
+fi
 
 [ -r "$config" ] || die "no LiteLLM proxy configured for this container ($config missing). On the host: \`jailbee litellm up\`, then \`jailbee apply\` in this repo."
 jq -e . "$config" >/dev/null 2>&1 || die "cannot read $config (not valid JSON); re-run \`jailbee apply\` on the host."
@@ -201,7 +233,39 @@ unset ANTHROPIC_API_KEY ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL \
        ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
 export ANTHROPIC_BASE_URL="$(get .base_url)"
 export ANTHROPIC_AUTH_TOKEN="$key"
-export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$(get .context_window)"
+
+# The session's window: the profile's default, or --context up to the profile's
+# ceiling. A litellm.json from before `max_context_window` has no ceiling, so
+# only its default is allowed until `jailbee apply` rewrites it.
+default_window="$(get .context_window)"
+ceiling="$(get '.max_context_window // empty')"
+window="$default_window"
+if [ "$have_context" -eq 1 ]; then
+    lower="${context,,}"
+    if [ "$lower" = default ]; then
+        window="$default_window"
+    elif [ "$lower" = max ]; then
+        window="${ceiling:-$default_window}"
+    elif [[ "$lower" =~ ^([1-9][0-9]{0,11})([km]?)$ ]]; then
+        window="${BASH_REMATCH[1]}"
+        case "${BASH_REMATCH[2]}" in
+            k) window=$((window * 1000)) ;;
+            m) window=$((window * 1000000)) ;;
+        esac
+    else
+        die "--context '$context' is not a size: use 272k, 1m, a token count, max or default"
+    fi
+    if [ "$window" -gt "${ceiling:-$default_window}" ]; then
+        hint=""
+        if [ -z "$ceiling" ]; then hint=" (if this profile allows more, re-run \`jailbee apply\` on the host)"; fi
+        die "--context $context is $window tokens, above the ${ceiling:-$default_window}-token ceiling of profile '$profile'$hint"
+    fi
+    if [ "$window" -gt "$default_window" ]; then
+        printf 'claude-jb: %s-token context window (default %s); a larger window costs more per request.\n' \
+            "$window" "$default_window" >&2
+    fi
+fi
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$window"
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 for tier in fable opus sonnet haiku; do
     model="$(get ".tiers.$tier // empty")"

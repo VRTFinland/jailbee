@@ -1084,7 +1084,7 @@ Per-container defaults.
 | `memory` | string | `16GiB` | Memory limit for new containers. |
 | `cpu` | int | `8` | CPU limit for new containers. |
 | `network` | enum | `strict` | Initial network mode: `strict` \| `loose`. |
-| `storage_pool` | string | `default` | Incus storage pool for new containers. |
+| `storage_pool` | string | unset | Incus storage pool new containers are created on. Unset leaves it to the root disk of Incus's `default` profile. Pool names are per-host, so set it in `global.yaml` (or a repo's local layer), not in a committed `.jailbee/config.yaml`; `jailbee new --storage <pool>` overrides it for one container. Existing containers stay on the pool they were created on. A pool that does not exist is an error (exit 2) listing the pools that do. Set in `global.yaml`, it also decides where the host-wide helper containers (egress proxy, registry mirror, LiteLLM, shared display) are created; a repo's own value does not. See [Storage](storage.md). |
 
 ### `golden`
 
@@ -2600,7 +2600,7 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | Permit `jailbee litellm up` and dev-container proxy settings. |
-| `version` | pinned `1.103.1` | LiteLLM version. An explicit version bypasses the bundled hash lock and warns. |
+| `version` | pinned `1.104.0` | LiteLLM version. An explicit version bypasses the bundled hash lock and warns. |
 | `default_profile` | `codex` | Profile used by `claude-jb` unless overridden by its `--profile` or `JAILBEE_LITELLM_PROFILE`. |
 | `autostart` | `false` | Start the Claude autostart window with `claude-jb` instead of `claude`. A repo's host-local file can override it. See [Autostart](litellm.md#autostart). |
 | `accounts` | `[default]` | Logins (ChatGPT or xAI), one proxy instance each. The built-in `codex` profile uses `default`. |
@@ -2611,7 +2611,8 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 
 Routes accept `model` (required for new routes), `effort` (fixed),
 `min_effort` (floor; mutually exclusive with `effort`), `context_window`
-(required for unknown models, default `272000` for `gpt-6-astra` and `gpt-6.1-sol`, `1050000` for `gpt-6-luna`),
+(required for unknown models, default `272000` for `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`; a profile uses the smallest of its routes' windows),
+`max_context_window` (the most `claude-jb --context` may select; default `1050000` for those three models, otherwise `context_window`; never below it),
 `oauth` (true: use the account's xAI subscription login, only on `xai/` routes, experimental),
 `api_key` (name of a variable in `~/.config/jailbee/litellm/secrets.env`, never
 the key; not allowed on `chatgpt/` routes), `api_base` (endpoint URL; its host
@@ -2704,8 +2705,8 @@ remote:
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
 | `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
 | `console` | bool | `true` | Permit the reserved `console [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
-| `exec` | bool | `true` | Permit one-shot `--repo PREFIX COMMAND [ARGS...]` execution. This switch affects only the one-shot entry point. |
-| `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
+| `exec` | bool | `true` | Permit one-shot `COMMAND [ARGS...] [--repo PREFIX]` execution and `repos`. This switch affects only the one-shot entry point. |
+| `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
 | `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
@@ -2717,7 +2718,8 @@ remote:
 An allowlist matches the exact public command leaf, not a prefix and not its
 arguments. `git pull` permits `git pull feat-x --cleanup`; `git` is not a leaf
 and does not grant every `git ...` command. Options cannot precede the command
-path. Hidden internal commands, including `_remote-console`, are never valid
+path, except the global `--repo PREFIX` selector (see
+[Commands](commands.md#global-repository-option)). Hidden internal commands, including `_remote-console`, are never valid
 allowlist entries and are never included by `full`.
 
 A handful of hidden top-level spellings (`merge`, `fetch`, `checkout`, `pull`,

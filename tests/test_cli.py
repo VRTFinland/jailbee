@@ -4657,70 +4657,73 @@ def test_git_retarget_merge_failure_keeps_retarget_and_hints_retry(mocker, tmp_p
     assert "re-run 'jailbee git push feat-b --merge'" in result.output
 
 
-def test_git_retarget_without_base_picks_one_on_a_tty(mocker, tmp_path):
-    runner = CliRunner()
-    mock_rt = _retarget_cli_mocks(mocker, tmp_path)
+def _retarget_tty(mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    pick = mocker.patch("jailbee.cli._pick_retarget_base", return_value="develop")
+    mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "develop"])
+    mocker.patch("jailbee.cli._container_base_branch", return_value="feat/a")
 
-    result = runner.invoke(app, ["git", "retarget", "feat-b"])
+
+def test_git_retarget_without_base_asks_with_the_other_branches(mocker, tmp_path):
+    mock_rt = _retarget_cli_mocks(mocker, tmp_path)
+    _retarget_tty(mocker)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="develop")
+
+    result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])
 
     assert result.exit_code == 0, result.output
-    pick.assert_called_once()
+    ask.assert_called_once_with("base branch", None, ["main", "develop"])
     assert mock_rt.call_args.args[3] == "develop"
+
+
+def test_git_retarget_re_asks_on_a_name_that_is_not_a_host_branch(mocker, tmp_path):
+    mock_rt = _retarget_cli_mocks(mocker, tmp_path)
+    _retarget_tty(mocker)
+    mocker.patch("jailbee.prompting._ask", side_effect=["nope", "feat/a", " main "])
+
+    result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    assert "no branch 'nope' on the host" in result.output
+    assert "'feat/a' is already the base branch" in result.output
+    assert mock_rt.call_args.args[3] == "main"
+
+
+def test_git_retarget_with_no_other_branch_still_asks_for_free_text(mocker, tmp_path):
+    mock_rt = _retarget_cli_mocks(mocker, tmp_path)
+    _retarget_tty(mocker)
+    mocker.patch("jailbee.git.list_branches", return_value=["feat/a"])
+    ask = mocker.patch("jailbee.prompting._ask", return_value="release")
+
+    result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_called_once_with("base branch", None, [])
+    assert mock_rt.call_args.args[3] == "release"
 
 
 def test_git_retarget_without_base_and_no_tty_exits_1(mocker, tmp_path):
     runner = CliRunner()
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    pick = mocker.patch("jailbee.cli._pick_retarget_base")
+    ask = mocker.patch("jailbee.prompting._ask")
 
     result = runner.invoke(app, ["git", "retarget", "feat-b"])
 
     assert result.exit_code == 1
     assert "base branch" in result.output
-    pick.assert_not_called()
+    ask.assert_not_called()
     mock_rt.assert_not_called()
 
 
-def test_git_retarget_cancelled_pick_changes_nothing(mocker, tmp_path):
-    runner = CliRunner()
+def test_git_retarget_cancelled_ask_changes_nothing(mocker, tmp_path):
     mock_rt = _retarget_cli_mocks(mocker, tmp_path)
-    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.cli._pick_retarget_base", return_value=None)
+    _retarget_tty(mocker)
+    mocker.patch("jailbee.prompting._ask", return_value=None)
 
-    result = runner.invoke(app, ["git", "retarget", "feat-b"])
+    result = CliRunner().invoke(app, ["git", "retarget", "feat-b"])
 
     assert result.exit_code != 0
     mock_rt.assert_not_called()
-
-
-def test_pick_retarget_base_offers_host_branches_except_current_base(mocker, tmp_path):
-    from jailbee.cli import _pick_retarget_base
-
-    cfg = mocker.MagicMock()
-    cfg.repo_root = tmp_path
-    mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "develop"])
-    select = mocker.patch("questionary.select")
-    select.return_value.ask.return_value = "develop"
-
-    assert _pick_retarget_base(cfg, current_base="feat/a") == "develop"
-
-    offered = [c.value for c in select.call_args.kwargs["choices"]]
-    assert offered == ["main", "develop"]
-
-
-def test_pick_retarget_base_with_no_candidates_returns_none(mocker, tmp_path):
-    from jailbee.cli import _pick_retarget_base
-
-    cfg = mocker.MagicMock()
-    cfg.repo_root = tmp_path
-    mocker.patch("jailbee.git.list_branches", return_value=["feat/a"])
-    select = mocker.patch("questionary.select")
-
-    assert _pick_retarget_base(cfg, current_base="feat/a") is None
-    select.assert_not_called()
 
 
 def test_git_retarget_sync_error_exits_1(mocker, tmp_path):
@@ -8267,7 +8270,7 @@ def test_ls_shows_job_column_when_job_present(make_cfg, tmp_path, monkeypatch, m
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
     # PID 4242 is synthetic; force the liveness probe to report alive so the
-    # JOB column renders the bare phase rather than "cloning (worker gone)".
+    # JOB column renders the bare phase rather than "cloning (dead)".
     mocker.patch("jailbee.background.worker_alive", return_value=True)
 
     from jailbee.lifecycle import ContainerInfo

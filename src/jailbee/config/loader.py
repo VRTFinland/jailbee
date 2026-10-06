@@ -23,6 +23,7 @@ from jailbee.config.common import (
     deep_merge,
     merge_apps_raw,
     normalize_credentials_key,
+    service_storage_pool_from_raw,
 )
 from jailbee.config.errors import ConfigError, ConfigNotFoundError
 from jailbee.config.legacy_pr import fold_legacy_pr_keys
@@ -824,6 +825,7 @@ def load_config_from_layers(
     creds = _credentials_from_host_raw(host_raw, default_global_config_path())
     object.__setattr__(cfg, "credential_group", creds.group_for(cfg.container_prefix, local_creds))
     cfg._agent_instructions = _agent_instructions_from_host_raw(host_raw, global_from)
+    cfg._service_storage_pool = service_storage_pool_from_raw(global_for_merge)
     cfg._litellm_view = repo_litellm_view(
         _litellm_from_host_raw(host_raw, global_from),
         cfg.container_prefix,

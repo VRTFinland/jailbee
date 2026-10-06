@@ -41,6 +41,7 @@ def test_builtin_routes_carry_spec_models_and_efforts():
         effort="high",
         min_effort=None,
         context_window=272_000,
+        max_context_window=1_050_000,
         params={},
     )
     assert (routes["sol-high"].model, routes["sol-high"].effort) == ("chatgpt/gpt-6.1-sol", "high")
@@ -120,8 +121,61 @@ def test_builtin_gpt6_context_windows():
         "astra": 272_000,
         "sol-high": 272_000,
         "sol-medium": 272_000,
-        "luna-high": 1_050_000,
+        "luna-high": 272_000,
     }
+
+
+def test_builtin_gpt6_routes_can_be_raised_to_the_api_window():
+    ceilings = {n: r.max_context_window for n, r in LiteLLMConfig().effective_routes().items()}
+    assert set(ceilings.values()) == {1_050_000}
+
+
+def test_a_route_without_a_ceiling_cannot_be_raised():
+    cfg = LiteLLMConfig.model_validate(
+        {"routes": {"t": {"model": "chatgpt/gpt-5.6-terra", "context_window": 400_000}}}
+    )
+    route = cfg.effective_routes()["t"]
+    assert (route.context_window, route.max_context_window) == (400_000, 400_000)
+
+
+def test_max_context_window_is_set_per_route():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "routes": {
+                "sol-high": {"max_context_window": 500_000},
+                "t": {
+                    "model": "openai/x",
+                    "context_window": 100_000,
+                    "max_context_window": 200_000,
+                    "api_base": "https://llm.example.com/v1",
+                },
+            }
+        }
+    )
+    routes = cfg.effective_routes()
+    assert (routes["sol-high"].context_window, routes["sol-high"].max_context_window) == (
+        272_000,
+        500_000,
+    )
+    assert routes["t"].max_context_window == 200_000
+
+
+def test_a_larger_explicit_window_lifts_the_ceiling_with_it():
+    cfg = LiteLLMConfig.model_validate({"routes": {"sol-high": {"context_window": 2_000_000}}})
+    route = cfg.effective_routes()["sol-high"]
+    assert (route.context_window, route.max_context_window) == (2_000_000, 2_000_000)
+
+
+def test_a_ceiling_below_the_default_window_is_rejected():
+    with pytest.raises(ValidationError, match=r"route 'sol-high': `max_context_window` \(100000\)"):
+        LiteLLMConfig.model_validate(
+            {"routes": {"sol-high": {"context_window": 272_000, "max_context_window": 100_000}}}
+        )
+
+
+def test_max_context_window_must_be_positive():
+    with pytest.raises(ValidationError):
+        LiteLLMConfig.model_validate({"routes": {"sol-high": {"max_context_window": 0}}})
 
 
 def test_unknown_chatgpt_model_needs_context_window():

@@ -3308,6 +3308,29 @@ def test_seed_view_state_migrates_retired_diff_with_visible_notice(mocker):
     assert shown == [notice]
 
 
+def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mocker):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_QT, ViewState, load_view_state, save_view_state
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    folded = frozenset({"p"})
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name", "ahead_diff"), folded=folded))
+
+    first: list[str] = []
+    dashboard.seed_view_state(engine, FRONTEND_QT, on_migration=first.append)
+    stored = load_view_state(engine, FRONTEND_QT)
+    assert stored.columns == ("name", "target_diff")
+    assert stored.folded == folded
+
+    second: list[str] = []
+    state = dashboard.seed_view_state(engine, FRONTEND_QT, on_migration=second.append)
+    assert len(first) == 1
+    assert second == []
+    assert state.columns == ("name", "target_diff")
+
+
 def test_dashboard_config_migration_notice_is_visible_not_debug_only(mocker):
     mocker.patch.object(
         dashboard,
@@ -3391,7 +3414,8 @@ def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(m
 
 
 def test_seed_view_state_does_not_rewrite_the_stored_row(mocker):
-    """`seed_view_state` itself never writes: filtering happens only on the
+    """`seed_view_state` never writes for an unknown name (only the retired
+    `ahead_diff` rename is persisted): filtering happens only on the
     value it returns, not on the stored row, which still has the phantom
     name right after this call.
 
@@ -4197,6 +4221,34 @@ def test_new_container_reject_note_for_prefix_names_the_orphan_repo(tmp_path):
     groups = _create_groups(tmp_path)
     note = dashboard.new_container_reject_note_for_prefix(groups, "gamma")
     assert note is not None and "gamma" in note
+
+
+@pytest.fixture(autouse=True)
+def _no_real_branch_listing(mocker):
+    """Keep the base prompt's branch listing from reaching a patched ``subprocess.run``."""
+    mocker.patch("jailbee.git.list_branches", return_value=[])
+
+
+def test_host_branches_lists_the_groups_repo_minus_the_excluded(mocker, tmp_path):
+    lb = mocker.patch("jailbee.git.list_branches", return_value=["main", "feat/a", "dev"])
+    assert dashboard.host_branches(str(tmp_path), exclude="feat/a") == ("main", "dev")
+    lb.assert_called_once_with(tmp_path)
+
+
+def test_host_branches_is_empty_without_a_repo_root(mocker):
+    lb = mocker.patch("jailbee.git.list_branches")
+    assert dashboard.host_branches(None) == ()
+    lb.assert_not_called()
+
+
+def test_retarget_argv_puts_the_names_after_the_separator():
+    assert dashboard.dact.retarget_argv("alpha-x", "main") == [
+        "git",
+        "retarget",
+        "--",
+        "alpha-x",
+        "main",
+    ]
 
 
 def test_new_container_base_default_reads_the_groups_own_repo(mocker, tmp_path):
@@ -5855,6 +5907,87 @@ def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path)
     child.assert_called_once_with(
         ["jailbee", "new", "--background", "--", "feature", "dev"], check=False, cwd=tmp_path
     )
+
+
+def _retarget_group(tmp_path):
+    info = dataclasses.replace(_ci("alpha-x", "alpha"), base_branch="feat/a")
+    return dashboard.RepoGroup("alpha", str(tmp_path), None, [info])
+
+
+def _fake_branches(_root, *, exclude=None):
+    return tuple(b for b in ("main", "feat/a", "develop") if b != exclude)
+
+
+def _text_prompts(render):
+    return [
+        c.kwargs["overlay"]
+        for c in render.call_args_list
+        if isinstance(c.kwargs.get("overlay"), dashboard.TextPrompt)
+    ]
+
+
+def test_run_retarget_asks_inline_and_runs_the_cli_with_the_base(mocker, tmp_path):
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    child.return_value.returncode = 0
+    mocker.patch.object(dashboard, "_wait_for_return")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    keys = [b"j", _ENTER, b"g", b"b", *_keys("dev"), b"\t", _ENTER]
+    assert _drive_run(mocker, keys, [group]) == 0
+
+    prompts = _text_prompts(render)
+    assert prompts[0].purpose == "container-retarget"
+    assert prompts[0].suggestions == ("main", "develop")  # current base left out
+    assert prompts[0].require_suggestion is True
+    assert "feat/a" in prompts[0].title
+    child.assert_called_once()
+    assert child.call_args.args[0] == ["jailbee", "git", "retarget", "--", "alpha-x", "develop"]
+
+
+def test_run_retarget_refuses_an_unknown_branch_inline(mocker, tmp_path):
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"g", b"b", *_keys("nope"), _ENTER], [group])
+
+    child.assert_not_called()
+    assert any(p.error == "'nope' is not one of the listed branches" for p in _text_prompts(render))
+
+
+def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path):
+    """No prompt opens when the pre-checks (SSH policy, availability) refuse the verb."""
+    group = _retarget_group(tmp_path)
+    child = mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    mocker.patch.object(
+        dashboard, "check_dashboard_command", side_effect=dashboard.RouteError("refused by policy")
+    )
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"j", _ENTER, b"g", b"b", _ESC], [group])
+
+    assert _text_prompts(render) == []
+    child.assert_not_called()
+    assert any("refused by policy" in str(c.kwargs.get("notice")) for c in render.call_args_list)
+
+
+def test_run_new_base_prompt_offers_the_host_branches(mocker, tmp_path):
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
+    mocker.patch.object(dashboard.subprocess, "run")
+    mocker.patch.object(dashboard, "new_container_base_default", return_value="main")
+    mocker.patch.object(dashboard, "host_branches", side_effect=_fake_branches)
+    render = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    _drive_run(mocker, [b"n", *_keys("feature"), _ENTER], [group])
+
+    base = [p for p in _text_prompts(render) if p.purpose == "new-base"]
+    assert base and base[-1].suggestions == ("main", "feat/a", "develop")
+    assert base[-1].require_suggestion is False
+    assert base[-1].text == "main"
 
 
 def _sigint_reader(sequence: list[bytes | type[BaseException]]):
@@ -9502,7 +9635,7 @@ def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
     assert run_cli.call_args.kwargs["style"] == "paged"
 
 
-def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
+def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
     child = mocker.patch.object(dashboard.subprocess, "run")
@@ -9526,7 +9659,6 @@ def test_outbox_publish_runs_in_the_terminal_after_a_yes(mocker, tmp_path):
             "apply",
             "alpha-x",
             "pr/a.json",
-            "--yes",
             "--revision",
             "r1",
             "--config",
@@ -10567,3 +10699,55 @@ def test_present_drops_groups_the_scope_excludes():
     groups = [_group("alpha", "/a"), _group("secret", "/s"), _group("gamma")]
     shown = dashboard.present(groups, None, RemoteRepoScope(frozenset({"secret"})))
     assert [g.prefix for g in shown] == ["alpha", "gamma"]
+
+
+def _data_line(frame: RenderableType, marker: str) -> str:
+    return next(line for line in _render_text(frame).splitlines() if marker in line)
+
+
+def test_live_cpu_value_growing_does_not_shift_later_columns(tmp_path):
+    """CPU 9% → 100% stays inside the column's reserve: the columns after
+    it keep their positions between refreshes."""
+
+    def frame(percent: float) -> RenderableType:
+        from jailbee.procstat import ProcessActivity
+
+        c = dataclasses.replace(
+            _ci("alpha-one", "alpha"),
+            cpu_percent=percent,
+            cpu_limit="16",
+            activity=(ProcessActivity(comm="pytest", percent=percent, count=1),),
+        )
+        return dashboard.render(
+            [dashboard.RepoGroup("alpha", str(tmp_path), None, [c])],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            git_enabled=False,
+            enabled=("name", "cpu", "doing"),
+        )
+
+    low, high = _data_line(frame(9), "pytest"), _data_line(frame(100), "pytest")
+    assert "9%·16" in low and "100%·16" in high
+    assert low.index("pytest") == high.index("pytest")
+
+
+def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
+    from jailbee.procstat import ProcessActivity
+
+    long_name = "x" * 60
+    c = dataclasses.replace(
+        _ci("alpha-one", "alpha"),
+        activity=(ProcessActivity(comm=long_name, percent=50.0, count=1),),
+    )
+    out = _render_text(
+        dashboard.render(
+            [dashboard.RepoGroup("alpha", str(tmp_path), None, [c])],
+            selected=None,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            git_enabled=False,
+            enabled=("name", "doing", "network"),
+        )
+    )
+    row = [line for line in out.splitlines() if "strict" in line]
+    assert len(row) == 1
+    assert long_name not in row[0] and "…" in row[0]

@@ -539,6 +539,13 @@ def _resolve_config_path(path: Path | None) -> Path:
     short on purpose, and every entry on it carries the guard.
     """
     if path is not None:
+        from jailbee import repo_option
+
+        try:
+            repo_option.check_config_selection(path)
+        except repo_option.RepoOptionError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
         return path
     return find_repo_config()
 
@@ -877,6 +884,23 @@ def main(
             help="Show the jailbee version and exit.",
         ),
     ] = False,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            metavar="PREFIX",
+            help="Run in this registered repository instead of the current directory's "
+            "(may also follow the command).",
+        ),
+    ] = None,
+    pick_repo: Annotated[
+        bool,
+        typer.Option(
+            "--pick-repo",
+            hidden=True,
+            help="Internal: pick the repository, set only by `jb remote ssh serve`.",
+        ),
+    ] = False,
 ) -> None:
     # No docstring: `help=` on the Typer() above is the command's help text,
     # and a docstring here would silently replace it.
@@ -887,6 +911,15 @@ def main(
     except RepoScopeError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
+
+    if (repo is not None or pick_repo) and not ctx.resilient_parsing:
+        from jailbee import repo_option
+
+        try:
+            ctx.meta[repo_option.CTX_KEY] = repo_option.enter_repo(repo, pick=pick_repo)
+        except repo_option.RepoOptionError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
 
     if ctx.invoked_subcommand is not None or ctx.resilient_parsing:
         return
@@ -1969,6 +2002,17 @@ def new_cmd(
             help="CPU core limit for the container. Overrides `defaults.cpu`.",
         ),
     ] = None,
+    storage: Annotated[
+        str | None,
+        typer.Option(
+            "--storage",
+            help=(
+                "Incus storage pool to create the container on. Overrides "
+                "`defaults.storage_pool`; with neither, the `default` profile's "
+                "root pool is used. Existing containers stay where they are."
+            ),
+        ),
+    ] = None,
     from_base: Annotated[
         str | None,
         typer.Option(
@@ -2462,6 +2506,15 @@ def new_cmd(
 
     net_mode = network or cfg.defaults.network
 
+    storage_pool = storage or cfg.defaults.storage_pool
+    from jailbee.lifecycle import check_storage_pool
+
+    try:
+        check_storage_pool(incus, storage_pool)
+    except ValueError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+
     mirror_endpoint: tuple[str, int] | None = None
     mirror_ca_path: Path | None = None
     if mirror_wanted(cfg, gcfg):
@@ -2560,6 +2613,7 @@ def new_cmd(
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
+            storage_pool=storage_pool,
         )
     else:
         opts = NewContainerOptions(
@@ -2584,6 +2638,7 @@ def new_cmd(
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
+            storage_pool=storage_pool,
         )
 
     # The shared scratch base image is built once per host, not per directory.
@@ -5679,28 +5734,6 @@ app.command(
 )(pull)
 
 
-def _pick_retarget_base(cfg: "Config", *, current_base: str | None) -> str | None:
-    """Open a questionary.select for the new base branch.
-
-    Offers the host's local branches except the container's current base.
-    Returns the branch, or None when the user cancels or there is nothing to
-    choose from.
-    """
-    import questionary
-
-    from jailbee.git import list_branches
-
-    candidates = [b for b in list_branches(cfg.repo_root) if b != current_base]
-    if not candidates:
-        error("No other local branch on the host to retarget onto.")
-        return None
-    result = questionary.select(
-        "Retarget onto which host branch?",
-        choices=[questionary.Choice(title=b, value=b) for b in candidates],
-    ).ask()
-    return None if result is None else str(result)
-
-
 @git_app.command("retarget")
 def retarget(
     name: ContainerArg = None,
@@ -5748,9 +5781,23 @@ def retarget(
                 "No base branch given and no TTY to ask on. Usage: jailbee git retarget NAME BASE"
             )
             raise typer.Exit(1)
-        new_base = _pick_retarget_base(cfg, current_base=_container_base_branch(incus, full))
-        if new_base is None:
-            raise typer.Abort()
+        current = _container_base_branch(incus, full)
+        candidates = [b for b in git_helpers.list_branches(cfg.repo_root) if b != current]
+
+        def _base_problem(text: str) -> str | None:
+            text = text.strip()
+            if not text:
+                return "enter a branch name"
+            if text == current:
+                return f"'{text}' is already the base branch"
+            if candidates and text not in candidates:
+                return f"no branch '{text}' on the host"
+            return None
+
+        # Ctrl-C / Esc raises prompting.Cancelled, which Typer reports (exit 1).
+        new_base = prompting.ask_text(
+            "base branch", validate=_base_problem, completions=candidates
+        ).strip()
 
     try:
         result = sync.retarget_container(cfg, incus, short, new_base)
@@ -9256,7 +9303,9 @@ def egress_add_cmd(
             error_plain(str(exc))
             raise typer.Exit(1) from exc
         added = f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}."
-        if is_wildcard_entry(entry) and not egress_proxy.proxy_up_or_warn(incus):
+        if is_wildcard_entry(entry) and not egress_proxy.proxy_up_or_warn(
+            incus, storage_pool=cfg.service_storage_pool()
+        ):
             error(f"{added} It is not reachable until the egress proxy runs: run `jailbee apply`.")
             raise typer.Exit(1)
         success(f"{added} Run `jailbee apply` to push it.")
@@ -9295,7 +9344,7 @@ def egress_add_cmd(
     proxy_ok = True
     if is_wildcard_entry(entry):
         # Squid first, so the sync finds an endpoint to point the environment at.
-        proxy_ok = egress_proxy.proxy_up_or_warn(incus)
+        proxy_ok = egress_proxy.proxy_up_or_warn(incus, storage_pool=cfg.service_storage_pool())
     env_changed = egress_proxy.sync_container(cfg, incus, container, mode)
     if not proxy_ok:
         error(
@@ -11018,6 +11067,70 @@ def _mirror_endpoint_or_none(cfg: "Config", incus: "IncusType") -> tuple[str, in
         return None
 
 
+egress_proxy_app = typer.Typer(
+    name="proxy",
+    help=(
+        "The shared Squid egress proxy that serves wildcard allowlist entries and "
+        "the work network. `jailbee apply` and `egress add` start it when a repo "
+        "needs it; these commands run it by hand."
+    ),
+    no_args_is_help=True,
+)
+egress_app.add_typer(egress_proxy_app)
+
+
+@egress_proxy_app.command("up")
+def egress_proxy_up_cmd(
+    recreate: Annotated[
+        bool,
+        typer.Option(
+            "--recreate",
+            help="Delete the proxy container and create it again, e.g. on another storage pool.",
+        ),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Start the egress proxy container; repairs it in place."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus, IncusError
+    from jailbee.tui import status_with_elapsed
+
+    cfg = _load_or_exit(config)
+    try:
+        with status_with_elapsed("starting the egress proxy") as status:
+            egress_proxy.proxy_up(
+                Incus(),
+                storage_pool=cfg.service_storage_pool(),
+                recreate=recreate,
+                on_step=status.update,
+            )
+    except (IncusError, RuntimeError, ValueError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success("Egress proxy running")
+
+
+@egress_proxy_app.command("down")
+def egress_proxy_down_cmd(config: ConfigOption = None) -> None:
+    """Stop the egress proxy; the container persists. Containers lose its allowance meanwhile."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus
+
+    _load_or_exit(config)
+    egress_proxy.proxy_down(Incus())
+    success("Egress proxy stopped")
+
+
+@egress_proxy_app.command("status")
+def egress_proxy_status_cmd(config: ConfigOption = None) -> None:
+    """Show the egress proxy's state."""
+    from jailbee import egress_proxy
+    from jailbee.incus import Incus
+
+    _load_or_exit(config)
+    info(f"Egress proxy: {egress_proxy.proxy_status(Incus()).value}")
+
+
 registry_app = typer.Typer(
     name="registry",
     help="Docker registry mirror control.",
@@ -11131,7 +11244,12 @@ def display_up_cmd(
     gcfg = _load_global()
     try:
         with status_with_elapsed("starting the shared display") as status:
-            display_up(Incus(), recreate=recreate, on_step=status.update)
+            display_up(
+                Incus(),
+                recreate=recreate,
+                storage_pool=gcfg.service_storage_pool,
+                on_step=status.update,
+            )
     except (IncusError, DisplayError) as e:
         error(str(e))
         raise typer.Exit(1) from e
@@ -11295,6 +11413,13 @@ def litellm_up_cmd(
     reinstall: Annotated[
         bool, typer.Option("--reinstall", help="Reinstall LiteLLM in the container.")
     ] = False,
+    recreate: Annotated[
+        bool,
+        typer.Option(
+            "--recreate",
+            help="Delete the container and create it again; the state volume (logins) is kept.",
+        ),
+    ] = False,
 ) -> None:
     """Create or repair the LiteLLM container and start the proxy."""
     from jailbee import litellm as ll
@@ -11306,7 +11431,9 @@ def litellm_up_cmd(
         warn(f"litellm.version={gcfg.litellm.version} bypasses jailbee's hash-locked install.")
     try:
         with status_with_elapsed("starting the LiteLLM proxy") as status:
-            result = ll.litellm_up(incus, gcfg, reinstall=reinstall, on_step=status.update)
+            result = ll.litellm_up(
+                incus, gcfg, reinstall=reinstall, recreate=recreate, on_step=status.update
+            )
     except (ValueError, RuntimeError, IncusError) as exc:
         error(str(exc))
         raise typer.Exit(1) from exc
@@ -11357,12 +11484,13 @@ def litellm_down_cmd(
         typer.Option(
             "--purge",
             help=(
-                "Also delete the state volume: every login, the rendered configs and their secrets."
+                "Delete the container too, and the state volume: every login, the "
+                "rendered configs and their secrets."
             ),
         ),
     ] = False,
 ) -> None:
-    """Remove the proxy container; its state volume (logins, settings) is kept."""
+    """Stop the proxy; the container and its state volume (logins, settings) are kept."""
     from jailbee import litellm as ll
     from jailbee.incus import IncusError
 
@@ -11375,7 +11503,7 @@ def litellm_down_cmd(
     if purge:
         success("LiteLLM proxy and its state volume removed; logins are gone.")
     else:
-        success("LiteLLM proxy removed; logins and settings are kept.")
+        success("LiteLLM proxy stopped; logins and settings are kept.")
 
 
 @litellm_app.command("status")

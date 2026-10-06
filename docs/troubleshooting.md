@@ -178,9 +178,9 @@ or it clearly didn't.
 
 1. **`jailbee ls`'s JOB column.** `autostart:<stage>` means a detached
    supervisor is on that stage right now. Once the supervisor has died, the
-   `autostart:` prefix drops and it reads just `<stage> (worker gone)` —
+   `autostart:` prefix drops and it reads just `<stage> (dead)` —
    the bare stage name it was on when it died, not `autostart:<stage>
-   (worker gone)`.
+   (dead)`.
 2. **`jailbee autostart status [<name>]`.** One row per step, grouped by
    stage. A step shown as `running` under a live worker is genuinely in
    flight; the same state under a dead one is rendered `interrupted` — it
@@ -188,7 +188,7 @@ or it clearly didn't.
    aborted step through the normal finish path.
 3. **`jailbee job log [<name>] [--follow]`.** The supervisor's own output —
    there is no separate `jailbee autostart log`.
-4. **`(worker gone)`** always means the supervisor process is dead, however
+4. **`(dead)`** always means the supervisor process is dead, however
    the run ended. `jailbee job clear <name>` acknowledges the record
    without touching the container, which is left exactly as the run left
    it (network mode, mounts, whatever steps did finish).
