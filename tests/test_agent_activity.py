@@ -272,9 +272,10 @@ def test_all_live_sessions_stay_cached_and_missing_transcripts_are_retried(
     monkeypatch.setattr(adapter, "locate_activity", locate)
     reader = aa.ActivityReader()
     lookup = _lookup(reader)
-    live = [replace(_session(sid), pid=pid, proc_start=pid) for pid, sid in enumerate(
-        ("a", "b", "missing"), start=10
-    )]
+    live = [
+        replace(_session(sid), pid=pid, proc_start=pid)
+        for pid, sid in enumerate(("a", "b", "missing"), start=10)
+    ]
 
     def tick(sessions: list[AgentSession]) -> None:
         reader.begin()
@@ -289,6 +290,8 @@ def test_all_live_sessions_stay_cached_and_missing_transcripts_are_retried(
     assert reader.cached == 2
     tick(live[1:])
     assert reader.cached == 1  # only the dead session is evicted
-    monkeypatch.setattr(adapter, "locate_activity", lambda home, session: ActivityPaths(home / "t", home))
+    monkeypatch.setattr(
+        adapter, "locate_activity", lambda home, session: ActivityPaths(home / "t", home)
+    )
     tick(live[1:])
     assert reader.cached == 2  # the missing transcript is retried without a new session

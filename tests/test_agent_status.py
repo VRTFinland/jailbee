@@ -321,7 +321,9 @@ def test_a_session_without_a_transcript_does_not_hide_the_one_with():
 
 def test_the_most_recently_written_transcript_wins_regardless_of_state_or_rank():
     def lookup(container, session, host_pid):
-        return AgentActivity(f"pid{session.pid}", None, modified={10: 100.0, 11: 200.0}[session.pid])
+        return AgentActivity(
+            f"pid{session.pid}", None, modified={10: 100.0, 11: 200.0}[session.pid]
+        )
 
     out = agent_status.match_sessions(
         {"a": [_s(10, 500, "waiting"), _s(11, 600, "idle")]},
@@ -341,7 +343,12 @@ def test_the_activity_carries_its_own_sessions_state_and_since():
         return AgentActivity("t", None, modified=1.0) if session.pid == 11 else None
 
     (summary,) = agent_status.match_sessions(
-        {"a": [_s(10, 500, "waiting", since=T0), _s(11, 600, "idle", since=T0 - timedelta(hours=2))]},
+        {
+            "a": [
+                _s(10, 500, "waiting", since=T0),
+                _s(11, 600, "idle", since=T0 - timedelta(hours=2)),
+            ]
+        },
         {"a": {1010: 500, 1111: 600}},
         {1010: 10, 1111: 11}.get,
         lookup,

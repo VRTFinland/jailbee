@@ -9626,7 +9626,9 @@ def test_annotate_agent_status_hands_the_lookup_to_the_match(mocker):
     annotate_agent_status([a], {"myrepo-a": [session]}, sampler, activity=lookup)
 
     assert seen == [("myrepo-a", 1010)]
-    assert a.agent_status[0].activity == AgentActivity("Bash  ls", None, state="busy", since=_AGENT_NOW)
+    assert a.agent_status[0].activity == AgentActivity(
+        "Bash  ls", None, state="busy", since=_AGENT_NOW
+    )
 
 
 def test_agent_config_homes_is_the_shared_home_per_container_and_pooled_agent(tmp_path):
