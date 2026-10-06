@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from jailbee.accounts.models import AgentSession
+    from jailbee.accounts.models import AgentActivity, AgentSession
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,9 @@ agent wants nothing from you yet, but it is not finished either.
 
 _LATEST = datetime.max.replace(tzinfo=UTC)
 
+type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
+"""`(container, session, host pid)` → what that session is doing, or None."""
+
 
 @dataclass(frozen=True)
 class AgentSummary:
@@ -45,6 +48,7 @@ class AgentSummary:
 
     `state`, `since` and `waiting_for` belong to the most urgent session;
     `count` is how many live sessions this agent has in the container.
+    `activity` is what the most urgent session is doing, when it was asked for.
     """
 
     agent: str
@@ -52,6 +56,7 @@ class AgentSummary:
     since: datetime | None
     waiting_for: str | None
     count: int
+    activity: AgentActivity | None = None
 
 
 def _rank(session: AgentSession) -> tuple[int, bool, datetime]:
@@ -79,8 +84,14 @@ def _updated(session: AgentSession) -> int:
     return -1 if session.updated_at is None else session.updated_at
 
 
-def summarize(live: Iterable[AgentSession]) -> tuple[AgentSummary, ...]:
-    """One summary per agent, most urgent first, agent name as the tiebreak."""
+def summarize(
+    live: Iterable[AgentSession],
+    activity_for: Callable[[AgentSession], AgentActivity | None] | None = None,
+) -> tuple[AgentSummary, ...]:
+    """One summary per agent, most urgent first, agent name as the tiebreak.
+
+    `activity_for` is asked once per agent, about its most urgent session.
+    """
     by_agent: dict[str, list[AgentSession]] = {}
     for session in live:
         by_agent.setdefault(session.agent, []).append(session)
@@ -93,16 +104,30 @@ def summarize(live: Iterable[AgentSession]) -> tuple[AgentSummary, ...]:
             since=top.since,
             waiting_for=top.waiting_for,
             count=len(items),
+            activity=None if activity_for is None else activity_for(top),
         )
         ranked.append((_rank(top), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))
     return tuple(summary for _, _, summary in ranked)
 
 
+def _lookup_for(
+    container: str, host_pids: Mapping[tuple[int, int], int], activity: ActivityLookup | None
+) -> Callable[[AgentSession], AgentActivity | None] | None:
+    if activity is None:
+        return None
+
+    def lookup(session: AgentSession) -> AgentActivity | None:
+        return activity(container, session, host_pids[(session.pid, session.proc_start)])
+
+    return lookup
+
+
 def match_sessions(
     sessions: Mapping[str, Sequence[AgentSession]],
     processes: Mapping[str, Mapping[int, int]],
     nspid: Callable[[int], int | None],
+    activity: ActivityLookup | None = None,
 ) -> dict[str, tuple[AgentSummary, ...]]:
     """Container name → its live agents, most urgent first.
 
@@ -113,7 +138,9 @@ def match_sessions(
     the process has in its own namespace, and is called only for a process
     whose start time one of the container's sessions claims: about one read
     per live session, not one per process. Every container in `processes`
-    gets an entry.
+    gets an entry. `activity`, when given, is asked about each agent's most
+    urgent live session with the container name and the session's host pid;
+    it must not raise.
     """
     out: dict[str, tuple[AgentSummary, ...]] = {}
     for name, procs in processes.items():
@@ -121,6 +148,7 @@ def match_sessions(
         for session in _one_per_process(sessions.get(name, ())):
             by_start.setdefault(session.proc_start, []).append(session)
         live: dict[tuple[int, int], AgentSession] = {}
+        host_pids: dict[tuple[int, int], int] = {}
         for host_pid, start in procs.items():
             claims = by_start.get(start)
             if not claims:
@@ -129,7 +157,8 @@ def match_sessions(
             for session in claims:
                 if session.pid == inner:
                     live[(session.pid, session.proc_start)] = session
-        out[name] = summarize(live.values())
+                    host_pids[(session.pid, session.proc_start)] = host_pid
+        out[name] = summarize(live.values(), _lookup_for(name, host_pids, activity))
     return out
 
 

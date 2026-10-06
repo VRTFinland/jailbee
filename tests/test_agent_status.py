@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jailbee import agent_status
 from jailbee.accounts.adapters import base
-from jailbee.accounts.models import AgentSession
+from jailbee.accounts.models import AgentActivity, AgentSession
 
 T0 = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
 
@@ -264,3 +264,56 @@ def test_live_sessions_are_keyed_by_pid_and_start_together():
     out = _match({"a": sessions}, {"a": {1: 500, 2: 600}}, {1: 10, 2: 10})
 
     assert [s.count for s in out["a"]] == [2]
+
+
+def test_summary_has_no_activity_without_a_lookup():
+    out = _match({"a": [_s(10, 500)]}, {"a": {1010: 500}}, {1010: 10})
+
+    assert out["a"][0].activity is None
+
+
+def test_the_lookup_is_asked_once_per_agent_for_its_most_urgent_session_and_host_pid():
+    calls: list[tuple[str, int, int]] = []
+    found = AgentActivity("Bash  ls", "hi")
+
+    def lookup(container, session, host_pid):
+        calls.append((container, session.pid, host_pid))
+        return found
+
+    out = agent_status.match_sessions(
+        {"a": [_s(10, 500, "idle"), _s(11, 600, "waiting")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )
+
+    assert calls == [("a", 11, 1111)]  # the waiting one, with its own host pid
+    assert out["a"][0].activity == found
+
+
+def test_the_lookup_is_not_asked_for_a_container_with_no_live_session():
+    def lookup(container, session, host_pid):
+        raise AssertionError("no live session, nothing to look up")
+
+    out = agent_status.match_sessions(
+        {"a": [_s(10, 500)]}, {"a": {1010: 999}, "b": {}}, {1010: 10}.get, lookup
+    )
+
+    assert out == {"a": (), "b": ()}
+
+
+def test_each_agent_of_a_container_is_looked_up_separately():
+    seen: list[str] = []
+
+    def lookup(container, session, host_pid):
+        seen.append(session.agent)
+        return None
+
+    agent_status.match_sessions(
+        {"a": [_s(10, 500, agent="claude"), _s(11, 600, agent="codex")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )
+
+    assert sorted(seen) == ["claude", "codex"]

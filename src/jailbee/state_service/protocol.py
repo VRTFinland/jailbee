@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import AppMenuEntry, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
@@ -24,7 +25,7 @@ from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity
 
 # Bumped on any change a client of another version could misread.
-PROTOCOL = 1
+PROTOCOL = 2
 
 
 class ProtocolError(ValueError):
@@ -91,6 +92,7 @@ _TYPES: dict[str, type[Any]] = {name: cls for cls, name in _NAMES.items()}
 _NAMESPACE: dict[str, Any] = {
     cls.__name__: cls
     for cls in (
+        AgentActivity,
         AgentSummary,
         AppMenuEntry,
         ContainerInfo,

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import AppMenuEntry, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
@@ -92,7 +93,16 @@ def _full_snapshot() -> Snapshot:
             cpu_limit="2",
             cpu_percent=12.5,
             activity=(ProcessActivity("node", 50.0, 2),),
-            agent_status=(AgentSummary("claude", "busy", T0, "permission", 2),),
+            agent_status=(
+                AgentSummary(
+                    "claude",
+                    "busy",
+                    T0,
+                    "permission",
+                    2,
+                    AgentActivity("Bash  ls <b>", "[red]done[/red]", subagents=2, shells=1),
+                ),
+            ),
             git_status=git,
             job_phase="running",
             job_pid=77,
