@@ -19,7 +19,7 @@ import sys
 import termios
 import time
 import tty
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -1304,6 +1304,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "Actions",
         brief="accounts",
     ),
+    KeyBinding("optimize", (b"o",), "o", "optimize column widths once", "View"),
     KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
     KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View", brief="details"),
     KeyBinding(
@@ -2088,7 +2089,35 @@ _DASHBOARD_COLUMN_BUDGETS = {
 }
 
 
-def _dashboard_column_widths(fields: list[FieldSpecCI]) -> tuple[int, ...]:
+def optimize_column_widths(
+    groups: list[RepoGroup],
+    *,
+    now: datetime,
+    enabled: Sequence[str] | None = None,
+    folded: frozenset[str] = frozenset(),
+) -> dict[str, int]:
+    """Snapshot visible cell budgets, keyed by field with no row indentation."""
+    expanded = [g for g in groups if g.prefix not in folded]
+    containers = [c for g in expanded for c in g.containers]
+    fields = _select_visible_fields(now, containers, enabled, apply_conditions=False)
+    widths: dict[str, int] = {}
+    for spec in fields:
+        cells = max(
+            (Text.from_markup(c.name if spec.name == "name" and g.repo_root is None
+                              else spec.cell(c)).cell_len
+             for g in expanded for c in g.containers),
+            default=0,
+        )
+        cells = max(cells, spec.dashboard_min_width)
+        if spec.dashboard_max_width is not None:
+            cells = min(cells, spec.dashboard_max_width)
+        widths[spec.name] = max(cells, Text.from_markup(spec.header).cell_len)
+    return widths
+
+
+def _dashboard_column_widths(
+    fields: list[FieldSpecCI], overrides: Mapping[str, int] | None = None
+) -> tuple[int, ...]:
     """Choose stable per-column budgets from field metadata and headers."""
     widths: list[int] = []
     for index, field_spec in enumerate(fields):
@@ -2099,6 +2128,8 @@ def _dashboard_column_widths(fields: list[FieldSpecCI]) -> tuple[int, ...]:
         )
         if field_spec.dashboard_max_width is not None:
             cells = min(cells, field_spec.dashboard_max_width)
+        if overrides is not None and field_spec.name in overrides:
+            cells = overrides[field_spec.name]
         widths.append(cells + (2 if index == 0 else 0))
     return tuple(widths)
 
@@ -2443,6 +2474,7 @@ def render(
     hidden_by_preferences: bool = False,
     height: int | None = None,
     show_details: bool = False,
+    column_widths: Mapping[str, int] | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
 
@@ -2473,7 +2505,7 @@ def render(
     fields = _select_visible_fields(now, visible, enabled, apply_conditions=False)
 
     visible_groups = groups
-    widths = _dashboard_column_widths(fields)
+    widths = _dashboard_column_widths(fields, column_widths)
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a
@@ -3224,6 +3256,7 @@ def run(
     show_empty_repos = view_state.show_empty_repos
     hidden_repos = view_state.hidden_repos
     show_details = view_state.show_details
+    column_widths: dict[str, int] | None = None
     hide_first = tuple(global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     def now() -> datetime:
@@ -4562,6 +4595,7 @@ def run(
                         hidden_by_preferences=bool(all_groups) and not groups,
                         height=console.height,
                         show_details=show_details,
+                        column_widths=column_widths,
                     ),
                     refresh=True,
                 )
@@ -4862,6 +4896,10 @@ def run(
                     set_notice(REMOTE_CONFIG_EDIT_NOTE)
                 elif key in ("config-edit", "config-edit-global"):
                     edit_config(global_layer=key == "config-edit-global")
+                elif key == "optimize":
+                    column_widths = optimize_column_widths(
+                        groups, now=now(), enabled=enabled, folded=folded
+                    )
                 elif key == "refresh":
                     client.refresh()
                 elif key == "details":

@@ -10937,3 +10937,49 @@ def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_pat
             end = next(i for i in range(start + 1, len(lines)) if "╰" in lines[i])
             panels.append(lines[start : end + 1])
         assert len(panels[0]) == len(panels[1]) == dd.DETAILS_MAX_ROWS + 2
+
+
+def test_optimize_key_is_documented_and_parsed():
+    assert dashboard.parse_key(b"o") == "optimize"
+    out = _render_text(dashboard.render(
+        [], None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay="help"
+    ))
+    assert "optimize" in out.lower() and "width" in out.lower()
+
+
+def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    short = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    long = dataclasses.replace(short, containers=[_ci("alpha-abcdefghijklmnop", "alpha")])
+    enabled = ("name", "network")
+    widths = dashboard.optimize_column_widths([short], now=now, enabled=enabled)
+
+    def frame(group, budgets, width=200):
+        return _render_text(dashboard.render(
+            [group], None, now=now, git_enabled=False, enabled=enabled,
+            column_widths=budgets,
+        ), width=width)
+
+    before = next(line for line in frame(short, widths).splitlines() if "strict" in line)
+    after = next(line for line in frame(long, widths).splitlines() if "strict" in line)
+    assert before.index("strict") == after.index("strict")
+    assert "abcdefghijklmnop" not in after and "…" in after
+    saved = dict(widths)
+    frame(long, widths, width=24)
+    assert widths == saved
+    updated = dashboard.optimize_column_widths([long], now=now, enabled=enabled)
+    renewed = next(line for line in frame(long, updated).splitlines() if "strict" in line)
+    assert "abcdefghijklmnop" in renewed
+    assert renewed.index("strict") > after.index("strict")
+
+
+def test_optimized_widths_are_named_without_first_column_indent(tmp_path):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    widths = dashboard.optimize_column_widths([group], now=now, enabled=("name", "network"))
+    fields = dashboard.visible_fields(now, group.containers, ("name", "network"))
+    forward = dashboard._dashboard_column_widths(fields, widths)
+    reverse = dashboard._dashboard_column_widths(list(reversed(fields)), widths)
+    assert forward[0] == widths[fields[0].name] + 2
+    assert forward[1] == widths[fields[1].name]
+    assert reverse == (forward[1] + 2, forward[0] - 2)

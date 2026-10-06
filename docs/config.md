@@ -2295,15 +2295,18 @@ The two are independent on purpose: a wide Qt table and a narrow TUI is a
 supported setup. State lives in `state.sqlite`'s `view_prefs` table, one row
 per front-end — machine-written, so it stays out of your hand-edited config.
 
-Enabling a column means "show it when it has something to say": the six
-dynamic columns (`job`, `ttl`, `pr`, `mode`, `issues`, `group`) still appear only when they
-apply, and the overlay marks them so. This differs from `ls --fields`, where
-naming a column forces it on — there a name is a one-shot request, here it is
-a standing preference.
+In the Qt dashboard, enabling a conditional column means "show it when it has
+something to say"; empty dynamic columns are omitted. The terminal dashboard
+keeps enabled columns present even when their values are empty, so refreshes do
+not shift the table. `ls --fields` also forces named columns on.
 
 The terminal dashboard additionally hides low-priority columns temporarily
 when they cannot fit at readable widths. It recalculates on each redraw, so
 resizing the terminal restores them without changing the remembered selection.
+Widths use fixed budgets by default. Press `o` to optimize them once from the
+currently visible data. These session-only budgets survive refreshes and refit
+on resize without remeasuring; press `o` again to measure new values. Newly
+enabled columns use their default budgets until the next optimization.
 The built-in order starts with long/redundant fields (`full_name`,
 `git_status`, `loose_until`, `ip`, `doing`) and leaves `name` for last. To
 override the first columns to hide across all repos, set in
