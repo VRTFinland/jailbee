@@ -8,8 +8,11 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from jailbee.accounts.adapters import claude_activity as ca
-from jailbee.accounts.adapters.claude import read_session_files
+from jailbee.accounts.adapters.claude import ClaudeAdapter, read_session_files
+from jailbee.accounts.models import ActivityPaths, AgentSession
 
 SID = "569e3205-9e79-44d7-8aea-f91ebd716f8c"
 
@@ -169,3 +172,122 @@ def test_read_tail_does_not_follow_a_symlink(tmp_path: Path) -> None:
     link.symlink_to(target)
 
     assert ca.read_tail(link) is None
+
+
+def _transcript(home: Path, project: str = "-home-dev-repo", sid: str = SID) -> Path:
+    directory = home / "projects" / project
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{sid}.jsonl"
+    path.write_text(_assistant(_tool("Bash", command="ls")) + "\n", encoding="utf-8")
+    return path
+
+
+def test_locate_finds_the_transcript_in_whichever_project_holds_it(tmp_path: Path) -> None:
+    _transcript(tmp_path, "-home-dev-other", sid="00000000-0000-0000-0000-000000000000")
+    wanted = _transcript(tmp_path, "-home-dev-repo")
+
+    paths = ca.locate(tmp_path, SID)
+
+    assert paths == ActivityPaths(wanted, wanted.parent / SID / "subagents")
+
+
+@pytest.mark.parametrize(
+    "session_id",
+    [None, "", "../../etc/passwd", "/etc/passwd", f"{SID}/../x", f"{SID}\x00", SID.upper() + "z"],
+)
+def test_locate_refuses_anything_that_is_not_a_uuid(tmp_path: Path, session_id: str | None) -> None:
+    _transcript(tmp_path)
+
+    assert ca.locate(tmp_path, session_id) is None
+
+
+def test_locate_is_none_when_nothing_matches_or_projects_is_missing(tmp_path: Path) -> None:
+    assert ca.locate(tmp_path, SID) is None
+    _transcript(tmp_path, sid="00000000-0000-0000-0000-000000000000")
+    assert ca.locate(tmp_path, SID) is None
+
+
+def test_locate_skips_a_project_directory_that_is_a_symlink(tmp_path: Path) -> None:
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (real / f"{SID}.jsonl").write_text("{}\n", encoding="utf-8")
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    (projects / "-link").symlink_to(real, target_is_directory=True)
+
+    assert ca.locate(tmp_path, SID) is None
+
+
+def _subagent(directory: Path, name: str, age: float, now: float) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("{}\n", encoding="utf-8")
+    os.utime(path, (now - age, now - age))
+
+
+def test_only_recently_written_subagent_files_count(tmp_path: Path) -> None:
+    now = 1_000_000.0
+    d = tmp_path / "subagents"
+    _subagent(d, "agent-a.jsonl", 5, now)
+    _subagent(d, "agent-b.jsonl", 29, now)
+    _subagent(d, "agent-old.jsonl", 600, now)
+    _subagent(d, "agent-a.meta.json", 1, now)
+    _subagent(d, "notes.jsonl", 1, now)
+
+    assert ca.count_fresh_subagents(d, now) == 2
+
+
+def test_no_subagents_directory_means_zero_not_unknown(tmp_path: Path) -> None:
+    assert ca.count_fresh_subagents(tmp_path / "subagents", 1.0) == 0
+
+
+def test_a_subagent_symlink_is_not_counted(tmp_path: Path) -> None:
+    now = 1_000_000.0
+    d = tmp_path / "subagents"
+    d.mkdir()
+    target = tmp_path / "t.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+    os.utime(target, (now, now))
+    (d / "agent-x.jsonl").symlink_to(target)
+
+    assert ca.count_fresh_subagents(d, now) == 0
+
+
+def test_an_unreadable_subagents_directory_is_unknown(tmp_path: Path) -> None:
+    not_a_dir = tmp_path / "subagents"
+    not_a_dir.write_text("x", encoding="utf-8")
+
+    assert ca.count_fresh_subagents(not_a_dir, 1.0) is None
+
+
+def test_read_activity_combines_the_tail_and_the_subagent_count(tmp_path: Path) -> None:
+    now = 1_000_000.0
+    transcript = _transcript(tmp_path)
+    transcript.write_text(
+        _assistant(_tool("Edit", file_path="/x.py")) + "\n" + _assistant(_text("done")) + "\n",
+        encoding="utf-8",
+    )
+    paths = ActivityPaths(transcript, transcript.parent / SID / "subagents")
+    _subagent(paths.subagents, "agent-a.jsonl", 3, now)
+
+    activity = ca.read_activity(paths, now=now)
+
+    assert activity is not None
+    assert (activity.last_tool, activity.last_message) == ("Edit  /x.py", "done")
+    assert activity.subagents == 1
+    assert activity.shells is None  # not the adapter's to know
+
+
+def test_read_activity_without_a_readable_transcript_is_none(tmp_path: Path) -> None:
+    paths = ActivityPaths(tmp_path / "gone.jsonl", tmp_path / "subagents")
+
+    assert ca.read_activity(paths, now=1.0) is None
+
+
+def test_the_adapter_locates_by_the_sessions_own_id(tmp_path: Path) -> None:
+    transcript = _transcript(tmp_path)
+    session = AgentSession("claude", 10, 500, "busy", None, None, None, session_id=SID)
+
+    paths = ClaudeAdapter().locate_activity(tmp_path, session)
+
+    assert paths is not None and paths.transcript == transcript

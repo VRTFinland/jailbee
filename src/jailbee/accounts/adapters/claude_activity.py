@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
+
+from jailbee.accounts.models import ActivityPaths, AgentActivity
 
 TAIL_BYTES = 64 * 1024
 MESSAGE_CHARS = 200
@@ -25,6 +28,10 @@ with no output is missed."""
 
 PROJECTS_DIRNAME = "projects"
 SUBAGENTS_DIRNAME = "subagents"
+
+_SESSION_ID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 _TOOL_ARGS = {
     "Bash": "command",
@@ -137,3 +144,70 @@ def parse_tail(raw: bytes) -> tuple[str | None, str | None]:
                 if isinstance(text, str):
                     last_message = _one_line(text, MESSAGE_CHARS) or None
     return last_tool, last_message
+
+
+def locate(config_home: Path, session_id: str | None) -> ActivityPaths | None:
+    """Where a session's transcript and subagent files are, or None.
+
+    `session_id` came from a file the container wrote, so it is accepted only
+    as a UUID: no separator or `..` can reach the path. `projects/` is shared
+    by every container of the repo, so the transcript is found by its UUID
+    name in whichever project directory holds it; a symlinked project
+    directory is skipped.
+    """
+    if session_id is None or _SESSION_ID.fullmatch(session_id) is None:
+        return None
+    try:
+        projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())
+    except OSError:
+        return None
+    for project in projects:
+        if project.is_symlink():
+            continue
+        transcript = project / f"{session_id}.jsonl"
+        if transcript.exists():
+            return ActivityPaths(transcript, project / session_id / SUBAGENTS_DIRNAME)
+    return None
+
+
+def count_fresh_subagents(
+    directory: Path, now: float, window: float = SUBAGENT_FRESH_SECONDS
+) -> int | None:
+    """How many `agent-*.jsonl` files under `directory` changed within `window`.
+
+    A missing directory is 0 (it exists only once a subagent was started);
+    any other failure is None (unknown). Symlinks are not counted.
+    """
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return None
+    count = 0
+    for entry in entries:
+        if not (entry.name.startswith("agent-") and entry.name.endswith(".jsonl")):
+            continue
+        try:
+            info = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_mtime >= now - window:
+            count += 1
+    return count
+
+
+def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
+    """The session's activity, or None when its transcript cannot be read.
+
+    `shells` stays None: the process tree, not the transcript, knows them.
+    """
+    tail = read_tail(paths.transcript)
+    if tail is None:
+        return None
+    last_tool, last_message = parse_tail(tail)
+    return AgentActivity(
+        last_tool=last_tool,
+        last_message=last_message,
+        subagents=count_fresh_subagents(paths.subagents, now),
+    )

@@ -39,7 +39,14 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
     from pathlib import Path
 
-    from jailbee.accounts.models import AgentSession, LiveAccount, Member, Slot
+    from jailbee.accounts.models import (
+        ActivityPaths,
+        AgentActivity,
+        AgentSession,
+        LiveAccount,
+        Member,
+        Slot,
+    )
     from jailbee.config import Config
     from jailbee.incus import Incus
 
@@ -291,6 +298,30 @@ class AccountAdapter(Protocol):
         Distinct from `sessions`: "any file counts" is right for a warning and
         wrong for a status column. An agent that records no sessions returns
         `[]`.
+        """
+        ...
+
+    def locate_activity(self, config_home: Path, session: AgentSession) -> ActivityPaths | None:
+        """Where `session`'s transcript lives, under the repo's shared `config_home`.
+
+        The input to the details panel's activity lines. `session` is one of
+        the container's *own* sessions (`read_sessions`), and the answer must
+        be derived from what that session names, never from a directory
+        listing of other containers' data. The name is untrusted text:
+        refuse anything that is not what the agent itself would have
+        written. None when there is nothing to read (no transcript yet, an
+        agent that keeps none). **Never raises.**
+        """
+        ...
+
+    def read_activity(self, paths: ActivityPaths, *, now: float) -> AgentActivity | None:
+        """What the agent last did, from the files `locate_activity` found.
+
+        `now` is epoch seconds, for the agents whose liveness is judged by a
+        file's age. Reads are bounded and never follow links or block on a
+        non-regular file (the files are written from a container). `shells`
+        stays None: the caller knows the process tree. None when the files
+        cannot be read. **Never raises.**
         """
         ...
 

@@ -21,8 +21,15 @@ from typing import TYPE_CHECKING, Any
 
 from jailbee import agent_private
 from jailbee.accounts import engine
-from jailbee.accounts.adapters import base
-from jailbee.accounts.models import AgentSession, Identity, LiveAccount, slug_for
+from jailbee.accounts.adapters import base, claude_activity
+from jailbee.accounts.models import (
+    ActivityPaths,
+    AgentActivity,
+    AgentSession,
+    Identity,
+    LiveAccount,
+    slug_for,
+)
 from jailbee.claude_locks import ClaudeLockTimeoutError, config_lock
 from jailbee.config import CONTAINER_USERNAME, ConfigError
 from jailbee.tui import choose_shared_credential, success
@@ -964,6 +971,12 @@ class ClaudeAdapter:
 
     def read_sessions(self, home: Path) -> list[AgentSession]:
         return read_session_files(home)
+
+    def locate_activity(self, config_home: Path, session: AgentSession) -> ActivityPaths | None:
+        return claude_activity.locate(config_home, session.session_id)
+
+    def read_activity(self, paths: ActivityPaths, *, now: float) -> AgentActivity | None:
+        return claude_activity.read_activity(paths, now=now)
 
     def session_home(self, cfg: Config, container: str) -> Path:
         """The container's private overlay of `~/.claude` (see `agent_private`).

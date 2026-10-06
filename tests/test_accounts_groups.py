@@ -350,6 +350,12 @@ class _RecordingAdapter:
     def read_sessions(self, home):
         return []
 
+    def locate_activity(self, config_home, session):
+        return None
+
+    def read_activity(self, paths, *, now):
+        return None
+
     def session_home(self, cfg, container):
         return Path("/nonexistent") / container
 

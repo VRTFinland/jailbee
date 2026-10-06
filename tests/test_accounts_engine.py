@@ -86,6 +86,16 @@ class FakeAdapter:
     def read_sessions(self, home: Path) -> list[models.AgentSession]:
         return []
 
+    def locate_activity(
+        self, config_home: Path, session: models.AgentSession
+    ) -> models.ActivityPaths | None:
+        return None
+
+    def read_activity(
+        self, paths: models.ActivityPaths, *, now: float
+    ) -> models.AgentActivity | None:
+        return None
+
     def session_home(self, cfg: Any, container: str) -> Path:
         return Path("/nonexistent") / container
 
