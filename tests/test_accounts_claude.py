@@ -2299,6 +2299,7 @@ def test_read_sessions_parses_a_real_shaped_session_file(tmp_path: Path) -> None
             waiting_for="input needed",
             since=datetime.fromtimestamp(1790714013497 / 1000, tz=UTC),
             updated_at=1790714013498,
+            session_id="0f1e2d3c-aaaa-bbbb-cccc-000000000000",
         )
     ]
 

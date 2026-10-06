@@ -247,7 +247,9 @@ class AgentSession:
     `state` is kept raw: `waiting`, `busy` and `idle` are the values seen so
     far, and an unknown one is still worth showing. `since` is the last state
     change, tz-aware UTC. `updated_at` is milliseconds and serves only to pick
-    between two files claiming one process.
+    between two files claiming one process. `session_id` names the session's
+    transcript. It is text the container wrote: validate it before using it as
+    part of a path (`claude_activity.locate` does).
     """
 
     agent: str
@@ -257,6 +259,7 @@ class AgentSession:
     waiting_for: str | None
     since: datetime | None
     updated_at: int | None
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)

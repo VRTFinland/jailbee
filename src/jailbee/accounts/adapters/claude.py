@@ -384,6 +384,7 @@ MAX_SESSION_FILE_BYTES = 64 * 1024
 
 MAX_STATE_CHARS = 24
 MAX_WAITING_FOR_CHARS = 200
+MAX_SESSION_ID_CHARS = 64
 
 
 def _read_small_regular_file(path: Path, limit: int) -> bytes | None:
@@ -474,6 +475,12 @@ def _parse_session(raw: bytes) -> AgentSession | None:
     waiting = data.get("waitingFor")
     waiting_for = _printable(waiting, MAX_WAITING_FOR_CHARS) if isinstance(waiting, str) else ""
     updated = data.get("updatedAt")
+    raw_session_id = data.get("sessionId")
+    session_id = (
+        _printable(raw_session_id, MAX_SESSION_ID_CHARS) or None
+        if isinstance(raw_session_id, str)
+        else None
+    )
     return AgentSession(
         agent="claude",
         pid=pid,
@@ -482,6 +489,7 @@ def _parse_session(raw: bytes) -> AgentSession | None:
         waiting_for=waiting_for or None,
         since=_since(data.get("statusUpdatedAt")),
         updated_at=updated if isinstance(updated, int) and not isinstance(updated, bool) else None,
+        session_id=session_id,
     )
 
 
