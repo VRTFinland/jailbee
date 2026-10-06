@@ -263,6 +263,28 @@ class AgentSession:
 
 
 @dataclass(frozen=True)
+class AgentActivity:
+    """What one live agent session is doing, from what the agent itself wrote.
+
+    Plain text, untrusted; `None` means unknown, never rendered as 0.
+    Renderers escape before it reaches Rich or Qt HTML.
+    """
+
+    last_tool: str | None
+    last_message: str | None
+    subagents: int | None = None
+    shells: int | None = None
+
+
+@dataclass(frozen=True)
+class ActivityPaths:
+    """Paths to the agent's transcript files."""
+
+    transcript: Path
+    subagents: Path
+
+
+@dataclass(frozen=True)
 class PoolChange:
     """What one pool operation did, for the CLI to report."""
 
