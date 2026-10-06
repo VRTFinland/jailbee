@@ -1161,7 +1161,17 @@ def visible_fields(
     all_containers: list[ContainerInfo],
     enabled: Sequence[str] | None = None,
 ) -> list[FieldSpecCI]:
-    """The dashboard's visible columns, honouring each field's ``show_if``.
+    return _select_visible_fields(now, all_containers, enabled, apply_conditions=True)
+
+
+def _select_visible_fields(
+    now: datetime,
+    all_containers: list[ContainerInfo],
+    enabled: Sequence[str] | None,
+    *,
+    apply_conditions: bool,
+) -> list[FieldSpecCI]:
+    """Select enabled fields, optionally applying data-presence conditions.
 
     ``enabled`` is the front-end's enabled-name set; ``None`` means
     :func:`default_columns`. Membership decides inclusion — not
@@ -1169,13 +1179,9 @@ def visible_fields(
     be turned on here — and the field-spec list's own order decides
     rendering order, so a stored list's order is not significant.
 
-    ``show_if`` applies to every column, enabled or not. This is the
-    deliberate difference from ``jailbee ls --fields``, where naming a column
-    clears its ``show_if`` (see ``table_format.apply_column_config``): there,
-    a name is a one-shot request; here it is a standing preference, and the
-    four dynamic columns (``job``, ``ttl``, ``pr``, ``mode``) would otherwise
-    render permanently empty for anyone who enabled them. The settings UI
-    marks those rows so the pruning does not read as a bug.
+    Qt's :func:`visible_fields` applies ``show_if`` to omit empty dynamic
+    columns. The terminal renderer disables these conditions so changing
+    cell contents cannot change the column selection.
 
     Unknown names are skipped rather than rejected — a stored set can outlive
     a renamed column, and view state must not break the view.
@@ -1184,8 +1190,8 @@ def visible_fields(
     folds the loose TTL inline (e.g. ``"loose (12m)"``); that is why the
     standalone TTL column is not in the default set.
 
-    Shared by the TUI ``render`` and both Qt views, so all three show the
-    same columns for the same enabled set.
+    Shared by the terminal renderer and both Qt views; only Qt applies
+    data-presence conditions.
     """
 
     def _network_cell(c: ContainerInfo) -> str:
@@ -1199,7 +1205,8 @@ def visible_fields(
     fields = [
         f
         for f in ls_field_specs(now=now, all_repos=False)
-        if f.name in wanted and (f.show_if is None or f.show_if(all_containers))
+        if f.name in wanted
+        and (not apply_conditions or f.show_if is None or f.show_if(all_containers))
     ]
     return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
 
@@ -1941,15 +1948,14 @@ def _aligned_table(
     )
     for index, (field_spec, width) in enumerate(zip(fields, widths, strict=True)):
         title = ("  " if index == 0 else "") + field_spec.header
-        capped = field_spec.dashboard_max_width is not None
         table.add_column(
             title if show_header else "",
             justify=field_spec.justify,
             width=width,
             min_width=1,
-            # A capped column is one line by design: its overlong values end
-            # in an ellipsis (Rich's default overflow) rather than wrapping.
-            no_wrap=capped,
+            # Every row stays one line regardless of the current cell values.
+            no_wrap=True,
+            overflow="ellipsis",
         )
     return table
 
@@ -2058,33 +2064,42 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
     return TableWindow(start, stop, start, count - stop)
 
 
-def _dashboard_column_widths(
-    fields: list[FieldSpecCI], rows: list[tuple[RepoGroup, ContainerInfo]]
-) -> tuple[int, ...]:
-    """Measure visible headers and cells once for cross-repo consistency.
+_DASHBOARD_COLUMN_BUDGETS = {
+    "name": 18,
+    "mode": 5,
+    "wt": 9,
+    "ahead_count": 3,
+    "behind_count": 3,
+    "conflict": 8,
+    "pr": 6,
+    "issues": 6,
+    "full_name": 28,
+    "repo": 16,
+    "base": 20,
+    "created": 20,
+    "network": 18,
+    "loose_until": 20,
+    "ip": 15,
+    "memory_limit": 14,
+    "group": 16,
+    "git_status": 36,
+    "local_diff": 16,
+    "target_diff": 16,
+}
 
-    A field's dashboard width bounds apply to its cells, never its header:
-    the reserve keeps a live column steady across refreshes, the cap stops a
-    free-form one from crowding out the rest.
-    """
+
+def _dashboard_column_widths(fields: list[FieldSpecCI]) -> tuple[int, ...]:
+    """Choose stable per-column budgets from field metadata and headers."""
     widths: list[int] = []
     for index, field_spec in enumerate(fields):
         cells = max(
-            (
-                Text.from_markup(
-                    container.name
-                    if field_spec.name == "name" and group.repo_root is None
-                    else field_spec.cell(container)
-                ).cell_len
-                for group, container in rows
-            ),
-            default=0,
+            _DASHBOARD_COLUMN_BUDGETS.get(field_spec.name, 0),
+            field_spec.dashboard_min_width,
+            Text.from_markup(field_spec.header).cell_len,
         )
-        cells = max(cells, field_spec.dashboard_min_width)
         if field_spec.dashboard_max_width is not None:
             cells = min(cells, field_spec.dashboard_max_width)
-        measured = max(cells, Text.from_markup(field_spec.header).cell_len)
-        widths.append(measured + (2 if index == 0 else 0))
+        widths.append(cells + (2 if index == 0 else 0))
     return tuple(widths)
 
 
@@ -2271,7 +2286,7 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
             lines.append("  " + "   ".join(overlay.suggestions))
         return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
     if isinstance(overlay, SettingsState):
-        return render_settings(overlay, dynamic=dynamic_column_names())
+        return render_settings(overlay, dynamic=frozenset())
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
     if isinstance(overlay, Picker):
@@ -2362,7 +2377,7 @@ class _FrameBody:
         extras: list[RenderableType] = [] if self.notice is None else [self.notice]
         details_fit = self._details_fit_beside_menu(console, options)
         if self.max_height is None:
-            bottom = self._bottom(None, self._details_cap() if details_fit else None)
+            bottom = self._bottom(None, self._details_cap() if details_fit else None, fixed=True)
             tail: list[RenderableType] = [] if bottom is None else ["", bottom]
             if hint is not None:
                 tail.append(hint)
@@ -2391,15 +2406,9 @@ class _FrameBody:
             # A panel with fewer than two content rows says nothing: leave it out.
             details_rows = min(self._details_cap(), room)
             with_details = details_fit and details_rows >= _MIN_DETAILS_ROWS
-            # When the table overflows it is the panel that must keep its shape:
-            # a panel as tall as its content would resize the table window as
-            # the cursor moves between a repo heading and a container.
-            fixed = False
-            if with_details:
-                budget = rest - len(gap_lines) - (details_rows + _OVERLAY_BORDER_ROWS)
-                if full is None and count <= budget:
-                    full = len(lines_of(self.sections))
-                fixed = count > budget or (full or 0) > budget
+            # Keep the panel's shape when selection or live content changes,
+            # even when the table fits without scrolling.
+            fixed = with_details
             bottom = self._bottom(
                 max(room, MIN_LIST_ROWS), details_rows if with_details else None, fixed=fixed
             )
@@ -2461,11 +2470,10 @@ def render(
     """
     all_containers = [c for g in groups for c in g.containers]
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
-    fields = visible_fields(now, visible, enabled)
+    fields = _select_visible_fields(now, visible, enabled, apply_conditions=False)
 
     visible_groups = groups
-    visible_rows = [(g, c) for g in visible_groups if g.prefix not in folded for c in g.containers]
-    widths = _dashboard_column_widths(fields, visible_rows)
+    widths = _dashboard_column_widths(fields)
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a

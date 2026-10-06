@@ -260,10 +260,14 @@ class _DetailsBody:
 
     def _grid_lines(self, console: Console, options: ConsoleOptions) -> list[list[Segment]]:
         pairs = max(1, min(DETAILS_MAX_PAIRS, options.max_width // DETAILS_PAIR_WIDTH))
-        grid = Table.grid(padding=(0, 1), expand=True)
+        pair_width = options.max_width // pairs
+        label_width = min(12, max(1, pair_width // 3))
+        # Padding adds one gap after every column except the last.
+        value_width = max(1, (options.max_width - (2 * pairs - 1)) // pairs - label_width)
+        grid = Table.grid(padding=(0, 1), expand=False)
         for _ in range(pairs):
-            grid.add_column(style="bold", no_wrap=True)
-            grid.add_column(ratio=1, overflow="fold")
+            grid.add_column(width=label_width, style="bold", no_wrap=True, overflow="ellipsis")
+            grid.add_column(width=value_width, overflow="ellipsis", no_wrap=True)
         for start in range(0, len(self.items), pairs):
             chunk = self.items[start : start + pairs]
             cells: list[str] = []

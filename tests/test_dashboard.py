@@ -3013,6 +3013,77 @@ def test_visible_fields_includes_pr_when_a_container_has_one():
     assert "pr" in names
 
 
+def test_rendered_columns_do_not_follow_conditional_cell_presence():
+    now = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+    plain = dashboard.RepoGroup("alpha", "/a", None, [_ci("alpha-x", "alpha")])
+    with_pr = dataclasses.replace(
+        plain,
+        containers=[dataclasses.replace(plain.containers[0], pr_number=42)],
+    )
+    for width in (56, 80, 120):
+        rendered = [
+            _render_text(
+                dashboard.render(
+                    [group],
+                    None,
+                    now=now,
+                    git_enabled=True,
+                    enabled=("name", "pr", "state"),
+                ),
+                width=width,
+            )
+            for group in (plain, with_pr)
+        ]
+        headers = [next(line for line in text.splitlines() if "NAME" in line) for text in rendered]
+        assert headers[0] == headers[1], width
+        assert "PR" in headers[0], width
+
+
+def test_rendered_columns_do_not_reflow_when_live_text_changes():
+    now = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+    plain = dashboard.RepoGroup("alpha", "/a", None, [_ci("alpha-x", "alpha")])
+    active = dataclasses.replace(
+        plain,
+        containers=[dataclasses.replace(plain.containers[0], name="alpha-" + "x" * 36)],
+    )
+    for width in (36, 56, 80, 120):
+        rendered = [
+            _render_text(
+                dashboard.render(
+                    [group],
+                    None,
+                    now=now,
+                    git_enabled=True,
+                    enabled=("name", "state", "network", "created", "pr"),
+                ),
+                width=width,
+            )
+            for group in (plain, active)
+        ]
+        headers = [next(line for line in text.splitlines() if "NAME" in line) for text in rendered]
+        assert headers[0] == headers[1], width
+
+
+def test_budgeted_base_value_stays_on_one_row():
+    now = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+    container = _ci("alpha-x", "alpha")
+    frames = []
+    for base in ("main", "feature/long-branch (tracking)"):
+        group = dashboard.RepoGroup(
+            "alpha", "/a", None, [dataclasses.replace(container, base_branch=base)]
+        )
+        frames.append(
+            _render_text(
+                dashboard.render(
+                    [group], None, now=now, git_enabled=True, enabled=("name", "base", "state")
+                ),
+                width=80,
+            ).splitlines()
+        )
+    assert len(frames[0]) == len(frames[1])
+    assert any("…" in line and "Running" in line for line in frames[1])
+
+
 def test_visible_fields_omits_pr_when_no_container_has_one():
     from datetime import datetime
 
@@ -3530,19 +3601,17 @@ def test_render_without_height_draws_a_long_menu_whole(tmp_path):
     assert "Action 0 " in text and "Action 29" in text and "more" not in text
 
 
-def test_render_hides_job_column_until_a_job_exists(tmp_path):
+def test_render_retains_enabled_job_column_without_a_job(tmp_path):
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    # No containers have an in-flight job -> JOB column hidden.
-    # We check that the JOB header is absent from the rendered table headers.
+    # Enabled columns retain their space even when all their cells are empty.
     g_noop = dashboard.RepoGroup(
         "alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]
     )
     out = _render_text(dashboard.render([g_noop], selected=None, now=now, git_enabled=True))
-    # The header row must not contain the JOB column header.
-    # We check the header line specifically (second line of the output).
+    # Check the header, not the empty cells.
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
-    assert " JOB " not in header_line and not header_line.startswith("JOB ")
+    assert " JOB " in header_line
     # The cell value "cloning" must also be absent when no job is in flight.
     assert "cloning" not in out
 
@@ -3751,11 +3820,11 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
             git_enabled=True,
             enabled=("state", "network", "name"),
         ),
-        width=32,
+        width=36,
     )
     table_lines = [line for line in rendered.splitlines() if "Running" in line]
     assert table_lines
-    assert max(len(line) for line in table_lines) <= 32
+    assert max(len(line) for line in table_lines) <= 36
 
 
 def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
@@ -3768,9 +3837,9 @@ def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
         enabled=("name", "state", "created", "network"),
     )
 
-    narrow = _render_text(frame, width=32)
+    narrow = _render_text(frame, width=56)
     wide = _render_text(frame, width=100)
-    narrow_again = _render_text(frame, width=32)
+    narrow_again = _render_text(frame, width=56)
 
     assert "NAME" in narrow and "STATE" in narrow
     assert "CREA" not in narrow and "NETWORK" in narrow
@@ -3788,7 +3857,7 @@ def test_render_uses_configured_auto_hide_order(tmp_path):
         enabled=("name", "state", "created", "network"),
         hide_first=("state",),
     )
-    narrow = _render_text(frame, width=32)
+    narrow = _render_text(frame, width=68)
 
     assert "NAME" in narrow and "CREATED" in narrow
     assert "STATE" not in narrow
@@ -5044,7 +5113,7 @@ def test_render_marks_a_folded_group_and_hides_its_rows(tmp_path):
     # "beta-two" -> "two" is the neighbour's untouched row, distinct from
     # "alpha-one" -> "one" so the two containers cannot be confused for
     # each other in the assertion below.
-    assert "one" not in out  # folded away
+    assert " one " not in out  # folded away; do not match MODE=clone
     assert "two" in out  # its neighbour is untouched
     assert "▸" in out and "▾" in out  # collapsed and expanded markers both drawn
     assert "1 folded" in out  # the title says what is hidden
@@ -5154,9 +5223,8 @@ def test_render_counts_every_container_even_when_folded(tmp_path):
     assert "2 containers" in out
 
 
-def test_show_if_is_computed_from_visible_containers_only(tmp_path):
-    """A folded group must not keep alive a column that has nothing to say on
-    screen. The PR container is folded away, so the PR column goes with it."""
+def test_folded_groups_retain_enabled_conditional_columns(tmp_path):
+    """Folding data away must not move the remaining columns."""
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     with_pr = _ci("alpha-one", "alpha")
     with_pr.pr_number = 7
@@ -5169,7 +5237,7 @@ def test_show_if_is_computed_from_visible_containers_only(tmp_path):
     folded = _render_text(dashboard.render(groups, folded=frozenset({"alpha"}), **kwargs))
 
     assert "PR" in unfolded
-    assert "PR" not in folded
+    assert "PR" in folded
 
 
 def test_space_key_is_fold_key_and_enter_remains_bound():
@@ -10854,3 +10922,18 @@ def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
     row = [line for line in out.splitlines() if "strict" in line]
     assert len(row) == 1
     assert long_name not in row[0] and "…" in row[0]
+
+
+def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_path):
+    group = _named_rows_group(tmp_path, 2)
+    for height in (None, 40):
+        panels = []
+        for selected, title in (
+            (dashboard.Row("repo", "alpha"), "╭─ alpha"),
+            (dashboard.Row("container", "alpha-row01"), "╭─ row01"),
+        ):
+            lines = _frame([group], selected, height=height)
+            start = next(i for i, line in enumerate(lines) if title in line)
+            end = next(i for i in range(start + 1, len(lines)) if "╰" in lines[i])
+            panels.append(lines[start : end + 1])
+        assert len(panels[0]) == len(panels[1]) == dd.DETAILS_MAX_ROWS + 2

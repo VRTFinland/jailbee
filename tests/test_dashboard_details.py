@@ -309,6 +309,28 @@ def test_a_cramped_panel_cuts_the_message_first_then_the_tool_and_keeps_two_grid
     assert "busy 2m" not in " ".join(two)  # the grid keeps its two rows
 
 
+def test_sparse_and_filled_details_keep_label_and_value_columns_aligned() -> None:
+    sparse = dd.DetailsView(
+        "t",
+        (dd.DetailItem("a", "one"), dd.DetailItem("b", "two")),
+    )
+    long_text = dd.DetailsView(
+        "t",
+        (
+            dd.DetailItem("long label", "one value that needs truncation"),
+            dd.DetailItem("b", "two"),
+        ),
+    )
+    lines = [
+        _text(dd.render_details(view, 6, fixed=True), width=80).splitlines()
+        for view in (sparse, long_text)
+    ]
+
+    assert len(lines[0]) == len(lines[1]) == 8
+    assert lines[0][1].index("one") == lines[1][1].index("one")
+    assert lines[0][1].index(" b ") == lines[1][1].index(" b ")
+
+
 def test_a_panel_without_a_reservation_renders_as_before() -> None:
     old = _text(dd.render_details(dd.DetailsView("t", _view(()).items), 8), width=120)
     new = _text(dd.render_details(_view((), reserve=0), 8), width=120)
