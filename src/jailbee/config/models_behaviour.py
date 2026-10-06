@@ -266,6 +266,8 @@ class Defaults(BaseModel):
             "root disk of Incus's `default` profile. Existing containers stay on the pool "
             "they were created on. Put it in `global.yaml` (or a repo's local layer), "
             "not in a committed `.jailbee/config.yaml`: pool names are per-host. "
+            "Set in `global.yaml`, it also decides where the host-wide helper containers "
+            "(egress proxy, registry mirror, LiteLLM, display) are created. "
             "Overridable per-invocation with `jailbee new --storage`."
         ),
     )

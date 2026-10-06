@@ -9303,7 +9303,9 @@ def egress_add_cmd(
             error_plain(str(exc))
             raise typer.Exit(1) from exc
         added = f"Added repo override '{entry}' to {local_config_path(cfg.container_prefix)}."
-        if is_wildcard_entry(entry) and not egress_proxy.proxy_up_or_warn(incus):
+        if is_wildcard_entry(entry) and not egress_proxy.proxy_up_or_warn(
+            incus, storage_pool=cfg.service_storage_pool()
+        ):
             error(f"{added} It is not reachable until the egress proxy runs: run `jailbee apply`.")
             raise typer.Exit(1)
         success(f"{added} Run `jailbee apply` to push it.")
@@ -9342,7 +9344,7 @@ def egress_add_cmd(
     proxy_ok = True
     if is_wildcard_entry(entry):
         # Squid first, so the sync finds an endpoint to point the environment at.
-        proxy_ok = egress_proxy.proxy_up_or_warn(incus)
+        proxy_ok = egress_proxy.proxy_up_or_warn(incus, storage_pool=cfg.service_storage_pool())
     env_changed = egress_proxy.sync_container(cfg, incus, container, mode)
     if not proxy_ok:
         error(
@@ -11178,7 +11180,12 @@ def display_up_cmd(
     gcfg = _load_global()
     try:
         with status_with_elapsed("starting the shared display") as status:
-            display_up(Incus(), recreate=recreate, on_step=status.update)
+            display_up(
+                Incus(),
+                recreate=recreate,
+                storage_pool=gcfg.service_storage_pool,
+                on_step=status.update,
+            )
     except (IncusError, DisplayError) as e:
         error(str(e))
         raise typer.Exit(1) from e

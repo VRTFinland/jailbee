@@ -565,3 +565,25 @@ def test_a_custom_refresh_keeps_the_column_fast_path(tmp_path, mocker):
     sanitize = mocker.patch("jailbee.config.sanitize_column_blocks")
     load_global_config(path)
     sanitize.assert_not_called()
+
+
+def test_service_storage_pool_defaults_to_none(tmp_path):
+    cfg, _ = load_global_config(tmp_path / "absent.yaml")
+    assert cfg.service_storage_pool is None
+
+
+def test_service_storage_pool_reads_defaults_storage_pool(tmp_path):
+    """`defaults:` is a repo-layer key, discarded from the host-level model — the
+    pool for the host-wide service containers is lifted out of it on purpose."""
+    path = tmp_path / "global.yaml"
+    path.write_text("defaults:\n  storage_pool: cow\n")
+    cfg, _ = load_global_config(path)
+    assert cfg.service_storage_pool == "cow"
+
+
+@pytest.mark.parametrize("body", ["defaults: {}\n", "defaults:\n  storage_pool: ''\n", "ls: {}\n"])
+def test_service_storage_pool_unset_or_empty_is_none(tmp_path, body):
+    path = tmp_path / "global.yaml"
+    path.write_text(body)
+    cfg, _ = load_global_config(path)
+    assert cfg.service_storage_pool is None

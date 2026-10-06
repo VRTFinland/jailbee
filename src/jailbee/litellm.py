@@ -221,13 +221,19 @@ def _detach_state(incus: Incus) -> None:
         incus.config_device_remove(LITELLM_CONTAINER, "state")
 
 
-def _state_pool(incus: Incus) -> str:
-    """The pool of the `default` profile's root disk, where the volume lives."""
+def _profile_root_pool(incus: Incus) -> str | None:
+    """The pool of the `default` profile's root disk, or None when it names none."""
     parsed = yaml.safe_load(incus.profile_show("default")) or {}
     devices = parsed.get("devices") if isinstance(parsed, dict) else None
     root = devices.get("root") if isinstance(devices, dict) else None
     pool = root.get("pool") if isinstance(root, dict) else None
-    if not isinstance(pool, str) or not pool:
+    return pool if isinstance(pool, str) and pool else None
+
+
+def _state_pool(incus: Incus) -> str:
+    """The pool of the `default` profile's root disk, where the volume lives."""
+    pool = _profile_root_pool(incus)
+    if pool is None:
         raise RuntimeError(
             "the default Incus profile has no root disk pool, so there is nowhere to "
             "keep the LiteLLM state volume; run `jailbee init` first."
@@ -235,10 +241,21 @@ def _state_pool(incus: Incus) -> str:
     return pool
 
 
-def _ensure_state_volume(incus: Incus) -> str:
-    pool = _state_pool(incus)
-    if not incus.storage_volume_exists(pool, STATE_VOLUME):
-        incus.storage_volume_create(pool, STATE_VOLUME)
+def _ensure_state_volume(incus: Incus, storage_pool: str | None = None) -> str:
+    """The pool holding the state volume, creating the volume when it exists nowhere.
+
+    `storage_pool` (`defaults.storage_pool` in `global.yaml`) is where a new
+    volume goes. A volume that already exists is kept where it is, in the
+    configured pool or else the profile's: creating an empty one in a newly
+    configured pool would silently drop every login and key the old one holds.
+    Copy the volume to the new pool to move it (see docs/storage.md).
+    """
+    profile_pool = _profile_root_pool(incus)
+    for pool in dict.fromkeys(p for p in (storage_pool, profile_pool) if p):
+        if incus.storage_volume_exists(pool, STATE_VOLUME):
+            return pool
+    pool = storage_pool or _state_pool(incus)
+    incus.storage_volume_create(pool, STATE_VOLUME)
     return pool
 
 
@@ -619,7 +636,7 @@ def litellm_up(
 
     containers = incus.list_containers()
     _check_static_ip(incus, ip, containers)
-    pool = _ensure_state_volume(incus)
+    pool = _ensure_state_volume(incus, gcfg.service_storage_pool)
     info = next((c for c in containers if c.get("name") == LITELLM_CONTAINER), None)
     needs_install = reinstall or info is None
     if info is None:
@@ -627,7 +644,7 @@ def litellm_up(
         _set_profile(incus, ip, with_acl=True)
         on_step(f"creating {LITELLM_CONTAINER} from {_IMAGE}")
         try:
-            incus.init(_IMAGE, LITELLM_CONTAINER)
+            incus.init(_IMAGE, LITELLM_CONTAINER, storage_pool=gcfg.service_storage_pool)
             incus.profile_assign(LITELLM_CONTAINER, ["default", LITELLM_PROFILE])
             incus.start(LITELLM_CONTAINER)
         except BaseException as error:
@@ -721,9 +738,13 @@ def litellm_down(incus: Incus, *, purge: bool = False) -> None:
     if _container(incus) is not None:
         incus.delete(LITELLM_CONTAINER, force=True)
     if purge:
-        pool = _state_pool(incus)
-        if incus.storage_volume_exists(pool, STATE_VOLUME):
-            incus.storage_volume_delete(pool, STATE_VOLUME)
+        # Wherever it lives: the pool it was created in may no longer be the
+        # profile's, nor the one `defaults.storage_pool` names today.
+        listed = (str(p.get("name")) for p in incus.list_storage_pools())
+        pools = [_profile_root_pool(incus), *listed]
+        for pool in dict.fromkeys(p for p in pools if p):
+            if incus.storage_volume_exists(pool, STATE_VOLUME):
+                incus.storage_volume_delete(pool, STATE_VOLUME)
 
 
 @dataclass(frozen=True)

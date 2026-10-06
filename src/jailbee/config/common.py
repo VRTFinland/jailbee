@@ -121,6 +121,19 @@ def _split_host_keys(
     return host, config
 
 
+def service_storage_pool_from_raw(global_raw: dict[str, object]) -> str | None:
+    """`defaults.storage_pool` of a raw `global.yaml`, for the host-wide service containers.
+
+    The egress proxy, registry mirror, LiteLLM proxy and shared display belong
+    to no repo, so a repo's `defaults` cannot decide where they live; only the
+    host's own `global.yaml` can. None (unset or empty) leaves the pool to the
+    `default` profile.
+    """
+    defaults = global_raw.get("defaults")
+    pool = defaults.get("storage_pool") if isinstance(defaults, dict) else None
+    return pool if isinstance(pool, str) and pool else None
+
+
 def normalize_credentials_key(
     raw: dict[str, object],
     origin: str,

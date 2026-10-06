@@ -387,7 +387,11 @@ async def handle_process(
             # Only an allowed command gets the display provisioned.
             from jailbee.remote_display import ensure_waypipe_display
 
-            await asyncio.to_thread(ensure_waypipe_display, Incus())
+            await asyncio.to_thread(
+                ensure_waypipe_display,
+                Incus(),
+                storage_pool=global_config.service_storage_pool,
+            )
         argv = (
             sys.executable,
             "-m",

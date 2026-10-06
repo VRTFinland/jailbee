@@ -5024,3 +5024,24 @@ def test_repo_defaults_storage_pool_overrides_global_yaml(tmp_path, monkeypatch,
     monkeypatch.setattr("jailbee.global_config.default_global_config_path", lambda: global_path)
 
     assert load_config(repo / ".jailbee" / "config.yaml").defaults.storage_pool == "ssd"
+
+
+def test_service_storage_pool_ignores_a_repo_override(tmp_path, monkeypatch, mocker):
+    """The host-wide service containers take the pool from `global.yaml` alone: a repo's
+    own `defaults.storage_pool` decides its branch containers, not the proxy everyone shares."""
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="defaults:\n  storage_pool: ssd\n")
+    global_path = tmp_path / "global.yaml"
+    global_path.write_text("defaults:\n  storage_pool: cow\n")
+    monkeypatch.setattr("jailbee.global_config.default_global_config_path", lambda: global_path)
+
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+
+    assert cfg.defaults.storage_pool == "ssd"
+    assert cfg.service_storage_pool() == "cow"
+
+
+def test_service_storage_pool_is_none_when_global_yaml_sets_none(tmp_path, mocker):
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="defaults:\n  storage_pool: ssd\n")
+    assert load_config(repo / ".jailbee" / "config.yaml").service_storage_pool() is None

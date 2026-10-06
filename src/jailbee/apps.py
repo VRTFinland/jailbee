@@ -234,6 +234,7 @@ def launch_env(
             container,
             ssh_port=port,
             say=info,
+            storage_pool=cfg.service_storage_pool(),
         )
     if target == "host":
         from jailbee.runtime_mounts import ensure_host_display

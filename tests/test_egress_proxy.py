@@ -94,7 +94,7 @@ class Rig:
         incus.profile_exists.return_value = False
         incus.list_containers.side_effect = self._list
         incus.start.side_effect = lambda n: self._rec("start")
-        incus.init.side_effect = lambda *a: self._rec("init")
+        incus.init.side_effect = lambda *a, **kw: self._rec("init")
         incus.profile_set_yaml.side_effect = lambda *a: self._rec("profile_set_yaml")
         incus.config_device_add.side_effect = self._dev_add
         incus.exec_with_input.side_effect = self._exec_input
@@ -1068,7 +1068,7 @@ def test_sync_container_starts_the_proxy_for_an_always_on_container(make_cfg, tm
     mocker.patch.object(egress_proxy, "sync_repo_rules")
     mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
     egress_proxy.sync_container(cfg, incus, "myrepo-new", "loose")
-    up.assert_called_once_with(incus)
+    up.assert_called_once_with(incus, storage_pool=None)
 
 
 def test_sync_container_restarts_a_proxy_without_a_nic_on_the_containers_bridge(
@@ -1088,7 +1088,7 @@ def test_sync_container_restarts_a_proxy_without_a_nic_on_the_containers_bridge(
     mocker.patch.object(egress_proxy, "sync_repo_rules")
     mocker.patch.object(egress_proxy, "sync_container_env", return_value={})
     egress_proxy.sync_container(cfg, incus, "myrepo-new", "strict")
-    up.assert_called_once_with(incus)
+    up.assert_called_once_with(incus, storage_pool=None)
 
 
 def test_sync_container_keeps_a_proxy_with_the_right_nic(make_cfg, tmp_path, mocker):
@@ -1398,3 +1398,16 @@ def test_proxy_needed(make_cfg, tmp_path, mocker, always, raws, extras, expected
     incus.list_containers.return_value = [raw]
     _patch_entries(mocker, ["plain.com"], {"myrepo-new": extras})
     assert egress_proxy.proxy_needed(cfg, incus, MagicMock()) is expected
+
+
+def test_proxy_up_creates_the_container_on_the_given_pool():
+    rig = Rig()
+    proxy_up(rig.incus, storage_pool="cow")
+    rig.incus.init.assert_called_once()
+    assert rig.incus.init.call_args.kwargs == {"storage_pool": "cow"}
+
+
+def test_proxy_up_without_a_pool_leaves_it_to_the_profile():
+    rig = Rig()
+    proxy_up(rig.incus)
+    assert rig.incus.init.call_args.kwargs == {"storage_pool": None}

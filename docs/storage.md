@@ -165,19 +165,29 @@ Only **new** containers are affected. A container keeps the pool it was created
 on whatever you set later, so you can switch to `cow`, create a few containers,
 and switch back by removing the key; nothing moves and nothing breaks.
 
-JailBee's helper containers (`jailbee-egress-proxy`, `jailbee-litellm`, the
-registry mirror, the shared display) and the LiteLLM state volume are not
-covered by this setting: they follow the `default` profile's root disk. To
-retire the old pool entirely, point the profile at the new one too:
+The host-wide helper containers (`jailbee-egress-proxy`, `jailbee-litellm`, the
+registry mirror, the shared display) and the LiteLLM state volume follow the
+`defaults.storage_pool` of **`global.yaml` only**: they belong to no repo, so a
+repo's own override does not move them. They are created on that pool when they
+do not exist yet; an existing helper stays where it is until it is deleted and
+recreated (`jailbee apply`, `jailbee litellm up`, `jailbee display up
+--recreate`). An existing LiteLLM state volume likewise stays in the pool it is
+in, so a newly set pool never silently replaces it with an empty volume: copy it
+(see below) and the configured pool wins.
+
+To retire the old pool entirely, the `default` profile must stop pointing at it
+too, otherwise Incus will not delete it:
 
 ```bash
 incus profile device set default root pool=cow
 incus profile show default       # root: pool: cow
 ```
 
-Do that when no container is running. Containers without their own root disk
-inherit it from the profile, and changing the pool under a running container is
-not something to attempt.
+Incus refuses this while any container still takes its root disk from the
+profile (`At least one instance relies on this profile's root disk device`),
+even a stopped one. Containers created with `jailbee new` after the setting
+above have their own root disk and do not count; older branch containers and
+helpers created before it do. Delete those first.
 
 ### Starting clean (recommended)
 
@@ -195,9 +205,11 @@ switch are clones. For disposable branch containers it is simplest to start over
    ```
 3. Stop and remove the containers. Use `jailbee destroy` for branch containers
    so JailBee's own bookkeeping is cleaned up, then `incus delete --force` for
-   the helper containers (`jailbee-egress-proxy`, `jailbee-litellm`).
-   `incus list` should then be empty.
-4. Switch the profile (above) and, if you set one, `defaults.storage_pool`.
+   the helper containers (`jailbee-egress-proxy`, `jailbee-litellm`, the
+   registry mirror, `jailbee-display`). The helpers must go before the profile
+   can be switched, since they take their root disk from it. `incus list`
+   should then be empty.
+4. Set `defaults.storage_pool` in `global.yaml` and switch the profile (above).
 5. Remove the old pool, which frees its space:
    ```bash
    incus storage volume delete default jailbee-litellm-state   # if you copied it
@@ -206,7 +218,9 @@ switch are clones. For disposable branch containers it is simplest to start over
 6. Prune dated image archives: `jailbee base prune --all --days 14`. Golden
    images live outside any pool, so the current ones keep working; Incus unpacks
    each into the new pool the first time it is used.
-7. Re-apply and verify: `jailbee apply`, `jailbee doctor`, then `jailbee new`.
+7. Re-apply and verify: `jailbee apply` recreates the helpers on the new pool
+   (`jailbee litellm up` and `jailbee display up` do the same for theirs), then
+   `jailbee doctor` and `jailbee new`.
 
 ### Moving a container you want to keep
 

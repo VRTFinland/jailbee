@@ -156,7 +156,9 @@ def test_up_refuses_when_disabled():
 def test_up_creates_provisions_and_opens_services_rule():
     incus = _incus(present=False)
     result = ll.litellm_up(incus, _gcfg())
-    incus.init.assert_called_once_with("images:ubuntu/26.04/cloud", ll.LITELLM_CONTAINER)
+    incus.init.assert_called_once_with(
+        "images:ubuntu/26.04/cloud", ll.LITELLM_CONTAINER, storage_pool=None
+    )
     assert "/root/install.sh" in _install_script(incus)
     assert result.ip == "10.79.115.3" and result.ports == {"default": 4100}
     assert result.installed is True
@@ -1956,3 +1958,47 @@ def test_xai_login_script_refuses_a_foreign_token_dir(tmp_path: Path):
     script = script.split("exec ", 1)[0] + f"exec touch {marker}"
     result = subprocess.run(["bash", "-c", script], check=False, capture_output=True)
     assert result.returncode != 0 and not marker.exists()
+
+
+def _pooled_gcfg(pool: str) -> GlobalConfig:
+    gcfg = _gcfg()
+    gcfg._service_storage_pool = pool
+    return gcfg
+
+
+def test_the_proxy_container_is_created_on_the_configured_service_pool():
+    incus = _incus(present=False)
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.init.assert_called_once_with(ll._IMAGE, ll.LITELLM_CONTAINER, storage_pool="cow")
+
+
+def test_a_new_state_volume_goes_to_the_configured_pool():
+    incus = _incus(present=False)
+    incus.storage_volume_exists.return_value = False
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.storage_volume_create.assert_called_once_with("cow", ll.STATE_VOLUME)
+    assert incus.config_device_add.call_args.args[3]["pool"] == "cow"
+
+
+def test_an_existing_state_volume_stays_in_the_profile_pool_when_a_pool_is_configured():
+    """Creating an empty volume in the newly configured pool would drop every login."""
+    incus = _incus(present=False)
+    incus.storage_volume_exists.side_effect = lambda pool, _name: pool == "default"
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    incus.storage_volume_create.assert_not_called()
+    assert incus.config_device_add.call_args.args[3]["pool"] == "default"
+
+
+def test_the_configured_pool_wins_once_the_volume_has_been_copied_there():
+    incus = _incus(present=False)
+    incus.storage_volume_exists.return_value = True  # in both pools
+    ll.litellm_up(incus, _pooled_gcfg("cow"))
+    assert incus.config_device_add.call_args.args[3]["pool"] == "cow"
+
+
+def test_purge_deletes_the_state_volume_from_whichever_pool_holds_it():
+    incus = _incus(present=True)
+    incus.list_storage_pools.return_value = [{"name": "default"}, {"name": "cow"}]
+    incus.storage_volume_exists.side_effect = lambda pool, _name: pool == "cow"
+    ll.litellm_down(incus, purge=True)
+    incus.storage_volume_delete.assert_called_once_with("cow", ll.STATE_VOLUME)

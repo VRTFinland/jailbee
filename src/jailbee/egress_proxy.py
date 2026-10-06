@@ -170,8 +170,8 @@ def _ensure_profile(incus: Incus) -> None:
     incus.profile_set_yaml(PROXY_PROFILE, yaml.safe_dump(profile, sort_keys=False))
 
 
-def _create(incus: Incus) -> None:
-    incus.init(_PROXY_IMAGE, PROXY_CONTAINER)
+def _create(incus: Incus, storage_pool: str | None) -> None:
+    incus.init(_PROXY_IMAGE, PROXY_CONTAINER, storage_pool=storage_pool)
     incus.profile_assign(PROXY_CONTAINER, ["default", PROXY_PROFILE])
     incus.config_set(PROXY_CONTAINER, "boot.autostart", "true")
     incus.start(PROXY_CONTAINER)
@@ -324,8 +324,17 @@ def _service_failure(reason: str) -> str:
     return f"{reason}. Run `jailbee apply` to retry, or delete {PROXY_CONTAINER} and apply again."
 
 
-def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> None:
-    """Bring the proxy container up. Idempotent; repairs in place."""
+def proxy_up(
+    incus: Incus,
+    *,
+    storage_pool: str | None = None,
+    on_step: Callable[[str], None] = _no_steps,
+) -> None:
+    """Bring the proxy container up. Idempotent; repairs in place.
+
+    `storage_pool` is where a container that does not exist yet is created; an
+    existing one stays on its pool. None leaves it to the `default` profile.
+    """
     on_step("preparing the proxy profile")
     _ensure_profile(incus)
 
@@ -333,7 +342,7 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
     provisioned = False
     if info is None:
         on_step(f"creating {PROXY_CONTAINER} from {_PROXY_IMAGE} (first run downloads it)")
-        _create(incus)
+        _create(incus, storage_pool)
     elif info.get("status") != "Running":
         on_step(f"starting {PROXY_CONTAINER}")
         incus.start(PROXY_CONTAINER)
@@ -352,7 +361,12 @@ def proxy_up(incus: Incus, *, on_step: Callable[[str], None] = _no_steps) -> Non
     set_service(incus, EGRESS_PROXY_LABEL, (sorted(client_endpoints(incus).values()), [PROXY_PORT]))
 
 
-def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None) -> bool:
+def proxy_up_or_warn(
+    incus: Incus,
+    on_step: Callable[[str], None] | None = None,
+    *,
+    storage_pool: str | None = None,
+) -> bool:
     """``proxy_up`` for callers that have more to finish: a failure is only a warning.
 
     Returns ``False`` on failure so a caller whose own outcome depends on the
@@ -361,7 +375,11 @@ def proxy_up_or_warn(incus: Incus, on_step: Callable[[str], None] | None = None)
     argv), which ``warn`` would read as markup.
     """
     try:
-        proxy_up(incus, on_step=on_step or (lambda message: tui.info(f"  {message}")))
+        proxy_up(
+            incus,
+            storage_pool=storage_pool,
+            on_step=on_step or (lambda message: tui.info(f"  {message}")),
+        )
     except (IncusError, RuntimeError, ValueError) as e:
         tui.warn_plain(f"Could not start the egress proxy: {e}")
         return False
@@ -732,7 +750,7 @@ def _ensure_proxy_for(cfg: Config, incus: Incus, name: str, mode: str | None) ->
         # A proxy made on another network has no NIC here; proxy_up adds it.
         if not isinstance(bridge, str) or bridge in _client_devices(proxy):
             return
-    proxy_up_or_warn(incus)
+    proxy_up_or_warn(incus, storage_pool=cfg.service_storage_pool())
 
 
 def sync_container(cfg: Config, incus: Incus, name: str, mode: str | None) -> bool:

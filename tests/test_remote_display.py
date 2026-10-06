@@ -489,3 +489,25 @@ def test_ensure_waypipe_display_stopped_path_goes_through_display_up_only(mocker
     up.assert_called_once()
     provision.assert_not_called()
     assert incus.config_device_add.call_args.args[1] == rd.LINKS_DEVICE
+
+
+def test_up_creates_the_display_on_the_given_pool():
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    incus.profile_exists.return_value = False
+    incus.exec.return_value = "active\n"
+
+    rd.display_up(incus, storage_pool="cow", sleep_fn=lambda _s: None)
+
+    assert incus.init.call_args.kwargs == {"storage_pool": "cow"}
+
+
+def test_up_without_a_pool_leaves_the_display_to_the_profile():
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    incus.profile_exists.return_value = False
+    incus.exec.return_value = "active\n"
+
+    rd.display_up(incus, sleep_fn=lambda _s: None)
+
+    assert incus.init.call_args.kwargs == {"storage_pool": None}
