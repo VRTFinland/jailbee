@@ -69,7 +69,7 @@ def _incus(
     *,
     present: bool,
     running: bool = True,
-    installed: str | None = "1.103.1",
+    installed: str | None = "1.104.0",
     login: str = "present",
     ack: str = "auto",
 ) -> MagicMock:
@@ -210,11 +210,11 @@ def test_provision_streams_real_lock_at_subprocess_boundary(mocker):
 
     run = mocker.patch("jailbee.incus.subprocess.run")
     run.return_value = subprocess.CompletedProcess([], 0, "", "")
-    ll._provision(Incus(), "1.103.1", True)
+    ll._provision(Incus(), "1.104.0", True)
     args, kwargs = run.call_args
     assert args[0][-2:] == ["bash", "-s"]
     assert len(kwargs["input"]) > 200_000
-    assert "litellm==1.103.1" in kwargs["input"]
+    assert "litellm==1.104.0" in kwargs["input"]
     assert all(len(arg) < 4096 for arg in args[0])
 
 
@@ -226,9 +226,9 @@ def test_provision_failure_does_not_echo_install_script_in_error(mocker):
         return_value=subprocess.CompletedProcess([], 1, "", "apt failed"),
     )
     with pytest.raises(IncusError) as caught:
-        ll._provision(Incus(), "1.103.1", True)
+        ll._provision(Incus(), "1.104.0", True)
     assert "apt failed" in str(caught.value)
-    assert "litellm==1.103.1" not in str(caught.value)
+    assert "litellm==1.104.0" not in str(caught.value)
 
 
 def test_reinstall_detaches_auth_before_package_egress_and_reattaches_after():
@@ -579,7 +579,7 @@ def test_status_running_reports_instance_and_login(xdg):
     ll.litellm_up(incus, _gcfg())
     status = ll.litellm_status(incus, _gcfg())
     assert status.container == ll.ContainerState.RUNNING
-    assert status.version == "1.103.1"
+    assert status.version == "1.104.0"
     assert status.instances == [
         ll.InstanceStatus(account="default", port=4100, active=True, healthy=True, login="present")
     ]
@@ -610,10 +610,10 @@ def test_install_uses_only_hash_locked_requirements_by_default():
 
 def test_unlocked_version_is_shell_quoted():
     incus = _incus(present=False)
-    malicious = "1.103.1; touch /root/unwanted"
+    malicious = "1.104.0; touch /root/unwanted"
     ll._provision(incus, malicious, pinned=False)
     command = incus.exec_with_input.call_args.args[2]
-    assert "JAILBEE_LITELLM_UNLOCKED_VERSION='1.103.1; touch /root/unwanted'" in command
+    assert "JAILBEE_LITELLM_UNLOCKED_VERSION='1.104.0; touch /root/unwanted'" in command
 
 
 def test_up_fails_closed_to_dev_containers_on_install_error():
@@ -1673,7 +1673,7 @@ def test_reconcile_leaves_structural_changes_to_up(xdg):
 
     stale = _incus(present=True, installed="1.0.0")
     result = ll.litellm_reconcile(stale, _gcfg())
-    assert result.needs_up is not None and "1.103.1" in result.needs_up
+    assert result.needs_up is not None and "1.104.0" in result.needs_up
 
 
 def test_reconcile_reports_a_broken_override_and_still_applies_the_rest(xdg):
