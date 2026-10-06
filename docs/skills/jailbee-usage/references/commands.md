@@ -799,8 +799,9 @@ Prompts those commands would normally ask (`git push`'s merge/rebase picker,
 hands over the real terminal. Every dashboard shows
 what one shared background service (`jailbee _state-service`, started on demand,
 exits 30 s after the last dashboard closes) gathers; the pace comes from
-`dashboard.refresh` (`interval` 3s, `git_interval` 10s, `git`) in the *global*
-config, and the service log is `~/.local/state/jailbee/state-service.log`.
+`dashboard.refresh` (`interval` 3s, `git_interval` 10s, `git`, `agent_activity`) in the *global*
+config (`agent_activity: false` stops the service reading an agent's
+transcript, so the details panel and Qt tooltip show no activity lines), and the service log is `~/.local/state/jailbee/state-service.log`.
 `-i`/`--interval`, `--git-interval` and `--no-git` are deprecated: warned about
 and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
 make the service gather. Requires a TTY. Orphan containers (jailbee-managed but

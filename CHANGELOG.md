@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **Agent activity in the dashboard's details panel.** For a container with a
+  live Claude session, the panel shows up to three lines: the session's state
+  with how many subagents and shell commands are running, its last tool call
+  and its last message. The Qt dashboard shows the same in the agent tooltip.
+  `dashboard.refresh.agent_activity: false` turns it off (no transcript is read).
 - `--repo PREFIX` works anywhere on the command line (`jb chrome feat --repo x`),
   and the remote SSH top level accepts every command the remote console does,
   with `repos` and a `help` that lists the allowed commands.

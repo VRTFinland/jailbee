@@ -5047,6 +5047,24 @@ Then, with `agents.claude.agent_view: true` (apply, restart), a `claude --bg`
 job runs to completion — this guards against a rename across the new
 `daemon/` and `jobs/` mount boundaries.
 
+### Details-panel activity lines
+
+Host or nested rig. Start a Claude session in a container and leave it busy,
+then run `jailbee dashboard` under `tmux` and press `v` on the container row.
+
+1. Three lines appear under the grid; the state line matches the AGENT column.
+2. A background command shows as `N shells` (its bash is a direct child of the
+   `claude` process); a running subagent shows as `~N subagents` while it
+   works and drops about 30 s after it finishes.
+3. Set `dashboard.refresh.agent_activity: false` in the global config and let
+   the state service exit (close every dashboard, wait 30 s). The lines are
+   gone and the panel is the old 8-row shape.
+4. At a terminal height of about 24 rows the grid keeps two rows and the
+   message is cut first.
+5. Moving the cursor between a container, an idle container and a repo
+   heading does not resize the table.
+6. In the Qt dashboard the same lines are in the agent tooltip.
+
 ## Unified outbox: isolated inspection and deletion
 
 These checks must use a disposable fixture or an explicitly approved,

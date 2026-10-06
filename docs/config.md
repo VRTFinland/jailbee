@@ -2348,7 +2348,16 @@ dashboard:
     interval: 3        # seconds between base-state gathers (floor 0.5)
     git_interval: 10   # seconds between git-status probes (never below interval)
     git: true          # false: skip the git probes entirely
+    agent_activity: true   # false: never read an agent's transcript (no activity lines)
 ```
+
+For the container's most urgent live agent session, the dashboard's details
+panel shows up to three lines: the state with its duration and `~N subagents` /
+`N shells`, the last tool call, and the last assistant message. The Qt
+dashboard puts them in the agent tooltip. They come from the session
+transcript, which contains prompts and code, so turn `agent_activity` off on a
+shared screen. The subagent count is an estimate (a subagent file written in
+the last 30 seconds).
 
 The service reads it when it starts, and exits once no dashboard has been open
 for 30 seconds — close every dashboard to apply a change. The dashboards'
