@@ -2353,7 +2353,7 @@ dashboard:
 
 For the live agent session with the most recently written readable transcript,
 the dashboard's details panel shows up to three lines: the state with its duration and `~N subagents` /
-`N shells`, the last tool call, and the last assistant message. The Qt
+`N shells`, the last tool call while the session is active, and the last assistant message. The Qt
 dashboard puts them in the agent tooltip. They come from the session
 transcript, which contains prompts and code, so turn `agent_activity` off on a
 shared screen. The subagent count is an estimate (a subagent file written in

@@ -147,4 +147,5 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
         head += f" · {_counted(activity.subagents, 'subagent', estimate=True)}"
     if activity.shells:
         head += f" · {_counted(activity.shells, 'shell')}"
-    return ActivityText(head, activity.last_tool, activity.last_message)
+    tool = None if state == "idle" else activity.last_tool
+    return ActivityText(head, tool, activity.last_message)

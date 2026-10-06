@@ -231,6 +231,24 @@ def test_describe_singular_and_omitted_counts() -> None:
     assert unknown.lines() == ("busy 2m",)
 
 
+def test_describe_hides_the_tool_when_the_selected_session_is_idle() -> None:
+    activity = AgentActivity("Bash  ls", "done", 2, 1, state="idle")
+
+    text = aa.describe(_summary(state="busy", activity=activity), NOW)
+
+    assert text is not None
+    assert text.lines() == ("idle · ~2 subagents · 1 shell", "“done”")
+
+
+def test_describe_keeps_the_tool_when_the_selected_session_is_busy() -> None:
+    activity = AgentActivity("Bash  ls", "working", 2, 1, state="busy")
+
+    text = aa.describe(_summary(state="idle", activity=activity), NOW)
+
+    assert text is not None
+    assert text.lines() == ("busy · ~2 subagents · 1 shell", "↳ Bash  ls", "“working”")
+
+
 def test_describe_without_activity_is_none() -> None:
     assert aa.describe(_summary(activity=None), NOW) is None
 
