@@ -258,6 +258,7 @@ Start here:
 | Doc | What's inside |
 |---|---|
 | [Installation](https://jailbee.gisgro.io/docs/installation/) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
+| [Storage: use btrfs](https://jailbee.gisgro.io/docs/storage/) | Why a copy-on-write btrfs pool beats the default `dir` pool, how to set one up, and how to point JailBee at it |
 | [Getting started](https://jailbee.gisgro.io/docs/getting-started/) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
 | [Commands](https://jailbee.gisgro.io/docs/commands/) | Full command + flag reference table |
 | [Configuration reference](https://jailbee.gisgro.io/docs/config/) | Every `.jailbee/config.yaml` and `global.yaml` key |

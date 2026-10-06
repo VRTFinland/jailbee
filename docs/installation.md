@@ -51,7 +51,8 @@ JailBee expects — instead of asking a dozen questions you would answer by
 pressing Enter. It is meant for a host that has not been initialised yet;
 there is nothing for it to do on one that has. Drop the flag if you want to
 pick the storage backend (`btrfs`, `lvm`, `zfs`) or a different subnet
-yourself.
+yourself. The default `dir` pool stores a full copy per container and per
+snapshot; for more than a few containers, [use a btrfs pool](storage.md).
 
 `security.nesting=true` (needed for nested Docker and for systemd services
 that use user namespaces) is set automatically by `jailbee` on every container.

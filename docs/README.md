@@ -13,6 +13,7 @@ New here? [Installation](installation.md) sets up the host, then
 | Doc | What's inside |
 |---|---|
 | [Installation](installation.md) | One-time host setup: Incus, UID delegation, installing the CLI (plus conditional firewall / kernel-keyring steps) |
+| [Storage: use btrfs](storage.md) | Why a copy-on-write btrfs pool beats the default `dir` pool, how to set one up, and how to point JailBee at it |
 | [Getting started](getting-started.md) | Concepts, configure a repo, build the image, and a "typical day" walkthrough |
 | [Using JailBee from a Mac](macos.md) | A Mac as client of a Linux host, or of a Linux VM on the Mac (experimental): SSH service plus Windows App for GUI apps |
 
