@@ -2656,7 +2656,7 @@ whenever `jailbee apply` reloads or restarts an instance for another reason; an 
 changes nothing else needs `jailbee litellm up`. Profiles also accept `account` (from `accounts`; required when the
 profile maps a `chatgpt/` route) and `effort` as the default session effort, and `instructions` (model-policy text appended to Claude Code's system prompt; see [Profile instructions](litellm.md#profile-instructions)). `jailbee litellm up` renders changes
 and restarts the instance if needed; `jailbee apply` also re-renders the proxy,
-reloads route changes into the running instances (restarting only for secrets,
+reloads route changes into the running instances (restarting only for
 `extra` outside its `model_list`, settings or an unconfirmed reload; `--no-restart` defers only the
 restarts), and
 synchronizes the gateway file/key into each running dev container.

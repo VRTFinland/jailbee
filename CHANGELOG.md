@@ -55,6 +55,12 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **A new or rotated LiteLLM API key no longer restarts the proxy.** `jailbee
+  apply` and `jailbee litellm up` load a key that a route (or `litellm.extra`'s
+  `model_list`) uses into the running instance, like any other route change, so
+  open `claude-jb` streams keep going; an account's first `oauth` route is a
+  reload too. Only a secret named by `extra` outside its `model_list` still
+  restarts. The first `apply` after upgrading restarts each instance once.
 - **Bare `jailbee` opens the dashboard on a terminal.** It used to print the
   help text; `default_command` picks something else. Without a terminal (a
   pipe, a script, `JAILBEE_NONINTERACTIVE`) it still prints help and exits 0.

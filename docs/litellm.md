@@ -342,7 +342,7 @@ reach is a config edit away.
    the running proxy without a restart, and open `claude-jb` sessions continue
    on the new model, since they hold tier names, not route names. A new route
    to another provider widens the egress allowlist in the same run, and a new
-   secret restarts the instance; only an edit that changes nothing but
+   secret is loaded the same way; only an edit that changes nothing but
    `egress` needs `jailbee litellm up` ([details](#per-repo-overrides)).
 5. **Check it**: `jailbee litellm ls` shows each tier's model, effort and
    window; `claude-jb -p 'say hi' --model opus` sends one request.
@@ -394,11 +394,10 @@ with `jailbee litellm ls`.
 
 After editing an override, run `jailbee apply` in that repo. It re-renders the
 proxy configuration and syncs the repo's running containers. Edits to routes
-and profiles (a model, `context_window`, `effort`, `api_base`, a new route that
-needs no new secret) are **loaded into the running proxy without a restart**:
+and profiles (a model, `context_window`, `effort`, `api_base`, a new route, a new or changed API key) are **loaded into the running proxy without a restart**:
 open `claude-jb` sessions keep going, and a stream in flight finishes on the
-route it started on. Anything the proxy only reads at start (a secret, `extra`
-outside its `model_list`, the proxy's settings, the callback itself) restarts the instance that changed,
+route it started on. Anything the proxy only reads at start (`extra`
+outside its `model_list` and any secret only it names, the proxy's settings, the callback itself) restarts the instance that changed,
 saying which. If the proxy does not confirm a reload within about ten seconds,
 or refuses it, `apply` restarts the instance instead and says why.
 `jailbee apply --no-restart` still applies reloads, since they interrupt
@@ -489,8 +488,8 @@ egress allowlist follows the routes: jailbee knows the hosts of `chatgpt/`,
 needs `api_base` (whose host replaces the provider's default hosts) or
 `egress: [host[:port]]`. Only the secrets that routes (or `extra`) reference are
 handed to the proxy, and `jailbee litellm up` refuses to start while one is
-missing or the file has any group or other permission bit set. Changing a secret restarts the
-instances on the next `up`.
+missing or the file has any group or other permission bit set. A new or changed secret is loaded into the running
+instances by the next `up` or `apply`, without a restart, unless only `extra` outside its `model_list` names it.
 
 ## Raw LiteLLM configuration
 
@@ -542,8 +541,8 @@ back on; that is your choice.
 - Claude Code's claude.ai connectors are disabled in gateway sessions.
   Resuming a native session with signed Opus thinking blocks through
   `claude-jb` is untested.
-- Changing a route reloads it into the account's running instance; changing a
-  secret, `litellm.extra` outside its `model_list` or the proxy's own settings restarts it, interrupting
+- Changing a route reloads it into the account's running instance; changing
+  `litellm.extra` outside its `model_list` (or a secret only it names) or the proxy's own settings restarts it, interrupting
   every container's streams on that account (`jailbee litellm up`, or
   `jailbee apply` in any repo). `apply --no-restart` defers the restart.
   An instance that serves no route at all cannot take its first route by
