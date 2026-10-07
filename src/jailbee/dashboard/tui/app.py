@@ -270,22 +270,24 @@ def run(
     startup = open_dashboard(cwd_root, scope=scope)
     if isinstance(startup, int):
         return startup
-    app = DashboardApp(
-        startup,
-        incus=incus,
-        cwd_root=cwd_root,
-        remote=remote,
-        over_ssh=over_ssh,
-        ssh_policy=ssh_policy,
-        scope=scope,
-    )
     try:
+        app = DashboardApp(
+            startup,
+            incus=incus,
+            cwd_root=cwd_root,
+            remote=remote,
+            over_ssh=over_ssh,
+            ssh_policy=ssh_policy,
+            scope=scope,
+        )
         # Pushed before Textual takes the screen and popped after it gives it
         # back, so the terminal's own title is saved and restored intact.
         with terminal_title_scope(sys.stdout):
             rc = app.run(mouse=startup.mouse)
+        # An unhandled handler exception ends Textual with return code 1 and no value.
+        rc = app.return_code or rc or 0
     except KeyboardInterrupt:
         rc = 0
     finally:
         startup.client.close()
-    return rc or 0
+    return rc

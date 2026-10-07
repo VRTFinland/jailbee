@@ -251,6 +251,33 @@ def test_startup_waits_for_the_first_snapshot_before_textual_starts(mocker):
     assert client.closed
 
 
+def test_a_crashed_app_exits_non_zero(mocker):
+    """Textual ends an unhandled handler exception with return code 1 and no value."""
+    _, client = start_session(mocker, [])
+
+    def crash(self, **_kw):
+        self._return_code = 1
+
+    mocker.patch.object(tapp.DashboardApp, "run", autospec=True, side_effect=crash)
+    assert tapp.run(mocker.Mock(), None) == 1
+    assert client.closed
+
+
+def test_ctrl_c_out_of_textual_exits_cleanly(mocker):
+    _, client = start_session(mocker, [])
+    mocker.patch.object(tapp.DashboardApp, "run", side_effect=KeyboardInterrupt)
+    assert tapp.run(mocker.Mock(), None) == 0
+    assert client.closed
+
+
+def test_a_failing_app_constructor_still_closes_the_state_client(mocker):
+    _, client = start_session(mocker, [])
+    mocker.patch.object(tapp.DashboardApp, "__init__", side_effect=RuntimeError("boom"))
+    with pytest.raises(RuntimeError, match="boom"):
+        tapp.run(mocker.Mock(), None)
+    assert client.closed
+
+
 def test_a_redirected_stderr_is_refused_before_any_screen(mocker):
     mocker.patch.object(tsession.sys, "stdin", mocker.Mock(isatty=lambda: True))
     mocker.patch.object(tsession.sys, "stdout", mocker.Mock(isatty=lambda: True))
