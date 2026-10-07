@@ -9,6 +9,7 @@ window is passive: it renders snapshots pushed via ``set_groups`` and emits
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, QEvent, Qt, Signal
@@ -37,8 +38,10 @@ from jailbee.qtui.action_menu import populate_action_menu
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
     STATE_COLORS,
+    cell_tooltip,
     column_headers,
     container_cells,
+    field_tooltip,
     group_header,
 )
 
@@ -462,6 +465,8 @@ class MainWindow(QMainWindow):
         headers = column_headers(fields)
         self.tree.setColumnCount(len(headers))
         self.tree.setHeaderLabels(headers)
+        for index, field in enumerate(fields):
+            self.tree.headerItem().setToolTip(index, field_tooltip(field))
         if self._pending_header_state is not None:
             self.tree.header().restoreState(
                 QByteArray.fromBase64(self._pending_header_state.encode("ascii"))
@@ -483,6 +488,11 @@ class MainWindow(QMainWindow):
             for c in g.containers:
                 child = QTreeWidgetItem(container_cells(c, fields))
                 child.setData(0, _NAME_ROLE, c.name)
+                for index, field in enumerate(fields):
+                    child.setToolTip(
+                        index,
+                        "<qt>" + escape(cell_tooltip(c, field)).replace("\n", "<br>") + "</qt>",
+                    )
                 color = _STATE_COLORS.get(c.state)
                 if color is not None and state_col is not None:
                     child.setForeground(state_col, color)
