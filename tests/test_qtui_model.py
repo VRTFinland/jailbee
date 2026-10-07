@@ -93,14 +93,24 @@ def test_state_colors_are_hex_strings():
 
 
 def test_card_content_splits_name_state_and_keeps_fields_in_order():
+    from datetime import UTC, timedelta
+
     from jailbee.dashboard import visible_fields
     from jailbee.qtui.model import CardField, card_content
 
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
     c = _ci("gisgro-feat", "gisgro", state="Running")
-    now = datetime.now().astimezone()
+    c.network = "loose"
+    c.loose_until = now + timedelta(minutes=12)
     fields = visible_fields(now, [c])
 
-    cc = card_content(c, fields)
+    cc = card_content(c, fields, now)
+
+    assert m.card_field(cc, "network") == "○ 12m"
+
+    c.network = "[custom]"
+    custom = card_content(c, fields, now)
+    assert m.card_field(custom, "network") == "[custom]"
 
     assert cc.name == c.display_name
     assert cc.state == "Running"
@@ -234,10 +244,10 @@ def test_pending_issue_actions_make_an_otherwise_clean_container_read_as_dirty()
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 
-    cc = _cc(mode="clone", base="main", network="loose (12m)")
-    assert compact_meta(cc) == ["clone", "main", "loose (12m)"]
-    cc2 = _cc(mode="clone", network="strict")  # no base
-    assert compact_meta(cc2) == ["clone", "strict"]
+    cc = _cc(mode="clone", base="main", network="○ 12m")
+    assert compact_meta(cc) == ["clone", "main", "○ 12m"]
+    cc2 = _cc(mode="clone", network="●")  # no base
+    assert compact_meta(cc2) == ["clone", "●"]
 
 
 def test_grid_rows_fold_git_into_one_row_and_drop_placeholders():
@@ -313,7 +323,7 @@ def test_card_content_carries_the_job_error():
         job_error="autostart step 'deps' failed",
     )
     fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
-    cc = m.card_content(c, fields)
+    cc = m.card_content(c, fields, datetime.now().astimezone())
     assert cc.job_error == "autostart step 'deps' failed"
 
 

@@ -2212,13 +2212,12 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
-**AGE** (elapsed seconds/minutes/hours/days), network **NET** (**S** strict,
-**L** loose with compact remaining TTL; **∞** means no auto-revert), target diff
-**Δ**, local diff **LΔ**, combined status **GIT**, full name **FULL**, memory
+**AGE** (elapsed seconds/minutes/hours/days), network **NET** (**●** strict,
+**○** loose), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
 limit **LIMIT**, loose deadline **UNTIL**, and pending issues **ISS**. **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle, and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
-**MODE** uses `cln`/`mnt`. **WT**, **Δ** and **LΔ** show ✓ for clean, not
+**MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
 for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.

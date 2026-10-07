@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee import dashboard_format
 from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
@@ -93,10 +94,16 @@ class CardContent:
     agent_waiting: bool = False
 
 
-def card_content(c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]]) -> CardContent:
+def card_content(
+    c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]], now: datetime | None = None
+) -> CardContent:
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
     cells = container_cells(c, fields)
+    if now is not None:
+        for index, field in enumerate(fields):
+            if field.name == "network":
+                cells[index] = _strip_markup(dashboard_format.card_network(c, now))
     name = ""
     state = ""
     card_fields: list[CardField] = []
@@ -220,7 +227,9 @@ _FIELD_MEANINGS = {
     "base": "Base branch; ↗ means last-fetched remote-tracking base (not a live remote)",
     "state": "Container state: ▶ Running, ■ Stopped, Ⅱ Frozen",
     "created": "Container age (s/m/h/d); tooltip shows exact creation timestamp",
-    "network": "Network: S = strict, L = loose; remaining auto-revert TTL, ∞ = no auto-revert",
+    "network": (
+        "Network: ● = strict, ○ = loose; cards show remaining auto-revert TTL, ∞ = no auto-revert"
+    ),
     "ttl": "Remaining loose-network auto-revert time",
     "loose_until": "Exact loose-network auto-revert deadline",
     "mem": "Memory usage / configured limit",

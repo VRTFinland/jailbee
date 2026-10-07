@@ -25,8 +25,8 @@ _HEADER_LABELS = {
     "loose_until": "UNTIL",
     "agent_compact": "AI",
     "issues": "ISS",
-    "target_diff": "Δ",
-    "local_diff": "LΔ",
+    "target_diff": "DIFF",
+    "local_diff": "L DIFF",
     "git_status": "GIT",
 }
 _STATE_GLYPHS = {"Running": "▶", "Stopped": "■", "Frozen": "Ⅱ"}
@@ -51,13 +51,23 @@ def _age(created_at: datetime | None, now: datetime) -> str:
     return f"{seconds // 86400}d"
 
 
-def _network(container: ContainerInfo, now: datetime) -> str:
+def _network(container: ContainerInfo) -> str:
+    if container.network == "strict":
+        return "●"
+    if container.network == "loose":
+        return "○"
+    return escape(container.network or "-")
+
+
+def card_network(container: ContainerInfo, now: datetime) -> str:
+    """Network label for cards, where the loose TTL remains useful inline."""
+    mode = _network(container)
     if container.network != "loose":
-        return "S" if container.network == "strict" else escape(container.network or "-")
+        return mode
     if container.loose_until is None:
-        return "L ∞"
+        return f"{mode} ∞"
     compact = format_duration_short(container.loose_until - now).replace(" ", "")
-    return f"L {compact}"
+    return f"{mode} {compact}"
 
 
 def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, now: datetime) -> str:
@@ -66,7 +76,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
     if field.name == "state":
         return _STATE_GLYPHS.get(container.state, escape(container.state))
     if field.name == "network":
-        return _network(container, now)
+        return _network(container)
     if field.name == "created":
         return _age(container.created_at, now)
     if field.name == "base":

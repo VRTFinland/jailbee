@@ -2941,7 +2941,7 @@ def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
     assert "ip" not in dashboard_names and "ip" not in ls_names
 
 
-def test_visible_fields_network_cell_folds_loose_ttl():
+def test_visible_fields_network_cell_shows_mode_icon_only():
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     loose = ContainerInfo(
         name="p-loose",
@@ -2957,11 +2957,11 @@ def test_visible_fields_network_cell_folds_loose_ttl():
     )
     fields = dashboard.visible_fields(now, [loose, strict])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(loose) == "L 12m"
-    assert network_field.cell(strict) == "S"
+    assert network_field.cell(loose) == "○"
+    assert network_field.cell(strict) == "●"
 
 
-def test_network_cell_renders_hours_for_a_long_ttl():
+def test_network_cell_is_icon_only_for_a_long_ttl():
     from datetime import UTC, datetime, timedelta
 
     from jailbee.lifecycle import ContainerInfo
@@ -2976,7 +2976,7 @@ def test_network_cell_renders_hours_for_a_long_ttl():
         loose_until=now + timedelta(hours=2, minutes=5),
     )
     network_field = next(f for f in dashboard.visible_fields(now, [loose]) if f.name == "network")
-    assert network_field.cell(loose) == "L 2h5m"
+    assert network_field.cell(loose) == "○"
 
 
 def test_visible_fields_network_cell_unknown_loose_until():
@@ -2992,7 +2992,7 @@ def test_visible_fields_network_cell_unknown_loose_until():
     )
     fields = dashboard.visible_fields(now, [c])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(c) == "L ∞"
+    assert network_field.cell(c) == "○"
 
 
 def test_visible_fields_includes_pr_when_a_container_has_one():
@@ -3219,8 +3219,8 @@ def test_enabled_from_column_config_reproduces_a_legacy_fields_block():
     assert names == ("name", "created")
 
 
-def test_visible_fields_still_folds_the_loose_ttl_into_network():
-    """The network-cell swap must survive an explicit field list."""
+def test_explicit_network_field_list_shows_mode_icon_only():
+    """An explicit field list does not add TTL to the network icon."""
     from datetime import timedelta
 
     from jailbee.lifecycle import ContainerInfo
@@ -3238,7 +3238,7 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
     fields = dashboard.visible_fields(now, [loose], ["name", "network"])
     network = next(f for f in fields if f.name == "network")
 
-    assert network.cell(loose) == "L 2h"
+    assert network.cell(loose) == "○"
 
 
 def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
@@ -3847,9 +3847,9 @@ def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
         enabled=("name", "state", "created", "network"),
     )
 
-    narrow = _render_text(frame, width=44)
+    narrow = _render_text(frame, width=37)
     wide = _render_text(frame, width=100)
-    narrow_again = _render_text(frame, width=44)
+    narrow_again = _render_text(frame, width=37)
 
     assert "NAME" in narrow and "ST" in narrow
     assert "AGE" not in narrow and "NET" in narrow
@@ -3876,7 +3876,7 @@ def test_render_uses_configured_auto_hide_order(tmp_path):
         enabled=("name", "state", "created", "network"),
         hide_first=("state",),
     )
-    narrow = _render_text(frame, width=47)
+    narrow = _render_text(frame, width=40)
 
     assert "NAME" in narrow and "AGE" in narrow
     assert "ST" not in narrow
@@ -3909,7 +3909,7 @@ def test_render_highlight_stays_on_row_when_first_column_is_hidden(tmp_path):
 
     cursor = _cursor_lines(_render_ansi_lines(frame, width=19))
 
-    assert len(cursor) == 1 and "S" in cursor[0]
+    assert len(cursor) == 1 and "●" in cursor[0]
 
 
 def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
@@ -10951,7 +10951,7 @@ def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
             enabled=("name", "doing", "network"),
         )
     )
-    row = [line for line in out.splitlines() if "S" in line and "pytest" not in line]
+    row = [line for line in out.splitlines() if "●" in line and "pytest" not in line]
     assert len(row) == 1
     assert long_name not in row[0] and "…" in row[0]
 
@@ -11002,22 +11002,22 @@ def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
         )
 
     before = next(
-        line for line in frame(short, widths).splitlines() if "S" in line and "alpha" not in line
+        line for line in frame(short, widths).splitlines() if "●" in line and "alpha" not in line
     )
     after = next(
-        line for line in frame(long, widths).splitlines() if "S" in line and "alpha" not in line
+        line for line in frame(long, widths).splitlines() if "●" in line and "alpha" not in line
     )
-    assert before.index("S") == after.index("S")
+    assert before.index("●") == after.index("●")
     assert "abcdefghijklmnop" not in after and "…" in after
     saved = dict(widths)
     frame(long, widths, width=24)
     assert widths == saved
     updated = dashboard.optimize_column_widths([long], now=now, enabled=enabled)
     renewed = next(
-        line for line in frame(long, updated).splitlines() if "S" in line and "alpha" not in line
+        line for line in frame(long, updated).splitlines() if "●" in line and "alpha" not in line
     )
     assert "abcdefghijklmnop" in renewed
-    assert renewed.index("S") > after.index("S")
+    assert renewed.index("●") > after.index("●")
 
 
 def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_path):
@@ -11027,7 +11027,7 @@ def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_pat
     out = _render_text(dashboard.render([group], None, now=now, git_enabled=False, enabled=enabled))
     header = next(line for line in out.splitlines() if "NAME" in line)
     assert "PR" not in header and "JOB" not in header and "AGE" not in header
-    assert "S" in out
+    assert "●" in out
     assert enabled == ("name", "pr", "job", "network", "created")
 
 
@@ -11070,7 +11070,7 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
     assert unfolded.kwargs["column_widths"] == optimized.kwargs["column_widths"]
     output = _render_text(dashboard.render(*unfolded.args, **unfolded.kwargs))
     assert "ST" in output and "NET" in output
-    assert "S" in output
+    assert "●" in output
 
 
 def test_optimized_widths_are_named_without_first_column_indent(tmp_path):
@@ -11118,18 +11118,14 @@ def test_dashboard_formatting_contracts():
     network = next(
         f for f in dashboard.visible_fields(now, [container()], ["network"]) if f.name == "network"
     )
-    assert network.cell(container()) == "S"
-    assert (
-        network.cell(container(network="loose", loose_until=now + timedelta(seconds=45))) == "L 45s"
-    )
-    assert (
-        network.cell(container(network="loose", loose_until=now + timedelta(minutes=12))) == "L 12m"
-    )
+    assert network.cell(container()) == "●"
+    assert network.cell(container(network="loose", loose_until=now + timedelta(seconds=45))) == "○"
+    assert network.cell(container(network="loose", loose_until=now + timedelta(minutes=12))) == "○"
     assert (
         network.cell(container(network="loose", loose_until=now + timedelta(hours=3, minutes=59)))
-        == "L 3h59m"
+        == "○"
     )
-    assert network.cell(container(network="loose", loose_until=None)) == "L ∞"
+    assert network.cell(container(network="loose", loose_until=None)) == "○"
     assert network.cell(container(network=None)) == "-"
     assert network.json(container()) == "strict"
 
@@ -11166,8 +11162,8 @@ def test_dashboard_formatting_contracts():
         "memory_limit": "LIMIT",
         "loose_until": "UNTIL",
         "agent_compact": "AI",
-        "target_diff": "Δ",
-        "local_diff": "LΔ",
+        "target_diff": "DIFF",
+        "local_diff": "L DIFF",
         "conflict": "MERGE",
     }
     canonical = {field.name: field.header for field in ls_field_specs(now=now, all_repos=False)}

@@ -1811,10 +1811,10 @@ def _render_help() -> RenderableType:
         ]
     lines += [
         "",
-        "ST: ▶ running, ■ stopped, Ⅱ frozen; NET: S strict, L loose; ∞ means no auto-revert.",
+        "ST: ▶ running, ■ stopped, Ⅱ frozen; NET: ● strict, ○ loose.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle).",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
-        "WT / Δ / LΔ: ✓ clean; Δ vs host target, LΔ vs host HEAD.",
+        "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
@@ -2082,7 +2082,7 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
 _DASHBOARD_COLUMN_BUDGETS = {
     "name": 18,
     "state": 2,
-    "network": 10,
+    "network": 3,
     "created": 5,
     "mem": 15,
     "mode": 5,

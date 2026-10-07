@@ -671,12 +671,13 @@ ignores `fields` entirely.
 ### `jailbee dashboard` (alias: `jailbee tui`)
 
 Both dashboards use compact presentation, without changing `ls` or JSON:
-ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), NET = S strict / L loose with
-remaining TTL (∞ no auto-revert), AGE = elapsed container age, AI = compact
-agent status (◆ waiting, ● busy, ◐ shell, ○ idle). BASE ↗ means tracking;
-MODE uses cln/mnt; WT/Δ/LΔ use ✓ for clean. Δ compares against the host target,
-LΔ against checked-out host HEAD. DOING uses ×N process counts. JOB shortens
-working verbs and uses auto:stage, while failed and (dead) remain distinct.
+ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), NET = ● strict / ○ loose,
+AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
+◐ shell, ○ idle). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
+use ✓ for clean. DIFF compares against the host target, L DIFF against
+checked-out host HEAD. TUI details and Qt tooltips retain network expiry times;
+Qt cards also show the remaining TTL inline. DOING uses ×N process counts. JOB
+shortens working verbs and uses auto:stage, while failed and (dead) remain distinct.
 Full AGENT, MERGE and PR stay unchanged. Qt table tooltips provide full
 meanings, exact timestamps and agent details; `h` shows the TUI legend.
 

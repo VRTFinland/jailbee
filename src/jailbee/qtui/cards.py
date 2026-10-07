@@ -404,7 +404,7 @@ class CardView(QScrollArea):
         desired: list[tuple[str, str, list[tuple[str, CardContent]]]] = []
         for g in groups:
             label, _is_orphan = group_header(g)
-            entries = [(c.name, card_content(c, fields)) for c in g.containers]
+            entries = [(c.name, card_content(c, fields, now)) for c in g.containers]
             desired.append((g.prefix, label, entries))
         structure = [
             (prefix, label, tuple(n for n, _ in entries)) for prefix, label, entries in desired
