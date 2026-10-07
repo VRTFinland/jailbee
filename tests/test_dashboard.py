@@ -5637,23 +5637,37 @@ def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):
         side_effect=lambda: width[0],
     )
     frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    group = _wide_group(tmp_path)
+    new_maximum = dashboard.clamp_column_offset(
+        [group],
+        12,
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        enabled=_WIDE,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        width=52,
+    )
 
     def keys():
         yield from [_RIGHT] * 12
         width[0] = 52
-        yield b"x"
         yield _LEFT
 
     _drive_run(
-        mocker, keys(), [_wide_group(tmp_path)], view_state=dashboard.ViewState(columns=_WIDE)
+        mocker,
+        key_sequence=keys(),
+        groups=[group],
+        view_state=dashboard.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
-    assert 0 < offsets[-2] < max(offsets)
-    assert offsets[-1] == offsets[-2] - 1
+    assert 0 < new_maximum < max(offsets)
+    assert offsets[-1] == new_maximum - 1
 
 
 @pytest.mark.parametrize("reset_keys", [[b"o"], [b"S", b" ", b"\x1b"]])
 def test_run_reset_the_offset(mocker, tmp_path, reset_keys):
+    mocker.patch.object(dashboard, "save_view_state")
     _narrow_console(mocker)
     frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _drive_run(
@@ -5690,6 +5704,7 @@ def test_run_arrows_are_ignored_while_an_overlay_is_open(mocker, tmp_path, open_
 
 
 def test_run_arrows_clamp_after_folding(mocker, tmp_path):
+    mocker.patch.object(dashboard, "save_view_state")
     _narrow_console(mocker)
     frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
     _drive_run(
