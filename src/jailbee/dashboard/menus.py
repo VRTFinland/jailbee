@@ -258,7 +258,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     including mount mode, unless the probe counted no manifest in both
     outboxes; an unknown count still offers it. Its fixed stores do not require
     a clone or an existing PR. The Qt dashboard opens its own
-    window for it; the terminal dashboard its own pickers (`dashboard_outbox`).
+    window for it; the terminal dashboard its own pickers (`jailbee.dashboard.outbox`).
     With manifests pending in the PR or issue outbox (read from
     ``ctx.git_status``) it leads the menu and
     carries the count; with an unknown count it follows "Open shell".

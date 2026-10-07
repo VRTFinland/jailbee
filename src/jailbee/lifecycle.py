@@ -555,7 +555,7 @@ def list_containers(
 def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySampler) -> None:
     """Fill ``cpu_percent`` and ``activity`` from one sampler reading.
 
-    The counterpart to ``dashboard.carry_forward_git_status``: a derived
+    The counterpart to ``jailbee.dashboard.model.carry_forward_git_status``: a derived
     value the gather cannot produce on its own, written in place after it.
     Rows the sampler did not answer for are cleared rather than left holding
     the previous tick's numbers.
@@ -2647,7 +2647,7 @@ def format_duration_short(delta: timedelta) -> str:
     """Render a duration compactly: ``4h``, ``3h 59m``, ``12m``, ``45s``.
 
     Truncates rather than rounds (a 2m30s remainder reads ``2m``), and clamps
-    a non-positive delta to ``0s``. Public because `dashboard.py` and
+    a non-positive delta to ``0s``. Public because `jailbee.dashboard.format` and
     `cli.py` render the same loose TTL.
     """
     total = max(0, int(delta.total_seconds()))

@@ -3,7 +3,7 @@
 `ActivityReader` is the one stateful piece: it remembers where each live
 session's transcript is, so the directory search happens once per session and
 not once per tick, and forgets a session the tick after it stops being live.
-It is driven by `dashboard.sample_activity` inside the state service's
+It is driven by `jailbee.dashboard.model.sample_activity` inside the state service's
 `Gatherer`; the pure matching in `agent_status` only receives its `lookup_for`
 callable.
 

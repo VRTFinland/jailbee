@@ -1,7 +1,7 @@
 """Main window for the Qt dashboard.
 
 A repo-grouped QTreeWidget over the shared dashboard data layer. Actions come
-from ``dashboard.actions_for_container`` so the GUI and TUI stay in sync. The
+from ``jailbee.dashboard.menus.actions_for_container`` so the GUI and TUI stay in sync. The
 window is passive: it renders snapshots pushed via ``set_groups`` and emits
 ``actionRequested(verb, container_name)`` — the app layer performs the launch.
 """

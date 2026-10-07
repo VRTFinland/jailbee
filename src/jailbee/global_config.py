@@ -485,7 +485,7 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     cosmetic typo is the wrong trade — the same principle that keeps a
     column preference from narrowing `--format json`. `cli._load_global()`
     is the one place ``warnings`` gets surfaced (via `tui.warn`); the
-    dashboards (`dashboard.global_config_or_defaults`) get the sanitized
+    dashboards (`jailbee.dashboard.model.global_config_or_defaults`) get the sanitized
     config and otherwise ignore the list.
 
     Genuine host-level schema problems (bad YAML, a malformed
@@ -500,7 +500,7 @@ def load_global_config(path: Path) -> tuple[GlobalConfig, list[str]]:
     # (the common case — most repos never touch column config), so skip
     # building `lifecycle.ls_field_specs`'s full field list just to confirm
     # nothing needs fixing. This loader runs on the dashboard's refresh
-    # cadence (`dashboard.gather_rows` calls it once per tick), so the
+    # cadence (`jailbee.dashboard.model.gather_rows` calls it once per tick), so the
     # saved work is not one-time — the global-layer twin of `load_config`'s
     # short-circuit for the repo layer; see `_columns_already_sanitized` for
     # why comparing by value here is safe.

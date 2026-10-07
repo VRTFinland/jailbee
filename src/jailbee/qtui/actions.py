@@ -3,7 +3,7 @@
 Framework-free (no PySide6). Mirrors the TUI's dispatch: every action runs
 ``jailbee <verb> <name>`` addressed at one repo — ``--config <path>`` for a
 configured repo, the child's working directory for one with no config file
-(see :class:`jailbee.dashboard.RepoTarget`) — so the target repo's own config
+(see :class:`jailbee.dashboard.model.RepoTarget`) — so the target repo's own config
 drives behaviour. How the GUI has to *run* that command differs per verb,
 though: some need a real TTY, some exist only for the text they print, and the
 rest are fire and forget — see :data:`LaunchMode`.
@@ -61,7 +61,7 @@ _ASSUME_YES_VERBS: frozenset[str] = _FORCE_ON_CONFIRM | ATTACH_VERBS
 def launch_mode(verb: str) -> LaunchMode:
     """Which launch path ``verb`` needs.
 
-    The "output" set is :data:`jailbee.dashboard.PRINTING_VERBS`, shared with the
+    The "output" set is :data:`jailbee.dashboard.menus.PRINTING_VERBS`, shared with the
     TUI rather than copied: a new printing verb must not be able to land in one
     front-end's list and be forgotten in the other's.
     """
@@ -105,7 +105,7 @@ def build_action(
 
     ``target`` says how to address the repo: ``--config <path>`` for a
     configured one, the child's cwd for a repo with no config file (see
-    :class:`jailbee.dashboard.RepoTarget`). The cwd is set either way, so
+    :class:`jailbee.dashboard.model.RepoTarget`). The cwd is set either way, so
     there is one launch path rather than two.
 
     ``verb`` may be a single token (``"shell"``) or a space-separated
@@ -114,8 +114,8 @@ def build_action(
     dispatches correctly.
 
     Verbs in ``_ASSUME_YES_VERBS``, and any verb starting with
-    ``jailbee.dashboard.APPS_RUN_PREFIX`` (a config-sourced ``apps:`` entry —
-    see ``dashboard._app_menu_verb``), get ``--force`` appended, for two
+    ``jailbee.dashboard.menus.APPS_RUN_PREFIX`` (a config-sourced ``apps:`` entry —
+    see ``jailbee.dashboard.model._app_menu_verb``), get ``--force`` appended, for two
     unrelated reasons. ``destroy`` has already been through the GUI's own
     confirmation dialog, and the detached ``Popen`` child has no interactive
     stdin, so the CLI's ``typer.confirm`` would read EOF and abort the

@@ -59,7 +59,7 @@ def seed_view_state(
     retired ``ahead_diff`` is migrated to ``target_diff`` with a visible notice
     before this filter, and that rename alone is written back so the notice
     appears once. Each
-    front-end's own last-column guard (``dashboard_settings.toggle_current``
+    front-end's own last-column guard (``jailbee.dashboard.settings.toggle_current``
     here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
     length, so a phantom name inflates that count without ever being a real,
     keepable column — reaching zero real columns from a single ordinary
@@ -287,7 +287,7 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
 
     ``heights`` are each row's rendered line count (a wrapped row is taller
     than one). A hidden end costs one marker line. Like
-    :func:`dashboard_overlays.window_lines`, the window is derived from the
+    :func:`jailbee.dashboard.overlays.window_lines`, the window is derived from the
     cursor alone: pinned to the top while the cursor fits there, to the
     bottom near the end, centred otherwise. A cursor row taller than the
     whole budget is still drawn; the frame clips it.

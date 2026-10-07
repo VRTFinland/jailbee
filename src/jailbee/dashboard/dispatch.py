@@ -232,7 +232,7 @@ def _run_cli_foreground(
     would change for the user.
 
     ``argv`` is checked exactly as given, then addressed: ``--config`` goes
-    before any ``--``, and nothing is added over SSH (`dashboard_actions.addressed`).
+    before any ``--``, and nothing is added over SSH (`jailbee.dashboard.actions.addressed`).
     ``style`` works as in :func:`_dispatch_action`. A remote session never gets
     a pager, because a pager can run host commands, so it gets the pause. A
     pager that cannot start also degrades to the pause.

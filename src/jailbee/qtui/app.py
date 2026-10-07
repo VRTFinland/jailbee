@@ -488,8 +488,8 @@ class AppController(QObject):
         if group is not None and not self._is_group_visible(group):
             return
         if note is not None:
-            # Same wording the TUI uses for the same state (dashboard.py's
-            # `new_container_reject_note`) — an orphan group's real prefix
+            # Same wording the TUI uses for the same state
+            # (`jailbee.dashboard.menus.new_container_reject_note`) — an orphan group's real prefix
             # must not be reported as "no repo selected", which used to be
             # this dialog's one hardcoded message regardless of cause.
             QMessageBox.warning(self._window, "No repo selected", note)

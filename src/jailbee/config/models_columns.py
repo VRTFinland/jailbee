@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # Columns the dashboard drops from the `ls` field set by default: REPO is
 # redundant under per-repo grouping, the wide GIT STATUS combo and the
 # JSON-only full_name add noise, and TTL is folded into the NETWORK cell.
-# Lives here rather than in `dashboard.py` because it is a config default
-# and `config.py` cannot import `dashboard` (that module imports this one).
+# Lives here rather than in `jailbee.dashboard.columns` because it is a
+# config default and that module imports this one.
 DASHBOARD_DEFAULT_HIDE: tuple[str, ...] = (
     "repo",
     "full_name",
@@ -64,7 +64,7 @@ class ColumnConfig(BaseModel):
 # global layer — where `GlobalConfig.dashboard`'s default already carries
 # `DASHBOARD_DEFAULT_HIDE` (see `global_config._DASHBOARD_DEFAULT`) — a
 # repo's own block defaults to a plain, unset `ColumnConfig`; the
-# dashboard-hide default is applied later, when `dashboard.seed_view_state`
+# dashboard-hide default is applied later, when `jailbee.dashboard.columns.seed_view_state`
 # reads the global block into a front-end's `view_prefs` row. So both repo
 # fields share one default here. Used by `load_config`'s sanitize
 # short-circuit.
