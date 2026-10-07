@@ -776,3 +776,13 @@ def runtime_dir(monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", base)
     yield Path(base) / "jailbee"
     shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.fixture
+def no_real_branch_listing(mocker):
+    """Keep the dashboard base prompt's branch listing from reaching a patched ``subprocess.run``.
+
+    Opt-in (``pytestmark = pytest.mark.usefixtures("no_real_branch_listing")``):
+    the git module's own tests need the real ``list_branches``.
+    """
+    mocker.patch("jailbee.git.list_branches", return_value=[])

@@ -141,7 +141,7 @@ class Run:
         return [view.overlay for view in self.trace if isinstance(view.overlay, kind)]
 
 
-def _patch_startup(mocker, view_state=None, mouse=True):  # type: ignore[no-untyped-def]
+def _patch_startup(mocker, view_state=None, mouse=True, jobs=SyncJobs):  # type: ignore[no-untyped-def]
     """Patch everything `open_dashboard` touches except the state client."""
     mocker.patch.object(
         tsession,
@@ -152,14 +152,22 @@ def _patch_startup(mocker, view_state=None, mouse=True):  # type: ignore[no-unty
     mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(tsession, "seed_view_state", return_value=view_state or ViewState())
-    mocker.patch.object(tsession, "JobRunner", SyncJobs)
+    mocker.patch.object(tsession, "JobRunner", jobs)
 
 
 def start_session(
-    mocker, groups=None, *, view_state=None, git_enabled=False, status=None, fail=None, mouse=True
+    mocker,
+    groups=None,
+    *,
+    view_state=None,
+    git_enabled=False,
+    status=None,
+    fail=None,
+    mouse=True,
+    jobs=SyncJobs,
 ):  # type: ignore[no-untyped-def]
     """Patch everything `open_dashboard` touches; return its `Startup` and the fake client."""
-    _patch_startup(mocker, view_state, mouse)
+    _patch_startup(mocker, view_state, mouse, jobs)
     client = FakeStateClient(
         groups if groups is not None else [], git_enabled=git_enabled, status=status, fail=fail
     )
@@ -213,6 +221,7 @@ def drive(  # type: ignore[no-untyped-def]
     cwd_root=None,
     client: FakeStateClient | None = None,
     mouse: bool = True,
+    jobs: type[JobRunner] = SyncJobs,
 ) -> Run:
     """Run a real `DashboardApp` headless through ``steps``; see the module docstring.
 
@@ -229,9 +238,10 @@ def drive(  # type: ignore[no-untyped-def]
             git_enabled=git_enabled,
             status=status,
             mouse=mouse,
+            jobs=jobs,
         )
     else:
-        _patch_startup(mocker, view_state, mouse)
+        _patch_startup(mocker, view_state, mouse, jobs)
         mocker.patch.object(tsession, "open_state_client", return_value=client)
         startup = tsession.open_dashboard(None)
     assert not isinstance(startup, int), "startup failed; use tapp.run for startup tests"

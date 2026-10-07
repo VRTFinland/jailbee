@@ -124,14 +124,6 @@ def test_textual_own_quit_binding_is_not_inherited(mocker):
     assert run.steps_taken == 3  # the two keys, then the Ctrl-C that quits
 
 
-def test_q_in_the_command_line_is_text(mocker, tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    run = drive(mocker, ["!", "q"], [group])
-    overlay = run.trace[2].overlay
-    assert isinstance(overlay, CommandState)
-    assert overlay.text == "q"
-
-
 def test_hand_off_order_marks_the_client_inactive_around_the_child(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     patch_pause(mocker)

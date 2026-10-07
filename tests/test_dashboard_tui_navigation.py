@@ -23,15 +23,11 @@ from tests.dashboard_pilot import (
     repo_menu_keys,
 )
 
+pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
+
 # The scroll markers the table draws at a clipped edge.
 LEFT_MORE = chr(0x2039)
 RIGHT_MORE = chr(0x203A)
-
-
-@pytest.fixture(autouse=True)
-def _no_real_branch_listing(mocker):
-    """Keep the base prompt's branch listing from reaching a patched ``subprocess.run``."""
-    mocker.patch("jailbee.git.list_branches", return_value=[])
 
 
 # --- the inline editor ---------------------------------------------------------

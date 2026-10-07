@@ -8,8 +8,10 @@ from pathlib import Path
 
 from rich.console import Console
 
+from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import frame as tframe
+from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
@@ -87,3 +89,30 @@ def frame_at(groups, *, width, offset=0, selected=None, folded=frozenset(), enab
 def header(text: str) -> str:
     """The table's column-heading line of a rendered frame."""
     return next(line for line in text.splitlines() if "NAME" in line)
+
+
+def retarget_group(tmp_path: Path) -> dmodel.RepoGroup:
+    """Repo ``alpha`` whose one container is based on ``feat/a``."""
+    info = dataclasses.replace(ci("alpha-x", "alpha"), base_branch="feat/a")
+    return dmodel.RepoGroup("alpha", str(tmp_path), None, [info])
+
+
+def fake_branches(_root, *, exclude=None):  # type: ignore[no-untyped-def]
+    return tuple(b for b in ("main", "feat/a", "develop") if b != exclude)
+
+
+def cfg_group(tmp_path: Path, containers: tuple[ContainerInfo, ...] = ()) -> dmodel.RepoGroup:
+    """Repo ``alpha`` with a config path: a local child gets ``--config``, an SSH one must not."""
+    return dmodel.RepoGroup(
+        "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", list(containers)
+    )
+
+
+def repo_menu_verbs(menu: tmenu.RepoMenuState | None) -> set[str]:
+    """Every leaf verb of a repo menu, submenus included."""
+    assert menu is not None
+    return {
+        leaf[1]
+        for item in menu.actions
+        for leaf in (item.actions if isinstance(item, dmenus.MenuGroup) else (item,))
+    }
