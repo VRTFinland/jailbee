@@ -124,6 +124,8 @@ def _render_help() -> RenderableType:
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
         "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
+        "Mouse: click selects; double- or right-click opens the menu;",
+        "▾/▸ folds, ‹ › scroll columns, the wheel moves; Shift-drag selects text.",  # noqa: RUF001 - the arrows the frame draws
         "",
         f"[dim]{_GATE_NOTE}[/dim]",
     ]

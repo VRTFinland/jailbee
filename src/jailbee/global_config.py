@@ -220,6 +220,13 @@ class DashboardConfig(ColumnConfig):
             "Read when the service starts; it exits once no dashboard is open."
         ),
     )
+    mouse: bool = Field(
+        default=True,
+        description=(
+            "Terminal dashboard: clicks, wheel and hover. False leaves the mouse to the "
+            "terminal (text selection); `m` toggles it for one session."
+        ),
+    )
 
 
 class GlobalConfig(BaseModel):

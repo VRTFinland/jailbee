@@ -2374,6 +2374,20 @@ The service reads it when it starts, and exits once no dashboard has been open
 for 30 seconds — close every dashboard to apply a change. The dashboards'
 `--interval`, `--git-interval` and `--no-git` flags are deprecated and ignored.
 
+### `dashboard.mouse` — mouse in the terminal dashboard
+
+Global config only. On by default: click a row to select it, double- or
+right-click to open its menu, click `▾`/`▸` to fold a repo and `‹`/`›` to
+scroll the columns; the wheel moves the selection or an open list.
+
+```yaml
+dashboard:
+  mouse: false   # leave the mouse to the terminal (text selection)
+```
+
+With the mouse on, most terminals still select text with Shift-drag. `m` in
+the dashboard turns the mouse off or on for that session only.
+
 ## Computed attributes
 
 The `Config` object exposes four attributes set at load time, not from YAML,

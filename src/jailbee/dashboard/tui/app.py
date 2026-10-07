@@ -22,7 +22,13 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView, render_view
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
-from jailbee.dashboard.tui.session import DashboardSession, Outcome, Startup, open_dashboard
+from jailbee.dashboard.tui.session import (
+    DOUBLE_CLICK_KINDS,
+    DashboardSession,
+    Outcome,
+    Startup,
+    open_dashboard,
+)
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -37,6 +43,28 @@ TICK_SECONDS = 0.25
 def _can_suspend(driver: Driver | None) -> bool:
     """Whether ``App.suspend`` can hand the terminal over (not headless, not web)."""
     return driver is not None and driver.can_suspend
+
+
+def _set_mouse_reporting(driver: Driver | None, on: bool) -> None:
+    """Switch the terminal's mouse reporting, and keep it switched across hand-offs.
+
+    Textual 8.2.8 has no public toggle. Its driver writes the reporting modes
+    from the private ``_mouse`` flag at start and again on every resume after
+    ``suspend()``, so the flag is flipped too: otherwise `jb tmux` and back
+    would silently turn the mouse on again.
+    """
+    if driver is None:
+        return
+    if on:
+        driver._mouse = True
+        enable = getattr(driver, "_enable_mouse_support", None)
+        if enable is not None:
+            enable()
+    else:
+        disable = getattr(driver, "_disable_mouse_support", None)
+        if disable is not None:
+            disable()
+        driver._mouse = False
 
 
 class DashboardApp(App[int], inherit_bindings=False):
@@ -84,6 +112,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._last_title: str | None = None
         self.hover: Hit | None = None
         self.quit_requested = False
+        self.mouse_on = startup.mouse
+        self._last_click: Hit | None = None
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -160,6 +190,63 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.quit_requested = True
             self.exit(0)
             return
+        if outcome == "toggle-mouse":
+            self.toggle_mouse()
+            return
+        self.refresh_frame()
+
+    def toggle_mouse(self) -> None:
+        """`m`: mouse reporting on or off for this session."""
+        self.mouse_on = not self.mouse_on
+        _set_mouse_reporting(self._driver, self.mouse_on)
+        self.hover = None
+        self.session.set_notice(
+            "mouse on" if self.mouse_on else "mouse off — terminal text selection active"
+        )
+        self.refresh_frame()
+
+    def on_click(self, event: events.Click) -> None:
+        hit = Hit.of(event.style.meta)
+        if event.chain > 1:
+            # The first click of the pair already acted; only a row-like target
+            # that the first click hit too, clicked twice, means Enter there.
+            # A right-click never pairs: its first click already opened the menu.
+            if (
+                event.button == 1
+                and hit is not None
+                and hit == self._last_click
+                and hit.kind in DOUBLE_CLICK_KINDS
+            ):
+                self._last_click = None  # a third click of the chain acts on nothing
+                self.session.click(hit, double=True)
+                self.refresh_frame()
+            return
+        self._last_click = hit
+        self.session.click(hit, right=event.button == 3)
+        self.refresh_frame()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        hit = Hit.of(event.style.meta)
+        if hit == self.hover:
+            return
+        self.hover = hit
+        self.session.hover(hit)
+        self.refresh_frame()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self.session.wheel(1, columns=event.shift)
+        self.refresh_frame()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.session.wheel(-1, columns=event.shift)
+        self.refresh_frame()
+
+    def on_mouse_scroll_right(self, _event: events.MouseScrollRight) -> None:
+        self.session.wheel(1, columns=True)
+        self.refresh_frame()
+
+    def on_mouse_scroll_left(self, _event: events.MouseScrollLeft) -> None:
+        self.session.wheel(-1, columns=True)
         self.refresh_frame()
 
     def _write_terminal(self, sequence: str) -> None:
@@ -196,7 +283,7 @@ def run(
         # Pushed before Textual takes the screen and popped after it gives it
         # back, so the terminal's own title is saved and restored intact.
         with terminal_title_scope(sys.stdout):
-            rc = app.run()
+            rc = app.run(mouse=startup.mouse)
     except KeyboardInterrupt:
         rc = 0
     finally:

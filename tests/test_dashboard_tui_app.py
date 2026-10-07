@@ -95,6 +95,22 @@ def test_ctrl_c_at_a_picker_cancels_the_picker(mocker, tmp_path):
     assert run.trace[3].overlay == "help"
 
 
+@pytest.mark.parametrize(
+    ("opening", "overlay_check"),
+    [
+        (["j", "enter"], lambda overlay: isinstance(overlay, MenuState)),
+        (["h"], lambda overlay: overlay == "help"),
+    ],
+    ids=["menu", "help"],
+)
+def test_ctrl_c_at_a_menu_or_help_quits_at_once(mocker, tmp_path, opening, overlay_check):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    run = drive(mocker, [*opening, "ctrl+c", "h"], [group])
+    assert overlay_check(run.trace[len(opening)].overlay)
+    assert run.steps_taken == len(opening) + 1  # the Ctrl-C ended it: no `h` after, no padding
+    assert run.rc == 0
+
+
 def test_ctrl_c_with_nothing_open_quits_at_once(mocker):
     run = drive(mocker, ["ctrl+c", "h"], [])
     assert run.steps_taken == 1
@@ -132,6 +148,29 @@ def test_hand_off_order_marks_the_client_inactive_around_the_child(mocker, tmp_p
     assert seen[0][-1] == ("active", False)
     after = client.events[len(seen[0]) :]
     assert after[:2] == [("active", True), ("refresh",)]
+
+
+def test_a_raising_child_still_reactivates_the_client_and_rewrites_the_title(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    writes = mocker.patch.object(tapp.DashboardApp, "_write_terminal")
+    seen: dict[str, object] = {}
+
+    def explode() -> int:
+        raise RuntimeError("child blew up")
+
+    def hand_off_the_failing_child(app: tapp.DashboardApp) -> None:
+        before = len(client.events)
+        with pytest.raises(RuntimeError, match="child blew up"):
+            app.hand_off(explode)
+        seen["events"] = client.events[before:]
+        seen["painted"] = app._painted
+
+    _, client = start_session(mocker, [group])
+    drive(mocker, [hand_off_the_failing_child], [group], client=client)
+    assert seen["events"] == [("active", False), ("active", True), ("refresh",)]
+    assert seen["painted"] is None  # the next frame repaints the screen the child drew over
+    # first frame, then again on the frame after the failed hand-off
+    assert [c.args[0] for c in writes.call_args_list] == ["\x1b]2;🐝 alpha\x07"] * 2
 
 
 def test_hand_off_suspends_textual_when_the_driver_can(mocker, tmp_path):

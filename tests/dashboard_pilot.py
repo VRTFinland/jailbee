@@ -19,12 +19,15 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from textual import events
 
+from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.frame import DashboardView, render_view
 from jailbee.db.view_prefs import ViewState
+from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
@@ -86,7 +89,31 @@ class Resize:
     height: int
 
 
-Step = str | Resize | Callable[["tapp.DashboardApp"], object]
+@dataclass(frozen=True)
+class Click:
+    hit: Hit
+    times: int = 1
+    button: int = 1
+
+
+@dataclass(frozen=True)
+class Wheel:
+    step: int
+    shift: bool = False
+    horizontal: bool = False
+
+
+Step = str | Resize | Click | Wheel | Callable[["tapp.DashboardApp"], object]
+
+
+def hit_offset(app: tapp.DashboardApp, hit: Hit) -> tuple[int, int]:
+    """The first screen cell whose style carries ``hit``."""
+    width, height = app.size
+    for y in range(height):
+        for x in range(width):
+            if Hit.of(app.screen.get_style_at(x, y).meta) == hit:
+                return x, y
+    raise AssertionError(f"{hit} is not on screen")
 
 
 @dataclass
@@ -111,8 +138,13 @@ class Run:
         return [view.overlay for view in self.trace if isinstance(view.overlay, kind)]
 
 
-def _patch_startup(mocker, view_state=None):  # type: ignore[no-untyped-def]
+def _patch_startup(mocker, view_state=None, mouse=True):  # type: ignore[no-untyped-def]
     """Patch everything `open_dashboard` touches except the state client."""
+    mocker.patch.object(
+        tsession,
+        "global_config_or_defaults",
+        return_value=GlobalConfig(dashboard=DashboardConfig(mouse=mouse)),
+    )
     mocker.patch.object(tsession, "_interactive", return_value=True)
     mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
@@ -121,10 +153,10 @@ def _patch_startup(mocker, view_state=None):  # type: ignore[no-untyped-def]
 
 
 def start_session(
-    mocker, groups=None, *, view_state=None, git_enabled=False, status=None, fail=None
+    mocker, groups=None, *, view_state=None, git_enabled=False, status=None, fail=None, mouse=True
 ):  # type: ignore[no-untyped-def]
     """Patch everything `open_dashboard` touches; return its `Startup` and the fake client."""
-    _patch_startup(mocker, view_state)
+    _patch_startup(mocker, view_state, mouse)
     client = FakeStateClient(
         groups if groups is not None else [], git_enabled=git_enabled, status=status, fail=fail
     )
@@ -145,6 +177,16 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         await pilot.press(step)
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
+        await pilot.pause()
+    elif isinstance(step, Click):
+        await pilot.click(offset=hit_offset(app, step.hit), times=step.times, button=step.button)
+    elif isinstance(step, Wheel):
+        if step.horizontal:
+            event = events.MouseScrollRight if step.step > 0 else events.MouseScrollLeft
+        else:
+            event = events.MouseScrollDown if step.step > 0 else events.MouseScrollUp
+        # Pilot has no public wheel helper in Textual 8.2.8.
+        await pilot._post_mouse_events([event], offset=(1, 1), shift=step.shift)
         await pilot.pause()
     else:
         step(app)
@@ -167,6 +209,7 @@ def drive(  # type: ignore[no-untyped-def]
     scope=None,
     cwd_root=None,
     client: FakeStateClient | None = None,
+    mouse: bool = True,
 ) -> Run:
     """Run a real `DashboardApp` headless through ``steps``; see the module docstring.
 
@@ -177,10 +220,15 @@ def drive(  # type: ignore[no-untyped-def]
     """
     if client is None:
         startup, client = start_session(
-            mocker, groups, view_state=view_state, git_enabled=git_enabled, status=status
+            mocker,
+            groups,
+            view_state=view_state,
+            git_enabled=git_enabled,
+            status=status,
+            mouse=mouse,
         )
     else:
-        _patch_startup(mocker, view_state)
+        _patch_startup(mocker, view_state, mouse)
         mocker.patch.object(tsession, "open_state_client", return_value=client)
         startup = tsession.open_dashboard(None)
     assert not isinstance(startup, int), "startup failed; use tapp.run for startup tests"
@@ -211,6 +259,49 @@ def drive(  # type: ignore[no-untyped-def]
     asyncio.run(script())
     result.rc = app.return_value
     return result
+
+
+class BareClient:
+    """A state client for a session with no frontend at all."""
+
+    def __init__(self, groups):  # type: ignore[no-untyped-def]
+        self.groups = groups
+        self.events: list[tuple[Any, ...]] = []
+
+    def latest(self):  # type: ignore[no-untyped-def]
+        return Snapshot(1, datetime(2026, 10, 7, tzinfo=UTC), False, self.groups)
+
+    def status(self):  # type: ignore[no-untyped-def]
+        return None
+
+    def refresh(self):  # type: ignore[no-untyped-def]
+        self.events.append(("refresh",))
+
+    def set_active(self, value):  # type: ignore[no-untyped-def]
+        self.events.append(("active", value))
+
+
+class BareTerminal:
+    width = 120
+
+    def __init__(self) -> None:
+        self.handed: list[object] = []
+
+    def hand_off(self, fn):  # type: ignore[no-untyped-def]
+        self.handed.append(fn)
+        return fn()
+
+
+def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]
+    """A `DashboardSession` over a `BareClient` and `BareTerminal`, ticked once."""
+    mocker.patch.object(tsession, "save_view_state")
+    startup = tsession.Startup(mocker.Mock(), BareClient(groups), ViewState(), None)  # type: ignore[arg-type]  # duck-typed client
+    terminal = BareTerminal()
+    session = tsession.DashboardSession(
+        startup, incus=mocker.Mock(), cwd_root=None, terminal=terminal, **kw
+    )
+    session.tick()
+    return session, terminal
 
 
 def render_text(view: DashboardView, size: tuple[int, int] = (80, 25)) -> str:

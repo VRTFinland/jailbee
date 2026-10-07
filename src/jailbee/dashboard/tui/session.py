@@ -84,6 +84,7 @@ from jailbee.dashboard.model import (
     dashboard_config_migration_notice,
     dashboard_group_notices,
     fold_target,
+    global_config_or_defaults,
     move_selection,
     present,
     prompt_target_kind,
@@ -96,6 +97,7 @@ from jailbee.dashboard.overlays import (
     Picker,
     PickerEntry,
     TextPrompt,
+    filter_suggestions,
     handle_prompt_key,
     move_picker,
     parse_pr_number,
@@ -154,7 +156,13 @@ NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
 STARTUP_NOTICE_SECONDS = 10.0  # a config-migration notice shown at launch
 
-Outcome = Literal["quit"] | None
+Outcome = Literal["quit", "toggle-mouse"] | None
+
+# Hits whose second click of a double-click means Enter there. Any other hit
+# already acted on the first click (a menu entry ran, a fold toggled).
+DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
+
+_OVERLAY_HITS = frozenset({"menu", "picker", "suggestion", "tab", "setting", "egress", "account"})
 
 
 def _now() -> datetime:
@@ -198,6 +206,7 @@ class Startup:
     client: StateClient
     view_state: ViewState
     notice: str | None
+    mouse: bool = True
 
 
 def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = None) -> Startup | int:
@@ -238,7 +247,9 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
         client.close()
         error(f"dashboard refresh failed: {exc}")
         return 1
-    return Startup(engine, client, view_state, column_notice)
+    return Startup(
+        engine, client, view_state, column_notice, mouse=global_config_or_defaults().dashboard.mouse
+    )
 
 
 class DashboardSession:
@@ -1622,8 +1633,7 @@ class DashboardSession:
             return None
         if key == "quit":
             return "quit"
-        self._table_key(key)
-        return None
+        return self._table_key(key)
 
     def _command_key(self, command: CommandState, data: bytes) -> None:
         """A key while the command line is open."""
@@ -1867,8 +1877,8 @@ class DashboardSession:
         self.column_offset = 0
         self.save_view()
 
-    def _table_key(self, key: str) -> None:
-        """A key with no overlay open."""
+    def _table_key(self, key: str) -> Outcome:
+        """A key with no overlay open; ``"toggle-mouse"`` asks the frontend to flip the mouse."""
         if key in ("up", "down"):
             self.move(-1 if key == "up" else 1)
         elif key in ("scroll-left", "scroll-right"):
@@ -1925,8 +1935,11 @@ class DashboardSession:
         elif key == "details":
             self.show_details = not self.show_details
             self.save_view()
+        elif key == "mouse":
+            return "toggle-mouse"
         elif key == "space":
             self.toggle_fold()
+        return None
 
     def select(self, row: Row) -> None:
         """Put the cursor on ``row`` if it is on screen."""
@@ -1968,6 +1981,109 @@ class DashboardSession:
             if self.overlay is None and container is not None:
                 note = view_only_note(self.groups, container)
                 self.set_notice(note or f"No actions available for '{container}'")
+
+    def click(self, hit: Hit | None, *, double: bool = False, right: bool = False) -> None:
+        """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules."""
+        overlay = self.overlay
+        if hit is not None and hit.kind in _OVERLAY_HITS:
+            self._click_overlay(hit, double=double)
+            return
+        if overlay is not None and not (
+            isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
+        ):
+            return  # a prompt, the command line, settings, egress or accounts keep the focus
+        if hit is not None and hit.kind != "scroll" and not self._listed(hit):
+            return  # stale: the row or repo left the listing since the frame was painted
+        if overlay is not None:
+            self.close_overlay()
+        if hit is None:
+            return
+        if hit.kind == "scroll":
+            if overlay is None:
+                self.scroll_columns(int(hit.args[0]))
+        elif hit.kind == "fold":
+            if overlay is None:
+                self.toggle_fold(str(hit.args[0]))
+            else:
+                self.select(Row("repo", str(hit.args[0])))
+        else:
+            self.select(Row("container" if hit.kind == "row" else "repo", str(hit.args[0])))
+            if double or right:
+                self.activate()
+
+    def _listed(self, hit: Hit) -> bool:
+        """Whether a row, heading or fold marker still names something on screen."""
+        name = str(hit.args[0]) if hit.args else ""
+        if hit.kind == "row":
+            return Row("container", name) in self.rows
+        return any(group.prefix == name for group in self.groups)
+
+    def _click_overlay(self, hit: Hit, *, double: bool) -> None:
+        """A click on one of the open overlay's own entries; a stale one is ignored."""
+        overlay = self.overlay
+        index = hit.args[0]
+        if hit.kind == "tab" and isinstance(overlay, SettingsState):
+            state = overlay
+            for _ in range(3):
+                if state.tab == index:
+                    self.overlay = state
+                    return
+                state = switch_tab(state)
+            return
+        if not isinstance(index, int):
+            return
+        moved: Overlay | None = None
+        if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
+            moved = move_menu(replace(overlay, index=0), index)
+        elif hit.kind == "picker" and isinstance(overlay, Picker):
+            moved = move_picker(replace(overlay, index=0), index)
+        elif hit.kind == "setting" and isinstance(overlay, SettingsState):
+            moved = move_settings(replace(overlay, index=0), index)
+        elif hit.kind == "egress" and isinstance(overlay, EgressState):
+            moved = move_egress(replace(overlay, index=0), index)
+        elif hit.kind == "account" and isinstance(overlay, da.AccountsState):
+            moved = da.move_accounts(replace(overlay, index=0), index)
+        elif hit.kind == "suggestion" and isinstance(overlay, TextPrompt):
+            matches = filter_suggestions(overlay.suggestions, overlay.text)
+            if 0 <= index < len(matches):
+                self._prompt_key(replace(overlay, highlight=index), b"\r")
+            return
+        if moved is None or getattr(moved, "index", None) != index:
+            return  # stale: the overlay changed since the frame was painted
+        self.overlay = moved
+        if hit.kind in ("menu", "picker"):
+            self.overlay_enter()
+        elif hit.kind == "setting":
+            self.toggle_setting()
+        elif hit.kind == "account" and double:
+            self.overlay_enter()
+
+    def wheel(self, step: int, *, columns: bool = False) -> None:
+        """A wheel notch: the open list's cursor or the selection; ``columns`` scrolls sideways."""
+        if columns:
+            if self.overlay is None:
+                self.scroll_columns(step)
+            return
+        if self.overlay is None:
+            self.move(step)
+        else:
+            self.overlay_move(step)
+
+    def hover(self, hit: Hit | None) -> None:
+        """The pointer rests on ``hit``: a menu or picker row takes the cursor."""
+        overlay = self.overlay
+        if hit is None or not hit.args or not isinstance(hit.args[0], int):
+            return
+        index = hit.args[0]
+        moved: MenuState | RepoMenuState | Picker
+        if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
+            moved = move_menu(replace(overlay, index=0), index)
+        elif hit.kind == "picker" and isinstance(overlay, Picker):
+            moved = move_picker(replace(overlay, index=0), index)
+        else:
+            return
+        if moved.index == index:
+            self.overlay = moved
 
     def toggle_fold(self, prefix: str | None = None) -> None:
         """Fold or unfold ``prefix`` (default: the selected repo) and park the cursor on it."""

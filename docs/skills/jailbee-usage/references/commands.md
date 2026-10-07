@@ -822,6 +822,8 @@ and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
 make the service gather. Requires a TTY. Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
+`m` toggles mouse support (clicks, wheel, hover; on by default, `dashboard.mouse: false` in the global config turns it off).
+
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`
 keeps it bound to the terminal). Same deprecated, ignored refresh flags; its
