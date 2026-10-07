@@ -30,7 +30,7 @@ _TEXTUAL_KEYS = {
     "enter": None,
     "escape": "\x1b",
     "tab": "\t",
-    "backspace": "\x08",
+    "backspace": None,
     "ctrl+c": None,
     "f2": None,
     "space": " ",
@@ -49,6 +49,21 @@ def test_every_bound_key_is_reachable_from_textual():
     tokens = {parse_key(data) for data in produced if data is not None}
     # EOF (b"") has no Textual key by design (plan refinement 4).
     assert {b.token for b in KEY_BINDINGS} <= tokens
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [("ctrl+h", b"\x7f"), ("ctrl+j", b"\r"), ("ctrl+m", b"\r")],
+)
+def test_control_aliases_of_backspace_and_enter_are_kept(key, expected):
+    assert key_adapter.legacy_bytes(key, None) == expected
+
+
+def test_ctrl_h_deletes_a_character_in_a_prompt(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
+    run = drive(mocker, ["n", "a", "b", "ctrl+h", "ctrl+c"], [group])
+    assert run.trace[4].overlay.text == "a"
 
 
 def test_unmapped_and_non_printable_keys_are_dropped():

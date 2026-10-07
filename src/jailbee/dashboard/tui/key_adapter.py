@@ -16,6 +16,10 @@ _NAMED: dict[str, bytes] = {
     "escape": b"\x1b",
     "tab": b"\t",
     "backspace": b"\x7f",
+    # The old cbreak loop delivered these control bytes with their usual meaning.
+    "ctrl+h": b"\x7f",
+    "ctrl+j": b"\r",
+    "ctrl+m": b"\r",
     "ctrl+c": b"\x03",
     "f2": b"\x1bOQ",
     "space": b" ",
