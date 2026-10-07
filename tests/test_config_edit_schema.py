@@ -267,7 +267,8 @@ def test_build_specs_covers_every_config_leaf():
     `port`, `dashboard`, `shell`, `exec`, `default_entrypoint`,
     `restrict_host`, `gui`, `files`, `network`, `excluded_repos`, and its nested `commands` policy's
     `mode` and `allow`.
-    `dashboard.auto_hide.hide_first` adds one editable global leaf.
+    `dashboard.auto_hide.hide_first` adds one editable global leaf (deprecated
+    and inert, but still editable like `dashboard.fields`/`hide`).
     The five `litellm` leaves (`enabled`, `version`, `default_profile`,
     `routes`, `profiles`) add 5 to GlobalConfig: 28 + 5 = 33.
     Phase 2 of LiteLLM adds `accounts`, `egress` and `extra`: 33 + 3 = 36.

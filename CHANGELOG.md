@@ -102,6 +102,9 @@ before editing `## Unreleased`.
 
 ### Deprecated
 
+- **`dashboard.auto_hide.hide_first`** in `global.yaml` has no effect: the
+  terminal dashboard no longer hides columns, it scrolls (see Changed). The key
+  still loads; `jailbee config validate` reports it so it can be deleted.
 - The remote SSH `shell` entry point is now `console`: `remote.ssh.shell`,
   `remote.ssh.default_entrypoint: shell`, `ssh … shell` and
   `jailbee remote ssh serve --shell` move to `remote.ssh.console`,

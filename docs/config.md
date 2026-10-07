@@ -153,7 +153,7 @@ Several keys are exempt from this pipeline — see [Keys that bypass the deep-me
 | `browsers.chrome.host_path` | global | Personal Chrome install path (default `/opt/google/chrome`). Firefox has no host default — it defaults to `source: image` instead. |
 | `browsers.default` | global | Personal — which browser `jailbee browser` opens when more than one is enabled |
 | `apps.<name>` | repo | A GUI app is part of the repo's tooling, like `agents:` |
-| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). Dashboard column *selection* is remembered by each front-end; `dashboard.auto_hide` in global config controls temporary TUI layout. |
+| `ls` (column preference) | global | Which columns `jailbee ls` shows is personal; see [`ls:`](#ls--dashboard--remembered-columns). Dashboard column *selection* is remembered by each front-end. |
 | `egress_allow` (Claude API, JetBrains license hosts) | global | Cross-cutting, repo appends |
 | `optional_mounts` (personal `~/.m2`, `~/.aws`) | global | Personal opt-in caches |
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
@@ -2316,40 +2316,30 @@ refreshes do not shift the table. Opening settings does not change this snapshot
 changing a setting or pressing `o` recomputes it. Empty columns remain selected in
 your preferences and return on the next snapshot when they have meaningful data. `ls --fields` also forces named columns on.
 
-The terminal dashboard additionally hides low-priority columns temporarily
-when they cannot fit at readable widths. It recalculates on each redraw, so
-resizing the terminal restores them without changing the remembered selection.
+The terminal dashboard never hides a column because the terminal is narrow.
+Every column keeps its width; when they do not all fit, the first column
+(normally NAME) stays put and `←`/`→` scroll the others one column at a
+time. A dim `‹` after the first column and `›` at the right edge mark
+columns out of view, and a column cut by the edge ends in `…`.
 Widths use fixed budgets by default. Press `o` to optimize them once from the
-currently visible data. These session-only budgets survive refreshes and refit
-on resize without remeasuring; press `o` again to measure new values and hide
-empty columns or restore populated ones. Changing settings recomputes column
-membership and resets widths to their default budgets. Only unfolded, visible
-repositories contribute to the snapshot.
-The built-in order starts with long/redundant fields (`full_name`,
-`git_status`, `loose_until`, `ip`, `doing`) and leaves `name` for last. To
-override the first columns to hide across all repos, set in
-`~/.config/jailbee/global.yaml`:
+currently visible data. These session-only budgets survive refreshes and
+resizes; press `o` again to measure new values and hide empty columns or
+restore populated ones. Changing settings recomputes column membership,
+resets widths to their default budgets and scrolls back to the first column.
+Only unfolded, visible repositories contribute to the snapshot.
 
-```yaml
-dashboard:
-  auto_hide:
-    hide_first: [doing, ip, created]
-```
+`dashboard.auto_hide.hide_first`, which chose the columns to hide first, is
+deprecated and has no effect; `jailbee config validate` reports it, and it can
+be deleted.
 
-Remaining columns follow the built-in order. `name` stays last even if listed;
-an enabled single column always remains visible. Unknown and repeated names
-are ignored with warnings; `jailbee config validate` reports them. This setting
-only affects the terminal dashboard, not the Qt dashboard or `jailbee ls`.
-
-**Only `dashboard.fields` and `dashboard.hide` are deprecated.** These keys
+**`dashboard.fields` and `dashboard.hide` are deprecated too.** These keys
 remain accepted so an existing config keeps loading: they are imported into each
 front-end's own settings the first time you open that dashboard after
 upgrading, and can be deleted once both have been opened at least once.
 `jailbee config validate` says so. Only `~/.config/jailbee/global.yaml` is
 imported this way — the setting is personal and applies in every repo, so a
 repo-level `dashboard:` block is reported and dropped rather than seeded.
-`ls:` is unaffected and still lives in config; `dashboard.auto_hide` remains
-active even after the legacy column keys are removed.
+`ls:` is unaffected and still lives in config.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a
 hardcoded selection — name, state, `mode`/`base`/`network`, a job badge and

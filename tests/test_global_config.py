@@ -261,7 +261,9 @@ def test_load_global_config_accepts_valid_column_blocks(tmp_path):
     assert warnings == []
 
 
-def test_dashboard_auto_hide_is_not_a_deprecated_column_preference(tmp_path):
+def test_dashboard_auto_hide_still_loads_and_is_reported_deprecated(tmp_path):
+    """1.6.0 shipped `auto_hide.hide_first`; a config that sets it must keep
+    loading, and `config validate` must say it no longer does anything."""
     from jailbee.global_config import global_config_issues
 
     path = tmp_path / "global.yaml"
@@ -271,7 +273,9 @@ def test_dashboard_auto_hide_is_not_a_deprecated_column_preference(tmp_path):
 
     assert gcfg.dashboard.auto_hide.hide_first == ["doing", "ip"]
     assert warnings == []
-    assert global_config_issues(path) == []
+    issues = global_config_issues(path)
+    assert any("auto_hide" in i and "deprecated" in i for i in issues)
+    assert not any("dashboard.fields/hide" in i for i in issues)
 
 
 def test_dashboard_auto_hide_keeps_legacy_seed_defaults(tmp_path):
@@ -307,18 +311,33 @@ def test_default_global_config_does_not_rebuild_column_specs(tmp_path, mocker):
     assert warnings == []
 
 
-def test_dashboard_auto_hide_recovers_unknown_and_duplicate_columns(tmp_path):
-    from jailbee.global_config import global_config_issues
-
+def test_dashboard_auto_hide_names_are_no_longer_checked(tmp_path):
     path = tmp_path / "global.yaml"
-    path.write_text("dashboard:\n  auto_hide:\n    hide_first: [ip, bogus, ip, state]\n")
+    path.write_text("dashboard:\n  auto_hide:\n    hide_first: [ip, bogus, ip]\n")
 
     gcfg, warnings = load_global_config(path)
 
-    assert gcfg.dashboard.auto_hide.hide_first == ["ip", "state"]
-    assert any("bogus" in w for w in warnings)
-    assert any("duplicate" in w for w in warnings)
-    assert any("bogus" in issue for issue in global_config_issues(path))
+    assert gcfg.dashboard.auto_hide.hide_first == ["ip", "bogus", "ip"]
+    assert warnings == []
+
+
+def test_dashboard_without_auto_hide_reports_no_auto_hide_deprecation(tmp_path):
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  refresh:\n    interval: 5\n")
+
+    assert not any("auto_hide" in i for i in global_config_issues(path))
+
+
+def test_fields_hide_notice_no_longer_says_auto_hide_is_active(tmp_path):
+    from jailbee.global_config import global_config_issues
+
+    path = tmp_path / "global.yaml"
+    path.write_text("dashboard:\n  hide: [mem]\n")
+
+    notice = next(i for i in global_config_issues(path) if "fields/hide" in i)
+    assert "remains active" not in notice
 
 
 def test_global_config_issues_reports_an_unknown_column_name(tmp_path):
