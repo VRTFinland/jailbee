@@ -1237,9 +1237,7 @@ class KeyBinding:
     would drift.
 
     ``hint`` is empty for a token whose sibling documents it (``down`` is
-    covered by ``up``'s "↑/↓ (j/k)"). ``brief`` is retained as optional
-    concise key metadata; keys without one remain documented in the help
-    overlay through their ``hint``/``label`` fields.
+    covered by ``up``'s "↑/↓ (j/k)").
     """
 
     token: str
@@ -1248,15 +1246,12 @@ class KeyBinding:
     label: str
     group: str
     verb: str | None = None
-    brief: str | None = None
 
 
 KEY_BINDINGS: tuple[KeyBinding, ...] = (
-    KeyBinding(
-        "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
-    ),
+    KeyBinding("up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate"),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
-    KeyBinding("scroll-left", (b"\x1b[D",), "←/→", "scroll columns", "Navigate", brief="scroll"),
+    KeyBinding("scroll-left", (b"\x1b[D",), "←/→", "scroll columns", "Navigate"),
     KeyBinding("scroll-right", (b"\x1b[C",), "", "", "Navigate"),
     KeyBinding(
         "enter", (b"\r", b"\n"), "Enter", "open a container or repo menu (fold there)", "Navigate"
@@ -1271,10 +1266,8 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "fold/unfold the selected repo (Settings: toggle)",
         "Navigate",
     ),
-    KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux", brief="tmux"),
-    KeyBinding(
-        "action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell", brief="shell"
-    ),
+    KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux"),
+    KeyBinding("action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell"),
     KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
     KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
     KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),
@@ -1294,7 +1287,7 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     # Repo-scoped, not container-scoped: no `verb`, so it never reaches
     # `quick_verb`/`actions_for_container` (those gate on a container's state).
     # `run`'s dispatch handles it directly, with its own guard.
-    KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions", brief="new"),
+    KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions"),
     # Repo-scoped like `new`: no `verb`, so neither reaches `quick_verb` — the
     # config being edited belongs to the repo, not to the highlighted container.
     KeyBinding(
@@ -1303,7 +1296,6 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "e / E",
         "edit this repo's config (E: the global one)",
         "Actions",
-        brief="config",
     ),
     KeyBinding("config-edit-global", (b"E",), "", "", "Actions"),
     # Host-wide, not row-scoped: the selected row only picks which repo the
@@ -1314,22 +1306,20 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "A",
         "credential groups and stored logins",
         "Actions",
-        brief="accounts",
     ),
     KeyBinding("optimize", (b"o",), "o", "optimize column widths once", "View"),
-    KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View", brief="refresh"),
-    KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View", brief="details"),
+    KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View"),
+    KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View"),
     KeyBinding(
         "settings",
         (b"\x1bOQ", b"\x1b[12~", b"S"),
         "F2 / S",
         "columns and repo folding",
         "View",
-        brief="settings",
     ),
     KeyBinding("tab", (b"\t",), "", "", "View"),
-    KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View", brief="help"),
-    KeyBinding("command", (b"!",), "!", "run a jailbee command", "Actions", brief="command"),
+    KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View"),
+    KeyBinding("command", (b"!",), "!", "run a jailbee command", "Actions"),
     KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View"),
     # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
     KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
