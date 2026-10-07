@@ -104,7 +104,8 @@ def card_content(c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]]) -> Ca
         if field.name == "name":
             name = cell
         elif field.name == "state":
-            state = cell
+            # Qt's status color lookup uses the canonical lifecycle state.
+            state = c.state
         else:
             card_fields.append(CardField(field.name, field.header, cell))
     reasons = [f"{s.agent}: {s.waiting_for}" for s in c.agent_status if s.waiting_for]

@@ -41,7 +41,7 @@ def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
         columns=["name", "created"],
     )
     headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
-    assert headers == ["NAME", "CREATED"]
+    assert headers == ["NAME", "AGE"]
 
 
 def test_menu_labels_match_menu_actions_for_running(qtbot):
@@ -206,8 +206,9 @@ def test_set_groups_colors_state_column_not_name_column(qtbot):
     root = win.tree.invisibleRootItem()
     running_row = root.child(0).child(0)
     fields_headers = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
-    state_col = fields_headers.index("STATE")
-    # The NAME column (0) must be left uncoloured; the STATE column carries
+    state_col = fields_headers.index("ST")
+    assert running_row.text(state_col) == "▶"
+    # The NAME column (0) must be left uncoloured; the ST column carries
     # the state-derived foreground colour.
     assert running_row.foreground(0).color().name() == "#000000"
     assert running_row.foreground(state_col).color().name() != "#000000"

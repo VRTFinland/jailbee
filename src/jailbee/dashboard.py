@@ -37,6 +37,7 @@ from rich.text import Text
 from jailbee import agent_status, table_format
 from jailbee import dashboard_accounts as da
 from jailbee import dashboard_actions as dact
+from jailbee import dashboard_format as dfmt
 from jailbee import dashboard_outbox as dob
 from jailbee.accounts.groups import RESERVED_GROUP_NAMES
 from jailbee.config import (
@@ -112,7 +113,6 @@ from jailbee.lifecycle import (
     agent_homes,
     annotate_activity,
     annotate_agent_status,
-    format_duration_short,
     list_containers,
     ls_field_specs,
     tracking_notices,
@@ -1164,6 +1164,13 @@ def visible_fields(
     return _select_visible_fields(now, all_containers, enabled, apply_conditions=True)
 
 
+def _dashboard_cell_for(spec: FieldSpecCI, now: datetime) -> Callable[[ContainerInfo], str]:
+    def cell(container: ContainerInfo) -> str:
+        return dfmt.dashboard_cell(spec, container, now)
+
+    return cell
+
+
 def _select_visible_fields(
     now: datetime,
     all_containers: list[ContainerInfo],
@@ -1186,28 +1193,31 @@ def _select_visible_fields(
     Unknown names are skipped rather than rejected — a stored set can outlive
     a renamed column, and view state must not break the view.
 
-    The ``network`` field is swapped for a dashboard-specific one whose cell
-    folds the loose TTL inline (e.g. ``"loose (12m)"``); that is why the
-    standalone TTL column is not in the default set.
+    Returned field specs wrap lifecycle values with dashboard-only compact
+    cells and labels. The standalone TTL column stays excluded from defaults.
 
     Shared by the terminal's snapshot selection and both Qt views.
     """
 
-    def _network_cell(c: ContainerInfo) -> str:
-        if c.network != "loose":
-            return c.network or "-"
-        if c.loose_until is None:
-            return f"{c.network} (—)"
-        return f"{c.network} ({format_duration_short(c.loose_until - now)})"
-
     wanted = frozenset(default_columns() if enabled is None else enabled)
     fields = [
-        f
-        for f in ls_field_specs(now=now, all_repos=False)
-        if f.name in wanted
-        and (not apply_conditions or f.show_if is None or f.show_if(all_containers))
+        field_spec
+        for field_spec in ls_field_specs(now=now, all_repos=False)
+        if field_spec.name in wanted
+        and (
+            not apply_conditions or field_spec.show_if is None or field_spec.show_if(all_containers)
+        )
     ]
-    return [replace(f, cell=_network_cell) if f.name == "network" else f for f in fields]
+    widths = {"state": 2, "mem": 15}
+    return [
+        replace(
+            field_spec,
+            header=dfmt.dashboard_header(field_spec),
+            cell=_dashboard_cell_for(field_spec, now),
+            dashboard_min_width=widths.get(field_spec.name, field_spec.dashboard_min_width),
+        )
+        for field_spec in fields
+    ]
 
 
 _KEY_READ_BYTES = 8  # covers all standard arrow/function-key CSI sequences
@@ -1801,6 +1811,8 @@ def _render_help() -> RenderableType:
         ]
     lines += [
         "",
+        "ST: ▶ running, ■ stopped, Ⅱ frozen; NET: S strict, L loose; ∞ means no auto-revert.",
+        "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle).",
         "Menus: the key in brackets picks that entry, like Enter on it.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
@@ -2066,18 +2078,20 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
 
 _DASHBOARD_COLUMN_BUDGETS = {
     "name": 18,
+    "state": 2,
+    "network": 10,
+    "created": 5,
+    "mem": 15,
     "mode": 5,
     "wt": 9,
     "ahead_count": 3,
     "behind_count": 3,
     "conflict": 8,
     "pr": 6,
-    "issues": 6,
+    "issues": 3,
     "full_name": 28,
     "repo": 16,
     "base": 20,
-    "created": 20,
-    "network": 18,
     "loose_until": 20,
     "ip": 15,
     "memory_limit": 14,
@@ -2540,7 +2554,6 @@ def render(
         else shown_columns,
         apply_conditions=False,
     )
-
     visible_groups = groups
     widths = _dashboard_column_widths(fields, column_widths)
     # A notice too long for the bottom border is drawn whole, wrapped, right
