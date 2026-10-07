@@ -87,13 +87,13 @@ def test_values_reuse_the_table_cells() -> None:
     cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
     items = dd.container_details(c, NOW)
     for name, label in [
-        ("wt", "git"),
-        ("ahead_count", "git"),
-        ("behind_count", "git"),
-        ("target_diff", "git"),
-        ("conflict", "git"),
-        ("local_diff", "git"),
-        ("local_count", "git"),
+        ("wt", "git wt"),
+        ("ahead_count", "commits"),
+        ("behind_count", "commits"),
+        ("target_diff", "target +/-"),
+        ("conflict", "conflict"),
+        ("local_diff", "local +/-"),
+        ("local_count", "local +/-"),
         ("mem", "resources"),
         ("cpu", "resources"),
         ("pr", "github"),
@@ -102,8 +102,9 @@ def test_values_reuse_the_table_cells() -> None:
     ]:
         assert cells[name](c) in _value(items, label), (name, label)
     # Distinct counts, so a swapped arrow cannot pass on a coincidence.
-    git = _plain(_value(items, "git"))
-    assert "↑7" in git and "↓9" in git and "local ↑5" in git
+    commits = _plain(_value(items, "commits"))
+    assert "↑7" in commits and "↓9" in commits
+    assert "↑5" in _plain(_value(items, "local +/-"))
 
 
 def test_absent_values_render_as_a_dash() -> None:
@@ -133,16 +134,18 @@ def test_changed_submodules_follow_git_with_escaped_paths_and_stats() -> None:
     )
     items = dd.container_details(_c(git_status=status), NOW)
 
-    assert [item.label for item in items][2:7] == [
-        "git",
-        "submodule",
+    labels = [item.label for item in items]
+    assert labels[2:8] == [
+        "git wt",
         "commits",
         "target +/-",
-        "working +/-",
+        "conflict",
+        "local +/-",
+        "submodule",
     ]
-    assert _plain(items[3].value) == "deps/" + "segment/" * 16 + "[bold]widget"
-    assert r"\[bold]widget" in items[3].value
-    assert [_plain(item.value) for item in items[4:7]] == ["modified · ↑2 ↓1", "+7 -3", "+4 -0"]
+    assert _plain(items[7].value) == "deps/" + "segment/" * 16 + "[bold]widget"
+    assert r"\[bold]widget" in items[7].value
+    assert [_plain(item.value) for item in items[8:11]] == ["modified · ↑2 ↓1", "+7 -3", "+4 -0"]
     rendered = _text(dd.render_details(dd.DetailsView("alpha", tuple(items)), None), width=120)
     assert "modified" in rendered and "↑2 ↓1" in rendered
     assert "+7 -3" in rendered and "+4 -0" in rendered
@@ -190,10 +193,11 @@ def test_multiple_submodules_preserve_order_and_unknown_stats() -> None:
 
     assert [_plain(row.value) for row in rows] == ["first", "second"]
     assert [_plain(i.value) for i in items if i.label == "commits"] == [
+        "↑0 ↓?",
         "new · ↑? ↓?",
         "removed · ↑0 ↓0",
     ]
-    assert [_plain(i.value) for i in items if i.label == "target +/-"] == ["?", "clean"]
+    assert [_plain(i.value) for i in items if i.label == "target +/-"] == ["?", "?", "clean"]
     assert [_plain(i.value) for i in items if i.label == "working +/-"] == ["?", "clean"]
 
 
@@ -306,6 +310,41 @@ def test_orphan_container_title_is_the_full_name() -> None:
     g = dashboard.RepoGroup("ghost", None, None, [orphan])
     view = dd.details_for([g], dashboard.Row("container", "orphan-container"), NOW)
     assert view is not None and view.title == "orphan-container"
+
+
+def test_render_keeps_each_group_in_one_column_at_two_and_three_columns() -> None:
+    groups = ((0, 1), (2, 3, 4, 5, 6), (7, 8, 9, 10))
+    items = tuple(
+        dd.DetailItem(f"k{i}:", f"v{i}", group=f"g{group_index}")
+        for group_index, group in enumerate(groups)
+        for i in group
+    )
+    view = dd.DetailsView("alpha", items)
+
+    for width in (40, 80, 120):
+        lines = _text(dd.render_details(view, None), width=width).splitlines()[1:-1]
+        positions = {
+            i: next(
+                (row, line.index(f"k{i}:")) for row, line in enumerate(lines) if f"k{i}:" in line
+            )
+            for group in groups
+            for i in group
+        }
+        for group in groups:
+            assert len({positions[i][1] for i in group}) == 1
+            assert [positions[i][0] for i in group] == list(
+                range(positions[group[0]][0], positions[group[0]][0] + len(group))
+            )
+
+
+def test_capped_columns_show_ellipsis_where_that_column_overflows() -> None:
+    items = tuple(dd.DetailItem(f"k{i}", f"v{i}", group=f"g{i}") for i in range(12))
+    rendered = _text(dd.render_details(dd.DetailsView("alpha", items), 3), width=120)
+
+    assert "k0" in rendered and "k1" in rendered and "k2" in rendered
+    assert rendered.count("…") == 3
+    assert "k6" not in rendered and "k7" not in rendered and "k8" not in rendered
+    assert len(rendered.splitlines()) == 5
 
 
 def test_render_flows_pairs_by_width_and_caps_rows() -> None:
