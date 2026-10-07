@@ -3888,8 +3888,8 @@ def test_render_lines_never_exceed_the_width_and_marks_show(tmp_path):
     at0 = _frame_at([group], width=40)
     at1 = _frame_at([group], width=40, offset=1)
     assert all(len(line) <= 40 for line in (at0 + at1).splitlines())
-    assert "›" in _header(at0) and "‹" not in _header(at0)
-    assert "‹" in _header(at1)
+    assert "\u203a" in _header(at0) and "\u2039" not in _header(at0)
+    assert "\u2039" in _header(at1)
 
 
 def test_render_scrolled_header_and_rows_stay_aligned(tmp_path):
@@ -3918,20 +3918,20 @@ def test_render_highlight_stays_on_row_when_scrolled(tmp_path, monkeypatch):
     )
     cursor = _cursor_lines(_render_ansi_lines(frame, width=40))
     assert len(cursor) == 1 and "one" in dashboard.Text.from_ansi(cursor[0]).plain
-    assert "‹" in "\n".join(_render_ansi_lines(frame, width=40))
+    assert "\u2039" in "\n".join(_render_ansi_lines(frame, width=40))
 
 
 def test_render_narrower_than_the_name_column(tmp_path):
     group = _wide_group(tmp_path)
     out = _frame_at([group], width=14, offset=3)
     assert all(len(line) <= 14 for line in out.splitlines())
-    assert "‹" not in out and "›" not in out
+    assert "\u2039" not in out and "\u203a" not in out
 
 
 def test_render_scrolled_with_every_repo_folded(tmp_path):
     group = _wide_group(tmp_path)
     out = _frame_at([group], width=40, offset=3, folded=frozenset({"alpha"}))
-    assert "alpha" in out and "‹" not in out and "›" not in out
+    assert "alpha" in out and "\u2039" not in out and "\u203a" not in out
 
 
 def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):

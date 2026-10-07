@@ -1947,7 +1947,10 @@ def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str])
 
 
 def _aligned_table(
-    fields: list[FieldSpecCI], widths: tuple[int, ...], *, show_header: bool,
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
+    *,
+    show_header: bool,
     marks: tuple[bool, bool] = (False, False),
 ) -> Table:
     """An empty table with the dashboard's shared, fixed column geometry.
@@ -1965,6 +1968,7 @@ def _aligned_table(
         show_header=show_header,
         padding=(0, 1),
     )
+
     def add_mark(glyph: str) -> None:
         table.add_column(
             Text(glyph, style="dim") if show_header else "",
@@ -1985,14 +1989,15 @@ def _aligned_table(
             overflow="ellipsis",
         )
         if index == 0 and marks[0]:
-            add_mark("‹")
+            add_mark("\u2039")
     if marks[1]:
-        add_mark("›")
+        add_mark("\u203a")
     return table
 
 
 def column_header(
-    fields: list[FieldSpecCI], widths: tuple[int, ...],
+    fields: list[FieldSpecCI],
+    widths: tuple[int, ...],
     marks: tuple[bool, bool] = (False, False),
 ) -> Table:
     """The column titles, drawn once above every repo section."""
