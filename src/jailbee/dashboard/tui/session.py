@@ -372,10 +372,10 @@ class DashboardSession:
     def set_notice(self, text: str, seconds: float = NOTICE_SECONDS) -> None:
         """Show ``text`` in the panel subtitle for ``seconds``.
 
-        The dashboard owns the whole screen while Live is running, so a
-        rejected key or a view-only row has nowhere to print — but staying
-        silent is indistinguishable from being broken, hence this. A failure
-        worth reading (a refused account command) is kept up longer.
+        The dashboard owns the whole screen, so a rejected key or a view-only
+        row has nowhere to print — but staying silent is indistinguishable
+        from being broken, hence this. A failure worth reading (a refused
+        account command) is kept up longer.
         """
         self.notice = text
         self.notice_until = time.monotonic() + seconds
@@ -384,12 +384,11 @@ class DashboardSession:
         """Write ``state`` to ``view_prefs``, degrading instead of crashing.
 
         The repo menu and settings overlay commit to SQLite straight from a
-        keypress (fold and setting toggles).
-        the dashboard driver's own ``try`` only catches ``KeyboardInterrupt``, so a
-        write failure here (``database is locked`` against a concurrent
-        background worker, a read-only state dir) would otherwise end the
-        whole session with a traceback. The fold/toggle already took effect
-        on screen by the time this runs — only persistence is lost.
+        keypress (fold and setting toggles). A write failure here (``database
+        is locked`` against a concurrent background worker, a read-only state
+        dir) would otherwise end the whole session with a traceback. The
+        fold/toggle already took effect on screen by the time this runs —
+        only persistence is lost.
         """
         try:
             save_view_state(self.engine, FRONTEND_TUI, state)
@@ -1621,7 +1620,7 @@ class DashboardSession:
             # A picker is one step of a question flow, like the prompt it can
             # lead to: Ctrl-C, Esc and `q` all cancel the step — a nested
             # picker returns to the panel it was opened from — never the
-            # dashboard. EOF (b"") still quits — a closed stdin must not spin here.
+            # dashboard.
             self.overlay = overlay.back
             self.set_notice("Cancelled")
             return None
