@@ -806,3 +806,31 @@ def test_synthetic_config_only_repo_remains_selectable_for_new(qtbot):
     win.set_groups([RepoGroup("scratch", "/scratch", None, [])], now=datetime.now().astimezone())
     win.tree.setCurrentItem(win.tree.topLevelItem(0))
     assert win._selected_prefix() == "scratch"
+
+
+def test_compact_table_headers_and_cells_explain_values(qtbot):
+    from datetime import UTC, timedelta
+    from jailbee.agent_status import AgentSummary
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    groups = _groups()
+    c = groups[0].containers[0]
+    c.created_at = now - timedelta(hours=3)
+    c.network = "loose"
+    c.loose_until = now + timedelta(minutes=12)
+    c.agent_status = (AgentSummary("claude", "waiting", now, "permission", 1),)
+    win = MainWindow()
+    qtbot.addWidget(win)
+    win.set_groups(groups, now=now, columns=["state", "created", "network", "agent_compact", "target_diff", "local_diff"])
+    headers = win.tree.headerItem()
+    row = win.tree.topLevelItem(0).child(0)
+    columns = {headers.text(i): i for i in range(win.tree.columnCount())}
+    assert "Running" in row.toolTip(columns["ST"])
+    assert c.created_at.isoformat() in row.toolTip(columns["AGE"])
+    assert c.loose_until.isoformat() in row.toolTip(columns["NET"])
+    assert "strict" in headers.toolTip(columns["NET"])
+    assert "waiting" in headers.toolTip(columns["AI"])
+    assert "claude" in row.toolTip(columns["AI"])
+    assert "permission" in row.toolTip(columns["AI"])
+    assert "target" in headers.toolTip(columns["Δ"])
+    assert "host" in headers.toolTip(columns["LΔ"])

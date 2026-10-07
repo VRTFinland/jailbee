@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from jailbee.agent_activity import describe
-from jailbee.background import DEAD_SUFFIX
+from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 
 if TYPE_CHECKING:
@@ -166,10 +166,10 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
     if behind_count not in (None, "0"):
         segs.append((f"↓{behind_count}", "ahead"))
     target_diff = card_field(cc, "target_diff")
-    if target_diff not in (None, "clean"):
+    if target_diff not in (None, "clean", "✓"):
         segs.append((target_diff, "diff"))
     wt = card_field(cc, "wt")
-    if wt not in (None, "clean"):
+    if wt not in (None, "clean", "✓"):
         segs.append((f"wt {wt}", "diff"))
     conflict = card_field(cc, "conflict")
     if conflict not in (None, "ok"):
@@ -210,3 +210,58 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
     segs = git_segments(cc)
     rows.append(("GIT", "clean" if not segs else "  ".join(t for t, _ in segs)))
     return rows
+
+
+_FIELD_MEANINGS = {
+    "name": "Container display name", "full_name": "Full Incus container name",
+    "repo": "Repository", "mode": "Repository mode: cln = clone, mnt = host mount",
+    "base": "Base branch; ↗ means last-fetched remote-tracking base (not a live remote)",
+    "state": "Container state: ▶ Running, ■ Stopped, Ⅱ Frozen",
+    "created": "Container age (s/m/h/d); tooltip shows exact creation timestamp",
+    "network": "Network: S = strict, L = loose; remaining auto-revert TTL, ∞ = no auto-revert",
+    "ttl": "Remaining loose-network auto-revert time",
+    "loose_until": "Exact loose-network auto-revert deadline",
+    "mem": "Memory usage / configured limit", "memory_limit": "Configured memory limit",
+    "cpu": "CPU usage; suffix is configured core limit", "doing": "Active processes; ×N = process count",
+    "job": "Background job phase; failed and (dead) identify failures",
+    "wt": "Working-tree diff; ✓ = clean",
+    "target_diff": "Diff against host target branch; ✓ = clean",
+    "local_diff": "Diff against checked-out host HEAD; ✓ = clean",
+    "ahead_count": "Commits ahead of host target", "behind_count": "Commits behind host target",
+    "conflict": "Merge prediction or actual in-progress Git operation",
+    "git_status": "Combined Git status", "pr": "Pull request and pending PR outbox actions",
+    "issues": "Pending issue outbox actions", "group": "Credential group",
+    "agent_compact": "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown",
+    "agent": "Full agent state and duration",
+}
+
+
+def field_tooltip(field: FieldSpec[ContainerInfo]) -> str:
+    """Expand compact labels without depending on Qt."""
+    return _FIELD_MEANINGS.get(field.name, field.name.replace("_", " ").capitalize())
+
+
+def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
+    """Full facts behind a compact table cell, including agent wait reasons."""
+    meaning = field_tooltip(field)
+    if field.name == "state":
+        detail = c.state
+    elif field.name == "created":
+        detail = c.created_at.isoformat() if c.created_at else "Unknown creation time"
+    elif field.name in ("network", "ttl", "loose_until"):
+        deadline = c.loose_until.isoformat() if c.loose_until else "no auto-revert deadline"
+        detail = f"{c.network or 'unknown'}; {deadline}"
+    elif field.name in ("agent", "agent_compact"):
+        details = [f"{s.agent}: {s.state}; {s.count} session(s)" + (f"; since {s.since.isoformat()}" if s.since else "") + (f"; {s.waiting_for}" if s.waiting_for else "") for s in c.agent_status]
+        now = datetime.now(UTC)
+        for summary in c.agent_status:
+            activity = describe(summary, now)
+            if activity is not None:
+                details.extend(activity.lines())
+        detail = "\n".join(details) or "No agent status"
+    elif field.name == "job":
+        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        detail = "\n".join(part for part in (label, c.job_error) if part)
+    else:
+        detail = _strip_markup(field.cell(c))
+    return f"{meaning}\n{detail}"

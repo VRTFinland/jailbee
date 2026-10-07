@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
-from jailbee.lifecycle import format_duration_short
+from jailbee import background
+from jailbee.lifecycle import DOING_MAX_NAMES, format_duration_short
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -24,6 +25,9 @@ _HEADER_LABELS = {
     "loose_until": "UNTIL",
     "agent_compact": "AI",
     "issues": "ISS",
+    "target_diff": "Δ",
+    "local_diff": "LΔ",
+    "git_status": "GIT",
 }
 _STATE_GLYPHS = {"Running": "▶", "Stopped": "■", "Frozen": "Ⅱ"}
 _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
@@ -65,6 +69,35 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return _network(container, now)
     if field.name == "created":
         return _age(container.created_at, now)
+    if field.name == "base":
+        base = escape(container.base_branch or "—")
+        tracking = container.base_branch and container.git_status and container.git_status.base_source == "tracking"
+        return f"{base} ↗" if tracking else base
+    if field.name == "mode":
+        return {"clone": "cln", "mount": "mnt"}.get(container.mode, escape(container.mode))
+    if field.name == "job":
+        if container.job_phase is None:
+            return ""
+        label = background.job_label_or_empty(container.job_phase, container.job_pid, kind=container.job_kind)
+        phase, suffix = (label[:-len(background.DEAD_SUFFIX)], background.DEAD_SUFFIX) if label.endswith(background.DEAD_SUFFIX) else (label, "")
+        if phase.startswith("autostart:"):
+            phase = "auto:" + phase[len("autostart:"):]
+        else:
+            phase = {"starting": "start", "creating": "create", "cloning": "clone", "stopping": "stop", "deleting": "delete", "destroying": "destroy"}.get(phase, phase)
+        dead = background.clearable(container.job_phase, container.job_pid) if container.job_pid is not None else container.job_phase in background.TERMINAL_PHASES
+        colour = "red" if dead else "yellow"
+        return f"[{colour}]{escape(phase + suffix)}[/{colour}]"
+    if field.name == "doing" and container.activity:
+        names = [escape(p.comm) if p.count == 1 else f"{escape(p.comm)}×{p.count}" for p in container.activity[:DOING_MAX_NAMES]]
+        hidden = len(container.activity) - len(names)
+        if hidden:
+            names.append(f"[dim]+{hidden}[/dim]")
+        return ",".join(names)
+    if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
+        if getattr(container.git_status, field.name) == "clean":
+            return "[dim]✓[/dim]"
+    if field.name == "ttl":
+        return value.replace(" ", "")
     if field.name == "mem":
         return _MEM_SEPARATOR_RE.sub("/", value)
     return value

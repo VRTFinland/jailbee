@@ -3613,15 +3613,15 @@ def test_render_hides_enabled_job_column_without_a_job(tmp_path):
     # Check the header, not the empty cells.
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
     assert " JOB " not in header_line
-    # The cell value "cloning" must also be absent when no job is in flight.
-    assert "cloning" not in out
+    # The compact phase must also be absent when no job is in flight.
+    assert "clone" not in out
 
     # A container with an in-flight job -> JOB column present, phase value visible.
     c = _ci("alpha-two", "alpha")
     c.job_phase = "cloning"
     g_op = dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
     out2 = _render_text(dashboard.render([g_op], selected=None, now=now, git_enabled=True))
-    assert "cloning" in out2
+    assert "clone" in out2
     header_line2 = next(ln for ln in out2.splitlines() if "NAME" in ln)
     assert " JOB " in header_line2 or header_line2.startswith("JOB ")
 
@@ -11166,8 +11166,8 @@ def test_dashboard_formatting_contracts():
         "memory_limit": "LIMIT",
         "loose_until": "UNTIL",
         "agent_compact": "AI",
-        "target_diff": "DIFF ±",
-        "local_diff": "LOCAL ±",
+        "target_diff": "Δ",
+        "local_diff": "LΔ",
         "conflict": "MERGE",
     }
     canonical = {field.name: field.header for field in ls_field_specs(now=now, all_repos=False)}
@@ -11191,3 +11191,45 @@ def test_dashboard_formatting_contracts():
         container(), dashboard.visible_fields(now, [container()], ["name", "state"])
     )
     assert content.state == "Running"
+
+
+def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
+    from rich.text import Text
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ls_field_specs
+    from jailbee.procstat import ProcessActivity
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    c = _ci("p-one", "p")
+    c.mode = "mount"
+    c.job_phase = "starting"
+    c.network = "loose"
+    c.base_branch = "dev[branch]"
+    c.git_status = GitStatus("clean", "clean", "0", "ok", local_diff="clean", target_diff="clean", base_source="tracking")
+    c.activity = (ProcessActivity("node x2, worker", 12.0, 2),)
+    fields = {f.name: f for f in dashboard.visible_fields(now, [c], ("base", "mode", "job", "doing", "wt", "target_diff", "local_diff", "git_status", "ttl"))}
+    canonical = {f.name: f for f in ls_field_specs(now=now, all_repos=False)}
+    assert Text.from_markup(fields["base"].cell(c)).plain == "dev[branch] ↗"
+    c.mode = "clone"
+    assert fields["mode"].cell(c) == "cln"
+    c.mode = "mount"
+    assert fields["mode"].cell(c) == "mnt"
+    assert Text.from_markup(fields["doing"].cell(c)).plain == "node x2, worker×2"
+    assert canonical["doing"].cell(c) == "node x2, worker x2"
+    for name in ("wt", "target_diff", "local_diff"):
+        assert Text.from_markup(fields[name].cell(c)).plain == "✓"
+        assert canonical[name].json(c) == fields[name].json(c) == "clean"
+    assert fields["git_status"].header == "GIT"
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    c.job_pid = 123
+    for phase, expected in (("starting", "start"), ("creating", "create"), ("cloning", "clone"), ("stopping", "stop"), ("deleting", "delete"), ("destroying", "destroy"), ("failed", "failed")):
+        c.job_phase = phase
+        assert Text.from_markup(fields["job"].cell(c)).plain == expected
+    c.job_kind = "autostart"
+    c.job_phase = "deps[red]"
+    assert Text.from_markup(fields["job"].cell(c)).plain == "auto:deps[red]"
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    assert Text.from_markup(fields["job"].cell(c)).plain == "deps[red] (dead)"
+    c.network = "loose"
+    c.loose_until = now + timedelta(hours=3, minutes=59)
+    assert Text.from_markup(fields["ttl"].cell(c)).plain == "3h59m"
