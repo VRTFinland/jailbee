@@ -3896,13 +3896,16 @@ def test_render_scrolled_header_and_rows_stay_aligned(tmp_path):
     group = _wide_group(tmp_path)
     aligned = 0
     for offset in (0, 1, 2):
-        out = _frame_at([group], width=60, offset=offset).splitlines()
+        out = _frame_at([group], width=40, offset=offset).splitlines()
         header = _header("\n".join(out))
         row = next(line for line in out if "one" in line)
-        if "MODE" in header:
-            assert header.index("MODE") == row.index("mnt")
-            aligned += 1
-    assert aligned > 0
+        if offset:
+            assert "\u2039" in header
+        for title, value in (("MODE", "mnt"), ("ST", "▶"), ("AGE", "6d"), ("NET", "●")):
+            if title in header:
+                assert header.index(title) == row.index(value)
+                aligned += 1
+    assert aligned >= 3
 
 
 def test_render_highlight_stays_on_row_when_scrolled(tmp_path, monkeypatch):
