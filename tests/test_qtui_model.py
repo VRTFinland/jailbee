@@ -82,7 +82,7 @@ def test_column_headers():
     fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
     headers = m.column_headers(fields)
     assert headers[0] == "NAME"
-    assert "STATE" in headers
+    assert "ST" in headers
 
 
 def test_state_colors_are_hex_strings():

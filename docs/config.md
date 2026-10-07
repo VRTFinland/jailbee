@@ -2202,13 +2202,28 @@ something has one" still applies to a hidden-by-config column, unlike
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
 DIFF ±, ↑, ↓, MERGE, plus the dynamic columns below when they apply. The
-dashboards add MEM, CPU, DOING and AGENT_COMPACT; the
+dashboards add MEM, CPU, DOING and AI (`agent_compact`); the
 compact agent status omits agent names to save width. The full AGENT column
 includes those names and is available by selecting it in dashboard settings.
 CPU and DOING are rates and have no value at all in a single reading, so `ls`
 takes a second one when you name either in `--fields`. Either agent field
 needs a single reading. IP is off in both — enable it in the dashboard
 settings UI, or ask for it from `ls` with `--fields ip`.
+
+**Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
+The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
+**AGE** (elapsed seconds/minutes/hours/days), network **NET** (**S** strict,
+**L** loose with compact remaining TTL; **∞** means no auto-revert), target diff
+**Δ**, local diff **LΔ**, combined status **GIT**, full name **FULL**, memory
+limit **LIMIT**, loose deadline **UNTIL**, and pending issues **ISS**. **AI** uses
+◆ waiting, ● busy, ◐ shell, ○ idle, and ? for an unknown agent state. Full
+**AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
+**MODE** uses `cln`/`mnt`. **WT**, **Δ** and **LΔ** show ✓ for clean, not
+for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
+working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
+`autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
+Qt table tooltips expand the labels, exact timestamps and agent details;
+the TUI's `h` help contains the legend. MERGE and PR retain their meanings.
 
 Six columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is

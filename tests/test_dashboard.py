@@ -2957,8 +2957,8 @@ def test_visible_fields_network_cell_folds_loose_ttl():
     )
     fields = dashboard.visible_fields(now, [loose, strict])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(loose) == "loose (12m)"
-    assert network_field.cell(strict) == "strict"
+    assert network_field.cell(loose) == "L 12m"
+    assert network_field.cell(strict) == "S"
 
 
 def test_network_cell_renders_hours_for_a_long_ttl():
@@ -2976,7 +2976,7 @@ def test_network_cell_renders_hours_for_a_long_ttl():
         loose_until=now + timedelta(hours=2, minutes=5),
     )
     network_field = next(f for f in dashboard.visible_fields(now, [loose]) if f.name == "network")
-    assert network_field.cell(loose) == "loose (2h 5m)"
+    assert network_field.cell(loose) == "L 2h5m"
 
 
 def test_visible_fields_network_cell_unknown_loose_until():
@@ -2992,7 +2992,7 @@ def test_visible_fields_network_cell_unknown_loose_until():
     )
     fields = dashboard.visible_fields(now, [c])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(c) == "loose (—)"
+    assert network_field.cell(c) == "L ∞"
 
 
 def test_visible_fields_includes_pr_when_a_container_has_one():
@@ -3082,7 +3082,7 @@ def test_budgeted_base_value_stays_on_one_row():
             ).splitlines()
         )
     assert len(frames[0]) == len(frames[1])
-    assert any("…" in line and "Running" in line for line in frames[1])
+    assert any("…" in line and "▶" in line for line in frames[1])
 
 
 def test_visible_fields_omits_pr_when_no_container_has_one():
@@ -3238,7 +3238,7 @@ def test_visible_fields_still_folds_the_loose_ttl_into_network():
     fields = dashboard.visible_fields(now, [loose], ["name", "network"])
     network = next(f for f in fields if f.name == "network")
 
-    assert network.cell(loose) == "loose (2h)"
+    assert network.cell(loose) == "L 2h"
 
 
 def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
@@ -3613,15 +3613,15 @@ def test_render_hides_enabled_job_column_without_a_job(tmp_path):
     # Check the header, not the empty cells.
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
     assert " JOB " not in header_line
-    # The cell value "cloning" must also be absent when no job is in flight.
-    assert "cloning" not in out
+    # The compact phase must also be absent when no job is in flight.
+    assert "clone" not in out
 
     # A container with an in-flight job -> JOB column present, phase value visible.
     c = _ci("alpha-two", "alpha")
     c.job_phase = "cloning"
     g_op = dashboard.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
     out2 = _render_text(dashboard.render([g_op], selected=None, now=now, git_enabled=True))
-    assert "cloning" in out2
+    assert "clone" in out2
     header_line2 = next(ln for ln in out2.splitlines() if "NAME" in ln)
     assert " JOB " in header_line2 or header_line2.startswith("JOB ")
 
@@ -3710,7 +3710,7 @@ def test_render_column_headers_stay_on_top_when_first_repo_is_empty(tmp_path):
 
 @pytest.mark.parametrize(
     ("enabled", "title", "cell"),
-    [(None, "NAME", "one"), (("state", "network"), "STATE", "Running")],
+    [(None, "NAME", "one"), (("state", "network"), "ST", "▶")],
 )
 def test_render_first_column_title_aligns_with_its_cells(tmp_path, enabled, title, cell):
     """Every first-column cell carries the two-cell selection gutter, so the
@@ -3771,9 +3771,9 @@ def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
         ),
     ):
         heading_line = next(line for line in rendered.splitlines() if prefix in line)
-        data_line = next(line for line in rendered.splitlines() if "Running" in line)
-        assert len(prefix) > len("Running")
-        assert heading_line.index("▾") < data_line.index("Running")
+        data_line = next(line for line in rendered.splitlines() if "▶" in line)
+        assert len(prefix) > len("▶")
+        assert heading_line.index("▾") < data_line.index("▶")
 
 
 def test_render_empty_repo_shows_header_without_table(tmp_path):
@@ -3823,7 +3823,7 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
         ),
         width=36,
     )
-    table_lines = [line for line in rendered.splitlines() if "Running" in line]
+    table_lines = [line for line in rendered.splitlines() if "▶" in line]
     assert table_lines
     assert max(len(line) for line in table_lines) <= 36
 
@@ -3847,13 +3847,13 @@ def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
         enabled=("name", "state", "created", "network"),
     )
 
-    narrow = _render_text(frame, width=56)
+    narrow = _render_text(frame, width=44)
     wide = _render_text(frame, width=100)
-    narrow_again = _render_text(frame, width=56)
+    narrow_again = _render_text(frame, width=44)
 
-    assert "NAME" in narrow and "STATE" in narrow
-    assert "CREA" not in narrow and "NETWORK" in narrow
-    assert "CREATED" in wide and "NETWORK" in wide
+    assert "NAME" in narrow and "ST" in narrow
+    assert "AGE" not in narrow and "NET" in narrow
+    assert "AGE" in wide and "NET" in wide
     assert narrow_again == narrow
 
 
@@ -3876,10 +3876,11 @@ def test_render_uses_configured_auto_hide_order(tmp_path):
         enabled=("name", "state", "created", "network"),
         hide_first=("state",),
     )
-    narrow = _render_text(frame, width=68)
+    narrow = _render_text(frame, width=47)
 
-    assert "NAME" in narrow and "CREATED" in narrow
-    assert "STATE" not in narrow
+    assert "NAME" in narrow and "AGE" in narrow
+    assert "ST" not in narrow
+    assert "NET" in narrow
 
 
 def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
@@ -3892,7 +3893,7 @@ def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
         enabled=("state",),
     )
 
-    assert "STATE" in _render_text(frame, width=20)
+    assert "ST" in _render_text(frame, width=20)
 
 
 def test_render_highlight_stays_on_row_when_first_column_is_hidden(tmp_path):
@@ -3908,7 +3909,7 @@ def test_render_highlight_stays_on_row_when_first_column_is_hidden(tmp_path):
 
     cursor = _cursor_lines(_render_ansi_lines(frame, width=19))
 
-    assert len(cursor) == 1 and "strict" in cursor[0]
+    assert len(cursor) == 1 and "S" in cursor[0]
 
 
 def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
@@ -3930,9 +3931,9 @@ def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path)
             enabled=("state",),
         )
     )
-    data_lines = [line for line in out.splitlines() if "Running" in line]
+    data_lines = [line for line in out.splitlines() if "▶" in line]
     assert len(data_lines) == 2
-    assert [line.index("Running") for line in data_lines] == [data_lines[0].index("Running")] * 2
+    assert [line.index("▶") for line in data_lines] == [data_lines[0].index("▶")] * 2
 
 
 def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
@@ -3957,7 +3958,7 @@ def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
         )
     )
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
-    assert "CREATED" in header_line
+    assert "AGE" in header_line
     assert "STATE" not in header_line
 
 
@@ -4037,7 +4038,7 @@ def test_render_long_notice_wraps_below_the_table_instead_of_the_border(tmp_path
         .rstrip()
         .splitlines()
     )
-    table_row = next(i for i, ln in enumerate(lines) if "Running" in ln)
+    table_row = next(i for i, ln in enumerate(lines) if "▶" in ln)
     first = next(i for i, ln in enumerate(lines) if "✗ invalid credential group name" in ln)
     assert first > table_row
     assert "END" in "".join(lines[first:-1])
@@ -5214,7 +5215,7 @@ def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path)
     )
     lines = [ln for ln in out.splitlines() if ln.strip()]
     header_line = next(ln for ln in lines if "alpha" in ln)
-    data_line = next(ln for ln in lines if "Running" in ln)
+    data_line = next(ln for ln in lines if "▶" in ln)
     # Both lines start with the Panel's own border+padding ("│ "), identical
     # on every row, so strip exactly that one border character before
     # measuring each row's own indentation — comparing the raw lines
@@ -10950,7 +10951,7 @@ def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
             enabled=("name", "doing", "network"),
         )
     )
-    row = [line for line in out.splitlines() if "strict" in line]
+    row = [line for line in out.splitlines() if "S" in line and "pytest" not in line]
     assert len(row) == 1
     assert long_name not in row[0] and "…" in row[0]
 
@@ -11000,17 +11001,23 @@ def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
             width=width,
         )
 
-    before = next(line for line in frame(short, widths).splitlines() if "strict" in line)
-    after = next(line for line in frame(long, widths).splitlines() if "strict" in line)
-    assert before.index("strict") == after.index("strict")
+    before = next(
+        line for line in frame(short, widths).splitlines() if "S" in line and "alpha" not in line
+    )
+    after = next(
+        line for line in frame(long, widths).splitlines() if "S" in line and "alpha" not in line
+    )
+    assert before.index("S") == after.index("S")
     assert "abcdefghijklmnop" not in after and "…" in after
     saved = dict(widths)
     frame(long, widths, width=24)
     assert widths == saved
     updated = dashboard.optimize_column_widths([long], now=now, enabled=enabled)
-    renewed = next(line for line in frame(long, updated).splitlines() if "strict" in line)
+    renewed = next(
+        line for line in frame(long, updated).splitlines() if "S" in line and "alpha" not in line
+    )
     assert "abcdefghijklmnop" in renewed
-    assert renewed.index("strict") > after.index("strict")
+    assert renewed.index("S") > after.index("S")
 
 
 def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_path):
@@ -11019,8 +11026,8 @@ def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_pat
     group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     out = _render_text(dashboard.render([group], None, now=now, git_enabled=False, enabled=enabled))
     header = next(line for line in out.splitlines() if "NAME" in line)
-    assert "PR" not in header and "JOB" not in header and "CREATED" not in header
-    assert "strict" in out
+    assert "PR" not in header and "JOB" not in header and "AGE" not in header
+    assert "S" in out
     assert enabled == ("name", "pr", "job", "network", "created")
 
 
@@ -11062,8 +11069,8 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
     assert unfolded.kwargs["shown_columns"] == ("name", "state", "network")
     assert unfolded.kwargs["column_widths"] == optimized.kwargs["column_widths"]
     output = _render_text(dashboard.render(*unfolded.args, **unfolded.kwargs))
-    assert "STATE" in output and "NETWORK" in output
-    assert "strict" in output
+    assert "ST" in output and "NET" in output
+    assert "S" in output
 
 
 def test_optimized_widths_are_named_without_first_column_indent(tmp_path):
@@ -11076,3 +11083,181 @@ def test_optimized_widths_are_named_without_first_column_indent(tmp_path):
     assert forward[0] == widths[fields[0].name] + 2
     assert forward[1] == widths[fields[1].name]
     assert reverse == (forward[1] + 2, forward[0] - 2)
+
+
+def test_dashboard_formatting_contracts():
+    from rich.text import Text
+
+    from jailbee.dashboard_format import dashboard_header
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+    from jailbee.qtui.model import card_content
+
+    def container(**overrides):
+        values = {
+            "name": "p-foo",
+            "state": "Running",
+            "network": "strict",
+            "ip": None,
+            "memory_limit": "4 GiB",
+            "repo": "p",
+        }
+        values.update(overrides)
+        return ContainerInfo(**values)
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    state = next(
+        f for f in dashboard.visible_fields(now, [container()], ["state"]) if f.name == "state"
+    )
+    assert state.cell(container()) == "▶"
+    assert state.cell(container(state="Stopped")) == "■"
+    assert state.cell(container(state="Frozen")) == "Ⅱ"
+    unknown = state.cell(container(state="<custom>[Running]</custom>"))
+    assert Text.from_markup(unknown).plain == "<custom>[Running]</custom>"
+    assert state.json(container()) == "Running"
+
+    network = next(
+        f for f in dashboard.visible_fields(now, [container()], ["network"]) if f.name == "network"
+    )
+    assert network.cell(container()) == "S"
+    assert (
+        network.cell(container(network="loose", loose_until=now + timedelta(seconds=45))) == "L 45s"
+    )
+    assert (
+        network.cell(container(network="loose", loose_until=now + timedelta(minutes=12))) == "L 12m"
+    )
+    assert (
+        network.cell(container(network="loose", loose_until=now + timedelta(hours=3, minutes=59)))
+        == "L 3h59m"
+    )
+    assert network.cell(container(network="loose", loose_until=None)) == "L ∞"
+    assert network.cell(container(network=None)) == "-"
+    assert network.json(container()) == "strict"
+
+    age = next(
+        f for f in dashboard.visible_fields(now, [container()], ["created"]) if f.name == "created"
+    )
+    assert age.cell(container(created_at=now - timedelta(seconds=42))) == "42s"
+    assert age.cell(container(created_at=now - timedelta(minutes=3, seconds=30))) == "3m"
+    assert age.cell(container(created_at=now - timedelta(hours=3, minutes=59))) == "3h"
+    assert age.cell(container(created_at=now - timedelta(days=2, hours=3))) == "2d"
+    assert age.cell(container(created_at=now + timedelta(days=1))) == "0s"
+    assert age.cell(container(created_at=None)) == "—"
+    assert age.json(container(created_at=now)) == now.isoformat()
+
+    names = (
+        "state",
+        "network",
+        "created",
+        "full_name",
+        "memory_limit",
+        "loose_until",
+        "agent_compact",
+        "target_diff",
+        "local_diff",
+        "conflict",
+    )
+    fields = dashboard.visible_fields(now, [container()], names)
+    headers = {field.name: field.header for field in fields}
+    assert headers == {
+        "state": "ST",
+        "network": "NET",
+        "created": "AGE",
+        "full_name": "FULL",
+        "memory_limit": "LIMIT",
+        "loose_until": "UNTIL",
+        "agent_compact": "AI",
+        "target_diff": "Δ",
+        "local_diff": "LΔ",
+        "conflict": "MERGE",
+    }
+    canonical = {field.name: field.header for field in ls_field_specs(now=now, all_repos=False)}
+    assert canonical["state"] == "STATE"
+    assert canonical["network"] == "NETWORK"
+    assert canonical["created"] == "CREATED"
+    assert canonical["full_name"] == "FULL NAME"
+    assert canonical["memory_limit"] == "MEMORY LIMIT"
+    assert canonical["loose_until"] == "LOOSE UNTIL"
+    assert canonical["agent_compact"] == "AGENT*"
+    assert canonical["issues"] == "ISSUES"
+    issue = next(f for f in ls_field_specs(now=now, all_repos=False) if f.name == "issues")
+    assert dashboard_header(issue) == "ISS"
+
+    mem = next(f for f in dashboard.visible_fields(now, [container()], ["mem"]) if f.name == "mem")
+    memory = container(memory_usage=1_073_741_824)
+    assert mem.cell(memory) == "1.0G/4 GiB"
+    assert mem.json(memory) == {"usage": 1_073_741_824, "limit": "4 GiB"}
+
+    content = card_content(
+        container(), dashboard.visible_fields(now, [container()], ["name", "state"])
+    )
+    assert content.state == "Running"
+
+
+def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
+    from rich.text import Text
+
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ls_field_specs
+    from jailbee.procstat import ProcessActivity
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    c = _ci("p-one", "p")
+    c.mode = "mount"
+    c.job_phase = "starting"
+    c.network = "loose"
+    c.base_branch = "dev[branch]"
+    c.git_status = GitStatus(
+        "clean", "clean", "0", "ok", local_diff="clean", target_diff="clean", base_source="tracking"
+    )
+    c.activity = (ProcessActivity("node x2, worker", 12.0, 2),)
+    fields = {
+        f.name: f
+        for f in dashboard.visible_fields(
+            now,
+            [c],
+            (
+                "base",
+                "mode",
+                "job",
+                "doing",
+                "wt",
+                "target_diff",
+                "local_diff",
+                "git_status",
+                "ttl",
+            ),
+        )
+    }
+    canonical = {f.name: f for f in ls_field_specs(now=now, all_repos=False)}
+    assert Text.from_markup(fields["base"].cell(c)).plain == "dev[branch] ↗"
+    c.mode = "clone"
+    assert fields["mode"].cell(c) == "cln"
+    c.mode = "mount"
+    assert fields["mode"].cell(c) == "mnt"
+    assert Text.from_markup(fields["doing"].cell(c)).plain == "node x2, worker×2"  # noqa: RUF001 - intentional multiplication sign
+    assert canonical["doing"].cell(c) == "node x2, worker x2"
+    for name in ("wt", "target_diff", "local_diff"):
+        assert Text.from_markup(fields[name].cell(c)).plain == "✓"
+        assert canonical[name].json(c) == fields[name].json(c) == "clean"
+    assert fields["git_status"].header == "GIT"
+    mocker.patch("jailbee.background.worker_alive", return_value=True)
+    c.job_pid = 123
+    for phase, expected in (
+        ("starting", "start"),
+        ("creating", "create"),
+        ("cloning", "clone"),
+        ("stopping", "stop"),
+        ("deleting", "delete"),
+        ("destroying", "destroy"),
+        ("failed", "failed"),
+    ):
+        c.job_phase = phase
+        assert Text.from_markup(fields["job"].cell(c)).plain == expected
+    c.job_kind = "autostart"
+    c.job_phase = "deps[red]"
+    assert Text.from_markup(fields["job"].cell(c)).plain == "auto:deps[red]"
+    mocker.patch("jailbee.background.worker_alive", return_value=False)
+    assert Text.from_markup(fields["job"].cell(c)).plain == "deps[red] (dead)"
+    c.network = "loose"
+    c.loose_until = now + timedelta(hours=3, minutes=59)
+    assert Text.from_markup(fields["ttl"].cell(c)).plain == "3h59m"
