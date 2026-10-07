@@ -100,6 +100,7 @@ from jailbee.dashboard_settings import (
     switch_tab,
     toggle_current,
 )
+from jailbee.dashboard_viewport import column_viewport
 from jailbee.dashboard_visibility import visible_repo_groups
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.global_config import (
@@ -1946,12 +1947,15 @@ def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str])
 
 
 def _aligned_table(
-    fields: list[FieldSpecCI], widths: tuple[int, ...], *, show_header: bool
+    fields: list[FieldSpecCI], widths: tuple[int, ...], *, show_header: bool,
+    marks: tuple[bool, bool] = (False, False),
 ) -> Table:
     """An empty table with the dashboard's shared, fixed column geometry.
 
     The first title carries the same two-cell indent that
-    :func:`repo_table` puts in front of every first-column cell.
+    :func:`repo_table` puts in front of every first-column cell. ``marks``
+    adds a one-cell left mark after the first column and a right mark at the
+    end (see :mod:`jailbee.dashboard_viewport`). Rows leave them blank.
     """
     table = Table(
         box=None,
@@ -1961,6 +1965,14 @@ def _aligned_table(
         show_header=show_header,
         padding=(0, 1),
     )
+    def add_mark(glyph: str) -> None:
+        table.add_column(
+            Text(glyph, style="dim") if show_header else "",
+            width=1,
+            min_width=1,
+            no_wrap=True,
+        )
+
     for index, (field_spec, width) in enumerate(zip(fields, widths, strict=True)):
         title = ("  " if index == 0 else "") + field_spec.header
         table.add_column(
@@ -1972,12 +1984,19 @@ def _aligned_table(
             no_wrap=True,
             overflow="ellipsis",
         )
+        if index == 0 and marks[0]:
+            add_mark("‹")
+    if marks[1]:
+        add_mark("›")
     return table
 
 
-def column_header(fields: list[FieldSpecCI], widths: tuple[int, ...]) -> Table:
+def column_header(
+    fields: list[FieldSpecCI], widths: tuple[int, ...],
+    marks: tuple[bool, bool] = (False, False),
+) -> Table:
     """The column titles, drawn once above every repo section."""
-    return _aligned_table(fields, widths, show_header=True)
+    return _aligned_table(fields, widths, show_header=True, marks=marks)
 
 
 def _container_cells(
@@ -2001,13 +2020,19 @@ def repo_table(
     fields: list[FieldSpecCI],
     widths: tuple[int, ...],
     selected: Row | None,
+    marks: tuple[bool, bool] = (False, False),
 ) -> Table:
     """Render one repo's rows, headerless, aligned with :func:`column_header`."""
-    table = _aligned_table(fields, widths, show_header=False)
+    table = _aligned_table(fields, widths, show_header=False, marks=marks)
     for container in group.containers:
         is_selected = selected == Row("container", container.name)
+        cells = _container_cells(group, container, fields)
+        if marks[0]:
+            cells.insert(1, "")
+        if marks[1]:
+            cells.append("")
         table.add_row(
-            *_container_cells(group, container, fields),
+            *cells,
             style=CURSOR_STYLE if is_selected else None,
         )
     return table
@@ -2019,9 +2044,10 @@ def container_row(
     fields: list[FieldSpecCI],
     widths: tuple[int, ...],
     selected: Row | None,
+    marks: tuple[bool, bool] = (False, False),
 ) -> Table:
     """One container as a single-row table, so the table can be windowed by row."""
-    return repo_table(replace(group, containers=[container]), fields, widths, selected)
+    return repo_table(replace(group, containers=[container]), fields, widths, selected, marks)
 
 
 @dataclass(frozen=True)
@@ -2180,90 +2206,29 @@ def _dashboard_column_widths(
     return tuple(widths)
 
 
-def _fit_dashboard_column_widths(widths: tuple[int, ...], available_width: int) -> tuple[int, ...]:
-    """Fit measured columns to Rich's current content width, retaining minima."""
-    if not widths:
-        return widths
-    # Each table column has one cell of horizontal padding on either side.
-    budget = max(len(widths), available_width - 2 * len(widths))
-    if sum(widths) <= budget:
-        return widths
-    scale = budget / sum(widths)
-    fitted = [max(1, int(width * scale)) for width in widths]
-    while sum(fitted) > budget:
-        largest = max(range(len(fitted)), key=fitted.__getitem__)
-        if fitted[largest] == 1:
-            break
-        fitted[largest] -= 1
-    while sum(fitted) < budget:
-        smallest_ratio = min(range(len(fitted)), key=lambda i: fitted[i] / widths[i])
-        fitted[smallest_ratio] += 1
-    return tuple(fitted)
-
-
-# First to go when space is tight. A personal hide_first list precedes this
-# order; NAME is the last resort even when listed there.
-_AUTO_HIDE_ORDER = (
-    "full_name",
-    "git_status",
-    "loose_until",
-    "ip",
-    "doing",
-    "repo",
-    "created",
-    "memory_limit",
-    "local_diff",
-    "local_count",
-    "base",
-    "mem",
-    "cpu",
-    "target_diff",
-    "behind_count",
-    "group",
-    "issues",
-    "pr",
-    "ttl",
-    "mode",
-    "ahead_count",
-    "agent_compact",
-    "agent",
-    "wt",
-    "conflict",
-    "job",
-    "network",
-    "state",
-    "name",
-)
-
-
-def _fit_dashboard_fields(
-    fields: list[FieldSpecCI],
-    widths: tuple[int, ...],
-    available_width: int,
-    hide_first: Sequence[str],
+def _frame_columns(
+    groups: list[RepoGroup],
+    *,
+    now: datetime,
+    enabled: Sequence[str] | None,
+    folded: frozenset[str],
+    column_widths: Mapping[str, int] | None,
+    shown_columns: Sequence[str] | None,
 ) -> tuple[list[FieldSpecCI], tuple[int, ...]]:
-    """Temporarily omit low-priority fields until their readable widths fit."""
-    kept = list(range(len(fields)))
-    priorities = tuple(dict.fromkeys((*hide_first, *_AUTO_HIDE_ORDER)))
-    order = {name: index for index, name in enumerate(priorities)}
+    """The frame's columns and their budgets: what :func:`render` lays out.
 
-    def required_width() -> int:
-        # The row indent moves to the first *remaining* column.
-        indent = 2 if kept and kept[0] != 0 else 0
-        return sum(widths[i] + 2 for i in kept) + indent
-
-    while len(kept) > 1 and required_width() > available_width:
-        discard = min(
-            kept,
-            key=lambda i: (
-                1 if fields[i].name == "name" else 0,
-                order.get(fields[i].name, len(order)),
-                -widths[i],
-            ),
-        )
-        kept.remove(discard)
-    fitted = tuple(widths[i] + (2 if pos == 0 and i != 0 else 0) for pos, i in enumerate(kept))
-    return [fields[i] for i in kept], fitted
+    Shared with the key loop's offset clamp, so both see the same columns.
+    """
+    visible = [c for g in groups if g.prefix not in folded for c in g.containers]
+    fields = _select_visible_fields(
+        now,
+        visible,
+        nonempty_columns(groups, now=now, enabled=enabled, folded=folded)
+        if shown_columns is None
+        else shown_columns,
+        apply_conditions=False,
+    )
+    return fields, _dashboard_column_widths(fields, column_widths)
 
 
 @dataclass(frozen=True)
@@ -2275,7 +2240,7 @@ class _RepoSections:
     folded: frozenset[str]
     empty: bool
     hidden_by_preferences: bool = False
-    hide_first: Sequence[str] = ()
+    column_offset: int = 0
     max_rows: int | None = None
     """Line budget including the column header and the "more" markers; None draws every row."""
 
@@ -2291,10 +2256,10 @@ class _RepoSections:
         return (1 if expanded else 0) + len(self.groups) + sum(len(g.containers) for g in expanded)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        fields, measured = _fit_dashboard_fields(
-            self.fields, self.widths, options.max_width, self.hide_first
-        )
-        widths = _fit_dashboard_column_widths(measured, options.max_width)
+        view = column_viewport(self.widths, options.max_width, self.column_offset)
+        fields = [self.fields[i] for i in view.indices]
+        widths = view.widths
+        marks = (view.hidden_left, view.hidden_right)
         if self.empty:
             yield (
                 "All repositories are hidden — open Settings > Visibility to show them"
@@ -2303,7 +2268,7 @@ class _RepoSections:
             )
             return
         expanded = {g.prefix for g in self.groups if g.containers and g.prefix not in self.folded}
-        header = column_header(fields, widths) if expanded else None
+        header = column_header(fields, widths, marks) if expanded else None
         blocks: list[tuple[Row, RenderableType]] = []
         for group in self.groups:
             blocks.append(
@@ -2313,7 +2278,7 @@ class _RepoSections:
                 blocks += [
                     (
                         Row("container", c.name),
-                        container_row(group, c, fields, widths, self.selected),
+                        container_row(group, c, fields, widths, self.selected, marks),
                     )
                     for c in group.containers
                 ]
@@ -2376,6 +2341,8 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
 # Panel border rows: around a windowed overlay's list, and around the frame.
 _OVERLAY_BORDER_ROWS = 2
 _FRAME_BORDER_ROWS = 2
+# Panel border plus `padding=(0, 1)`: the table's width is the console's minus this.
+_FRAME_INSET_COLS = 4
 # Content rows a details panel needs to say anything; with fewer it is left out.
 _MIN_DETAILS_ROWS = 2
 # Table rows (column header not counted) kept on screen under the bottom area.
@@ -2516,7 +2483,7 @@ def render(
     overlay: Overlay | None = None,
     notice: str | None = None,
     folded: frozenset[str] = frozenset(),
-    hide_first: Sequence[str] = (),
+    column_offset: int = 0,
     hidden_by_preferences: bool = False,
     height: int | None = None,
     show_details: bool = False,
@@ -2524,6 +2491,8 @@ def render(
     shown_columns: Sequence[str] | None = None,
 ) -> RenderableType:
     """Build the Rich renderable for one dashboard frame.
+
+    ``column_offset`` scrolls the columns after the first; it is clamped at render time.
 
     Repo sections are rendered in the dashboard body with aligned columns.
     The selected row, heading or container, is marked by its
@@ -2548,17 +2517,15 @@ def render(
     right below the table.
     """
     all_containers = [c for g in groups for c in g.containers]
-    visible = [c for g in groups if g.prefix not in folded for c in g.containers]
-    fields = _select_visible_fields(
-        now,
-        visible,
-        nonempty_columns(groups, now=now, enabled=enabled, folded=folded)
-        if shown_columns is None
-        else shown_columns,
-        apply_conditions=False,
+    fields, widths = _frame_columns(
+        groups,
+        now=now,
+        enabled=enabled,
+        folded=folded,
+        column_widths=column_widths,
+        shown_columns=shown_columns,
     )
     visible_groups = groups
-    widths = _dashboard_column_widths(fields, column_widths)
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
     # which an ellipsis on the border would cut. A plain `Text`, not markup: a
@@ -2572,7 +2539,7 @@ def render(
         folded,
         empty=not groups,
         hidden_by_preferences=hidden_by_preferences,
-        hide_first=hide_first,
+        column_offset=column_offset,
     )
     details = details_for(visible_groups, selected, now) if show_details and groups else None
     n_repos = len({g.prefix for g in groups})
@@ -3310,7 +3277,6 @@ def run(
     hidden_repos = view_state.hidden_repos
     show_details = view_state.show_details
     column_widths: dict[str, int] | None = None
-    hide_first = tuple(global_config_or_defaults().dashboard.auto_hide.hide_first)
 
     def now() -> datetime:
         return datetime.now().astimezone()
@@ -4645,7 +4611,6 @@ def run(
                         or "; ".join(jobs.active())
                         or ("; ".join(tracking) if tracking else None),
                         folded=folded,
-                        hide_first=hide_first,
                         hidden_by_preferences=bool(all_groups) and not groups,
                         height=console.height,
                         show_details=show_details,

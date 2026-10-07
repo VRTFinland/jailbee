@@ -3828,59 +3828,110 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
     assert max(len(line) for line in table_lines) <= 36
 
 
-def test_render_temporarily_hides_columns_and_restores_them_on_resize(tmp_path):
-    group = dashboard.RepoGroup(
+def _wide_group(tmp_path):
+    return dashboard.RepoGroup(
         "alpha",
         str(tmp_path),
         None,
         [
             dataclasses.replace(
-                _ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+                _ci("alpha-one", "alpha", pr_number=4, mode="mount"),
+                created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
             )
         ],
     )
+
+
+_WIDE = ("name", "state", "network", "mode", "pr", "created")
+
+
+def _frame_at(groups, *, width, offset=0, selected=None, folded=frozenset(), enabled=_WIDE):
+    return _render_text(
+        dashboard.render(
+            groups,
+            selected,
+            now=datetime(2026, 6, 8, tzinfo=UTC),
+            git_enabled=True,
+            enabled=enabled,
+            folded=folded,
+            column_offset=offset,
+        ),
+        width=width,
+    )
+
+
+def _header(text):
+    return next(line for line in text.splitlines() if "NAME" in line)
+
+
+def test_render_never_drops_a_column_and_scrolling_reaches_them_all(tmp_path):
+    group = _wide_group(tmp_path)
+    wide = _header(_frame_at([group], width=200)).split()
+    assert set(wide) == {"│", "NAME", "MODE", "ST", "AGE", "NET", "PR"}
+    narrow0 = _header(_frame_at([group], width=40))
+    assert not all(title in narrow0.split() for title in wide)  # really overflows
+    seen = set()
+    for offset in range(len(wide) + 1):
+        seen |= set(_header(_frame_at([group], width=40, offset=offset)).split())
+    assert set(wide) <= seen
+
+
+def test_render_keeps_column_widths_stable_across_terminal_widths(tmp_path):
+    group = _wide_group(tmp_path)
+    narrow, wide = _header(_frame_at([group], width=60)), _header(_frame_at([group], width=200))
+    assert narrow.index("ST") == wide.index("ST")
+    assert narrow.index("NET") == wide.index("NET")
+
+
+def test_render_lines_never_exceed_the_width_and_marks_show(tmp_path):
+    group = _wide_group(tmp_path)
+    at0 = _frame_at([group], width=40)
+    at1 = _frame_at([group], width=40, offset=1)
+    assert all(len(line) <= 40 for line in (at0 + at1).splitlines())
+    assert "›" in _header(at0) and "‹" not in _header(at0)
+    assert "‹" in _header(at1)
+
+
+def test_render_scrolled_header_and_rows_stay_aligned(tmp_path):
+    group = _wide_group(tmp_path)
+    aligned = 0
+    for offset in (0, 1, 2):
+        out = _frame_at([group], width=60, offset=offset).splitlines()
+        header = _header("\n".join(out))
+        row = next(line for line in out if "one" in line)
+        if "MODE" in header:
+            assert header.index("MODE") == row.index("mnt")
+            aligned += 1
+    assert aligned > 0
+
+
+def test_render_highlight_stays_on_row_when_scrolled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TERM", "xterm-256color")
+    group = _wide_group(tmp_path)
     frame = dashboard.render(
         [group],
-        selected=None,
+        dashboard.Row("container", "alpha-one"),
         now=datetime(2026, 6, 8, tzinfo=UTC),
         git_enabled=True,
-        enabled=("name", "state", "created", "network"),
+        enabled=_WIDE,
+        column_offset=2,
     )
-
-    narrow = _render_text(frame, width=37)
-    wide = _render_text(frame, width=100)
-    narrow_again = _render_text(frame, width=37)
-
-    assert "NAME" in narrow and "ST" in narrow
-    assert "AGE" not in narrow and "NET" in narrow
-    assert "AGE" in wide and "NET" in wide
-    assert narrow_again == narrow
+    cursor = _cursor_lines(_render_ansi_lines(frame, width=40))
+    assert len(cursor) == 1 and "one" in dashboard.Text.from_ansi(cursor[0]).plain
+    assert "‹" in "\n".join(_render_ansi_lines(frame, width=40))
 
 
-def test_render_uses_configured_auto_hide_order(tmp_path):
-    group = dashboard.RepoGroup(
-        "alpha",
-        str(tmp_path),
-        None,
-        [
-            dataclasses.replace(
-                _ci("alpha-one", "alpha"), created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
-            )
-        ],
-    )
-    frame = dashboard.render(
-        [group],
-        selected=None,
-        now=datetime(2026, 6, 8, tzinfo=UTC),
-        git_enabled=True,
-        enabled=("name", "state", "created", "network"),
-        hide_first=("state",),
-    )
-    narrow = _render_text(frame, width=40)
+def test_render_narrower_than_the_name_column(tmp_path):
+    group = _wide_group(tmp_path)
+    out = _frame_at([group], width=14, offset=3)
+    assert all(len(line) <= 14 for line in out.splitlines())
+    assert "‹" not in out and "›" not in out
 
-    assert "NAME" in narrow and "AGE" in narrow
-    assert "ST" not in narrow
-    assert "NET" in narrow
+
+def test_render_scrolled_with_every_repo_folded(tmp_path):
+    group = _wide_group(tmp_path)
+    out = _frame_at([group], width=40, offset=3, folded=frozenset({"alpha"}))
+    assert "alpha" in out and "‹" not in out and "›" not in out
 
 
 def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
@@ -3894,22 +3945,6 @@ def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
     )
 
     assert "ST" in _render_text(frame, width=20)
-
-
-def test_render_highlight_stays_on_row_when_first_column_is_hidden(tmp_path):
-    group = dashboard.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
-    frame = dashboard.render(
-        [group],
-        selected=dashboard.Row("container", "alpha-one"),
-        now=datetime(2026, 6, 8, tzinfo=UTC),
-        git_enabled=True,
-        enabled=("state", "network"),
-        hide_first=("state",),
-    )
-
-    cursor = _cursor_lines(_render_ansi_lines(frame, width=19))
-
-    assert len(cursor) == 1 and "●" in cursor[0]
 
 
 def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path):
@@ -7880,23 +7915,6 @@ def test_sample_activity_reads_the_agent_state_after_the_activity_reading(mocker
     assert order == ["activity", "agent"]
 
 
-def test_every_column_has_an_auto_hide_priority():
-    """`_fit_dashboard_fields` ranks an unlisted column `len(order)`, so it is
-    auto-hidden only after everything else — beside NAME. For a new column
-    that is a silent wrong priority."""
-    from jailbee.lifecycle import ls_field_specs
-
-    names = {f.name for f in ls_field_specs(now=datetime.now(UTC))}
-    assert names - set(dashboard._AUTO_HIDE_ORDER) == set()
-
-
-def test_agent_columns_outlive_every_column_but_the_core_ones():
-    """Agent status is the reason for the columns to exist: hidden just before WT."""
-    order = dashboard._AUTO_HIDE_ORDER
-    assert order.index("agent") == order.index("wt") - 1
-    assert order.index("agent_compact") < order.index("agent")
-
-
 def test_remote_action_menu_never_opens_the_pr_in_a_host_browser():
     local = dashboard.menu_actions(_ctx(pr_number=7))
     remote = dashboard.menu_actions(_ctx(pr_number=7, remote=True))
@@ -10848,7 +10866,7 @@ def test_a_cursor_row_taller_than_the_window_is_not_cut_away(tmp_path, mocker):
     mocker.patch.object(
         dashboard,
         "container_row",
-        lambda group, c, fields, widths, selected: f"{c.name}\nsecond\nthird\nfourth",
+        lambda group, c, fields, widths, selected, marks: f"{c.name}\nsecond\nthird\nfourth",
     )
     group = _mixed_group(tmp_path, 12)
     fields = dashboard.visible_fields(_FRAME_NOW, group.containers)[:1]
