@@ -171,8 +171,10 @@ def test_instance_env():
         "PORT=4100",
         "LITELLM_MASTER_KEY=sk-jb-x",
         "CHATGPT_TOKEN_DIR=/var/lib/jailbee-litellm/default/auth",
+        "XAI_OAUTH_TOKEN_DIR=/var/lib/jailbee-litellm/default/xai-auth",
         "JAILBEE_LITELLM_HOT_FILE=/var/lib/jailbee-litellm/default/hot.json",
         "JAILBEE_LITELLM_ACK_FILE=/var/lib/jailbee-litellm/default/applied.json",
+        "JAILBEE_LITELLM_ENV_FILE=/var/lib/jailbee-litellm/default/instance.env",
         "LITELLM_LOCAL_MODEL_COST_MAP=True",
     ]
     assert env.endswith("\n")
@@ -683,11 +685,16 @@ def test_oauth_routes_open_the_xai_auth_host():
     assert "auth.x.ai:443" in hosts and "api.x.ai:443" in hosts
 
 
-def test_an_account_without_oauth_routes_renders_todays_env():
-    files = render_instance_files(LiteLLMConfig(), "default", port=4100, master_key="k")
-    assert "XAI_" not in files.instance_env
-    assert files.instance_env == render_instance_env(port=4100, master_key="k", account="default")
-    assert files.login_providers == ("chatgpt",)
+def test_a_first_oauth_route_changes_nothing_a_restart_reads():
+    plain = render_instance_files(LiteLLMConfig(), "default", port=4100, master_key="k")
+    grok = render_instance_files(
+        LiteLLMConfig.model_validate(_GROK_CFG), "default", port=4100, master_key="k"
+    )
+    assert "XAI_OAUTH_TOKEN_DIR=/var/lib/jailbee-litellm/default/xai-auth\n" in plain.instance_env
+    assert plain.instance_env == grok.instance_env
+    assert plain.digest("cb") == grok.digest("cb")
+    assert plain.hot_digest() != grok.hot_digest()
+    assert plain.login_providers == ("chatgpt",)
 
 
 def test_an_account_serving_an_oauth_route_gets_the_xai_token_dir():

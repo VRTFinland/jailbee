@@ -54,6 +54,7 @@ CATCH_ALL = "claude-*"
 CONTAINER_STATE_DIR = "/var/lib/jailbee-litellm"
 HOT_FILE = "hot.json"
 ACK_FILE = "applied.json"
+ENV_FILE = "instance.env"
 _CHEAPEST_FIRST = ("haiku", "sonnet", "opus", "fable")
 TIER_LEVELS: Mapping[str, str] = {
     "fable": "most-capable",
@@ -276,24 +277,25 @@ def render_instance_env(
     master_key: str,
     account: str,
     secrets: Mapping[str, str] | None = None,
-    xai_oauth: bool = False,
 ) -> str:
     """systemd `EnvironmentFile` that `jailbee litellm login` also sources with bash.
 
     Single quotes mean the same thing to both parsers only without a quote,
     backslash or newline inside; `litellm_inputs` refuses such values first.
 
-    `XAI_OAUTH_TOKEN_DIR` only when the account serves an `oauth` route, so every
-    other instance's environment — and its restart digest — stays as it was.
+    `XAI_OAUTH_TOKEN_DIR` is set whether or not the account serves an `oauth`
+    route, so its first one is a reload, not a restart. The callback re-reads
+    secrets from this file (`JAILBEE_LITELLM_ENV_FILE`) on a reload.
     """
     base = f"{CONTAINER_STATE_DIR}/{account}"
     lines = [
         f"PORT={port}",
         f"LITELLM_MASTER_KEY={master_key}",
         f"CHATGPT_TOKEN_DIR={base}/auth",
-        *([f"XAI_OAUTH_TOKEN_DIR={base}/xai-auth"] if xai_oauth else []),
+        f"XAI_OAUTH_TOKEN_DIR={base}/xai-auth",
         f"JAILBEE_LITELLM_HOT_FILE={base}/{HOT_FILE}",
         f"JAILBEE_LITELLM_ACK_FILE={base}/{ACK_FILE}",
+        f"JAILBEE_LITELLM_ENV_FILE={base}/{ENV_FILE}",
         "LITELLM_LOCAL_MODEL_COST_MAP=True",
     ]
     for name, value in sorted((secrets or {}).items()):
@@ -364,7 +366,6 @@ def render_instance_files(
             master_key=master_key,
             account=account,
             secrets=secrets,
-            xai_oauth="xai" in providers,
         ),
         login_providers=providers,
     )

@@ -30,6 +30,7 @@ from jailbee.litellm_inputs import load_host_inputs
 from jailbee.litellm_render import (
     ACK_FILE,
     CONTAINER_STATE_DIR,
+    ENV_FILE,
     HOT_FILE,
     InstanceFiles,
     account_login_providers,
@@ -283,7 +284,7 @@ def _push_state(incus: Incus, files: list[InstanceFiles], callback_source: str) 
         base = f"{root}/{litellm_state.check_account(f.account)}"
         lines += [
             f"mkdir -p {base}/auth; chmod 0700 {base} {base}/auth",
-            f"put {base}/instance.env {_b64(f.instance_env)}",
+            f"put {base}/{ENV_FILE} {_b64(f.instance_env)}",
             f"put {base}/config.yaml {_b64(f.config_yaml)}",
             # Last: the running proxy reloads when this file changes.
             f"put {base}/{HOT_FILE} {_b64(f.hot_json)}",
@@ -1059,7 +1060,7 @@ def litellm_logout(incus: Incus, account: str, provider: str = "chatgpt") -> boo
 def litellm_login(incus: Incus, account: str) -> int:
     """Start LiteLLM's own ChatGPT device-code flow on an interactive PTY."""
     _require_running(incus)
-    env_file = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/instance.env")
+    env_file = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/{ENV_FILE}")
     auth_dir = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/auth")
     script = (
         f"set -e; umask 0077; test -r {env_file}; unset CHATGPT_TOKEN_DIR; "
@@ -1113,7 +1114,7 @@ def litellm_login_xai(incus: Incus, cfg: LiteLLMConfig, account: str) -> int:
         f"JAILBEE_XAI_LOGIN\nchown root:root {helper}\nchmod 0644 {helper}\n",
         timeout=30,
     )
-    env_file = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/instance.env")
+    env_file = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/{ENV_FILE}")
     auth_dir = shlex.quote(f"{CONTAINER_STATE_DIR}/{account}/{_AUTH_DIRS['xai']}")
     script = (
         f"set -e; umask 0077; test -r {env_file}; "
