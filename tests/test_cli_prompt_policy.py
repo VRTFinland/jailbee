@@ -20,7 +20,9 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "jailbee"
 _NOT_A_PROMPT = {
     "prompting.py": "the predicate itself",
     "macos.py": "decides whether the delegated host command gets a pty",
-    "dashboard/tui/loop.py": "a full-screen TUI needs a terminal on both ends, env override or not",
+    "dashboard/tui/session.py": (
+        "a full-screen TUI needs a terminal on both ends, env override or not"
+    ),
 }
 
 

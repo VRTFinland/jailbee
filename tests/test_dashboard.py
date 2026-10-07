@@ -29,6 +29,7 @@ from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import loop as tloop
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import overlay as toverlay
+from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import terminal as tterm
 from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
@@ -1180,9 +1181,9 @@ def _container_egress_keys(group: dmodel.RepoGroup, **menu_kwargs) -> list[bytes
 
 def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    rows = mocker.patch.object(tloop, "load_egress_rows", return_value=())
+    rows = mocker.patch.object(tsession, "load_egress_rows", return_value=())
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -1202,7 +1203,7 @@ def test_egress_add_prompts_inline_then_runs_the_scoped_cli(mocker, tmp_path):
     asked = [
         i
         for i, call in enumerate(calls)
-        if isinstance(call.kwargs.get("overlay"), tloop.TextPrompt)
+        if isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
         and call.kwargs["overlay"].purpose == "egress-add"
     ]
     assert asked, "the destination question was never drawn in the frame"
@@ -1232,10 +1233,10 @@ def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocke
     )
     egress_index = next(i for i, (_, verb) in enumerate(network.actions) if verb == "net egress ls")
     mocker.patch.object(
-        tloop, "load_egress_rows", return_value=(EntryRow("allowed.example", "config"),)
+        tsession, "load_egress_rows", return_value=(EntryRow("allowed.example", "config"),)
     )
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert (
@@ -1263,11 +1264,11 @@ def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocke
     prompt.assert_not_called()
     child.assert_not_called()
     panels = [call.kwargs["overlay"] for call in render.call_args_list]
-    egress = next(panel for panel in panels if isinstance(panel, tloop.EgressState))
+    egress = next(panel for panel in panels if isinstance(panel, tsession.EgressState))
     assert egress.can_add is False
     assert egress.can_rm is True
     # A refused add never opens the destination question.
-    assert not any(isinstance(panel, tloop.TextPrompt) for panel in panels)
+    assert not any(isinstance(panel, tsession.TextPrompt) for panel in panels)
     assert any(
         "net egress add is not permitted" in str(call.kwargs.get("notice"))
         for call in render.call_args_list
@@ -1316,8 +1317,8 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
         EntryRow("from-config.example", "config"),
         EntryRow("container-only.example", "container"),
     )
-    load = mocker.patch.object(tloop, "load_egress_rows", return_value=rows)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    load = mocker.patch.object(tsession, "load_egress_rows", return_value=rows)
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     menu = tmenu.open_menu([group], "alpha-x")
@@ -1359,10 +1360,10 @@ def test_run_removes_only_selected_container_override(mocker, tmp_path):
 def test_repo_egress_dispatch_uses_repo_scope_and_explicit_config(mocker, tmp_path):
     config_path = tmp_path / ".jailbee" / "config.yaml"
     group = dmodel.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
     prompt = mocker.patch("typer.prompt")
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
 
     keys = [
@@ -1397,9 +1398,9 @@ def test_repo_egress_dispatch_uses_repo_scope_and_explicit_config(mocker, tmp_pa
 @pytest.mark.parametrize("cancel", [b"\x1b", b"\x03"], ids=["escape", "ctrl-c"])
 def test_egress_add_escape_returns_to_the_panel_with_a_notice(mocker, tmp_path, cancel):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_egress_keys(group), b"a", *_keys("x"), cancel, b"\x03"]
@@ -1409,13 +1410,13 @@ def test_egress_add_escape_returns_to_the_panel_with_a_notice(mocker, tmp_path, 
     child.assert_not_called()
     calls = render.call_args_list
     assert any(
-        isinstance(call.kwargs.get("overlay"), tloop.TextPrompt)
+        isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
         and call.kwargs["overlay"].text == "x"
         for call in calls
     ), "the typed text never reached the inline prompt"
     # Cancelling answers the question, not the dashboard: the panel is back.
     last = calls[-1].kwargs.get("overlay")
-    assert isinstance(last, tloop.EgressState)
+    assert isinstance(last, tsession.EgressState)
     assert last.container == "alpha-x"
     assert calls[-1].kwargs.get("notice") == "Egress change cancelled"
 
@@ -1429,8 +1430,8 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
         commands=RemoteCommandPolicy(mode="allowlist", allow=["net egress ls", "net egress add"]),
         restrict_host=False,
     )
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
-    child = mocker.patch.object(tloop.subprocess, "run")
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     _mock_terminal(mocker)
     _fake_state(mocker, [group])
@@ -1466,7 +1467,7 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
 
     calls = render.call_args_list
     assert any(
-        isinstance(call.kwargs.get("overlay"), tloop.TextPrompt)
+        isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
         and call.kwargs["overlay"].text == "example.com"
         for call in calls
     ), "the add question never opened under the permissive policy"
@@ -1475,13 +1476,13 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
         call.kwargs.get("notice") == "net egress add is not permitted by the SSH policy"
         for call in calls
     )
-    assert isinstance(calls[-1].kwargs.get("overlay"), tloop.EgressState)
+    assert isinstance(calls[-1].kwargs.get("overlay"), tsession.EgressState)
 
 
 def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
-    child = mocker.patch.object(tloop.subprocess, "run")
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_egress_keys(group), b"a", *_keys("  "), _ENTER, b"\x03"]
@@ -1493,7 +1494,7 @@ def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
     rejected = [
         call.kwargs["overlay"]
         for call in render.call_args_list
-        if isinstance(call.kwargs.get("overlay"), tloop.TextPrompt)
+        if isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
         and call.kwargs["overlay"].error is not None
     ]
     assert [(p.purpose, p.error) for p in rejected] == [
@@ -1504,9 +1505,9 @@ def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
 @pytest.mark.parametrize("returncode", [1, 2], ids=["mutation-failure", "invalid-destination"])
 def test_egress_mutation_failure_is_visible(mocker, tmp_path, returncode):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = returncode
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
@@ -1549,8 +1550,8 @@ def test_egress_panel_closes_when_container_disappears(mocker, tmp_path):
         step = next(script, b"\x03")
         return step() if callable(step) else step
 
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
-    child = mocker.patch.object(tloop.subprocess, "run")
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run_with_reader(mocker, read, [group]) == 0
@@ -1558,12 +1559,12 @@ def test_egress_panel_closes_when_container_disappears(mocker, tmp_path):
     child.assert_not_called()
     calls = render.call_args_list
     assert any(
-        isinstance(call.kwargs.get("overlay"), tloop.TextPrompt)
+        isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
         and call.kwargs["overlay"].text == "example.comx"
         for call in calls
     ), "the prompt must still be open, with the text typed after the removal"
     overlays = [call.kwargs.get("overlay") for call in calls]
-    assert not isinstance(overlays[-1], (tloop.EgressState, tloop.TextPrompt))
+    assert not isinstance(overlays[-1], (tsession.EgressState, tsession.TextPrompt))
     assert any(
         call.kwargs.get("notice") == "Egress target is no longer available" for call in calls
     )
@@ -1571,8 +1572,8 @@ def test_egress_panel_closes_when_container_disappears(mocker, tmp_path):
 
 def test_egress_panel_closes_when_repo_disappears_during_dispatch(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "load_egress_rows", return_value=())
-    child = mocker.patch.object(tloop.subprocess, "run", side_effect=FileNotFoundError())
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    child = mocker.patch.object(tsession.subprocess, "run", side_effect=FileNotFoundError())
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_egress_keys(group), b"a", *_keys("example.com"), _ENTER, b"\x03"]
@@ -1581,7 +1582,7 @@ def test_egress_panel_closes_when_repo_disappears_during_dispatch(mocker, tmp_pa
     child.assert_called_once()
     assert child.call_args.args[0] == ["jailbee", "net", "egress", "add", "example.com", "alpha-x"]
     overlays = [call.kwargs.get("overlay") for call in render.call_args_list]
-    assert not isinstance(overlays[-1], tloop.EgressState)
+    assert not isinstance(overlays[-1], tsession.EgressState)
     assert any(
         "no longer exists" in str(call.kwargs.get("notice", "")) for call in render.call_args_list
     )
@@ -1601,7 +1602,9 @@ def test_egress_loader_failure_is_visible_and_does_not_crash(mocker, tmp_path):
         item for item in root if isinstance(item, dmenus.MenuGroup) and item.label == "Network →"
     )
     egress_index = next(i for i, (_, verb) in enumerate(network.actions) if verb == "net egress ls")
-    mocker.patch.object(tloop, "load_egress_rows", side_effect=LookupError("database unavailable"))
+    mocker.patch.object(
+        tsession, "load_egress_rows", side_effect=LookupError("database unavailable")
+    )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert (
@@ -1878,7 +1881,7 @@ def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
 
 
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     pause = _patch_all(mocker, "_wait_for_return")
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "outbox browse", "alpha-x")
@@ -2215,13 +2218,13 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
     which other entries happen to be visible.
     """
     autostart = (
-        ("Autostart status", tloop.dact.AUTOSTART_STATUS),
-        ("Cancel autostart…", tloop.dact.AUTOSTART_CANCEL),
+        ("Autostart status", tsession.dact.AUTOSTART_STATUS),
+        ("Cancel autostart…", tsession.dact.AUTOSTART_CANCEL),
     )
     before = (
-        ("Snapshots…", tloop.dact.SNAPSHOTS),
-        ("Mount…", tloop.dact.MOUNT_ADD),
-        ("Unmount…", tloop.dact.MOUNT_REMOVE),
+        ("Snapshots…", tsession.dact.SNAPSHOTS),
+        ("Mount…", tsession.dact.MOUNT_ADD),
+        ("Unmount…", tsession.dact.MOUNT_REMOVE),
     )
     for pr_number, pr_author, job, network, extras, pending in itertools.product(
         (None, 7),
@@ -2262,15 +2265,15 @@ def test_repo_menu_keys_never_move_whatever_the_policy_hides(drop):
         ("Credential group…", "credential-group"),
         ("Accounts…", "accounts"),
         dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
-        ("Apply config…", tloop.dact.REPO_APPLY),
+        ("Apply config…", tsession.dact.REPO_APPLY),
         dmenus.MenuGroup(
-            tloop.dact.DIAGNOSTICS_LABEL,
+            tsession.dact.DIAGNOSTICS_LABEL,
             (
-                ("Doctor", tloop.dact.REPO_DOCTOR),
-                ("Disk usage", tloop.dact.REPO_DISK_USAGE),
+                ("Doctor", tsession.dact.REPO_DOCTOR),
+                ("Disk usage", tsession.dact.REPO_DISK_USAGE),
             ),
         ),
-        ("Prune stale containers…", tloop.dact.REPO_PRUNE),
+        ("Prune stale containers…", tsession.dact.REPO_PRUNE),
         ("Fold", "fold"),
     ]
     menu = tmenu.RepoMenuState(
@@ -2374,7 +2377,7 @@ def test_repo_target_of_is_none_for_an_orphan_group():
 
 def test_dispatch_action_runs_jailbee_with_the_repos_config(mocker, tmp_path):
     config_path = tmp_path / "config.yaml"
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "net loose", "alpha-x")
@@ -2396,7 +2399,7 @@ def test_dispatch_action_forces_the_attach_verbs(mocker, tmp_path):
     whatever terminal the dashboard was started from.
     """
     config_path = tmp_path / "config.yaml"
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     for verb in ("tmux", "shell", "ide", "chrome"):
@@ -2413,7 +2416,7 @@ def test_dispatch_action_rechecks_remote_policy_before_subprocess(mocker, tmp_pa
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
     from jailbee.remote_ssh.router import RouteError
 
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
     with pytest.raises(RouteError):
         ddispatch._dispatch_action(
@@ -2429,7 +2432,7 @@ def test_dispatch_action_rechecks_remote_policy_before_subprocess(mocker, tmp_pa
 def test_dispatch_action_does_not_force_other_verbs(mocker, tmp_path):
     """`--force` means different things per command (and most don't take it
     at all), so only the attach verbs get it appended."""
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "restart", "alpha-x")
@@ -2457,7 +2460,7 @@ def test_dispatch_action_routes_a_top_level_apps_container_through_the_flag(
     verb = dmodel._app_menu_verb(spec)
 
     config_path = tmp_path / "config.yaml"
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
@@ -2497,7 +2500,7 @@ def test_dispatch_action_routes_a_non_top_level_app_to_a_real_command(mocker, tm
     assert verb == "apps run figma --container"
 
     config_path = tmp_path / "config.yaml"
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), verb, "alpha-x")
@@ -2526,7 +2529,7 @@ def test_qtui_still_imports_the_constant():
 
 
 def test_dispatch_action_reports_the_commands_exit_code(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 2
 
     assert ddispatch._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x") == 2
@@ -2536,7 +2539,7 @@ def test_dispatch_action_omits_the_config_flag_for_a_scratch_repo(mocker, tmp_pa
     """A scratch repo has no path to point `--config` at. It is addressed by
     running the child in the repo root instead, so the cwd is the only thing
     that says which repo this is — it must actually be set."""
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     ddispatch._dispatch_action(dmodel.RepoTarget(tmp_path, None), "net loose", "alpha-x")
@@ -2549,13 +2552,13 @@ def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_pat
     otherwise `jailbee git diff` in a scratch repo resolves the dashboard's own
     directory instead of the row's."""
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
     popen.return_value.wait.return_value = 0
     # Patching `Popen` alone is process-wide and takes `subprocess.run` with
     # it too — mocked here (as the sibling non-scratch test already does) so
     # a regression that reaches the plain `run` fallback fails with a
     # readable assertion instead of a `TypeError` from the real subprocess API.
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
 
     ddispatch._dispatch_action(dmodel.RepoTarget(tmp_path, None), "git diff", "alpha-x")
 
@@ -2636,9 +2639,9 @@ def test_pager_argv_falls_back_to_less_then_more(mocker):
 def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
     config_path = tmp_path / "config.yaml"
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
     popen.return_value.wait.return_value = 0
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
 
     rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
@@ -2665,8 +2668,8 @@ def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
     """`less`'s `!`, `v` and `|` would run on the host. A remote diff is
     printed and paused on instead, and no pager process exists at all."""
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
-    run = mocker.patch.object(tloop.subprocess, "run")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2679,7 +2682,7 @@ def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
 
 
 def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2689,7 +2692,7 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
 
 
 def test_dispatch_action_pauses_after_merge(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2702,7 +2705,7 @@ def test_dispatch_action_pauses_after_merge(mocker, tmp_path):
 def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_path):
     """tmux and shell end when the user leaves them; there is nothing left to
     read, and an extra keypress would just be in the way."""
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2713,7 +2716,7 @@ def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_pa
 
 def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tmp_path):
     mocker.patch.object(ddispatch, "pager_argv", return_value=None)
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 3
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2729,9 +2732,9 @@ def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp
     its output still has to be readable."""
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     producer = mocker.MagicMock()
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
     popen.side_effect = [producer, OSError("no less")]
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -2756,9 +2759,9 @@ def test_dispatch_action_does_not_mistake_a_vanished_repo_for_a_missing_pager(mo
     `OSError` uncaught, taking the whole TUI down.
     """
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
     popen.side_effect = OSError("no such directory")
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
 
     with pytest.raises(OSError):
         ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
@@ -2772,7 +2775,7 @@ def test_dispatch_falls_back_to_a_pager_unavailable_when_the_pager_itself_fails(
     is what the call site's `except _PagerUnavailableError` actually catches."""
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     producer = mocker.MagicMock()
-    popen = mocker.patch.object(tloop.subprocess, "Popen")
+    popen = mocker.patch.object(tsession.subprocess, "Popen")
     popen.side_effect = [producer, OSError("no less")]
 
     with pytest.raises(ddispatch._PagerUnavailableError):
@@ -3537,8 +3540,8 @@ def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
 
 
 def test_render_scrolls_a_picker_taller_than_the_screen_to_its_cursor(tmp_path):
-    entries = tuple(tloop.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
-    picker = tloop.Picker("x", "Pick one", entries, index=29)
+    entries = tuple(tsession.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
+    picker = tsession.Picker("x", "Pick one", entries, index=29)
     lines = _screen_lines([_tall_group(tmp_path, 3)], picker, height=20)
     assert len(lines) <= 20
     assert "▸ Entry 29" in "\n".join(lines)
@@ -4326,7 +4329,7 @@ def test_host_branches_is_empty_without_a_repo_root(mocker):
 
 
 def test_retarget_argv_puts_the_names_after_the_separator():
-    assert tloop.dact.retarget_argv("alpha-x", "main") == [
+    assert tsession.dact.retarget_argv("alpha-x", "main") == [
         "git",
         "retarget",
         "--",
@@ -4890,7 +4893,7 @@ def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> N
     from jailbee.remote_ssh.router import RouteError
 
     target = dmodel.RepoTarget(tmp_path, None)
-    run = mocker.patch("jailbee.dashboard.tui.loop.subprocess.run")
+    run = mocker.patch("jailbee.dashboard.tui.session.subprocess.run")
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
 
     with pytest.raises(RouteError, match="disabled"):
@@ -4913,7 +4916,7 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
     from jailbee.config.models_remote import RemoteSSHConfig
 
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _mock_terminal(mocker)
     _fake_state(mocker, [group])
@@ -5387,7 +5390,7 @@ class _SyncJobs(JobRunner):
     """
 
     def start(self, key, label, argv, cwd, on_done):
-        proc = tloop.subprocess.run(argv, check=False, cwd=cwd)
+        proc = tsession.subprocess.run(argv, check=False, cwd=cwd)
         self._labels[key] = label
         stderr = proc.stderr if isinstance(proc.stderr, str) else ""
         self._finished.append((key, on_done, JobResult(proc.returncode, stderr)))
@@ -5401,10 +5404,10 @@ def _mock_terminal(mocker):
     before `Live` starts, so anything recorded while its ``call_count`` is 0
     happened while the user could still see their own shell.
     """
-    mocker.patch.object(tloop, "collect_repo_roots", return_value=[Path("/x")])
+    mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
-    mocker.patch.object(tloop, "seed_view_state", return_value=tloop.ViewState())
-    mocker.patch.object(tloop, "JobRunner", _SyncJobs)
+    mocker.patch.object(tsession, "seed_view_state", return_value=tsession.ViewState())
+    mocker.patch.object(tsession, "JobRunner", _SyncJobs)
 
     mock_stdin = mocker.Mock()
     mock_stdin.isatty.return_value = True
@@ -5455,7 +5458,7 @@ class FakeStateClient:
 
 def _fake_state(mocker, groups, **kw) -> FakeStateClient:
     fake = FakeStateClient(groups, **kw)
-    mocker.patch.object(tloop, "open_state_client", return_value=fake)
+    mocker.patch.object(tsession, "open_state_client", return_value=fake)
     return fake
 
 
@@ -5467,7 +5470,7 @@ def _drive_run(
     remote: bool = False,
     over_ssh: bool = False,
     ssh_policy=None,
-    view_state: tloop.ViewState | None = None,
+    view_state: tsession.ViewState | None = None,
     git_enabled: bool = False,
 ) -> int:
     """Run the real ``jailbee.dashboard.tui.loop.run()`` key loop with a fake terminal.
@@ -5483,7 +5486,7 @@ def _drive_run(
     """
     _mock_terminal(mocker)
     if view_state is not None:
-        mocker.patch.object(tloop, "seed_view_state", return_value=view_state)
+        mocker.patch.object(tsession, "seed_view_state", return_value=view_state)
     _fake_state(mocker, groups or [], git_enabled=git_enabled)
     mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
 
@@ -5559,7 +5562,7 @@ def test_run_arrows_scroll_and_clamp_overshoot(mocker, tmp_path):
         mocker,
         [_RIGHT] * 12 + [_LEFT],
         [_wide_group(tmp_path)],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
     peak = max(offsets)
@@ -5576,7 +5579,7 @@ def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, t
         mocker,
         [_RIGHT] * 6 + [_LEFT],
         [_wide_group(tmp_path)],
-        view_state=tloop.ViewState(columns=enabled),
+        view_state=tsession.ViewState(columns=enabled),
     )
     assert _offsets(frames) == [0, 1, 2, 3, 3, 3, 3, 2]
     mocker.stop(terminal_width)
@@ -5601,7 +5604,7 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
         mocker,
         [_RIGHT] * 6 + _repo_menu_keys(group, "fold") + [_RIGHT] * 3,
         [group],
-        view_state=tloop.ViewState(
+        view_state=tsession.ViewState(
             columns=enabled,
             folded=frozenset({"alpha"}) if initially_folded else frozenset(),
         ),
@@ -5631,7 +5634,7 @@ def test_repo_menu_fold_reclamps_without_resetting_optimized_widths(mocker, tmp_
         mocker,
         [b"o"] + [_RIGHT] * 6 + _repo_menu_keys(group, "fold"),
         [group, other],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     before, after = frames.call_args_list[7].kwargs, frames.call_args.kwargs
     assert before["column_offset"] > 0
@@ -5671,7 +5674,7 @@ def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):
         mocker,
         key_sequence=keys(),
         groups=[group],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
     assert 0 < new_maximum < max(offsets)
@@ -5687,7 +5690,7 @@ def test_run_reset_the_offset(mocker, tmp_path, reset_keys):
         mocker,
         [_RIGHT, _RIGHT, *reset_keys],
         [_wide_group(tmp_path)],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
     assert max(offsets) > 0 and offsets[-1] == 0
@@ -5708,7 +5711,7 @@ def test_run_arrows_are_ignored_while_an_overlay_is_open(mocker, tmp_path, open_
         mocker,
         [_RIGHT, *open_keys, _RIGHT, _LEFT, b"\x1b"],
         [_wide_group(tmp_path)],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
     assert offsets[1] > 0
@@ -5724,7 +5727,7 @@ def test_run_arrows_clamp_after_folding(mocker, tmp_path):
         mocker,
         [_RIGHT] * 12 + [b" ", _LEFT],
         [_wide_group(tmp_path)],
-        view_state=tloop.ViewState(columns=_WIDE),
+        view_state=tsession.ViewState(columns=_WIDE),
     )
     offsets = _offsets(frames)
     assert max(offsets) > 0
@@ -5756,7 +5759,7 @@ _ESC = b"\x1b"
 
 def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -5778,7 +5781,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
 def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -5792,7 +5795,7 @@ def test_run_menu_hotkeys_open_a_group_and_dispatch_its_leaf(mocker, tmp_path):
 def test_run_menu_capital_hotkey_destroys_only_through_lifecycle(mocker, tmp_path):
     """`D` inside `Lifecycle →` reaches destroy; a lowercase `d` there does nothing."""
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -5805,7 +5808,7 @@ def test_run_menu_capital_hotkey_destroys_only_through_lifecycle(mocker, tmp_pat
 
 def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"j", _ENTER, b"z"], groups=[group])
@@ -5818,7 +5821,7 @@ def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
 def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha", pr_number=7)])
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
 
     _drive_run(
         mocker,
@@ -5877,7 +5880,7 @@ def test_ssh_disabled_policy_rejects_new_before_prompt_or_spawn(mocker, tmp_path
 
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
 
@@ -5895,7 +5898,8 @@ def test_ssh_disabled_policy_rejects_new_before_prompt_or_spawn(mocker, tmp_path
     assert any("disabled" in str(call.kwargs.get("notice")) for call in render.call_args_list)
     # rejected before the first question: no prompt was ever drawn
     assert not any(
-        isinstance(call.kwargs.get("overlay"), tloop.TextPrompt) for call in render.call_args_list
+        isinstance(call.kwargs.get("overlay"), tsession.TextPrompt)
+        for call in render.call_args_list
     )
 
 
@@ -5904,9 +5908,9 @@ def test_ssh_allowlisted_new_prompts_then_spawns_final_argv(mocker, tmp_path):
 
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     _patch_all(mocker, "_wait_for_return")
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["new"]))
 
@@ -5929,7 +5933,7 @@ def test_ssh_inline_shell_works_when_exec_entrypoint_is_disabled(mocker, tmp_pat
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     policy = RemoteSSHConfig(
         exec=False, commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"])
@@ -5953,7 +5957,7 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
 
     container = _ci("alpha-x", "alpha")
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [container])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     _mock_terminal(mocker)
     _fake_state(mocker, [group])
@@ -6061,7 +6065,7 @@ def test_run_persists_view_state_when_the_write_succeeds(mocker):
     save.assert_called_once()
     _engine, frontend, state = save.call_args.args
     assert frontend == FRONTEND_TUI
-    assert isinstance(state, tloop.ViewState)
+    assert isinstance(state, tsession.ViewState)
 
 
 def test_run_visibility_tab_uses_raw_prefixes_and_persists_complete_state(mocker, tmp_path):
@@ -6077,7 +6081,7 @@ def test_run_visibility_tab_uses_raw_prefixes_and_persists_complete_state(mocker
             mocker,
             [b"S", b"\t", b"\t", b"\x1b[B", b" "],
             [alpha, empty],
-            view_state=tloop.ViewState(("name",), frozenset({"vanished"})),
+            view_state=tsession.ViewState(("name",), frozenset({"vanished"})),
         )
         == 0
     )
@@ -6098,9 +6102,9 @@ def test_run_visibility_tab_uses_raw_prefixes_and_persists_complete_state(mocker
 def test_run_new_from_empty_repo_header_dispatches_to_repo_root(mocker, tmp_path):
     group = dmodel.RepoGroup("empty", str(tmp_path), None, [])
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     _patch_all(mocker, "_wait_for_return")
 
     keys = [b"n", *_keys("feature"), _ENTER, _ENTER]  # base prefilled with "main"
@@ -6115,14 +6119,14 @@ def test_run_new_from_empty_repo_header_dispatches_to_repo_root(mocker, tmp_path
 def test_run_new_prompt_is_drawn_in_the_frame_and_keeps_the_table(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
 
     _drive_run(mocker, [b"n", *_keys("fe")], [group])
 
     prompts = [
         c.kwargs["overlay"]
         for c in render.call_args_list
-        if isinstance(c.kwargs.get("overlay"), tloop.TextPrompt)
+        if isinstance(c.kwargs.get("overlay"), tsession.TextPrompt)
     ]
     assert prompts[-1].label == "New branch"
     assert prompts[-1].text == "fe"
@@ -6136,8 +6140,8 @@ def test_run_new_prompt_is_drawn_in_the_frame_and_keeps_the_table(mocker, tmp_pa
 
 def test_run_new_escape_at_either_step_spawns_nothing_and_keeps_the_dashboard(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     for keys in (
@@ -6157,15 +6161,15 @@ def test_run_new_escape_at_either_step_spawns_nothing_and_keeps_the_dashboard(mo
 
 def test_run_new_blank_branch_is_rejected_inline_not_dispatched(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"n", *_keys("  "), _ENTER], [group])
 
     child.assert_not_called()
     assert any(
-        isinstance(c.kwargs.get("overlay"), tloop.TextPrompt)
+        isinstance(c.kwargs.get("overlay"), tsession.TextPrompt)
         and c.kwargs["overlay"].error == "New branch cannot be empty"
         for c in render.call_args_list
     )
@@ -6173,9 +6177,9 @@ def test_run_new_blank_branch_is_rejected_inline_not_dispatched(mocker, tmp_path
 
 def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     wipe_main = [b"\x7f"] * 4
@@ -6194,7 +6198,7 @@ def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path)
     assert _drive_run(mocker, keys, [group]) == 0
 
     assert any(
-        isinstance(c.kwargs.get("overlay"), tloop.TextPrompt)
+        isinstance(c.kwargs.get("overlay"), tsession.TextPrompt)
         and c.kwargs["overlay"].error == "Base branch cannot be empty"
         for c in render.call_args_list
     )
@@ -6216,16 +6220,16 @@ def _text_prompts(render):
     return [
         c.kwargs["overlay"]
         for c in render.call_args_list
-        if isinstance(c.kwargs.get("overlay"), tloop.TextPrompt)
+        if isinstance(c.kwargs.get("overlay"), tsession.TextPrompt)
     ]
 
 
 def test_run_retarget_asks_inline_and_runs_the_cli_with_the_base(mocker, tmp_path):
     group = _retarget_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
-    mocker.patch.object(tloop, "host_branches", side_effect=_fake_branches)
+    mocker.patch.object(tsession, "host_branches", side_effect=_fake_branches)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [b"j", _ENTER, b"g", b"b", *_keys("dev"), b"\t", _ENTER]
@@ -6242,8 +6246,8 @@ def test_run_retarget_asks_inline_and_runs_the_cli_with_the_base(mocker, tmp_pat
 
 def test_run_retarget_refuses_an_unknown_branch_inline(mocker, tmp_path):
     group = _retarget_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "host_branches", side_effect=_fake_branches)
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "host_branches", side_effect=_fake_branches)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"j", _ENTER, b"g", b"b", *_keys("nope"), _ENTER], [group])
@@ -6255,9 +6259,11 @@ def test_run_retarget_refuses_an_unknown_branch_inline(mocker, tmp_path):
 def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path):
     """No prompt opens when the pre-checks (SSH policy, availability) refuse the verb."""
     group = _retarget_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "host_branches", side_effect=_fake_branches)
-    _patch_all(mocker, "check_dashboard_command", side_effect=tloop.RouteError("refused by policy"))
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "host_branches", side_effect=_fake_branches)
+    _patch_all(
+        mocker, "check_dashboard_command", side_effect=tsession.RouteError("refused by policy")
+    )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"j", _ENTER, b"g", b"b", _ESC], [group])
@@ -6269,9 +6275,9 @@ def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path
 
 def test_run_new_base_prompt_offers_the_host_branches(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
-    mocker.patch.object(tloop, "host_branches", side_effect=_fake_branches)
+    mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "host_branches", side_effect=_fake_branches)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"n", *_keys("feature"), _ENTER], [group])
@@ -6314,8 +6320,8 @@ def _sigint_reader(sequence: list[bytes | type[BaseException]]):
 )
 def test_run_sigint_at_a_text_input_cancels_it_and_keeps_the_dashboard(mocker, tmp_path, before):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     read, reads = _sigint_reader([*before, KeyboardInterrupt, b"h", _ESC])
@@ -6329,7 +6335,7 @@ def test_run_sigint_at_a_text_input_cancels_it_and_keeps_the_dashboard(mocker, t
 
 def test_run_sigint_with_no_overlay_still_quits(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
 
     read, reads = _sigint_reader([KeyboardInterrupt, b"h"])
     assert _drive_run_with_reader(mocker, read, [group]) == 0
@@ -6340,7 +6346,7 @@ def test_run_sigint_with_no_overlay_still_quits(mocker, tmp_path):
 
 def test_run_new_from_pr_prompts_for_a_number_and_dispatches(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -6358,7 +6364,7 @@ _NEW_PR_KEYS = [_ENTER, b"\x1b[B", _ENTER, *_keys("123"), _ENTER]
 
 def test_new_container_runs_detached_without_taking_the_terminal(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -6372,7 +6378,7 @@ def test_new_container_that_wants_an_answer_is_rerun_in_the_foreground(mocker, t
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
     attended = mocker.Mock(returncode=0, stderr=None)
-    child = mocker.patch.object(tloop.subprocess, "run", side_effect=[detached, attended])
+    child = mocker.patch.object(tsession.subprocess, "run", side_effect=[detached, attended])
     wait = _patch_all(mocker, "_wait_for_return")
 
     assert _drive_run(mocker, _NEW_PR_KEYS, [group]) == 0
@@ -6388,7 +6394,7 @@ def test_new_container_that_wants_an_answer_is_rerun_in_the_foreground(mocker, t
 def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     child = mocker.patch.object(
-        tloop.subprocess,
+        tsession.subprocess,
         "run",
         return_value=mocker.Mock(returncode=1, stderr="warning\nerror: git fetch failed\n"),
     )
@@ -6416,14 +6422,14 @@ class _PendingJobs(JobRunner):
 
 def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     typed = [b"n", *_keys("work"), _ENTER, _ENTER, b"n", *_keys("work"), _ENTER, _ENTER]
     _patch_all(mocker, "_wait_for_return")
-    mocker.patch.object(tloop.subprocess, "run")
+    mocker.patch.object(tsession.subprocess, "run")
 
     _mock_terminal(mocker)  # installs the synchronous fake; swap in the pending one
-    mocker.patch.object(tloop, "JobRunner", _PendingJobs)
+    mocker.patch.object(tsession, "JobRunner", _PendingJobs)
     _fake_state(mocker, [group])
     mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
     padded = itertools.chain(typed, [b"\x03"], itertools.repeat(b"\x03"))
@@ -6438,8 +6444,8 @@ def test_running_job_is_shown_and_not_started_twice(mocker, tmp_path):
 def test_run_new_prompt_whose_repo_vanishes_dispatches_nothing(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     live: list[dmodel.RepoGroup] = [group]
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     # branch, Enter (repo vanishes here), then Enter to confirm the base
@@ -6463,8 +6469,8 @@ def test_run_open_prompt_closes_when_its_repo_vanishes_before_any_submit(mocker,
     """The loop-top guard alone: the repo goes while the user is still typing."""
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     live: list[dmodel.RepoGroup] = [group]
-    child = mocker.patch.object(tloop.subprocess, "run")
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     typed = iter([b"n", b"f", b"x"])  # no Enter: nothing is ever submitted
 
@@ -6478,7 +6484,7 @@ def test_run_open_prompt_closes_when_its_repo_vanishes_before_any_submit(mocker,
 
     child.assert_not_called()
     overlays = [c.kwargs.get("overlay") for c in render.call_args_list]
-    prompts = [o for o in overlays if isinstance(o, tloop.TextPrompt)]
+    prompts = [o for o in overlays if isinstance(o, tsession.TextPrompt)]
     # the last frame with the prompt showed "f"; "x" was typed, then the repo went
     assert prompts[-1].text == "f"
     closed_at = overlays.index(prompts[-1]) + 1
@@ -6490,9 +6496,9 @@ def test_run_open_prompt_closes_when_its_repo_vanishes_before_any_submit(mocker,
 
 def test_run_empty_repo_header_menu_creates_container(mocker, tmp_path):
     group = dmodel.RepoGroup("empty", str(tmp_path), None, [])
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
 
     # Enter opens the repo menu, Enter picks "New container…", then the two answers
@@ -6507,7 +6513,7 @@ def test_run_empty_repo_header_menu_creates_container(mocker, tmp_path):
 def test_run_cannot_create_from_a_row_hidden_by_visibility_settings(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
     prompt = mocker.patch("typer.prompt")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert (
@@ -6525,9 +6531,9 @@ def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
     _mock_terminal(mocker)
     _fake_state(mocker, [group])
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     hiding = False
-    filter_groups = tloop.visible_repo_groups
+    filter_groups = tsession.visible_repo_groups
 
     def hide_after_menu_opens(groups, *, show_empty_repos, hidden_repos):
         active_hidden = hidden_repos | ({"alpha"} if hiding else set())
@@ -6535,7 +6541,7 @@ def test_open_menu_closes_when_its_container_becomes_hidden(mocker, tmp_path):
             groups, show_empty_repos=show_empty_repos, hidden_repos=frozenset(active_hidden)
         )
 
-    mocker.patch.object(tloop, "visible_repo_groups", side_effect=hide_after_menu_opens)
+    mocker.patch.object(tsession, "visible_repo_groups", side_effect=hide_after_menu_opens)
     selections = 0
 
     def advance_to_hidden_snapshot(*args, **kwargs):
@@ -6630,9 +6636,9 @@ def test_repo_header_enter_opens_menu_without_folding(mocker, tmp_path):
 
 def test_repo_menu_new_runs_the_existing_creation_flow(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop, "new_container_base_default", return_value="develop")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="develop")
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
 
     # the base field is prefilled with "develop": erase it and type another base
@@ -6647,7 +6653,7 @@ def test_repo_menu_new_runs_the_existing_creation_flow(mocker, tmp_path):
 def test_repo_menu_new_from_pr_runs_review_creation_in_repo(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
 
     keys = [_ENTER, b"j", _ENTER, *_keys("123"), _ENTER]
@@ -6677,7 +6683,7 @@ def test_repo_menu_new_from_pr_rejects_nonpositive_or_non_numeric_input(
 ):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
     _patch_all(mocker, "_wait_for_return")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # the answer arrives as one read (a paste), so the oversized case stays one frame
@@ -6688,7 +6694,7 @@ def test_repo_menu_new_from_pr_rejects_nonpositive_or_non_numeric_input(
     prompts = [
         c.kwargs["overlay"]
         for c in render.call_args_list
-        if isinstance(c.kwargs.get("overlay"), tloop.TextPrompt)
+        if isinstance(c.kwargs.get("overlay"), tsession.TextPrompt)
     ]
     assert prompts[-1].purpose == "new-pr"
     assert prompts[-1].text == answer
@@ -6708,7 +6714,7 @@ def test_repo_menu_toggles_fold_and_persists_it(mocker, tmp_path, initially_fold
             mocker,
             _repo_menu_keys(group, "fold"),
             groups=[group],
-            view_state=tloop.ViewState(
+            view_state=tsession.ViewState(
                 folded=frozenset({"alpha"}) if initially_folded else frozenset(),
                 show_empty_repos=False,
                 hidden_repos=frozenset({"other"}),
@@ -6731,7 +6737,7 @@ def test_repo_menu_toggles_fold_and_persists_it(mocker, tmp_path, initially_fold
 def test_orphan_repo_menu_only_offers_folding(mocker):
     group = dmodel.RepoGroup("orphan", None, None, [_ci("orphan-x", "orphan")])
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     _patch_all(mocker, "save_view_state")
 
     assert _drive_run(mocker, [b"\r", b"\r"], groups=[group]) == 0
@@ -6840,7 +6846,7 @@ def test_repo_apply_runs_in_the_terminal_with_the_chosen_restart_policy(
     mocker, tmp_path, downs, tail
 ):
     group = _cfg_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -6848,7 +6854,7 @@ def test_repo_apply_runs_in_the_terminal_with_the_chosen_restart_policy(
     keys = [*_repo_menu_keys(group, "apply"), *[b"j"] * downs, _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert [e.value for e in picker.entries] == ["restart", "no-restart"]
     child.assert_called_once_with(
         ["jailbee", "apply", *tail, "--config", str(group.config_path)], check=False, cwd=tmp_path
@@ -6859,13 +6865,13 @@ def test_repo_apply_runs_in_the_terminal_with_the_chosen_restart_policy(
 @pytest.mark.parametrize("key", [_ESC, b"\x03"], ids=["escape", "ctrl-c"])
 def test_repo_apply_cancel_runs_nothing(mocker, tmp_path, key):
     group = _cfg_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [*_repo_menu_keys(group, "apply"), key], [group]) == 0
 
     child.assert_not_called()
-    assert _rendered(render, tloop.Picker)
+    assert _rendered(render, tsession.Picker)
     if key == _ESC:
         assert "Cancelled" in _notices(render)
 
@@ -6875,7 +6881,7 @@ def test_repo_apply_over_unrestricted_ssh_sends_no_config_flag(mocker, tmp_path)
 
     group = _cfg_group(tmp_path)
     policy = RemoteSSHConfig(restrict_host=False)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -6904,7 +6910,7 @@ def test_repo_apply_is_not_offered_to_a_default_ssh_session(mocker, tmp_path):
 
 def test_repo_apply_nonzero_exit_is_a_notice(mocker, tmp_path):
     group = _cfg_group(tmp_path)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 2
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -6926,16 +6932,16 @@ _OPEN_REPO_GROUP_PICKER = [_ENTER, b"j", b"j", _ENTER]
 
 def _fake_account_cli(mocker, *, listing, change=None):
     """Patch the quiet CLI runner: the group listing answers ``listing``, a change ``change``."""
-    change = change or tloop.da.CliResult(True, "Set.")
+    change = change or tsession.da.CliResult(True, "Set.")
 
     def fake(argv, **_kwargs):
         return listing if argv[:3] == ["account", "group", "ls"] else change
 
-    return mocker.patch.object(tloop.da, "run_cli_quiet", side_effect=fake)
+    return mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=fake)
 
 
-def _groups_listing(stdout: str) -> tloop.da.CliResult:
-    return tloop.da.CliResult(True, "done", stdout)
+def _groups_listing(stdout: str) -> tsession.da.CliResult:
+    return tsession.da.CliResult(True, "done", stdout)
 
 
 def _rendered(render, kind):
@@ -6993,19 +6999,19 @@ def test_repo_menu_credential_group_follows_the_ssh_policy(over_ssh, policy_kwar
 def test_repo_credential_group_flow_sets_the_chosen_group(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = _fake_account_cli(mocker, listing=_groups_listing(_TEAM_ROWS))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # the picker opens on its first entry, the only group: "team"
     assert _drive_run(mocker, [*_OPEN_REPO_GROUP_PICKER, _ENTER], [group]) == 0
 
     assert run.call_args_list == [
-        mocker.call(tloop.da.group_ls_argv(), cwd=tmp_path),
+        mocker.call(tsession.da.group_ls_argv(), cwd=tmp_path),
         mocker.call(["account", "group", "set", "team"], cwd=tmp_path),
     ]
     child.assert_not_called()  # quiet: the terminal was never handed over
     calls = render.call_args_list
-    shown = [i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tloop.Picker)]
+    shown = [i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tsession.Picker)]
     assert shown, "the group picker was never drawn"
     picker = calls[shown[0]].kwargs["overlay"]
     assert (picker.purpose, picker.target, picker.title) == (
@@ -7028,7 +7034,7 @@ def test_credential_group_picker_offers_none_and_host_default_even_with_no_group
 
     assert _drive_run(mocker, [*_OPEN_REPO_GROUP_PICKER, cancel], [group]) == 0
 
-    pickers = _rendered(render, tloop.Picker)
+    pickers = _rendered(render, tsession.Picker)
     assert [e.label for e in pickers[0].entries] == [
         "none (this repo keeps its own login)",
         "Use the host default",
@@ -7064,7 +7070,9 @@ def test_ctrl_c_at_the_group_picker_cancels_it_and_the_dashboard_keeps_running(
     assert _drive_run_with_reader(mocker, _sigint_or(script), [group]) == 0
 
     calls = render.call_args_list
-    picker_at = max(i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tloop.Picker))
+    picker_at = max(
+        i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tsession.Picker)
+    )
     cancelled = calls[picker_at + 1].kwargs
     assert cancelled["overlay"] is None
     assert cancelled["notice"] == "Cancelled"
@@ -7102,7 +7110,7 @@ def test_eof_at_the_group_picker_still_quits(mocker, tmp_path):
 
     assert _drive_run_with_reader(mocker, read, [group]) == 0
     assert len(reads) == len(_OPEN_REPO_GROUP_PICKER) + 1
-    assert isinstance(render.call_args_list[-1].kwargs["overlay"], tloop.Picker)
+    assert isinstance(render.call_args_list[-1].kwargs["overlay"], tsession.Picker)
 
 
 def test_credential_group_picker_lists_each_group_once_in_order(mocker, tmp_path):
@@ -7122,7 +7130,7 @@ def test_credential_group_picker_lists_each_group_once_in_order(mocker, tmp_path
 
     assert _drive_run(mocker, [*_OPEN_REPO_GROUP_PICKER, _ESC], [group]) == 0
 
-    entries = _rendered(render, tloop.Picker)[0].entries
+    entries = _rendered(render, tsession.Picker)[0].entries
     assert [(e.label, e.value) for e in entries[:2]] == [("solo", "solo"), ("team", "team")]
     assert len(entries) == 5
 
@@ -7141,7 +7149,7 @@ def test_credential_group_picker_hides_a_legacy_group_named_none(mocker, tmp_pat
 
     assert _drive_run(mocker, [*_OPEN_REPO_GROUP_PICKER, _ESC], [group]) == 0
 
-    entries = _rendered(render, tloop.Picker)[0].entries
+    entries = _rendered(render, tsession.Picker)[0].entries
     assert [(e.label, e.value) for e in entries] == [
         ("team", "team"),
         ("none (this repo keeps its own login)", "none"),
@@ -7172,8 +7180,8 @@ def test_credential_group_picker_non_group_choices_run_their_command(mocker, tmp
 @pytest.mark.parametrize(
     ("listing", "reason"),
     [
-        (tloop.da.CliResult(False, "error: boom"), "boom"),
-        (tloop.da.CliResult(True, "done", "not json"), "unexpected output"),
+        (tsession.da.CliResult(False, "error: boom"), "boom"),
+        (tsession.da.CliResult(True, "done", "not json"), "unexpected output"),
     ],
     ids=["command-failed", "garbled-output"],
 )
@@ -7187,7 +7195,7 @@ def test_credential_group_listing_failure_is_a_notice_not_a_traceback(
     assert _drive_run(mocker, _OPEN_REPO_GROUP_PICKER, [group]) == 0
 
     assert run.call_count == 1
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     last = render.call_args_list[-1].kwargs
     assert last["overlay"] is None
     assert "could not list credential groups" in last["notice"]
@@ -7203,7 +7211,7 @@ def test_new_group_name_prompt_esc_runs_nothing(mocker, tmp_path):
     keys = [*_OPEN_REPO_GROUP_PICKER, *[b"j"] * 3, _ENTER, *_keys("fresh"), _ESC]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    prompts = _rendered(render, tloop.TextPrompt)
+    prompts = _rendered(render, tsession.TextPrompt)
     assert prompts and prompts[0].purpose == "repo-group-name"
     assert prompts[-1].text == "fresh"
     assert run.call_count == 1  # only the listing
@@ -7225,8 +7233,8 @@ def test_new_group_name_prompt_sets_the_typed_group(mocker, tmp_path):
 @pytest.mark.parametrize(
     ("change", "stays_up"),
     [
-        (tloop.da.CliResult(False, "an agent is running; pass --force"), True),
-        (tloop.da.CliResult(True, "This repo now uses group `team`."), False),
+        (tsession.da.CliResult(False, "an agent is running; pass --force"), True),
+        (tsession.da.CliResult(True, "This repo now uses group `team`."), False),
     ],
     ids=["failure", "success"],
 )
@@ -7236,7 +7244,7 @@ def test_account_command_failure_shows_a_long_notice(mocker, tmp_path, change, s
     _fake_account_cli(mocker, listing=_groups_listing(_TEAM_ROWS), change=change)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     clock = [1000.0]
-    mocker.patch.object(tloop.time, "monotonic", side_effect=lambda: clock[0])
+    mocker.patch.object(tsession.time, "monotonic", side_effect=lambda: clock[0])
     assert tkeys.parse_key(b"z") == ""  # an unbound key: one more frame, nothing else
     script = iter([*_OPEN_REPO_GROUP_PICKER, _ENTER, "advance", b"z"])
 
@@ -7282,7 +7290,7 @@ def test_repo_credential_group_config_flag_is_local_only(mocker, tmp_path, over_
 
     flags = [] if over_ssh else ["--config", str(config_path)]
     assert [c.args[0] for c in run.call_args_list] == [
-        [*tloop.da.group_ls_argv(), *flags],
+        [*tsession.da.group_ls_argv(), *flags],
         ["account", "group", "set", "team", *flags],
     ]
 
@@ -7382,19 +7390,19 @@ def test_container_credential_group_flow_uses_the_container_and_reset(
 ):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = _fake_account_cli(mocker, listing=_groups_listing(_TEAM_ROWS))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_open_container_group_picker(group), *[b"j"] * downs, _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
     assert run.call_args_list == [
-        mocker.call(tloop.da.group_ls_argv(), cwd=tmp_path),
+        mocker.call(tsession.da.group_ls_argv(), cwd=tmp_path),
         mocker.call(argv, cwd=tmp_path),
     ]
     child.assert_not_called()  # never dispatched to the CLI as a menu verb
     calls = render.call_args_list
-    shown = [i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tloop.Picker)]
+    shown = [i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tsession.Picker)]
     picker = calls[shown[0]].kwargs["overlay"]
     assert (picker.purpose, picker.target) == ("container-group", "alpha-x")
     assert [e.label for e in picker.entries] == [
@@ -7423,7 +7431,7 @@ def test_container_credential_group_config_flag_is_local_only(mocker, tmp_path, 
 
     flags = [] if over_ssh else ["--config", str(config_path)]
     assert [c.args[0] for c in run.call_args_list] == [
-        [*tloop.da.group_ls_argv(), *flags],
+        [*tsession.da.group_ls_argv(), *flags],
         ["account", "group", "use", "team", "alpha-x", *flags],
     ]
 
@@ -7437,13 +7445,13 @@ def test_container_new_group_name_prompt_uses_the_typed_group(mocker, tmp_path):
     keys = [*_open_container_group_picker(group), *[b"j"] * 2, _ENTER, *_keys("fresh"), _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    prompts = _rendered(render, tloop.TextPrompt)
+    prompts = _rendered(render, tsession.TextPrompt)
     assert {(p.purpose, p.target) for p in prompts} == {("container-group-name", "alpha-x")}
     assert run.call_args_list[-1] == mocker.call(
         ["account", "group", "use", "fresh", "alpha-x"], cwd=tmp_path
     )
     prompt_frames = [
-        c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tloop.TextPrompt)
+        c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tsession.TextPrompt)
     ]
     assert {c.args[1] for c in prompt_frames} == {dmodel.Row("container", "alpha-x")}
 
@@ -7461,14 +7469,14 @@ def test_container_new_group_name_prompt_uses_the_typed_group(mocker, tmp_path):
 def test_container_credential_group_esc_runs_nothing(mocker, tmp_path, tail):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = _fake_account_cli(mocker, listing=_groups_listing("[]"))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [*_open_container_group_picker(group), *tail], [group]) == 0
 
-    assert run.call_args_list == [mocker.call(tloop.da.group_ls_argv(), cwd=tmp_path)]
+    assert run.call_args_list == [mocker.call(tsession.da.group_ls_argv(), cwd=tmp_path)]
     child.assert_not_called()
-    assert _rendered(render, tloop.Picker)
+    assert _rendered(render, tsession.Picker)
     assert render.call_args_list[-1].kwargs["overlay"] is None
 
 
@@ -7477,7 +7485,7 @@ def test_container_vanishing_while_the_group_picker_is_open_runs_nothing(mocker,
     """Closed by the loop-top guard, or refused by the submit's own re-resolve."""
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
     run = _fake_account_cli(mocker, listing=_groups_listing(_TEAM_ROWS))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     vanish = [*_open_container_group_picker(group), "vanish"]
     script = iter([*vanish, _ENTER] if when == "frame-before-enter" else vanish)
@@ -7491,7 +7499,7 @@ def test_container_vanishing_while_the_group_picker_is_open_runs_nothing(mocker,
 
     assert _drive_run_with_reader(mocker, read, [group]) == 0
 
-    assert run.call_args_list == [mocker.call(tloop.da.group_ls_argv(), cwd=tmp_path)]
+    assert run.call_args_list == [mocker.call(tsession.da.group_ls_argv(), cwd=tmp_path)]
     child.assert_not_called()
     notices = " ".join(str(c.kwargs["notice"]) for c in render.call_args_list)
     assert "'alpha-x' is gone" in notices
@@ -7509,11 +7517,11 @@ def test_container_group_flow_is_not_misdirected_by_a_repo_of_the_same_name(mock
     assert _drive_run(mocker, keys, [group, namesake]) == 0
 
     assert run.call_args_list == [
-        mocker.call(tloop.da.group_ls_argv(), cwd=alpha_root),
+        mocker.call(tsession.da.group_ls_argv(), cwd=alpha_root),
         mocker.call(["account", "group", "use", "team", "alpha-x"], cwd=alpha_root),
     ]
     picker_frames = [
-        c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tloop.Picker)
+        c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tsession.Picker)
     ]
     assert picker_frames
     assert {c.args[1] for c in picker_frames} == {dmodel.Row("container", "alpha-x")}
@@ -7524,12 +7532,12 @@ def test_new_from_a_container_row_leaves_the_cursor_there_after_esc(mocker, tmp_
         "alpha", str(tmp_path), None, [_ci("alpha-x", "alpha"), _ci("alpha-y", "alpha")]
     )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    mocker.patch.object(tloop, "new_container_base_default", return_value="main")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
 
     assert _drive_run(mocker, [b"j", b"j", b"n", *_keys("fe"), _ESC], [group]) == 0
 
     calls = render.call_args_list
-    prompt_frames = [c for c in calls if isinstance(c.kwargs["overlay"], tloop.TextPrompt)]
+    prompt_frames = [c for c in calls if isinstance(c.kwargs["overlay"], tsession.TextPrompt)]
     assert prompt_frames
     assert {c.args[1] for c in prompt_frames} == {dmodel.Row("container", "alpha-y")}
     assert calls[-1].kwargs["overlay"] is None
@@ -7546,7 +7554,7 @@ def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
     wrapped around it is what this test actually exercises.
     """
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop.subprocess, "run", side_effect=OSError("gone"))
+    mocker.patch.object(tsession.subprocess, "run", side_effect=OSError("gone"))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # "j" moves the highlight off the repo header onto the container row;
@@ -7570,7 +7578,7 @@ def test_foreground_marks_the_client_inactive_and_refreshes_on_return(mocker, tm
         return mocker.Mock(returncode=0)
 
     fake = _fake_state(mocker, [group])
-    mocker.patch.object(tloop.subprocess, "run", side_effect=child)
+    mocker.patch.object(tsession.subprocess, "run", side_effect=child)
     _mock_terminal(mocker)
     mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
     keys = itertools.chain([b"j", b"t"], itertools.repeat(b"\x03"))
@@ -7632,7 +7640,7 @@ def test_run_pins_its_own_cwd_and_applies_its_scope(mocker, tmp_path):
 
 def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -7645,7 +7653,7 @@ def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_p
 
 def test_inline_command_on_container_uses_selected_source(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -7657,7 +7665,7 @@ def test_inline_command_on_container_uses_selected_source(mocker, tmp_path):
 
 def test_inline_command_malformed_quote_notifies_without_spawning(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"j", b"!", b"merge '", b"\r"], groups=[group])
@@ -7668,7 +7676,7 @@ def test_inline_command_malformed_quote_notifies_without_spawning(mocker, tmp_pa
 
 def test_inline_command_refuses_orphan_before_spawning(mocker):
     group = dmodel.RepoGroup("alpha", None, None, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
@@ -7678,7 +7686,7 @@ def test_inline_command_refuses_orphan_before_spawning(mocker):
 
 
 def test_inline_command_refuses_without_selection_before_spawning(mocker):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_run(mocker, [b"!", b"merge", b"\r"])
@@ -7693,7 +7701,7 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     wait = _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     _mock_terminal(mocker)
@@ -7720,7 +7728,7 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
 
 def test_inline_command_reports_vanished_repo_and_returns_to_loop(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    mocker.patch.object(tloop.subprocess, "run", side_effect=OSError("gone"))
+    mocker.patch.object(tsession.subprocess, "run", side_effect=OSError("gone"))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     rc = _drive_run(mocker, [b"j", b"!", b"merge", b"\r"], groups=[group])
@@ -7755,7 +7763,7 @@ def test_new_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, 
     # and returns None (so the base field opens empty), so this only affects
     # `run_new_container`'s subprocess.run (see git.get_current_branch's own
     # try/except).
-    mocker.patch.object(tloop.subprocess, "run", side_effect=OSError("gone"))
+    mocker.patch.object(tsession.subprocess, "run", side_effect=OSError("gone"))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # The repo header row is selected by default (no navigation needed): "n"
@@ -7782,7 +7790,7 @@ def test_run_dispatches_e_and_shift_e_to_edit_config(mocker, tmp_path):
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
     )
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
 
     rc = _drive_run(mocker, [b"e", b"E"], groups=[group])
@@ -7802,7 +7810,7 @@ def test_remote_run_never_opens_the_config_editor(mocker, tmp_path):
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
     )
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     rc = _drive_run(mocker, [b"e", b"E"], groups=[group], remote=True)
@@ -7825,7 +7833,7 @@ def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tm
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), tmp_path / ".jailbee" / "config.yaml", [_ci("alpha-x", "alpha")]
     )
-    mocker.patch.object(tloop.subprocess, "run", side_effect=OSError("gone"))
+    mocker.patch.object(tsession.subprocess, "run", side_effect=OSError("gone"))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     rc = _drive_run(mocker, [b"e"], groups=[group])
@@ -8205,7 +8213,7 @@ _ACCOUNT_ROWS = (
     ' {"agent": "claude", "group": "spare", "account": null, "state": "empty",'
     ' "repos": [], "containers": []}]'
 )
-_ACCOUNT_LS = tloop.da.account_ls_argv()
+_ACCOUNT_LS = tsession.da.account_ls_argv()
 
 
 def _fake_accounts_cli(mocker, *, listing=None, change=None):
@@ -8215,12 +8223,12 @@ def _fake_accounts_cli(mocker, *, listing=None, change=None):
     answers ``change``.
     """
     listing = listing or _groups_listing(_ACCOUNT_ROWS)
-    change = change or tloop.da.CliResult(True, "Done.")
+    change = change or tsession.da.CliResult(True, "Done.")
 
     def fake(argv, **_kwargs):
         return listing if argv[:2] == ["account", "ls"] else change
 
-    return mocker.patch.object(tloop.da, "run_cli_quiet", side_effect=fake)
+    return mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=fake)
 
 
 def _alpha(tmp_path):
@@ -8230,7 +8238,7 @@ def _alpha(tmp_path):
 def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-zebra", "alpha")])
     run = _fake_accounts_cli(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [b"A"], [group]) == 0
@@ -8238,7 +8246,9 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
     assert run.call_args_list == [mocker.call(_ACCOUNT_LS, cwd=tmp_path)]
     child.assert_not_called()
     frames = [
-        c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tloop.da.AccountsState)
+        c
+        for c in render.call_args_list
+        if isinstance(c.kwargs["overlay"], tsession.da.AccountsState)
     ]
     assert frames, "the Accounts panel was never drawn"
     state = frames[-1].kwargs["overlay"]
@@ -8284,7 +8294,7 @@ def test_repo_menu_accounts_opens_the_panel_in_that_repo(mocker, tmp_path):
     assert _drive_run(mocker, keys, [_alpha(tmp_path)]) == 0
 
     assert run.call_args_list == [mocker.call(_ACCOUNT_LS, cwd=tmp_path)]
-    states = _rendered(render, tloop.da.AccountsState)
+    states = _rendered(render, tsession.da.AccountsState)
     assert states
     assert states[-1].prefix == "alpha"
 
@@ -8311,7 +8321,7 @@ def test_key_a_from_an_orphan_row_falls_back_to_the_first_real_repo(mocker, tmp_
 
     assert render.call_args_list[0].args[1] == dmodel.Row("repo", "gamma")
     assert run.call_args_list == [mocker.call(_ACCOUNT_LS, cwd=tmp_path)]
-    assert _rendered(render, tloop.da.AccountsState)[-1].prefix == "beta"
+    assert _rendered(render, tsession.da.AccountsState)[-1].prefix == "beta"
 
 
 def test_key_a_with_no_real_repo_is_a_notice(mocker):
@@ -8330,8 +8340,8 @@ def test_key_a_with_no_real_repo_is_a_notice(mocker):
 @pytest.mark.parametrize(
     ("listing", "reason"),
     [
-        (tloop.da.CliResult(False, "error: no pool"), "no pool"),
-        (tloop.da.CliResult(True, "done", "not json"), "unexpected output"),
+        (tsession.da.CliResult(False, "error: no pool"), "no pool"),
+        (tsession.da.CliResult(True, "done", "not json"), "unexpected output"),
     ],
     ids=["command-failed", "garbled-output"],
 )
@@ -8343,7 +8353,7 @@ def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, re
     assert _drive_run(mocker, [b"A", b"j"], [_alpha(tmp_path)]) == 0
 
     assert run.call_count == 1
-    assert not _rendered(render, tloop.da.AccountsState)
+    assert not _rendered(render, tsession.da.AccountsState)
     last = render.call_args_list[-1].kwargs
     assert last["overlay"] is None
     assert last["notice"].startswith("could not list accounts: ")
@@ -8359,13 +8369,13 @@ def test_accounts_panel_with_an_empty_pool_says_so(mocker, tmp_path):
 
     assert run.call_count == 1  # Enter on nothing ran nothing
     last = render.call_args_list[-1]
-    assert isinstance(last.kwargs["overlay"], tloop.da.AccountsState)
+    assert isinstance(last.kwargs["overlay"], tsession.da.AccountsState)
     assert last.kwargs["overlay"].rows == ()
     assert last.kwargs["notice"] == "No actions for this row"
     assert "(no logins or groups on this host)" in _render_text(
         tframe.render(*last.args, **last.kwargs)
     )
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
 
 
 def test_accounts_actions_picker_offers_the_rows_actions(mocker, tmp_path):
@@ -8376,7 +8386,7 @@ def test_accounts_actions_picker_offers_the_rows_actions(mocker, tmp_path):
     keys = [b"A", _ENTER, _ESC, b"j", _ENTER]
     assert _drive_run(mocker, keys, [_alpha(tmp_path)]) == 0
 
-    pickers = _rendered(render, tloop.Picker)
+    pickers = _rendered(render, tsession.Picker)
     live, parked = pickers[0], pickers[-1]
     assert (live.purpose, live.title, live.target, live.carry) == (
         "acct-action",
@@ -8390,7 +8400,7 @@ def test_accounts_actions_picker_offers_the_rows_actions(mocker, tmp_path):
     ]
     assert (parked.title, parked.carry) == ("Login b@x.io~2 (claude)", ("claude", "", "b@x.io~2"))
     assert [e.value for e in parked.entries] == ["use-in", "delete"]
-    assert isinstance(parked.back, tloop.da.AccountsState)
+    assert isinstance(parked.back, tsession.da.AccountsState)
     assert parked.back.index == 1  # the panel remembers its cursor
 
 
@@ -8401,15 +8411,15 @@ def test_accounts_questions_keep_the_cursor_where_the_key_was_pressed(mocker, tm
     # j: onto the container row, then A and Enter (the actions picker)
     assert _drive_run(mocker, [b"j", b"A", _ENTER], [_alpha(tmp_path)]) == 0
 
-    frames = [c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tloop.Picker)]
+    frames = [c for c in render.call_args_list if isinstance(c.kwargs["overlay"], tsession.Picker)]
     assert frames, "the actions picker was never drawn"
     # the picker targets the repo "alpha" but must not pin its header
     assert frames[-1].args[1] == dmodel.Row("container", "alpha-x")
 
 
 def test_accounts_park_runs_the_scoped_command_and_closes(mocker, tmp_path):
-    run = _fake_accounts_cli(mocker, change=tloop.da.CliResult(True, "Parked a@x.io#org12345."))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    run = _fake_accounts_cli(mocker, change=tsession.da.CliResult(True, "Parked a@x.io#org12345."))
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # A, Enter (row 0's actions), Down to "Park the live login", Enter
@@ -8427,7 +8437,7 @@ def test_accounts_park_runs_the_scoped_command_and_closes(mocker, tmp_path):
 
 
 def test_accounts_refused_change_keeps_the_panel_under_its_notice(mocker, tmp_path):
-    refusal = tloop.da.CliResult(False, "error: an agent is running; pass --force")
+    refusal = tsession.da.CliResult(False, "error: an agent is running; pass --force")
     run = _fake_accounts_cli(mocker, change=refusal)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
@@ -8439,7 +8449,7 @@ def test_accounts_refused_change_keeps_the_panel_under_its_notice(mocker, tmp_pa
         ["account", "park", "-a", "claude", "-g", "team"],
     ]
     last = render.call_args_list[-1].kwargs
-    assert isinstance(last["overlay"], tloop.da.AccountsState)
+    assert isinstance(last["overlay"], tsession.da.AccountsState)
     assert len(last["overlay"].rows) == 3  # the listing it had before
     assert last["notice"] == "error: an agent is running; pass --force"
 
@@ -8451,7 +8461,7 @@ def test_accounts_use_stored_login_two_step(mocker, tmp_path):
     # A, Enter (row 0's actions), Enter ("Use a stored login…"), Enter (the one parked login)
     assert _drive_run(mocker, [b"A", _ENTER, _ENTER, _ENTER], [_alpha(tmp_path)]) == 0
 
-    use = [p for p in _rendered(render, tloop.Picker) if p.purpose == "acct-use"]
+    use = [p for p in _rendered(render, tsession.Picker) if p.purpose == "acct-use"]
     assert use, "the stored-login picker was never drawn"
     assert use[0].title == "Use which login?"
     assert [(e.label, e.value) for e in use[0].entries] == [("b@x.io~2", "b@x.io~2")]
@@ -8471,7 +8481,7 @@ def test_accounts_use_a_parked_login_in_a_chosen_group(mocker, tmp_path, downs, 
     keys = [b"A", b"j", _ENTER, _ENTER, *[b"j"] * downs, _ENTER]
     assert _drive_run(mocker, keys, [_alpha(tmp_path)]) == 0
 
-    use_in = [p for p in _rendered(render, tloop.Picker) if p.purpose == "acct-use-in"]
+    use_in = [p for p in _rendered(render, tsession.Picker) if p.purpose == "acct-use-in"]
     assert [e.value for e in use_in[0].entries] == ["spare", "team"]
     assert run.call_args_list == [
         mocker.call(_ACCOUNT_LS, cwd=tmp_path),
@@ -8539,7 +8549,7 @@ def test_accounts_confirmation_yes_runs_the_removal_and_closes(mocker, tmp_path,
 
     assert _drive_run(mocker, [*keys, b"j", _ENTER], [_alpha(tmp_path)]) == 0
 
-    confirm = next(p for p in _rendered(render, tloop.Picker) if p.purpose == "acct-confirm")
+    confirm = next(p for p in _rendered(render, tsession.Picker) if p.purpose == "acct-confirm")
     assert confirm.title == title
     assert [(e.label, e.value) for e in confirm.entries] == [
         ("No", "no"),
@@ -8567,21 +8577,21 @@ def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, key
     confirm_at = max(
         i
         for i, c in enumerate(calls)
-        if isinstance(c.kwargs["overlay"], tloop.Picker)
+        if isinstance(c.kwargs["overlay"], tsession.Picker)
         and c.kwargs["overlay"].purpose == "acct-confirm"
     )
     back = calls[confirm_at + 1].kwargs["overlay"]
-    assert isinstance(back, tloop.da.AccountsState)
+    assert isinstance(back, tsession.da.AccountsState)
     assert back is calls[confirm_at].kwargs["overlay"].back  # the same panel, not reloaded
 
 
 def test_accounts_new_group_prompt_creates_the_typed_group_and_closes(mocker, tmp_path):
-    run = _fake_accounts_cli(mocker, change=tloop.da.CliResult(True, "Created group spare2."))
+    run = _fake_accounts_cli(mocker, change=tsession.da.CliResult(True, "Created group spare2."))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [b"A", b"n", *_keys("spare2"), _ENTER], [_alpha(tmp_path)]) == 0
 
-    prompt = _rendered(render, tloop.TextPrompt)[0]
+    prompt = _rendered(render, tsession.TextPrompt)[0]
     assert (prompt.purpose, prompt.title, prompt.label, prompt.target) == (
         "acct-group-new",
         "New credential group",
@@ -8604,7 +8614,7 @@ def test_accounts_new_group_prompt_rejects_a_blank_name_inline(mocker, tmp_path)
     assert _drive_run(mocker, [b"A", b"n", b" ", _ENTER, b"z"], [_alpha(tmp_path)]) == 0
 
     assert run.call_count == 1  # the listing only
-    prompts = _rendered(render, tloop.TextPrompt)
+    prompts = _rendered(render, tsession.TextPrompt)
     assert prompts[-1].error is None and prompts[-1].text == " z"  # still editing after
     assert any(p.error == "Group name cannot be empty" for p in prompts)
 
@@ -8630,7 +8640,7 @@ def test_accounts_cancel_at_every_question_returns_to_the_panel(
     mocker, tmp_path, keys, purpose, cancel
 ):
     run = _fake_accounts_cli(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     # after the cancel, `j` must move the panel's cursor: still open, still live
     script = iter([*keys, cancel, b"j"])
@@ -8641,16 +8651,16 @@ def test_accounts_cancel_at_every_question_returns_to_the_panel(
     asked_at = max(
         i
         for i, c in enumerate(calls)
-        if isinstance(c.kwargs["overlay"], (tloop.Picker, tloop.TextPrompt))
+        if isinstance(c.kwargs["overlay"], (tsession.Picker, tsession.TextPrompt))
     )
     question = calls[asked_at].kwargs["overlay"]
     assert question.purpose == purpose
     after = calls[asked_at + 1].kwargs["overlay"]
     assert after is question.back
-    assert isinstance(after, tloop.da.AccountsState)
+    assert isinstance(after, tsession.da.AccountsState)
     assert calls[asked_at + 1].kwargs["notice"] == "Cancelled"  # Esc says so, like Ctrl-C
     moved = calls[asked_at + 2].kwargs["overlay"]
-    assert isinstance(moved, tloop.da.AccountsState)
+    assert isinstance(moved, tsession.da.AccountsState)
     assert moved.index == min(after.index + 1, len(after.rows) - 1)
     assert run.call_args_list == [mocker.call(_ACCOUNT_LS, cwd=tmp_path)]
     child.assert_not_called()
@@ -8674,10 +8684,12 @@ def test_q_at_an_accounts_picker_steps_back_one_level_like_esc(mocker, tmp_path,
     assert _drive_run(mocker, [*keys, b"q"], [_alpha(tmp_path)]) == 0
 
     calls = render.call_args_list
-    asked_at = max(i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tloop.Picker))
+    asked_at = max(
+        i for i, c in enumerate(calls) if isinstance(c.kwargs["overlay"], tsession.Picker)
+    )
     after = calls[asked_at + 1].kwargs
     assert after["overlay"] is calls[asked_at].kwargs["overlay"].back
-    assert isinstance(after["overlay"], tloop.da.AccountsState)
+    assert isinstance(after["overlay"], tsession.da.AccountsState)
     assert after["notice"] == "Cancelled"
     assert run.call_args_list == [mocker.call(_ACCOUNT_LS, cwd=tmp_path)]
 
@@ -8739,7 +8751,7 @@ def test_accounts_repo_vanishing_while_a_question_is_open_runs_nothing(
     group = _alpha(tmp_path)
     groups = [group]
     run = _fake_accounts_cli(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     script = iter([*keys, "vanish", _ENTER])
 
@@ -8770,7 +8782,7 @@ def _target(tmp_path: Path) -> dmodel.RepoTarget:
 
 
 def test_run_cli_foreground_inserts_config_before_the_separator_and_pauses(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -8799,7 +8811,7 @@ def test_run_cli_foreground_inserts_config_before_the_separator_and_pauses(mocke
 def test_run_cli_foreground_over_ssh_sends_no_config_flag(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteSSHConfig
 
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -8819,7 +8831,7 @@ def test_run_cli_foreground_refuses_before_spawning(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.remote_ssh.router import RouteError
 
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     paged = mocker.patch.object(ddispatch, "_run_paged")
 
     with pytest.raises(RouteError):
@@ -8839,7 +8851,7 @@ def test_run_cli_foreground_refuses_before_spawning(mocker, tmp_path):
 def test_run_cli_foreground_pages_locally(mocker, tmp_path):
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     paged = mocker.patch.object(ddispatch, "_run_paged", return_value=3)
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
 
     rc = ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged")
 
@@ -8855,7 +8867,7 @@ def test_run_cli_foreground_never_pages_a_remote_session(mocker, tmp_path):
 
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -8878,7 +8890,7 @@ def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, t
     mocker.patch.object(
         ddispatch, "_run_paged", side_effect=ddispatch._PagerUnavailableError("gone")
     )
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -8888,7 +8900,7 @@ def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, t
 
 
 def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -8905,7 +8917,7 @@ def test_run_cli_foreground_either_remote_flag_alone_forbids_the_pager(
 
     pager = mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -8978,7 +8990,7 @@ def test_repo_doctor_is_paged_locally(mocker, tmp_path):
     group = _cfg_group(tmp_path)
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     paged = mocker.patch.object(ddispatch, "_run_paged", return_value=0)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
 
     assert _drive_run(mocker, _repo_menu_keys(group, "doctor"), [group]) == 0
 
@@ -8995,7 +9007,7 @@ def test_repo_doctor_over_ssh_pauses_instead_of_paging_and_sends_no_config(mocke
     policy = RemoteSSHConfig()
     mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
     paged = mocker.patch.object(ddispatch, "_run_paged")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -9020,7 +9032,7 @@ def test_repo_disk_usage_and_prune_run_in_the_terminal_with_a_pause(
 
     group = _cfg_group(tmp_path)
     policy = RemoteSSHConfig() if over_ssh else None
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -9039,7 +9051,7 @@ def test_repo_disk_usage_and_prune_run_in_the_terminal_with_a_pause(
 def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
     group = _cfg_group(tmp_path)
     mocker.patch.object(ddispatch, "pager_argv", return_value=None)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 1
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -9155,7 +9167,7 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
 
     group = _cfg_group(tmp_path, (_autostart_ci(),))
     policy = RemoteSSHConfig() if over_ssh else None
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
@@ -9172,13 +9184,13 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
 
 def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "autostart-cancel"), _ENTER]  # Enter on "No"
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert [e.value for e in _rendered(render, tloop.Picker)[0].entries] == ["no", "yes"]
+    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["no", "yes"]
     child.assert_not_called()
     assert "Cancelled" in _notices(render)
 
@@ -9189,7 +9201,7 @@ def test_cancel_autostart_yes_runs_the_cancel(mocker, tmp_path, over_ssh):
 
     group = _cfg_group(tmp_path, (_autostart_ci(),))
     policy = RemoteSSHConfig() if over_ssh else None
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
@@ -9228,7 +9240,7 @@ def test_container_vanishing_while_the_autostart_cancel_picker_is_open_runs_noth
     mocker, tmp_path, when
 ):
     group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     # ``j`` moves the cursor from "No" to "Yes"; the container then disappears
@@ -9243,7 +9255,7 @@ def test_container_vanishing_while_the_autostart_cancel_picker_is_open_runs_noth
 def test_repo_vanishing_while_the_apply_picker_is_open_runs_nothing(mocker, tmp_path, when):
     group = _cfg_group(tmp_path)
     groups = [group]
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     gone = False
     real_target_group = dmodel.target_group
@@ -9251,7 +9263,7 @@ def test_repo_vanishing_while_the_apply_picker_is_open_runs_nothing(mocker, tmp_
     def target_group(seen, target, kind):
         return None if gone and kind == "repo" else real_target_group(seen, target, kind)
 
-    mocker.patch.object(tloop, "target_group", side_effect=target_group)
+    mocker.patch.object(tsession, "target_group", side_effect=target_group)
 
     def vanish():
         nonlocal gone
@@ -9270,14 +9282,14 @@ def test_repo_vanishing_while_the_apply_picker_is_open_runs_nothing(mocker, tmp_
 
 def test_stale_menu_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     keys = _container_menu_keys(group, "autostart-status")  # built while the menu offers it
-    real_check = tloop.check_dashboard_command
+    real_check = tsession.check_dashboard_command
 
     def refuse(argv, policy, *, over_ssh):
         if argv[:2] == ["autostart", "status"]:
-            raise tloop.RouteError("autostart status is not permitted")
+            raise tsession.RouteError("autostart status is not permitted")
         return real_check(argv, policy, over_ssh=over_ssh)
 
     _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
@@ -9297,9 +9309,9 @@ _SNAPSHOT_LS = ["snapshot", "ls", "alpha-x", "-o", "json", "--fields", "name,cre
 def _fake_snapshot_ls(mocker, result=None):
     """Patch the quiet runner the snapshot listing goes through."""
     return mocker.patch.object(
-        tloop.da,
+        tsession.da,
         "run_cli_quiet",
-        return_value=result or tloop.da.CliResult(True, "done", _SNAPS_JSON),
+        return_value=result or tsession.da.CliResult(True, "done", _SNAPS_JSON),
     )
 
 
@@ -9310,7 +9322,7 @@ def test_snapshots_lists_quietly_and_offers_create_above_the_snapshots(mocker, t
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     policy = RemoteSSHConfig() if over_ssh else None
     listing = _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
 
@@ -9321,7 +9333,7 @@ def test_snapshots_lists_quietly_and_offers_create_above_the_snapshots(mocker, t
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     listing.assert_called_once_with([*_SNAPSHOT_LS, *flags], cwd=tmp_path)
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert [e.value for e in picker.entries] == [
         "create:timestamp",
         "create:named",
@@ -9337,7 +9349,7 @@ def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path,
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     policy = RemoteSSHConfig() if over_ssh else None
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
@@ -9355,7 +9367,7 @@ def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path,
 def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -9379,13 +9391,15 @@ def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_pat
 
 
 def _snapshot_tag_prompts(render) -> list:
-    return [p for p in _rendered(render, tloop.TextPrompt) if p.purpose == "container-snapshot-tag"]
+    return [
+        p for p in _rendered(render, tsession.TextPrompt) if p.purpose == "container-snapshot-tag"
+    ]
 
 
 def test_snapshot_tag_prompt_escape_runs_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "snapshots"), b"j", _ENTER, *_keys("x"), _ESC]
@@ -9399,7 +9413,7 @@ def test_snapshot_tag_prompt_escape_runs_nothing(mocker, tmp_path):
 def test_snapshot_tag_prompt_ctrl_c_cancels_only_the_prompt(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [
@@ -9423,7 +9437,7 @@ def test_snapshot_tag_prompt_ctrl_c_cancels_only_the_prompt(mocker, tmp_path):
 def test_snapshot_tag_prompt_rejects_a_blank_tag_inline(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "snapshots"), b"j", _ENTER, *_keys("  "), _ENTER]
@@ -9436,21 +9450,21 @@ def test_snapshot_tag_prompt_rejects_a_blank_tag_inline(mocker, tmp_path):
 def test_snapshot_picker_escape_runs_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [*_container_menu_keys(group, "snapshots"), _ESC], [group]) == 0
 
-    assert _rendered(render, tloop.Picker)
+    assert _rendered(render, tsession.Picker)
     child.assert_not_called()
 
 
 @pytest.mark.parametrize(
     ("result", "notice"),
     [
-        (tloop.da.CliResult(False, "error: boom"), "could not list snapshots: error: boom"),
+        (tsession.da.CliResult(False, "error: boom"), "could not list snapshots: error: boom"),
         (
-            tloop.da.CliResult(True, "done", "No snapshots"),
+            tsession.da.CliResult(True, "done", "No snapshots"),
             "could not list snapshots: unexpected output from 'jailbee snapshot ls'",
         ),
     ],
@@ -9463,7 +9477,7 @@ def test_a_failed_snapshot_listing_is_a_notice(mocker, tmp_path, result, notice)
 
     assert _drive_run(mocker, _container_menu_keys(group, "snapshots"), [group]) == 0
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     assert notice in _notices(render)
 
 
@@ -9476,7 +9490,7 @@ def test_snapshot_listing_is_refused_when_create_is_not_permitted_and_there_are_
     policy = RemoteSSHConfig.model_validate(
         {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls"]}}
     )
-    _fake_snapshot_ls(mocker, tloop.da.CliResult(True, "done", "[]"))
+    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", "[]"))
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
 
@@ -9485,7 +9499,7 @@ def test_snapshot_listing_is_refused_when_create_is_not_permitted_and_there_are_
         == 0
     )
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     assert "No snapshots of 'alpha-x'" in _notices(render)
 
 
@@ -9505,7 +9519,7 @@ def test_snapshot_picker_hides_create_when_only_the_listing_is_permitted(mocker,
         == 0
     )
 
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert [e.value for e in picker.entries] == ["snapshot:before-upgrade"]
 
 
@@ -9518,8 +9532,8 @@ def test_snapshot_create_permitted_over_ssh_with_an_empty_listing_still_opens_th
     policy = RemoteSSHConfig.model_validate(
         {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls", "snapshot create"]}}
     )
-    _fake_snapshot_ls(mocker, tloop.da.CliResult(True, "done", "[]"))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", "[]"))
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
@@ -9528,7 +9542,7 @@ def test_snapshot_create_permitted_over_ssh_with_an_empty_listing_still_opens_th
     keys = [*_container_menu_keys(group, "snapshots", **kwargs), b"j", _ENTER, *_keys("--yes")]
     assert _drive_run(mocker, [*keys, _ENTER], [group], **kwargs) == 0
 
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert [e.value for e in picker.entries] == ["create:timestamp", "create:named"]
     child.assert_called_once_with(
         ["jailbee", "snapshot", "create", "--", "alpha-x", "--yes"], check=False, cwd=tmp_path
@@ -9538,13 +9552,13 @@ def test_snapshot_create_permitted_over_ssh_with_an_empty_listing_still_opens_th
 def test_snapshot_create_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tloop.check_dashboard_command
+    real_check = tsession.check_dashboard_command
 
     def refuse(argv, policy, *, over_ssh):
         if argv[:2] == ["snapshot", "create"]:
-            raise tloop.RouteError("snapshot create is not permitted")
+            raise tsession.RouteError("snapshot create is not permitted")
         return real_check(argv, policy, over_ssh=over_ssh)
 
     _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
@@ -9563,7 +9577,7 @@ def test_container_vanishing_while_the_snapshots_picker_or_tag_prompt_is_open_ru
 ):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     listing = _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = _container_menu_keys(group, "snapshots")
@@ -9593,7 +9607,7 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     policy = RemoteSSHConfig() if over_ssh else None
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
@@ -9621,7 +9635,7 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
 def test_snapshot_confirm_no_runs_nothing(mocker, tmp_path, action_downs):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [
@@ -9634,7 +9648,7 @@ def test_snapshot_confirm_no_runs_nothing(mocker, tmp_path, action_downs):
     assert _drive_run(mocker, keys, [group]) == 0
 
     confirm = [
-        p for p in _rendered(render, tloop.Picker) if p.purpose == "container-snapshot-confirm"
+        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-snapshot-confirm"
     ]
     assert confirm and confirm[0].entries[0].value == "no"
     child.assert_not_called()
@@ -9646,7 +9660,7 @@ def test_snapshot_confirm_no_runs_nothing(mocker, tmp_path, action_downs):
 def test_snapshot_action_and_confirm_cancel_runs_nothing(mocker, tmp_path, step, key):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "snapshots"), *_TO_SNAPSHOT_ROW]
@@ -9654,7 +9668,7 @@ def test_snapshot_action_and_confirm_cancel_runs_nothing(mocker, tmp_path, step,
         keys += [b"j", _ENTER, b"j"]  # Delete, then onto "Yes"
     assert _drive_run(mocker, [*keys, key, _ENTER], [group]) == 0
 
-    purposes = {p.purpose for p in _rendered(render, tloop.Picker)}
+    purposes = {p.purpose for p in _rendered(render, tsession.Picker)}
     assert "container-snapshot-action" in purposes
     assert ("container-snapshot-confirm" in purposes) == (step == "confirm")
     child.assert_not_called()
@@ -9675,7 +9689,7 @@ def test_snapshot_changes_the_policy_refuses_are_not_offered(mocker, tmp_path):
     keys = [*_container_menu_keys(group, "snapshots", **kwargs), _ENTER]
     assert _drive_run(mocker, keys, [group], **kwargs) == 0
 
-    pickers = _rendered(render, tloop.Picker)
+    pickers = _rendered(render, tsession.Picker)
     assert [e.value for e in pickers[0].entries] == ["snapshot:before-upgrade"]
     actions = [p for p in pickers if p.purpose == "container-snapshot-action"]
     assert [e.value for e in actions[0].entries] == ["delete"]
@@ -9696,7 +9710,7 @@ def test_snapshot_restore_alone_is_offered_when_delete_is_refused(mocker, tmp_pa
     assert _drive_run(mocker, keys, [group], **kwargs) == 0
 
     actions = [
-        p for p in _rendered(render, tloop.Picker) if p.purpose == "container-snapshot-action"
+        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-snapshot-action"
     ]
     assert [e.value for e in actions[0].entries] == ["restore"]
 
@@ -9709,7 +9723,7 @@ def test_a_snapshot_the_policy_permits_no_change_to_is_a_notice(mocker, tmp_path
         {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls"]}}
     )
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
 
@@ -9717,7 +9731,7 @@ def test_a_snapshot_the_policy_permits_no_change_to_is_a_notice(mocker, tmp_path
     assert _drive_run(mocker, keys, [group], **kwargs) == 0
 
     assert "No change to snapshot before-upgrade is permitted here" in _notices(render)
-    assert not [p for p in _rendered(render, tloop.Picker) if p.purpose.endswith("action")]
+    assert not [p for p in _rendered(render, tsession.Picker) if p.purpose.endswith("action")]
     child.assert_not_called()
 
 
@@ -9728,8 +9742,8 @@ def test_snapshot_names_that_look_like_options_or_sentinels_stay_positional(
 ):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     listing = json.dumps([{"name": name, "created": "2026-09-29T10:00:00Z"}])
-    _fake_snapshot_ls(mocker, tloop.da.CliResult(True, "done", listing))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", listing))
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -9763,13 +9777,13 @@ def test_snapshot_names_that_look_like_options_or_sentinels_stay_positional(
 def test_snapshot_change_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path, verb):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tloop.check_dashboard_command
+    real_check = tsession.check_dashboard_command
 
     def refuse(argv, policy, *, over_ssh):
         if argv[:2] == ["snapshot", verb]:
-            raise tloop.RouteError(f"snapshot {verb} is not permitted")
+            raise tsession.RouteError(f"snapshot {verb} is not permitted")
         return real_check(argv, policy, over_ssh=over_ssh)
 
     _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
@@ -9795,7 +9809,7 @@ def test_container_vanishing_while_a_snapshot_action_or_confirm_is_open_runs_not
 ):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "snapshots"), *_TO_SNAPSHOT_ROW]
@@ -9803,7 +9817,7 @@ def test_container_vanishing_while_a_snapshot_action_or_confirm_is_open_runs_not
         keys += [_ENTER, b"j"]  # Restore, then onto "Yes"
     assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
 
-    purposes = {p.purpose for p in _rendered(render, tloop.Picker)}
+    purposes = {p.purpose for p in _rendered(render, tsession.Picker)}
     assert "container-snapshot-action" in purposes
     assert ("container-snapshot-confirm" in purposes) == (step == "confirm")
     child.assert_not_called()
@@ -9819,8 +9833,8 @@ def test_snapshot_change_acts_on_the_chosen_snapshot_not_the_first(
     mocker, tmp_path, verb, row, tag
 ):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker, tloop.da.CliResult(True, "done", _THREE_SNAPS))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", _THREE_SNAPS))
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
 
@@ -9848,8 +9862,8 @@ def test_snapshot_named_config_stays_positional_over_ssh(mocker, tmp_path, verb)
 
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     listing = json.dumps([{"name": "--config", "created": "2026-09-29T10:00:00Z"}])
-    _fake_snapshot_ls(mocker, tloop.da.CliResult(True, "done", listing))
-    child = mocker.patch.object(tloop.subprocess, "run")
+    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", listing))
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     kwargs = {"remote": True, "over_ssh": True, "ssh_policy": RemoteSSHConfig()}
@@ -9872,10 +9886,10 @@ def test_snapshot_named_config_stays_positional_over_ssh(mocker, tmp_path, verb)
 def test_an_unknown_snapshot_action_spawns_nothing(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
-    real = tloop.dact.snapshot_confirm_picker
+    child = mocker.patch.object(tsession.subprocess, "run")
+    real = tsession.dact.snapshot_confirm_picker
     mocker.patch.object(
-        tloop.dact,
+        tsession.dact,
         "snapshot_confirm_picker",
         side_effect=lambda container, _action, tag: real(container, "bogus", tag),
     )
@@ -9918,9 +9932,9 @@ _TO_PROPOSAL = [_ENTER]  # the first entry is the only proposal
 def _fake_outbox_ls(mocker, result=None):
     """Patch the quiet runner the outbox listing (and a delete) go through."""
     return mocker.patch.object(
-        tloop.da,
+        tsession.da,
         "run_cli_quiet",
-        return_value=result or tloop.da.CliResult(True, "done", _OUTBOX_JSON),
+        return_value=result or tsession.da.CliResult(True, "done", _OUTBOX_JSON),
     )
 
 
@@ -9931,7 +9945,7 @@ def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_pat
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     policy = RemoteSSHConfig() if over_ssh else None
     listing = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
 
@@ -9940,7 +9954,7 @@ def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_pat
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     listing.assert_called_once_with([*_OUTBOX_LS, *flags], cwd=tmp_path)
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert picker.title == "Outbox — alpha-x"
     assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
     child.assert_not_called()  # listing is quiet: the screen never blanked
@@ -9949,14 +9963,14 @@ def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_pat
 def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
-    run_cli = mocker.patch.object(tloop, "_run_cli_foreground", return_value=0)
+    run_cli = mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
     actions = [
-        p for p in _rendered(render, tloop.Picker) if p.purpose == "container-outbox-proposal"
+        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-outbox-proposal"
     ]
     assert [e.value for e in actions[0].entries] == ["show", "publish", "delete"]
     run_cli.assert_called_once()
@@ -9967,7 +9981,7 @@ def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
 def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -10002,7 +10016,7 @@ def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_pat
 def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     quiet = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
 
     keys = [
         *_container_menu_keys(group, "outbox browse"),
@@ -10027,7 +10041,7 @@ def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
 def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     quiet = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [
@@ -10047,7 +10061,7 @@ def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
 def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_path):
     group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -10065,13 +10079,13 @@ def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_
 @pytest.mark.parametrize(
     ("result", "notice"),
     [
-        (tloop.da.CliResult(False, "error: boom"), "could not list the outbox: error: boom"),
+        (tsession.da.CliResult(False, "error: boom"), "could not list the outbox: error: boom"),
         (
-            tloop.da.CliResult(True, "done", "Container  Proposal"),
+            tsession.da.CliResult(True, "done", "Container  Proposal"),
             "could not list the outbox: unexpected output from 'jailbee outbox ls'",
         ),
         (
-            tloop.da.CliResult(
+            tsession.da.CliResult(
                 False,
                 "exit 2",
                 json.dumps(
@@ -10081,7 +10095,7 @@ def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_
             "could not read the outbox: stopped",
         ),
         (
-            tloop.da.CliResult(True, "done", json.dumps({"containers": []})),
+            tsession.da.CliResult(True, "done", json.dumps({"containers": []})),
             "Outbox of 'alpha-x' is empty",
         ),
     ],
@@ -10094,7 +10108,7 @@ def test_an_outbox_with_nothing_to_offer_is_a_notice(mocker, tmp_path, result, n
 
     assert _drive_run(mocker, _container_menu_keys(group, "outbox browse"), [group]) == 0
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     assert notice in _notices(render)
 
 
@@ -10112,7 +10126,7 @@ def test_outbox_hides_what_the_ssh_allowlist_does_not_permit(mocker, tmp_path):
     keys = [*_container_menu_keys(group, "outbox browse", **kwargs), *_TO_PROPOSAL]
     assert _drive_run(mocker, keys, [group], **kwargs) == 0
 
-    picker = _rendered(render, tloop.Picker)[0]
+    picker = _rendered(render, tsession.Picker)[0]
     assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
     assert "Nothing can be done to pr/a.json here" in _notices(render)
 
@@ -10208,17 +10222,17 @@ def test_container_menu_survives_an_empty_shared_action_list(
 def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
     group = _mount_group(tmp_path)
     quiet = mocker.patch.object(
-        tloop.da,
+        tsession.da,
         "run_cli_quiet",
-        return_value=tloop.da.CliResult(True, "✓ Mounted 'aws' in container 'x'"),
+        return_value=tsession.da.CliResult(True, "✓ Mounted 'aws' in container 'x'"),
     )
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert [e.value for e in _rendered(render, tloop.Picker)[0].entries] == ["aws"]
+    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["aws"]
     quiet.assert_called_once_with(
         ["mount", "--config", str(group.config_path), "--", "aws", "alpha-x"], cwd=tmp_path
     )
@@ -10229,14 +10243,14 @@ def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
 def test_unmount_offers_the_attached_kinds(mocker, tmp_path):
     group = _mount_group(tmp_path)
     quiet = mocker.patch.object(
-        tloop.da, "run_cli_quiet", return_value=tloop.da.CliResult(True, "done")
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "mount-remove"), _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert [e.value for e in _rendered(render, tloop.Picker)[0].entries] == ["gcloud"]
+    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
     quiet.assert_called_once_with(
         ["unmount", "--config", str(group.config_path), "--", "gcloud", "alpha-x"], cwd=tmp_path
     )
@@ -10248,7 +10262,7 @@ def test_unmount_over_ssh_offers_the_attached_kinds_without_config(mocker, tmp_p
     group = _mount_group(tmp_path)
     policy = RemoteSSHConfig()
     quiet = mocker.patch.object(
-        tloop.da, "run_cli_quiet", return_value=tloop.da.CliResult(True, "done")
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
     kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
@@ -10256,18 +10270,18 @@ def test_unmount_over_ssh_offers_the_attached_kinds_without_config(mocker, tmp_p
     keys = [*_container_menu_keys(group, "mount-remove", **kwargs), _ENTER]
     assert _drive_run(mocker, keys, [group], **kwargs) == 0
 
-    assert [e.value for e in _rendered(render, tloop.Picker)[0].entries] == ["gcloud"]
+    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
     quiet.assert_called_once_with(["unmount", "--", "gcloud", "alpha-x"], cwd=tmp_path)
 
 
 def test_a_refused_mount_is_a_long_notice(mocker, tmp_path):
     group = _mount_group(tmp_path)
     mocker.patch.object(
-        tloop.da,
+        tsession.da,
         "run_cli_quiet",
-        return_value=tloop.da.CliResult(False, "error: Unknown optional mount 'aws'"),
+        return_value=tsession.da.CliResult(False, "error: Unknown optional mount 'aws'"),
     )
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
@@ -10280,13 +10294,13 @@ def test_a_refused_mount_is_a_long_notice(mocker, tmp_path):
 
 def test_mount_picker_escape_runs_nothing(mocker, tmp_path):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "mount-add"), _ESC]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert _rendered(render, tloop.Picker)  # it did open
+    assert _rendered(render, tsession.Picker)  # it did open
     quiet.assert_not_called()
 
 
@@ -10295,7 +10309,7 @@ def test_a_kind_spelled_like_an_option_stays_positional(mocker, tmp_path, verb):
     group = _mount_group(tmp_path)
     group.optional_mounts = ("--yes", "gcloud")
     quiet = mocker.patch.object(
-        tloop.da, "run_cli_quiet", return_value=tloop.da.CliResult(True, "done")
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
     if verb == "mount-remove":
         group.containers[0] = dataclasses.replace(
@@ -10316,13 +10330,15 @@ def test_kinds_missing_from_the_config_are_not_offered_to_unmount(mocker, tmp_pa
     group.containers[0] = dataclasses.replace(
         group.containers[0], optional_mounts=("gcloud", "retired")
     )
-    mocker.patch.object(tloop.da, "run_cli_quiet", return_value=tloop.da.CliResult(True, "done"))
+    mocker.patch.object(
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
+    )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = [*_container_menu_keys(group, "mount-remove"), _ESC]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert [e.value for e in _rendered(render, tloop.Picker)[0].entries] == ["gcloud"]
+    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
 
 
 def _drive_mount_menu_then(mocker, group, verb, change, *, same_read: bool = False) -> None:
@@ -10347,7 +10363,7 @@ def _drive_mount_menu_then(mocker, group, verb, change, *, same_read: bool = Fal
 
 def test_mount_with_nothing_left_to_add_notices_instead_of_opening(mocker, tmp_path):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     def attach_everything():
@@ -10357,14 +10373,14 @@ def test_mount_with_nothing_left_to_add_notices_instead_of_opening(mocker, tmp_p
 
     _drive_mount_menu_then(mocker, group, "mount-add", attach_everything)
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     assert "No optional mount to add" in _notices(render)
     quiet.assert_not_called()
 
 
 def test_unmount_with_nothing_attached_notices_instead_of_opening(mocker, tmp_path):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     def detach_everything():
@@ -10372,7 +10388,7 @@ def test_unmount_with_nothing_attached_notices_instead_of_opening(mocker, tmp_pa
 
     _drive_mount_menu_then(mocker, group, "mount-remove", detach_everything)
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     assert "No optional mount to remove" in _notices(render)
     quiet.assert_not_called()
 
@@ -10382,25 +10398,25 @@ def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothin
     mocker, tmp_path, verb
 ):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     _drive_mount_menu_then(mocker, group, verb, group.containers.clear, same_read=True)
 
-    assert not _rendered(render, tloop.Picker)
+    assert not _rendered(render, tsession.Picker)
     quiet.assert_not_called()
     assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
 
 
 def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, tmp_path):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tloop.check_dashboard_command
+    real_check = tsession.check_dashboard_command
 
     def refuse(argv, policy, *, over_ssh):
         if argv[:1] == ["mount"]:
-            raise tloop.RouteError("mount is not permitted")
+            raise tsession.RouteError("mount is not permitted")
         return real_check(argv, policy, over_ssh=over_ssh)
 
     _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
@@ -10408,7 +10424,7 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
     keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
     assert _drive_run(mocker, keys, [group]) == 0
 
-    assert _rendered(render, tloop.Picker)
+    assert _rendered(render, tsession.Picker)
     quiet.assert_not_called()
     assert "mount is not permitted" in _notices(render)
 
@@ -10419,15 +10435,15 @@ def test_container_vanishing_while_the_mount_picker_is_open_runs_nothing(
     mocker, tmp_path, when, verb
 ):
     group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tloop.da, "run_cli_quiet")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
+    child = mocker.patch.object(tsession.subprocess, "run")
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     keys = _container_menu_keys(group, verb)
     assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
 
     purpose = "container-mount-remove" if verb == "mount-remove" else "container-mount-add"
-    assert {p.purpose for p in _rendered(render, tloop.Picker)} == {purpose}
+    assert {p.purpose for p in _rendered(render, tsession.Picker)} == {purpose}
     quiet.assert_not_called()
     child.assert_not_called()
     assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
@@ -10448,7 +10464,7 @@ def _every_verb_group(tmp_path: Path) -> dmodel.RepoGroup:
     return group
 
 
-_CONTAINER_VERB_CASES = sorted(tloop.dact.CONTAINER_VERBS)
+_CONTAINER_VERB_CASES = sorted(tsession.dact.CONTAINER_VERBS)
 
 
 def test_every_container_verb_has_a_guard_case(tmp_path):
@@ -10457,8 +10473,8 @@ def test_every_container_verb_has_a_guard_case(tmp_path):
     assert menu is not None
     offered = {verb for _label, verb in menu.actions}
     # a new verb must be offered by this fixture (and so parametrized below)
-    assert offered & tloop.dact.CONTAINER_VERBS == tloop.dact.CONTAINER_VERBS
-    assert set(_CONTAINER_VERB_CASES) == tloop.dact.CONTAINER_VERBS
+    assert offered & tsession.dact.CONTAINER_VERBS == tsession.dact.CONTAINER_VERBS
+    assert set(_CONTAINER_VERB_CASES) == tsession.dact.CONTAINER_VERBS
 
 
 @pytest.mark.parametrize("verb", _CONTAINER_VERB_CASES)
@@ -10471,22 +10487,22 @@ def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
     invalid ``jailbee <verb> <container>`` command.
     """
     group = _every_verb_group(tmp_path)
-    dispatch = mocker.patch.object(tloop, "_dispatch_action")
-    child = mocker.patch.object(tloop.subprocess, "run")
+    dispatch = mocker.patch.object(tsession, "_dispatch_action")
+    child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     _patch_all(mocker, "_wait_for_return")
     # one quiet runner: the snapshot listing needs JSON, the mount a plain success
     mocker.patch.object(
-        tloop.da,
+        tsession.da,
         "run_cli_quiet",
-        return_value=tloop.da.CliResult(True, "done", _SNAPS_JSON),
+        return_value=tsession.da.CliResult(True, "done", _SNAPS_JSON),
     )
     render = mocker.patch.object(tloop, "render", wraps=tframe.render)
 
     assert _drive_run(mocker, [*_container_menu_keys(group, verb), _ENTER], [group]) == 0
 
     dispatch.assert_not_called()
-    opened = _rendered(render, tloop.Picker) or _rendered(render, tloop.TextPrompt)
+    opened = _rendered(render, tsession.Picker) or _rendered(render, tsession.TextPrompt)
     spawned = [call.args[0] for call in child.call_args_list]
     assert opened or spawned
     assert ["jailbee", verb, "alpha-x"] not in spawned
@@ -10497,7 +10513,7 @@ def test_outbox_dispatch_rechecks_ssh_policy(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
     from jailbee.remote_ssh.router import RouteError
 
-    child = mocker.patch.object(tloop.subprocess, "run")
+    child = mocker.patch.object(tsession.subprocess, "run")
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
     with pytest.raises(RouteError):
         ddispatch._dispatch_action(
@@ -10574,7 +10590,7 @@ def test_gui_remote_allowlist_naming_chrome_offers_chrome():
 def test_remote_gui_dispatch_keeps_the_recipe_on_screen(mocker, tmp_path, verb, pauses):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), gui=True)
@@ -10606,7 +10622,7 @@ def _gui_dispatch_policy(*, gui: bool):
 
 def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocker, tmp_path):
     """The launch prints how to reach the shared display; the pause keeps it readable."""
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -10630,7 +10646,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
     env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -10646,7 +10662,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
 
 
 def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker, tmp_path):
-    run = mocker.patch.object(tloop.subprocess, "run")
+    run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
     wait = _patch_all(mocker, "_wait_for_return")
 
@@ -10780,7 +10796,7 @@ def test_menu_sits_to_the_right_of_the_details(tmp_path):
 
 
 def test_other_overlays_hide_the_details(tmp_path):
-    picker = tloop.Picker("x", "Pick one", (tloop.PickerEntry("Entry 0", "0"),))
+    picker = tsession.Picker("x", "Pick one", (tsession.PickerEntry("Entry 0", "0"),))
     lines = _frame(
         [_named_rows_group(tmp_path, 3)],
         dmodel.Row("container", "alpha-row01"),
@@ -10865,7 +10881,7 @@ def test_v_parses_to_the_details_toggle():
 def test_v_toggles_the_details_panel_and_persists_it(mocker, tmp_path):
     saved = _patch_all(mocker, "save_view_state")
     render = mocker.spy(tloop, "render")
-    _drive_run(mocker, [b"v"], [_named_rows_group(tmp_path, 2)], view_state=tloop.ViewState())
+    _drive_run(mocker, [b"v"], [_named_rows_group(tmp_path, 2)], view_state=tsession.ViewState())
     assert render.call_args_list[0].kwargs["show_details"] is True
     assert render.call_args_list[-1].kwargs["show_details"] is False
     assert saved.call_args.args[2].show_details is False
@@ -10879,7 +10895,7 @@ def test_folding_keeps_a_stored_details_preference(mocker, tmp_path):
         mocker,
         [b" "],  # the cursor starts on the repo heading: Space folds it
         [_named_rows_group(tmp_path, 2)],
-        view_state=tloop.ViewState(show_details=False),
+        view_state=tsession.ViewState(show_details=False),
     )
     state = saved.call_args.args[2]
     assert state.folded == frozenset({"alpha"})
@@ -10897,7 +10913,7 @@ def test_every_saved_view_state_keeps_a_stored_details_preference(mocker, tmp_pa
         "repo-menu": _repo_menu_keys(group, "fold"),
     }[path]
     saved = _patch_all(mocker, "save_view_state")
-    _drive_run(mocker, keys, [group], view_state=tloop.ViewState(show_details=False))
+    _drive_run(mocker, keys, [group], view_state=tsession.ViewState(show_details=False))
     assert saved.call_count >= 1
     assert saved.call_args.args[2].show_details is False
 
@@ -11184,7 +11200,7 @@ def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path)
     frames = mocker.patch.object(tloop, "render", wraps=tframe.render)
     _mock_terminal(mocker)
     mocker.patch.object(
-        tloop, "seed_view_state", return_value=tloop.ViewState(columns=("name", "pr"))
+        tsession, "seed_view_state", return_value=tsession.ViewState(columns=("name", "pr"))
     )
     _fake_state(mocker, [group])
     mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
@@ -11208,7 +11224,7 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
         mocker,
         [b"o", b" "],
         [group],
-        view_state=tloop.ViewState(
+        view_state=tsession.ViewState(
             columns=("name", "state", "network"), folded=frozenset({"alpha"})
         ),
     )
@@ -11418,6 +11434,7 @@ _DASHBOARD_MODULES = (
     tframe,
     tterm,
     tloop,
+    tsession,
 )
 
 
