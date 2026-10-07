@@ -26,7 +26,12 @@ from rich.table import Table
 from rich.text import Text
 
 from jailbee.agent_activity import describe
-from jailbee.lifecycle import ContainerInfo, format_duration_short, ls_field_specs, submodule_sub_rows
+from jailbee.lifecycle import (
+    ContainerInfo,
+    format_duration_short,
+    ls_field_specs,
+    submodule_sub_rows,
+)
 
 if TYPE_CHECKING:
     from jailbee.dashboard import RepoGroup, Row
