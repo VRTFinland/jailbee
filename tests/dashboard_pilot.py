@@ -21,9 +21,12 @@ from typing import Any
 from rich.console import Console
 from textual import events
 
+from jailbee.dashboard import menus as dmenus
+from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.tui import app as tapp
+from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.frame import DashboardView, render_view
 from jailbee.db.view_prefs import ViewState
@@ -325,3 +328,41 @@ def patch_in(mocker, name: str, *modules: object, **kwargs: Any):  # type: ignor
     for module in modules[1:]:
         mocker.patch.object(module, name, mock)
     return mock
+
+
+def container_egress_keys(group: dmodel.RepoGroup, **menu_kwargs: Any) -> list[str]:
+    """Keys that open the first container's Egress panel from the dashboard.
+
+    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the
+    ``drive()`` call: the menu an SSH session sees has other entries.
+    """
+    menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
+    assert menu is not None
+    root = tmenu._menu_entries(menu)
+    network_index = next(
+        i
+        for i, item in enumerate(root)
+        if isinstance(item, dmenus.MenuGroup) and item.label == "Network →"
+    )
+    network = root[network_index]
+    assert isinstance(network, dmenus.MenuGroup)
+    egress_index = next(i for i, (_, verb) in enumerate(network.actions) if verb == "net egress ls")
+    return ["j", "enter", *["j"] * network_index, "enter", *["j"] * egress_index, "enter"]
+
+
+def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> list[str]:
+    """Keys that choose repo-menu ``verb`` from the first row (the repo header).
+
+    Finds a top-level leaf or one inside a submenu, so no test counts entries.
+    ``menu_kwargs`` (``ssh_policy``/``over_ssh``) must match the ``drive()`` call.
+    """
+    menu = tmenu.open_repo_menu([group], group.prefix, frozenset(), **menu_kwargs)
+    assert menu is not None
+    for i, item in enumerate(menu.actions):
+        if isinstance(item, dmenus.MenuGroup):
+            leaves = [leaf_verb for _label, leaf_verb in item.actions]
+            if verb in leaves:
+                return ["enter", *["j"] * i, "enter", *["j"] * leaves.index(verb), "enter"]
+        elif item[1] == verb:
+            return ["enter", *["j"] * i, "enter"]
+    raise AssertionError(f"{verb!r} is not in the repo menu")
