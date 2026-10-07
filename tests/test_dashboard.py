@@ -5569,6 +5569,140 @@ def test_run_renders_with_the_snapshots_git_enabled(mocker, git_enabled):
     assert all(c.kwargs["git_enabled"] is git_enabled for c in render.call_args_list)
 
 
+_RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"
+
+
+def test_arrow_keys_parse_and_are_documented():
+    assert dashboard.parse_key(_RIGHT) == "scroll-right"
+    assert dashboard.parse_key(_LEFT) == "scroll-left"
+    out = _render_text(
+        dashboard.render(
+            [], None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay="help"
+        )
+    )
+    assert "←/→" in out and "scroll columns" in out
+
+
+def test_clamp_column_offset_follows_the_width(tmp_path):
+    kw = dict(
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        enabled=_WIDE,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+    )
+    group = _wide_group(tmp_path)
+    assert dashboard.clamp_column_offset([group], 9, width=44, **kw) > 0
+    assert dashboard.clamp_column_offset([group], 9, width=300, **kw) == 0
+    assert dashboard.clamp_column_offset([group], -1, width=44, **kw) == 0
+    assert (
+        dashboard.clamp_column_offset(
+            [group], 9, width=44, **(kw | {"folded": frozenset({"alpha"})})
+        )
+        == 0
+    )
+
+
+def _offsets(frames):
+    return [c.kwargs["column_offset"] for c in frames.call_args_list]
+
+
+def _narrow_console(mocker, width=44):
+    mocker.patch.object(
+        type(dashboard.console), "width", new_callable=mocker.PropertyMock, return_value=width
+    )
+
+
+def test_run_arrows_scroll_and_clamp_overshoot(mocker, tmp_path):
+    _narrow_console(mocker)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(
+        mocker,
+        [_RIGHT] * 12 + [_LEFT],
+        [_wide_group(tmp_path)],
+        view_state=dashboard.ViewState(columns=_WIDE),
+    )
+    offsets = _offsets(frames)
+    peak = max(offsets)
+    assert peak > 0
+    assert offsets[-2:] == [peak, peak - 1]
+
+
+def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):
+    width = [44]
+    mocker.patch.object(
+        type(dashboard.console),
+        "width",
+        new_callable=mocker.PropertyMock,
+        side_effect=lambda: width[0],
+    )
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+
+    def keys():
+        yield from [_RIGHT] * 12
+        width[0] = 52
+        yield b"x"
+        yield _LEFT
+
+    _drive_run(
+        mocker, keys(), [_wide_group(tmp_path)], view_state=dashboard.ViewState(columns=_WIDE)
+    )
+    offsets = _offsets(frames)
+    assert 0 < offsets[-2] < max(offsets)
+    assert offsets[-1] == offsets[-2] - 1
+
+
+@pytest.mark.parametrize("reset_keys", [[b"o"], [b"S", b" ", b"\x1b"]])
+def test_run_reset_the_offset(mocker, tmp_path, reset_keys):
+    _narrow_console(mocker)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(
+        mocker,
+        [_RIGHT, _RIGHT, *reset_keys],
+        [_wide_group(tmp_path)],
+        view_state=dashboard.ViewState(columns=_WIDE),
+    )
+    offsets = _offsets(frames)
+    assert max(offsets) > 0 and offsets[-1] == 0
+
+
+@pytest.mark.parametrize(
+    "open_keys, overlay_type",
+    [
+        ([b"h"], str),
+        ([b"\r"], dashboard.RepoMenuState),
+        ([b"j", b"\r"], dashboard.MenuState),
+    ],
+)
+def test_run_arrows_are_ignored_while_an_overlay_is_open(mocker, tmp_path, open_keys, overlay_type):
+    _narrow_console(mocker)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(
+        mocker,
+        [_RIGHT, *open_keys, _RIGHT, _LEFT, b"\x1b"],
+        [_wide_group(tmp_path)],
+        view_state=dashboard.ViewState(columns=_WIDE),
+    )
+    offsets = _offsets(frames)
+    assert offsets[1] > 0
+    assert set(offsets[1:]) == {offsets[1]}
+    assert any(isinstance(c.kwargs["overlay"], overlay_type) for c in frames.call_args_list)
+
+
+def test_run_arrows_clamp_after_folding(mocker, tmp_path):
+    _narrow_console(mocker)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    _drive_run(
+        mocker,
+        [_RIGHT] * 12 + [b" ", _LEFT],
+        [_wide_group(tmp_path)],
+        view_state=dashboard.ViewState(columns=_WIDE),
+    )
+    offsets = _offsets(frames)
+    assert max(offsets) > 0
+    assert offsets[-2:] == [0, 0]
+
+
 def _drive_run_with_reader(mocker, read, groups: list[dashboard.RepoGroup]) -> int:
     """``_drive_run`` with a caller-supplied ``os.read`` side effect.
 

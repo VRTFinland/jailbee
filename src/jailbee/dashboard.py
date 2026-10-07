@@ -1256,6 +1256,8 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate", brief="move"
     ),
     KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
+    KeyBinding("scroll-left", (b"\x1b[D",), "←/→", "scroll columns", "Navigate", brief="scroll"),
+    KeyBinding("scroll-right", (b"\x1b[C",), "", "", "Navigate"),
     KeyBinding(
         "enter", (b"\r", b"\n"), "Enter", "open a container or repo menu (fold there)", "Navigate"
     ),
@@ -2234,6 +2236,29 @@ def _frame_columns(
         apply_conditions=False,
     )
     return fields, _dashboard_column_widths(fields, column_widths)
+
+
+def clamp_column_offset(
+    groups: list[RepoGroup],
+    offset: int,
+    *,
+    now: datetime,
+    enabled: Sequence[str] | None,
+    folded: frozenset[str],
+    column_widths: Mapping[str, int] | None,
+    shown_columns: Sequence[str] | None,
+    width: int,
+) -> int:
+    """Clamp the session offset to the frame's scrollable column geometry."""
+    _, widths = _frame_columns(
+        groups,
+        now=now,
+        enabled=enabled,
+        folded=folded,
+        column_widths=column_widths,
+        shown_columns=shown_columns,
+    )
+    return column_viewport(widths, width - _FRAME_INSET_COLS, offset).offset
 
 
 @dataclass(frozen=True)
@@ -3282,6 +3307,7 @@ def run(
     hidden_repos = view_state.hidden_repos
     show_details = view_state.show_details
     column_widths: dict[str, int] | None = None
+    column_offset = 0
 
     def now() -> datetime:
         return datetime.now().astimezone()
@@ -4493,6 +4519,19 @@ def run(
                 all_groups, show_empty_repos=show_empty_repos, hidden_repos=hidden_repos
             )
             shown_columns = nonempty_columns(groups, now=now(), enabled=enabled, folded=folded)
+
+            def clamped(offset: int) -> int:
+                return clamp_column_offset(
+                    groups,
+                    offset,
+                    now=now(),
+                    enabled=enabled,
+                    folded=folded,
+                    column_widths=column_widths,
+                    shown_columns=shown_columns,
+                    width=console.width,
+                )
+
             while True:
                 jobs.poll()
                 snapshot = client.latest()
@@ -4603,6 +4642,7 @@ def run(
                     last_title = title
                 tracking = tracking_notices([c for g in all_groups for c in g.containers])
                 tracking.extend(dashboard_group_notices(all_groups))
+                column_offset = clamped(column_offset)
                 live.update(
                     render(
                         groups,
@@ -4620,6 +4660,7 @@ def run(
                         height=console.height,
                         show_details=show_details,
                         column_widths=column_widths,
+                        column_offset=column_offset,
                         shown_columns=shown_columns,
                     ),
                     refresh=True,
@@ -4757,6 +4798,7 @@ def run(
                                 groups, now=now(), enabled=enabled, folded=folded
                             )
                             column_widths = None
+                            column_offset = 0
                             persist_view_state(
                                 ViewState(
                                     columns=enabled,
@@ -4872,6 +4914,13 @@ def run(
                     selected = move_selection(rows, selected, -1 if key == "up" else 1)
                     if selected in rows:
                         sel_index = rows.index(selected)
+                elif key in ("scroll-left", "scroll-right"):
+                    # Clamp before stepping too: a resize since the last frame
+                    # may have reduced the scrollable range.
+
+                    column_offset = clamped(
+                        clamped(column_offset) + (1 if key == "scroll-right" else -1)
+                    )
                 elif key == "enter":
                     if selected is not None and selected.kind == "repo":
                         overlay = open_repo_menu(
@@ -4937,6 +4986,7 @@ def run(
                     column_widths = optimize_column_widths(
                         groups, now=now(), enabled=enabled, folded=folded
                     )
+                    column_offset = 0
                 elif key == "refresh":
                     client.refresh()
                 elif key == "details":

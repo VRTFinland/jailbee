@@ -55,6 +55,12 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **The terminal dashboard scrolls sideways instead of hiding columns.** Every
+  column keeps its width at any terminal size. When they do not fit, the first
+  column stays put and `←`/`→` scroll the rest one column at a time; a dim
+  `‹`/`›` marks columns out of view and the column at the edge is truncated
+  with `…`. Columns no longer disappear or shrink as the terminal is resized.
+
 - **A new or rotated LiteLLM API key no longer restarts the proxy.** `jailbee
   apply` and `jailbee litellm up` load a key that a route (or `litellm.extra`'s
   `model_list`) uses into the running instance, like any other route change, so
