@@ -11,7 +11,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEvent, QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
-from jailbee.dashboard import RepoTarget
+from jailbee.dashboard.model import RepoTarget
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView
 from jailbee.outbox_io import JournalStore

@@ -33,7 +33,7 @@ from jailbee.lifecycle import (
 )
 
 if TYPE_CHECKING:
-    from jailbee.dashboard import RepoGroup, Row
+    from jailbee.dashboard.model import RepoGroup, Row
 
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
 DETAILS_ACTIVITY_ROWS = 3  # extra rows reserved under it for a live agent's activity

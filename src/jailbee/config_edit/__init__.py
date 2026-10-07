@@ -1,7 +1,7 @@
 """The config editor: schema introspection, layer resolution, editor state.
 
 Three rings, so that most of it can be unit-tested without a terminal or a
-real config file — the split `dashboard_settings.py` uses on the Rich side:
+real config file — the split `dashboard/settings.py` uses on the Rich side:
 
 * **pure core** — `schema` (what fields exist), `state` (what is on screen and
   what is staged), `values` (text in, value out), `render` (state in,

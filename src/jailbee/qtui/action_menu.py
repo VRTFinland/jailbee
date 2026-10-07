@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jailbee.dashboard import MenuGroup, group_menu_actions
+from jailbee.dashboard.menus import MenuGroup, group_menu_actions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

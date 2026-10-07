@@ -1,6 +1,6 @@
 """The editor's state machine: what is on screen and what has been staged.
 
-Pure, following `dashboard_settings.py`. Every transition takes a state
+Pure, following `dashboard/settings.py`. Every transition takes a state
 and returns a new one; nothing here reads a key, draws a cell or touches
 a file. That is what lets the whole interaction model — navigation,
 search, staging, reset — be tested without a terminal.

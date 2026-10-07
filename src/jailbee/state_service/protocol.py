@@ -19,7 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
-from jailbee.dashboard import AppMenuEntry, RepoGroup
+from jailbee.dashboard.model import AppMenuEntry, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity

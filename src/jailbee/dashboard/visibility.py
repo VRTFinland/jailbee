@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
 
 
 def visible_repo_groups(

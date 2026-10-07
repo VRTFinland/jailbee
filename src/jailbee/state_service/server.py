@@ -201,7 +201,7 @@ def _take_lifetime_lock(path: Path) -> int | None:
 
 def run_service(incus: Incus) -> int:
     """Body of `jailbee _state-service`. Exits 0 when another server is running."""
-    from jailbee.dashboard import global_config_or_defaults
+    from jailbee.dashboard.model import global_config_or_defaults
     from jailbee.state_service.gatherer import Cadence, Gatherer
 
     logging.basicConfig(

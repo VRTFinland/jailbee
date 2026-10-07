@@ -19,21 +19,23 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
-from jailbee.dashboard import (
-    NOTHING_TO_SHOW,
-    STARTUP_TIMEOUT_SECONDS,
-    RepoTarget,
-    collect_repo_roots,
+from jailbee.dashboard.columns import seed_view_state
+from jailbee.dashboard.menus import (
     config_edit_reject_note_for_prefix,
-    dashboard_config_migration_notice,
-    dashboard_group_notices,
     host_branches,
     new_container_argv,
     new_container_base_default,
     new_container_reject_note_for_prefix,
     new_pr_container_argv,
+)
+from jailbee.dashboard.model import (
+    NOTHING_TO_SHOW,
+    STARTUP_TIMEOUT_SECONDS,
+    RepoTarget,
+    collect_repo_roots,
+    dashboard_config_migration_notice,
+    dashboard_group_notices,
     present,
-    seed_view_state,
 )
 from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.lifecycle import tracking_notices
@@ -66,7 +68,7 @@ from jailbee.state_service.client import StateClient
 from jailbee.tui import error
 
 if TYPE_CHECKING:
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.state_service.protocol import Snapshot
 

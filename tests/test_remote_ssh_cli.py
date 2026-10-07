@@ -32,7 +32,7 @@ def test_remote_dashboard_fails_closed_on_invalid_exclusion_snapshot(
         monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", snapshot)
     else:
         monkeypatch.delenv("JAILBEE_SSH_EXCLUDED_REPOS", raising=False)
-    run = mocker.patch("jailbee.dashboard.run")
+    run = mocker.patch("jailbee.dashboard.tui.loop.run")
     incus = mocker.patch("jailbee.incus.Incus")
     policy = '{"exec":true,"commands":{"mode":"full"}}'
 

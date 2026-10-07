@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.console import Console
 
 from jailbee import egress_scope
-from jailbee.dashboard_egress import (
+from jailbee.dashboard.egress import (
     EgressState,
     egress_argv,
     move_egress,
@@ -17,15 +17,15 @@ from jailbee.egress_scope import EntryRow
 
 
 def test_empty_panel_and_argv(make_cfg, tmp_path, mocker):
-    from jailbee.dashboard_egress_data import load_egress_rows
+    from jailbee.dashboard.egress_data import load_egress_rows
 
     console = Console()
     with console.capture() as captured:
         console.print(render_egress(EgressState("repo", None, ()), can_add=True, can_rm=False))
     assert "No egress entries" in captured.get()
-    mocker.patch("jailbee.dashboard_egress_data.load_repo_config", return_value=make_cfg(tmp_path))
-    mocker.patch("jailbee.dashboard_egress_data.get_engine")
-    classify = mocker.patch("jailbee.dashboard_egress_data.classify_sources", return_value=[])
+    mocker.patch("jailbee.dashboard.egress_data.load_repo_config", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.dashboard.egress_data.get_engine")
+    classify = mocker.patch("jailbee.dashboard.egress_data.classify_sources", return_value=[])
     assert load_egress_rows(tmp_path, mocker.Mock(), None) == ()
     assert classify.call_args.kwargs == {"container": None}
 
@@ -46,7 +46,7 @@ def test_cursor_clamps_scrolls_and_replacement_preserves_selection():
 
 
 def test_loader_classifies_scoped_rows_and_preserves_redundant_sources(make_cfg, tmp_path, mocker):
-    from jailbee.dashboard_egress_data import load_egress_rows
+    from jailbee.dashboard.egress_data import load_egress_rows
 
     cfg = make_cfg(tmp_path, egress_allow=["config.example", "shared.example", "shared.example"])
     legacy = mocker.Mock(entry="shared.example")
@@ -55,10 +55,10 @@ def test_loader_classifies_scoped_rows_and_preserves_redundant_sources(make_cfg,
     local = mocker.patch("jailbee.egress_scope.local_entries", return_value=["shared.example"])
     incus = mocker.MagicMock()
     incus.config_get.return_value = '["container.example", "shared.example"]'
-    mocker.patch("jailbee.dashboard_egress_data.load_repo_config", return_value=cfg)
-    mocker.patch("jailbee.dashboard_egress_data.get_engine")
+    mocker.patch("jailbee.dashboard.egress_data.load_repo_config", return_value=cfg)
+    mocker.patch("jailbee.dashboard.egress_data.get_engine")
     mocker.patch(
-        "jailbee.dashboard_egress_data.Session"
+        "jailbee.dashboard.egress_data.Session"
     ).return_value.__enter__.return_value = session
 
     rows = load_egress_rows(tmp_path, incus, "repo-feat")

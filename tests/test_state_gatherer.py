@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.git_status import GitStatus
 from jailbee.global_config import DashboardRefresh
 from jailbee.lifecycle import ContainerInfo

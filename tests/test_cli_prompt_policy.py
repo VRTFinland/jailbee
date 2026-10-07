@@ -15,11 +15,12 @@ from jailbee.cli import app
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "jailbee"
 
-# Modules that read stdin's TTY-ness for something other than "may I ask?".
+# Modules that read stdin's TTY-ness for something other than "may I ask?",
+# keyed by path relative to src/jailbee.
 _NOT_A_PROMPT = {
     "prompting.py": "the predicate itself",
     "macos.py": "decides whether the delegated host command gets a pty",
-    "dashboard.py": "a full-screen TUI needs a terminal on both ends, env override or not",
+    "dashboard/tui/loop.py": "a full-screen TUI needs a terminal on both ends, env override or not",
 }
 
 
@@ -47,7 +48,7 @@ def _tty_probes(source: str) -> list[int]:
 def test_stdin_isatty_only_in_prompting() -> None:
     offenders = []
     for path in sorted(SRC.rglob("*.py")):
-        if path.name in _NOT_A_PROMPT and path.parent == SRC:
+        if path.relative_to(SRC).as_posix() in _NOT_A_PROMPT:
             continue
         offenders += [f"{path.relative_to(SRC)}:{line}" for line in _tty_probes(path.read_text())]
     assert offenders == [], (

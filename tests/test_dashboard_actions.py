@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from jailbee import dashboard_actions as dact
 from jailbee.config.models_remote import RemoteSSHConfig
-from jailbee.dashboard import prompt_target_kind
-from jailbee.dashboard_overlays import validate_answer
+from jailbee.dashboard import actions as dact
+from jailbee.dashboard.model import prompt_target_kind
+from jailbee.dashboard.overlays import validate_answer
 from jailbee.lifecycle import ContainerInfo
 
 PolicyCase = tuple[bool, dict[str, object] | None]

@@ -6,11 +6,11 @@ Publish… and Delete…, and each change asks its own No-first question before 
 real `jailbee outbox …` child runs it. Deleting a single action or comment
 stays in `jailbee outbox browse`, which the last entry hands the terminal to.
 
-Everything here is pure; `jailbee.dashboard` wires it into `run()`. Which
+Everything here is pure; `jailbee.dashboard.tui.loop` wires it into `run()`. Which
 entries a proposal offers is decided by the caller from the remote-SSH policy
-(`dashboard_commands.permitted`), as for snapshots.
+(`dashboard.commands.permitted`), as for snapshots.
 
-Must not import `jailbee.dashboard`, which imports this module.
+Must not import `jailbee.dashboard.tui`, which imports this module.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from jailbee.dashboard_overlays import Picker, PickerEntry
+from jailbee.dashboard.overlays import Picker, PickerEntry
 
 BROWSE = "browse"
 SHOW = "show"

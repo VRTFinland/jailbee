@@ -15,13 +15,13 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.dashboard import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
+from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, acknowledge_command, build_terminal_command
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
 
 # How the GUI has to run a verb.
 #   "terminal" — needs an interactive TTY, so it gets a host terminal window.

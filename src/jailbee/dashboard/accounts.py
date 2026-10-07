@@ -6,8 +6,9 @@ into `accounts/` — the CLI stays the single place that knows the pool rules
 (locks, running-agent refusals, parking). This module only shapes the rows the
 listing prints and the argv the actions run.
 
-Must not import `jailbee.dashboard` or `jailbee.dashboard_overlays`: the
-dependency direction is `dashboard_overlays -> dashboard_accounts`.
+Must not import `jailbee.dashboard.overlays` or anything under
+`jailbee.dashboard.tui`: the dependency direction is
+`dashboard.overlays -> dashboard.accounts`.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from jailbee.dashboard_settings import CURSOR_STYLE
+from jailbee.dashboard.settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
     from rich.console import RenderableType

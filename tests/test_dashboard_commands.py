@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
-from jailbee.dashboard_commands import (
+from jailbee.dashboard.commands import (
     apply_completion,
     check_dashboard_command,
     command_argv,

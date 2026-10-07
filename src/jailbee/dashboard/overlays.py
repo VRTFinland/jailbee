@@ -17,15 +17,15 @@ from rich.console import Group
 from rich.markup import escape
 from rich.panel import Panel
 
-from jailbee.dashboard_settings import CURSOR_STYLE
+from jailbee.dashboard.settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from rich.console import RenderableType
 
-    from jailbee.dashboard_accounts import AccountsState
-    from jailbee.dashboard_egress import EgressState
+    from jailbee.dashboard.accounts import AccountsState
+    from jailbee.dashboard.egress import EgressState
 
 PromptOutcome = Literal["editing", "submit", "cancel"]
 

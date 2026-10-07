@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from datetime import UTC, datetime
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.qtui.refresh import StateBridge
 from jailbee.state_service.protocol import Snapshot
 

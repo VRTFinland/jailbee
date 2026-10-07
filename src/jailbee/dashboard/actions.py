@@ -2,17 +2,17 @@
 
 The repo menu gains `apply`, `doctor`, `disk-usage` and `prune`; the container
 menu gains the autostart run, snapshots and optional mounts. Everything here
-is pure. `jailbee.dashboard` wires it into `run()`, and every command runs as
+is pure. `jailbee.dashboard.tui.loop` wires it into `run()`, and every command runs as
 a real `jailbee` child, so the CLI stays the one place that validates a tag, a
 mount kind or a restart. This module only decides which entries a row offers
 and which argv each one runs.
 
 Visibility follows the remote-SSH policy exactly. An entry is offered only
-when `dashboard_commands.permitted` accepts the argv shape it will run, and
+when `dashboard.commands.permitted` accepts the argv shape it will run, and
 the spawn re-checks the real argv anyway. Locally (`over_ssh` false) the
 policy is never consulted.
 
-Must not import `jailbee.dashboard`, which imports this module.
+Must not import `jailbee.dashboard.tui`, which imports this module.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from itertools import takewhile
 from typing import TYPE_CHECKING
 
-from jailbee.dashboard_commands import insert_options_before_separator, permitted
-from jailbee.dashboard_overlays import Picker, PickerEntry, TextPrompt
+from jailbee.dashboard.commands import insert_options_before_separator, permitted
+from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig

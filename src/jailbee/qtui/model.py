@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
-from jailbee import dashboard_format
 from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX, job_label_or_empty
+from jailbee.dashboard import format as dashboard_format
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 
 if TYPE_CHECKING:
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.table_format import FieldSpec
 

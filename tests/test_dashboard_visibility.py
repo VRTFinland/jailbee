@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jailbee.dashboard import RepoGroup
-from jailbee.dashboard_visibility import visible_repo_groups
+from jailbee.dashboard.model import RepoGroup
+from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.lifecycle import ContainerInfo
 
 

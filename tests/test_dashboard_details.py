@@ -9,10 +9,10 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from jailbee import dashboard
-from jailbee import dashboard_details as dd
 from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
+from jailbee.dashboard import details as dd
+from jailbee.dashboard import model as dmodel
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
 from jailbee.procstat import ProcessActivity
@@ -267,7 +267,7 @@ def test_group_says_when_it_inherits_and_escapes_a_name() -> None:
 
 
 def test_repo_summary(tmp_path: Path) -> None:
-    g = dashboard.RepoGroup(
+    g = dmodel.RepoGroup(
         "alpha",
         "/repos/alpha",
         tmp_path / "config.yaml",
@@ -285,30 +285,30 @@ def test_repo_summary(tmp_path: Path) -> None:
 
 
 def test_orphan_and_synthesized_repo_summaries() -> None:
-    orphan = dd.repo_details(dashboard.RepoGroup("ghost", None, None, []))
+    orphan = dd.repo_details(dmodel.RepoGroup("ghost", None, None, []))
     assert _plain(_value(orphan, "root")) == "orphan"
     assert _plain(_value(orphan, "config")) == "—"
-    synthesized = dd.repo_details(dashboard.RepoGroup("beta", "/repos/beta", None, []))
+    synthesized = dd.repo_details(dmodel.RepoGroup("beta", "/repos/beta", None, []))
     assert _plain(_value(synthesized, "config")) == "synthesized"
     assert _plain(_value(synthesized, "loose ttl")) == "no auto-revert"
 
 
 def test_details_for_resolves_rows_and_tolerates_a_vanished_container() -> None:
-    g = dashboard.RepoGroup("alpha", "/repos/alpha", None, [_c()])
-    view = dd.details_for([g], dashboard.Row("container", "alpha-feat"), NOW)
+    g = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_c()])
+    view = dd.details_for([g], dmodel.Row("container", "alpha-feat"), NOW)
     assert view is not None and view.title == "feat"
-    repo_view = dd.details_for([g], dashboard.Row("repo", "alpha"), NOW)
+    repo_view = dd.details_for([g], dmodel.Row("repo", "alpha"), NOW)
     assert repo_view is not None and repo_view.title == "alpha"
-    assert dd.details_for([g], dashboard.Row("container", "alpha-gone"), NOW) is None
-    assert dd.details_for([g], dashboard.Row("repo", "gone"), NOW) is None
+    assert dd.details_for([g], dmodel.Row("container", "alpha-gone"), NOW) is None
+    assert dd.details_for([g], dmodel.Row("repo", "gone"), NOW) is None
     assert dd.details_for([g], None, NOW) is None
 
 
 def test_orphan_container_title_is_the_full_name() -> None:
     """A container with no repo or mismatched prefix shows its full name."""
     orphan = _c(name="orphan-container", repo=None)
-    g = dashboard.RepoGroup("ghost", None, None, [orphan])
-    view = dd.details_for([g], dashboard.Row("container", "orphan-container"), NOW)
+    g = dmodel.RepoGroup("ghost", None, None, [orphan])
+    view = dd.details_for([g], dmodel.Row("container", "orphan-container"), NOW)
     assert view is not None and view.title == "orphan-container"
 
 
@@ -393,17 +393,17 @@ def test_the_first_agent_that_has_activity_speaks() -> None:
     assert [_plain(line) for line in lines] == ["busy", "↳ Edit  x"]
 
 
-def _group(*containers: ContainerInfo) -> dashboard.RepoGroup:
-    return dashboard.RepoGroup("alpha", "/a", None, list(containers))
+def _group(*containers: ContainerInfo) -> dmodel.RepoGroup:
+    return dmodel.RepoGroup("alpha", "/a", None, list(containers))
 
 
 def test_rows_are_reserved_for_every_view_once_any_container_has_activity() -> None:
     busy, idle = _with_activity(), _c(name="alpha-idle")
     groups = [_group(busy, idle)]
 
-    on_busy = dd.details_for(groups, dashboard.Row("container", busy.name), NOW)
-    on_idle = dd.details_for(groups, dashboard.Row("container", idle.name), NOW)
-    on_repo = dd.details_for(groups, dashboard.Row("repo", "alpha"), NOW)
+    on_busy = dd.details_for(groups, dmodel.Row("container", busy.name), NOW)
+    on_idle = dd.details_for(groups, dmodel.Row("container", idle.name), NOW)
+    on_repo = dd.details_for(groups, dmodel.Row("repo", "alpha"), NOW)
 
     assert on_busy is not None and on_idle is not None and on_repo is not None
     assert (on_busy.reserve_rows, on_idle.reserve_rows, on_repo.reserve_rows) == (3, 3, 3)
@@ -414,7 +414,7 @@ def test_rows_are_reserved_for_every_view_once_any_container_has_activity() -> N
 
 def test_nothing_is_reserved_when_no_container_has_activity() -> None:
     plain = _c()
-    view = dd.details_for([_group(plain)], dashboard.Row("container", plain.name), NOW)
+    view = dd.details_for([_group(plain)], dmodel.Row("container", plain.name), NOW)
 
     assert view is not None
     assert (view.reserve_rows, view.max_rows) == (0, dd.DETAILS_MAX_ROWS)

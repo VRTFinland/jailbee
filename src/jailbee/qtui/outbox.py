@@ -30,7 +30,7 @@ from jailbee.outbox_io import JournalStore
 from jailbee.remote_ssh.session import is_ssh_session
 
 if TYPE_CHECKING:
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
 
 
 @dataclass(frozen=True)

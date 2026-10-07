@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from rich.console import Console
 
-from jailbee import dashboard_overlays as ov
+from jailbee.dashboard import overlays as ov
 
 
 def _prompt(**kw) -> ov.TextPrompt:

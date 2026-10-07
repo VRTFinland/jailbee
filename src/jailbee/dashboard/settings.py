@@ -1,7 +1,7 @@
 """The TUI dashboard's settings overlay: which columns show, which repos fold.
 
-A pure state machine plus a renderer, kept out of ``dashboard.py`` because
-that module is already large and this is a self-contained concern. Nothing
+A pure state machine plus a renderer, separate from ``dashboard.tui.loop``
+because this is a self-contained concern. Nothing
 here touches the terminal, the database or ``lifecycle``: the field
 vocabulary and the set of dynamic columns are passed in, so the overlay can
 be tested without building a container list.
@@ -27,7 +27,7 @@ Tab = Literal["fields", "repos", "visibility"]
 
 # The cursor row's text style for every TUI dashboard surface: container
 # rows, repo headings, action menus and this overlay. It lives here, the
-# lowest module that draws a cursor, so `dashboard` can import it. It must
+# lowest module that draws a cursor, so every dashboard module can import it. It must
 # stay distinct from the headings' resting colours (cyan, yellow). Container
 # rows and headings carry no other cursor marker.
 CURSOR_STYLE = "bold magenta"
