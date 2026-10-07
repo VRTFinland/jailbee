@@ -376,3 +376,20 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
         elif item[1] == verb:
             return ["enter", *["j"] * i, "enter"]
     raise AssertionError(f"{verb!r} is not in the repo menu")
+
+
+# repo header → Enter (menu) → past New container…, New from PR… → Enter
+OPEN_REPO_GROUP_PICKER = ["enter", "j", "j", "enter"]
+
+CREDENTIAL_GROUP_LEAF = ("Credential group…", "credential-group")
+
+
+def open_container_group_picker(group: dmodel.RepoGroup, **menu_kwargs: Any) -> list[str]:
+    """Keys that open the first container's credential-group picker.
+
+    ``menu_kwargs`` must match the ``drive()`` call, as in ``container_egress_keys``.
+    """
+    menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
+    assert menu is not None
+    at = list(tmenu._menu_entries(menu)).index(CREDENTIAL_GROUP_LEAF)
+    return ["j", "enter", *["j"] * at, "enter"]

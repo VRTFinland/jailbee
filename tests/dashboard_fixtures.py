@@ -12,6 +12,7 @@ from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import menu_state as tmenu
+from jailbee.dashboard.tui import session as tsession
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 
@@ -116,3 +117,55 @@ def repo_menu_verbs(menu: tmenu.RepoMenuState | None) -> set[str]:
         for item in menu.actions
         for leaf in (item.actions if isinstance(item, dmenus.MenuGroup) else (item,))
     }
+
+
+TEAM_ROWS = (
+    '[{"agent": "claude", "group": "team", "account": null, "state": "empty",'
+    ' "repos": [], "containers": []}]'
+)
+
+# Same rows as `ROWS` in tests/test_dashboard_accounts.py: a live login in
+# "team", a parked login, an empty "spare" group.
+ACCOUNT_ROWS = (
+    '[{"agent": "claude", "group": "team", "account": "a@x.io#org12345", "state": "live",'
+    ' "repos": ["alpha"], "containers": ["alpha-x"]},'
+    ' {"agent": "claude", "group": null, "account": "b@x.io~2", "state": "parked",'
+    ' "repos": [], "containers": []},'
+    ' {"agent": "claude", "group": "spare", "account": null, "state": "empty",'
+    ' "repos": [], "containers": []}]'
+)
+ACCOUNT_LS = tsession.da.account_ls_argv()
+
+
+def groups_listing(stdout: str) -> tsession.da.CliResult:
+    return tsession.da.CliResult(True, "done", stdout)
+
+
+def fake_account_cli(mocker, *, listing, change=None):  # type: ignore[no-untyped-def]
+    """Patch the quiet CLI runner: the group listing answers ``listing``, a change ``change``."""
+    change = change or tsession.da.CliResult(True, "Set.")
+
+    def fake(argv, **_kwargs):  # type: ignore[no-untyped-def]
+        return listing if argv[:3] == ["account", "group", "ls"] else change
+
+    return mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=fake)
+
+
+def fake_accounts_cli(mocker, *, listing=None, change=None):  # type: ignore[no-untyped-def]
+    """Patch the quiet CLI runner for the Accounts panel.
+
+    Every `account ls` answers ``listing``; anything else is a change and
+    answers ``change``.
+    """
+    listing = listing or groups_listing(ACCOUNT_ROWS)
+    change = change or tsession.da.CliResult(True, "Done.")
+
+    def fake(argv, **_kwargs):  # type: ignore[no-untyped-def]
+        return listing if argv[:2] == ["account", "ls"] else change
+
+    return mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=fake)
+
+
+def alpha_group(tmp_path: Path) -> dmodel.RepoGroup:
+    """Repo ``alpha`` with its one container ``alpha-x``."""
+    return dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])

@@ -321,9 +321,32 @@ def test_run_new_prompt_whose_repo_vanishes_dispatches_nothing(mocker, tmp_path)
     assert run.rc == 0
 
     child.assert_not_called()
-    # either the tick-time guard or the submit-time lookup explains it
+    # the tick after the vanish closes the prompt, so no submit is ever reached
     notices = [str(notice) for notice in run.notices()]
-    assert any("prompt closed" in n or "no longer listed" in n for n in notices)
+    assert any("prompt closed" in n for n in notices)
+
+
+def test_run_new_prompt_whose_repo_loses_its_directory_is_refused_at_submit(mocker, tmp_path):
+    """The submit-time lookup alone: the tick still lists the repo, only its directory is gone."""
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
+    patch_pause(mocker)
+
+    def lose_directory(_app):
+        group.repo_root = None  # still listed (the tick keeps the prompt), but not runnable
+
+    # branch, Enter opens the base prompt, the directory goes, Enter submits
+    steps = ["n", *keys("feature"), "enter", lose_directory, "enter"]
+    run = drive(mocker, steps, [group])
+    assert run.rc == 0
+
+    child.assert_not_called()
+    prompts = run.of_type(tsession.TextPrompt)
+    assert len(prompts) >= 2  # the branch prompt, then the base prompt that was submitted
+    notices = [str(notice) for notice in run.notices()]
+    assert not any("prompt closed" in n for n in notices)
+    assert "'alpha' is no longer listed" in notices
 
 
 def test_run_open_prompt_closes_when_its_repo_vanishes_before_any_submit(mocker, tmp_path):
