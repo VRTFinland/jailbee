@@ -6,8 +6,6 @@ import contextlib
 import dataclasses
 import io
 import itertools
-import json
-import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,7 +23,6 @@ from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import keys as tkeys
-from jailbee.dashboard.tui import loop as tloop
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import overlay as toverlay
 from jailbee.dashboard.tui import session as tsession
@@ -33,16 +30,18 @@ from jailbee.dashboard.tui import terminal as tterm
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 from tests.dashboard_fixtures import WIDE as _WIDE
+from tests.dashboard_fixtures import autostart_ci as _autostart_ci
 from tests.dashboard_fixtures import cfg_group as _cfg_group
 from tests.dashboard_fixtures import ci as _ci
+from tests.dashboard_fixtures import every_verb_group as _every_verb_group
 from tests.dashboard_fixtures import frame_at as _frame_at
 from tests.dashboard_fixtures import header as _header
+from tests.dashboard_fixtures import mount_group as _mount_group
 from tests.dashboard_fixtures import named_rows_group as _named_rows_group
 from tests.dashboard_fixtures import repo_menu_verbs as _repo_menu_verbs
 from tests.dashboard_fixtures import wide_group as _wide_group
 from tests.dashboard_pilot import CREDENTIAL_GROUP_LEAF as _CREDENTIAL_GROUP_LEAF
-from tests.dashboard_pilot import FakeStateClient
-from tests.dashboard_pilot import SyncJobs as _SyncJobs
+from tests.dashboard_pilot import patch_pause
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
@@ -1436,7 +1435,7 @@ def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    pause = _patch_all(mocker, "_wait_for_return")
+    pause = patch_pause(mocker)
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "outbox browse", "alpha-x")
     run.assert_called_once_with(
         ["jailbee", "outbox", "browse", "alpha-x", "--config", str(tmp_path / "config.yaml")],
@@ -2173,12 +2172,12 @@ def test_every_printing_verb_is_a_real_menu_verb():
 
 
 def test_pager_argv_prefers_the_environment(mocker):
-    mocker.patch.dict(tloop.os.environ, {"PAGER": "bat -p"}, clear=False)
+    mocker.patch.dict(ddispatch.os.environ, {"PAGER": "bat -p"}, clear=False)
     assert ddispatch.pager_argv() == ["bat", "-p"]
 
 
 def test_pager_argv_falls_back_to_less_then_more(mocker):
-    mocker.patch.dict(tloop.os.environ, {}, clear=True)
+    mocker.patch.dict(ddispatch.os.environ, {}, clear=True)
     which = mocker.patch.object(ddispatch.shutil, "which", return_value=None)
     assert ddispatch.pager_argv() is None
 
@@ -2224,7 +2223,7 @@ def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
     popen = mocker.patch.object(tsession.subprocess, "Popen")
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x", remote=True)
 
@@ -2237,7 +2236,7 @@ def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
 def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "git push", "alpha-x")
 
@@ -2247,7 +2246,7 @@ def test_dispatch_action_pauses_after_a_printing_verb(mocker, tmp_path):
 def test_dispatch_action_pauses_after_merge(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "merge", "alpha-x")
 
@@ -2260,7 +2259,7 @@ def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_pa
     read, and an extra keypress would just be in the way."""
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x")
 
@@ -2271,7 +2270,7 @@ def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tm
     mocker.patch.object(ddispatch, "pager_argv", return_value=None)
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 3
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
@@ -2289,7 +2288,7 @@ def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp
     popen.side_effect = [producer, OSError("no less")]
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
 
@@ -4838,84 +4837,6 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
     assert "Fields" in out
 
 
-# ---------------------------------------------------------------------------
-# run() loop: a fake terminal, driven by a scripted key sequence
-# ---------------------------------------------------------------------------
-
-
-def _mock_terminal(mocker):
-    """Patch everything ``run()`` touches on a real terminal and the state DB.
-
-    Returns the ``tty.setcbreak`` mock, which is this file's marker for "the
-    screen has been taken": it is the first thing `run()` does to the terminal
-    before `Live` starts, so anything recorded while its ``call_count`` is 0
-    happened while the user could still see their own shell.
-    """
-    mocker.patch.object(tsession, "_interactive", return_value=True)
-    mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
-    mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
-    mocker.patch.object(tsession, "seed_view_state", return_value=tsession.ViewState())
-    mocker.patch.object(tsession, "JobRunner", _SyncJobs)
-
-    mock_stdin = mocker.Mock()
-    mock_stdin.isatty.return_value = True
-    mock_stdin.fileno.return_value = 0
-    mocker.patch.object(tloop.sys, "stdin", mock_stdin)
-    mock_stdout = mocker.Mock()
-    mock_stdout.isatty.return_value = True
-    mocker.patch.object(tloop.sys, "stdout", mock_stdout)
-
-    mocker.patch.object(tloop.termios, "tcgetattr", return_value=object())
-    mocker.patch.object(tloop.termios, "tcsetattr")
-    return mocker.patch.object(tloop.tty, "setcbreak")
-
-
-def _fake_state(mocker, groups, **kw) -> FakeStateClient:
-    fake = FakeStateClient(groups, **kw)
-    mocker.patch.object(tsession, "open_state_client", return_value=fake)
-    return fake
-
-
-def _drive_run(
-    mocker,
-    key_sequence: list[bytes],
-    groups: list[dmodel.RepoGroup] | None = None,
-    *,
-    remote: bool = False,
-    over_ssh: bool = False,
-    ssh_policy=None,
-    view_state: tsession.ViewState | None = None,
-    git_enabled: bool = False,
-) -> int:
-    """Run the real ``jailbee.dashboard.tui.loop.run()`` key loop with a fake terminal.
-
-    Feeds ``key_sequence`` one key per main-loop iteration (``os.read`` is
-    mocked, not stdin itself), padded with a trailing Ctrl-C so the loop
-    always terminates even if a test's own key list doesn't. Everything
-    that would touch a real terminal, the state DB, or Incus is mocked;
-    the state service is a `FakeStateClient` serving ``groups`` (empty by
-    default), so most tests exercise overlay and persistence behaviour with
-    nothing selectable. A test that needs a real, dispatchable container
-    passes its own ``groups``.
-    """
-    _mock_terminal(mocker)
-    if view_state is not None:
-        mocker.patch.object(tsession, "seed_view_state", return_value=view_state)
-    _fake_state(mocker, groups or [], git_enabled=git_enabled)
-    mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
-
-    padded = itertools.chain(key_sequence, [b"\x03"], itertools.repeat(b"\x03"))
-    mocker.patch.object(tloop.os, "read", side_effect=lambda fd, n: next(padded))
-
-    return tloop.run(
-        mocker.Mock(),
-        None,
-        remote=remote,
-        over_ssh=over_ssh,
-        ssh_policy=ssh_policy,
-    )
-
-
 _RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"
 
 
@@ -4950,52 +4871,7 @@ def test_clamp_column_offset_follows_the_width(tmp_path):
     )
 
 
-def _drive_run_with_reader(mocker, read, groups: list[dmodel.RepoGroup]) -> int:
-    """``_drive_run`` with a caller-supplied ``os.read`` side effect.
-
-    The fake state client serves the ``groups`` list object itself on every
-    frame, and the real `present` runs on it each frame, so a reader that
-    mutates it changes what the key loop sees on its next iteration.
-    """
-    _mock_terminal(mocker)
-    _fake_state(mocker, groups)
-    mocker.patch.object(tloop.select, "select", return_value=([True], [], []))
-    mocker.patch.object(tloop.os, "read", side_effect=read)
-    return tloop.run(mocker.Mock(), None)
-
-
-def _keys(text: str) -> list[bytes]:
-    """One terminal read per character — how a typist feeds the prompt."""
-    return [ch.encode() for ch in text]
-
-
-_ENTER = b"\r"
-_ESC = b"\x1b"
-
-
 # --- Repo-level CLI entries (apply, diagnostics, prune) ----------------------
-
-
-def _repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs) -> list[bytes]:
-    """Keys that choose repo-menu ``verb`` from the first row (the repo header).
-
-    Finds a top-level leaf or one inside a submenu, so no test counts entries.
-    ``menu_kwargs`` (``ssh_policy``/``over_ssh``) must match the ``run()`` call.
-    """
-    menu = tmenu.open_repo_menu([group], group.prefix, frozenset(), **menu_kwargs)
-    assert menu is not None
-    for i, item in enumerate(menu.actions):
-        if isinstance(item, dmenus.MenuGroup):
-            leaves = [leaf_verb for _label, leaf_verb in item.actions]
-            if verb in leaves:
-                return [_ENTER, *[b"j"] * i, _ENTER, *[b"j"] * leaves.index(verb), _ENTER]
-        elif item[1] == verb:
-            return [_ENTER, *[b"j"] * i, _ENTER]
-    raise AssertionError(f"{verb!r} is not in the repo menu")
-
-
-def _notices(render) -> list[str]:
-    return [c.kwargs["notice"] for c in render.call_args_list if c.kwargs.get("notice")]
 
 
 def test_repo_menu_offers_apply_after_network_and_before_fold(tmp_path):
@@ -5049,12 +4925,6 @@ def test_repo_menu_apply_follows_the_ssh_policy(tmp_path, over_ssh, policy_kwarg
 
 
 # --- Credential group… in the repo menu ------------------------------------
-
-
-def _rendered(render, kind):
-    """Every overlay of type ``kind`` a frame drew, in order."""
-    overlays = (c.kwargs["overlay"] for c in render.call_args_list)
-    return [overlay for overlay in overlays if isinstance(overlay, kind)]
 
 
 def test_repo_menu_offers_credential_group_after_the_creation_entries():
@@ -5575,7 +5445,7 @@ def _target(tmp_path: Path) -> dmodel.RepoTarget:
 def test_run_cli_foreground_inserts_config_before_the_separator_and_pauses(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     rc = ddispatch._run_cli_foreground(
         _target(tmp_path), ["snapshot", "create", "--", "alpha-x", "t"], style="output"
@@ -5604,7 +5474,7 @@ def test_run_cli_foreground_over_ssh_sends_no_config_flag(mocker, tmp_path):
 
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
+    patch_pause(mocker)
 
     ddispatch._run_cli_foreground(
         _target(tmp_path),
@@ -5660,7 +5530,7 @@ def test_run_cli_foreground_never_pages_a_remote_session(mocker, tmp_path):
     paged = mocker.patch.object(ddispatch, "_run_paged")
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._run_cli_foreground(
         _target(tmp_path),
@@ -5683,7 +5553,7 @@ def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, t
     )
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     assert ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged") == 0
     run.assert_called_once()
@@ -5693,7 +5563,7 @@ def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, t
 def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._run_cli_foreground(_target(tmp_path), ["disk-usage"], style="plain")
 
@@ -5710,7 +5580,7 @@ def test_run_cli_foreground_either_remote_flag_alone_forbids_the_pager(
     paged = mocker.patch.object(ddispatch, "_run_paged")
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._run_cli_foreground(
         _target(tmp_path),
@@ -5778,29 +5648,6 @@ def test_repo_menu_diagnostics_and_prune_follow_the_ssh_policy(
 
 
 # --- Terminal-only container entries (autostart, snapshots, mounts) ---------
-
-
-def _autostart_ci(phase: str = "autostart") -> ContainerInfo:
-    """A container whose job row is an autostart run; os.getpid() keeps the worker alive."""
-    return dataclasses.replace(
-        _ci("alpha-x", "alpha", job_phase=phase, job_pid=os.getpid()), job_kind="autostart"
-    )
-
-
-def _container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs) -> list[bytes]:
-    """Keys that choose top-level container-menu leaf ``verb`` for the first container.
-
-    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the ``run()`` call.
-    """
-    menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
-    assert menu is not None
-    entries = list(tmenu._menu_entries(menu))
-    at = next(
-        i
-        for i, entry in enumerate(entries)
-        if not isinstance(entry, dmenus.MenuGroup) and entry[1] == verb
-    )
-    return [b"j", _ENTER, *[b"j"] * at, _ENTER]
 
 
 def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_the_group(
@@ -5877,986 +5724,7 @@ def test_container_menu_autostart_entries_follow_the_ssh_policy(
     )
 
 
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_autostart_ci(),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    keys = _container_menu_keys(group, "autostart-status", **kwargs)
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    child.assert_called_once_with(
-        ["jailbee", "autostart", "status", "alpha-x", *flags], check=False, cwd=tmp_path
-    )
-    wait.assert_called_once()
-
-
-def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "autostart-cancel"), _ENTER]  # Enter on "No"
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["no", "yes"]
-    child.assert_not_called()
-    assert "Cancelled" in _notices(render)
-
-
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_cancel_autostart_yes_runs_the_cancel(mocker, tmp_path, over_ssh):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_autostart_ci(),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "autostart-cancel", **kwargs), b"j", _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    child.assert_called_once_with(
-        ["jailbee", "autostart", "cancel", "alpha-x", *flags], check=False, cwd=tmp_path
-    )
-
-
-# --- Vanish, inert and stale-policy protection of the terminal-only entries --
-
-
-def _drive_with_vanish(mocker, keys, groups, vanish, *, when: str) -> int:
-    """Run the loop; ``vanish()`` fires after ``keys``: a frame before Enter, or on its read."""
-    script = iter([*keys, "vanish", *([_ENTER] if when == "frame-before-enter" else [])])
-
-    def read(_fd, _n):
-        item = next(script, b"\x03")
-        if item == "vanish":
-            vanish()
-            return b"z" if when == "frame-before-enter" else _ENTER
-        return item
-
-    return _drive_run_with_reader(mocker, read, groups)
-
-
-_VANISH_WHEN = pytest.mark.parametrize("when", ["frame-before-enter", "same-read-as-enter"])
-
-
-@_VANISH_WHEN
-def test_container_vanishing_while_the_autostart_cancel_picker_is_open_runs_nothing(
-    mocker, tmp_path, when
-):
-    group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    # ``j`` moves the cursor from "No" to "Yes"; the container then disappears
-    keys = [*_container_menu_keys(group, "autostart-cancel"), b"j"]
-    assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
-
-    child.assert_not_called()
-    assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
-
-
-@pytest.mark.parametrize("when", ["frame-before-enter", "same-read-as-enter"])
-def test_repo_vanishing_while_the_apply_picker_is_open_runs_nothing(mocker, tmp_path, when):
-    group = _cfg_group(tmp_path)
-    groups = [group]
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    gone = False
-    real_target_group = dmodel.target_group
-
-    def target_group(seen, target, kind):
-        return None if gone and kind == "repo" else real_target_group(seen, target, kind)
-
-    mocker.patch.object(tsession, "target_group", side_effect=target_group)
-
-    def vanish():
-        nonlocal gone
-        if when == "frame-before-enter":
-            groups.clear()  # the next frame's loop-top guard closes the picker
-        else:
-            gone = True  # the frame still lists it; only the submit's re-resolve can notice
-
-    assert (
-        _drive_with_vanish(mocker, _repo_menu_keys(group, "apply"), groups, vanish, when=when) == 0
-    )
-
-    child.assert_not_called()
-    assert "'alpha' is gone" in " ".join(str(n) for n in _notices(render))
-
-
-def test_stale_menu_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_autostart_ci(),))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    keys = _container_menu_keys(group, "autostart-status")  # built while the menu offers it
-    real_check = tsession.check_dashboard_command
-
-    def refuse(argv, policy, *, over_ssh):
-        if argv[:2] == ["autostart", "status"]:
-            raise tsession.RouteError("autostart status is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
-
-    _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
-
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-    assert "autostart status is not permitted" in _notices(render)
-
-
-# --- Snapshots…: listing and create -----------------------------------------
-
-_SNAPS_JSON = '[{"name": "before-upgrade", "created": "2026-09-29T10:00:00.5Z"}]'
-_SNAPSHOT_LS = ["snapshot", "ls", "alpha-x", "-o", "json", "--fields", "name,created"]
-
-
-def _fake_snapshot_ls(mocker, result=None):
-    """Patch the quiet runner the snapshot listing goes through."""
-    return mocker.patch.object(
-        tsession.da,
-        "run_cli_quiet",
-        return_value=result or tsession.da.CliResult(True, "done", _SNAPS_JSON),
-    )
-
-
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_snapshots_lists_quietly_and_offers_create_above_the_snapshots(mocker, tmp_path, over_ssh):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    listing = _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    assert (
-        _drive_run(mocker, _container_menu_keys(group, "snapshots", **kwargs), [group], **kwargs)
-        == 0
-    )
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    listing.assert_called_once_with([*_SNAPSHOT_LS, *flags], cwd=tmp_path)
-    picker = _rendered(render, tsession.Picker)[0]
-    assert [e.value for e in picker.entries] == [
-        "create:timestamp",
-        "create:named",
-        "snapshot:before-upgrade",
-    ]
-    child.assert_not_called()  # listing is quiet: the screen never blanked
-
-
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path, over_ssh):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "snapshots", **kwargs), _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    child.assert_called_once_with(
-        ["jailbee", "snapshot", "create", *flags, "--", "alpha-x"], check=False, cwd=tmp_path
-    )
-    wait.assert_called_once()
-
-
-def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-
-    keys = [*_container_menu_keys(group, "snapshots"), b"j", _ENTER, *_keys("--yes"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_called_once_with(
-        [
-            "jailbee",
-            "snapshot",
-            "create",
-            "--config",
-            str(group.config_path),
-            "--",
-            "alpha-x",
-            "--yes",
-        ],
-        check=False,
-        cwd=tmp_path,
-    )
-
-
-def _snapshot_tag_prompts(render) -> list:
-    return [
-        p for p in _rendered(render, tsession.TextPrompt) if p.purpose == "container-snapshot-tag"
-    ]
-
-
-def test_snapshot_tag_prompt_escape_runs_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "snapshots"), b"j", _ENTER, *_keys("x"), _ESC]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert _snapshot_tag_prompts(render)
-    assert "Cancelled" in _notices(render)
-    child.assert_not_called()
-
-
-def test_snapshot_tag_prompt_ctrl_c_cancels_only_the_prompt(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [
-        *_container_menu_keys(group, "snapshots"),
-        b"j",
-        _ENTER,
-        *_keys("x"),
-        b"\x03",
-        b"h",
-        _ESC,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert _snapshot_tag_prompts(render)
-    child.assert_not_called()
-    assert "Cancelled" in _notices(render)
-    # the dashboard survived the Ctrl-C: the later `h` still opened help
-    assert "help" in [c.kwargs.get("overlay") for c in render.call_args_list]
-
-
-def test_snapshot_tag_prompt_rejects_a_blank_tag_inline(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "snapshots"), b"j", _ENTER, *_keys("  "), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-    assert any(p.error == "Snapshot tag cannot be empty" for p in _snapshot_tag_prompts(render))
-
-
-def test_snapshot_picker_escape_runs_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    assert _drive_run(mocker, [*_container_menu_keys(group, "snapshots"), _ESC], [group]) == 0
-
-    assert _rendered(render, tsession.Picker)
-    child.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    ("result", "notice"),
-    [
-        (tsession.da.CliResult(False, "error: boom"), "could not list snapshots: error: boom"),
-        (
-            tsession.da.CliResult(True, "done", "No snapshots"),
-            "could not list snapshots: unexpected output from 'jailbee snapshot ls'",
-        ),
-    ],
-    ids=["cli-failed", "not-json"],
-)
-def test_a_failed_snapshot_listing_is_a_notice(mocker, tmp_path, result, notice):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker, result)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    assert _drive_run(mocker, _container_menu_keys(group, "snapshots"), [group]) == 0
-
-    assert not _rendered(render, tsession.Picker)
-    assert notice in _notices(render)
-
-
-def test_snapshot_listing_is_refused_when_create_is_not_permitted_and_there_are_none(
-    mocker, tmp_path
-):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls"]}}
-    )
-    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", "[]"))
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    assert (
-        _drive_run(mocker, _container_menu_keys(group, "snapshots", **kwargs), [group], **kwargs)
-        == 0
-    )
-
-    assert not _rendered(render, tsession.Picker)
-    assert "No snapshots of 'alpha-x'" in _notices(render)
-
-
-def test_snapshot_picker_hides_create_when_only_the_listing_is_permitted(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls"]}}
-    )
-    _fake_snapshot_ls(mocker)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    assert (
-        _drive_run(mocker, _container_menu_keys(group, "snapshots", **kwargs), [group], **kwargs)
-        == 0
-    )
-
-    picker = _rendered(render, tsession.Picker)[0]
-    assert [e.value for e in picker.entries] == ["snapshot:before-upgrade"]
-
-
-def test_snapshot_create_permitted_over_ssh_with_an_empty_listing_still_opens_the_picker(
-    mocker, tmp_path
-):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls", "snapshot create"]}}
-    )
-    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", "[]"))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "snapshots", **kwargs), b"j", _ENTER, *_keys("--yes")]
-    assert _drive_run(mocker, [*keys, _ENTER], [group], **kwargs) == 0
-
-    picker = _rendered(render, tsession.Picker)[0]
-    assert [e.value for e in picker.entries] == ["create:timestamp", "create:named"]
-    child.assert_called_once_with(
-        ["jailbee", "snapshot", "create", "--", "alpha-x", "--yes"], check=False, cwd=tmp_path
-    )
-
-
-def test_snapshot_create_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tsession.check_dashboard_command
-
-    def refuse(argv, policy, *, over_ssh):
-        if argv[:2] == ["snapshot", "create"]:
-            raise tsession.RouteError("snapshot create is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
-
-    _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
-
-    keys = [*_container_menu_keys(group, "snapshots"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-    assert "snapshot create is not permitted" in _notices(render)
-
-
-@_VANISH_WHEN
-@pytest.mark.parametrize("choice", ["timestamp", "named-tag"])
-def test_container_vanishing_while_the_snapshots_picker_or_tag_prompt_is_open_runs_nothing(
-    mocker, tmp_path, when, choice
-):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    listing = _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = _container_menu_keys(group, "snapshots")
-    if choice == "named-tag":
-        keys = [*keys, b"j", _ENTER, *_keys("v1")]
-    assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
-
-    child.assert_not_called()
-    assert listing.call_count == 1  # nothing was listed again either
-    assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
-
-
-# --- Snapshots…: restore and delete, confirmed -------------------------------
-
-_TO_SNAPSHOT_ROW = [b"j", b"j", _ENTER]
-
-
-@pytest.mark.parametrize(
-    ("action_downs", "verb"), [(0, "restore"), (1, "delete")], ids=["restore", "delete"]
-)
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_snapshot_restore_and_delete_run_after_a_yes(
-    mocker, tmp_path, action_downs, verb, over_ssh
-):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    keys = [
-        *_container_menu_keys(group, "snapshots", **kwargs),
-        *_TO_SNAPSHOT_ROW,
-        *[b"j"] * action_downs,
-        _ENTER,
-        b"j",  # "Yes, …"
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    child.assert_called_once_with(
-        ["jailbee", "snapshot", verb, *flags, "--", "alpha-x", "before-upgrade"],
-        check=False,
-        cwd=tmp_path,
-    )
-    wait.assert_called_once()
-
-
-@pytest.mark.parametrize("action_downs", [0, 1], ids=["restore", "delete"])
-def test_snapshot_confirm_no_runs_nothing(mocker, tmp_path, action_downs):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [
-        *_container_menu_keys(group, "snapshots"),
-        *_TO_SNAPSHOT_ROW,
-        *[b"j"] * action_downs,
-        _ENTER,
-        _ENTER,  # a stray Enter lands on "No"
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    confirm = [
-        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-snapshot-confirm"
-    ]
-    assert confirm and confirm[0].entries[0].value == "no"
-    child.assert_not_called()
-    assert "Cancelled" in _notices(render)
-
-
-@pytest.mark.parametrize("step", ["action", "confirm"])
-@pytest.mark.parametrize("key", [_ESC, b"\x03"], ids=["esc", "ctrl-c"])
-def test_snapshot_action_and_confirm_cancel_runs_nothing(mocker, tmp_path, step, key):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "snapshots"), *_TO_SNAPSHOT_ROW]
-    if step == "confirm":
-        keys += [b"j", _ENTER, b"j"]  # Delete, then onto "Yes"
-    assert _drive_run(mocker, [*keys, key, _ENTER], [group]) == 0
-
-    purposes = {p.purpose for p in _rendered(render, tsession.Picker)}
-    assert "container-snapshot-action" in purposes
-    assert ("container-snapshot-confirm" in purposes) == (step == "confirm")
-    child.assert_not_called()
-
-
-def test_snapshot_changes_the_policy_refuses_are_not_offered(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls", "snapshot delete"]}}
-    )
-    _fake_snapshot_ls(mocker)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    # no create entries: the listed snapshot is row 0
-    keys = [*_container_menu_keys(group, "snapshots", **kwargs), _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    pickers = _rendered(render, tsession.Picker)
-    assert [e.value for e in pickers[0].entries] == ["snapshot:before-upgrade"]
-    actions = [p for p in pickers if p.purpose == "container-snapshot-action"]
-    assert [e.value for e in actions[0].entries] == ["delete"]
-
-
-def test_snapshot_restore_alone_is_offered_when_delete_is_refused(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls", "snapshot restore"]}}
-    )
-    _fake_snapshot_ls(mocker)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "snapshots", **kwargs), _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    actions = [
-        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-snapshot-action"
-    ]
-    assert [e.value for e in actions[0].entries] == ["restore"]
-
-
-def test_a_snapshot_the_policy_permits_no_change_to_is_a_notice(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "snapshot ls"]}}
-    )
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "snapshots", **kwargs), _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    assert "No change to snapshot before-upgrade is permitted here" in _notices(render)
-    assert not [p for p in _rendered(render, tsession.Picker) if p.purpose.endswith("action")]
-    child.assert_not_called()
-
-
-@pytest.mark.parametrize("verb", ["restore", "delete"])
-@pytest.mark.parametrize("name", ["--yes", "snapshot:x"])
-def test_snapshot_names_that_look_like_options_or_sentinels_stay_positional(
-    mocker, tmp_path, verb, name
-):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    listing = json.dumps([{"name": name, "created": "2026-09-29T10:00:00Z"}])
-    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", listing))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-
-    keys = [
-        *_container_menu_keys(group, "snapshots"),
-        *_TO_SNAPSHOT_ROW,
-        *([b"j"] if verb == "delete" else []),
-        _ENTER,
-        b"j",
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_called_once_with(
-        [
-            "jailbee",
-            "snapshot",
-            verb,
-            "--config",
-            str(group.config_path),
-            "--",
-            "alpha-x",
-            name,
-        ],
-        check=False,
-        cwd=tmp_path,
-    )
-
-
-@pytest.mark.parametrize("verb", ["restore", "delete"])
-def test_snapshot_change_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_path, verb):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tsession.check_dashboard_command
-
-    def refuse(argv, policy, *, over_ssh):
-        if argv[:2] == ["snapshot", verb]:
-            raise tsession.RouteError(f"snapshot {verb} is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
-
-    _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
-
-    keys = [
-        *_container_menu_keys(group, "snapshots"),
-        *_TO_SNAPSHOT_ROW,
-        *([b"j"] if verb == "delete" else []),
-        _ENTER,
-        b"j",
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-    assert f"snapshot {verb} is not permitted" in _notices(render)
-
-
-@_VANISH_WHEN
-@pytest.mark.parametrize("step", ["action", "confirm"])
-def test_container_vanishing_while_a_snapshot_action_or_confirm_is_open_runs_nothing(
-    mocker, tmp_path, when, step
-):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "snapshots"), *_TO_SNAPSHOT_ROW]
-    if step == "confirm":
-        keys += [_ENTER, b"j"]  # Restore, then onto "Yes"
-    assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
-
-    purposes = {p.purpose for p in _rendered(render, tsession.Picker)}
-    assert "container-snapshot-action" in purposes
-    assert ("container-snapshot-confirm" in purposes) == (step == "confirm")
-    child.assert_not_called()
-    assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
-
-
-_THREE_SNAPS = json.dumps([{"name": n, "created": "2026-09-29T10:00:00Z"} for n in ("a", "b", "c")])
-
-
-@pytest.mark.parametrize("verb", ["restore", "delete"])
-@pytest.mark.parametrize(("row", "tag"), [(0, "a"), (1, "b"), (2, "c")], ids=["a", "b", "c"])
-def test_snapshot_change_acts_on_the_chosen_snapshot_not_the_first(
-    mocker, tmp_path, verb, row, tag
-):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", _THREE_SNAPS))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-
-    keys = [
-        *_container_menu_keys(group, "snapshots"),
-        *[b"j"] * (2 + row),  # past the two create entries
-        _ENTER,
-        *([b"j"] if verb == "delete" else []),
-        _ENTER,
-        b"j",
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_called_once_with(
-        ["jailbee", "snapshot", verb, "--config", str(group.config_path), "--", "alpha-x", tag],
-        check=False,
-        cwd=tmp_path,
-    )
-
-
-@pytest.mark.parametrize("verb", ["restore", "delete"])
-def test_snapshot_named_config_stays_positional_over_ssh(mocker, tmp_path, verb):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    listing = json.dumps([{"name": "--config", "created": "2026-09-29T10:00:00Z"}])
-    _fake_snapshot_ls(mocker, tsession.da.CliResult(True, "done", listing))
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": RemoteSSHConfig()}
-
-    keys = [
-        *_container_menu_keys(group, "snapshots", **kwargs),
-        *_TO_SNAPSHOT_ROW,
-        *([b"j"] if verb == "delete" else []),
-        _ENTER,
-        b"j",
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    child.assert_called_once_with(
-        ["jailbee", "snapshot", verb, "--", "alpha-x", "--config"], check=False, cwd=tmp_path
-    )
-
-
-def test_an_unknown_snapshot_action_spawns_nothing(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_snapshot_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    real = tsession.dact.snapshot_confirm_picker
-    mocker.patch.object(
-        tsession.dact,
-        "snapshot_confirm_picker",
-        side_effect=lambda container, _action, tag: real(container, "bogus", tag),
-    )
-
-    keys = [*_container_menu_keys(group, "snapshots"), *_TO_SNAPSHOT_ROW, _ENTER, b"j", _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-
-
-# --- Outbox: the same picker panels as Snapshots… ------------------------------
-
-_OUTBOX_JSON = json.dumps(
-    {
-        "schema": 1,
-        "containers": [
-            {
-                "name": "alpha-x",
-                "available": True,
-                "error": None,
-                "stores": [],
-                "proposals": [
-                    {
-                        "id": "pr/a.json",
-                        "state": "pending",
-                        "revision": "r1",
-                        "actions": [{"index": 0}],
-                        "error": None,
-                        "edit_block": None,
-                    }
-                ],
-            }
-        ],
-    }
-)
-_OUTBOX_LS = ["outbox", "ls", "alpha-x", "-o", "json"]
-_TO_PROPOSAL = [_ENTER]  # the first entry is the only proposal
-
-
-def _fake_outbox_ls(mocker, result=None):
-    """Patch the quiet runner the outbox listing (and a delete) go through."""
-    return mocker.patch.object(
-        tsession.da,
-        "run_cli_quiet",
-        return_value=result or tsession.da.CliResult(True, "done", _OUTBOX_JSON),
-    )
-
-
-@pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_outbox_lists_quietly_in_a_picker_instead_of_the_browser(mocker, tmp_path, over_ssh):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig() if over_ssh else None
-    listing = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
-
-    keys = _container_menu_keys(group, "outbox browse", **kwargs)
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    flags = [] if over_ssh else ["--config", str(group.config_path)]
-    listing.assert_called_once_with([*_OUTBOX_LS, *flags], cwd=tmp_path)
-    picker = _rendered(render, tsession.Picker)[0]
-    assert picker.title == "Outbox — alpha-x"
-    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
-    child.assert_not_called()  # listing is quiet: the screen never blanked
-
-
-def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_outbox_ls(mocker)
-    run_cli = mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    actions = [
-        p for p in _rendered(render, tsession.Picker) if p.purpose == "container-outbox-proposal"
-    ]
-    assert [e.value for e in actions[0].entries] == ["show", "publish", "delete"]
-    run_cli.assert_called_once()
-    assert run_cli.call_args.args[1] == ["outbox", "show", "alpha-x", "pr/a.json", "--color"]
-    assert run_cli.call_args.kwargs["style"] == "paged"
-
-
-def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
-
-    keys = [
-        *_container_menu_keys(group, "outbox browse"),
-        *_TO_PROPOSAL,
-        b"j",  # Publish…
-        _ENTER,
-        b"j",  # "Yes, publish"
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_called_once_with(
-        [
-            "jailbee",
-            "outbox",
-            "apply",
-            "alpha-x",
-            "pr/a.json",
-            "--revision",
-            "r1",
-            "--config",
-            str(group.config_path),
-        ],
-        check=False,
-        cwd=tmp_path,
-    )
-    wait.assert_called_once()
-
-
-def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    quiet = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-
-    keys = [
-        *_container_menu_keys(group, "outbox browse"),
-        *_TO_PROPOSAL,
-        b"j",
-        b"j",  # Delete…
-        _ENTER,
-        b"j",  # "Yes, delete"
-        _ENTER,
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    flags = ["--config", str(group.config_path)]
-    assert quiet.call_args_list[-1] == mocker.call(
-        ["outbox", "drop", "alpha-x", "pr/a.json", "--yes", "--revision", "r1", *flags],
-        cwd=tmp_path,
-    )
-    child.assert_not_called()
-
-
-@pytest.mark.parametrize("downs", [1, 2], ids=["publish", "delete"])
-def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    quiet = _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [
-        *_container_menu_keys(group, "outbox browse"),
-        *_TO_PROPOSAL,
-        *[b"j"] * downs,
-        _ENTER,
-        _ENTER,  # a stray Enter lands on "No"
-    ]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_not_called()
-    assert quiet.call_count == 1  # only the listing
-    assert "Cancelled" in _notices(render)
-
-
-def test_outbox_browse_entry_hands_the_terminal_to_the_full_browser(mocker, tmp_path):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_outbox_ls(mocker)
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
-
-    keys = [*_container_menu_keys(group, "outbox browse"), b"j", _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    child.assert_called_once_with(
-        ["jailbee", "outbox", "browse", "alpha-x", "--config", str(group.config_path)],
-        check=False,
-        cwd=tmp_path,
-    )
-    wait.assert_not_called()  # interactive: nothing left on screen to read
-
-
-@pytest.mark.parametrize(
-    ("result", "notice"),
-    [
-        (tsession.da.CliResult(False, "error: boom"), "could not list the outbox: error: boom"),
-        (
-            tsession.da.CliResult(True, "done", "Container  Proposal"),
-            "could not list the outbox: unexpected output from 'jailbee outbox ls'",
-        ),
-        (
-            tsession.da.CliResult(
-                False,
-                "exit 2",
-                json.dumps(
-                    {"containers": [{"name": "alpha-x", "available": False, "error": "stopped"}]}
-                ),
-            ),
-            "could not read the outbox: stopped",
-        ),
-        (
-            tsession.da.CliResult(True, "done", json.dumps({"containers": []})),
-            "Outbox of 'alpha-x' is empty",
-        ),
-    ],
-    ids=["cli-failed", "not-json", "unavailable", "empty"],
-)
-def test_an_outbox_with_nothing_to_offer_is_a_notice(mocker, tmp_path, result, notice):
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    _fake_outbox_ls(mocker, result)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    assert _drive_run(mocker, _container_menu_keys(group, "outbox browse"), [group]) == 0
-
-    assert not _rendered(render, tsession.Picker)
-    assert notice in _notices(render)
-
-
-def test_outbox_hides_what_the_ssh_allowlist_does_not_permit(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _cfg_group(tmp_path, (_ci("alpha-x", "alpha"),))
-    policy = RemoteSSHConfig.model_validate(
-        {"commands": {"mode": "allowlist", "allow": ["shell", "outbox browse", "outbox ls"]}}
-    )
-    _fake_outbox_ls(mocker)
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "outbox browse", **kwargs), *_TO_PROPOSAL]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    picker = _rendered(render, tsession.Picker)[0]
-    assert [e.value for e in picker.entries] == ["proposal:pr/a.json", "browse"]
-    assert "Nothing can be done to pr/a.json here" in _notices(render)
-
-
-# --- Mount… / Unmount… -------------------------------------------------------
-
-
-def _mount_group(tmp_path: Path) -> dmodel.RepoGroup:
-    """Kinds aws + gcloud configured; gcloud attached to alpha-x."""
-    group = _cfg_group(
-        tmp_path, (dataclasses.replace(_ci("alpha-x", "alpha"), optional_mounts=("gcloud",)),)
-    )
-    group.optional_mounts = ("aws", "gcloud")
-    return group
+# --- Mount… / Unmount… (menu entries) ----------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -6935,249 +5803,10 @@ def test_container_menu_survives_an_empty_shared_action_list(
         assert [label for label, _verb in menu.actions] == expected
 
 
-def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(
-        tsession.da,
-        "run_cli_quiet",
-        return_value=tsession.da.CliResult(True, "✓ Mounted 'aws' in container 'x'"),
-    )
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["aws"]
-    quiet.assert_called_once_with(
-        ["mount", "--config", str(group.config_path), "--", "aws", "alpha-x"], cwd=tmp_path
-    )
-    child.assert_not_called()  # quiet: the screen never blanked
-    assert "✓ Mounted 'aws' in container 'x'" in _notices(render)
-
-
-def test_unmount_offers_the_attached_kinds(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(
-        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
-    )
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "mount-remove"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
-    quiet.assert_called_once_with(
-        ["unmount", "--config", str(group.config_path), "--", "gcloud", "alpha-x"], cwd=tmp_path
-    )
-
-
-def test_unmount_over_ssh_offers_the_attached_kinds_without_config(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    group = _mount_group(tmp_path)
-    policy = RemoteSSHConfig()
-    quiet = mocker.patch.object(
-        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
-    )
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
-
-    keys = [*_container_menu_keys(group, "mount-remove", **kwargs), _ENTER]
-    assert _drive_run(mocker, keys, [group], **kwargs) == 0
-
-    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
-    quiet.assert_called_once_with(["unmount", "--", "gcloud", "alpha-x"], cwd=tmp_path)
-
-
-def test_a_refused_mount_is_a_long_notice(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    mocker.patch.object(
-        tsession.da,
-        "run_cli_quiet",
-        return_value=tsession.da.CliResult(False, "error: Unknown optional mount 'aws'"),
-    )
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    # the CLI's own verdict, shown whole; the dashboard is still running (rc 0)
-    assert "error: Unknown optional mount 'aws'" in _notices(render)
-    child.assert_not_called()
-
-
-def test_mount_picker_escape_runs_nothing(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "mount-add"), _ESC]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert _rendered(render, tsession.Picker)  # it did open
-    quiet.assert_not_called()
-
-
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
-def test_a_kind_spelled_like_an_option_stays_positional(mocker, tmp_path, verb):
-    group = _mount_group(tmp_path)
-    group.optional_mounts = ("--yes", "gcloud")
-    quiet = mocker.patch.object(
-        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
-    )
-    if verb == "mount-remove":
-        group.containers[0] = dataclasses.replace(
-            group.containers[0], optional_mounts=("--yes", "gcloud")
-        )
-
-    keys = [*_container_menu_keys(group, verb), _ENTER]  # the first entry: "--yes"
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    verb_word = "unmount" if verb == "mount-remove" else "mount"
-    quiet.assert_called_once_with(
-        [verb_word, "--config", str(group.config_path), "--", "--yes", "alpha-x"], cwd=tmp_path
-    )
-
-
-def test_kinds_missing_from_the_config_are_not_offered_to_unmount(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    group.containers[0] = dataclasses.replace(
-        group.containers[0], optional_mounts=("gcloud", "retired")
-    )
-    mocker.patch.object(
-        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
-    )
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = [*_container_menu_keys(group, "mount-remove"), _ESC]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert [e.value for e in _rendered(render, tsession.Picker)[0].entries] == ["gcloud"]
-
-
-def _drive_mount_menu_then(mocker, group, verb, change, *, same_read: bool = False) -> None:
-    """Open the container menu on ``verb``, run ``change()``, then press Enter on it.
-
-    The menu overlay keeps the entries it opened with, so this is a stale menu.
-    With ``same_read`` the change lands on the very read that delivers Enter, so
-    no frame sees it first.
-    """
-    keys = _container_menu_keys(group, verb)
-    script = iter([*keys[:-1], "change", *([] if same_read else [keys[-1]])])
-
-    def read(_fd, _n):
-        item = next(script, b"\x03")
-        if item == "change":
-            change()
-            return keys[-1] if same_read else b"z"
-        return item
-
-    assert _drive_run_with_reader(mocker, read, [group]) == 0
-
-
-def test_mount_with_nothing_left_to_add_notices_instead_of_opening(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    def attach_everything():
-        group.containers[0] = dataclasses.replace(
-            group.containers[0], optional_mounts=("aws", "gcloud")
-        )
-
-    _drive_mount_menu_then(mocker, group, "mount-add", attach_everything)
-
-    assert not _rendered(render, tsession.Picker)
-    assert "No optional mount to add" in _notices(render)
-    quiet.assert_not_called()
-
-
-def test_unmount_with_nothing_attached_notices_instead_of_opening(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    def detach_everything():
-        group.containers[0] = dataclasses.replace(group.containers[0], optional_mounts=())
-
-    _drive_mount_menu_then(mocker, group, "mount-remove", detach_everything)
-
-    assert not _rendered(render, tsession.Picker)
-    assert "No optional mount to remove" in _notices(render)
-    quiet.assert_not_called()
-
-
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
-def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothing(
-    mocker, tmp_path, verb
-):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    _drive_mount_menu_then(mocker, group, verb, group.containers.clear, same_read=True)
-
-    assert not _rendered(render, tsession.Picker)
-    quiet.assert_not_called()
-    assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
-
-
-def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, tmp_path):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-    real_check = tsession.check_dashboard_command
-
-    def refuse(argv, policy, *, over_ssh):
-        if argv[:1] == ["mount"]:
-            raise tsession.RouteError("mount is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
-
-    _patch_all(mocker, "check_dashboard_command", side_effect=refuse)
-
-    keys = [*_container_menu_keys(group, "mount-add"), _ENTER]
-    assert _drive_run(mocker, keys, [group]) == 0
-
-    assert _rendered(render, tsession.Picker)
-    quiet.assert_not_called()
-    assert "mount is not permitted" in _notices(render)
-
-
-@_VANISH_WHEN
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
-def test_container_vanishing_while_the_mount_picker_is_open_runs_nothing(
-    mocker, tmp_path, when, verb
-):
-    group = _mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    child = mocker.patch.object(tsession.subprocess, "run")
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    keys = _container_menu_keys(group, verb)
-    assert _drive_with_vanish(mocker, keys, [group], group.containers.clear, when=when) == 0
-
-    purpose = "container-mount-remove" if verb == "mount-remove" else "container-mount-add"
-    assert {p.purpose for p in _rendered(render, tsession.Picker)} == {purpose}
-    quiet.assert_not_called()
-    child.assert_not_called()
-    assert "'alpha-x' is gone" in " ".join(str(n) for n in _notices(render))
-
-
 def test_help_panel_points_at_the_repo_and_container_menu_entries():
     text = _render_text(tframe._render_help())
     assert "Apply config…" in text
     assert "Snapshots…" in text
-
-
-def _every_verb_group(tmp_path: Path) -> dmodel.RepoGroup:
-    """A container that is offered every terminal-only entry at once."""
-    group = _mount_group(tmp_path)
-    group.containers[0] = dataclasses.replace(
-        group.containers[0], job_phase="autostart", job_pid=os.getpid(), job_kind="autostart"
-    )
-    return group
 
 
 _CONTAINER_VERB_CASES = sorted(tsession.dact.CONTAINER_VERBS)
@@ -7191,38 +5820,6 @@ def test_every_container_verb_has_a_guard_case(tmp_path):
     # a new verb must be offered by this fixture (and so parametrized below)
     assert offered & tsession.dact.CONTAINER_VERBS == tsession.dact.CONTAINER_VERBS
     assert set(_CONTAINER_VERB_CASES) == tsession.dact.CONTAINER_VERBS
-
-
-@pytest.mark.parametrize("verb", _CONTAINER_VERB_CASES)
-def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
-    mocker, tmp_path, verb
-):
-    """Each entry opens an overlay or spawns through the dashboard's own runners.
-
-    It must never fall through to ``_dispatch_action``, which would build the
-    invalid ``jailbee <verb> <container>`` command.
-    """
-    group = _every_verb_group(tmp_path)
-    dispatch = mocker.patch.object(tsession, "_dispatch_action")
-    child = mocker.patch.object(tsession.subprocess, "run")
-    child.return_value.returncode = 0
-    _patch_all(mocker, "_wait_for_return")
-    # one quiet runner: the snapshot listing needs JSON, the mount a plain success
-    mocker.patch.object(
-        tsession.da,
-        "run_cli_quiet",
-        return_value=tsession.da.CliResult(True, "done", _SNAPS_JSON),
-    )
-    render = mocker.patch.object(tloop, "render", wraps=tframe.render)
-
-    assert _drive_run(mocker, [*_container_menu_keys(group, verb), _ENTER], [group]) == 0
-
-    dispatch.assert_not_called()
-    opened = _rendered(render, tsession.Picker) or _rendered(render, tsession.TextPrompt)
-    spawned = [call.args[0] for call in child.call_args_list]
-    assert opened or spawned
-    assert ["jailbee", verb, "alpha-x"] not in spawned
-    assert all(argv[:2] != ["jailbee", verb] for argv in spawned)
 
 
 def test_outbox_dispatch_rechecks_ssh_policy(mocker, tmp_path):
@@ -7308,7 +5905,7 @@ def test_remote_gui_dispatch_keeps_the_recipe_on_screen(mocker, tmp_path, verb, 
 
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), gui=True)
 
     ddispatch._dispatch_action(
@@ -7340,7 +5937,7 @@ def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocke
     """The launch prints how to reach the shared display; the pause keeps it readable."""
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(
         _dispatch_target(tmp_path),
@@ -7364,7 +5961,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
         monkeypatch.setenv(key, value)
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(
         _dispatch_target(tmp_path),
@@ -7380,7 +5977,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
 def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker, tmp_path):
     run = mocker.patch.object(tsession.subprocess, "run")
     run.return_value.returncode = 0
-    wait = _patch_all(mocker, "_wait_for_return")
+    wait = patch_pause(mocker)
 
     ddispatch._dispatch_action(
         _dispatch_target(tmp_path),
@@ -8045,31 +6642,3 @@ def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     c.network = "loose"
     c.loose_until = now + timedelta(hours=3, minutes=59)
     assert Text.from_markup(fields["ttl"].cell(c)).plain == "3h59m"
-
-
-_DASHBOARD_MODULES = (
-    dmodel,
-    dcolumns,
-    dmenus,
-    ddispatch,
-    tkeys,
-    tmenu,
-    toverlay,
-    tframe,
-    tterm,
-    tloop,
-    tsession,
-)
-
-
-def _patch_all(mocker, name, *args, **kwargs):
-    """Patch ``name`` in every dashboard module that holds it, with one shared mock.
-
-    Bridges the package split: a helper such as ``_wait_for_return`` is looked
-    up by both ``dispatch`` and ``tui.loop``. Retired with the loop tests in V1.
-    """
-    holders = [m for m in _DASHBOARD_MODULES if hasattr(m, name)]
-    mock = mocker.patch.object(holders[0], name, *args, **kwargs)
-    for module in holders[1:]:
-        mocker.patch.object(module, name, mock)
-    return mock

@@ -378,6 +378,22 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
     raise AssertionError(f"{verb!r} is not in the repo menu")
 
 
+def container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> list[str]:
+    """Keys that choose top-level container-menu leaf ``verb`` for the first container.
+
+    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the ``drive()`` call.
+    """
+    menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
+    assert menu is not None
+    entries = list(tmenu._menu_entries(menu))
+    at = next(
+        i
+        for i, entry in enumerate(entries)
+        if not isinstance(entry, dmenus.MenuGroup) and entry[1] == verb
+    )
+    return ["j", "enter", *["j"] * at, "enter"]
+
+
 # repo header → Enter (menu) → past New container…, New from PR… → Enter
 OPEN_REPO_GROUP_PICKER = ["enter", "j", "j", "enter"]
 

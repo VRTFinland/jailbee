@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -169,3 +170,28 @@ def fake_accounts_cli(mocker, *, listing=None, change=None):  # type: ignore[no-
 def alpha_group(tmp_path: Path) -> dmodel.RepoGroup:
     """Repo ``alpha`` with its one container ``alpha-x``."""
     return dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
+
+
+def autostart_ci(phase: str = "autostart") -> ContainerInfo:
+    """A container whose job row is an autostart run; os.getpid() keeps the worker alive."""
+    return dataclasses.replace(
+        ci("alpha-x", "alpha", job_phase=phase, job_pid=os.getpid()), job_kind="autostart"
+    )
+
+
+def mount_group(tmp_path: Path) -> dmodel.RepoGroup:
+    """Kinds aws + gcloud configured; gcloud attached to alpha-x."""
+    group = cfg_group(
+        tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"), optional_mounts=("gcloud",)),)
+    )
+    group.optional_mounts = ("aws", "gcloud")
+    return group
+
+
+def every_verb_group(tmp_path: Path) -> dmodel.RepoGroup:
+    """A container that is offered every terminal-only entry at once."""
+    group = mount_group(tmp_path)
+    group.containers[0] = dataclasses.replace(
+        group.containers[0], job_phase="autostart", job_pid=os.getpid(), job_kind="autostart"
+    )
+    return group
