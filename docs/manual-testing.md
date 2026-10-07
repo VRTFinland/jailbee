@@ -173,8 +173,7 @@ never Astra.
 3. Change the effort to `medium` and run `jailbee apply --no-restart`: it still
    reloads (`Reloaded the routes of LiteLLM instance(s) default without a
    restart.`). Then make a genuinely cold change instead: edit a key of the
-   `litellm.extra` fragment outside `model_list` (for example `litellm_settings`), or rotate
-   a secret (an `extra` edit touching only `model_list` is hot). Run `jailbee apply --no-restart`: it warns
+   `litellm.extra` fragment outside `model_list` (for example `litellm_settings`; an `extra` edit touching only `model_list` is hot). Run `jailbee apply --no-restart`: it warns
    that instance `default` still serves the previous routes. A plain
    `jailbee apply` then restarts it.
 4. Break the file (`litellm: {enabled: true}`): `jailbee litellm ls`, and
@@ -5226,7 +5225,7 @@ explicitly authorized checks.
    Expect: "Reloaded the routes of LiteLLM instance(s) default without a restart."; the turn finishes.
 4. `incus exec jailbee-litellm -- cat /var/lib/jailbee-litellm/default/applied.json`
    Expect `"error": null` and a `hot_digest` equal to `sha256sum` of the neighbouring `hot.json`.
-5. Rotate a secret in `secrets.env` and `apply`: expect a restart message (cold change).
+5. Rotate an API key a route uses in `secrets.env` and `apply`: expect a reload message, no restart; `systemctl show -p ExecMainStartTimestamp jailbee-litellm@<account>` inside `jailbee-litellm` is unchanged, and the next request uses the new key.
 6. Break the reload on purpose: `incus exec jailbee-litellm -- sh -c 'rm /var/lib/jailbee-litellm/default/applied.json && mkdir /var/lib/jailbee-litellm/default/applied.json'`
    (the callback's `os.replace` of a file onto a directory fails, so no acknowledgement arrives).
    Edit a route and run `jailbee apply`: expect "could not reload live (the proxy did not
