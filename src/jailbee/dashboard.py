@@ -1815,7 +1815,7 @@ def _render_help() -> RenderableType:
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle).",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / Δ / LΔ: ✓ clean; Δ vs host target, LΔ vs host HEAD.",
-        "DOING ×N: process count; JOB auto:stage: autostart stage.",
+        "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",

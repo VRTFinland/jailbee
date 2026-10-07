@@ -213,24 +213,31 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
 
 
 _FIELD_MEANINGS = {
-    "name": "Container display name", "full_name": "Full Incus container name",
-    "repo": "Repository", "mode": "Repository mode: cln = clone, mnt = host mount",
+    "name": "Container display name",
+    "full_name": "Full Incus container name",
+    "repo": "Repository",
+    "mode": "Repository mode: cln = clone, mnt = host mount",
     "base": "Base branch; ↗ means last-fetched remote-tracking base (not a live remote)",
     "state": "Container state: ▶ Running, ■ Stopped, Ⅱ Frozen",
     "created": "Container age (s/m/h/d); tooltip shows exact creation timestamp",
     "network": "Network: S = strict, L = loose; remaining auto-revert TTL, ∞ = no auto-revert",
     "ttl": "Remaining loose-network auto-revert time",
     "loose_until": "Exact loose-network auto-revert deadline",
-    "mem": "Memory usage / configured limit", "memory_limit": "Configured memory limit",
-    "cpu": "CPU usage; suffix is configured core limit", "doing": "Active processes; ×N = process count",
+    "mem": "Memory usage / configured limit",
+    "memory_limit": "Configured memory limit",
+    "cpu": "CPU usage; suffix is configured core limit",
+    "doing": "Active processes; ×N = process count",  # noqa: RUF001 - intentional multiplication sign
     "job": "Background job phase; failed and (dead) identify failures",
     "wt": "Working-tree diff; ✓ = clean",
     "target_diff": "Diff against host target branch; ✓ = clean",
     "local_diff": "Diff against checked-out host HEAD; ✓ = clean",
-    "ahead_count": "Commits ahead of host target", "behind_count": "Commits behind host target",
+    "ahead_count": "Commits ahead of host target",
+    "behind_count": "Commits behind host target",
     "conflict": "Merge prediction or actual in-progress Git operation",
-    "git_status": "Combined Git status", "pr": "Pull request and pending PR outbox actions",
-    "issues": "Pending issue outbox actions", "group": "Credential group",
+    "git_status": "Combined Git status",
+    "pr": "Pull request and pending PR outbox actions",
+    "issues": "Pending issue outbox actions",
+    "group": "Credential group",
     "agent_compact": "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown",
     "agent": "Full agent state and duration",
 }
@@ -252,7 +259,12 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
         deadline = c.loose_until.isoformat() if c.loose_until else "no auto-revert deadline"
         detail = f"{c.network or 'unknown'}; {deadline}"
     elif field.name in ("agent", "agent_compact"):
-        details = [f"{s.agent}: {s.state}; {s.count} session(s)" + (f"; since {s.since.isoformat()}" if s.since else "") + (f"; {s.waiting_for}" if s.waiting_for else "") for s in c.agent_status]
+        details = [
+            f"{s.agent}: {s.state}; {s.count} session(s)"
+            + (f"; since {s.since.isoformat()}" if s.since else "")
+            + (f"; {s.waiting_for}" if s.waiting_for else "")
+            for s in c.agent_status
+        ]
         now = datetime.now(UTC)
         for summary in c.agent_status:
             activity = describe(summary, now)

@@ -810,6 +810,7 @@ def test_synthetic_config_only_repo_remains_selectable_for_new(qtbot):
 
 def test_compact_table_headers_and_cells_explain_values(qtbot):
     from datetime import UTC, timedelta
+
     from jailbee.agent_status import AgentSummary
 
     now = datetime(2026, 10, 7, 12, tzinfo=UTC)
@@ -821,7 +822,11 @@ def test_compact_table_headers_and_cells_explain_values(qtbot):
     c.agent_status = (AgentSummary("claude", "waiting", now, "permission", 1),)
     win = MainWindow()
     qtbot.addWidget(win)
-    win.set_groups(groups, now=now, columns=["state", "created", "network", "agent_compact", "target_diff", "local_diff"])
+    win.set_groups(
+        groups,
+        now=now,
+        columns=["state", "created", "network", "agent_compact", "target_diff", "local_diff"],
+    )
     headers = win.tree.headerItem()
     row = win.tree.topLevelItem(0).child(0)
     columns = {headers.text(i): i for i in range(win.tree.columnCount())}

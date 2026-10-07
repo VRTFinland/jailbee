@@ -11195,6 +11195,7 @@ def test_dashboard_formatting_contracts():
 
 def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     from rich.text import Text
+
     from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ls_field_specs
     from jailbee.procstat import ProcessActivity
@@ -11205,16 +11206,35 @@ def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     c.job_phase = "starting"
     c.network = "loose"
     c.base_branch = "dev[branch]"
-    c.git_status = GitStatus("clean", "clean", "0", "ok", local_diff="clean", target_diff="clean", base_source="tracking")
+    c.git_status = GitStatus(
+        "clean", "clean", "0", "ok", local_diff="clean", target_diff="clean", base_source="tracking"
+    )
     c.activity = (ProcessActivity("node x2, worker", 12.0, 2),)
-    fields = {f.name: f for f in dashboard.visible_fields(now, [c], ("base", "mode", "job", "doing", "wt", "target_diff", "local_diff", "git_status", "ttl"))}
+    fields = {
+        f.name: f
+        for f in dashboard.visible_fields(
+            now,
+            [c],
+            (
+                "base",
+                "mode",
+                "job",
+                "doing",
+                "wt",
+                "target_diff",
+                "local_diff",
+                "git_status",
+                "ttl",
+            ),
+        )
+    }
     canonical = {f.name: f for f in ls_field_specs(now=now, all_repos=False)}
     assert Text.from_markup(fields["base"].cell(c)).plain == "dev[branch] ↗"
     c.mode = "clone"
     assert fields["mode"].cell(c) == "cln"
     c.mode = "mount"
     assert fields["mode"].cell(c) == "mnt"
-    assert Text.from_markup(fields["doing"].cell(c)).plain == "node x2, worker×2"
+    assert Text.from_markup(fields["doing"].cell(c)).plain == "node x2, worker×2"  # noqa: RUF001 - intentional multiplication sign
     assert canonical["doing"].cell(c) == "node x2, worker x2"
     for name in ("wt", "target_diff", "local_diff"):
         assert Text.from_markup(fields[name].cell(c)).plain == "✓"
@@ -11222,7 +11242,15 @@ def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     assert fields["git_status"].header == "GIT"
     mocker.patch("jailbee.background.worker_alive", return_value=True)
     c.job_pid = 123
-    for phase, expected in (("starting", "start"), ("creating", "create"), ("cloning", "clone"), ("stopping", "stop"), ("deleting", "delete"), ("destroying", "destroy"), ("failed", "failed")):
+    for phase, expected in (
+        ("starting", "start"),
+        ("creating", "create"),
+        ("cloning", "clone"),
+        ("stopping", "stop"),
+        ("deleting", "delete"),
+        ("destroying", "destroy"),
+        ("failed", "failed"),
+    ):
         c.job_phase = phase
         assert Text.from_markup(fields["job"].cell(c)).plain == expected
     c.job_kind = "autostart"

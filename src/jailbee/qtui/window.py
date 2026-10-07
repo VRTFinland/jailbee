@@ -38,10 +38,10 @@ from jailbee.qtui.action_menu import populate_action_menu
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
     STATE_COLORS,
-    column_headers,
     cell_tooltip,
-    field_tooltip,
+    column_headers,
     container_cells,
+    field_tooltip,
     group_header,
 )
 
@@ -489,7 +489,10 @@ class MainWindow(QMainWindow):
                 child = QTreeWidgetItem(container_cells(c, fields))
                 child.setData(0, _NAME_ROLE, c.name)
                 for index, field in enumerate(fields):
-                    child.setToolTip(index, "<qt>" + escape(cell_tooltip(c, field)).replace("\n", "<br>") + "</qt>")
+                    child.setToolTip(
+                        index,
+                        "<qt>" + escape(cell_tooltip(c, field)).replace("\n", "<br>") + "</qt>",
+                    )
                 color = _STATE_COLORS.get(c.state)
                 if color is not None and state_col is not None:
                     child.setForeground(state_col, color)
