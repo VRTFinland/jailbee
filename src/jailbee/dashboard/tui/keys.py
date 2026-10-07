@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.commands import (
@@ -19,9 +18,6 @@ from jailbee.dashboard.menus import (
 )
 from jailbee.dashboard.model import RepoGroup
 from jailbee.remote_ssh.router import RouteError
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(frozen=True)

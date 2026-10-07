@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
@@ -54,9 +53,6 @@ from jailbee.dashboard.viewport import column_viewport
 from jailbee.lifecycle import (
     ContainerInfo,
 )
-
-if TYPE_CHECKING:
-    pass
 
 _INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
 

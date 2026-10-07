@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import actions as dact
@@ -26,10 +26,6 @@ from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERB
 from jailbee.dashboard.model import RepoTarget
 from jailbee.remote_ssh.session import waypipe_session
 from jailbee.tui import console
-
-if TYPE_CHECKING:
-    pass
-
 
 log = logging.getLogger(__name__)
 

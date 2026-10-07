@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import actions as dact
@@ -23,9 +22,6 @@ from jailbee.dashboard.menus import (
 )
 from jailbee.dashboard.model import RepoGroup, RepoTarget, _find_group
 from jailbee.dashboard.tui.keys import KEY_BINDINGS
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

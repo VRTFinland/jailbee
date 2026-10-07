@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard.commands import (
@@ -21,9 +21,6 @@ from jailbee.dashboard.settings import (
     SettingsState,
 )
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
-
-if TYPE_CHECKING:
-    pass
 
 
 # What occupies the slot under the table. Overlays are mutually exclusive by
