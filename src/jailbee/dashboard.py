@@ -4917,7 +4917,6 @@ def run(
                 elif key in ("scroll-left", "scroll-right"):
                     # Clamp before stepping too: a resize since the last frame
                     # may have reduced the scrollable range.
-
                     column_offset = clamped(
                         clamped(column_offset) + (1 if key == "scroll-right" else -1)
                     )
