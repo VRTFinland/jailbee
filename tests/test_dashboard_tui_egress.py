@@ -228,14 +228,11 @@ def test_egress_mutation_failure_is_visible(mocker, tmp_path, returncode):
     assert run.rc == 0
 
     # Destination validation stays the CLI's: the dashboard passes it through.
-    assert child.call_args.args[0] == [
-        "jailbee",
-        "net",
-        "egress",
-        "add",
-        "invalid..example",
-        "alpha-x",
-    ]
+    child.assert_called_once_with(
+        ["jailbee", "net", "egress", "add", "invalid..example", "alpha-x"],
+        check=False,
+        cwd=tmp_path,
+    )
     assert any(f"exited {returncode}" in str(notice or "") for notice in run.notices())
 
 
