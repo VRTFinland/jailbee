@@ -1176,6 +1176,18 @@ def test_rendered_files_are_pushed_after_the_volume_and_restricted_egress():
     assert f"{ll.CONTAINER_STATE_DIR}/callback/jailbee_callback.py" in files
 
 
+def test_instance_env_is_written_before_hot_json():
+    """The callback re-reads instance.env when hot.json changes, so it must land first."""
+    incus = _incus(present=False)
+    ll.litellm_up(incus, _gcfg())
+    script = next(
+        c.args[2] for c in incus.exec_with_input.call_args_list if "/default/hot.json" in c.args[2]
+    )
+    puts = re.findall(r"^put (\S+) ", script, re.M)
+    base = f"{ll.CONTAINER_STATE_DIR}/default"
+    assert puts.index(f"{base}/instance.env") < puts.index(f"{base}/hot.json")
+
+
 def test_no_secret_reaches_incus_argv():
     incus = _incus(present=False)
     ll.litellm_up(incus, _gcfg())

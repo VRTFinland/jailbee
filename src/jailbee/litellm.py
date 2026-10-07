@@ -284,6 +284,7 @@ def _push_state(incus: Incus, files: list[InstanceFiles], callback_source: str) 
         base = f"{root}/{litellm_state.check_account(f.account)}"
         lines += [
             f"mkdir -p {base}/auth; chmod 0700 {base} {base}/auth",
+            # The callback re-reads instance.env on reload, so it lands before hot.json.
             f"put {base}/{ENV_FILE} {_b64(f.instance_env)}",
             f"put {base}/config.yaml {_b64(f.config_yaml)}",
             # Last: the running proxy reloads when this file changes.
