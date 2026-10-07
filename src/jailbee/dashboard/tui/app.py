@@ -167,6 +167,21 @@ class DashboardApp(App[int], inherit_bindings=False):
         event.prevent_default()
         self._after(self.session.handle_input(data))
 
+    def on_paste(self, event: events.Paste) -> None:
+        """A bracketed paste reaches the prompt or command line as one input.
+
+        Line breaks are dropped (a trailing one, as copied lines carry, leaves
+        no stray character): the single-line inputs would otherwise reject
+        the whole chunk as non-printable. With no text input open the paste is
+        ignored — fed to the table it would fire shortcuts (a pasted ``q``).
+        """
+        event.stop()
+        if not self.session.text_input_open:
+            return
+        text = "".join(event.text.strip("\r\n").splitlines())
+        if text:
+            self._after(self.session.handle_input(text.encode()))
+
     # --- frame -------------------------------------------------------------
 
     def refresh_frame(self) -> None:

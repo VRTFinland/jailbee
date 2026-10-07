@@ -1605,6 +1605,11 @@ class DashboardSession:
         if self.selected in self.rows:
             self.sel_index = self.rows.index(self.selected)
 
+    @property
+    def text_input_open(self) -> bool:
+        """Whether the prompt or the command line is taking typed text."""
+        return isinstance(self.overlay, (CommandState, TextPrompt))
+
     def handle_input(self, data: bytes) -> Outcome:
         """Apply one key, as the terminal sends it; ``"quit"`` ends the dashboard."""
         overlay = self.overlay

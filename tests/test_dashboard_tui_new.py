@@ -12,17 +12,12 @@ from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import ci, fake_branches, retarget_group
-from tests.dashboard_pilot import drive, keys, patch_in, patch_pause
+from tests.dashboard_pilot import Paste, drive, keys, patch_in, patch_pause
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
 # repo header -> Enter opens the repo menu -> Down to "New from PR..." -> Enter
 _NEW_PR_KEYS = ["enter", "down", "enter", *keys("123"), "enter"]
-
-
-def _paste(text: str):  # type: ignore[no-untyped-def]
-    """A step delivering ``text`` as one input, as a terminal paste arrives."""
-    return lambda app: app.session.handle_input(text.encode())
 
 
 def _prompts(run):  # type: ignore[no-untyped-def]
@@ -526,7 +521,7 @@ def test_repo_menu_new_from_pr_rejects_nonpositive_or_non_numeric_input(
     child = mocker.patch.object(tsession.subprocess, "run")
 
     # the answer arrives as one input (a paste), so the oversized case stays one frame
-    run = drive(mocker, ["enter", "j", "enter", _paste(answer), "enter"], [group])
+    run = drive(mocker, ["enter", "j", "enter", Paste(answer), "enter"], [group])
     assert run.rc == 0
 
     child.assert_not_called()
@@ -534,6 +529,37 @@ def test_repo_menu_new_from_pr_rejects_nonpositive_or_non_numeric_input(
     assert prompts[-1].purpose == "new-pr"
     assert prompts[-1].text == answer
     assert prompts[-1].error == error
+
+
+@pytest.mark.parametrize(
+    ("pasted", "typed"),
+    [
+        ("feature-x", "feature-x"),
+        ("feature-x\n", "feature-x"),
+        ("feature\r\n-x\n\n", "feature-x"),
+    ],
+)
+def test_a_paste_into_the_prompt_lands_as_one_input_without_line_breaks(
+    mocker, tmp_path, pasted, typed
+):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
+    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
+    run = drive(mocker, ["n", Paste(pasted), "ctrl+c"], [group])
+    assert run.trace[2].overlay.text == typed  # one frame for the whole paste
+
+
+def test_a_paste_into_the_command_line_lands_in_it(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    run = drive(mocker, ["!", Paste("ls -l\n"), "ctrl+c"], [group])
+    assert run.trace[2].overlay.text == "ls -l"
+
+
+def test_a_paste_with_no_text_input_open_is_ignored(mocker, tmp_path):
+    """Fed to the table, a pasted `q` or `j` would fire a shortcut."""
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    run = drive(mocker, [Paste("q"), Paste("j")], [group])
+    assert run.trace[1] == run.trace[0] == run.trace[2]
+    assert run.rc == 0
 
 
 def test_new_container_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):

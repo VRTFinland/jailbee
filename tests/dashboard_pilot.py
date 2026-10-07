@@ -110,7 +110,14 @@ class Wheel:
     horizontal: bool = False
 
 
-Step = str | Resize | Click | Wheel | Callable[["tapp.DashboardApp"], object]
+@dataclass(frozen=True)
+class Paste:
+    """A bracketed paste: the terminal's one chunk, delivered as Textual's `events.Paste`."""
+
+    text: str
+
+
+Step = str | Resize | Click | Wheel | Paste | Callable[["tapp.DashboardApp"], object]
 
 
 def hit_offset(app: tapp.DashboardApp, hit: Hit) -> tuple[int, int]:
@@ -192,6 +199,9 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         await pilot.press(step)
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
+        await pilot.pause()
+    elif isinstance(step, Paste):
+        app.post_message(events.Paste(step.text))
         await pilot.pause()
     elif isinstance(step, Click):
         await pilot.click(offset=hit_offset(app, step.hit), times=step.times, button=step.button)
