@@ -43,6 +43,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "sqlmodel>=0.0.16",
     "ruamel-yaml>=0.19.1",
+    "textual>=8.2",
 ]
 
 [project.optional-dependencies]
