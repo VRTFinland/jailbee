@@ -23,7 +23,7 @@ from jailbee.dashboard import details as dd
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.jobs import JobResult, JobRunner
+from jailbee.dashboard.jobs import JobRunner
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import loop as tloop
@@ -34,10 +34,11 @@ from jailbee.dashboard.tui import terminal as tterm
 from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
-from jailbee.state_service.protocol import Snapshot
 from tests.dashboard_fixtures import WIDE as _WIDE
 from tests.dashboard_fixtures import ci as _ci
 from tests.dashboard_fixtures import wide_group as _wide_group
+from tests.dashboard_pilot import FakeStateClient
+from tests.dashboard_pilot import SyncJobs as _SyncJobs
 
 
 def test_inline_editor_keeps_shortcuts_as_text():
@@ -5378,24 +5379,6 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-class _SyncJobs(JobRunner):
-    """`JobRunner` that runs the child through the (mocked) `subprocess.run`.
-
-    The real runner spawns a `Popen` and waits on a thread; patching `Popen`
-    is process-wide and breaks every other `subprocess.run`, so these tests
-    keep asserting on the one `subprocess.run` mock and get the result on the
-    next `poll()`, exactly as the real runner delivers it. The mock's
-    `returncode` is the child's exit code; stderr is the mock's `stderr` when it
-    is a string, else empty.
-    """
-
-    def start(self, key, label, argv, cwd, on_done):
-        proc = tsession.subprocess.run(argv, check=False, cwd=cwd)
-        self._labels[key] = label
-        stderr = proc.stderr if isinstance(proc.stderr, str) else ""
-        self._finished.append((key, on_done, JobResult(proc.returncode, stderr)))
-
-
 def _mock_terminal(mocker):
     """Patch everything ``run()`` touches on a real terminal and the state DB.
 
@@ -5404,6 +5387,7 @@ def _mock_terminal(mocker):
     before `Live` starts, so anything recorded while its ``call_count`` is 0
     happened while the user could still see their own shell.
     """
+    mocker.patch.object(tsession, "_interactive", return_value=True)
     mocker.patch.object(tsession, "collect_repo_roots", return_value=[Path("/x")])
     mocker.patch("jailbee.db.get_engine", return_value=mocker.Mock())
     mocker.patch.object(tsession, "seed_view_state", return_value=tsession.ViewState())
@@ -5420,40 +5404,6 @@ def _mock_terminal(mocker):
     mocker.patch.object(tloop.termios, "tcgetattr", return_value=object())
     mocker.patch.object(tloop.termios, "tcsetattr")
     return mocker.patch.object(tloop.tty, "setcbreak")
-
-
-class FakeStateClient:
-    """Stands in for `StateClient`: `latest()` returns the *same* groups list
-    every frame, so a test that mutates it changes what the next frame sees."""
-
-    def __init__(self, groups, *, git_enabled=False, status=None, fail=None):
-        self.groups = groups
-        self.git_enabled = git_enabled
-        self._status = status
-        self.fail = fail
-        self.events: list[tuple] = []
-        self.closed = False
-
-    def wait_first_snapshot(self, timeout):
-        self.events.append(("wait",))
-        if self.fail is not None:
-            raise self.fail
-        return self.latest()
-
-    def latest(self):
-        return Snapshot(1, datetime(2026, 10, 4, tzinfo=UTC), self.git_enabled, self.groups)
-
-    def status(self):
-        return self._status
-
-    def refresh(self):
-        self.events.append(("refresh",))
-
-    def set_active(self, value):
-        self.events.append(("active", value))
-
-    def close(self):
-        self.closed = True
 
 
 def _fake_state(mocker, groups, **kw) -> FakeStateClient:

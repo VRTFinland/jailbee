@@ -171,8 +171,12 @@ def open_state_client(cwd_root: Path | None) -> StateClient:
 
 
 def _interactive() -> bool:
-    """Whether the dashboard has a terminal to draw on and read from."""
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    """Whether the dashboard has a terminal to draw on and read from.
+
+    stderr too: Textual draws on it, so a redirected stderr would receive the
+    whole screen.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
 
 
 class Terminal(Protocol):

@@ -37,13 +37,18 @@ def terminal_title(groups: list[RepoGroup], selected: Row | None) -> str:
     return f"🐝 {group.prefix}/{name}"
 
 
+def title_sequence(text: str) -> str:
+    """One OSC 2 window-title sequence."""
+    return f"\x1b]2;{text}\x07"
+
+
 def set_terminal_title(text: str, *, stream: TextIO) -> None:
     """Write one OSC 2 window-title sequence.
 
     Best-effort: a terminal that does not implement it drops the sequence
     silently, so there is nothing to detect or guard against.
     """
-    stream.write(f"\x1b]2;{text}\x07")
+    stream.write(title_sequence(text))
     stream.flush()
 
 
