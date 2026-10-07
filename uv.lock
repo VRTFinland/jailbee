@@ -376,7 +376,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7" },
     { name = "ruamel-yaml", specifier = ">=0.19.1" },
     { name = "sqlmodel", specifier = ">=0.0.16" },
-    { name = "textual", specifier = ">=8.2" },
+    { name = "textual", specifier = ">=8.2,<9" },
     { name = "typer", specifier = ">=0.12" },
 ]
 provides-extras = ["gui", "ssh"]
