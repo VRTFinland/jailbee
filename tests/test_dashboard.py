@@ -3878,9 +3878,23 @@ def test_render_never_drops_a_column_and_scrolling_reaches_them_all(tmp_path):
 
 def test_render_keeps_column_widths_stable_across_terminal_widths(tmp_path):
     group = _wide_group(tmp_path)
-    narrow, wide = _header(_frame_at([group], width=60)), _header(_frame_at([group], width=200))
+    narrow = _header(_frame_at([group], width=40))
+    wide = _header(_frame_at([group], width=200))
+    shifted = _header(_frame_at([group], width=40, offset=1))
+    assert "\u203a" in narrow and "PR" not in narrow.split()
+    assert narrow.index("MODE") == wide.index("MODE")
     assert narrow.index("ST") == wide.index("ST")
-    assert narrow.index("NET") == wide.index("NET")
+    _, widths = dashboard._frame_columns(
+        [group],
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        enabled=_WIDE,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+    )
+    assert narrow.index("MODE") - narrow.index("NAME") == widths[0]
+    assert shifted.index("\u2039") - shifted.index("NAME") == widths[0]
+    assert shifted.index("ST") == narrow.index("MODE") + 3
 
 
 def test_render_lines_never_exceed_the_width_and_marks_show(tmp_path):
@@ -3935,6 +3949,13 @@ def test_render_scrolled_with_every_repo_folded(tmp_path):
     group = _wide_group(tmp_path)
     out = _frame_at([group], width=40, offset=3, folded=frozenset({"alpha"}))
     assert "alpha" in out and "\u2039" not in out and "\u203a" not in out
+
+
+def test_render_with_no_enabled_columns_has_no_scroll_marks(tmp_path):
+    out = _frame_at([_wide_group(tmp_path)], width=32, offset=3, enabled=())
+    assert "alpha" in out
+    assert "\u2039" not in out and "\u203a" not in out
+    assert all(len(line) <= 32 for line in out.splitlines())
 
 
 def test_render_keeps_only_enabled_column_at_tiny_width(tmp_path):
@@ -5608,7 +5629,7 @@ def _offsets(frames):
 
 
 def _narrow_console(mocker, width=44):
-    mocker.patch.object(
+    return mocker.patch.object(
         type(dashboard.console), "width", new_callable=mocker.PropertyMock, return_value=width
     )
 
@@ -5626,6 +5647,80 @@ def test_run_arrows_scroll_and_clamp_overshoot(mocker, tmp_path):
     peak = max(offsets)
     assert peak > 0
     assert offsets[-2:] == [peak, peak - 1]
+
+
+@pytest.mark.parametrize("width", [32, 33, 34])
+def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, tmp_path, width):
+    terminal_width = _narrow_console(mocker, width)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    enabled = ("name", "mode", "state", "created", "network")
+    _drive_run(
+        mocker,
+        [_RIGHT] * 6 + [_LEFT],
+        [_wide_group(tmp_path)],
+        view_state=dashboard.ViewState(columns=enabled),
+    )
+    assert _offsets(frames) == [0, 1, 2, 3, 3, 3, 3, 2]
+    mocker.stop(terminal_width)
+    rendered = []
+    for call in list(frames.call_args_list):
+        output = Console(file=io.StringIO(), record=True, width=width, height=24)
+        output.print(dashboard.render(*call.args, **call.kwargs))
+        rendered.append(output.export_text())
+    assert "NET" in _header(rendered[-2]).split()
+    assert "\u2039" in _header(rendered[-2]) and "\u203a" not in _header(rendered[-2])
+    assert all(len(line) <= width for text in rendered for line in text.splitlines())
+
+
+@pytest.mark.parametrize("initially_folded", [False, True])
+def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_folded):
+    mocker.patch.object(dashboard, "save_view_state")
+    terminal_width = _narrow_console(mocker, 34)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    group = _wide_group(tmp_path)
+    enabled = ("name", "mode", "state", "created", "network")
+    _drive_run(
+        mocker,
+        [_RIGHT] * 6 + _repo_menu_keys(group, "fold") + [_RIGHT] * 3,
+        [group],
+        view_state=dashboard.ViewState(
+            columns=enabled,
+            folded=frozenset({"alpha"}) if initially_folded else frozenset(),
+        ),
+    )
+    before = frames.call_args_list[6].kwargs
+    final = frames.call_args.kwargs
+    assert (before["column_offset"] == 0) if initially_folded else (before["column_offset"] > 0)
+    assert set(final["shown_columns"]) == (set(enabled) if initially_folded else {"name"})
+    assert final["column_offset"] == (3 if initially_folded else 0)
+    mocker.stop(terminal_width)
+    text = _frame_at(
+        [group], width=34, offset=final["column_offset"], enabled=enabled, folded=final["folded"]
+    )
+    if initially_folded:
+        assert "NET" in _header(text).split()
+    else:
+        assert "\u2039" not in text and "\u203a" not in text
+
+
+def test_repo_menu_fold_reclamps_without_resetting_optimized_widths(mocker, tmp_path):
+    mocker.patch.object(dashboard, "save_view_state")
+    _narrow_console(mocker, 32)
+    frames = mocker.patch.object(dashboard, "render", wraps=dashboard.render)
+    group = _wide_group(tmp_path)
+    other = dataclasses.replace(group, prefix="beta")
+    _drive_run(
+        mocker,
+        [b"o"] + [_RIGHT] * 6 + _repo_menu_keys(group, "fold"),
+        [group, other],
+        view_state=dashboard.ViewState(columns=_WIDE),
+    )
+    before, after = frames.call_args_list[7].kwargs, frames.call_args.kwargs
+    assert before["column_offset"] > 0
+    assert after["column_offset"] == before["column_offset"]
+    assert after["column_widths"] == before["column_widths"]
+    assert after["column_widths"] is not None
+    assert set(after["shown_columns"]) == set(_WIDE)
 
 
 def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):

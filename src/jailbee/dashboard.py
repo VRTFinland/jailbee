@@ -4873,6 +4873,9 @@ def run(
                                     run_dashboard_command(target, "repo", dact.prune_argv())
                                 elif verb == "fold":
                                     folded = toggle_folded(folded, target)
+                                    shown_columns = nonempty_columns(
+                                        groups, now=now(), enabled=enabled, folded=folded
+                                    )
                                     persist_view_state(
                                         ViewState(
                                             columns=enabled,

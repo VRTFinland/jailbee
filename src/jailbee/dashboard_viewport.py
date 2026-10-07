@@ -40,12 +40,10 @@ def _layout(widths: tuple[int, ...], available: int, offset: int) -> Viewport:
     if available <= 0:
         return Viewport((0,), (0,), 0, False, False)
     first = max(1, min(widths[0], available))
-    if len(widths) == 1 or first + 2 + MIN_PARTIAL > available:
+    if len(widths) == 1 or first == available:
         return Viewport((0,), (first,), 0, False, False)
-    left = offset > 0
+    left = offset > 0 and first + MARK_COST <= available
     used = first + (MARK_COST if left else 0)
-    if used + 2 + MIN_PARTIAL > available:
-        return Viewport((0,), (first,), 0, False, False)
     indices, drawn = [0], [first]
     last = len(widths) - 1
     for i in range(1 + offset, len(widths)):
@@ -81,12 +79,16 @@ def column_viewport(widths: tuple[int, ...], available: int, offset: int) -> Vie
     if available <= 0:
         return Viewport((0,), (0,), 0, False, False)
     highest = max(0, len(widths) - 2)
+    drawable = False
     for candidate in range(highest + 1):
-        if _complete(_layout(widths, available, candidate), widths):
+        view = _layout(widths, available, candidate)
+        drawable |= len(view.indices) > 1
+        if _complete(view, widths):
             highest = candidate
             break
-    clamped = max(0, min(offset, highest))
-    view = _layout(widths, available, clamped)
-    if view.indices == (0,):
+    if not drawable:
+        view = _layout(widths, available, 0)
         return Viewport(view.indices, view.widths, 0, False, False)
-    return view
+    # A mark-only intermediate step must remain traversable to later columns.
+    clamped = max(0, min(offset, highest))
+    return _layout(widths, available, clamped)
