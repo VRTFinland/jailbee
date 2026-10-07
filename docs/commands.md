@@ -1,5 +1,14 @@
 # Commands
 
+The terminal dashboard's container details panel (`v`) also shows changed
+submodules: their paths and gitlink status, ahead/behind commit counts, the
+committed diff against the container's base, and working-tree diff counts.
+Unchanged submodules are omitted; `?` means the probe could not determine a value.
+Read each details column from top to bottom. Related fields stay together:
+the parent repository's Git status and each submodule form their own groups,
+never split across columns. Narrow terminals use one column. Each column marks
+omitted rows with an ellipsis when the panel has insufficient space.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in that registered repository instead of the

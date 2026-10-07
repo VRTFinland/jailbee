@@ -21,12 +21,16 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markup import escape
 from rich.panel import Panel
 from rich.segment import Segment
-from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
 from jailbee.agent_activity import describe
-from jailbee.lifecycle import ContainerInfo, format_duration_short, ls_field_specs
+from jailbee.lifecycle import (
+    ContainerInfo,
+    format_duration_short,
+    ls_field_specs,
+    submodule_sub_rows,
+)
 
 if TYPE_CHECKING:
     from jailbee.dashboard import RepoGroup, Row
@@ -46,6 +50,7 @@ class DetailItem:
 
     label: str
     value: str
+    group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,14 +122,39 @@ def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
     network += f" · {c.ip or '—'}"
 
     git = (
-        _DASH
+        [DetailItem("git", _DASH, "git")]
         if c.git_status is None
-        else (
-            f"wt {cell('wt')} · ↑{cell('ahead_count')} ↓{cell('behind_count')}"
-            f" · ± {cell('target_diff')} · {cell('conflict')}"
-            f" · local ↑{cell('local_count')} ± {cell('local_diff')}"
-        )
+        else [
+            DetailItem("git wt", cell("wt"), "git"),
+            DetailItem("commits", f"↑{cell('ahead_count')} ↓{cell('behind_count')}", "git"),
+            DetailItem("target +/-", cell("target_diff"), "git"),
+            DetailItem("conflict", cell("conflict"), "git"),
+            DetailItem(
+                "local +/-",
+                f"↑{cell('local_count')} · {cell('local_diff')}",
+                "git",
+            ),
+        ]
     )
+    submodules: list[DetailItem] = []
+    if c.git_status is not None:
+        sub_rows = submodule_sub_rows(c)
+        for index, (sub, row) in enumerate(zip(c.git_status.submodules, sub_rows, strict=True)):
+            path = escape(sub.path)
+            group = f"submodule-{index}"
+            submodules.extend(
+                (
+                    DetailItem("submodule", path, group),
+                    DetailItem(
+                        "commits",
+                        f"{sub.status} · ↑{row['ahead_count'] or '0'} "
+                        f"↓{row['behind_count'] or '0'}",
+                        group,
+                    ),
+                    DetailItem("target +/-", row["target_diff"], group),
+                    DetailItem("working +/-", row["wt"], group),
+                )
+            )
     # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
     doing = ", ".join(
         escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity
@@ -136,20 +166,22 @@ def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
         created = f"{format_duration_short(now - c.created_at)} ago · {created}"
 
     return [
-        DetailItem("state", state),
-        DetailItem("network", network),
-        DetailItem("git", git),
-        DetailItem("agent", cell("agent")),
-        DetailItem("doing", _or_dash(doing)),
-        DetailItem("resources", f"mem {cell('mem')} · cpu {cell('cpu')}"),
-        DetailItem("mode / base", f"{escape(c.mode)} · {cell('base')}"),
-        DetailItem("github", _or_dash(github)),
+        DetailItem("state", state, "runtime"),
+        DetailItem("network", network, "runtime"),
+        *git,
+        *submodules,
+        DetailItem("agent", cell("agent"), "activity"),
+        DetailItem("doing", _or_dash(doing), "activity"),
+        DetailItem("resources", f"mem {cell('mem')} · cpu {cell('cpu')}", "resources"),
+        DetailItem("mode / base", f"{escape(c.mode)} · {cell('base')}", "configuration"),
+        DetailItem("github", _or_dash(github), "github"),
         DetailItem(
             "group",
             escape(c.credential_group) if c.credential_group else "[dim]inherits repo[/dim]",
+            "identity",
         ),
-        DetailItem("created", created),
-        DetailItem("mounts", _or_dash(", ".join(escape(m) for m in c.optional_mounts))),
+        DetailItem("created", created, "identity"),
+        DetailItem("mounts", _or_dash(", ".join(escape(m) for m in c.optional_mounts)), "mounts"),
     ]
 
 
@@ -214,15 +246,10 @@ def details_for(
 
 @dataclass(frozen=True)
 class _DetailsBody:
-    """The label/value grid, flowed into as many pairs per line as fit, then the
-    agent activity lines under it.
-
-    ``max_rows`` caps all content rows. The activity block takes the rows
-    ``reserve`` asks for, but never so many that the grid keeps fewer than
-    ``_MIN_GRID_ROWS``; the grid is cut to the rest with a dim ``…`` as its last
-    line, and the activity lines are cut from the end (message, then tool, then
-    the state line). With ``fixed`` each block is also padded to its share, so
-    the panel keeps one shape whatever it describes."""
+    """Whole detail groups are packed into the shortest column, followed by
+    agent activity. ``max_rows`` caps each column independently with an
+    ellipsis; activity is clipped after its reserved rows. With ``fixed`` both
+    blocks are padded to their share so the panel keeps one shape."""
 
     items: tuple[DetailItem, ...]
     activity: tuple[str, ...]
@@ -237,9 +264,6 @@ class _DetailsBody:
             activity_rows = min(self.reserve, max(0, self.max_rows - _MIN_GRID_ROWS))
             grid_rows = self.max_rows - activity_rows
         lines = self._grid_lines(console, options)
-        if grid_rows is not None and len(lines) > grid_rows:
-            keep = max(0, grid_rows - 1)
-            lines = [*lines[:keep], [Segment("…", Style(dim=True))]]
         if self.fixed and grid_rows is not None:
             lines += [[_BLANK] for _ in range(grid_rows - len(lines))]
         shown = self.activity[:activity_rows]
@@ -260,20 +284,39 @@ class _DetailsBody:
 
     def _grid_lines(self, console: Console, options: ConsoleOptions) -> list[list[Segment]]:
         pairs = max(1, min(DETAILS_MAX_PAIRS, options.max_width // DETAILS_PAIR_WIDTH))
+        columns: list[list[DetailItem]] = [[] for _ in range(pairs)]
+        groups: list[list[DetailItem]] = []
+        for item in self.items:
+            if item.group is not None and groups and groups[-1][0].group == item.group:
+                groups[-1].append(item)
+            else:
+                groups.append([item])
+        for group in groups:
+            target = min(range(pairs), key=lambda index: len(columns[index]))
+            columns[target].extend(group)
+
         pair_width = options.max_width // pairs
         label_width = min(12, max(1, pair_width // 3))
         # Padding adds one gap after every column except the last.
         value_width = max(1, (options.max_width - (2 * pairs - 1)) // pairs - label_width)
+        row_count = max((len(column) for column in columns), default=0)
+        if self.max_rows is not None:
+            activity_rows = min(self.reserve, max(0, self.max_rows - _MIN_GRID_ROWS))
+            row_count = min(row_count, self.max_rows - activity_rows)
         grid = Table.grid(padding=(0, 1), expand=False)
         for _ in range(pairs):
             grid.add_column(width=label_width, style="bold", no_wrap=True, overflow="ellipsis")
             grid.add_column(width=value_width, overflow="ellipsis", no_wrap=True)
-        for start in range(0, len(self.items), pairs):
-            chunk = self.items[start : start + pairs]
+        for row in range(row_count):
             cells: list[str] = []
-            for item in chunk:
-                cells += [item.label, item.value]
-            cells += ["", ""] * (pairs - len(chunk))
+            for column in columns:
+                if row == row_count - 1 and len(column) > row_count:
+                    cells += ["", "…"]
+                elif row < len(column):
+                    item = column[row]
+                    cells += [item.label, item.value]
+                else:
+                    cells += ["", ""]
             grid.add_row(*cells)
         return console.render_lines(grid, options.update(height=None), pad=False)
 
