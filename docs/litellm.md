@@ -397,7 +397,7 @@ proxy configuration and syncs the repo's running containers. Edits to routes
 and profiles (a model, `context_window`, `effort`, `api_base`, a new route, a new or changed API key) are **loaded into the running proxy without a restart**:
 open `claude-jb` sessions keep going, and a stream in flight finishes on the
 route it started on. Anything the proxy only reads at start (`extra`
-outside its `model_list` and any secret only it names, the proxy's settings, the callback itself) restarts the instance that changed,
+outside its `model_list` and any secret it names, the proxy's settings, the callback itself) restarts the instance that changed,
 saying which. If the proxy does not confirm a reload within about ten seconds,
 or refuses it, `apply` restarts the instance instead and says why.
 `jailbee apply --no-restart` still applies reloads, since they interrupt
@@ -542,7 +542,7 @@ back on; that is your choice.
   Resuming a native session with signed Opus thinking blocks through
   `claude-jb` is untested.
 - Changing a route reloads it into the account's running instance; changing
-  `litellm.extra` outside its `model_list` (or a secret only it names) or the proxy's own settings restarts it, interrupting
+  `litellm.extra` outside its `model_list` (or any secret it names) or the proxy's own settings restarts it, interrupting
   every container's streams on that account (`jailbee litellm up`, or
   `jailbee apply` in any repo). `apply --no-restart` defers the restart.
   An instance that serves no route at all cannot take its first route by
