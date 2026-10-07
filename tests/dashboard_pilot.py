@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from textual import _wait as textual_wait
 from textual import events
 
 from jailbee.dashboard import menus as dmenus
@@ -34,6 +35,9 @@ from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
+# Pilot's wait_for_idle sleeps this long per poll (20 ms by default, twice per
+# key press); the session is synchronous, so a poll of 1 ms is as deterministic.
+_SLEEP_GRANULARITY = 0.001
 
 
 class SyncJobs(JobRunner):
@@ -230,6 +234,8 @@ def drive(  # type: ignore[no-untyped-def]
     steps, Ctrl-C is pressed until the app quits, as the old harness padded
     its input.
     """
+    # Read at call time by `wait_for_idle(0)`, which `pilot.press`/`pause` use.
+    mocker.patch.object(textual_wait, "SLEEP_GRANULARITY", _SLEEP_GRANULARITY)
     if client is None:
         startup, client = start_session(
             mocker,
