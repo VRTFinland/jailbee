@@ -819,7 +819,7 @@ config (`agent_activity: false` stops the service reading an agent's
 transcript, so the details panel and Qt tooltip show no activity lines), and the service log is `~/.local/state/jailbee/state-service.log`.
 `-i`/`--interval`, `--git-interval` and `--no-git` are deprecated: warned about
 and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
-make the service gather. Requires a TTY. Orphan containers (jailbee-managed but
+make the service gather. Requires a TTY on stdin, stdout and stderr (`jailbee dashboard 2>file` is refused). Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
 `m` toggles mouse support (clicks, wheel, hover; on by default, `dashboard.mouse: false` in the global config turns it off).

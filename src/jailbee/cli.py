@@ -3793,7 +3793,7 @@ def _run_dashboard(
     registered repos only — the server's working directory is no repo anyone
     chose — and skips the setup offer, whose steps run on the host. A
     *restricted* session additionally gets the TUI in its restricted form
-    (see `jailbee.dashboard.tui.loop.run`'s `remote`).
+    (see `jailbee.dashboard.tui.session.DashboardSession`'s `remote`).
     """
     from pydantic import ValidationError
 
@@ -3884,9 +3884,9 @@ def _run_dashboard(
         info(f"Launched jailbee dashboard GUI in the background (logs: {log_path}).")
         return 0
 
-    from jailbee.dashboard.tui import loop as tloop
+    from jailbee.dashboard.tui import app as tapp
 
-    return tloop.run(
+    return tapp.run(
         Incus(),
         cwd_root=cwd_root,
         remote=remote,

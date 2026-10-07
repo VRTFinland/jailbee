@@ -1,6 +1,6 @@
 """The TUI dashboard's settings overlay: which columns show, which repos fold.
 
-A pure state machine plus a renderer, separate from ``dashboard.tui.loop``
+A pure state machine plus a renderer, separate from ``dashboard.tui.app``
 because this is a self-contained concern. Nothing
 here touches the terminal, the database or ``lifecycle``: the field
 vocabulary and the set of dynamic columns are passed in, so the overlay can

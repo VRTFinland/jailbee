@@ -42,16 +42,6 @@ def title_sequence(text: str) -> str:
     return f"\x1b]2;{text}\x07"
 
 
-def set_terminal_title(text: str, *, stream: TextIO) -> None:
-    """Write one OSC 2 window-title sequence.
-
-    Best-effort: a terminal that does not implement it drops the sequence
-    silently, so there is nothing to detect or guard against.
-    """
-    stream.write(title_sequence(text))
-    stream.flush()
-
-
 @contextmanager
 def terminal_title_scope(stream: TextIO) -> Iterator[None]:
     """Save the terminal's own title on entry, restore it on exit.

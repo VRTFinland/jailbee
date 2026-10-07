@@ -6,7 +6,7 @@ Publish… and Delete…, and each change asks its own No-first question before 
 real `jailbee outbox …` child runs it. Deleting a single action or comment
 stays in `jailbee outbox browse`, which the last entry hands the terminal to.
 
-Everything here is pure; `jailbee.dashboard.tui.loop` wires it into `run()`. Which
+Everything here is pure; `jailbee.dashboard.tui.session` wires it into `DashboardSession`. Which
 entries a proposal offers is decided by the caller from the remote-SSH policy
 (`dashboard.commands.permitted`), as for snapshots.
 

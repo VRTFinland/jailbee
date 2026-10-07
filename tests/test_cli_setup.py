@@ -421,7 +421,7 @@ def test_dashboard_offers_to_run_setup(mocker) -> None:
     run = _stub_run(mocker)
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
-    mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
 
     result = runner.invoke(app, ["dashboard"], input="y\n")
 

@@ -3712,10 +3712,8 @@ def test_terminal_title_of_an_unknown_container_falls_back(tmp_path):
     assert tterm.terminal_title(groups, dmodel.Row("container", "ghost")) == "🐝 jailbee"
 
 
-def test_set_terminal_title_writes_one_osc2_sequence():
-    stream = io.StringIO()
-    tterm.set_terminal_title("🐝 alpha/one", stream=stream)
-    assert stream.getvalue() == "\x1b]2;🐝 alpha/one\x07"
+def test_title_sequence_is_one_osc2_sequence():
+    assert tterm.title_sequence("🐝 alpha/one") == "\x1b]2;🐝 alpha/one\x07"
 
 
 def test_terminal_title_scope_pushes_on_entry_and_pops_on_exit():
@@ -4275,7 +4273,7 @@ def test_render_shows_memory_used_and_limit(tmp_path):
 def test_dashboard_command_delegates_to_run(mocker):
     from jailbee.config import ConfigNotFoundError
 
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     result = CliRunner().invoke(app, ["dashboard", "-i", "5", "--no-git"])
@@ -4289,7 +4287,7 @@ def test_dashboard_command_delegates_to_run(mocker):
 def test_dashboard_command_passes_the_cwd_root_when_its_config_loads(mocker):
     """The probe answers "is the cwd a repo we can show", and the cwd's own
     *root* is what both dashboards now key on."""
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.config.load_repo_config", return_value=mocker.Mock())
     result = CliRunner().invoke(app, ["dashboard"])
@@ -4306,7 +4304,7 @@ def test_dashboard_command_passes_none_when_the_cwd_repo_config_is_broken(mocker
     """
     from jailbee.config import ConfigError
 
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("bad yaml"))
     result = CliRunner().invoke(app, ["dashboard"])
@@ -4324,7 +4322,7 @@ def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
     traceback is the one failure a user cannot work around, so the probe treats
     it exactly like an unloadable config: this is not the cwd repo.
     """
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch(
         "jailbee.config.load_repo_config",
@@ -4342,7 +4340,7 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
     monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", '["snapshot"]')
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
@@ -4368,7 +4366,7 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
 def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, policy_json):
     monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
     monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
-    run = mocker.patch("jailbee.dashboard.tui.loop.run")
+    run = mocker.patch("jailbee.dashboard.tui.app.run")
     popen = mocker.patch("subprocess.Popen")
     argv = ["dashboard"]
     if policy_json is not None:
@@ -4386,7 +4384,7 @@ def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     mocker.patch("jailbee.config.load_repo_config", side_effect=OSError("no repo"))
     mocker.patch("jailbee.cli._advise_setup")
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
     result = CliRunner().invoke(app, ["dashboard"])
@@ -4451,7 +4449,7 @@ def test_dashboard_command_lets_a_programming_error_out_of_the_probe(mocker):
     bug in the loader means something else entirely and must still surface
     rather than silently rendering a dashboard with the cwd repo missing.
     """
-    mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.config.load_repo_config", side_effect=RuntimeError("bug"))
     result = CliRunner().invoke(app, ["dashboard"])
@@ -4463,7 +4461,7 @@ def test_tui_command_is_an_alias_for_the_dashboard(mocker):
     """`jailbee tui` mirrors `jailbee gui`: the TUI frontend, same options."""
     from jailbee.config import ConfigNotFoundError
 
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     result = CliRunner().invoke(app, ["tui", "-i", "5", "--git-interval", "7", "--no-git"])
@@ -5285,7 +5283,7 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
     monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
-    run = mocker.patch("jailbee.dashboard.tui.loop.run", return_value=0)
+    run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     mocker.patch("jailbee.incus.Incus")
 
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig

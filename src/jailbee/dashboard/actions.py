@@ -2,7 +2,7 @@
 
 The repo menu gains `apply`, `doctor`, `disk-usage` and `prune`; the container
 menu gains the autostart run, snapshots and optional mounts. Everything here
-is pure. `jailbee.dashboard.tui.loop` wires it into `run()`, and every command runs as
+is pure. `jailbee.dashboard.tui.session` wires it into `DashboardSession`, and every command runs as
 a real `jailbee` child, so the CLI stays the one place that validates a tag, a
 mount kind or a restart. This module only decides which entries a row offers
 and which argv each one runs.

@@ -3287,6 +3287,8 @@ jailbee destroy feat-dashsmoke --force
 # Non-TTY guard:
 echo "" | jailbee dashboard
 # expect: exit 1, "jailbee dashboard requires an interactive terminal."
+jailbee dashboard 2>/dev/null
+# expect: the same refusal — stderr must be a terminal too
 ```
 
 ## Host target status after pull smoke test
