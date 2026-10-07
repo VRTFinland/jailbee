@@ -17,6 +17,7 @@ from jailbee.litellm_render import (
     container_profiles,
     deployment_id,
     egress_hosts,
+    env_references,
     merge_extra,
     render_callback_data,
     render_instance_config,
@@ -381,9 +382,21 @@ def test_instance_files_digest_changes_with_every_part():
     rekeyed = render_instance_files(LiteLLMConfig(), "default", port=4100, master_key="k2")
     assert rekeyed.digest("callback v1") != base
     secret = render_instance_files(
-        LiteLLMConfig(), "default", port=4100, master_key="k1", secrets={"K": "v"}
+        LiteLLMConfig(),
+        "default",
+        port=4100,
+        master_key="k1",
+        secrets={"K": "v"},
+        extra={"litellm_settings": {"k": "os.environ/K"}},
     )
-    assert secret.digest("callback v1") != base
+    settings_only = render_instance_files(
+        LiteLLMConfig(),
+        "default",
+        port=4100,
+        master_key="k1",
+        extra={"litellm_settings": {"k": "os.environ/K"}},
+    )
+    assert secret.digest("callback v1") != settings_only.digest("callback v1")
     assert isinstance(files, InstanceFiles) and files.account == "default"
 
 
@@ -586,6 +599,63 @@ def _files(**kw):
     )
 
 
+_KIMI_CFG = {"routes": {"kimi": _KIMI}}
+
+
+def test_env_references_finds_every_environ_string():
+    value = {"a": "os.environ/A", "b": ["x", {"c": "os.environ/C"}], "d": 3, "e": "plain"}
+    assert env_references(value) == {"A", "C"}
+
+
+def test_a_secret_only_the_model_list_names_is_a_reload_not_a_restart():
+    cfg = LiteLLMConfig.model_validate(_KIMI_CFG)
+    one = _files(cfg=cfg, secrets={"OPENROUTER_API_KEY": "sk-or-1"})
+    two = _files(cfg=cfg, secrets={"OPENROUTER_API_KEY": "sk-or-2"})
+    assert one.digest("cb") == two.digest("cb")
+    assert one.hot_digest() != two.hot_digest()
+    assert "OPENROUTER_API_KEY='sk-or-2'" in two.instance_env
+    assert "OPENROUTER_API_KEY" not in two.env_settings
+    env = json.loads(two.hot_json)["env"]
+    assert env["names"] == ["OPENROUTER_API_KEY"]
+    assert "sk-or-2" not in two.hot_json
+
+
+def test_a_new_api_key_route_is_a_reload_not_a_restart():
+    before = _files()
+    after = _files(
+        cfg=LiteLLMConfig.model_validate(_KIMI_CFG), secrets={"OPENROUTER_API_KEY": "sk-or-1"}
+    )
+    assert before.digest("cb") == after.digest("cb")
+    assert before.hot_digest() != after.hot_digest()
+
+
+def test_an_unreferenced_secret_reaches_no_file():
+    base = _files()
+    stray = _files(secrets={"UNUSED_KEY": "v"})
+    assert stray.instance_env == base.instance_env
+    assert stray.hot_json == base.hot_json
+    assert json.loads(stray.hot_json)["env"]["names"] == []
+
+
+def test_a_secret_the_settings_name_stays_a_restart():
+    extra = {"litellm_settings": {"success_callback_key": "os.environ/K"}}
+    one = _files(extra=extra, secrets={"K": "v1"})
+    two = _files(extra=extra, secrets={"K": "v2"})
+    assert one.digest("cb") != two.digest("cb")
+    assert json.loads(one.hot_json)["env"]["names"] == []
+
+
+def test_a_secret_named_by_both_halves_stays_a_restart():
+    extra = {
+        "litellm_settings": {"k": "os.environ/OPENROUTER_API_KEY"},
+    }
+    cfg = LiteLLMConfig.model_validate(_KIMI_CFG)
+    one = _files(cfg=cfg, extra=extra, secrets={"OPENROUTER_API_KEY": "a"})
+    two = _files(cfg=cfg, extra=extra, secrets={"OPENROUTER_API_KEY": "b"})
+    assert one.digest("cb") != two.digest("cb")
+    assert json.loads(one.hot_json)["env"]["names"] == []
+
+
 def test_every_deployment_has_a_stable_unique_id():
     models = json.loads(_files().hot_json)["models"]
     ids = [m["model_info"]["id"] for m in models]
@@ -614,6 +684,7 @@ def test_hot_json_carries_the_callback_table_and_the_model_list():
     assert hot["callback"] == render_callback_data(LiteLLMConfig(), "default")
     assert hot["models"] == yaml.safe_load(files.config_yaml)["model_list"]
     assert "model_list" not in yaml.safe_load(files.settings_yaml)
+    assert hot["env"] == {"names": [], "digest": hot["env"]["digest"]}
 
 
 def test_digest_ignores_routes_and_effort_but_not_what_the_proxy_reads_at_start():
@@ -624,8 +695,11 @@ def test_digest_ignores_routes_and_effort_but_not_what_the_proxy_reads_at_start(
     settings = _files(extra={"router_settings": {"num_retries": 2}})
     assert settings.digest("cb") != base.digest("cb")
     assert settings.hot_digest() == base.hot_digest()
-    secret = _files(secrets={"K": "v"})
-    assert secret.digest("cb") != base.digest("cb") and secret.hot_digest() == base.hot_digest()
+    cfg = LiteLLMConfig.model_validate(_KIMI_CFG)
+    keyed = _files(cfg=cfg, secrets={"OPENROUTER_API_KEY": "v"})
+    rotated = _files(cfg=cfg, secrets={"OPENROUTER_API_KEY": "w"})
+    assert keyed.digest("cb") == rotated.digest("cb")
+    assert keyed.hot_digest() != rotated.hot_digest()
     assert base.digest("cb v2") != base.digest("cb")
 
 

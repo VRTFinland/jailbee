@@ -30,8 +30,10 @@ for `/model` and for sessions started before tier aliases existed.
 Secrets appear in the rendered config only as `os.environ/<NAME>`; their
 values live in the per-instance `instance.env`.
 
-`hot.json` is what the callback re-reads while the proxy runs (alias table +
-`model_list`); everything else is read at start and needs a restart.
+`hot.json` is what the callback re-reads while the proxy runs (alias table,
+`model_list`, and the names of the secrets `model_list` uses, which it then
+re-reads from `instance.env`); everything else is read at start and needs a
+restart.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ CONTAINER_STATE_DIR = "/var/lib/jailbee-litellm"
 HOT_FILE = "hot.json"
 ACK_FILE = "applied.json"
 ENV_FILE = "instance.env"
+_ENV_PREFIX = "os.environ/"
 _CHEAPEST_FIRST = ("haiku", "sonnet", "opus", "fable")
 TIER_LEVELS: Mapping[str, str] = {
     "fable": "most-capable",
@@ -233,6 +236,22 @@ def _with_ids(rendered: dict[str, object]) -> dict[str, object]:
     return {**rendered, "model_list": out}
 
 
+def env_references(value: object) -> set[str]:
+    """Every `NAME` of an `os.environ/NAME` string anywhere in `value`."""
+    if isinstance(value, str):
+        return {value.removeprefix(_ENV_PREFIX)} if value.startswith(_ENV_PREFIX) else set()
+    if isinstance(value, Mapping):
+        return {n for v in value.values() for n in env_references(v)}
+    if isinstance(value, list):
+        return {n for v in value for n in env_references(v)}
+    return set()
+
+
+def _values_digest(values: Mapping[str, str]) -> str:
+    """Changes when any value does; hot.json carries this, never a value."""
+    return hashlib.sha256(json.dumps(dict(values), sort_keys=True).encode()).hexdigest()
+
+
 def render_instance_config(
     cfg: LiteLLMConfig,
     account: str,
@@ -311,6 +330,8 @@ class InstanceFiles:
 
     `settings_yaml` is `config_yaml` without its `model_list`: the part of the
     config only a restart re-reads. It is the digest's basis and is never pushed.
+    `env_settings` is `instance_env` without the secrets only `model_list`
+    references: the part only a restart re-reads; never pushed.
     `login_providers` are the logins the instance's routes need; `litellm._converge`
     reads them, the digests do not.
     """
@@ -320,6 +341,7 @@ class InstanceFiles:
     settings_yaml: str
     hot_json: str
     instance_env: str
+    env_settings: str
     login_providers: tuple[str, ...] = ()
 
     def digest(self, callback_source: str) -> str:
@@ -328,7 +350,7 @@ class InstanceFiles:
         for name, text in (
             ("jailbee_callback.py", callback_source),
             ("settings.yaml", self.settings_yaml),
-            ("instance.env", self.instance_env),
+            ("instance.env", self.env_settings),
         ):
             sha.update(name.encode() + b"\0" + text.encode() + b"\0")
         return sha.hexdigest()
@@ -349,25 +371,31 @@ def render_instance_files(
     scopes: Scopes | None = None,
 ) -> InstanceFiles:
     config = render_instance_config(cfg, account, extra=extra, scopes=scopes)
+    settings = {k: v for k, v in config.items() if k != "model_list"}
+    referenced = env_references(config)
+    cold_names = env_references(settings)
+    own = {n: v for n, v in (secrets or {}).items() if n in referenced}
+    cold = {n: v for n, v in own.items() if n in cold_names}
+    hot_env = {n: v for n, v in own.items() if n not in cold_names}
     hot = {
         "callback": render_callback_data(cfg, account, scopes=scopes),
         "models": config["model_list"],
+        "env": {"names": sorted(hot_env), "digest": _values_digest(hot_env)},
     }
-    providers = account_login_providers(cfg, account, scopes)
+
+    def env(values: Mapping[str, str]) -> str:
+        return render_instance_env(
+            port=port, master_key=master_key, account=account, secrets=values
+        )
+
     return InstanceFiles(
         account=account,
         config_yaml=yaml.safe_dump(config, sort_keys=False),
-        settings_yaml=yaml.safe_dump(
-            {k: v for k, v in config.items() if k != "model_list"}, sort_keys=False
-        ),
+        settings_yaml=yaml.safe_dump(settings, sort_keys=False),
         hot_json=json.dumps(hot, indent=2, default=str) + "\n",
-        instance_env=render_instance_env(
-            port=port,
-            master_key=master_key,
-            account=account,
-            secrets=secrets,
-        ),
-        login_providers=providers,
+        instance_env=env(own),
+        env_settings=env(cold),
+        login_providers=account_login_providers(cfg, account, scopes),
     )
 
 

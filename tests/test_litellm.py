@@ -1408,6 +1408,8 @@ def test_a_secret_reaches_only_the_pushed_instance_env(xdg: Path):
     assert "OPENROUTER_API_KEY='sk-or-test-123'" in env
     config = _pushed(incus)[f"{ll.CONTAINER_STATE_DIR}/default/config.yaml"]
     assert "sk-or-test-123" not in config
+    hot = _pushed(incus)[f"{ll.CONTAINER_STATE_DIR}/default/hot.json"]
+    assert "sk-or-test-123" not in hot
     argv = [
         repr(c.args[1]) for c in incus.exec.call_args_list + incus.exec_with_input.call_args_list
     ]
@@ -1420,12 +1422,25 @@ def test_a_secret_reaches_only_the_pushed_instance_env(xdg: Path):
     assert on_disk == []
 
 
-def test_a_changed_secret_restarts_the_instance(xdg: Path):
+def test_a_changed_secret_reloads_the_running_instance(xdg: Path):
     _secrets(xdg, "OPENROUTER_API_KEY=sk-or-1\n")
     incus = _incus(present=True)
     ll.litellm_up(incus, _gcfg(routes={"kimi": _KIMI}))
     _secrets(xdg, "OPENROUTER_API_KEY=sk-or-2\n")
-    assert ll.litellm_up(incus, _gcfg(routes={"kimi": _KIMI})).restarted == ["default"]
+    result = ll.litellm_up(incus, _gcfg(routes={"kimi": _KIMI}))
+    assert (result.restarted, result.reloaded) == ([], ["default"])
+    env = _pushed(incus)[f"{ll.CONTAINER_STATE_DIR}/default/instance.env"]
+    assert "OPENROUTER_API_KEY='sk-or-2'" in env
+
+
+def test_a_new_api_key_route_is_reloaded_by_apply(xdg: Path):
+    incus = _incus(present=True)
+    ll.litellm_up(incus, _gcfg())
+    _secrets(xdg, "OPENROUTER_API_KEY=sk-or-1\n")
+    incus.reset_mock(return_value=False, side_effect=False)
+    result = ll.litellm_reconcile(incus, _gcfg(routes={"kimi": _KIMI}))
+    assert (result.reloaded, result.restarted, result.pending) == (["default"], [], [])
+    assert _restarts(incus) == []
 
 
 def test_up_allows_the_providers_of_every_served_route(xdg: Path):

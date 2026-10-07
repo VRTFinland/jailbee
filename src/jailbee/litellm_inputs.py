@@ -2,8 +2,8 @@
 
 - `~/.config/jailbee/litellm/secrets.env` (0600, `NAME=value` lines): API keys
   that routes name in `api_key`, or that `extra` names as `os.environ/NAME`.
-  Only referenced names are read out, and they go only into the proxy's
-  per-instance environment (`litellm_render.render_instance_env`).
+  Only referenced names are read out, and they go only into the environment of the
+  instances whose config references them (`litellm_render.render_instance_env`).
 - the `litellm.extra` fragment: raw LiteLLM config merged into every instance.
 
 Neither is read at config load, so a missing secret breaks `up` (and shows in
@@ -23,13 +23,12 @@ import yaml
 
 from jailbee.config.models_litellm import check_secret_name
 from jailbee.global_config import default_global_config_path
-from jailbee.litellm_render import CATCH_ALL
+from jailbee.litellm_render import CATCH_ALL, env_references
 from jailbee.paths import expand_path
 
 if TYPE_CHECKING:
     from jailbee.config.models_litellm import LiteLLMConfig
 
-_ENV_PREFIX = "os.environ/"
 _MAPPINGS = ("general_settings", "litellm_settings", "router_settings", "environment_variables")
 
 
@@ -45,17 +44,6 @@ class HostInputs:
 
 def secrets_path() -> Path:
     return default_global_config_path().parent / "litellm" / "secrets.env"
-
-
-def extra_secret_names(fragment: object) -> set[str]:
-    """Every `os.environ/NAME` value anywhere in the fragment."""
-    if isinstance(fragment, str):
-        return {fragment.removeprefix(_ENV_PREFIX)} if fragment.startswith(_ENV_PREFIX) else set()
-    if isinstance(fragment, dict):
-        return {n for value in fragment.values() for n in extra_secret_names(value)}
-    if isinstance(fragment, list):
-        return {n for value in fragment for n in extra_secret_names(value)}
-    return set()
 
 
 def _reserved(name: str, origin: str) -> LiteLLMInputError | None:
@@ -96,7 +84,7 @@ def check_extra(fragment: dict[str, object], origin: str) -> None:
             f"litellm.extra {origin} sets general_settings.master_key; jailbee generates it"
         )
     env = fragment.get("environment_variables")
-    names = [*(env if isinstance(env, dict) else {}), *extra_secret_names(fragment)]
+    names = [*(env if isinstance(env, dict) else {}), *env_references(fragment)]
     for name in names:
         problem = _reserved(str(name), origin)
         if problem is not None:
@@ -145,7 +133,7 @@ def referenced_secrets(
     names = {
         r.api_key for view in (cfg, *scopes) for r in view.effective_routes().values() if r.api_key
     }
-    names |= extra_secret_names(extra or {})
+    names |= env_references(extra or {})
     return sorted(names)
 
 
