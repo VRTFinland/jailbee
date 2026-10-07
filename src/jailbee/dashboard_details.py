@@ -26,7 +26,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jailbee.agent_activity import describe
-from jailbee.lifecycle import ContainerInfo, format_duration_short, ls_field_specs
+from jailbee.lifecycle import ContainerInfo, format_duration_short, ls_field_specs, submodule_sub_rows
 
 if TYPE_CHECKING:
     from jailbee.dashboard import RepoGroup, Row
@@ -125,6 +125,23 @@ def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
             f" · local ↑{cell('local_count')} ± {cell('local_diff')}"
         )
     )
+    submodules: list[DetailItem] = []
+    if c.git_status is not None:
+        sub_rows = submodule_sub_rows(c)
+        for sub, row in zip(c.git_status.submodules, sub_rows, strict=True):
+            path = escape(sub.path)
+            submodules.extend(
+                (
+                    DetailItem("submodule", path),
+                    DetailItem(
+                        "commits",
+                        f"{sub.status} · ↑{row['ahead_count'] or '0'} "
+                        f"↓{row['behind_count'] or '0'}",
+                    ),
+                    DetailItem("target +/-", row["target_diff"]),
+                    DetailItem("working +/-", row["wt"]),
+                )
+            )
     # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
     doing = ", ".join(
         escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity
@@ -139,6 +156,7 @@ def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
         DetailItem("state", state),
         DetailItem("network", network),
         DetailItem("git", git),
+        *submodules,
         DetailItem("agent", cell("agent")),
         DetailItem("doing", _or_dash(doing)),
         DetailItem("resources", f"mem {cell('mem')} · cpu {cell('cpu')}"),

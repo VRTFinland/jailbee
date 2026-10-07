@@ -13,7 +13,7 @@ from jailbee import dashboard
 from jailbee import dashboard_details as dd
 from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
-from jailbee.git_status import GitStatus
+from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
 from jailbee.procstat import ProcessActivity
 
@@ -110,6 +110,122 @@ def test_absent_values_render_as_a_dash() -> None:
     items = dd.container_details(_c(), NOW)
     for label in ("git", "agent", "doing", "github", "mounts"):
         assert _plain(_value(items, label)) == "—", label
+
+
+def test_changed_submodules_follow_git_with_escaped_paths_and_stats() -> None:
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        submodules=(
+            SubmoduleChange(
+                path="deps/" + "segment/" * 16 + "[bold]widget",
+                status="modified",
+                ahead_commits=2,
+                behind_commits=1,
+                target_ins=7,
+                target_del=3,
+                wt_ins=4,
+                wt_del=0,
+            ),
+        ),
+    )
+    items = dd.container_details(_c(git_status=status), NOW)
+
+    assert [item.label for item in items][2:7] == [
+        "git",
+        "submodule",
+        "commits",
+        "target +/-",
+        "working +/-",
+    ]
+    assert _plain(items[3].value) == "deps/" + "segment/" * 16 + "[bold]widget"
+    assert r"\[bold]widget" in items[3].value
+    assert [_plain(item.value) for item in items[4:7]] == ["modified · ↑2 ↓1", "+7 -3", "+4 -0"]
+    rendered = _text(dd.render_details(dd.DetailsView("alpha", tuple(items)), None), width=120)
+    assert "modified" in rendered and "↑2 ↓1" in rendered
+    assert "+7 -3" in rendered and "+4 -0" in rendered
+
+
+def test_submodule_missing_status_and_empty_changes_add_no_rows() -> None:
+    assert [i.label for i in dd.container_details(_c(), NOW)].count("submodule") == 0
+    empty = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok")
+    assert [i.label for i in dd.container_details(_c(git_status=empty), NOW)].count(
+        "submodule"
+    ) == 0
+
+
+def test_multiple_submodules_preserve_order_and_unknown_stats() -> None:
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        submodules=(
+            SubmoduleChange(
+                path="first",
+                status="new",
+                ahead_commits=None,
+                behind_commits=None,
+                target_ins=None,
+                target_del=None,
+                wt_ins=None,
+                wt_del=None,
+            ),
+            SubmoduleChange(
+                path="second",
+                status="removed",
+                ahead_commits=0,
+                behind_commits=0,
+                target_ins=0,
+                target_del=0,
+                wt_ins=0,
+                wt_del=0,
+            ),
+        ),
+    )
+    items = dd.container_details(_c(git_status=status), NOW)
+    rows = [i for i in items if i.label == "submodule"]
+
+    assert [_plain(row.value) for row in rows] == ["first", "second"]
+    assert [_plain(i.value) for i in items if i.label == "commits"] == [
+        "new · ↑? ↓?",
+        "removed · ↑0 ↓0",
+    ]
+    assert [_plain(i.value) for i in items if i.label == "target +/-"] == ["?", "clean"]
+    assert [_plain(i.value) for i in items if i.label == "working +/-"] == ["?", "clean"]
+
+
+def test_submodule_rows_obey_narrow_capped_grid_rendering() -> None:
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        submodules=tuple(
+            SubmoduleChange(
+                path=f"deps/module-{index}",
+                status="modified",
+                ahead_commits=index,
+                behind_commits=0,
+                target_ins=2,
+                target_del=1,
+                wt_ins=3,
+                wt_del=0,
+            )
+            for index in range(5)
+        ),
+    )
+    view = dd.DetailsView("alpha-feat", tuple(dd.container_details(_c(git_status=status), NOW)))
+    rendered = _text(dd.render_details(view, 8), width=120)
+    capped = _text(dd.render_details(view, 8), width=60)
+
+    assert "deps/module-0" in rendered and "↑0 ↓0" in rendered
+    assert "+2 -1" in rendered and "+3 -0" in rendered
+    assert len(capped.splitlines()) == 10
+    assert "…" in capped
+    assert "deps/module-4" not in capped
 
 
 def test_loose_network_carries_ttl_until_and_ip() -> None:

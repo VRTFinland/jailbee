@@ -1,5 +1,11 @@
 # Commands
 
+The terminal dashboard's container details panel (`v`) also shows changed
+submodules: their paths and gitlink status, ahead/behind commit counts, the
+committed diff against the container's base, and working-tree diff counts.
+Unchanged submodules are omitted; `?` means the probe could not determine a value.
+Like other details, these rows are truncated when the panel has insufficient space.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in that registered repository instead of the
