@@ -11,6 +11,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
+from jailbee.dashboard import hit as dhit
 from jailbee.egress import is_wildcard_entry
 from jailbee.egress_scope import EntryRow
 
@@ -109,6 +110,7 @@ def render_egress(state: EgressState, *, can_add: bool, can_rm: bool) -> Rendera
                 line.append("  [proxy]")
             if row.redundant:
                 line.append("  (redundant)", style="dim")
+            line.stylize(dhit.hit_style("egress", i))
             lines.append(line)
         if end < len(state.rows):
             lines.append(Text(f"↓ {len(state.rows) - end} more", style="dim"))

@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Literal
 from rich import box
 from rich.panel import Panel
 
+from jailbee.dashboard import hit as dhit
+
 if TYPE_CHECKING:
     from rich.console import RenderableType
 
@@ -200,7 +202,11 @@ def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> Rendera
     bottom rows first with no way to scroll them back into view.
     """
     tabs = " ".join(
-        f"[reverse bold] {label} [/]" if state.tab == tab else f" {label} "
+        dhit.hit_markup(
+            f"[reverse bold] {label} [/]" if state.tab == tab else f" {label} ",
+            "tab",
+            tab,
+        )
         for tab, label in (
             ("fields", "Fields"),
             ("repos", "Repos"),
@@ -235,7 +241,8 @@ def render_settings(state: SettingsState, *, dynamic: frozenset[str]) -> Rendera
         )
         style = CURSOR_STYLE if i == state.index else ""
         text = f"[{style}]{name}[/]" if style else name
-        lines.append(f"{cursor}[{box_mark}]  {text}{note}")
+        line = f"{cursor}[{box_mark}]  {text}{note}"
+        lines.append(dhit.hit_markup(line, "setting", i))
     if end < total:
         lines.append(f"[dim]↓ {total - end} more[/dim]")
     lines += ["", "[dim]↑/↓ move  ·  Space toggle  ·  Tab switch  ·  Esc close[/dim]"]

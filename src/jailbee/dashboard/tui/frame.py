@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
+from typing import Any
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.measure import Measurement
 from rich.panel import Panel
 from rich.segment import Segment
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
 from jailbee.dashboard import accounts as da
+from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns, window_rows
 from jailbee.dashboard.details import (
     DETAILS_MAX_ROWS,
@@ -61,14 +64,16 @@ def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -
     """The action menu as a bordered panel: one row per action, cursor on the
     highlighted one, windowed to ``max_rows`` around the cursor."""
     entries = _menu_entries(menu)
-    lines = [
-        f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
-        if i == menu.index
-        else f"  {tag} {label}"
-        for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True))
-        for label in [item.label if isinstance(item, MenuGroup) else item[0]]
-        for tag in [f"[bold]\\[{key}][/]" if key else "   "]
-    ]
+    lines = []
+    for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True)):
+        label = item.label if isinstance(item, MenuGroup) else item[0]
+        tag = f"[bold]\\[{key}][/]" if key else "   "
+        line = (
+            f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
+            if i == menu.index
+            else f"  {tag} {label}"
+        )
+        lines.append(dhit.hit_markup(line, "menu", i))
     if isinstance(menu, RepoMenuState):
         title = (
             f"{menu.repo} → {menu.active_group.removesuffix(' →')}"
@@ -180,17 +185,21 @@ def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str])
 
     The cursor heading is marked by :data:`CURSOR_STYLE` alone, like a
     container row; an inserted marker would shift the whole line whenever
-    the cursor landed on it.
+    the cursor landed on it. The marker and the rest carry separate click targets
+    (``fold`` and ``repo``).
     """
     marker = "▸" if group.prefix in folded else "▾"
-    label = f"{marker} {group.prefix}  ({len(group.containers)})"
+    rest = f" {group.prefix}  ({len(group.containers)})"
     if group.repo_root is None:
-        label += "  (orphan)"
+        rest += "  (orphan)"
     if selected == Row("repo", group.prefix):
         style = CURSOR_STYLE
     else:
         style = "bold yellow" if group.repo_root is None else "bold cyan"
-    return Text(label, style=style)
+    heading = Text(style=style)
+    heading.append(marker, style=dhit.hit_style("fold", group.prefix))
+    heading.append(rest, style=dhit.hit_style("repo", group.prefix))
+    return heading
 
 
 def _aligned_table(
@@ -216,9 +225,11 @@ def _aligned_table(
         padding=(0, 1),
     )
 
-    def add_mark(glyph: str) -> None:
+    def add_mark(glyph: str, step: int) -> None:
         table.add_column(
-            Text(glyph, style="dim") if show_header else "",
+            Text(glyph, style=Style(dim=True) + dhit.hit_style("scroll", step))
+            if show_header
+            else "",
             width=1,
             min_width=1,
             no_wrap=True,
@@ -236,9 +247,9 @@ def _aligned_table(
             overflow="ellipsis",
         )
         if index == 0 and marks[0]:
-            add_mark("\u2039")
+            add_mark("\u2039", -1)
     if marks[1]:
-        add_mark("\u203a")
+        add_mark("\u203a", 1)
     return table
 
 
@@ -283,9 +294,10 @@ def repo_table(
             cells.insert(1, "")
         if marks[1]:
             cells.append("")
+        row_style = dhit.hit_style("row", container.name)
         table.add_row(
             *cells,
-            style=CURSOR_STYLE if is_selected else None,
+            style=Style.parse(CURSOR_STYLE) + row_style if is_selected else row_style,
         )
     return table
 
@@ -642,3 +654,57 @@ def render(
         box=box.ROUNDED,
         padding=(0, 1),
     )
+
+
+@dataclass(frozen=True)
+class HoverHighlight:
+    """``renderable`` with the hovered click target given :data:`HOVER_STYLE`."""
+
+    renderable: RenderableType
+    hover: dhit.Hit | None
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        if self.hover is None:
+            yield self.renderable
+            return
+        target = self.hover.meta_value()
+        for segment in console.render(self.renderable, options):
+            style = segment.style
+            if style is not None and style.meta.get(dhit.HIT_KEY) == target:
+                yield Segment(segment.text, style + dhit.HOVER_STYLE, segment.control)
+            else:
+                yield segment
+
+
+@dataclass(frozen=True)
+class DashboardView:
+    """Everything one frame shows: :func:`render`'s arguments plus the hovered target.
+
+    Produced by the session after every refresh and key, consumed by both
+    frontends and read by the tests in place of the old ``render`` call
+    arguments. Equality is cheap enough to skip unchanged repaints.
+    """
+
+    groups: list[RepoGroup]
+    selected: Row | None
+    now: datetime
+    git_enabled: bool
+    enabled: Sequence[str] | None
+    overlay: Overlay | None
+    notice: str | None
+    folded: frozenset[str]
+    column_offset: int
+    hidden_by_preferences: bool
+    show_details: bool
+    column_widths: Mapping[str, int] | None
+    shown_columns: Sequence[str] | None
+    hover: dhit.Hit | None = None
+
+    def render_kwargs(self) -> dict[str, Any]:
+        """:func:`render`'s keyword arguments (everything but ``hover``)."""
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "hover"}
+
+
+def render_view(view: DashboardView, *, height: int | None) -> RenderableType:
+    """The frame for ``view`` on a terminal ``height`` rows tall."""
+    return HoverHighlight(render(**view.render_kwargs(), height=height), view.hover)

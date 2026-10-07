@@ -17,6 +17,7 @@ from rich.console import Group
 from rich.markup import escape
 from rich.panel import Panel
 
+from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
@@ -222,12 +223,19 @@ def render_prompt(prompt: TextPrompt) -> RenderableType:
     lines: list[RenderableType] = [f"{escape(prompt.label)}", f"> {escape(prompt.text)}▏"]
     if prompt.suggestions:
         matches = filter_suggestions(prompt.suggestions, prompt.text)
-        rows = [
-            f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(m)}[/]"
-            if i == prompt.highlight
-            else f"  {escape(m)}"
-            for i, m in enumerate(matches)
-        ] or ["[dim](no matching branch)[/dim]"]
+        if matches:
+            rows = [
+                dhit.hit_markup(
+                    f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(m)}[/]"
+                    if i == prompt.highlight
+                    else f"  {escape(m)}",
+                    "suggestion",
+                    i,
+                )
+                for i, m in enumerate(matches)
+            ]
+        else:
+            rows = ["[dim](no matching branch)[/dim]"]
         lines.extend(window_lines(rows, prompt.highlight or 0, SUGGESTION_ROWS))
     if prompt.error:
         lines.append(f"[red]{escape(prompt.error)}[/red]")
@@ -306,12 +314,19 @@ def window_lines(lines: list[str], index: int, max_rows: int | None) -> list[str
 
 def render_picker(picker: Picker, max_rows: int | None = None) -> RenderableType:
     """The picker as a bordered panel, its entries windowed to ``max_rows``."""
-    lines = [
-        f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(entry.label)}[/]"
-        if i == picker.index
-        else f"  {escape(entry.label)}"
-        for i, entry in enumerate(picker.entries)
-    ] or ["[dim](nothing to choose)[/dim]"]
+    if picker.entries:
+        lines = [
+            dhit.hit_markup(
+                f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(entry.label)}[/]"
+                if i == picker.index
+                else f"  {escape(entry.label)}",
+                "picker",
+                i,
+            )
+            for i, entry in enumerate(picker.entries)
+        ]
+    else:
+        lines = ["[dim](nothing to choose)[/dim]"]
     return Panel(
         "\n".join(window_lines(lines, picker.index, max_rows)),
         title=f"[bold]{escape(picker.title)}[/]",

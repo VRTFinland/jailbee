@@ -34,6 +34,9 @@ from jailbee.egress_scope import EntryRow
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 from jailbee.state_service.protocol import Snapshot
+from tests.dashboard_fixtures import WIDE as _WIDE
+from tests.dashboard_fixtures import ci as _ci
+from tests.dashboard_fixtures import wide_group as _wide_group
 
 
 def test_inline_editor_keeps_shortcuts_as_text():
@@ -224,32 +227,6 @@ def test_registered_repo_roots_filters_excluded_prefix_before_loading(db_session
 
     scope = RemoteRepoScope(frozenset({"secret"}))
     assert dmodel.registered_repo_roots(scope=scope) == [roots[0]]
-
-
-def _ci(
-    name: str,
-    repo: str,
-    state: str = "Running",
-    *,
-    mode: str = "clone",
-    pr_number: int | None = None,
-    job_phase: str | None = None,
-    job_pid: int | None = None,
-    git_status: GitStatus | None = None,
-) -> ContainerInfo:
-    return ContainerInfo(
-        name=name,
-        state=state,
-        network="strict",
-        ip=None,
-        memory_limit=None,
-        repo=repo,
-        mode=mode,
-        pr_number=pr_number,
-        job_phase=job_phase,
-        job_pid=job_pid,
-        git_status=git_status,
-    )
 
 
 def _repo_dir(tmp_path: Path, name: str) -> Path:
@@ -3814,23 +3791,6 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
     table_lines = [line for line in rendered.splitlines() if "▶" in line]
     assert table_lines
     assert max(len(line) for line in table_lines) <= 36
-
-
-def _wide_group(tmp_path):
-    return dmodel.RepoGroup(
-        "alpha",
-        str(tmp_path),
-        None,
-        [
-            dataclasses.replace(
-                _ci("alpha-one", "alpha", pr_number=4, mode="mount"),
-                created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
-            )
-        ],
-    )
-
-
-_WIDE = ("name", "state", "network", "mode", "pr", "created")
 
 
 def _frame_at(groups, *, width, offset=0, selected=None, folded=frozenset(), enabled=_WIDE):

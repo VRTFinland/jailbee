@@ -23,9 +23,11 @@ from typing import TYPE_CHECKING
 
 from rich import box
 from rich.panel import Panel
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.settings import CURSOR_STYLE
 
 if TYPE_CHECKING:
@@ -299,7 +301,12 @@ def render_accounts(state: AccountsState) -> RenderableType:
         )
     for i, cells in enumerate(cells_by_row):
         style = CURSOR_STYLE if i == state.index else ""
-        table.add_row(*(Text(c) for c in cells), style=style)
+        row_style = (
+            Style.parse(style) + dhit.hit_style("account", i)
+            if style
+            else dhit.hit_style("account", i)
+        )
+        table.add_row(*(Text(c) for c in cells), style=row_style)
     body: RenderableType = table
     if not state.rows:
         body = Text.from_markup("[dim](no logins or groups on this host)[/dim]")

@@ -1,0 +1,191 @@
+"""Click targets in the dashboard frame: hit tags, hover, and the view seam."""
+
+from __future__ import annotations
+
+import io
+from datetime import UTC, datetime
+
+from rich.console import Console, RenderableType
+
+from jailbee.dashboard import hit as dhit
+from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.egress import EgressState
+from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
+from jailbee.dashboard.settings import open_settings
+from jailbee.dashboard.tui import frame as tframe
+from jailbee.dashboard.tui.menu_state import open_repo_menu
+from tests.dashboard_fixtures import WIDE, ci, wide_group
+
+_NOW = datetime(2026, 10, 7, tzinfo=UTC)
+
+
+def _hits(renderable: RenderableType, width: int = 120) -> list[tuple[int, int, dhit.Hit]]:
+    """Every tagged cell as (x, y, hit), top-left first."""
+    console = Console(width=width, file=io.StringIO(), color_system="truecolor")
+    found = []
+    for y, line in enumerate(console.render_lines(renderable, pad=False)):
+        x = 0
+        for segment in line:
+            hit = dhit.Hit.of(segment.style.meta) if segment.style else None
+            if hit is not None:
+                found += [(x + i, y, hit) for i in range(len(segment.text))]
+            x += len(segment.text)
+    return found
+
+
+def _kinds(renderable: RenderableType, width: int = 120) -> set[dhit.Hit]:
+    return {hit for _, _, hit in _hits(renderable, width)}
+
+
+def _view(groups, **kw) -> tframe.DashboardView:
+    base = dict(
+        groups=groups,
+        selected=None,
+        now=_NOW,
+        git_enabled=False,
+        enabled=None,
+        overlay=None,
+        notice=None,
+        folded=frozenset(),
+        column_offset=0,
+        hidden_by_preferences=False,
+        show_details=False,
+        column_widths=None,
+        shown_columns=None,
+    )
+    return tframe.DashboardView(**(base | kw))
+
+
+def test_hit_round_trips_through_style_meta_and_markup():
+    hit = dhit.Hit("picker", (3,))
+    assert dhit.Hit.of(dhit.hit_style("picker", 3).meta) == hit
+    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "picker", 3))
+    assert dhit.Hit.of(text.spans[0].style.meta) == hit  # type: ignore[union-attr]  # markup spans carry Style objects
+    assert dhit.Hit.of({}) is None
+    assert dhit.Hit.of({dhit.HIT_KEY: "garbage"}) is None
+
+
+def test_container_rows_headings_and_markers_are_tagged(tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    kinds = _kinds(tframe.render([group], None, now=_NOW, git_enabled=False))
+    assert dhit.Hit("row", ("alpha-one",)) in kinds
+    assert dhit.Hit("repo", ("alpha",)) in kinds
+    assert dhit.Hit("fold", ("alpha",)) in kinds
+
+
+def test_the_fold_hit_covers_only_the_marker(tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    cells = [
+        (x, y)
+        for x, y, h in _hits(tframe.render([group], None, now=_NOW, git_enabled=False))
+        if h == dhit.Hit("fold", ("alpha",))
+    ]
+    assert len(cells) == 1
+
+
+def test_a_row_hit_covers_the_cell_padding_too(tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    hits = _hits(tframe.render([group], None, now=_NOW, git_enabled=False))
+    row_y = {y for _, y, h in hits if h.kind == "row"}
+    assert len(row_y) == 1
+    xs = sorted(x for x, y, h in hits if h.kind == "row")
+    assert xs == list(range(xs[0], xs[-1] + 1))  # no untagged gap between cells
+
+
+def test_scroll_marks_are_tagged_with_their_direction(tmp_path):
+    group = wide_group(tmp_path)
+    kinds = _kinds(
+        tframe.render([group], None, now=_NOW, git_enabled=False, enabled=WIDE, column_offset=1),
+        width=44,
+    )
+    assert dhit.Hit("scroll", (-1,)) in kinds
+
+
+def test_overlay_entries_are_tagged_by_index(tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
+    menu = open_repo_menu([group], "alpha", frozenset())
+    assert menu is not None
+    assert {dhit.Hit("menu", (0,)), dhit.Hit("menu", (1,))} <= _kinds(tframe._render_overlay(menu))
+    picker = Picker("p", "Pick", (PickerEntry("a", "a"), PickerEntry("b", "b")))
+    assert _kinds(tframe._render_overlay(picker)) == {
+        dhit.Hit("picker", (0,)),
+        dhit.Hit("picker", (1,)),
+    }
+    prompt = TextPrompt("x", "T", "Base", suggestions=("main", "dev"))
+    assert _kinds(tframe._render_overlay(prompt)) == {
+        dhit.Hit("suggestion", (0,)),
+        dhit.Hit("suggestion", (1,)),
+    }
+    settings = open_settings(
+        field_names=("name", "state"),
+        enabled=frozenset({"name"}),
+        repo_prefixes=("alpha",),
+        folded=frozenset(),
+        visibility_repo_prefixes=("alpha",),
+        show_empty_repos=False,
+        hidden_repos=frozenset(),
+    )
+    kinds = _kinds(tframe._render_overlay(settings))
+    assert {
+        dhit.Hit("tab", ("fields",)),
+        dhit.Hit("tab", ("repos",)),
+        dhit.Hit("tab", ("visibility",)),
+    } <= kinds
+    assert {dhit.Hit("setting", (0,)), dhit.Hit("setting", (1,))} <= kinds
+
+
+def test_egress_and_account_rows_are_tagged_by_index():
+    from jailbee.dashboard import accounts as da
+    from jailbee.egress_scope import EntryRow
+
+    egress = EgressState(
+        "alpha", None, (EntryRow("a.example", "local"), EntryRow("b.example", "local"))
+    )
+    assert {dhit.Hit("egress", (0,)), dhit.Hit("egress", (1,))} <= _kinds(
+        tframe._render_overlay(egress)
+    )
+    rows = (da.AccountRow("claude", "team", "a", "live", (), ()),)
+    assert dhit.Hit("account", (0,)) in _kinds(tframe._render_overlay(da.AccountsState(rows)))
+
+
+def test_hover_paints_only_the_hovered_target(tmp_path):
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")]
+    )
+    plain = _view([group])
+    hovered = _view([group], hover=dhit.Hit("row", ("alpha-two",)))
+    console = Console(width=120, file=io.StringIO(), color_system="truecolor")
+    before = console.render_lines(tframe.render_view(plain, height=None), pad=False)
+    after = console.render_lines(tframe.render_view(hovered, height=None), pad=False)
+    changed = [
+        dhit.Hit.of(a.style.meta)
+        for line_a, line_b in zip(after, before, strict=True)
+        for a, b in zip(line_a, line_b, strict=True)
+        if a.style != b.style
+    ]
+    assert changed and set(changed) == {dhit.Hit("row", ("alpha-two",))}
+    assert all(
+        a.style.bgcolor == dhit.HOVER_STYLE.bgcolor
+        for line in after
+        for a in line
+        if a.style and dhit.Hit.of(a.style.meta) == dhit.Hit("row", ("alpha-two",))
+    )
+
+
+def test_render_view_matches_render_with_the_same_arguments(tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    view = _view([group], selected=dmodel.Row("container", "alpha-one"), notice="hi")
+    console = Console(width=100, height=30, file=io.StringIO(), record=True)
+    console.print(tframe.render_view(view, height=30))
+    a = console.export_text()
+    console.print(tframe.render(**view.render_kwargs(), height=30))
+    assert console.export_text() == a
+    assert "hover" not in view.render_kwargs()
+
+
+def test_hit_tags_do_not_change_the_rendered_text(tmp_path):
+    """Meta is invisible: no escape sequence, no width change."""
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    console = Console(width=100, file=io.StringIO(), color_system="truecolor", record=True)
+    console.print(tframe.render([group], None, now=_NOW, git_enabled=False))
+    assert "\x1b]8" not in console.export_text(styles=True)  # no OSC 8 link
