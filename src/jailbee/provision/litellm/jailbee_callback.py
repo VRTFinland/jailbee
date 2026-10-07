@@ -20,6 +20,13 @@ host restarts the instance only when no matching, error-free acknowledgement
 appears. A file that cannot be read or applied changes nothing and is reported.
 The file is required at start: without it no request would be flattened and
 every one would fail upstream, so a missing variable stops the proxy.
+
+``hot.json``'s optional ``env.names`` lists the API keys its deployments name
+as ``os.environ/NAME``. Before reconciling, the reload reads exactly those from
+``$JAILBEE_LITELLM_ENV_FILE`` (the instance's systemd ``EnvironmentFile``) into
+``os.environ``, so a new or rotated key needs no restart. ``env.digest`` is
+there only so a rotated value changes the file; the callback never reads it.
+
 This module needs only the standard library and LiteLLM.
 """
 
@@ -47,6 +54,7 @@ class HotFile:
     table: dict[str, Any]
     models: list[dict[str, Any]]
     digest: str
+    env_names: tuple[str, ...] = ()
 
 
 def _required_env(name: str, why: str) -> str:
@@ -67,7 +75,39 @@ def read_hot(path: str) -> HotFile:
         or not all(isinstance(m, dict) for m in models)
     ):
         raise ValueError("expected a `callback` object and a `models` list of objects")
-    return HotFile(table, models, hashlib.sha256(raw).hexdigest())
+    env = data.get("env", {})
+    names = env.get("names", []) if isinstance(env, dict) else None
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ValueError("expected `env.names` to be a list of variable names")
+    return HotFile(table, models, hashlib.sha256(raw).hexdigest(), tuple(names))
+
+
+def read_env(path: str, names: tuple[str, ...]) -> dict[str, str]:
+    """The named variables from the instance's systemd ``EnvironmentFile``.
+
+    jailbee writes it (``render_instance_env``): ``NAME=value`` or
+    ``NAME='value'``, a quoted value holding no quote, backslash or newline.
+    Split on the first ``=`` only: keys may end in ``=``. A missing name
+    raises, naming it; no message carries a value.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except UnicodeDecodeError:
+        raise ValueError(f"{path} is not valid UTF-8") from None
+    wanted = set(names)
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        name, sep, value = line.partition("=")
+        if not sep or name not in wanted:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1]
+        values[name] = value
+    missing = sorted(wanted - values.keys())
+    if missing:
+        raise ValueError(f"{path} does not define {', '.join(missing)}")
+    return values
 
 
 def _file_digest(path: str) -> str | None:
@@ -219,6 +259,9 @@ class JailbeeCallback(CustomLogger):  # type: ignore[misc]  # LiteLLM's base is 
         self._ack_path = _required_env(
             "JAILBEE_LITELLM_ACK_FILE", "the proxy could not report what it loaded."
         )
+        self._env_path = _required_env(
+            "JAILBEE_LITELLM_ENV_FILE", "the proxy could not reload its API keys."
+        )
         # Signature first: a push between the stat and the read is then seen as a
         # change by the next poll, instead of never being read.
         self._seen = _signature(self._hot_path)
@@ -259,6 +302,13 @@ class JailbeeCallback(CustomLogger):  # type: ignore[misc]  # LiteLLM's base is 
         if self._pending is None or router is None:
             return
         hot = self._pending
+        if hot.env_names:
+            try:
+                os.environ.update(read_env(self._env_path, hot.env_names))
+            except (OSError, ValueError) as exc:  # read_env's messages never carry a value
+                self._pending = None
+                self._ack(hot.digest, f"cannot read the proxy environment: {exc}")
+                return
         try:
             reconcile_router(router, hot.models)
         except Exception as exc:  # reconcile_router's messages never carry a value

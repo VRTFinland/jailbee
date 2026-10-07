@@ -82,13 +82,17 @@ def cb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     (tmp_path / "hot.json").write_text(json.dumps(HOT))
     monkeypatch.setenv("JAILBEE_LITELLM_HOT_FILE", str(tmp_path / "hot.json"))
     monkeypatch.setenv("JAILBEE_LITELLM_ACK_FILE", str(tmp_path / "applied.json"))
+    monkeypatch.setenv("JAILBEE_LITELLM_ENV_FILE", str(tmp_path / "instance.env"))
     monkeypatch.delitem(sys.modules, "jailbee.provision.litellm.jailbee_callback", raising=False)
     return importlib.import_module("jailbee.provision.litellm.jailbee_callback")
 
 
-def _write_hot(tmp_path: Path, callback: dict, models: list) -> str:
+def _write_hot(tmp_path: Path, callback: dict, models: list, env: dict | None = None) -> str:
     """Write hot.json the way the host does (replace, so the inode changes); return its digest."""
-    text = json.dumps({"callback": callback, "models": models})
+    data: dict = {"callback": callback, "models": models}
+    if env is not None:
+        data["env"] = env
+    text = json.dumps(data)
     tmp = tmp_path / "hot.json.new"
     tmp.write_text(text)
     tmp.replace(tmp_path / "hot.json")
@@ -464,3 +468,96 @@ def test_the_ack_never_contains_a_resolved_secret(cb, tmp_path, monkeypatch, pha
     text = (tmp_path / "applied.json").read_text()
     assert "s3cret" not in text
     assert "cannot apply" in _ack(tmp_path)["error"]
+
+
+def _env_file(tmp_path: Path, text: str) -> None:
+    (tmp_path / "instance.env").write_text(text)
+
+
+def test_missing_env_file_variable_stops_the_proxy_at_start(cb, monkeypatch):
+    monkeypatch.delenv("JAILBEE_LITELLM_ENV_FILE")
+    with pytest.raises(RuntimeError, match="JAILBEE_LITELLM_ENV_FILE is not set"):
+        cb.JailbeeCallback()
+
+
+def test_a_reload_reads_the_listed_secrets_before_the_upsert(cb, tmp_path, monkeypatch):
+    # setenv first so monkeypatch removes what the callback writes when the test ends
+    monkeypatch.setenv("NEW_KEY", "before")
+    monkeypatch.setenv("OTHER", "untouched")
+    handler, router = cb.JailbeeCallback(), FakeRouter()
+    handler.reload_once(router)
+    _env_file(tmp_path, "PORT=4100\nNEW_KEY='sk-new=='\nOTHER='not-listed'\n")
+    model = _keyed("jb:a", {"model": "m", "api_key": "os.environ/NEW_KEY"})
+    digest = _write_hot(tmp_path, TABLE, [model], {"names": ["NEW_KEY"], "digest": "d1"})
+    handler.reload_once(router)
+    assert router.params["jb:a"]["api_key"] == "sk-new=="
+    assert os.environ["NEW_KEY"] == "sk-new=="
+    assert os.environ["OTHER"] == "untouched"  # only listed names are read
+    assert _ack(tmp_path) == {"hot_digest": digest, "error": None}
+
+
+def test_a_rotated_secret_reaches_the_router(cb, tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_KEY", "old")
+    model = _keyed("jb:a", {"model": "m", "api_key": "os.environ/MY_KEY"})
+    _env_file(tmp_path, "MY_KEY='old'\n")
+    _write_hot(tmp_path, TABLE, [model], {"names": ["MY_KEY"], "digest": "d1"})
+    handler, router = cb.JailbeeCallback(), FakeRouter()
+    handler.reload_once(router)
+    _env_file(tmp_path, "MY_KEY='new'\n")
+    _write_hot(tmp_path, TABLE, [model], {"names": ["MY_KEY"], "digest": "d2"})
+    handler.reload_once(router)
+    assert router.params["jb:a"]["api_key"] == "new"
+
+
+def test_a_listed_name_the_env_file_lacks_changes_nothing_and_names_it(cb, tmp_path):
+    handler, router = cb.JailbeeCallback(), FakeRouter(["jb:old"])
+    handler.reload_once(router)
+    router.calls.clear()
+    _env_file(tmp_path, "PORT=4100\nPRESENT='s3cret'\n")
+    model = _keyed("jb:a", {"model": "m", "api_key": "os.environ/GONE"})
+    _write_hot(
+        tmp_path,
+        {"aliases": {}, "catch_all": None},
+        [model],
+        {"names": ["GONE", "PRESENT"], "digest": "d"},
+    )
+    handler.reload_once(router)
+    assert router.calls == []
+    assert handler._table == TABLE
+    error = _ack(tmp_path)["error"]
+    assert "GONE" in error and "s3cret" not in error
+
+
+def test_an_unreadable_env_file_changes_nothing(cb, tmp_path):
+    handler, router = cb.JailbeeCallback(), FakeRouter(["jb:old"])
+    handler.reload_once(router)
+    router.calls.clear()
+    _write_hot(tmp_path, TABLE, [dep("jb:new")], {"names": ["K"], "digest": "d"})
+    handler.reload_once(router)  # no instance.env written
+    assert router.calls == []
+    assert "cannot read the proxy environment" in _ack(tmp_path)["error"]
+
+
+def test_an_env_file_that_is_not_utf8_never_echoes_its_bytes(cb, tmp_path):
+    (tmp_path / "instance.env").write_bytes(b"K='\xffs3cret'\n")
+    _write_hot(tmp_path, TABLE, [dep("jb:a")], {"names": ["K"], "digest": "d"})
+    handler = cb.JailbeeCallback()
+    handler.reload_once(FakeRouter())
+    error = _ack(tmp_path)["error"]
+    assert "not valid UTF-8" in error and "s3cret" not in error and "xff" not in error
+
+
+def test_without_listed_names_the_env_file_is_never_read(cb, tmp_path):
+    digest = _write_hot(tmp_path, TABLE, [dep("jb:a")], {"names": [], "digest": "d"})
+    handler = cb.JailbeeCallback()
+    handler.reload_once(FakeRouter())  # instance.env does not exist
+    assert _ack(tmp_path) == {"hot_digest": digest, "error": None}
+
+
+@pytest.mark.parametrize("env", [{"names": "K"}, {"names": [1]}, ["K"]])
+def test_a_malformed_env_block_is_reported(cb, tmp_path, env):
+    handler = cb.JailbeeCallback()
+    handler.reload_once(FakeRouter())
+    _write_hot(tmp_path, TABLE, [], env)
+    handler.reload_once(FakeRouter())
+    assert "cannot read" in _ack(tmp_path)["error"]
