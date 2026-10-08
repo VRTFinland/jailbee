@@ -89,14 +89,20 @@ class FleetTable(ScrollView, can_focus=False):
         return self.scrollable_content_region.width
 
     def show(
-        self, model: TableModel, selected: Row | None, hover: dhit.Hit | None,
-        *, width: int | None = None,
+        self,
+        model: TableModel,
+        selected: Row | None,
+        hover: dhit.Hit | None,
+        *,
+        width: int | None = None,
     ) -> None:
         previous = self._model
         old_selected = self._selected
         self._model, self._selected, self._hover = model, selected, hover
         if model.empty_text is not None:
-            self._placeholder_width = max(1, width if width is not None else self.content_width or self.app.size.width)
+            self._placeholder_width = max(
+                1, width if width is not None else self.content_width or self.app.size.width
+            )
         drawn = self._signatures(model)
         structural = (
             previous is None
@@ -107,7 +113,10 @@ class FleetTable(ScrollView, can_focus=False):
             or previous.empty_text != model.empty_text
         )
         if structural:
-            self.virtual_size = Size(self._placeholder_width if model.empty_text is not None else model.geometry.width, len(drawn))
+            self.virtual_size = Size(
+                self._placeholder_width if model.empty_text is not None else model.geometry.width,
+                len(drawn),
+            )
             self.refresh()
         else:
             for virtual_y, (old, new) in enumerate(zip(self._drawn, drawn, strict=True)):
@@ -168,9 +177,7 @@ class FleetTable(ScrollView, can_focus=False):
         if model.empty_text is not None:
             return tuple(
                 ("empty", line.plain)
-                for line in Text(model.empty_text).wrap(
-                    self.app.console, self._placeholder_width
-                )
+                for line in Text(model.empty_text).wrap(self.app.console, self._placeholder_width)
             )
         hover = self._hover
         lines: list[tuple[object, ...]] = []
@@ -475,6 +482,7 @@ class DashboardFrame(Vertical):
             # The model counts one logical placeholder; its instruction wraps on screen.
             placeholder = fleet.HIDDEN_TEXT if view.hidden_by_preferences else fleet.EMPTY_TEXT
             table_lines = len(Text(placeholder).wrap(console, max(1, width)))
+
         def fit(table_lines: int) -> FrameLayout:
             return frame_layout(
                 height=height,
@@ -486,6 +494,7 @@ class DashboardFrame(Vertical):
                 details_fit=details_fit,
                 bottom_lines=bottom_lines,
             )
+
         layout = fit(table_lines)
         scrollbar = 1 if layout.table_rows < table_lines else 0
         if not view.groups and scrollbar:
