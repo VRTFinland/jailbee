@@ -41,14 +41,24 @@ def _kinds(renderable: RenderableType, width: int = 120) -> set[dhit.Hit]:
 def _table(groups, *, width=120, enabled=None, column_offset=0):
     """Tagged pure header/entry lines at the old frame's content width."""
     inner = width - 4
-    model = fleet.table_model(groups, now=_NOW, enabled=enabled, folded=frozenset(),
-                              column_widths=None, shown_columns=None,
-                              column_offset=column_offset, hidden_by_preferences=False,
-                              width=inner)
-    return Group(fleet.header_line(model.geometry), *[
-        fleet.entry_line(e, model.geometry, model.folded, selected=False, width=inner)
-        for e in model.entries
-    ])
+    model = fleet.table_model(
+        groups,
+        now=_NOW,
+        enabled=enabled,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=column_offset,
+        hidden_by_preferences=False,
+        width=inner,
+    )
+    return Group(
+        fleet.header_line(model.geometry),
+        *[
+            fleet.entry_line(e, model.geometry, model.folded, selected=False, width=inner)
+            for e in model.entries
+        ],
+    )
 
 
 def test_hit_round_trips_through_style_meta_and_markup():
@@ -70,11 +80,7 @@ def test_container_rows_headings_and_markers_are_tagged(tmp_path):
 
 def test_the_fold_hit_covers_only_the_marker(tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    cells = [
-        (x, y)
-        for x, y, h in _hits(_table([group]))
-        if h == dhit.Hit("fold", ("alpha",))
-    ]
+    cells = [(x, y) for x, y, h in _hits(_table([group])) if h == dhit.Hit("fold", ("alpha",))]
     assert len(cells) == 1
 
 

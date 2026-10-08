@@ -75,14 +75,30 @@ FRAME_INSET = 4
 NOW = datetime(2026, 6, 8, tzinfo=UTC)
 
 
-def _table_lines(groups, *, width=200, selected=None, now=NOW, enabled=None,
-                 folded=frozenset(), column_offset=0, column_widths=None,
-                 shown_columns=None, hidden_by_preferences=False):  # type: ignore[no-untyped-def]  # test utility
+def _table_lines(
+    groups,
+    *,
+    width=200,
+    selected=None,
+    now=NOW,
+    enabled=None,
+    folded=frozenset(),
+    column_offset=0,
+    column_widths=None,
+    shown_columns=None,
+    hidden_by_preferences=False,
+):  # type: ignore[no-untyped-def]  # test utility
     inner = max(0, width - FRAME_INSET)
     model = fleet.table_model(
-        groups, now=now, enabled=enabled, folded=folded, column_widths=column_widths,
-        shown_columns=shown_columns, column_offset=column_offset,
-        hidden_by_preferences=hidden_by_preferences, width=inner,
+        groups,
+        now=now,
+        enabled=enabled,
+        folded=folded,
+        column_widths=column_widths,
+        shown_columns=shown_columns,
+        column_offset=column_offset,
+        hidden_by_preferences=hidden_by_preferences,
+        width=inner,
     )
     if model.empty_text is not None:
         from rich.text import Text
@@ -90,34 +106,77 @@ def _table_lines(groups, *, width=200, selected=None, now=NOW, enabled=None,
         return [Text(model.empty_text)]
     lines = [fleet.header_line(model.geometry)] if model.has_header else []
     lines += [
-        fleet.entry_line(entry, model.geometry, model.folded,
-                         selected=entry.row == selected, width=inner)
+        fleet.entry_line(
+            entry, model.geometry, model.folded, selected=entry.row == selected, width=inner
+        )
         for entry in model.entries
     ]
     return lines
 
 
-def table_text(groups, *, width=200, selected=None, now=NOW, enabled=None,
-               folded=frozenset(), column_offset=0, column_widths=None,
-               shown_columns=None, hidden_by_preferences=False):  # type: ignore[no-untyped-def]  # test utility
+def table_text(
+    groups,
+    *,
+    width=200,
+    selected=None,
+    now=NOW,
+    enabled=None,
+    folded=frozenset(),
+    column_offset=0,
+    column_widths=None,
+    shown_columns=None,
+    hidden_by_preferences=False,
+):  # type: ignore[no-untyped-def]  # test utility
     """Plain table lines at the inset content width of a terminal."""
-    return [line.plain for line in _table_lines(
-        groups, width=width, selected=selected, now=now, enabled=enabled,
-        folded=folded, column_offset=column_offset, column_widths=column_widths,
-        shown_columns=shown_columns, hidden_by_preferences=hidden_by_preferences,
-    )]
+    return [
+        line.plain
+        for line in _table_lines(
+            groups,
+            width=width,
+            selected=selected,
+            now=now,
+            enabled=enabled,
+            folded=folded,
+            column_offset=column_offset,
+            column_widths=column_widths,
+            shown_columns=shown_columns,
+            hidden_by_preferences=hidden_by_preferences,
+        )
+    ]
 
 
-def table_ansi_lines(groups, *, width=200, selected=None, now=NOW, enabled=None,
-                     folded=frozenset(), column_offset=0, column_widths=None,
-                     shown_columns=None, hidden_by_preferences=False):  # type: ignore[no-untyped-def]  # test utility
+def table_ansi_lines(
+    groups,
+    *,
+    width=200,
+    selected=None,
+    now=NOW,
+    enabled=None,
+    folded=frozenset(),
+    column_offset=0,
+    column_widths=None,
+    shown_columns=None,
+    hidden_by_preferences=False,
+):  # type: ignore[no-untyped-def]  # test utility
     """Styled table lines; override NO_COLOR so cursor assertions see colours."""
-    console = Console(record=True, width=max(1, width - FRAME_INSET),
-                      force_terminal=True, color_system="truecolor", no_color=False)
+    console = Console(
+        record=True,
+        width=max(1, width - FRAME_INSET),
+        force_terminal=True,
+        color_system="truecolor",
+        no_color=False,
+    )
     for line in _table_lines(
-        groups, width=width, selected=selected, now=now, enabled=enabled,
-        folded=folded, column_offset=column_offset, column_widths=column_widths,
-        shown_columns=shown_columns, hidden_by_preferences=hidden_by_preferences,
+        groups,
+        width=width,
+        selected=selected,
+        now=now,
+        enabled=enabled,
+        folded=folded,
+        column_offset=column_offset,
+        column_widths=column_widths,
+        shown_columns=shown_columns,
+        hidden_by_preferences=hidden_by_preferences,
     ):
         console.print(line, end="\n")
     return console.export_text(styles=True).splitlines()
@@ -125,8 +184,19 @@ def table_ansi_lines(groups, *, width=200, selected=None, now=NOW, enabled=None,
 
 def frame_at(groups, *, width, offset=0, selected=None, folded=frozenset(), enabled=WIDE):  # type: ignore[no-untyped-def]
     """One table at terminal ``width``; retain the frame helper's string shape."""
-    return "\n".join(table_text(groups, width=width, column_offset=offset,
-                                selected=selected, folded=folded, enabled=enabled)) + "\n"
+    return (
+        "\n".join(
+            table_text(
+                groups,
+                width=width,
+                column_offset=offset,
+                selected=selected,
+                folded=folded,
+                enabled=enabled,
+            )
+        )
+        + "\n"
+    )
 
 
 def header(text: str) -> str:

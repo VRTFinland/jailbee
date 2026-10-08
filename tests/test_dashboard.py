@@ -40,10 +40,10 @@ from tests.dashboard_fixtures import header as _header
 from tests.dashboard_fixtures import mount_group as _mount_group
 from tests.dashboard_fixtures import named_rows_group as _named_rows_group
 from tests.dashboard_fixtures import repo_menu_verbs as _repo_menu_verbs
+from tests.dashboard_fixtures import table_ansi_lines, table_text
 from tests.dashboard_fixtures import wide_group as _wide_group
-from tests.dashboard_fixtures import table_text, table_ansi_lines
 from tests.dashboard_pilot import CREDENTIAL_GROUP_LEAF as _CREDENTIAL_GROUP_LEAF
-from tests.dashboard_pilot import patch_pause, paint, view_of
+from tests.dashboard_pilot import paint, patch_pause, view_of
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
@@ -115,8 +115,9 @@ def test_command_binding_and_inline_render_keep_table_visible():
 
 def test_render_title_has_no_refresh_clock():
     group = dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-x", "alpha")])
-    title = tframe.frame_title([group], frozenset(),
-                              now=datetime(2026, 6, 8, 12, 0, 5, tzinfo=UTC), git_enabled=True).plain
+    title = tframe.frame_title(
+        [group], frozenset(), now=datetime(2026, 6, 8, 12, 0, 5, tzinfo=UTC), git_enabled=True
+    ).plain
     assert "12:00:05" in title
     assert "↻" not in title and "s/" not in title
 
@@ -2540,12 +2541,16 @@ def test_rendered_columns_do_not_follow_conditional_cell_presence():
     )
     for width in (56, 80, 120):
         rendered = [
-            "\n".join(table_text(
+            "\n".join(
+                table_text(
                     [group],
                     selected=None,
                     now=now,
                     enabled=("name", "pr", "state"),
-                    shown_columns=("name", "pr", "state"), width=width))
+                    shown_columns=("name", "pr", "state"),
+                    width=width,
+                )
+            )
             for group in (plain, with_pr)
         ]
         headers = [next(line for line in text.splitlines() if "NAME" in line) for text in rendered]
@@ -2562,11 +2567,15 @@ def test_rendered_columns_do_not_reflow_when_live_text_changes():
     )
     for width in (36, 56, 80, 120):
         rendered = [
-            "\n".join(table_text(
+            "\n".join(
+                table_text(
                     [group],
                     selected=None,
                     now=now,
-                    enabled=("name", "state", "network", "created", "pr"), width=width))
+                    enabled=("name", "state", "network", "created", "pr"),
+                    width=width,
+                )
+            )
             for group in (plain, active)
         ]
         headers = [next(line for line in text.splitlines() if "NAME" in line) for text in rendered]
@@ -2582,8 +2591,11 @@ def test_budgeted_base_value_stays_on_one_row():
             "alpha", "/a", None, [dataclasses.replace(container, base_branch=base)]
         )
         frames.append(
-            "\n".join(table_text(
-                    [group], selected=None, now=now, enabled=("name", "base", "state"), width=80)).splitlines()
+            "\n".join(
+                table_text(
+                    [group], selected=None, now=now, enabled=("name", "base", "state"), width=80
+                )
+            ).splitlines()
         )
     assert len(frames[0]) == len(frames[1])
     assert any("…" in line and "▶" in line for line in frames[1])
@@ -3141,10 +3153,7 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
         dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")]),
     ]
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    out = "\n".join(table_text(
-            groups,
-            selected=dmodel.Row("container", "alpha-one"),
-            now=now))
+    out = "\n".join(table_text(groups, selected=dmodel.Row("container", "alpha-one"), now=now))
     assert "alpha" in out
     assert "gamma" in out and "orphan" in out
     assert "one" in out  # display_name with prefix stripped
@@ -3155,10 +3164,7 @@ def test_render_shows_repo_headers_and_rows(tmp_path):
     # The selected row is highlighted, and the highlight is its only marker.
     assert "▸" not in out
     cursor = _cursor_lines(
-        table_ansi_lines(
-                groups,
-                selected=dmodel.Row("container", "alpha-one"),
-                now=now)
+        table_ansi_lines(groups, selected=dmodel.Row("container", "alpha-one"), now=now)
     )
     assert len(cursor) == 1 and "one" in cursor[0] and "alpha" not in cursor[0]
 
@@ -3170,10 +3176,7 @@ def test_render_column_headers_sit_above_every_repo_heading(tmp_path):
         dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-one", "alpha")]),
         dmodel.RepoGroup("beta", "/repos/beta", None, [_ci("beta-two", "beta")]),
     ]
-    out = "\n".join(table_text(
-            groups,
-            selected=None,
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC)))
+    out = "\n".join(table_text(groups, selected=None, now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC)))
     lines = out.splitlines()
     header_rows = [i for i, ln in enumerate(lines) if "NAME" in ln]
     alpha_heading = next(i for i, ln in enumerate(lines) if "▾ alpha" in ln)
@@ -3186,10 +3189,7 @@ def test_render_column_headers_stay_on_top_when_first_repo_is_empty(tmp_path):
         dmodel.RepoGroup("alpha", "/repos/alpha", None, []),
         dmodel.RepoGroup("beta", "/repos/beta", None, [_ci("beta-two", "beta")]),
     ]
-    out = "\n".join(table_text(
-            groups,
-            selected=None,
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC)))
+    out = "\n".join(table_text(groups, selected=None, now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC)))
     lines = out.splitlines()
     header_row = next(i for i, ln in enumerate(lines) if "NAME" in ln)
     alpha_heading = next(i for i, ln in enumerate(lines) if "▾ alpha" in ln)
@@ -3204,11 +3204,11 @@ def test_render_first_column_title_aligns_with_its_cells(tmp_path, enabled, titl
     """Every first-column cell carries the two-cell selection gutter, so the
     title above it must too — whichever field happens to come first."""
     group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-one", "alpha")])
-    out = "\n".join(table_text(
-            [group],
-            selected=None,
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
-            enabled=enabled))
+    out = "\n".join(
+        table_text(
+            [group], selected=None, now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), enabled=enabled
+        )
+    )
     lines = out.splitlines()
     header_line = next(ln for ln in lines if title in ln)
     data_line = next(ln for ln in lines if cell in ln and "alpha" not in ln)
@@ -3216,29 +3216,39 @@ def test_render_first_column_title_aligns_with_its_cells(tmp_path, enabled, titl
 
 
 def test_render_empty_groups_shows_placeholder():
-    out = "\n".join(table_text(
-            [],
-            selected=None,
-            now=datetime(2026, 6, 8, tzinfo=UTC)))
+    out = "\n".join(table_text([], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC)))
     assert "no containers" in out.lower()
-    assert "no-git" in tframe.frame_title([], frozenset(), git_enabled=False, now=datetime(2026, 6, 8, tzinfo=UTC)).plain
+    assert (
+        "no-git"
+        in tframe.frame_title(
+            [], frozenset(), git_enabled=False, now=datetime(2026, 6, 8, tzinfo=UTC)
+        ).plain
+    )
 
 
 def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
     prefix = "long-repository-prefix"
     group = dmodel.RepoGroup(prefix, str(tmp_path), None, [_ci(f"{prefix}-one", prefix)])
-    out = "\n".join(table_text(
+    out = "\n".join(
+        table_text(
             [group],
             selected=None,
             now=datetime(2026, 6, 8, tzinfo=UTC),
-            enabled=("state",), width=48))
+            enabled=("state",),
+            width=48,
+        )
+    )
     for rendered in (
         out,
-        "\n".join(table_text(
+        "\n".join(
+            table_text(
                 [group],
                 selected=None,
                 now=datetime(2026, 6, 8, tzinfo=UTC),
-                enabled=("state",), width=100)),
+                enabled=("state",),
+                width=100,
+            )
+        ),
     ):
         heading_line = next(line for line in rendered.splitlines() if prefix in line)
         data_line = next(line for line in rendered.splitlines() if "▶" in line)
@@ -3248,10 +3258,7 @@ def test_header_uses_more_than_first_column_at_narrow_width(tmp_path):
 
 def test_render_empty_repo_shows_header_without_table(tmp_path):
     group = dmodel.RepoGroup("empty", str(tmp_path), None, [])
-    out = "\n".join(table_text(
-            [group],
-            selected=None,
-            now=datetime(2026, 6, 8, tzinfo=UTC)))
+    out = "\n".join(table_text([group], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC)))
     assert "empty" in out
     assert "(0)" in out
     assert "no containers found" not in out
@@ -3259,11 +3266,11 @@ def test_render_empty_repo_shows_header_without_table(tmp_path):
 
 
 def test_render_all_filtered_repos_explains_visibility_settings(tmp_path):
-    out = "\n".join(table_text(
-            [],
-            selected=None,
-            now=datetime(2026, 6, 8, tzinfo=UTC),
-            hidden_by_preferences=True))
+    out = "\n".join(
+        table_text(
+            [], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC), hidden_by_preferences=True
+        )
+    )
     assert "visibility" in out.lower()
     assert "settings" in out.lower()
 
@@ -3275,11 +3282,15 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
         None,
         [_ci("long-repository-prefix-one", "long-repository-prefix")],
     )
-    rendered = "\n".join(table_text(
+    rendered = "\n".join(
+        table_text(
             [group],
             selected=None,
             now=datetime(2026, 6, 8, tzinfo=UTC),
-            enabled=("state", "network", "name"), width=36))
+            enabled=("state", "network", "name"),
+            width=36,
+        )
+    )
     table_lines = [line for line in rendered.splitlines() if "▶" in line]
     assert table_lines
     assert max(len(line) for line in table_lines) <= 36
@@ -3346,12 +3357,17 @@ def test_render_scrolled_header_and_rows_stay_aligned(tmp_path):
 def test_render_highlight_stays_on_row_when_scrolled(tmp_path, monkeypatch):
     monkeypatch.setenv("TERM", "xterm-256color")
     group = _wide_group(tmp_path)
-    lines = table_ansi_lines([group], selected=dmodel.Row("container", "alpha-one"),
-                             now=datetime(2026, 6, 8, tzinfo=UTC), enabled=_WIDE,
-                             column_offset=2, width=40)
+    lines = table_ansi_lines(
+        [group],
+        selected=dmodel.Row("container", "alpha-one"),
+        now=datetime(2026, 6, 8, tzinfo=UTC),
+        enabled=_WIDE,
+        column_offset=2,
+        width=40,
+    )
     cursor = _cursor_lines(lines)
     assert len(cursor) == 1 and "one" in dcolumns.Text.from_ansi(cursor[0]).plain
-    assert "‹" in "\n".join(lines)
+    assert "‹" in "\n".join(lines)  # noqa: RUF001 - the frame's scroll marker
 
 
 def test_render_narrower_than_the_name_column(tmp_path):
@@ -3389,11 +3405,9 @@ def test_render_column_offsets_align_across_repos_of_different_lengths(tmp_path)
             [_ci("a-much-longer-repository-two", "a-much-longer-repository")],
         ),
     ]
-    out = "\n".join(table_text(
-            groups,
-            selected=None,
-            now=datetime(2026, 6, 8, tzinfo=UTC),
-            enabled=("state",)))
+    out = "\n".join(
+        table_text(groups, selected=None, now=datetime(2026, 6, 8, tzinfo=UTC), enabled=("state",))
+    )
     data_lines = [line for line in out.splitlines() if "▶" in line]
     assert len(data_lines) == 2
     assert [line.index("▶") for line in data_lines] == [data_lines[0].index("▶")] * 2
@@ -3411,11 +3425,7 @@ def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
             )
         ],
     )
-    out = "\n".join(table_text(
-            [g],
-            selected=None,
-            now=now,
-            enabled=["name", "created"]))
+    out = "\n".join(table_text([g], selected=None, now=now, enabled=["name", "created"]))
     header_line = next(ln for ln in out.splitlines() if "NAME" in ln)
     assert "AGE" in header_line
     assert "STATE" not in header_line
@@ -3424,9 +3434,12 @@ def test_render_forwards_enabled_columns_to_visible_fields(tmp_path):
 def _title_line(groups, *, git_enabled: bool = True, **kwargs) -> str:
     """The pure border title; screen alignment is tested on native widgets."""
     kwargs.pop("selected", None)
-    return tframe.frame_title(groups, kwargs.pop("folded", frozenset()),
-                              git_enabled=git_enabled,
-                              now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC)).plain
+    return tframe.frame_title(
+        groups,
+        kwargs.pop("folded", frozenset()),
+        git_enabled=git_enabled,
+        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+    ).plain
 
 
 def test_render_title_has_no_blinking_refresh_indicator(tmp_path):
@@ -3524,7 +3537,9 @@ def test_normal_mode_help_is_in_frame_not_footer(tmp_path):
     assert "h/? help" in title
     assert "Enter menu" not in title and "Space fold" not in title
     assert tframe._hint_line(None) == ""
-    hint = _render_text(tframe._hint_line(tmenu.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0)))
+    hint = _render_text(
+        tframe._hint_line(tmenu.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0))
+    )
     assert "Esc" in hint and "cancel" in hint
 
 
@@ -4121,10 +4136,7 @@ def test_render_shows_memory_used_and_limit(tmp_path):
     c.memory_limit = "8GiB"
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    out = "\n".join(table_text(
-            [g],
-            selected=None,
-            now=now))
+    out = "\n".join(table_text([g], selected=None, now=now))
     assert "3.7G" in out  # used
     assert "8GiB" in out  # limit
     assert "MEM" in out  # the new column header
@@ -4465,11 +4477,7 @@ def test_render_marks_a_folded_group_and_hides_its_rows(tmp_path):
         dmodel.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")]),
         dmodel.RepoGroup("beta", "/b", tmp_path / "b.yaml", [_ci("beta-two", "beta")]),
     ]
-    out = "\n".join(table_text(
-            groups,
-            selected=None,
-            now=now,
-            folded=frozenset({"alpha"})))
+    out = "\n".join(table_text(groups, selected=None, now=now, folded=frozenset({"alpha"})))
     # NAME cells show display_name (repo prefix stripped, see ContainerInfo);
     # "beta-two" -> "two" is the neighbour's untouched row, distinct from
     # "alpha-one" -> "one" so the two containers cannot be confused for
@@ -4477,7 +4485,10 @@ def test_render_marks_a_folded_group_and_hides_its_rows(tmp_path):
     assert " one " not in out  # folded away; do not match MODE=clone
     assert "two" in out  # its neighbour is untouched
     assert "▸" in out and "▾" in out  # collapsed and expanded markers both drawn
-    assert "1 folded" in tframe.frame_title(groups, frozenset({"alpha"}), git_enabled=True, now=now).plain
+    assert (
+        "1 folded"
+        in tframe.frame_title(groups, frozenset({"alpha"}), git_enabled=True, now=now).plain
+    )
 
 
 def test_render_marks_a_selected_repo_header(tmp_path):
@@ -4501,11 +4512,23 @@ def test_render_marks_a_selected_repo_header(tmp_path):
     # The plain text is identical: nothing is inserted, so nothing shifts.
     assert unselected == on_header
 
-    model = fleet.table_model([g], now=kwargs["now"], enabled=None, folded=frozenset(),
-                              column_widths=None, shown_columns=None, column_offset=0,
-                              hidden_by_preferences=False, width=196)
-    plain = fleet.entry_line(model.entries[0], model.geometry, model.folded, selected=False, width=196)
-    selected = fleet.entry_line(model.entries[0], model.geometry, model.folded, selected=True, width=196)
+    model = fleet.table_model(
+        [g],
+        now=kwargs["now"],
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=196,
+    )
+    plain = fleet.entry_line(
+        model.entries[0], model.geometry, model.folded, selected=False, width=196
+    )
+    selected = fleet.entry_line(
+        model.entries[0], model.geometry, model.folded, selected=True, width=196
+    )
     row = fleet.entry_line(model.entries[1], model.geometry, model.folded, selected=True, width=196)
     assert selected.plain == plain.plain
     assert str(plain.style) == "bold cyan"
@@ -4538,11 +4561,9 @@ def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path)
     `name`) while the header row still gets one unconditionally."""
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     g = dmodel.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
-    out = "\n".join(table_text(
-            [g],
-            selected=None,
-            now=now,
-            enabled=("state", "network")))  # `name` disabled; `state` is first
+    out = "\n".join(
+        table_text([g], selected=None, now=now, enabled=("state", "network"))
+    )  # `name` disabled; `state` is first
     lines = [ln for ln in out.splitlines() if ln.strip()]
     header_line = next(ln for ln in lines if "alpha" in ln)
     data_line = next(ln for ln in lines if "▶" in ln)
@@ -6164,14 +6185,19 @@ def test_live_cpu_value_growing_does_not_shift_later_columns(tmp_path):
             cpu_limit="16",
             activity=(ProcessActivity(comm="pytest", percent=percent, count=1),),
         )
-        return "\n".join(table_text(
-            [dmodel.RepoGroup("alpha", str(tmp_path), None, [c])],
-            selected=None,
-            now=datetime(2026, 6, 8, tzinfo=UTC),
-            enabled=("name", "cpu", "doing"),
-        ))
+        return "\n".join(
+            table_text(
+                [dmodel.RepoGroup("alpha", str(tmp_path), None, [c])],
+                selected=None,
+                now=datetime(2026, 6, 8, tzinfo=UTC),
+                enabled=("name", "cpu", "doing"),
+            )
+        )
 
-    low, high = (next(line for line in frame(percent).splitlines() if "pytest" in line) for percent in (9, 100))
+    low, high = (
+        next(line for line in frame(percent).splitlines() if "pytest" in line)
+        for percent in (9, 100)
+    )
     assert "9%·16" in low and "100%·16" in high
     assert low.index("pytest") == high.index("pytest")
 
@@ -6184,11 +6210,14 @@ def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
         _ci("alpha-one", "alpha"),
         activity=(ProcessActivity(comm=long_name, percent=50.0, count=1),),
     )
-    out = "\n".join(table_text(
+    out = "\n".join(
+        table_text(
             [dmodel.RepoGroup("alpha", str(tmp_path), None, [c])],
             selected=None,
             now=datetime(2026, 6, 8, tzinfo=UTC),
-            enabled=("name", "doing", "network")))
+            enabled=("name", "doing", "network"),
+        )
+    )
     row = [line for line in out.splitlines() if "●" in line and "pytest" not in line]
     assert len(row) == 1
     assert long_name not in row[0] and "…" in row[0]
@@ -6227,12 +6256,11 @@ def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
     widths = dcolumns.optimize_column_widths([short], now=now, enabled=enabled)
 
     def frame(group, budgets, width=200):
-        return "\n".join(table_text(
-                [group],
-                selected=None,
-                now=now,
-                enabled=enabled,
-                column_widths=budgets, width=width))
+        return "\n".join(
+            table_text(
+                [group], selected=None, now=now, enabled=enabled, column_widths=budgets, width=width
+            )
+        )
 
     before = next(
         line for line in frame(short, widths).splitlines() if "●" in line and "alpha" not in line
