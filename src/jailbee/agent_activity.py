@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from jailbee.accounts.models import ActivityPaths, AgentActivity, AgentSession
+    from jailbee.accounts.models import ActivityEvent, ActivityPaths, AgentActivity, AgentSession
     from jailbee.agent_status import ActivityLookup, AgentSummary
     from jailbee.procstat import ProcSample
 
@@ -103,6 +103,11 @@ class ActivityReader:
         return activity
 
 
+TOOLTIP_MESSAGE_CHARS = 200
+"""`lines()` cuts the message here: a tooltip does not wrap, and the details
+panel, which does, reads `message` itself."""
+
+
 @dataclass(frozen=True)
 class ActivityText:
     """The activity lines, as plain text. Renderers escape and style them."""
@@ -110,14 +115,18 @@ class ActivityText:
     head: str
     tool: str | None
     message: str | None
+    recent: tuple[ActivityEvent, ...] = ()
 
     def lines(self) -> tuple[str, ...]:
-        """Head, then the tool and message lines that exist."""
+        """Head, then the tool and (cut) message lines that exist."""
         out = [self.head]
         if self.tool is not None:
             out.append(f"↳ {self.tool}")
         if self.message is not None:
-            out.append(f"“{self.message}”")
+            message = self.message
+            if len(message) > TOOLTIP_MESSAGE_CHARS:
+                message = message[: TOOLTIP_MESSAGE_CHARS - 1] + "…"
+            out.append(f"“{message}”")
         return tuple(out)
 
 
@@ -148,4 +157,4 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
     if activity.shells:
         head += f" · {_counted(activity.shells, 'shell')}"
     tool = None if state == "idle" else activity.last_tool
-    return ActivityText(head, tool, activity.last_message)
+    return ActivityText(head, tool, activity.last_message, activity.recent)

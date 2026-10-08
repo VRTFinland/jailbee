@@ -11,7 +11,7 @@ import pytest
 
 from jailbee import agent_activity as aa
 from jailbee.accounts.adapters import base
-from jailbee.accounts.models import ActivityPaths, AgentActivity, AgentSession
+from jailbee.accounts.models import ActivityEvent, ActivityPaths, AgentActivity, AgentSession
 from jailbee.agent_status import AgentSummary, match_sessions
 from jailbee.procstat import ProcSample
 
@@ -247,6 +247,26 @@ def test_describe_keeps_the_tool_when_the_selected_session_is_busy() -> None:
 
     assert text is not None
     assert text.lines() == ("busy · ~2 subagents · 1 shell", "↳ Bash  ls", "“working”")
+
+
+def test_describe_passes_the_recent_events_through() -> None:
+    recent = (ActivityEvent("tool", "Read  /a.py"), ActivityEvent("message", "hi"))
+    activity = AgentActivity("Bash  ls", "done", 2, 1, recent=recent)
+
+    text = aa.describe(_summary(activity=activity), NOW)
+
+    assert text is not None
+    assert text.recent == recent
+
+
+def test_the_tooltip_lines_cut_a_long_message_but_the_text_keeps_it() -> None:
+    long = "z" * 1000
+    text = aa.describe(_summary(activity=AgentActivity("Bash  ls", long, 2, 1)), NOW)
+
+    assert text is not None
+    assert text.message == long
+    assert text.lines()[-1] == "“" + "z" * (aa.TOOLTIP_MESSAGE_CHARS - 1) + "…”"
+    assert aa.TOOLTIP_MESSAGE_CHARS == 200
 
 
 def test_describe_without_activity_is_none() -> None:
