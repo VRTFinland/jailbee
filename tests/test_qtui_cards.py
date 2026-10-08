@@ -626,10 +626,10 @@ def test_compact_card_shows_cpu_and_doing(qtbot):
         state="Running",
         fields=[
             CardField("ip", "IP", "10.0.0.5"),
-            CardField("mem", "MEM", "2.0 GB / 4GB"),
+            CardField("mem_used", "USED", "2.0G"),
             CardField("cpu", "CPU", "182%·4"),
-            CardField("doing", "DOING", "claude, pytest x8"),
         ],
+        doing="claude, pytest x8",
     )
     card = _Card("p-feat", cc, style="compact", selected=False)
     qtbot.addWidget(card)
@@ -785,3 +785,46 @@ def test_empty_actionable_group_has_new_control_but_orphan_does_not(qtbot):
         buttons["PR…"].click()
     assert blocker.args == ["scratch"]
     assert "0 containers" in headers["scratch"].text()
+
+
+def test_compact_card_shows_used_and_mem_pct_with_the_limit_in_a_tooltip(qtbot):
+    from jailbee.qtui.cards import _Card
+    from jailbee.qtui.model import CardContent, CardField
+
+    cc = CardContent(
+        name="feat",
+        state="Running",
+        fields=[CardField("mem_used", "USED", "1.0G"), CardField("mem_pct", "MEM%", "25%")],
+        memory_limit="4GiB",
+    )
+    card = _Card("p-feat", cc, style="compact", selected=False)
+    qtbot.addWidget(card)
+
+    chip = next(label for label in card.findChildren(QLabel) if label.text() == "▪ 1.0G 25%")
+    assert chip.toolTip() == "Memory limit: 4GiB"
+
+
+def test_default_card_reads_memory_from_the_new_fields(qtbot):
+    """End to end with the default columns: `mem` is no longer among them, so
+    a card still reading it would silently lose its memory chip."""
+    view = CardView()
+    qtbot.addWidget(view)
+    groups = _groups()
+    groups[0].containers[0].memory_usage = 500_000_000  # of "2GB"
+
+    view.set_groups(groups, now=datetime.now().astimezone(), columns=None)
+
+    assert "▪ 476.8M 25%" in _label_texts(_card(view, "p-foo"))
+
+
+def test_default_card_shows_the_doing_line_without_the_doing_column(qtbot):
+    from jailbee.procstat import ProcessActivity
+
+    view = CardView()
+    qtbot.addWidget(view)
+    groups = _groups()
+    groups[0].containers[0].activity = (ProcessActivity(comm="pytest", percent=80.0, count=1),)
+
+    view.set_groups(groups, now=datetime.now().astimezone(), columns=None)
+
+    assert "pytest" in _label_texts(_card(view, "p-foo"))

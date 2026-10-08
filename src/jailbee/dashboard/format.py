@@ -74,6 +74,20 @@ def card_network(container: ContainerInfo, now: datetime) -> str:
     return _loose(container, now)
 
 
+def doing_cell(container: ContainerInfo) -> str:
+    """The busy processes as compact markup, ``""`` when there are none."""
+    if not container.activity:
+        return ""
+    names = [
+        escape(p.comm) if p.count == 1 else f"{escape(p.comm)}×{p.count}"  # noqa: RUF001 - intentional multiplication sign
+        for p in container.activity[:DOING_MAX_NAMES]
+    ]
+    hidden = len(container.activity) - len(names)
+    if hidden:
+        names.append(f"[dim]+{hidden}[/dim]")
+    return ",".join(names)
+
+
 def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, now: datetime) -> str:
     """Return a dashboard-specific value, keeping unknown text safely renderable."""
     value = field.cell(container)
@@ -130,14 +144,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         colour = "red" if dead else "yellow"
         return f"[{colour}]{escape(phase + suffix)}[/{colour}]"
     if field.name == "doing" and container.activity:
-        names = [
-            escape(p.comm) if p.count == 1 else f"{escape(p.comm)}×{p.count}"  # noqa: RUF001 - intentional multiplication sign
-            for p in container.activity[:DOING_MAX_NAMES]
-        ]
-        hidden = len(container.activity) - len(names)
-        if hidden:
-            names.append(f"[dim]+{hidden}[/dim]")
-        return ",".join(names)
+        return doing_cell(container)
     if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
         if getattr(container.git_status, field.name) == "clean":
             return "[dim]✓[/dim]"
