@@ -354,3 +354,22 @@ def test_a_full_frame_keeps_the_panels_bottom_border(tmp_path, height):
 
     assert len(lines) == height and lines[-1].startswith("╰")
     assert lines[-2].startswith("│ ╰")
+
+
+@pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.parametrize("height", range(13, 26))
+def test_a_full_frame_with_a_menu_beside_the_details_keeps_panel_and_hint(tmp_path, height, busy):
+    """The hint's lines count against the frame: no filler may be drawn when it is full."""
+    group = _busy(tmp_path, 40) if busy else _long(tmp_path)
+    name = "alpha-row01" if busy else "row01"
+    view = view_of(
+        [group],
+        selected=Row("container", name),
+        show_details=True,
+        overlay=MenuState(name, [("Attach tmux", "tmux")]),
+    )
+    lines = paint(view, size=(120, height))
+
+    assert len(lines) == height and lines[-1].startswith("╰")
+    assert lines[-3].startswith("│ ╰")  # the panel's bottom border
+    assert "Esc" in lines[-2]  # the hint
