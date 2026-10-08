@@ -6473,7 +6473,6 @@ def test_loose_cell_escapes_an_unknown_network_value():
     assert Text.from_markup(field.cell(odd)).plain == "[bold]x"
 
 
-
 def _view_engine():
     from sqlmodel import SQLModel, create_engine
 
