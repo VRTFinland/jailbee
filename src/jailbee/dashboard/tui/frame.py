@@ -65,7 +65,33 @@ from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_ent
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 from jailbee.lifecycle import ContainerInfo
 
-_INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
+INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
+
+
+def frame_title(
+    groups: Sequence[RepoGroup], folded: frozenset[str], *, git_enabled: bool, now: datetime
+) -> Text:
+    """The frame border's summary and clock, independent of its body."""
+    n_repos = len({g.prefix for g in groups})
+    n_ctr = sum(len(g.containers) for g in groups)
+    n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
+    folded_note = f" · {n_folded} folded" if n_folded else ""
+    git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
+    return Text.from_markup(
+        f"[bold]🐝 jailbee dashboard[/]  ·  [dim]h/? help[/]"
+        f"  ·  {n_repos} repos · {n_ctr} containers{folded_note}{git_note}  ·  {now:%H:%M:%S}"
+    )
+
+
+def notice_parts(notice: str | None) -> tuple[Text | None, Text | None]:
+    """Plain yellow notice as (border subtitle, wrapped inline text)."""
+    # Long refusals keep their remedy intact below the table. Never parse CLI markup.
+    if not notice:
+        return None, None
+    if len(notice) > INLINE_NOTICE_MAX:
+        return None, Text(notice, style="yellow")
+    # Keep the verdict at the start when the border is narrower than the notice.
+    return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
 
 
 def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
@@ -586,16 +612,11 @@ def render(
     overlay hides it.
 
     ``notice`` is a transient message (a rejected key, a view-only row) shown
-    in the subtitle, or — longer than :data:`_INLINE_NOTICE_MAX` — wrapped
+    in the subtitle, or — longer than :data:`INLINE_NOTICE_MAX` — wrapped
     right below the table.
     """
-    all_containers = [c for g in groups for c in g.containers]
     visible_groups = groups
-    # A notice too long for the bottom border is drawn whole, wrapped, right
-    # below the table: a CLI refusal ends in its remedy ("… pass --force"),
-    # which an ellipsis on the border would cut. A plain `Text`, not markup: a
-    # CLI message may contain `[...]`.
-    inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
+    subtitle, inline_notice = notice_parts(notice)
     sections = _RepoSections(
         groups=visible_groups,
         now=now,
@@ -608,27 +629,11 @@ def render(
         hidden_by_preferences=hidden_by_preferences,
     )
     details = details_for(visible_groups, selected, now) if show_details and groups else None
-    n_repos = len({g.prefix for g in groups})
-    n_ctr = len(all_containers)
-    n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
-    folded_note = f" · {n_folded} folded" if n_folded else ""
-    git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
-    title = (
-        f"[bold]🐝 jailbee dashboard[/]  ·  [dim]h/? help[/]"
-        f"  ·  {n_repos} repos · {n_ctr} containers{folded_note}{git_note}  ·  {now:%H:%M:%S}"
-    )
-    # Subtitle is notice-only: a short transient message on the bottom border
-    # cannot push the table around. Should the terminal still be narrower than
-    # a short notice, it is cut on the right so its start (the verdict) stays.
-    subtitle = (
-        Text(notice, style="yellow", no_wrap=True, overflow="ellipsis")
-        if notice and inline_notice is None
-        else None
-    )
+    title = frame_title(groups, folded, git_enabled=git_enabled, now=now)
     return Panel(
         _FrameBody(
             sections,
-            Text(inline_notice, style="yellow") if inline_notice is not None else None,
+            inline_notice,
             overlay,
             details,
             None if height is None else max(0, height - _FRAME_BORDER_ROWS),

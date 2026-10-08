@@ -462,7 +462,7 @@ def clamp_column_offset(
     folded: frozenset[str],
     column_widths: Mapping[str, int] | None,
     shown_columns: Sequence[str] | None,
-    width: int,
+    available: int,
 ) -> int:
     """Clamp the session offset to the frame's scrollable column geometry."""
     _, widths = _frame_columns(
@@ -473,8 +473,4 @@ def clamp_column_offset(
         column_widths=column_widths,
         shown_columns=shown_columns,
     )
-    return column_viewport(widths, width - _FRAME_INSET_COLS, offset).offset
-
-
-# Panel border plus `padding=(0, 1)`: the table's width is the console's minus this.
-_FRAME_INSET_COLS = 4
+    return column_viewport(widths, available, offset).offset

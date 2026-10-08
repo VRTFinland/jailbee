@@ -5,7 +5,7 @@ from __future__ import annotations
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
-from tests.dashboard_fixtures import ci
+from tests.dashboard_fixtures import ci, wide_group
 from tests.dashboard_pilot import bare_session
 
 
@@ -45,6 +45,14 @@ def test_a_dispatch_goes_through_the_terminal_hand_off(mocker, tmp_path):
     session.handle_input(b"t")  # tmux: a foreground dispatch
     assert len(terminal.handed) == 1
     child.assert_called_once()
+
+
+def test_the_offset_clamp_uses_the_tables_own_width(mocker, tmp_path):
+    clamp = mocker.spy(tsession, "clamp_column_offset")
+    session, terminal = bare_session(mocker, [wide_group(tmp_path)])
+    terminal.table_width = 40
+    session.scroll_columns(1)
+    assert clamp.call_args.kwargs["available"] == 40
 
 
 def test_the_session_module_imports_without_textual():

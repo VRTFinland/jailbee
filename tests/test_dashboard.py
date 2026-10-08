@@ -4858,12 +4858,12 @@ def test_clamp_column_offset_follows_the_width(tmp_path):
         shown_columns=None,
     )
     group = _wide_group(tmp_path)
-    assert dcolumns.clamp_column_offset([group], 9, width=44, **kw) > 0
-    assert dcolumns.clamp_column_offset([group], 9, width=300, **kw) == 0
-    assert dcolumns.clamp_column_offset([group], -1, width=44, **kw) == 0
+    assert dcolumns.clamp_column_offset([group], 9, available=40, **kw) > 0
+    assert dcolumns.clamp_column_offset([group], 9, available=296, **kw) == 0
+    assert dcolumns.clamp_column_offset([group], -1, available=40, **kw) == 0
     assert (
         dcolumns.clamp_column_offset(
-            [group], 9, width=44, **(kw | {"folded": frozenset({"alpha"})})
+            [group], 9, available=40, **(kw | {"folded": frozenset({"alpha"})})
         )
         == 0
     )

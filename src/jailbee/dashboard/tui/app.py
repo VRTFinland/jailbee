@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 TICK_SECONDS = 0.25
+FRAME_INSET_COLS = 4  # Panel border plus `padding=(0, 1)`.
 
 
 def _can_suspend(driver: Driver | None) -> bool:
@@ -118,8 +119,8 @@ class DashboardApp(App[int], inherit_bindings=False):
     # --- Terminal protocol -------------------------------------------------
 
     @property
-    def width(self) -> int:
-        return self.size.width
+    def table_width(self) -> int:
+        return max(0, self.size.width - FRAME_INSET_COLS)
 
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Run ``fn`` on the real terminal with the dashboard suspended."""

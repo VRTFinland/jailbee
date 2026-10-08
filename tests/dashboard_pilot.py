@@ -311,7 +311,7 @@ class BareClient:
 
 
 class BareTerminal:
-    width = 120
+    table_width = 116
 
     def __init__(self) -> None:
         self.handed: list[object] = []

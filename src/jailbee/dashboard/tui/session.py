@@ -191,7 +191,9 @@ class Terminal(Protocol):
     """What a session needs from the frontend drawing it."""
 
     @property
-    def width(self) -> int: ...
+    def table_width(self) -> int:
+        """Cells the table has, scrollbar excluded."""
+        ...
 
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Give the real terminal to ``fn`` (a child command), take it back, return its result."""
@@ -1492,7 +1494,7 @@ class DashboardSession:
             folded=self.folded,
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
-            width=self.terminal.width,
+            available=self.terminal.table_width,
         )
 
     def _close_vanished_overlay(self) -> None:

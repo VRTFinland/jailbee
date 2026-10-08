@@ -211,7 +211,7 @@ def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):
         folded=frozenset(),
         column_widths=None,
         shown_columns=None,
-        width=52,
+        available=48,
     )
 
     run = drive(
