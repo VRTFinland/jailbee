@@ -119,6 +119,8 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     @property
     def table_width(self) -> int:
+        # Private flag (like the driver's in ``_set_mouse_reporting``): the public
+        # ``App.is_mounted`` needs a widget, and ``frame`` raises before compose ends.
         if self._is_mounted:
             width = self.frame.table.content_width
             if width > 0:
@@ -251,12 +253,24 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_mouse_move(self, event: events.MouseMove) -> None:
         if not self.mouse_on:
             return
-        hit = Hit.of(event.style.meta)
+        self._set_hover(Hit.of(event.style.meta))
+
+    def _set_hover(self, hit: Hit | None) -> None:
         if hit == self.hover:
             return
         self.hover = hit
         self.session.hover(hit)
         self.refresh_frame()
+
+    def on_fleet_table_wheel_scrolled(self, _message: FleetTable.WheelScrolled) -> None:
+        """Re-resolve hover from what is now under the pointer (no MouseMove follows a wheel)."""
+        if self.mouse_on:
+            self.call_after_refresh(self._rehover)
+
+    def _rehover(self) -> None:
+        if self.mouse_on:
+            x, y = self.mouse_position
+            self._set_hover(Hit.of(self.screen.get_style_at(x, y).meta))
 
     def on_fleet_table_geometry_changed(self, _message: FleetTable.GeometryChanged) -> None:
         self.refresh_frame()

@@ -72,6 +72,9 @@ class FleetTable(ScrollView, can_focus=False):
     class GeometryChanged(Message):
         """The actual content width has settled after layout."""
 
+    class WheelScrolled(Message):
+        """The wheel moved the table vertically; the row under the pointer changed."""
+
     class ColumnScroll(Message):
         def __init__(self, step: int) -> None:
             super().__init__()
@@ -260,6 +263,8 @@ class FleetTable(ScrollView, can_focus=False):
             self.post_message(self.ColumnScroll(step))
         else:
             self.scroll_relative(y=step, animate=False)
+            # Textual sends no MouseMove after a wheel notch: the app re-resolves hover.
+            self.post_message(self.WheelScrolled())
 
     # Override private handlers: Textual runs every _on_ base handler, otherwise scrolling twice.
     def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
@@ -353,9 +358,11 @@ class OverlayPanel(Static):
             super().__init__()
             self.step = step
 
-    def __init__(self, *, id: str | None = None) -> None:
+    def __init__(
+        self, *, id: str | None = None, mouse_enabled: Callable[[], bool] | None = None
+    ) -> None:
         super().__init__(id=id)
-        self.mouse_enabled: Callable[[], bool] = lambda: True
+        self.mouse_enabled: Callable[[], bool] = mouse_enabled or (lambda: True)
         self.auto_links = False  # the panel tags its own targets (see `jailbee.dashboard.hit`)
 
     def show(self, renderable: RenderableType | None, crop_top: int) -> None:
@@ -420,11 +427,11 @@ class DashboardFrame(Vertical):
         self._hint_input: object = None
 
     def compose(self) -> ComposeResult:
-        yield FleetTable(id="fleet")
+        yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
         yield Static(id="notice")
         with Horizontal(id="bottom"):
             yield DetailsPanel(id="details")
-            yield OverlayPanel(id="overlay")
+            yield OverlayPanel(id="overlay", mouse_enabled=self.mouse_enabled)
         yield Static(id="hint")
 
     @cached_property
@@ -518,7 +525,6 @@ class DashboardFrame(Vertical):
             width=max(0, width - scrollbar),
         )
         table = self.table
-        table.mouse_enabled = self.mouse_enabled
         table.display = layout.table_rows > 0
         table.styles.height = layout.table_rows
         table_hover = (
@@ -542,7 +548,6 @@ class DashboardFrame(Vertical):
         self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
         panel = self.query_one(OverlayPanel)
         panel.styles.width = menu_width if beside and overlay is not None else "1fr"
-        panel.mouse_enabled = self.mouse_enabled
         overlay_input = (view.overlay, layout.list_rows, overlay_hover, layout.crop_top)
         if overlay_input != self._overlay_input:
             panel.show(overlay_renderable(layout.list_rows), layout.crop_top)

@@ -388,7 +388,7 @@ def test_real_app_thousand_rows_bounds_each_key_render_work(mocker):
 
     def check(app):
         counts.append((render.call_count, build.call_count))
-        assert 0 < render.call_count <= 2 * 40
+        assert 0 < render.call_count <= 4  # a full repaint would be ~40 lines
         assert 0 < build.call_count <= 2 * 40
 
     result = drive(
@@ -397,3 +397,47 @@ def test_real_app_thousand_rows_bounds_each_key_render_work(mocker):
     assert result.last.selected == Row("container", "alpha-002")
     assert len(counts) == 3
     print(f"per-key (render_line, entry_line): {counts}")
+
+
+def _scrolled_hover_script(mocker, *, mouse_on=True):  # type: ignore[no-untyped-def]
+    """Hover a row, wheel one notch, return (hit before, hit now, hit under pointer, app)."""
+    from jailbee.dashboard.tui import session as tsession
+    from tests.dashboard_pilot import FROZEN_NOW, hit_offset, make_app
+
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    app = make_app(mocker, [_model(1000).entries[0].group])
+    seen = {}
+
+    async def main():  # type: ignore[no-untyped-def]
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            offset = hit_offset(app, Hit("row", ("alpha-005",)))
+            await pilot.hover(offset=offset)
+            await pilot.pause()
+            seen["before"] = app.hover
+            if not mouse_on:
+                app.toggle_mouse()
+            await pilot._post_mouse_events([events.MouseScrollDown], offset=offset)
+            await pilot.pause()
+            await pilot.pause()
+            seen["after"] = app.hover
+            seen["under"] = Hit.of(app.screen.get_style_at(*offset).meta)
+            seen["table_hover"] = app.query_one(FleetTable)._hover
+            seen["scroll_y"] = app.query_one(FleetTable).scroll_y
+
+    asyncio.run(main())
+    return seen
+
+
+def test_hover_follows_the_pointer_after_a_wheel_scroll(mocker):
+    seen = _scrolled_hover_script(mocker)
+    assert seen["scroll_y"] == 1
+    assert seen["before"] == Hit("row", ("alpha-005",))
+    assert seen["under"] == Hit("row", ("alpha-006",))
+    assert seen["after"] == seen["under"]
+    assert seen["table_hover"] == seen["under"]
+
+
+def test_wheel_scroll_leaves_hover_cleared_when_mouse_is_off(mocker):
+    seen = _scrolled_hover_script(mocker, mouse_on=False)
+    assert seen["after"] is None and seen["table_hover"] is None
