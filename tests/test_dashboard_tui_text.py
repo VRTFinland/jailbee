@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from textual import events
 from textual.widgets import Input
 
 from jailbee.dashboard import model as dmodel
@@ -16,6 +15,7 @@ from tests.dashboard_pilot import (
     backgrounds,
     bare_session,
     box_text,
+    burst,
     drive,
     keys,
     patch_pause,
@@ -24,16 +24,6 @@ from tests.dashboard_pilot import (
 
 def _group(tmp_path):  # type: ignore[no-untyped-def]
     return dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-
-
-def _batch(*pairs: tuple[str, str]):  # type: ignore[no-untyped-def]
-    """Keys posted in one go, as one terminal read delivers them (Pilot waits between presses)."""
-
-    def step(app):  # type: ignore[no-untyped-def]
-        for key, character in pairs:
-            app.post_message(events.Key(key, character))
-
-    return step
 
 
 def _texts(run):  # type: ignore[no-untyped-def]
@@ -89,7 +79,7 @@ def test_keys_typed_before_the_command_box_is_focused_land_in_it(mocker, tmp_pat
     run = drive(
         mocker,
         [
-            _batch(
+            burst(
                 ("exclamation_mark", "!"), ("l", "l"), ("s", "s"), ("backspace", "\x7f"), ("x", "x")
             )
         ],
@@ -104,7 +94,7 @@ def test_type_ahead_enter_runs_the_command(mocker, tmp_path):
     patch_pause(mocker)
     drive(
         mocker,
-        [_batch(("exclamation_mark", "!"), ("l", "l"), ("s", "s"), ("enter", "\r"))],
+        [burst(("exclamation_mark", "!"), ("l", "l"), ("s", "s"), ("enter", "\r"))],
         [_group(tmp_path)],
     )
     child.assert_called_once()

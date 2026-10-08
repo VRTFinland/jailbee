@@ -122,6 +122,23 @@ class Paste:
     text: str
 
 
+def burst(*items: tuple[str, str | None] | Paste) -> Callable[[tapp.DashboardApp], None]:
+    """Keys and pastes posted in one go, as one terminal read delivers them.
+
+    `pilot.press` waits after every key, so it can never show a key arriving before
+    the box an earlier key opened; a burst can. Items are ``(key, character)``
+    pairs (``("enter", "\\r")``, ``("j", "j")``) or `Paste`.
+    """
+
+    def step(app: tapp.DashboardApp) -> None:
+        for item in items:
+            app.post_message(
+                events.Paste(item.text) if isinstance(item, Paste) else events.Key(*item)
+            )
+
+    return step
+
+
 NATIVE_LIST = "#native-list"
 
 

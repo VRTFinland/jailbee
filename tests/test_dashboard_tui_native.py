@@ -53,6 +53,7 @@ from tests.dashboard_pilot import (
     Wheel,
     backgrounds,
     box_text,
+    burst,
     container_egress_keys,
     drive,
     make_app,
@@ -1866,3 +1867,58 @@ def test_a_double_click_on_a_picker_entry_chooses_once(mocker, tmp_path):
     )
     drive(mocker, [*_apply_picker(group), Pick(1, times=2)], [group])
     assert chosen.call_count == 1
+
+
+def test_a_box_replaced_before_it_mounted_does_not_crash(mocker, tmp_path):
+    """Enter, then help on, off, on in one read: the menu leaves before it ever mounted.
+
+    The menu's `on_mount` used to run after `_swap_native` had removed it and
+    raise NoMatches, which ends the app.
+    """
+    boxes = []
+    run = drive(
+        mocker,
+        [
+            "j",
+            burst(("enter", "\r"), ("h", "h"), ("h", "h"), ("h", "h")),
+            lambda app: boxes.append([type(b).__name__ for b in app.query(OverlayBox)]),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert boxes == [["HelpBox"]]
+    assert run.natives[-1] == NativeState("help", None)
+
+
+def test_the_slot_holds_only_the_sessions_box(mocker, tmp_path):
+    """However fast overlays change, `#bottom` ends with the one box the session shows.
+
+    A box's own `on_mount` focus is switched off, so the focus read below can only
+    come from `settle_native`.
+    """
+    mocker.patch.object(OverlayBox, "on_mount", lambda self: self._ready())
+    seen = []
+    drive(
+        mocker,
+        [
+            "j",
+            burst(("enter", "\r"), ("h", "h"), ("S", "S"), ("h", "h")),
+            lambda app: seen.append(
+                (
+                    [
+                        b
+                        for b in app.frame.query_one("#bottom").children
+                        if isinstance(b, OverlayBox)
+                    ],
+                    app.frame.native_box,
+                    app.session.overlay,
+                    # Read while the app runs: a stopped app has no focus.
+                    app.frame.native_box.has_focus_within,
+                )
+            ),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    [(mounted, box, overlay, focused)] = seen
+    assert mounted == [box]
+    assert overlay == "help" and type(box).__name__ == "HelpBox"
+    assert focused

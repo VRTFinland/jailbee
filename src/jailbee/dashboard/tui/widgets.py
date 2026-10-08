@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from functools import cached_property
 
@@ -388,6 +389,8 @@ class DashboardFrame(Vertical):
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
         self._native_overlay_key: tuple[object, ...] | None = None
+        # Mounting and removing are awaited one after the other, never interleaved.
+        self._settle_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
@@ -401,39 +404,51 @@ class DashboardFrame(Vertical):
         return self.query_one(FleetTable)
 
     def _sync_native(self, overlay: Overlay | None) -> OverlayBox | None:
-        """Keep, refresh, replace or drop the native box for ``overlay``."""
+        """Keep and refresh the box for ``overlay``, or name a new one for `settle_native`."""
         key = overlay_key(overlay)
         box = self.native_box
         if box is not None and key == self._native_overlay_key:
             assert overlay is not None
             box.show(overlay)
             return box
-        old = box
         self._native_overlay_key = key
-        self.native_box = None
-        if key is None or overlay is None:
-            if old is not None and old.parent is not None:
-                old.remove()
-            return None
-        box = build_box(overlay, mouse_enabled=self.mouse_enabled, candidates=self.candidates)
-        self.native_box = box
-        if old is None:
-            self._mount_native(box)
-        else:
-            # Never have two boxes mounted (and focusable) at once: the replacement
-            # is mounted only after the old one has left the DOM.
-            self.app.call_later(self._swap_native, old, box)
-        return box
+        self.native_box = (
+            None
+            if key is None or overlay is None
+            else build_box(overlay, mouse_enabled=self.mouse_enabled, candidates=self.candidates)
+        )
+        # The app settles before every key; this covers a change no key follows
+        # (a tick closing a vanished target, a click).
+        self.app.call_later(self.settle_native)
+        return self.native_box
 
-    def _mount_native(self, box: OverlayBox) -> None:
-        self.query_one("#bottom", Horizontal).mount(box)
+    async def settle_native(self) -> None:
+        """Make `#bottom` hold exactly `native_box`, mounted and focused.
 
-    async def _swap_native(self, old: OverlayBox, box: OverlayBox) -> None:
-        """Replace ``old`` by ``box`` once ``old`` is gone (unless superseded)."""
-        if old.parent is not None:
-            await old.remove()
-        if self.native_box is box:
-            await self.query_one("#bottom", Horizontal).mount(box)
+        The only code that mounts or removes a box. A box is removed only once
+        its own mount has been awaited, so its `on_mount` never runs on a box
+        that already left; two boxes are never mounted (or focusable) at once.
+        """
+        async with self._settle_lock:
+            bottom = self.query_one("#bottom", Horizontal)
+            while True:
+                stale = [
+                    child
+                    for child in bottom.children
+                    if isinstance(child, OverlayBox) and child is not self.native_box
+                ]
+                if stale:
+                    await bottom.remove_children(stale)
+                    continue
+                box = self.native_box
+                if box is not None and box.parent is None:
+                    await bottom.mount(box)
+                    continue
+                break
+            box = self.native_box
+            if box is not None and not box.has_focus_within:
+                # `focus()` would defer to the next idle; the next key must find it.
+                self.screen.set_focus(box.focus_target())
 
     def native_state(self) -> NativeState | None:
         box = self.native_box
