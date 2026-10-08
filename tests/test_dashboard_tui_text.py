@@ -317,3 +317,16 @@ def test_a_late_change_event_for_the_refused_text_keeps_the_error(mocker, tmp_pa
     run = _retarget(mocker, tmp_path, ["e", "enter", late_changed])
     last = _prompt_states(run)[-1]
     assert (last.text, last.error) == ("e", "'e' is not one of the listed branches")
+
+
+def test_an_arrow_typed_with_the_letters_moves_in_the_list_of_those_letters(mocker, tmp_path):
+    """`e` and ↓ in one read: the highlight is on the first match of `e`, not of the old text."""
+    run = _retarget(mocker, tmp_path, [burst(("e", "e"), ("down", None))])
+    last = _prompt_states(run)[-1]
+    assert (last.text, last.matches, last.cursor) == ("e", ("develop",), 0)
+
+
+def test_an_arrow_typed_after_a_paste_moves_in_the_list_of_the_pasted_text(mocker, tmp_path):
+    run = _retarget(mocker, tmp_path, [burst(Paste("e"), ("down", None))])
+    last = _prompt_states(run)[-1]
+    assert (last.text, last.matches, last.cursor) == ("e", ("develop",), 0)

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from textual import events
 from textual.app import App, ComposeResult
 from textual.geometry import Size
+from textual.message import Message
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
@@ -32,6 +33,7 @@ from jailbee.dashboard.tui.native import (
     PromptBox,
     SettingsBox,
     TextBox,
+    _run_binding,
 )
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
@@ -85,7 +87,7 @@ class DashboardApp(App[int], inherit_bindings=False):
     """The dashboard's Textual frontend: one frame, keys, timer, hand-off, title.
 
     ``inherit_bindings=False`` drops Textual's own ``ctrl+c``/``ctrl+q``/
-    ``ctrl+p`` bindings: every key belongs to the session, so Ctrl-C can
+    ``ctrl+p`` bindings: every key is routed by `on_event`, so Ctrl-C can
     cancel a prompt instead of quitting.
     """
 
@@ -185,40 +187,63 @@ class DashboardApp(App[int], inherit_bindings=False):
         # Clamp again after child geometry (including scrollbar allowance) settles.
         self.call_after_refresh(self.refresh_frame)
 
-    def on_key(self, event: events.Key) -> None:
+    async def on_event(self, event: events.Event) -> None:
+        # Keys and pastes are routed here, one at a time, never through the focus chain:
+        # Textual would pick a key's widget on arrival, before the keys ahead of it in
+        # the same read had opened or closed anything.
+        if isinstance(event, events.Key) and not event.is_forwarded:
+            self.app_focus = True  # what Textual's own handler does for a key
+            await self._route_key(event)
+        elif isinstance(event, events.Paste) and not event.is_forwarded:
+            await self._route_paste(event.text)
+        else:
+            await super().on_event(event)
+
+    async def _route_key(self, event: events.Key) -> None:
+        """One key, completely: the slot shows what it did before the next key is read."""
+        await self.frame.settle_native()
         box = self.frame.native_box
-        if box is not None:
-            self._on_native_key(box, event)
-            return
-        token = parse_key(event.key)
-        if not token:
-            return
-        event.stop()
-        event.prevent_default()
-        self._after(self.session.handle_key(token))
+        if box is None:
+            token = parse_key(event.key)
+            if token:
+                self._after(self.session.handle_key(token))
+        elif isinstance(box, TextBox):
+            outcome = await box.handle_key(event)
+            if isinstance(outcome, Message):
+                self._apply(outcome)
+        else:
+            await self._on_native_key(box, event)
+        await self.frame.settle_native()
 
-    def _on_native_key(self, box: OverlayBox, event: events.Key) -> None:
-        """A key while a native overlay is open: only the global ones are ours.
+    async def _on_native_key(self, box: OverlayBox, event: events.Key) -> None:
+        """A key while a list box is open (until they answer keys themselves).
 
-        The box's own keys reach it through its `on_key` (before this handler)
-        and its bindings (after it); preventing anything else here would cancel
-        those bindings. A text box takes every key; one that arrives before its
-        input has the focus would be lost, so the box keeps it (`type_ahead`).
+        The box's own `on_key`, then the dashboard's global keys, then the
+        box's bindings: the order the focus chain gave them, but now, not
+        whenever Textual gets to it.
         """
+        own = getattr(box, "on_key", None)
+        if own is not None:
+            own(event)
+            if event._stop_propagation:  # Textual keeps no public flag for a stopped event
+                return
         if event.key in ("tab", "shift+tab"):
-            event.prevent_default()  # Screen's focus cycling would take the overlay's focus
-            return
-        if isinstance(box, TextBox):
-            if not box.has_focus_within:
-                event.stop()
-                event.prevent_default()
-                box.type_ahead(event.key, event.character)
-            return
+            return  # Screen's focus cycling would take the overlay's focus
         token = parse_key(event.key)
         if token in OVERLAY_GLOBAL_TOKENS:
-            event.stop()
-            event.prevent_default()  # also Screen's ctrl+c copy binding
             self._after(self.session.overlay_global_key(token))
+        else:
+            await _run_binding(box, event)
+
+    async def _route_paste(self, text: str) -> None:
+        await self.frame.settle_native()
+        box = self.frame.native_box
+        if isinstance(box, TextBox):
+            box.paste(text)
+
+    def _apply(self, message: Message) -> None:
+        """A box's outcome for a routed key, through the handler a posted one would reach."""
+        getattr(self, message.handler_name)(message)
 
     def _native_current(self, key: tuple[object, ...] | None) -> bool:
         """Whether a box's message is about the overlay still open (a tick may have closed it)."""

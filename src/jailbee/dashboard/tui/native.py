@@ -6,9 +6,12 @@ and posts what the user did. `DashboardFrame` mounts the box for the session's
 overlay, keeps it while `overlay_key` is unchanged, and sizes it from
 `content_rows`/`natural_width` through `frame_layout`.
 
-Keys: the focused list sees a key first (its ancestors' `on_key` next, then
-`DashboardApp.on_key`, then the list's bindings), so a box consumes its own
-letters in `on_key` with `stop()` + `prevent_default()`.
+Keys: `DashboardApp` routes every key to the open box's `handle_key`, which
+answers with an outcome message (applied before the next key is read),
+`True` for a key it used, or `False` for one the dashboard keeps (`q`, `h`,
+`S`, Ctrl-C in a list). Keys never travel Textual's focus chain, so a key
+typed ahead lands in whatever the previous key opened. The mouse still
+reaches boxes through Textual's events; those outcomes are posted.
 """
 
 from __future__ import annotations
@@ -62,6 +65,9 @@ from jailbee.dashboard.tui.overlay import CommandState, NativeState, Overlay, ov
 from jailbee.egress_scope import EntryRow
 
 NATIVE_LIST_ID = "native-list"
+
+KeyOutcome = Message | bool
+"""What a box made of a routed key: an outcome to apply, or whether the key was its own."""
 
 # Every overlay list: no background but the hover, the cursor in CURSOR_STYLE
 # (bold magenta), and the V2 scrollbar colours (else Textual's theme paints RGB).
@@ -251,6 +257,22 @@ class OverlayBox(Vertical):
         self.focus_target().focus()
 
 
+async def _run_binding(box: OverlayBox, event: events.Key) -> bool:
+    """Run the binding a widget inside ``box`` has for ``event``, as Textual would.
+
+    Looked up through ``screen.active_bindings`` (the focus chain, nearest
+    first), keeping only nodes inside the box: the app's and screen's own
+    bindings (focus cycling, copy) never apply to a box key.
+    """
+    active = box.screen.active_bindings
+    for key in event.aliases:
+        found = active.get(key)
+        if found is not None and box in found.node.ancestors_with_self:
+            await box.app.run_action(found.binding.action, found.node)
+            return True
+    return False
+
+
 INPUT_ID = "native-input"
 _CANCEL_KEYS = frozenset({"escape", "ctrl+c"})
 # Enter's control aliases: the old cbreak loop took a bare LF (Ctrl-J) as Enter.
@@ -258,12 +280,7 @@ _SUBMIT_KEYS = frozenset({"ctrl+j", "ctrl+m"})
 
 
 class OverlayInput(Input):
-    """One line of typed text: no select-all on focus, no blink, the dashboard's colours.
-
-    A paste keeps every line, joined (Textual's own handler keeps only the
-    first), and a chunk carrying a control character is dropped whole, as
-    the byte loop before V3b did.
-    """
+    """One line of typed text: no select-all on focus, no blink, the dashboard's colours."""
 
     DEFAULT_CSS = """
     OverlayInput, OverlayInput:focus {
@@ -291,25 +308,14 @@ class OverlayInput(Input):
         )
         self.cursor_blink = False
 
-    def _on_paste(self, event: events.Paste) -> None:
-        event.stop()
-        event.prevent_default()  # else Input's handler inserts the first line as well
-        text = "".join(event.text.strip("\r\n").splitlines())
-        if text and text.isprintable():
-            self.insert_text_at_cursor(text)
-
 
 class TextBox(OverlayBox):
     """A box answered by typing.
 
-    Every printable key is text (the input consumes it before anyone else
-    sees it), so no dashboard shortcut fires while the box is open. Esc and
-    Ctrl-C cancel just this input; Tab is `complete`, never focus cycling.
-
-    Keys that arrive before the input has the focus — typed in the same
-    terminal read as the key that opened the box — reach the app with nothing
-    to type into. The app hands them to `type_ahead`; the box replays them
-    once its input is focused.
+    Every key reaches `handle_key` from the app, in order: printable keys are
+    text, Esc and Ctrl-C cancel just this input, Enter (and Ctrl-J/Ctrl-M)
+    answers, Tab is `complete`, and every other key runs the input's own
+    binding (←/→, Home/End, Ctrl-A/E/W/U/K, selection).
     """
 
     DEFAULT_CSS = """
@@ -319,7 +325,7 @@ class TextBox(OverlayBox):
 
     def __init__(self, spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
-        self._ahead: list[tuple[str, str | None]] = []
+        self._seen: str | None = None  # the text the box's lists and error answer
 
     @property
     def input(self) -> OverlayInput:
@@ -328,50 +334,69 @@ class TextBox(OverlayBox):
     def focus_target(self) -> Widget:
         return self.input
 
-    def type_ahead(self, key: str, character: str | None) -> None:
-        """Keep a key that came before the focus; ask for the focus again if it was lost."""
-        self._ahead.append((key, character))
-        if self.is_mounted:
-            self.input.focus()
+    # Widget.handle_key (key_* method dispatch, -> bool) is never reached: the app routes keys.
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+        key = event.key
+        if key in _CANCEL_KEYS:
+            return self.Cancelled(self.key)
+        if key == "enter" or key in _SUBMIT_KEYS:
+            return self.answer()
+        if key in ("tab", "shift+tab"):
+            self.complete()
+        elif key == "ctrl+h":
+            self.input.action_delete_left()
+        elif self._own_key(key):
+            return True  # a move, not an edit: the text is as `_seen` has it
+        else:
+            if event.is_printable:
+                assert event.character is not None
+                self.type_text(event.character)
+            else:
+                await _run_binding(self, event)
+        self.text_changed()
+        return True
 
-    def on_descendant_focus(self, _event: events.DescendantFocus) -> None:
-        ahead, self._ahead = self._ahead, []
-        for key, character in ahead:
-            if key in _CANCEL_KEYS:
-                self.cancel()
-                return
-            if key == "enter" or key in _SUBMIT_KEYS:
-                self.submit()
-                return
-            if key in ("backspace", "ctrl+h"):
-                self.input.action_delete_left()
-            elif character is not None and len(character) == 1 and character.isprintable():
-                self.input.insert_text_at_cursor(character)
+    def type_text(self, text: str) -> None:
+        """Type ``text`` at the cursor, over the selection if there is one (as `Input` does)."""
+        selection = self.input.selection
+        if selection.is_empty:
+            self.input.insert_text_at_cursor(text)
+        else:
+            self.input.replace(text, *selection)
 
-    def submit(self) -> None:
-        """Enter: post the answer."""
+    def paste(self, text: str) -> None:
+        """Every line of a paste, joined; a chunk with a control character is dropped whole."""
+        joined = "".join(text.strip("\r\n").splitlines())
+        if joined and joined.isprintable():
+            self.type_text(joined)
+            self.text_changed()
+
+    def text_changed(self) -> None:
+        """Bring the box's lists and error up to the input's text, once per text."""
+        value = self.input.value
+        if value != self._seen:
+            self._seen = value
+            self._edited(value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # Every edit already went through `text_changed`; this only catches up on one
+        # that did not (none today) and is a no-op otherwise.
+        event.stop()
+        self.text_changed()
+
+    def _edited(self, value: str) -> None:
+        """The text became ``value``: refresh what depends on it."""
+
+    def _own_key(self, key: str) -> bool:
+        """A key this kind of box gives its own meaning (a choice prompt's ↑/↓)."""
+        return False
+
+    def answer(self) -> Message:
+        """Enter: the outcome that answers this box."""
         raise NotImplementedError
 
     def complete(self) -> None:
         """Tab: complete the answer if the box can."""
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.submit()
-
-    def on_key(self, event: events.Key) -> None:
-        if event.key in _CANCEL_KEYS:
-            self.cancel()
-        elif event.key in _SUBMIT_KEYS:
-            self.submit()
-        elif event.key == "ctrl+h":
-            self.input.action_delete_left()
-        elif event.key in ("tab", "shift+tab"):
-            self.complete()
-        else:
-            return
-        event.stop()
-        event.prevent_default()  # Input's ctrl+c copy, Screen's tab focus cycling
 
 
 def _no_candidates(_text: str) -> tuple[str, ...]:
@@ -430,7 +455,7 @@ class CommandBox(TextBox):
         """The session's completions for ``text``.
 
         The one-entry cache keyed on the text only dedups the suggester's call for the
-        same edit (it and `on_input_changed` both ask); it must not be widened, or a
+        same edit (it and `_edited` both ask); it must not be widened, or a
         session whose candidates changed under the same text would answer stale.
         """
         if self._memo is None or self._memo[0] != text:
@@ -451,14 +476,13 @@ class CommandBox(TextBox):
         if self.content_rows() != before:
             self.post_message(self.Changed())
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        event.stop()
-        if 0 <= self._index < len(self._shown) and event.value == apply_completion(
+    def _edited(self, value: str) -> None:
+        if 0 <= self._index < len(self._shown) and value == apply_completion(
             self._base, self._shown[self._index]
         ):
             return  # the box's own Tab completion, not an edit
-        self._base, self._index = event.value, -1
-        self._list(self.candidates_for(event.value))
+        self._base, self._index = value, -1
+        self._list(self.candidates_for(value))
 
     def complete(self) -> None:
         if not self._shown:
@@ -469,8 +493,8 @@ class CommandBox(TextBox):
         self.input.cursor_position = len(completed)
         self._list(self._shown)  # repaint the marked candidate
 
-    def submit(self) -> None:
-        self.post_message(self.Submitted(self.key, self.input.value))
+    def answer(self) -> Message:
+        return self.Submitted(self.key, self.input.value)
 
     def content_rows(self) -> int:
         return 1 + int(bool(self._shown))
@@ -554,15 +578,14 @@ class PromptBox(TextBox):
         lst = self._list()
         return lst.highlighted if lst is not None and self._matches else None
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        event.stop()
+    def _edited(self, value: str) -> None:
         before = self.content_rows()
-        if self._error is not None and event.value != self._error_for:
+        if self._error is not None and value != self._error_for:
             self._error = None
             self.query_one("#prompt-error", Static).display = False
         lst = self._list()
         if lst is not None:
-            matches = filter_suggestions(self.prompt.suggestions, event.value)
+            matches = filter_suggestions(self.prompt.suggestions, value)
             if matches != self._matches:
                 self._matches = matches
                 lst.clear_options()
@@ -571,27 +594,24 @@ class PromptBox(TextBox):
         if self.content_rows() != before:
             self.post_message(self.Changed())
 
-    def on_key(self, event: events.Key) -> None:
-        # Runs before TextBox.on_key (MRO dispatch); prevent_default keeps that one out.
+    def _own_key(self, key: str) -> bool:
         lst = self._list()
-        if lst is None or event.key not in ("up", "down"):
-            return
-        event.stop()
-        event.prevent_default()
-        if not self._matches:
-            return
-        current = lst.highlighted
-        if event.key == "down":
-            lst.highlighted = 0 if current is None else min(current + 1, len(self._matches) - 1)
-        else:
-            lst.highlighted = None if current is None or current == 0 else current - 1
+        if lst is None or key not in ("up", "down"):
+            return False
+        if self._matches:
+            current = lst.highlighted
+            if key == "down":
+                lst.highlighted = 0 if current is None else min(current + 1, len(self._matches) - 1)
+            else:
+                lst.highlighted = None if current is None or current == 0 else current - 1
+        return True
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()  # a click on a match: choose it, as Enter on it would
         lst = self._list()
         if lst is not None and 0 <= event.option_index < len(self._matches):
             lst.highlighted = event.option_index
-            self.submit()
+            self.post_message(self.answer())
 
     def complete(self) -> None:
         if not self._matches:
@@ -601,13 +621,14 @@ class PromptBox(TextBox):
         self.input.value = chosen
         self.input.cursor_position = len(chosen)
 
-    def submit(self) -> None:
+    def answer(self) -> Message:
         current = self._highlight()
         text = self._matches[current] if current is not None else self.input.value
         if text != self.input.value:
             self.input.value = text
             self.input.cursor_position = len(text)
-        self.post_message(self.Submitted(self.key, text))
+            self.text_changed()
+        return self.Submitted(self.key, text)
 
     def show_error(self, error: str) -> None:
         """The session refused the answer: say why until the text changes."""
