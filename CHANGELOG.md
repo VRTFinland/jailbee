@@ -117,6 +117,11 @@ before editing `## Unreleased`.
 - **opencode's model catalogue is reachable in strict mode.** Current opencode
   fetches it from `models.opencode.ai` rather than `models.dev`, which the
   `opencode` preset did not allow. Run `jailbee apply` to pick it up.
+- **The `AGENT` column's duration follows the session you just used.** With two
+  live sessions in one state, the column showed the one in that state the
+  longest, so a session left idle since yesterday read `idle 18h` while another
+  had just finished. Only `waiting` still shows its longest wait; every other
+  state shows its latest change.
 - **The `AGENT` column understands Claude Code's `shell` state.** Newer Claude
   Code reports `shell` when it is idle but a background shell job it started is
   still running; the compact column showed it as `? shell`. It is now `◐`,

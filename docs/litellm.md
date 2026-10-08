@@ -530,7 +530,7 @@ back on; that is your choice.
   the state volume is detached until package access is removed.
   Dev containers can reach its static address through the
   `jailbee-services` ACL; a proxy key is not a provider token.
-- The default LiteLLM installation is pinned to version `1.104.0` and a
+- The default LiteLLM installation is pinned to version `1.106.0.dev2` and a
   hash-locked requirements file. Setting `litellm.version` bypasses the hash
   lock and emits a warning. Prompt/message logging and the remote model-cost
   map fetch are disabled. Treat this as risk reduction, not a guarantee that

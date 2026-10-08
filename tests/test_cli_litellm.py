@@ -119,7 +119,7 @@ def test_up_disabled_is_exit_1_with_message(mocker, context):
 
 
 def test_up_warns_if_install_is_unlocked(mocker, context):
-    context.return_value[1].litellm.version = "1.104.0"
+    context.return_value[1].litellm.version = "1.106.0.dev2"
     mocker.patch(
         "jailbee.litellm.litellm_up",
         return_value=ll.UpResult(
@@ -182,14 +182,14 @@ def test_status_never_prints_tokens(mocker, context):
         return_value=ll.LiteLLMStatus(
             ll.ContainerState.RUNNING,
             "10.0.0.3",
-            "1.104.0",
+            "1.106.0.dev2",
             [ll.InstanceStatus("default", 4100, True, True, "present")],
         ),
     )
     result = runner.invoke(app, ["litellm", "status"])
     assert result.exit_code == 0, result.output
     assert "running" in result.output and "logged in" in result.output
-    assert "10.0.0.3" in result.output and "1.104.0" in result.output
+    assert "10.0.0.3" in result.output and "1.106.0.dev2" in result.output
     assert "4100" in result.output
 
 
@@ -198,11 +198,11 @@ def test_status_never_prints_tokens(mocker, context):
     [
         ll.LiteLLMStatus(ll.ContainerState.MISSING, None, None, []),
         ll.LiteLLMStatus(ll.ContainerState.STOPPED, "10.0.0.3", None, []),
-        ll.LiteLLMStatus(ll.ContainerState.RUNNING, "10.0.0.3", "1.104.0", []),
+        ll.LiteLLMStatus(ll.ContainerState.RUNNING, "10.0.0.3", "1.106.0.dev2", []),
         ll.LiteLLMStatus(
             ll.ContainerState.RUNNING,
             "10.0.0.3",
-            "1.104.0",
+            "1.106.0.dev2",
             [ll.InstanceStatus("default", 4100, True, False, "missing")],
         ),
     ],
@@ -448,7 +448,7 @@ def test_status_shows_the_xai_login_line_only_when_needed(mocker, context):
         return ll.LiteLLMStatus(
             ll.ContainerState.RUNNING,
             "10.0.0.3",
-            "1.104.0",
+            "1.106.0.dev2",
             [ll.InstanceStatus("default", 4100, True, True, "present", xai_login=xai)],
         )
 

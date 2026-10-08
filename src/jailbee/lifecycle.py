@@ -2940,8 +2940,8 @@ def ls_field_specs(
     def _agent_compact_cell(c: ContainerInfo) -> str:
         if not c.agent_status:
             return "[dim]—[/dim]"
-        # One mark per distinct state: agents arrive most urgent first, so the
-        # first of a state is its longest-standing.
+        # One mark per distinct state: agents arrive in `agent_status._rank`
+        # order, so the first of a state is its longest wait or latest change.
         first_of_state = {s.state: s for s in reversed(c.agent_status)}
         return " ".join(
             _agent_compact_text(s) for s in c.agent_status if first_of_state[s.state] is s

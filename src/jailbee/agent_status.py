@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,7 +36,6 @@ URGENCY: tuple[str, ...] = ("waiting", "busy", "shell", "idle")
 agent wants nothing from you yet, but it is not finished either.
 """
 
-_LATEST = datetime.max.replace(tzinfo=UTC)
 
 type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
 """`(container, session, host pid)` → what that session is doing, or None."""
@@ -59,14 +58,22 @@ class AgentSummary:
     activity: AgentActivity | None = None
 
 
-def _rank(session: AgentSession) -> tuple[int, bool, datetime]:
-    """Most urgent first. Among equals, the longest-standing state; undated last."""
+def _rank(session: AgentSession) -> tuple[int, bool, float]:
+    """Most urgent first; undated last among equals.
+
+    Among equal `waiting` states the longest wait comes first: it is the one
+    to answer. Among any other equal states the latest change comes first, so
+    a session idle since yesterday does not hide one that just finished.
+    """
     try:
         urgency = URGENCY.index(session.state)
     except ValueError:
         urgency = len(URGENCY)
     since = session.since
-    return (urgency, since is None, _LATEST if since is None else since)
+    if since is None:
+        return (urgency, True, 0.0)
+    stamp = since.timestamp()
+    return (urgency, False, stamp if session.state == "waiting" else -stamp)
 
 
 def _one_per_process(sessions: Iterable[AgentSession]) -> list[AgentSession]:
@@ -95,7 +102,7 @@ def summarize(
     by_agent: dict[str, list[AgentSession]] = {}
     for session in live:
         by_agent.setdefault(session.agent, []).append(session)
-    ranked: list[tuple[tuple[int, bool, datetime], str, AgentSummary]] = []
+    ranked: list[tuple[tuple[int, bool, float], str, AgentSummary]] = []
     for agent, items in by_agent.items():
         ordered = sorted(items, key=_rank)
         top = ordered[0]

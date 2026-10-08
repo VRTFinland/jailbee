@@ -139,6 +139,23 @@ def test_among_equals_the_longest_wait_wins():
     assert out["a"][0].since == early
 
 
+@pytest.mark.parametrize("state", ["busy", "shell", "idle", "compacting"])
+def test_among_equals_outside_waiting_the_latest_change_wins(state):
+    early, late = T0, T0 + timedelta(hours=18)
+    sessions = [_s(1, 11, state, since=early), _s(2, 12, state, since=late)]
+    out = _match({"a": sessions}, {"a": {101: 11, 102: 12}}, {101: 1, 102: 2})
+
+    assert out["a"][0].since == late
+
+
+def test_across_agents_in_one_idle_state_the_latest_change_comes_first():
+    early, late = T0, T0 + timedelta(hours=18)
+    sessions = [_s(1, 11, "idle", agent="a", since=early), _s(2, 12, "idle", agent="b", since=late)]
+    out = _match({"c": sessions}, {"c": {101: 11, 102: 12}}, {101: 1, 102: 2})
+
+    assert [s.agent for s in out["c"]] == ["b", "a"]
+
+
 def test_an_undated_session_ranks_after_a_dated_one_of_the_same_state():
     sessions = [_s(1, 11, "busy", since=None), _s(2, 12, "busy", since=T0)]
     out = _match({"a": sessions}, {"a": {101: 11, 102: 12}}, {101: 1, 102: 2})
@@ -292,7 +309,7 @@ def test_the_lookup_is_asked_about_every_live_session_in_rank_order_with_its_hos
 
 
 def _two_sessions(lookup):
-    """`claude` and `claude-jb`: same state, the first has the longer-standing one."""
+    """`claude` and `claude-jb`: same idle state, the second changed later and ranks first."""
     return agent_status.match_sessions(
         {
             "a": [
@@ -307,11 +324,11 @@ def _two_sessions(lookup):
 
 
 def test_a_session_without_a_transcript_does_not_hide_the_one_with():
-    """The bug: the long-idle session wins `_rank` and has nothing to show."""
+    """The bug: the session that wins `_rank` has nothing to show."""
     found = AgentActivity("Bash  ls", "hi", modified=100.0)
 
     def lookup(container, session, host_pid):
-        return found if session.pid == 11 else None
+        return found if session.pid == 10 else None
 
     (summary,) = _two_sessions(lookup)["a"]
 
@@ -367,18 +384,18 @@ def test_equal_or_unknown_mtimes_fall_back_to_rank_order(modified):
     (summary,) = _two_sessions(lookup)["a"]
 
     assert summary.activity is not None
-    assert summary.activity.last_tool == "pid10"  # the longer-standing idle one
+    assert summary.activity.last_tool == "pid11"  # the more recently changed idle one
 
 
 def test_the_agent_column_is_unchanged_by_the_activity_choice():
     def lookup(container, session, host_pid):
-        return AgentActivity("t", None, modified=1.0) if session.pid == 11 else None
+        return AgentActivity("t", None, modified=1.0) if session.pid == 10 else None
 
     (summary,) = _two_sessions(lookup)["a"]
 
     assert (summary.state, summary.since, summary.waiting_for, summary.count) == (
         "idle",
-        T0 - timedelta(hours=1),
+        T0,
         None,
         2,
     )

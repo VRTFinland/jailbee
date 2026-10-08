@@ -350,9 +350,6 @@ JB_SERVICE_EOF
 cat > /root/litellm-requirements.lock <<'JB_LOCK_EOF'
 {_read("requirements.lock").rstrip()}
 JB_LOCK_EOF
-cat > /root/litellm-chatgpt-stream-fix.py <<'JB_FIX_EOF'
-{_read("chatgpt_stream_fix.py").rstrip()}
-JB_FIX_EOF
 chmod +x /root/install.sh
 JAILBEE_LITELLM_UNLOCKED_VERSION={unlocked} /root/install.sh
 """
