@@ -227,8 +227,8 @@ _FIELD_MEANINGS = {
     "state": "Container state: ▶ Running, ■ Stopped, Ⅱ Frozen",
     "created": "Container age (s/m/h/d); tooltip shows exact creation timestamp",
     "network": (
-        "Loose network: red ● = loose with its remaining auto-revert time, "
-        "∞ = no auto-revert; empty = strict"
+        "Network mode: ● followed by the remaining auto-revert time = loose, "
+        "∞ = loose with no auto-revert; empty = strict"
     ),
     "ttl": "Remaining loose-network auto-revert time",
     "loose_until": "Exact loose-network auto-revert deadline",
@@ -251,7 +251,7 @@ _FIELD_MEANINGS = {
     "outbox": "Staged PR and issue outbox manifests waiting to be published (✉N)",
     "group": "Credential group",
     "agent_compact": (
-        "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle (bright: idle under 30 min); ? unknown"
+        "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"
     ),
     "agent": "Full agent state and duration",
 }

@@ -804,6 +804,22 @@ def test_compact_card_shows_used_and_mem_pct_with_the_limit_in_a_tooltip(qtbot):
     assert chip.toolTip() == "Memory limit: 4GiB"
 
 
+def test_compact_card_falls_back_to_the_mem_field_without_used_and_pct(qtbot):
+    from jailbee.qtui.cards import _Card
+    from jailbee.qtui.model import CardContent, CardField
+
+    cc = CardContent(
+        name="feat",
+        state="Running",
+        fields=[CardField("mem", "MEM", "1.0G/4.0G")],
+        memory_limit="4GiB",
+    )
+    card = _Card("p-feat", cc, style="compact", selected=False)
+    qtbot.addWidget(card)
+
+    assert any(label.text() == "▪ 1.0G/4.0G" for label in card.findChildren(QLabel))
+
+
 def test_default_card_reads_memory_from_the_new_fields(qtbot):
     """End to end with the default columns: `mem` is no longer among them, so
     a card still reading it would silently lose its memory chip."""

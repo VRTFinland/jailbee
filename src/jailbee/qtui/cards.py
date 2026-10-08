@@ -178,7 +178,7 @@ class _Card(QFrame):
         ip = card_field(self._content, "ip")
         used = card_field(self._content, "mem_used")
         pct = card_field(self._content, "mem_pct")
-        mem = " ".join(v for v in (used, pct) if v)
+        mem = " ".join(v for v in (used, pct) if v) or card_field(self._content, "mem") or ""
         cpu = card_field(self._content, "cpu")
         if ip or mem or cpu:
             res = QHBoxLayout()
