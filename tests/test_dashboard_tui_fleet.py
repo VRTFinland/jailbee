@@ -347,3 +347,31 @@ def test_placeholder_rewraps_on_resize_and_uses_scrollbar_content_width():
         assert fleet.HIDDEN_TEXT in _screen(app)[0]
 
     _run(script)
+
+
+def test_real_app_thousand_rows_bounds_each_key_render_work(mocker):
+    from jailbee.dashboard.tui import session as tsession
+    from jailbee.dashboard.tui import widgets
+    from tests.dashboard_pilot import FROZEN_NOW, drive
+
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    group = _model(1000).entries[0].group
+    render = mocker.spy(FleetTable, "render_line")
+    build = mocker.spy(widgets, "entry_line")
+    counts = []
+
+    def clear(app):
+        assert app.query_one(FleetTable).show_vertical_scrollbar
+        render.reset_mock()
+        build.reset_mock()
+
+    def check(app):
+        counts.append((render.call_count, build.call_count))
+        assert 0 < render.call_count <= 2 * 40
+        assert 0 < build.call_count <= 2 * 40
+
+    result = drive(mocker, [clear, "j", check, clear, "j", check, clear, "j", check],
+                   [group], size=(120, 40))
+    assert result.last.selected == Row("container", "alpha-002")
+    assert len(counts) == 3
+    print(f"per-key (render_line, entry_line): {counts}")

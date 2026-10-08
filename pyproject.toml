@@ -73,6 +73,7 @@ dev = [
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.6",
     "asyncssh>=2.24",
+    "pytest-textual-snapshot>=1.0",
 ]
 # The documentation site generator. Pinned exactly rather than floored: it is
 # 0.0.x, so any release may break the build, and an upgrade should be a commit

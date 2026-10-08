@@ -226,6 +226,52 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         await pilot.pause()
 
 
+def make_app(  # type: ignore[no-untyped-def]
+    mocker,
+    groups=None,
+    *,
+    remote=False,
+    over_ssh=False,
+    ssh_policy=None,
+    view_state=None,
+    git_enabled=False,
+    status=None,
+    scope=None,
+    cwd_root=None,
+    client: FakeStateClient | None = None,
+    mouse: bool = True,
+    jobs: type[JobRunner] = SyncJobs,
+) -> tapp.DashboardApp:
+    """Build the real app with the same isolated startup for pilots and snapshots."""
+    # Read at call time by `wait_for_idle(0)`, which `pilot.press`/`pause` use.
+    mocker.patch.object(textual_wait, "SLEEP_GRANULARITY", _SLEEP_GRANULARITY)
+    if client is None:
+        startup, client = start_session(
+            mocker,
+            groups,
+            view_state=view_state,
+            git_enabled=git_enabled,
+            status=status,
+            mouse=mouse,
+            jobs=jobs,
+        )
+    else:
+        _patch_startup(mocker, view_state, mouse, jobs)
+        mocker.patch.object(tsession, "open_state_client", return_value=client)
+        startup = tsession.open_dashboard(None)
+    assert not isinstance(startup, int), "startup failed; use tapp.run for startup tests"
+    return tapp.DashboardApp(
+        startup,
+        incus=mocker.Mock(),
+        cwd_root=cwd_root,
+        remote=remote,
+        over_ssh=over_ssh,
+        ssh_policy=ssh_policy,
+        scope=scope,
+        tick_seconds=None,
+    )
+
+
 def drive(  # type: ignore[no-untyped-def]
     mocker,
     steps: Iterable[Step],
@@ -252,33 +298,12 @@ def drive(  # type: ignore[no-untyped-def]
     steps, Ctrl-C is pressed until the app quits, as the old harness padded
     its input.
     """
-    # Read at call time by `wait_for_idle(0)`, which `pilot.press`/`pause` use.
-    mocker.patch.object(textual_wait, "SLEEP_GRANULARITY", _SLEEP_GRANULARITY)
-    if client is None:
-        startup, client = start_session(
-            mocker,
-            groups,
-            view_state=view_state,
-            git_enabled=git_enabled,
-            status=status,
-            mouse=mouse,
-            jobs=jobs,
-        )
-    else:
-        _patch_startup(mocker, view_state, mouse, jobs)
-        mocker.patch.object(tsession, "open_state_client", return_value=client)
-        startup = tsession.open_dashboard(None)
-    assert not isinstance(startup, int), "startup failed; use tapp.run for startup tests"
-    app = tapp.DashboardApp(
-        startup,
-        incus=mocker.Mock(),
-        cwd_root=cwd_root,
-        remote=remote,
-        over_ssh=over_ssh,
-        ssh_policy=ssh_policy,
-        scope=scope,
-        tick_seconds=None,
+    app = make_app(
+        mocker, groups, remote=remote, over_ssh=over_ssh, ssh_policy=ssh_policy,
+        view_state=view_state, git_enabled=git_enabled, status=status, scope=scope,
+        cwd_root=cwd_root, client=client, mouse=mouse, jobs=jobs,
     )
+    client = app.session.client
     result = Run(app, client)
 
     async def script() -> None:
