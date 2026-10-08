@@ -250,9 +250,7 @@ _FIELD_MEANINGS = {
     "issues": "Pending issue outbox actions",
     "outbox": "Staged PR and issue outbox manifests waiting to be published (✉N)",
     "group": "Credential group",
-    "agent_compact": (
-        "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"
-    ),
+    "agent_compact": ("Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
     "agent": "Full agent state and duration",
 }
 
