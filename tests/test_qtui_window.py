@@ -826,9 +826,9 @@ def test_compact_table_headers_and_cells_explain_values(qtbot):
     columns = {headers.text(i): i for i in range(win.tree.columnCount())}
     assert "Running" in row.toolTip(columns["ST"])
     assert c.created_at.isoformat() in row.toolTip(columns["AGE"])
-    assert row.text(columns["NET"]) == "○"
-    assert c.loose_until.isoformat() in row.toolTip(columns["NET"])
-    assert "strict" in headers.toolTip(columns["NET"])
+    assert row.text(columns["LOOSE"]) == "● 12m"
+    assert c.loose_until.isoformat() in row.toolTip(columns["LOOSE"])
+    assert "strict" in headers.toolTip(columns["LOOSE"])
     assert "waiting" in headers.toolTip(columns["AI"])
     assert "claude" in row.toolTip(columns["AI"])
     assert "permission" in row.toolTip(columns["AI"])

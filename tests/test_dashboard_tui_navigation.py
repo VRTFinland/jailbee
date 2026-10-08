@@ -135,7 +135,7 @@ def test_run_arrows_scroll_and_clamp_overshoot(mocker, tmp_path):
     assert offsets[-2:] == [peak, peak - 1]
 
 
-@pytest.mark.parametrize("width", [32, 33, 34])
+@pytest.mark.parametrize("width", [34, 35, 36])
 def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, tmp_path, width):
     enabled = ("name", "mode", "state", "created", "network")
     run = drive(
@@ -149,7 +149,7 @@ def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, t
     assert _offsets(run) == [0, 1, 2, 3, 3, 3, 3, 2]
     rendered = run.screens
     assert len(rendered) == len(run.trace)
-    assert "NET" in header(rendered[-2]).split()
+    assert "LOOSE" in header(rendered[-2]).split()
     assert LEFT_MORE in header(rendered[-2]) and RIGHT_MORE not in header(rendered[-2])
     assert all(len(line) <= width for text in rendered for line in text.splitlines())
 
@@ -178,7 +178,7 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
         [group], width=34, offset=final.column_offset, enabled=enabled, folded=final.folded
     )
     if initially_folded:
-        assert "NET" in header(text).split()
+        assert "LOOSE" in header(text).split()
     else:
         assert LEFT_MORE not in text and RIGHT_MORE not in text
 
@@ -246,12 +246,12 @@ def test_resize_step_lays_out_before_the_next_key_without_textuals_debounce(mock
     widths: list[int] = []
     run = drive(
         mocker,
-        [*["right"] * 12, Resize(52, 25), lambda app: widths.append(app.table_width), "left"],
+        [*["right"] * 12, Resize(54, 25), lambda app: widths.append(app.table_width), "left"],
         [wide_group(tmp_path)],
         view_state=ViewState(columns=WIDE),
         size=(44, 25),
     )
-    assert widths == [48]
+    assert widths == [50]
     assert _offsets(run)[-3:] == [1, 1, 0]
 
 
@@ -695,7 +695,8 @@ def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path)
 
 
 def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker, tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    loose = dataclasses.replace(ci("alpha-one", "alpha"), network="loose")
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [loose])
     run = drive(
         mocker,
         ["o", "space"],
@@ -708,5 +709,5 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
     assert unfolded.shown_columns == ("name", "state", "network")
     assert unfolded.column_widths == optimized.column_widths
     output = run.screens[2]
-    assert "ST" in output and "NET" in output
+    assert "ST" in output and "LOOSE" in output
     assert "●" in output

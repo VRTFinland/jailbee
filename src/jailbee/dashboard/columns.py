@@ -260,7 +260,7 @@ def _select_visible_fields(
             not apply_conditions or field_spec.show_if is None or field_spec.show_if(all_containers)
         )
     ]
-    widths = {"state": 2, "mem": 15}
+    widths = {"state": 2, "mem": 15, "mem_used": 6, "mem_pct": 4, "outbox": 3}
     return [
         replace(
             field_spec,
@@ -334,6 +334,8 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "network": 3,
     "created": 5,
     "mem": 15,
+    "mem_used": 6,
+    "mem_pct": 4,
     "mode": 5,
     "wt": 9,
     "ahead_count": 3,
@@ -341,6 +343,7 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "conflict": 8,
     "pr": 6,
     "issues": 3,
+    "outbox": 3,
     "full_name": 28,
     "repo": 16,
     "base": 20,

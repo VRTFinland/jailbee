@@ -2371,8 +2371,8 @@ def test_visible_fields_network_cell_shows_mode_icon_only():
     )
     fields = dcolumns.visible_fields(now, [loose, strict])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(loose) == "○"
-    assert network_field.cell(strict) == "●"
+    assert network_field.cell(loose) == "[red]●[/red] 12m"
+    assert network_field.cell(strict) == ""
 
 
 def test_network_cell_is_icon_only_for_a_long_ttl():
@@ -2390,7 +2390,7 @@ def test_network_cell_is_icon_only_for_a_long_ttl():
         loose_until=now + timedelta(hours=2, minutes=5),
     )
     network_field = next(f for f in dcolumns.visible_fields(now, [loose]) if f.name == "network")
-    assert network_field.cell(loose) == "○"
+    assert network_field.cell(loose) == "[red]●[/red] 2h5m"
 
 
 def test_visible_fields_network_cell_unknown_loose_until():
@@ -2406,7 +2406,7 @@ def test_visible_fields_network_cell_unknown_loose_until():
     )
     fields = dcolumns.visible_fields(now, [c])
     network_field = next(f for f in fields if f.name == "network")
-    assert network_field.cell(c) == "○"
+    assert network_field.cell(c) == "[red]●[/red] ∞"
 
 
 def test_visible_fields_includes_pr_when_a_container_has_one():
@@ -2631,8 +2631,8 @@ def test_enabled_from_column_config_reproduces_a_legacy_fields_block():
     assert names == ("name", "created")
 
 
-def test_explicit_network_field_list_shows_mode_icon_only():
-    """An explicit field list does not add TTL to the network icon."""
+def test_explicit_network_field_list_shows_the_loose_ttl_inline():
+    """LOOSE carries the remaining TTL itself; no separate TTL column needed."""
     from datetime import timedelta
 
     from jailbee.lifecycle import ContainerInfo
@@ -2650,7 +2650,7 @@ def test_explicit_network_field_list_shows_mode_icon_only():
     fields = dcolumns.visible_fields(now, [loose], ["name", "network"])
     network = next(f for f in fields if f.name == "network")
 
-    assert network.cell(loose) == "○"
+    assert network.cell(loose) == "[red]●[/red] 2h"
 
 
 def test_global_config_or_defaults_gets_the_sanitized_block_not_the_default(tmp_path, monkeypatch):
@@ -3172,7 +3172,7 @@ def test_narrow_multi_column_render_stays_within_available_content_width(tmp_pat
 def test_render_never_drops_a_column_and_scrolling_reaches_them_all(tmp_path):
     group = _wide_group(tmp_path)
     wide = _header(_frame_at([group], width=200)).split()
-    assert set(wide) == {"NAME", "MODE", "ST", "AGE", "NET", "PR"}
+    assert set(wide) == {"NAME", "MODE", "ST", "AGE", "LOOSE", "PR"}
     narrow0 = _header(_frame_at([group], width=40))
     assert not all(title in narrow0.split() for title in wide)  # really overflows
     seen = set()
@@ -3220,7 +3220,7 @@ def test_render_scrolled_header_and_rows_stay_aligned(tmp_path):
         row = next(line for line in out if "one" in line)
         if offset:
             assert "\u2039" in header
-        for title, value in (("MODE", "mnt"), ("ST", "▶"), ("AGE", "6d"), ("NET", "●")):
+        for title, value in (("MODE", "mnt"), ("ST", "▶"), ("AGE", "6d"), ("LOOSE", "●")):
             if title in header:
                 assert header.index(title) == row.index(value)
                 aligned += 1
@@ -6077,6 +6077,7 @@ def test_overlong_doing_value_is_cut_with_an_ellipsis_on_one_line(tmp_path):
     long_name = "x" * 60
     c = dataclasses.replace(
         _ci("alpha-one", "alpha"),
+        network="loose",  # LOOSE "● ∞" anchors the row; a strict row's cell is empty
         activity=(ProcessActivity(comm=long_name, percent=50.0, count=1),),
     )
     out = "\n".join(
@@ -6126,8 +6127,11 @@ def test_optimize_key_is_documented_and_parsed():
 
 def test_optimized_widths_retain_snapshot_until_reoptimized(tmp_path):
     now = datetime(2026, 6, 8, tzinfo=UTC)
-    short = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
-    long = dataclasses.replace(short, containers=[_ci("alpha-abcdefghijklmnop", "alpha")])
+    # Loose rows: LOOSE "● ∞" is the anchor; a strict row's LOOSE cell is empty.
+    one = dataclasses.replace(_ci("alpha-one", "alpha"), network="loose")
+    longer = dataclasses.replace(_ci("alpha-abcdefghijklmnop", "alpha"), network="loose")
+    short = dmodel.RepoGroup("alpha", str(tmp_path), None, [one])
+    long = dataclasses.replace(short, containers=[longer])
     enabled = ("name", "network")
     widths = dcolumns.optimize_column_widths([short], now=now, enabled=enabled)
 
@@ -6164,13 +6168,15 @@ def test_nonempty_columns_hide_placeholders_without_changing_preferences(tmp_pat
     out = "\n".join(table_text([group], selected=None, now=now, enabled=enabled))
     header = next(line for line in out.splitlines() if "NAME" in line)
     assert "PR" not in header and "JOB" not in header and "AGE" not in header
-    assert "●" in out
+    assert "LOOSE" not in header  # a strict-only fleet's LOOSE cells are all empty
+    assert "one" in out
     assert enabled == ("name", "pr", "job", "network", "created")
 
 
 def test_optimized_widths_are_named_without_first_column_indent(tmp_path):
     now = datetime(2026, 6, 8, tzinfo=UTC)
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-one", "alpha")])
+    loose = dataclasses.replace(_ci("alpha-one", "alpha"), network="loose")
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [loose])
     widths = dcolumns.optimize_column_widths([group], now=now, enabled=("name", "network"))
     fields = dcolumns.visible_fields(now, group.containers, ("name", "network"))
     forward = dcolumns._dashboard_column_widths(fields, widths)
@@ -6213,14 +6219,19 @@ def test_dashboard_formatting_contracts():
     network = next(
         f for f in dcolumns.visible_fields(now, [container()], ["network"]) if f.name == "network"
     )
-    assert network.cell(container()) == "●"
-    assert network.cell(container(network="loose", loose_until=now + timedelta(seconds=45))) == "○"
-    assert network.cell(container(network="loose", loose_until=now + timedelta(minutes=12))) == "○"
+    assert network.cell(container()) == ""
+    loose = "[red]●[/red]"
+    assert network.cell(container(network="loose", loose_until=now + timedelta(seconds=45))) == (
+        f"{loose} 45s"
+    )
+    assert network.cell(container(network="loose", loose_until=now + timedelta(minutes=12))) == (
+        f"{loose} 12m"
+    )
     assert (
         network.cell(container(network="loose", loose_until=now + timedelta(hours=3, minutes=59)))
-        == "○"
+        == f"{loose} 3h59m"
     )
-    assert network.cell(container(network="loose", loose_until=None)) == "○"
+    assert network.cell(container(network="loose", loose_until=None)) == f"{loose} ∞"
     assert network.cell(container(network=None)) == "-"
     assert network.json(container()) == "strict"
 
@@ -6251,7 +6262,7 @@ def test_dashboard_formatting_contracts():
     headers = {field.name: field.header for field in fields}
     assert headers == {
         "state": "ST",
-        "network": "NET",
+        "network": "LOOSE",
         "created": "AGE",
         "full_name": "FULL",
         "memory_limit": "LIMIT",
@@ -6385,3 +6396,78 @@ def test_dashboard_ai_cell_leaves_other_states_and_undated_idle_alone():
     assert cell("waiting", now - timedelta(minutes=5)) == "[yellow]◆ 5m[/yellow]"
     assert cell("idle", None) == "[dim]○[/dim]"
     assert cell("idle", now + timedelta(minutes=5)) == "[dim]○[/dim]"  # clock skew: no age
+
+
+def test_dashboard_pr_cell_drops_the_outbox_marker_that_ls_keeps():
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    status = GitStatus(
+        wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2
+    )
+    authored = dataclasses.replace(
+        _ci("p-one", "p", pr_number=7), pr_author=True, git_status=status
+    )
+    review = dataclasses.replace(_ci("p-two", "p", pr_number=8), git_status=status)
+    staged_only = dataclasses.replace(_ci("p-three", "p"), git_status=status)
+    (pr,) = dcolumns.visible_fields(now, [authored, review, staged_only], ["pr"])
+    canonical = next(f for f in ls_field_specs(now=now) if f.name == "pr")
+
+    assert pr.cell(authored) == "#7"
+    assert pr.cell(review) == "#8↓"
+    assert pr.cell(staged_only) == ""  # its count is in OUTBOX
+    assert canonical.cell(authored) == "#7 ✉2"  # `jailbee ls` unchanged
+
+
+def test_dashboard_headers_for_the_new_and_relabelled_columns():
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    names = ["network", "mem_used", "mem_pct", "outbox"]
+    fields = dcolumns._select_visible_fields(now, [], names, apply_conditions=False)
+
+    assert {f.name: f.header for f in fields} == {
+        "network": "LOOSE",
+        "mem_used": "USED",
+        "mem_pct": "MEM%",
+        "outbox": "OUTBOX",
+    }
+
+
+def test_new_columns_have_dashboard_width_budgets():
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    names = ["mem_used", "mem_pct", "outbox"]
+    fields = dcolumns._select_visible_fields(now, [], names, apply_conditions=False)
+
+    assert {f.name: f.dashboard_min_width for f in fields} == {
+        "mem_used": 6,
+        "mem_pct": 4,
+        "outbox": 3,
+    }
+    assert {n: dcolumns._DASHBOARD_COLUMN_BUDGETS[n] for n in names} == {
+        "mem_used": 6,
+        "mem_pct": 4,
+        "outbox": 3,
+    }
+    assert dcolumns._DASHBOARD_COLUMN_BUDGETS["mem"] == 15  # kept for opt-in users
+
+
+def test_card_network_uses_the_loose_cell_symbols():
+    from jailbee.dashboard.format import card_network
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    strict = _ci("p-one", "p")
+    loose = dataclasses.replace(strict, network="loose", loose_until=now + timedelta(minutes=45))
+    forever = dataclasses.replace(strict, network="loose", loose_until=None)
+
+    assert card_network(strict, now) == ""
+    assert card_network(loose, now) == "[red]●[/red] 45m"
+    assert card_network(forever, now) == "[red]●[/red] ∞"
+
+
+def test_loose_cell_escapes_an_unknown_network_value():
+    from rich.text import Text
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    odd = dataclasses.replace(_ci("p-one", "p"), network="[bold]x")
+    (field,) = dcolumns.visible_fields(now, [odd], ["network"])
+
+    assert Text.from_markup(field.cell(odd)).plain == "[bold]x"

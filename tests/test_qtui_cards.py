@@ -462,14 +462,18 @@ def test_set_groups_forwards_columns_to_hide_a_field(qtbot):
     view.set_card_style("grid")
     now = datetime.now().astimezone()
 
-    without_network = [n for n in dcolumns.default_columns() if n != "network"]
-    view.set_groups(_groups(), now=now, columns=without_network)
-    hidden_texts = " | ".join(_label_texts(_card(view, "p-foo")))
-    assert "NET" not in hidden_texts
+    groups = _groups()
+    # Loose: a strict container's LOOSE cell is empty and never reaches a card.
+    groups[0].containers[0].network = "loose"
 
-    view.set_groups(_groups(), now=now, columns=None)
+    without_network = [n for n in dcolumns.default_columns() if n != "network"]
+    view.set_groups(groups, now=now, columns=without_network)
+    hidden_texts = " | ".join(_label_texts(_card(view, "p-foo")))
+    assert "LOOSE" not in hidden_texts
+
+    view.set_groups(groups, now=now, columns=None)
     shown_texts = " | ".join(_label_texts(_card(view, "p-foo")))
-    assert "NET" in shown_texts
+    assert "LOOSE" in shown_texts
 
 
 def test_set_card_style_rerender_keeps_the_active_columns(qtbot):

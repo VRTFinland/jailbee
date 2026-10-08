@@ -54,9 +54,9 @@ def test_lines_keep_the_rich_table_layout(tmp_path):
         for line in _new_lines(groups, 44, offset=1, selected=selected, enabled=WIDE)
     ]
     assert plain == [
-        "  NAME                ‹  ST  AGE    NET  ›",  # noqa: RUF001 - literal scroll marks
+        "  NAME                ‹  ST  AGE    LOOSE  ›",  # noqa: RUF001 - literal scroll marks
         "▾ alpha  (1)",
-        "  one                    ▶   129d   ●     ",
+        "  one                    ▶   129d   ● ∞     ",
     ]
 
 

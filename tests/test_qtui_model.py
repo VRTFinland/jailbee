@@ -107,7 +107,10 @@ def test_card_content_splits_name_state_and_keeps_fields_in_order():
 
     cc = card_content(c, fields, now)
 
-    assert m.card_field(cc, "network") == "○ 12m"
+    assert m.card_field(cc, "network") == "● 12m"
+    c.network = "strict"
+    assert m.card_field(card_content(c, fields, now), "network") is None  # placeholder ""
+    c.network = "loose"
 
     c.network = "[custom]"
     custom = card_content(c, fields, now)
@@ -245,10 +248,10 @@ def test_pending_issue_actions_make_an_otherwise_clean_container_read_as_dirty()
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 
-    cc = _cc(mode="clone", base="main", network="○ 12m")
-    assert compact_meta(cc) == ["clone", "main", "○ 12m"]
-    cc2 = _cc(mode="clone", network="●")  # no base
-    assert compact_meta(cc2) == ["clone", "●"]
+    cc = _cc(mode="clone", base="main", network="● 12m")
+    assert compact_meta(cc) == ["clone", "main", "● 12m"]
+    cc2 = _cc(mode="clone", network="")  # strict: empty LOOSE cell; no base
+    assert compact_meta(cc2) == ["clone"]
 
 
 def test_grid_rows_fold_git_into_one_row_and_drop_placeholders():
