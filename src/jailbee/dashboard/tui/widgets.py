@@ -16,7 +16,7 @@ from textual.strip import Strip
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.model import Row
-from jailbee.dashboard.tui.fleet import TableModel, entry_line, header_line
+from jailbee.dashboard.tui.fleet import TableModel, entry_cells, entry_line, header_line
 
 _CACHE_MAX = 4096
 
@@ -52,8 +52,8 @@ class FleetTable(ScrollView, can_focus=False):
         self._selected: Row | None = None
         self._hover: dhit.Hit | None = None
         self._height = -1
-        self._drawn: tuple[tuple[Segment, ...], ...] = ()
-        self._strips: dict[tuple[tuple[Segment, ...], int], Strip] = {}
+        self._drawn: tuple[tuple[object, ...], ...] = ()
+        self._strips: dict[tuple[object, ...], Strip] = {}
 
     @property
     def content_width(self) -> int:
@@ -87,16 +87,23 @@ class FleetTable(ScrollView, can_focus=False):
         self._drawn = drawn
         height = self.size.height
         if selected is not None and (selected != old_selected or height != self._height):
-            self.scroll_to_row(selected)
+            if structural:
+                # Scroll bounds/allow_vertical_scroll settle during the next layout pass.
+                self.call_after_refresh(self._reveal_selection, selected)
+            else:
+                self.scroll_to_row(selected)
         self._height = height
 
     def on_resize(self, event: events.Resize) -> None:
         if self._model is not None:
-            self._drawn = self._signatures(self._model)
             self.refresh()
             if self._selected is not None and self.size.height != self._height:
                 self.scroll_to_row(self._selected)
             self._height = self.size.height
+
+    def _reveal_selection(self, row: Row) -> None:
+        if self._selected == row:
+            self.scroll_to_row(row)
 
     def scroll_to_row(self, row: Row) -> None:
         model = self._model
@@ -114,24 +121,26 @@ class FleetTable(ScrollView, can_focus=False):
         # Text.render drops a base style when there are no spans; Console.render preserves it.
         return tuple(dhit.hover_segments(list(self.app.console.render(text)), self._hover))
 
-    def _signatures(self, model: TableModel) -> tuple[tuple[Segment, ...], ...]:
-        width = self.content_width
+    def _signatures(self, model: TableModel) -> tuple[tuple[object, ...], ...]:
         if model.empty_text is not None:
-            return (self._paint(Text(model.empty_text, no_wrap=True, end="")),)
-        lines = [self._paint(header_line(model.geometry))] if model.has_header else []
-        lines.extend(
-            self._paint(
-                entry_line(
-                    entry,
-                    model.geometry,
-                    model.folded,
-                    selected=entry.row == self._selected,
-                    width=width,
-                )
-            )
-            for entry in model.entries
-        )
-        # Compare actual drawn cells/styles/hits, not model.now or closure identity.
+            return (("empty", model.empty_text),)
+        hover = self._hover
+        lines: list[tuple[object, ...]] = []
+        if model.has_header:
+            lines.append(("header", model.geometry, hover if hover and hover.kind == "scroll" else None))
+        for entry in model.entries:
+            target = None
+            if hover and hover.args and hover.args[0] == entry.row.key:
+                if (entry.row.kind == "container" and hover.kind == "row") or (
+                    entry.row.kind == "repo" and hover.kind in ("repo", "fold")
+                ):
+                    target = hover
+            lines.append((
+                "entry", entry.row, entry.heading, entry_cells(entry, model.geometry),
+                model.geometry, entry.row.key in model.folded if entry.heading is not None else False,
+                entry.row == self._selected, target,
+            ))
+        # Lightweight cell values capture fresh AGE closures without building Rich lines.
         return tuple(lines)
 
     def render_line(self, y: int) -> Strip:
@@ -144,10 +153,20 @@ class FleetTable(ScrollView, can_focus=False):
         virtual_y = y if (model.has_header and y == 0) else int(self.scroll_offset.y) + y
         if not 0 <= virtual_y < len(lines):
             return Strip.blank(width, Style(color="default"))
-        segments = lines[virtual_y]
-        key = (segments, width)
+        key = (*lines[virtual_y], width)
         strip = self._strips.get(key)
         if strip is None:
+            if model.empty_text is not None:
+                text = Text(model.empty_text, no_wrap=True, end="")
+            elif model.has_header and virtual_y == 0:
+                text = header_line(model.geometry)
+            else:
+                entry = model.entries[virtual_y - int(model.has_header)]
+                text = entry_line(
+                    entry, model.geometry, model.folded,
+                    selected=entry.row == self._selected, width=width,
+                )
+            segments = self._paint(text)
             if len(self._strips) >= _CACHE_MAX:
                 self._strips.clear()
             strip = (
