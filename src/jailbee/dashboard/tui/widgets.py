@@ -28,6 +28,7 @@ from jailbee.dashboard.details import (
     details_for,
     render_details,
 )
+from jailbee.dashboard.details import details_rows as measure_details
 from jailbee.dashboard.model import Row
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui.fleet import TableModel, entry_cells, entry_line, header_line
@@ -352,9 +353,12 @@ class _CropTop:
 class DashboardFrame(Vertical):
     """The whole dashboard inside one rounded border.
 
-    Title: the summary and clock; subtitle: a short notice. Inside, top to
-    bottom: the table, a long notice, the bottom area (details and/or an
-    overlay) and the hint — sized by :func:`jailbee.dashboard.tui.layout.frame_layout`.
+    Title: the summary and clock; subtitle: a short notice. It fills the
+    terminal. Inside, top to bottom: the table, a long notice, the bottom area
+    (details and/or an overlay) and the hint — sized by
+    :func:`jailbee.dashboard.tui.layout.frame_layout`; a blank filler sits above
+    the bottom area while the details panel is drawn (the panel ends on the last
+    row) and under the hint otherwise.
     Each part repaints only when its own input changed; the clock touches
     only the border.
     """
@@ -362,7 +366,7 @@ class DashboardFrame(Vertical):
     DEFAULT_CSS = """
     DashboardFrame {
         width: 100%;
-        height: auto;
+        height: 100%;
         border: round ansi_default;
         border-title-align: left;
         border-subtitle-align: left;
@@ -373,6 +377,7 @@ class DashboardFrame(Vertical):
     DashboardFrame > #notice { height: auto; background: ansi_default; }
     DashboardFrame > #bottom { height: auto; }
     DashboardFrame > #hint { height: auto; background: ansi_default; color: ansi_default; }
+    DashboardFrame > .fill { height: 1fr; background: ansi_default; }
     """
 
     def __init__(
@@ -395,9 +400,11 @@ class DashboardFrame(Vertical):
     def compose(self) -> ComposeResult:
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
         yield Static(id="notice")
+        yield Static(id="fill-above", classes="fill")
         with Horizontal(id="bottom"):
             yield DetailsPanel(id="details")
         yield Static(id="hint")
+        yield Static(id="fill-below", classes="fill")
 
     @cached_property
     def table(self) -> FleetTable:
@@ -484,6 +491,11 @@ class DashboardFrame(Vertical):
         hint = _hint_line(overlay) if overlay is not None else None
         menu_width = (box.natural_width() or 0) if box is not None and menu else 0
         details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
+        measured = (
+            None
+            if details is None
+            else measure_details(details, console, max(1, width - menu_width))
+        )
 
         def bottom_lines(list_rows: int, details_rows: int | None) -> int:
             beside = details is not None and details_rows is not None and (overlay is None or menu)
@@ -505,7 +517,8 @@ class DashboardFrame(Vertical):
                 notice_lines=lines(inline, width),
                 hint_lines=lines(hint, width),
                 has_bottom=overlay is not None or details is not None,
-                details_cap=DETAILS_MAX_ROWS if details is None else details.base_rows,
+                details_cap=DETAILS_MAX_ROWS if measured is None else measured.base,
+                details_want=DETAILS_MAX_ROWS if measured is None else measured.want,
                 details_fit=details_fit,
                 bottom_lines=bottom_lines,
             )
@@ -545,6 +558,18 @@ class DashboardFrame(Vertical):
             details is not None and layout.details_rows is not None and (overlay is None or menu)
         )
         self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
+        anchored = beside and layout.details_rows is not None
+        used = (
+            layout.table_rows
+            + layout.notice_rows
+            + int(layout.gap)
+            + max(0, layout.bottom_rows - layout.crop_top)
+            + lines(hint, width)
+        )
+        # A 1fr child is never given less than a row, so a full frame has no filler.
+        spare = used < height
+        self.query_one("#fill-above", Static).display = anchored and spare
+        self.query_one("#fill-below", Static).display = not anchored and spare
         if box is not None:
             rows = min(box.content_rows(), layout.list_rows) + box.chrome_rows() - layout.crop_top
             box.display = rows > box.chrome_rows()

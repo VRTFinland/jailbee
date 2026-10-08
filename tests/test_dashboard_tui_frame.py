@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from rich.cells import cell_len
 
+from jailbee.accounts.models import ActivityEvent, AgentActivity
+from jailbee.agent_status import AgentSummary
+from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.dashboard.tui.overlay import NativeState
-from tests.dashboard_fixtures import WIDE, ci, wide_group
-from tests.dashboard_pilot import NATIVE_LIST, Wheel, drive, paint, view_of
+from jailbee.db.view_prefs import ViewState
+from tests.dashboard_fixtures import WIDE, ci, named_rows_group, wide_group
+from tests.dashboard_pilot import NATIVE_LIST, Resize, Wheel, drive, paint, view_of
 
 Row = dmodel.Row
 
@@ -26,6 +32,7 @@ def test_title_table_and_bottom_border(tmp_path):
     assert lines[0].startswith("╭─ 🐝 jailbee dashboard")
     assert "NAME" in lines[1] and "▾ alpha" in lines[2]
     assert lines[-1].startswith("╰")
+    assert len(lines) == 25
 
 
 def test_a_long_table_fills_the_screen_and_keeps_the_header(tmp_path):
@@ -211,3 +218,139 @@ def test_overlay_sideways_ignored_and_ctrl_table_wheel_vertical(mocker, tmp_path
     )
     assert all(v.column_offset == 0 for v in run.trace[:9])
     assert run.trace[9].column_offset == 1  # same overflowing fleet scrolls once overlay closes
+
+
+def _busy(tmp_path, n=3, *, events=20, message="the last message", busy=None):
+    """``n`` containers; those named in ``busy`` (default: all) carry 20 recent events."""
+    recent = tuple(
+        ActivityEvent("tool" if i % 2 else "message", f"event{i:02d}") for i in range(events)
+    )
+    summary = AgentSummary(
+        "claude",
+        "busy",
+        None,
+        None,
+        1,
+        activity=AgentActivity("Bash  ls", message, recent=recent),
+    )
+    group = named_rows_group(tmp_path, n)
+    return replace(
+        group,
+        containers=[
+            replace(c, agent_status=(summary,)) if busy is None or c.name in busy else c
+            for c in group.containers
+        ],
+    )
+
+
+def _panel(lines, title="╭─ row01"):
+    top = next(i for i, ln in enumerate(lines) if title in ln)
+    bottom = next(i for i in range(top + 1, len(lines)) if "╰" in lines[i])
+    return top, bottom
+
+
+def test_the_frame_fills_the_terminal_and_the_details_show_the_whole_history(tmp_path):
+    view = view_of([_busy(tmp_path)], selected=Row("container", "alpha-row01"), show_details=True)
+    lines = paint(view, size=(120, 45))
+
+    assert len(lines) == 45 and lines[-1].startswith("╰")
+    top, bottom = _panel(lines)
+    assert bottom == 43  # the panel's border sits on the frame's last content row
+    assert bottom - top - 1 == dd.DETAILS_MAX_ROWS + 2 + 1 + 18  # grid, head, message, history
+    text = "\n".join(lines)
+    assert text.index("event17") < text.index("“event16”") < text.index("“event00”")
+    assert lines[top - 1].strip("│ ") == ""  # the slack is blank space above the panel
+
+
+def test_history_that_does_not_fit_is_cut_with_an_ellipsis_row(tmp_path):
+    view = view_of([_busy(tmp_path)], selected=Row("container", "alpha-row01"), show_details=True)
+    lines = paint(view, size=(120, 30))
+
+    assert len(lines) == 30 and lines[-1].startswith("╰")
+    top, bottom = _panel(lines)
+    content = [ln.strip("│ ") for ln in lines[top + 1 : bottom]]
+    assert content[-1] == "…" and content[-2] == "“event10”"  # even events are messages
+    assert "event09" not in "\n".join(lines)
+
+
+def test_without_activity_the_panel_keeps_its_size_at_the_bottom(tmp_path):
+    view = view_of(
+        [named_rows_group(tmp_path, 3)],
+        selected=Row("container", "alpha-row01"),
+        show_details=True,
+    )
+    lines = paint(view, size=(100, 40))
+
+    assert len(lines) == 40
+    top, bottom = _panel(lines)
+    assert bottom == 38 and bottom - top - 1 == dd.DETAILS_MAX_ROWS
+    assert all(ln.strip("│ ") == "" for ln in lines[7:top])  # blank between table and panel
+
+
+def test_a_long_table_keeps_its_height_as_the_cursor_moves(tmp_path):
+    group = _busy(tmp_path, 40, busy={"alpha-row01"})
+    heights = []
+    for selected in (
+        Row("container", "alpha-row01"),
+        Row("container", "alpha-row02"),
+        Row("repo", "alpha"),
+    ):
+        lines = paint(view_of([group], selected=selected, show_details=True), size=(120, 40))
+        heights.append(next(i for i, ln in enumerate(lines) if i and "╭" in ln))
+    assert heights[0] == heights[1] == heights[2]
+
+
+def test_a_huge_message_on_a_small_terminal_stays_inside_the_frame(tmp_path):
+    view = view_of(
+        [_busy(tmp_path, message="m" * 1000)],
+        selected=Row("container", "alpha-row01"),
+        show_details=True,
+    )
+    lines = paint(view, size=(80, 24))
+
+    assert len(lines) == 24 and lines[-1].startswith("╰")
+    _, bottom = _panel(lines)
+    assert lines[bottom - 1].rstrip(" │").endswith("…")
+
+
+def test_a_picker_still_sits_under_the_table(tmp_path):
+    picker = tsession.Picker("x", "Pick one", (tsession.PickerEntry("Entry 0", "0"),))
+    lines = paint(
+        view_of(
+            [named_rows_group(tmp_path, 3)],
+            selected=Row("container", "alpha-row01"),
+            overlay=picker,
+        ),
+        size=(100, 40),
+    )
+
+    assert len(lines) == 40 and lines[-1].startswith("╰")
+    assert next(i for i, ln in enumerate(lines) if "Pick one" in ln) < 12
+
+
+def test_resizing_keeps_the_frame_full_height(mocker, tmp_path):
+    run = drive(
+        mocker,
+        ["j", Resize(200, 60), Resize(80, 24), Resize(120, 40)],
+        [_busy(tmp_path)],
+        view_state=ViewState(show_details=True),
+        size=(120, 40),
+        screens=True,
+    )
+    for screen, height in zip(run.screens[1:5], (40, 60, 24, 40), strict=True):
+        lines = screen.splitlines()
+        assert len(lines) == height and lines[-1].startswith("╰"), height
+    assert "event00" in run.screens[2]  # 200x60: the whole history fits
+    assert "event00" not in run.screens[3]  # 80x24: it does not
+
+
+@pytest.mark.parametrize("height", [14, 15, 16, 17, 18, 19, 20])
+def test_a_full_frame_keeps_the_panels_bottom_border(tmp_path, height):
+    """A 1fr filler is never smaller than a row: none may be drawn when nothing is spare."""
+    view = view_of(
+        [named_rows_group(tmp_path, 3)], selected=Row("container", "alpha-row01"), show_details=True
+    )
+    lines = paint(view, size=(60, height))
+
+    assert len(lines) == height and lines[-1].startswith("╰")
+    assert lines[-2].startswith("│ ╰")

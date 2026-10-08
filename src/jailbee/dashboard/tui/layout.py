@@ -2,8 +2,10 @@
 
 The table keeps five rows plus its header before the bottom area may grow.
 Lists retain their minimum window; details with fewer than two content rows
-are omitted. Overflow loses the table, notice and gap first, then the top of
-the bottom area, preserving the hint and the frame's bottom border.
+are omitted. The table then takes every line it has; details grow from their
+guaranteed rows into what is left. Overflow loses the table, notice and gap
+first, then the top of the bottom area, preserving the hint and the frame's
+bottom border.
 """
 
 from __future__ import annotations
@@ -44,10 +46,16 @@ def frame_layout(
     hint_lines: int,
     has_bottom: bool,
     details_cap: int,
+    details_want: int,
     details_fit: bool,
     bottom_lines: Callable[[int, int | None], int],
 ) -> FrameLayout:
-    """Budget the frame's inner height using a bottom-area line counter."""
+    """Budget the frame's inner height using a bottom-area line counter.
+
+    ``details_cap`` is the rows the details panel is guaranteed, ``details_want``
+    the rows it would use; it gets the difference only from rows the table
+    does not need.
+    """
     rest = height - notice_lines - hint_lines
     if not has_bottom:
         table_rows = min(table_lines, max(0, rest))
@@ -60,6 +68,11 @@ def frame_layout(
     bottom = bottom_lines(list_rows, shown_details)
     gap = bottom > 0
     table_rows = min(table_lines, max(0, rest - int(gap) - bottom))
+    if shown_details is not None and details_want > shown_details:
+        spare = rest - int(gap) - table_rows - bottom
+        if spare > 0:
+            shown_details = min(details_want, shown_details + spare)
+            bottom = bottom_lines(list_rows, shown_details)
     return _fit(height, table_rows, notice_lines, gap, shown_details, list_rows, bottom, hint_lines)
 
 

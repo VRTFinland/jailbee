@@ -26,6 +26,7 @@ def _layout(
     hint_lines: int = 0,
     has_bottom: bool = False,
     details_cap: int = 8,
+    details_want: int | None = None,
     details_fit: bool = True,
     bottom_lines: Callable[[int, int | None], int] | None = None,
 ):
@@ -38,6 +39,7 @@ def _layout(
         hint_lines=hint_lines,
         has_bottom=has_bottom,
         details_cap=details_cap,
+        details_want=details_cap if details_want is None else details_want,
         details_fit=details_fit,
         bottom_lines=_bottom() if bottom_lines is None else bottom_lines,
     )
@@ -156,3 +158,64 @@ def test_layout_constants_values():
     from jailbee.dashboard.tui.layout import MIN_DETAILS_ROWS, MIN_TABLE_ROWS, OVERLAY_BORDER_ROWS
 
     assert (MIN_TABLE_ROWS, OVERLAY_BORDER_ROWS, MIN_DETAILS_ROWS) == (5, 2, 2)
+
+
+def test_details_grow_into_what_a_short_table_leaves():
+    layout = _layout(
+        height=40,
+        table_lines=10,
+        has_bottom=True,
+        details_cap=11,
+        details_want=30,
+        bottom_lines=_bottom(details=True),
+    )
+    assert layout.table_rows == 10
+    assert layout.details_rows == 27  # 40 - table 10 - gap 1 - panel borders 2
+    assert layout.bottom_rows == 29
+
+
+def test_details_stop_at_what_they_want():
+    layout = _layout(
+        height=40,
+        table_lines=10,
+        has_bottom=True,
+        details_cap=11,
+        details_want=15,
+        bottom_lines=_bottom(details=True),
+    )
+    assert (layout.table_rows, layout.details_rows, layout.bottom_rows) == (10, 15, 17)
+
+
+def test_a_long_table_keeps_its_rows_and_the_details_only_their_base():
+    layout = _layout(
+        height=40,
+        table_lines=60,
+        has_bottom=True,
+        details_cap=11,
+        details_want=30,
+        bottom_lines=_bottom(details=True),
+    )
+    assert (layout.table_rows, layout.details_rows) == (26, 11)
+
+
+def test_details_beside_a_menu_still_grow():
+    layout = _layout(
+        height=40,
+        table_lines=10,
+        has_bottom=True,
+        details_cap=11,
+        details_want=30,
+        bottom_lines=_bottom(details=True, overlay_lines=8),
+    )
+    assert (layout.details_rows, layout.bottom_rows) == (27, 29)
+
+
+def test_details_left_out_do_not_grow():
+    layout = _layout(
+        has_bottom=True,
+        details_fit=False,
+        details_cap=11,
+        details_want=30,
+        bottom_lines=_bottom(details=True, overlay_lines=6),
+    )
+    assert layout.details_rows is None and layout.bottom_rows == 6
