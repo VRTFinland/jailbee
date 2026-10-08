@@ -193,6 +193,8 @@ def test_overlay_sideways_ignored_and_ctrl_table_wheel_vertical(mocker, tmp_path
     )
     assert positions == [1]
     assert run.trace[1].selected == run.trace[0].selected
-    assert run.trace[4].overlay == run.trace[5].overlay == run.trace[6].overlay == run.trace[7].overlay
+    assert (
+        run.trace[4].overlay == run.trace[5].overlay == run.trace[6].overlay == run.trace[7].overlay
+    )
     assert all(v.column_offset == 0 for v in run.trace[:9])
     assert run.trace[9].column_offset == 1  # same overflowing fleet scrolls once overlay closes
