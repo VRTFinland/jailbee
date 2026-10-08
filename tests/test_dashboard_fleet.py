@@ -49,9 +49,12 @@ def test_lines_keep_the_rich_table_layout(tmp_path):
 
     groups = [wide_group(tmp_path)]
     selected = Row("container", groups[0].containers[0].name)
-    plain = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in _new_lines(groups, 44, offset=1, selected=selected, enabled=WIDE)]
+    plain = [
+        re.sub(r"\x1b\[[0-9;]*m", "", line)
+        for line in _new_lines(groups, 44, offset=1, selected=selected, enabled=WIDE)
+    ]
     assert plain == [
-        "  NAME                ‹  ST  AGE    NET  ›",
+        "  NAME                ‹  ST  AGE    NET  ›",  # noqa: RUF001 - literal scroll marks
         "▾ alpha  (1)",
         "  one                    ▶   129d   ●     ",
     ]

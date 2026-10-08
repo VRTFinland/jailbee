@@ -137,8 +137,10 @@ def test_native_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(he
 
 @pytest.mark.parametrize(
     "hidden, expected",
-    [(False, "(no containers found)"),
-     (True, "All repositories are hidden — open Settings > Visibility to show them")],
+    [
+        (False, "(no containers found)"),
+        (True, "All repositories are hidden — open Settings > Visibility to show them"),
+    ],
 )
 def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected):
     from tests.dashboard_pilot import paint, view_of

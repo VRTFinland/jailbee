@@ -96,7 +96,12 @@ def test_inline_editor_completion_preserves_unfinished_quote():
 def test_command_binding_and_inline_render_keep_table_visible():
     group = dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-x", "alpha")])
     overlay = toverlay.CommandState(text="git d", suggestions=("git diff",))
-    rendered = "\n".join(paint(view_of([group], selected=dmodel.Row("container", "alpha-x"), overlay=overlay), size=(100, 200)))
+    rendered = "\n".join(
+        paint(
+            view_of([group], selected=dmodel.Row("container", "alpha-x"), overlay=overlay),
+            size=(100, 200),
+        )
+    )
     assert tkeys.parse_key(b"!") == "command"
     assert "  x" in rendered
     assert "git d" in rendered
@@ -3038,7 +3043,18 @@ def _cursor_lines(lines: list[str]) -> list[str]:
 
 def _screen_lines(groups, overlay, height: int) -> list[str]:
     """One frame as the full-screen dashboard draws it at ``height`` rows."""
-    frame = "\n".join(paint(view_of(groups, selected=dmodel.Row('container', groups[0].containers[0].name), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay=overlay), size=(100, 200 if height is None else height)))
+    frame = "\n".join(
+        paint(
+            view_of(
+                groups,
+                selected=dmodel.Row("container", groups[0].containers[0].name),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+                overlay=overlay,
+            ),
+            size=(100, 200 if height is None else height),
+        )
+    )
     return frame.splitlines()
 
 
@@ -3438,7 +3454,18 @@ def test_render_long_notice_wraps_below_the_table_instead_of_the_border(tmp_path
     notice = "✗ invalid credential group name 'Bad Name': " + "lowercase letters " * 12 + "END"
     lines = (
         (
-            "\n".join(paint(view_of([g], selected=None, now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, notice=notice), size=(100, 200)))
+            "\n".join(
+                paint(
+                    view_of(
+                        [g],
+                        selected=None,
+                        now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                        git_enabled=True,
+                        notice=notice,
+                    ),
+                    size=(100, 200),
+                )
+            )
         )
         .rstrip()
         .splitlines()
@@ -3467,8 +3494,17 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     menu = tmenu.MenuState(
         "alpha-one", [("Attach tmux", "tmux"), ("Outbox", "outbox browse")], index=1
     )
-    out = (
-        "\n".join(paint(view_of([g], selected=dmodel.Row('container', 'alpha-one'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay=menu), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [g],
+                selected=dmodel.Row("container", "alpha-one"),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+                overlay=menu,
+            ),
+            size=(200, 200),
+        )
     )
     # Both container rows and the column headers are still rendered.
     assert "one" in out and "two" in out
@@ -3997,8 +4033,17 @@ def test_binding_for_token_finds_the_key_and_its_label():
 
 def test_render_help_overlay_documents_every_key(tmp_path):
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
-    out = (
-        "\n".join(paint(view_of([g], selected=dmodel.Row('container', 'alpha-one'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay='help'), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [g],
+                selected=dmodel.Row("container", "alpha-one"),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+                overlay="help",
+            ),
+            size=(200, 200),
+        )
     )
     for b in tkeys.KEY_BINDINGS:
         if b.hint:
@@ -4016,8 +4061,17 @@ def test_render_help_overlay_documents_every_key(tmp_path):
 
 def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
-    out = (
-        "\n".join(paint(view_of([g], selected=dmodel.Row('container', 'alpha-one'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay=tmenu.MenuState('alpha-one', [('Attach tmux', 'tmux')])), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [g],
+                selected=dmodel.Row("container", "alpha-one"),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+                overlay=tmenu.MenuState("alpha-one", [("Attach tmux", "tmux")]),
+            ),
+            size=(200, 200),
+        )
     )
     assert "Enter open/run" in out and "Esc cancel" in out
     assert "[key] pick" in out
@@ -4030,8 +4084,17 @@ def test_render_menu_submenu_title_and_contextual_back_hint(tmp_path):
     submenu, _ = tmenu.enter_menu(tmenu.move_menu(tmenu.move_menu(root, 1), 1))
 
     def frame(menu):
-        return (
-            "\n".join(paint(view_of([g], selected=dmodel.Row('container', 'alpha-x'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay=menu), size=(200, 200)))
+        return "\n".join(
+            paint(
+                view_of(
+                    [g],
+                    selected=dmodel.Row("container", "alpha-x"),
+                    now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                    git_enabled=True,
+                    overlay=menu,
+                ),
+                size=(200, 200),
+            )
         )
 
     assert "PR →" in frame(root) and "Git →" in frame(root)
@@ -4614,8 +4677,10 @@ def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
         repo_prefixes=("alpha",),
         folded=frozenset(),
     )
-    out = (
-        "\n".join(paint(view_of([g], selected=None, now=now, git_enabled=True, overlay=overlay), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of([g], selected=None, now=now, git_enabled=True, overlay=overlay), size=(200, 200)
+        )
     )
     # The live table stays on screen behind the panel — that is the whole
     # reason the overlay is a panel and not a full-screen modal.
@@ -4632,8 +4697,17 @@ _RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"
 def test_arrow_keys_parse_and_are_documented():
     assert tkeys.parse_key(_RIGHT) == "scroll-right"
     assert tkeys.parse_key(_LEFT) == "scroll-left"
-    out = (
-        "\n".join(paint(view_of([], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay='help'), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [],
+                selected=None,
+                now=datetime(2026, 6, 8, tzinfo=UTC),
+                git_enabled=False,
+                overlay="help",
+            ),
+            size=(200, 200),
+        )
     )
     assert "←/→" in out and "scroll columns" in out
 
@@ -4842,8 +4916,17 @@ def test_new_binding_is_not_a_container_verb():
 
 def test_new_binding_appears_in_the_help_overlay(tmp_path):
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
-    out = (
-        "\n".join(paint(view_of([g], selected=None, now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True, overlay='help'), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [g],
+                selected=None,
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+                overlay="help",
+            ),
+            size=(200, 200),
+        )
     )
     assert "create a container" in out
 
@@ -5803,7 +5886,17 @@ def test_window_rows_without_a_cursor_starts_at_the_top():
 
 
 def test_render_scrolls_a_long_table_to_the_cursor(tmp_path):
-    frame = "\n".join(paint(view_of([_named_rows_group(tmp_path, 40)], selected=dmodel.Row('container', 'alpha-row35'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True), size=(100, 20)))
+    frame = "\n".join(
+        paint(
+            view_of(
+                [_named_rows_group(tmp_path, 40)],
+                selected=dmodel.Row("container", "alpha-row35"),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+            ),
+            size=(100, 20),
+        )
+    )
     lines = frame.splitlines()
     text = "\n".join(lines)
     assert len(lines) <= 20
@@ -5815,7 +5908,17 @@ def test_render_scrolls_a_long_table_to_the_cursor(tmp_path):
 
 
 def test_render_without_height_draws_a_long_table_whole(tmp_path):
-    frame = "\n".join(paint(view_of([_named_rows_group(tmp_path, 40)], selected=dmodel.Row('container', 'alpha-row35'), now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC), git_enabled=True), size=(100, 200)))
+    frame = "\n".join(
+        paint(
+            view_of(
+                [_named_rows_group(tmp_path, 40)],
+                selected=dmodel.Row("container", "alpha-row35"),
+                now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
+                git_enabled=True,
+            ),
+            size=(100, 200),
+        )
+    )
     text = frame
     assert "row00" in text and "row39" in text and "more" not in text
 
@@ -5824,7 +5927,19 @@ _FRAME_NOW = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
 
 def _frame(groups, selected, *, overlay=None, height=None, width=100, show_details=True):
-    frame = "\n".join(paint(view_of(groups, selected=selected, now=_FRAME_NOW, git_enabled=True, overlay=overlay, show_details=show_details), size=(width, 200 if height is None else height)))
+    frame = "\n".join(
+        paint(
+            view_of(
+                groups,
+                selected=selected,
+                now=_FRAME_NOW,
+                git_enabled=True,
+                overlay=overlay,
+                show_details=show_details,
+            ),
+            size=(width, 200 if height is None else height),
+        )
+    )
     return frame.splitlines()
 
 
@@ -6122,8 +6237,17 @@ def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_pat
 
 def test_optimize_key_is_documented_and_parsed():
     assert tkeys.parse_key(b"o") == "optimize"
-    out = (
-        "\n".join(paint(view_of([], selected=None, now=datetime(2026, 6, 8, tzinfo=UTC), git_enabled=False, overlay='help'), size=(200, 200)))
+    out = "\n".join(
+        paint(
+            view_of(
+                [],
+                selected=None,
+                now=datetime(2026, 6, 8, tzinfo=UTC),
+                git_enabled=False,
+                overlay="help",
+            ),
+            size=(200, 200),
+        )
     )
     assert "optimize" in out.lower() and "width" in out.lower()
 

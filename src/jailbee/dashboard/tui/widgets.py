@@ -152,7 +152,12 @@ class FleetTable(ScrollView, can_focus=False):
 
     def _signatures(self, model: TableModel) -> tuple[tuple[object, ...], ...]:
         if model.empty_text is not None:
-            return tuple(("empty", line.plain) for line in Text(model.empty_text).wrap(self.app.console, max(1, model.geometry.width)))
+            return tuple(
+                ("empty", line.plain)
+                for line in Text(model.empty_text).wrap(
+                    self.app.console, max(1, model.geometry.width)
+                )
+            )
         hover = self._hover
         lines: list[tuple[object, ...]] = []
         if model.has_header:

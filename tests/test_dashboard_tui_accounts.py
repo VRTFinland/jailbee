@@ -437,7 +437,9 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
     state = views[-1].overlay
     assert [r.account for r in state.rows] == ["a@x.io#org12345", "b@x.io~2", None]
     assert (state.index, state.prefix) == (0, "alpha")
-    at = max(i for i, view in enumerate(run.trace) if isinstance(view.overlay, tsession.da.AccountsState))
+    at = max(
+        i for i, view in enumerate(run.trace) if isinstance(view.overlay, tsession.da.AccountsState)
+    )
     out = run.screens[at]
     assert "NAME" in out and "zebra" in out  # the container table is still drawn
     assert "credential groups and logins" in out
