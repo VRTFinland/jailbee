@@ -87,3 +87,51 @@ def _with_egress_panel(overlay: Overlay | None, panel: EgressState) -> Overlay |
     if isinstance(overlay, (TextPrompt, Picker)):
         return replace(overlay, back=panel)
     return overlay
+
+
+@dataclass(frozen=True)
+class NativeState:
+    """What an open native overlay shows now: its cursor, a menu's level, settings' tab.
+
+    Read by the tests and the PTY rig; the session never sees it.
+    """
+
+    kind: str
+    cursor: int | None
+    level: str | None = None
+    tab: str | None = None
+
+
+def is_native(overlay: Overlay | None) -> bool:
+    """Whether ``overlay`` is drawn by a native box (the rest by `_render_overlay`)."""
+    return overlay == "help" or isinstance(
+        overlay, (Picker, MenuState, RepoMenuState, SettingsState, EgressState, da.AccountsState)
+    )
+
+
+def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:
+    """Which overlay this is, ignoring its data and initial cursor.
+
+    The frame keeps a mounted box while the key is unchanged (new data goes to
+    `OverlayBox.show`), so a tick that rebuilds a panel's rows never resets the
+    cursor; a box's message is acted on only while its key is still the open one.
+    """
+    if overlay is None:
+        return None
+    if overlay == "help":
+        return ("help",)
+    if isinstance(overlay, MenuState):
+        return ("menu", overlay.container)
+    if isinstance(overlay, RepoMenuState):
+        return ("repo-menu", overlay.repo)
+    if isinstance(overlay, Picker):
+        return ("picker", overlay.purpose, overlay.target, overlay.title, overlay.entries)
+    if isinstance(overlay, SettingsState):
+        return ("settings",)
+    if isinstance(overlay, EgressState):
+        return ("egress", overlay.prefix, overlay.container)
+    if isinstance(overlay, da.AccountsState):
+        return ("accounts", overlay.prefix)
+    if isinstance(overlay, TextPrompt):
+        return ("prompt", overlay.purpose, overlay.target)
+    return ("command",)

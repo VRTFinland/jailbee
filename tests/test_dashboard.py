@@ -21,6 +21,7 @@ from jailbee.dashboard import details as dd
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import keys as tkeys
@@ -44,7 +45,7 @@ from tests.dashboard_fixtures import repo_menu_verbs as _repo_menu_verbs
 from tests.dashboard_fixtures import table_ansi_lines, table_text
 from tests.dashboard_fixtures import wide_group as _wide_group
 from tests.dashboard_pilot import CREDENTIAL_GROUP_LEAF as _CREDENTIAL_GROUP_LEAF
-from tests.dashboard_pilot import paint, patch_pause, view_of
+from tests.dashboard_pilot import box_text, paint, patch_pause, view_of
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
@@ -1112,23 +1113,18 @@ def test_repo_menu_egress_respects_ssh_read_permission():
     )
 
 
-def test_repo_network_menu_is_a_submenu_and_escape_returns_to_parent():
+def test_repo_network_menu_is_a_submenu_of_its_own_level():
     group = dmodel.RepoGroup("alpha", "/alpha", None, [])
     menu = tmenu.open_repo_menu([group], "alpha", frozenset())
     assert menu is not None
-    assert menu.actions[4] == dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),))
-
-    menu.index = 4
-    child, verb = tmenu.enter_menu(menu)
-    assert verb is None
-    assert isinstance(child, tmenu.RepoMenuState)
-    assert child.active_group == "Network →"
-    assert tmenu.menu_verb(child) == "net egress ls"
-    parent = tmenu.back_menu(child)
-    assert parent is not None
-    assert parent.active_group is None
-    assert parent.index == 4
-    assert tmenu.menu_verb(parent) is None
+    network = dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),))
+    assert menu.actions[4] == network
+    assert tmenu.menu_entries(menu)[4] == network
+    assert tmenu.menu_entries(menu, "Network →") == network.actions
+    assert tmenu.menu_entries(menu, "No such group →") == ()
+    assert tmenu.menu_title(menu, None) == "alpha →"
+    assert tmenu.menu_title(menu, "Network →") == "alpha → Network"
+    assert (menu.start_group, menu.start_index) == (None, 0)
 
 
 def test_repo_network_submenu_remains_gated_by_ssh_read_permission():
@@ -1413,7 +1409,7 @@ def test_outbox_follows_the_shell_when_the_count_is_unknown(git_status):
         ("Outbox", "outbox browse"),
     ]
     menu = tmenu.MenuState("alpha-x", actions)
-    assert tmenu._menu_entries(menu)[0] == ("Attach tmux", "tmux")
+    assert tmenu.menu_entries(menu)[0] == ("Attach tmux", "tmux")
 
 
 @pytest.mark.parametrize(("pr", "issue", "total"), [(2, None, 2), (None, 1, 1), (2, 1, 3)])
@@ -1424,7 +1420,7 @@ def test_pending_outbox_leads_the_menu_with_its_count(pr, issue, total):
     lead = (f"Outbox ({total} pending)", "outbox browse")
     assert actions[:3] == [lead, ("Attach tmux", "tmux"), ("Open shell", "shell")]
     menu = tmenu.MenuState("alpha-x", actions)
-    assert tmenu._menu_entries(menu)[0] == lead
+    assert tmenu.menu_entries(menu)[0] == lead
 
 
 def test_outbox_dispatch_uses_target_config_and_no_pause(mocker, tmp_path):
@@ -1521,7 +1517,7 @@ def test_menu_actions_orphan_ignores_every_workflow_field():
     )
 
 
-def test_open_menu_captures_the_actions_with_the_cursor_at_the_top(tmp_path):
+def test_open_menu_captures_the_actions_and_opens_at_the_root_top(tmp_path):
     config_path = tmp_path / "config.yaml"
     group = dmodel.RepoGroup("alpha", str(tmp_path), config_path, [_ci("alpha-x", "alpha")])
 
@@ -1529,7 +1525,7 @@ def test_open_menu_captures_the_actions_with_the_cursor_at_the_top(tmp_path):
 
     assert menu is not None
     assert menu.container == "alpha-x"
-    assert menu.index == 0
+    assert (menu.start_group, menu.start_index) == (None, 0)
     # the shared (Qt too) action list, plus the terminal-only entries
     assert [a for a in menu.actions if a[1] not in dmenus.TERMINAL_MENU_VERBS] == (
         dmenus.actions_for_container([group], "alpha-x")
@@ -1557,31 +1553,6 @@ def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
     assert tmenu.open_menu([group], None) is None
 
 
-def test_move_menu_clamps_at_both_edges():
-    menu = tmenu.MenuState("alpha-x", [("A", "a"), ("B", "b"), ("C", "c")], index=0)
-
-    assert tmenu.move_menu(menu, -1).index == 0  # already at the top
-    assert tmenu.move_menu(menu, 1).index == 1
-    assert tmenu.move_menu(tmenu.move_menu(menu, 1), 1).index == 2
-    assert tmenu.move_menu(tmenu.MenuState("alpha-x", [], index=0), 1).index == 0
-
-
-def test_move_menu_returns_a_new_state_and_leaves_the_original_alone():
-    menu = tmenu.MenuState("alpha-x", [("A", "a"), ("B", "b")], index=0)
-
-    moved = tmenu.move_menu(menu, 1)
-
-    assert moved is not menu
-    assert menu.index == 0
-
-
-def test_menu_verb_returns_the_highlighted_verb():
-    menu = tmenu.MenuState("alpha-x", [("A", "a"), ("B", "b")], index=1)
-
-    assert tmenu.menu_verb(menu) == "b"
-    assert tmenu.menu_verb(tmenu.MenuState("alpha-x", [], index=0)) is None
-
-
 def _grouped_menu():
     return tmenu.MenuState(
         "alpha-x",
@@ -1589,32 +1560,22 @@ def _grouped_menu():
     )
 
 
-def test_menu_enters_groups_and_returns_to_saved_root_cursor():
+def test_menu_levels_are_the_root_and_each_group():
     root = _grouped_menu()
-    assert tmenu.back_menu(root) is None
-    assert tmenu.menu_verb(tmenu.move_menu(root, 1)) is None
-    assert tmenu.move_menu(root, -1).index == 0
-
     # Terminal order: Attach tmux, Git →, PR →.
-    pr, verb = tmenu.enter_menu(tmenu.move_menu(tmenu.move_menu(root, 1), 1))
-    assert verb is None
-    assert pr.active_group == "PR →" and pr.index == 0 and pr.parent_index == 2
-    assert tmenu.menu_verb(pr) == "pr"
-    assert tmenu.enter_menu(pr) == (pr, "pr")
-    assert tmenu.move_menu(pr, 1).index == 0
-
-    parent = tmenu.back_menu(pr)
-    assert parent is not None
-    assert parent.active_group is None and parent.index == 2
-    git, verb = tmenu.enter_menu(tmenu.move_menu(parent, -1))
-    assert verb is None
-    assert git.active_group == "Git →" and git.index == 0
-    assert tmenu.enter_menu(git) == (git, "git diff")
-    assert tmenu.back_menu(git).index == 1
-    assert root.index == 0 and root.active_group is None
+    assert [
+        i.label if isinstance(i, dmenus.MenuGroup) else i[0] for i in tmenu.menu_entries(root)
+    ] == [
+        "Attach tmux",
+        "Git →",
+        "PR →",
+    ]
+    assert tmenu.menu_entries(root, "PR →") == (("Create/update PR", "pr"),)
+    assert tmenu.menu_entries(root, "Git →") == (("Show diff (git diff)", "git diff"),)
+    assert tmenu.menu_title(root, "PR →") == "alpha-x → PR"
 
 
-def test_menu_launch_submenu_navigates_and_dispatches_original_verbs():
+def test_menu_launch_group_holds_the_original_verbs():
     root = tmenu.MenuState(
         "alpha-x",
         [
@@ -1624,27 +1585,17 @@ def test_menu_launch_submenu_navigates_and_dispatches_original_verbs():
             ("Destroy", "destroy"),
         ],
     )
-    selected = tmenu.move_menu(root, 1)
-    assert tmenu.menu_verb(selected) is None
-
-    launch, verb = tmenu.enter_menu(selected)
-    assert verb is None and launch.active_group == "Launch →"
-    assert tmenu.menu_verb(launch) == "ide"
-    assert tmenu.enter_menu(tmenu.move_menu(launch, 1))[1] == "apps run figma --container"
-    parent = tmenu.back_menu(launch)
-    assert parent is not None and parent.active_group is None and parent.index == 1
+    launch = tmenu.menu_entries(root, "Launch →")
+    assert [verb for _, verb in launch] == ["ide", "apps run figma --container"]
+    assert any(
+        i.label == "Launch →" for i in tmenu.menu_entries(root) if isinstance(i, dmenus.MenuGroup)
+    )
 
 
-def test_menu_group_cursor_clamps_within_visible_entries():
-    root = _grouped_menu()
-    assert tmenu.move_menu(root, 10).index == 2
-    git, _ = tmenu.enter_menu(tmenu.move_menu(root, 2))
-    assert tmenu.move_menu(git, 10).index == 0
-    assert tmenu.move_menu(git, -10).index == 0
-
-
-def _hotkeys(menu: tmenu.MenuState | tmenu.RepoMenuState) -> dict[str, str | None]:
-    entries = tmenu._menu_entries(menu)
+def _hotkeys(
+    menu: tmenu.MenuState | tmenu.RepoMenuState, group: str | None = None
+) -> dict[str, str | None]:
+    entries = tmenu.menu_entries(menu, group)
     labels = [item.label if isinstance(item, dmenus.MenuGroup) else item[0] for item in entries]
     return dict(zip(labels, tmenu.menu_hotkeys(entries), strict=True))
 
@@ -1669,17 +1620,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
     ctx = _ctx(pr_number=7)
     root = tmenu.MenuState("alpha-x", dmenus.menu_actions(ctx))
 
-    def submenu(label: str) -> tmenu.MenuState:
-        index = next(
-            i
-            for i, item in enumerate(tmenu._menu_entries(root))
-            if isinstance(item, dmenus.MenuGroup) and item.label == label
-        )
-        child, _ = tmenu.enter_menu(dataclasses.replace(root, index=index))
-        assert isinstance(child, tmenu.MenuState)
-        return child
-
-    assert _hotkeys(submenu("Git →")) == {
+    assert _hotkeys(root, "Git →") == {
         "Merge into…": "m",
         "Send commits to host (git pull)": "l",
         "Update from base (git push)": "u",
@@ -1687,9 +1628,9 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
         "Change base branch (git retarget)": "b",
         "Show diff (git diff)": "d",
     }
-    assert _hotkeys(submenu("PR →")) == {"Open PR": "p", "Create/update PR": "P"}
-    assert _hotkeys(submenu("Lifecycle →")) == {"Restart": "r", "Stop": "s", "Destroy": "D"}
-    assert _hotkeys(submenu("Network →")) == {"Network: loose": "l", "Egress…": "e"}
+    assert _hotkeys(root, "PR →") == {"Open PR": "p", "Create/update PR": "P"}
+    assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "s", "Destroy": "D"}
+    assert _hotkeys(root, "Network →") == {"Network: loose": "l", "Egress…": "e"}
 
 
 def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
@@ -1729,7 +1670,7 @@ def test_menu_hotkeys_cover_the_repo_menu():
 
 def _levels(menu: tmenu.MenuState | tmenu.RepoMenuState):
     """Every level of ``menu`` as (group label or None, entries)."""
-    root = tmenu._menu_entries(menu)
+    root = tmenu.menu_entries(menu)
     yield None, root
     for item in root:
         if isinstance(item, dmenus.MenuGroup):
@@ -1857,23 +1798,18 @@ def test_menu_hotkeys_preferred_keys_win_over_earlier_fallbacks():
     assert tmenu.menu_hotkeys(entries) == ["a", "t"]
 
 
-def test_hotkey_menu_moves_the_cursor_to_the_entry_or_returns_none():
+def test_menu_option_text_shows_each_entry_with_its_key():
     root = _grouped_menu()  # Attach tmux, Git →, PR →
-
-    hit = tmenu.hotkey_menu(root, b"p")
-    assert hit is not None and hit.index == 2 and hit.active_group is None
-    assert tmenu.hotkey_menu(root, b"z") is None
-    assert tmenu.hotkey_menu(root, b"\x1b[A") is None
-
-
-def test_render_menu_shows_each_entry_with_its_key():
-    console = Console(width=60, record=True)
-    console.print(tframe._render_menu(_grouped_menu()))
-    text = console.export_text()
-
-    assert "[t] Attach tmux" in text
-    assert "[g] Git →" in text
-    assert "[p] PR →" in text
+    assert _hotkeys(root) == {"Attach tmux": "t", "Git →": "g", "PR →": "p"}
+    entries = tmenu.menu_entries(root)
+    texts = [
+        tmenu.menu_option_text(item, key).plain
+        for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
+    ]
+    assert texts == ["[t] Attach tmux", "[g] Git →", "[p] PR →"]
+    key_span = tmenu.menu_option_text(entries[0], "t").spans[0]
+    assert (key_span.start, key_span.end, str(key_span.style)) == (0, 3, "bold")
+    assert tmenu.menu_option_text(("Plain", "plain"), None).plain == "    Plain"
 
 
 # --- RepoTarget: how a spawned `jailbee` child is pointed at one repo --------
@@ -3037,7 +2973,7 @@ def _cursor_lines(lines: list[str]) -> list[str]:
     """Lines carrying the cursor highlight — the only cursor indicator."""
     console = Console(force_terminal=True, color_system="standard", no_color=False)
     with console.capture() as cap:
-        console.print(f"[{tframe.CURSOR_STYLE}]x[/]", end="")
+        console.print(f"[{CURSOR_STYLE}]x[/]", end="")
     sgr = cap.get().split("x", 1)[0]
     return [ln for ln in lines if sgr in ln]
 
@@ -3066,37 +3002,28 @@ def _tall_group(tmp_path, n: int) -> dmodel.RepoGroup:
 
 
 def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
-    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
+    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=25)
     lines = _screen_lines([_tall_group(tmp_path, 3)], menu, height=20)
     text = "\n".join(lines)
     assert len(lines) <= 20
-    assert re.search(r"▸ (\[\w\]|   ) Action 25\b", text)  # keys run out before 25
+    assert re.search(r"(\[\w\]|   ) Action 25\b", text)  # keys run out before 25
     assert "Action 0 " not in text
-    assert "more" in text
     assert lines[-1].startswith("╰")  # the frame's bottom border is on screen
 
 
-def test_render_scrolls_a_picker_taller_than_the_screen_to_its_cursor(tmp_path):
-    entries = tuple(tsession.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
-    picker = tsession.Picker("x", "Pick one", entries, index=29)
-    lines = _screen_lines([_tall_group(tmp_path, 3)], picker, height=20)
-    assert len(lines) <= 20
-    assert "▸ Entry 29" in "\n".join(lines)
-
-
 def test_render_cuts_a_table_taller_than_the_screen_to_keep_the_menu_visible(tmp_path):
-    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=12)
+    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=12)
     lines = _screen_lines([_tall_group(tmp_path, 40)], menu, height=20)
     text = "\n".join(lines)
     assert len(lines) <= 20
     assert "NAME" in text  # the table is cut from below, keeping its header
-    assert re.search(r"▸ \[\w\] Action 12\b", text)
+    assert re.search(r"\[\w\] Action 12\b", text)
     assert "Enter" in lines[-2]  # the hint line, right above the bottom border
 
 
 def test_render_without_height_draws_a_long_menu_whole(tmp_path):
-    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=25)
-    text = _render_text(tframe._render_menu(menu, None), width=100)
+    menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=25)
+    text = "\n".join(box_text(menu, size=(100, 100)))
     assert "Action 0 " in text and "Action 29" in text and "more" not in text
 
 
@@ -3493,7 +3420,7 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
         [_ci("alpha-one", "alpha"), _ci("alpha-two", "alpha")],
     )
     menu = tmenu.MenuState(
-        "alpha-one", [("Attach tmux", "tmux"), ("Outbox", "outbox browse")], index=1
+        "alpha-one", [("Attach tmux", "tmux"), ("Outbox", "outbox browse")], start_index=1
     )
     out = "\n".join(
         paint(
@@ -3513,11 +3440,6 @@ def test_render_keeps_the_table_visible_under_the_menu_overlay(tmp_path):
     # The menu lists its actions, titled with the target container.
     assert "Attach tmux" in out and "Outbox" in out
     assert "alpha-one" in out
-    # The highlighted entry (index=1) carries the cursor, the other does not.
-    cursor_line = next(ln for ln in out.splitlines() if "Outbox" in ln)
-    other_line = next(ln for ln in out.splitlines() if "Attach tmux" in ln)
-    assert "▸" in cursor_line
-    assert "▸" not in other_line
 
 
 def test_normal_mode_help_is_in_frame_not_footer(tmp_path):
@@ -3526,10 +3448,8 @@ def test_normal_mode_help_is_in_frame_not_footer(tmp_path):
     assert "h/? help" in title
     assert "Enter menu" not in title and "Space fold" not in title
     assert tframe._hint_line(None) == ""
-    hint = _render_text(
-        tframe._hint_line(tmenu.MenuState("alpha-one", [("Attach tmux", "tmux")], index=0))
-    )
-    assert "Esc" in hint and "cancel" in hint
+    hint = _render_text(tframe._hint_line(tmenu.MenuState("alpha-one", [("Attach tmux", "tmux")])))
+    assert "Esc" in hint and "back" in hint
 
 
 def test_small_width_keeps_help_cue_in_the_top_border(tmp_path):
@@ -4074,7 +3994,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
             size=(200, 200),
         )
     )
-    assert "Enter open/run" in out and "Esc cancel" in out
+    assert "Enter open/run" in out and "Esc back" in out and "q close" in out
     assert "[key] pick" in out
     assert "h/? help" in out.splitlines()[0]
 
@@ -4082,7 +4002,7 @@ def test_render_swaps_the_hint_line_while_the_menu_is_open(tmp_path):
 def test_render_menu_submenu_title_and_contextual_back_hint(tmp_path):
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [_ci("alpha-x", "alpha")])
     root = _grouped_menu()
-    submenu, _ = tmenu.enter_menu(tmenu.move_menu(tmenu.move_menu(root, 1), 1))
+    submenu = dataclasses.replace(root, start_group="PR →", start_index=0)
 
     def frame(menu):
         return "\n".join(
@@ -4100,10 +4020,10 @@ def test_render_menu_submenu_title_and_contextual_back_hint(tmp_path):
 
     assert "PR →" in frame(root) and "Git →" in frame(root)
     assert "Enter open/run" in frame(root)
-    assert "Esc cancel" in frame(root)
+    assert "Esc back" in frame(root)
     assert "alpha-x → PR" in frame(submenu)
     assert "Create/update PR" in frame(submenu)
-    assert "Enter run" in frame(submenu)
+    assert "Enter open/run" in frame(submenu)
     assert "Esc back" in frame(submenu)
     assert "Git →" not in frame(submenu)
 
@@ -4530,7 +4450,7 @@ def test_render_marks_a_selected_repo_header(tmp_path):
     row = fleet.entry_line(model.entries[1], model.geometry, model.folded, selected=True, width=196)
     assert selected.plain == plain.plain
     assert str(plain.style) == "bold cyan"
-    assert str(selected.style) == tframe.CURSOR_STYLE
+    assert str(selected.style) == CURSOR_STYLE
     assert row.style.bold and row.style.color == selected.get_style_at_offset(Console(), 0).color
 
 
@@ -4541,10 +4461,10 @@ def test_cursor_style_is_distinct_from_every_heading_colour(tmp_path):
     orphan = dmodel.RepoGroup("gamma", None, None, [])
     resting = {str(fleet.repo_heading(g, None, frozenset()).style) for g in (repo, orphan)}
     assert resting == {"bold cyan", "bold yellow"}
-    assert tframe.CURSOR_STYLE == "bold magenta"
+    assert CURSOR_STYLE == "bold magenta"
     for g in (repo, orphan):
         on_it = fleet.repo_heading(g, dmodel.Row("repo", g.prefix), frozenset())
-        assert str(on_it.style) == tframe.CURSOR_STYLE
+        assert str(on_it.style) == CURSOR_STYLE
 
 
 def test_render_gutter_lands_on_the_first_enabled_column_not_just_name(tmp_path):
@@ -4667,29 +4587,19 @@ def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
     assert len(prefixes) == len(set(prefixes))  # no duplicate for a folded on-screen repo
 
 
-def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
+def test_the_settings_box_draws_its_tabs_and_rows():
     from jailbee.dashboard.settings import open_settings
 
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    g = dmodel.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
     overlay = open_settings(
         field_names=dcolumns.all_column_names(),
         enabled=frozenset(dcolumns.default_columns()),
         repo_prefixes=("alpha",),
         folded=frozenset(),
     )
-    out = "\n".join(
-        paint(
-            view_of([g], selected=None, now=now, git_enabled=True, overlay=overlay), size=(200, 200)
-        )
-    )
-    # The live table stays on screen behind the panel — that is the whole
-    # reason the overlay is a panel and not a full-screen modal.
-    # (The container row renders as "one": display_name strips the repo
-    # prefix, same as the menu-overlay table-visibility check above.)
-    assert "one" in out
+    out = "\n".join(box_text(overlay, size=(100, 40)))
     assert "settings" in out
-    assert "Fields" in out
+    assert "Fields" in out and "Repos" in out and "Visibility" in out
+    assert "▐X▌ " + dcolumns.all_column_names()[0] in out
 
 
 _RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"
@@ -4850,7 +4760,7 @@ def test_container_menu_offers_credential_group_just_before_network_and_lifecycl
     assert not any(v.startswith("net ") for v in verbs[:at])
     assert at < verbs.index("restart")
     # in the drawn menu it sits right above the Network → group
-    entries = list(tmenu._menu_entries(menu))
+    entries = list(tmenu.menu_entries(menu))
     labels = [i.label if isinstance(i, dmenus.MenuGroup) else i[0] for i in entries]
     assert labels.index("Network →") < entries.index(_CREDENTIAL_GROUP_LEAF)
 
@@ -5201,7 +5111,7 @@ def test_terminal_order_running_menu_layout(tmp_path):
     assert menu is not None
     labels = [
         item.label if isinstance(item, dmenus.MenuGroup) else item[0]
-        for item in tmenu._menu_entries(menu)
+        for item in tmenu.menu_entries(menu)
     ]
     assert labels[:7] == [
         "Attach tmux",
@@ -5215,7 +5125,7 @@ def test_terminal_order_running_menu_layout(tmp_path):
     assert "Open shell" not in labels
     lifecycle = next(
         i
-        for i in tmenu._menu_entries(menu)
+        for i in tmenu.menu_entries(menu)
         if isinstance(i, dmenus.MenuGroup) and i.label == "Lifecycle →"
     )
     assert [v for _, v in lifecycle.actions] == ["restart", "stop", "destroy"]
@@ -5231,7 +5141,7 @@ def test_terminal_order_stopped_menu_keeps_a_lone_destroy_leaf(tmp_path):
     assert menu is not None
     labels = [
         item.label if isinstance(item, dmenus.MenuGroup) else item[0]
-        for item in tmenu._menu_entries(menu)
+        for item in tmenu.menu_entries(menu)
     ]
     assert labels[0] == "Start"
     at = labels.index("PR →")
@@ -5258,7 +5168,7 @@ def test_terminal_menu_drops_an_empty_pr_group_when_only_apply_remains():
     menu = tmenu.MenuState("alpha-x", actions)
     labels = [
         item.label if isinstance(item, dmenus.MenuGroup) else item[0]
-        for item in tmenu._menu_entries(menu)
+        for item in tmenu.menu_entries(menu)
     ]
     assert labels[0] == "Outbox (2 pending)"
     assert "PR →" not in labels
@@ -5294,7 +5204,7 @@ def test_repo_menu_accounts_follows_the_ssh_policy(over_ssh, policy_kwargs, offe
 
 def test_accounts_key_is_documented_in_help():
     assert tkeys.parse_key(b"A") == "accounts"
-    out = _render_text(tframe._render_help())
+    out = "\n".join(box_text("help", size=(100, 100)))
     line = next(ln for ln in out.splitlines() if "credential groups and stored logins" in ln)
     assert line.split()[1] == "A"
     assert "Accounts panel: Enter acts on a login or group, n creates a group." in out
@@ -5669,7 +5579,7 @@ def test_container_menu_survives_an_empty_shared_action_list(
 
 
 def test_help_panel_points_at_the_repo_and_container_menu_entries():
-    text = _render_text(tframe._render_help())
+    text = "\n".join(box_text("help", size=(100, 100)))
     assert "Apply config…" in text
     assert "Snapshots…" in text
 
@@ -6043,7 +5953,9 @@ def test_long_table_keeps_min_rows_and_the_cursor_with_details(tmp_path):
 
 
 def test_short_terminals_never_overflow(tmp_path):
-    menu = tmenu.MenuState("alpha-row05", [(f"Action {i}", f"v{i}") for i in range(30)], index=20)
+    menu = tmenu.MenuState(
+        "alpha-row05", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=20
+    )
     for height in (8, 10, 12, 16):
         lines = _frame(
             [_named_rows_group(tmp_path, 40)],

@@ -13,12 +13,7 @@ from rich.text import Text
 
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
-from jailbee.dashboard.egress import (
-    EgressState,
-    removable_entry,
-    render_egress,
-)
-from jailbee.dashboard.menus import MenuGroup
+from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.overlays import (
     PICKER_HINT,
@@ -26,17 +21,11 @@ from jailbee.dashboard.overlays import (
     SUGGEST_HINT,
     Picker,
     TextPrompt,
-    render_picker,
     render_prompt,
-    window_lines,
 )
-from jailbee.dashboard.settings import (
-    CURSOR_STYLE,
-    SettingsState,
-    render_settings,
-)
+from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
-from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
+from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 
 INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
@@ -68,42 +57,8 @@ def notice_parts(notice: str | None) -> tuple[Text | None, Text | None]:
     return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
 
 
-def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
-    """The action menu as a bordered panel: one row per action, cursor on the
-    highlighted one, windowed to ``max_rows`` around the cursor."""
-    entries = _menu_entries(menu)
-    lines = []
-    for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True)):
-        label = item.label if isinstance(item, MenuGroup) else item[0]
-        tag = f"[bold]\\[{key}][/]" if key else "   "
-        line = (
-            f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
-            if i == menu.index
-            else f"  {tag} {label}"
-        )
-        lines.append(dhit.hit_markup(line, "menu", i))
-    if isinstance(menu, RepoMenuState):
-        title = (
-            f"{menu.repo} → {menu.active_group.removesuffix(' →')}"
-            if menu.active_group
-            else f"{menu.repo} →"
-        )
-    elif menu.active_group:
-        title = f"{menu.container} → {menu.active_group.removesuffix(' →')}"
-    else:
-        title = f"{menu.container} →"
-    return Panel(
-        "\n".join(window_lines(lines, menu.index, max_rows)),
-        title=f"[bold]{title}[/]",
-        title_align="left",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        expand=False,
-    )
-
-
-def _render_help() -> RenderableType:
-    """The keybinding help as a bordered panel, grouped as the table declares.
+def help_lines() -> list[str]:
+    """The keybinding help as markup lines, grouped as the key table declares.
 
     Rows come from :data:`KEY_BINDINGS`, so a new key documents itself. The
     closing note explains why an action key can decline to fire — without it
@@ -120,7 +75,8 @@ def _render_help() -> RenderableType:
             for b in KEY_BINDINGS
             if b.group == group and b.hint
         ]
-    lines += [
+    return [
+        *lines,
         "",
         "ST: ▶ running, ■ stopped, Ⅱ frozen; NET: ● strict, ○ loose.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle).",
@@ -133,18 +89,11 @@ def _render_help() -> RenderableType:
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
         "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
         "Mouse: click selects; double- or right-click opens the menu;",
-        "▾/▸ folds, ‹ › scroll columns, the wheel moves; Shift-drag selects text.",  # noqa: RUF001 - the arrows the frame draws
+        "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
+        "Shift-drag selects text.",
         "",
         f"[dim]{_GATE_NOTE}[/dim]",
     ]
-    return Panel(
-        "\n".join(lines),
-        title="[bold]keys[/]",
-        title_align="left",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        width=72,
-    )
 
 
 _MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
@@ -152,26 +101,19 @@ _MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
 
 def _hint_line(overlay: Overlay | None) -> str:
     """Contextual controls shown only while an overlay is open."""
-    if isinstance(overlay, MenuState):
-        if overlay.active_group is not None:
-            return (
-                f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] run  ·  "
-                "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
-            )
+    if isinstance(overlay, (MenuState, RepoMenuState)):
         return (
-            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
-            "[bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
-        )
-    if isinstance(overlay, RepoMenuState):
-        return (
-            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
-            "[bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] open/run  ·  "
+            "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
         )
     if isinstance(overlay, EgressState):
-        return (
-            "[bold]↑/↓[/bold] move  ·  [bold]a[/bold] add  ·  "
-            "[bold]r[/bold] remove  ·  [bold]Esc[/bold] back"
-        )
+        parts = ["[bold]↑/↓[/bold] move"]
+        if overlay.can_add:
+            parts.append("[bold]a[/bold] add")
+        if overlay.can_rm:
+            parts.append("[bold]r[/bold] remove")
+        parts.append("[bold]Esc[/bold] back")
+        return "  ·  ".join(parts)
     if isinstance(overlay, SettingsState):
         return (
             "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
@@ -190,30 +132,16 @@ def _hint_line(overlay: Overlay | None) -> str:
     return ""
 
 
-def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
-    """The overlay's panel; ``max_rows`` windows the scrollable list overlays."""
-    if isinstance(overlay, EgressState):
-        return render_egress(
-            overlay,
-            can_add=overlay.can_add,
-            can_rm=overlay.can_rm and removable_entry(overlay) is not None,
-        )
-    if isinstance(overlay, (MenuState, RepoMenuState)):
-        return _render_menu(overlay, max_rows)
+def _render_overlay(overlay: Overlay) -> RenderableType:
+    """The panel of the prompt or the command line (the list overlays are native boxes)."""
     if isinstance(overlay, CommandState):
         lines = [f"> {overlay.text}▏"]
         if overlay.suggestions:
             lines.append("  " + "   ".join(overlay.suggestions))
         return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
-    if isinstance(overlay, SettingsState):
-        return render_settings(overlay, dynamic=frozenset())
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
-    if isinstance(overlay, Picker):
-        return render_picker(overlay, max_rows)
-    if isinstance(overlay, da.AccountsState):
-        return da.render_accounts(overlay)
-    return _render_help()
+    raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native
 
 
 @dataclass(frozen=True)

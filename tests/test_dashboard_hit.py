@@ -9,12 +9,9 @@ from rich.console import Console, Group, RenderableType
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.egress import EgressState
-from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
-from jailbee.dashboard.settings import open_settings
+from jailbee.dashboard.overlays import TextPrompt
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
-from jailbee.dashboard.tui.menu_state import open_repo_menu
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 _NOW = datetime(2026, 10, 7, tzinfo=UTC)
@@ -62,9 +59,9 @@ def _table(groups, *, width=120, enabled=None, column_offset=0):
 
 
 def test_hit_round_trips_through_style_meta_and_markup():
-    hit = dhit.Hit("picker", (3,))
-    assert dhit.Hit.of(dhit.hit_style("picker", 3).meta) == hit
-    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "picker", 3))
+    hit = dhit.Hit("suggestion", (3,))
+    assert dhit.Hit.of(dhit.hit_style("suggestion", 3).meta) == hit
+    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "suggestion", 3))
     assert dhit.Hit.of(text.spans[0].style.meta) == hit  # type: ignore[union-attr]  # markup spans carry Style objects
     assert dhit.Hit.of({}) is None
     assert dhit.Hit.of({dhit.HIT_KEY: "garbage"}) is None
@@ -103,50 +100,11 @@ def test_scroll_marks_are_tagged_with_their_direction(tmp_path):
 
 
 def test_overlay_entries_are_tagged_by_index(tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
-    menu = open_repo_menu([group], "alpha", frozenset())
-    assert menu is not None
-    assert {dhit.Hit("menu", (0,)), dhit.Hit("menu", (1,))} <= _kinds(tframe._render_overlay(menu))
-    picker = Picker("p", "Pick", (PickerEntry("a", "a"), PickerEntry("b", "b")))
-    assert _kinds(tframe._render_overlay(picker)) == {
-        dhit.Hit("picker", (0,)),
-        dhit.Hit("picker", (1,)),
-    }
     prompt = TextPrompt("x", "T", "Base", suggestions=("main", "dev"))
     assert _kinds(tframe._render_overlay(prompt)) == {
         dhit.Hit("suggestion", (0,)),
         dhit.Hit("suggestion", (1,)),
     }
-    settings = open_settings(
-        field_names=("name", "state"),
-        enabled=frozenset({"name"}),
-        repo_prefixes=("alpha",),
-        folded=frozenset(),
-        visibility_repo_prefixes=("alpha",),
-        show_empty_repos=False,
-        hidden_repos=frozenset(),
-    )
-    kinds = _kinds(tframe._render_overlay(settings))
-    assert {
-        dhit.Hit("tab", ("fields",)),
-        dhit.Hit("tab", ("repos",)),
-        dhit.Hit("tab", ("visibility",)),
-    } <= kinds
-    assert {dhit.Hit("setting", (0,)), dhit.Hit("setting", (1,))} <= kinds
-
-
-def test_egress_and_account_rows_are_tagged_by_index():
-    from jailbee.dashboard import accounts as da
-    from jailbee.egress_scope import EntryRow
-
-    egress = EgressState(
-        "alpha", None, (EntryRow("a.example", "local"), EntryRow("b.example", "local"))
-    )
-    assert {dhit.Hit("egress", (0,)), dhit.Hit("egress", (1,))} <= _kinds(
-        tframe._render_overlay(egress)
-    )
-    rows = (da.AccountRow("claude", "team", "a", "live", (), ()),)
-    assert dhit.Hit("account", (0,)) in _kinds(tframe._render_overlay(da.AccountsState(rows)))
 
 
 def test_hover_segments_paints_only_the_matching_target():

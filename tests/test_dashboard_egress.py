@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from rich.console import Console
-
 from jailbee import egress_scope
 from jailbee.dashboard.egress import (
     EgressState,
     egress_argv,
-    move_egress,
+    egress_label,
     removable_entry,
-    render_egress,
-    replace_egress_rows,
 )
 from jailbee.egress_scope import EntryRow
 
@@ -19,30 +15,11 @@ from jailbee.egress_scope import EntryRow
 def test_empty_panel_and_argv(make_cfg, tmp_path, mocker):
     from jailbee.dashboard.egress_data import load_egress_rows
 
-    console = Console()
-    with console.capture() as captured:
-        console.print(render_egress(EgressState("repo", None, ()), can_add=True, can_rm=False))
-    assert "No egress entries" in captured.get()
     mocker.patch("jailbee.dashboard.egress_data.load_repo_config", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.dashboard.egress_data.get_engine")
     classify = mocker.patch("jailbee.dashboard.egress_data.classify_sources", return_value=[])
     assert load_egress_rows(tmp_path, mocker.Mock(), None) == ()
     assert classify.call_args.kwargs == {"container": None}
-
-
-def test_cursor_clamps_scrolls_and_replacement_preserves_selection():
-    rows = tuple(EntryRow(f"host{i}.example", "config") for i in range(12))
-    state = EgressState("repo", None, rows)
-    assert move_egress(state, 100).index == 11
-    assert move_egress(state, -100).index == 0
-    state = move_egress(state, 5)
-    changed = replace_egress_rows(state, (rows[5], rows[0]))
-    assert changed.index == 0
-    assert replace_egress_rows(state, rows[:2]).index == 1
-    console = Console()
-    with console.capture() as captured:
-        console.print(render_egress(move_egress(state, 6), can_add=True, can_rm=False))
-    assert "↓" in captured.get()
 
 
 def test_loader_classifies_scoped_rows_and_preserves_redundant_sources(make_cfg, tmp_path, mocker):
@@ -74,47 +51,50 @@ def test_loader_classifies_scoped_rows_and_preserves_redundant_sources(make_cfg,
     incus.config_get.assert_called_once()
 
 
-def test_remove_rules_and_explicit_argv():
+def test_argv_names_the_scope_explicitly():
     entry = "example.org:443"
-    assert removable_entry(EgressState("repo", None, (EntryRow(entry, "config"),))) is None
-    for source in ("local", "db (legacy)"):
-        state = EgressState("repo", None, (EntryRow(entry, source, True),))
-        assert removable_entry(state) == entry
-        assert egress_argv(state, "rm", entry) == ["net", "egress", "rm", entry, "--repo"]
-    assert removable_entry(EgressState("repo", "repo-feat", (EntryRow(entry, "local"),))) is None
-    container = EgressState("repo", "repo-feat", (EntryRow(entry, "container", True),))
-    assert removable_entry(container) == entry
+    repo = EgressState("repo", None, ())
+    container = EgressState("repo", "repo-feat", ())
+    assert egress_argv(repo, "rm", entry) == ["net", "egress", "rm", entry, "--repo"]
+    assert egress_argv(repo, "add", entry) == ["net", "egress", "add", entry, "--repo"]
     assert egress_argv(container, "add", entry) == ["net", "egress", "add", entry, "repo-feat"]
-    assert egress_argv(EgressState("repo", None, ()), "add", entry) == [
-        "net",
-        "egress",
-        "add",
-        entry,
-        "--repo",
-    ]
 
 
-def test_duplicate_repo_copies_explain_both_are_removed():
+def test_removable_entry_follows_the_scope():
+    repo = EgressState("alpha", None, ())
+    ctr = EgressState("alpha", "alpha-x", ())
+    assert removable_entry(repo, EntryRow("a.io", "local")) == "a.io"
+    assert removable_entry(repo, EntryRow("a.io", "db (legacy)")) == "a.io"
+    assert removable_entry(repo, EntryRow("a.io", "config")) is None
+    assert removable_entry(repo, EntryRow("a.io", "container")) is None
+    assert removable_entry(ctr, EntryRow("a.io", "container")) == "a.io"
+    assert removable_entry(ctr, EntryRow("a.io", "local")) is None
+    assert removable_entry(ctr, EntryRow("a.io", "config")) is None
+
+
+def test_egress_label_notes_source_proxy_and_redundancy():
     state = EgressState(
-        "repo",
+        "alpha",
         None,
-        (EntryRow("shared.example", "local"), EntryRow("shared.example", "db (legacy)")),
+        (EntryRow("*.x.io", "local", redundant=True), EntryRow("*.x.io", "db (legacy)")),
     )
-    console = Console()
-    with console.capture() as captured:
-        console.print(render_egress(state, can_add=True, can_rm=True))
-    assert "removes both repo copies" in captured.get()
+    text = egress_label(state, state.rows[0]).plain
+    assert text.startswith("*.x.io")
+    assert "[local; removes both repo copies]" in text and "[proxy]" in text
+    assert "(redundant)" in text
+
+
+def test_the_duplicate_note_is_a_repo_scope_note_only():
+    rows = (EntryRow("shared.example", "local"), EntryRow("shared.example", "db (legacy)"))
+    container = EgressState("repo", "repo-feat", rows)
+    assert "removes both" not in egress_label(container, rows[0]).plain
+    lone = EgressState("repo", None, rows[:1])
+    assert egress_label(lone, rows[0]).plain == "shared.example  [local]"
 
 
 def test_proxy_tag_only_on_wildcard_rows():
     state = EgressState(
         "repo", None, (EntryRow("github.com", "config"), EntryRow("*.example.com", "local"))
     )
-    console = Console(width=100)
-    with console.capture() as captured:
-        console.print(render_egress(state, can_add=True, can_rm=True))
-    lines = captured.get().splitlines()
-    plain = next(line for line in lines if "github.com" in line)
-    wild = next(line for line in lines if "*.example.com" in line)
-    assert "[proxy]" not in plain
-    assert "[local]  [proxy]" in wild
+    assert "[proxy]" not in egress_label(state, state.rows[0]).plain
+    assert egress_label(state, state.rows[1]).plain == "*.example.com  [local]  [proxy]"

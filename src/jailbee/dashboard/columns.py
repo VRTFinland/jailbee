@@ -59,7 +59,7 @@ def seed_view_state(
     retired ``ahead_diff`` is migrated to ``target_diff`` with a visible notice
     before this filter, and that rename alone is written back so the notice
     appears once. Each
-    front-end's own last-column guard (``jailbee.dashboard.settings.toggle_current``
+    front-end's own last-column guard (``jailbee.dashboard.settings.toggle_setting``
     here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
     length, so a phantom name inflates that count without ever being a real,
     keepable column — reaching zero real columns from a single ordinary

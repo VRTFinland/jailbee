@@ -265,19 +265,9 @@ class Picker:
     purpose: str
     title: str
     entries: tuple[PickerEntry, ...]
-    index: int = 0
     target: str = ""
     carry: tuple[str, ...] = ()
     back: EgressState | AccountsState | None = None
-
-
-def move_picker(picker: Picker, delta: int) -> Picker:
-    last = max(0, len(picker.entries) - 1)
-    return replace(picker, index=max(0, min(last, picker.index + delta)))
-
-
-def picked(picker: Picker) -> PickerEntry | None:
-    return picker.entries[picker.index] if 0 <= picker.index < len(picker.entries) else None
 
 
 # A scrolled list never shrinks below this many rows: the cursor plus a
@@ -310,28 +300,3 @@ def window_lines(lines: list[str], index: int, max_rows: int | None) -> list[str
     size = budget - 2
     start = max(1, min(index - size // 2, count - size - 1))
     return [more(start, "↑"), *lines[start : start + size], more(count - start - size, "↓")]
-
-
-def render_picker(picker: Picker, max_rows: int | None = None) -> RenderableType:
-    """The picker as a bordered panel, its entries windowed to ``max_rows``."""
-    if picker.entries:
-        lines = [
-            dhit.hit_markup(
-                f"[bold cyan]▸[/] [{CURSOR_STYLE}]{escape(entry.label)}[/]"
-                if i == picker.index
-                else f"  {escape(entry.label)}",
-                "picker",
-                i,
-            )
-            for i, entry in enumerate(picker.entries)
-        ]
-    else:
-        lines = ["[dim](nothing to choose)[/dim]"]
-    return Panel(
-        "\n".join(window_lines(lines, picker.index, max_rows)),
-        title=f"[bold]{escape(picker.title)}[/]",
-        title_align="left",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        expand=False,
-    )

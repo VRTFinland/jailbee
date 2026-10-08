@@ -25,13 +25,7 @@ HitKind = Literal[
     "repo",
     "fold",
     "scroll",
-    "menu",
-    "picker",
     "suggestion",
-    "tab",
-    "setting",
-    "egress",
-    "account",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 TABLE_HIT_KINDS: frozenset[HitKind] = frozenset({"row", "repo", "fold", "scroll"})

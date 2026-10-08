@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+
+from rich.cells import cell_len
+from rich.text import Text
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import actions as dact
@@ -26,7 +29,11 @@ from jailbee.dashboard.tui.keys import KEY_BINDINGS
 
 @dataclass
 class MenuState:
-    """An open action menu, rendered inline under the dashboard table.
+    """An open action menu, drawn by the native menu box.
+
+    ``start_group``/``start_index`` say where the menu opens: the root at 0,
+    or, coming back from the Egress panel, the level and row it was opened
+    from. The live cursor and level are the menu widget's own.
 
     ``actions`` is captured when the menu opens rather than recomputed per
     frame: the dashboard keeps refreshing behind the menu, and a list that
@@ -38,9 +45,8 @@ class MenuState:
 
     container: str
     actions: list[tuple[str, str]]
-    index: int = 0
-    active_group: str | None = None
-    parent_index: int = 0
+    start_group: str | None = None
+    start_index: int = 0
 
 
 @dataclass
@@ -49,9 +55,8 @@ class RepoMenuState:
 
     repo: str
     actions: list[MenuItem]
-    index: int = 0
-    active_group: str | None = None
-    parent_index: int = 0
+    start_group: str | None = None
+    start_index: int = 0
 
 
 def open_menu(
@@ -142,47 +147,54 @@ def open_repo_menu(
     return RepoMenuState(prefix, actions)
 
 
-def _menu_entries(menu: MenuState | RepoMenuState) -> Sequence[MenuItem]:
-    """Visible entries at this level, derived only from captured leaves."""
+def menu_entries(menu: MenuState | RepoMenuState, group: str | None = None) -> Sequence[MenuItem]:
+    """Visible entries of the root (``group`` None) or of one group, from captured leaves."""
     items = (
         menu.actions
         if isinstance(menu, RepoMenuState)
         else group_menu_actions(menu.actions, include_network=True, terminal_order=True)
     )
-    if menu.active_group is None:
+    if group is None:
         return items
     return next(
-        (
-            item.actions
-            for item in items
-            if isinstance(item, MenuGroup) and item.label == menu.active_group
-        ),
+        (item.actions for item in items if isinstance(item, MenuGroup) and item.label == group),
         (),
     )
 
 
-def enter_menu(menu: MenuState | RepoMenuState) -> tuple[MenuState | RepoMenuState, str | None]:
-    """Enter a selected group or return its selected executable verb."""
-    entries = _menu_entries(menu)
-    if not 0 <= menu.index < len(entries):
-        return menu, None
-    selected = entries[menu.index]
-    if isinstance(selected, MenuGroup):
-        return replace(menu, active_group=selected.label, parent_index=menu.index, index=0), None
-    return menu, selected[1]
+def menu_title(menu: MenuState | RepoMenuState, group: str | None) -> str:
+    """The border title of one level: ``owner →`` at the root, ``owner → Group`` inside."""
+    owner = menu.repo if isinstance(menu, RepoMenuState) else menu.container
+    return f"{owner} → {group.removesuffix(' →')}" if group else f"{owner} →"
 
 
-def back_menu(menu: MenuState | RepoMenuState) -> MenuState | RepoMenuState | None:
-    """Go back to the highlighted parent group; close at the root."""
-    if menu.active_group is None:
-        return None
-    return replace(menu, active_group=None, index=menu.parent_index)
+def menu_option_text(item: MenuItem, key: str | None) -> Text:
+    """One entry: its key in brackets (bold), then its label; one line."""
+    label = item.label if isinstance(item, MenuGroup) else item[0]
+    text = Text(no_wrap=True, overflow="ellipsis")
+    text.append(f"[{key}]" if key else "   ", style="bold" if key else "")
+    text.append(f" {label}")
+    return text
 
 
-def move_menu(menu: MenuState | RepoMenuState, delta: int) -> MenuState | RepoMenuState:
-    """Move the cursor within the visible level, clamped at both ends."""
-    last = max(0, len(_menu_entries(menu)) - 1)
-    return replace(menu, index=max(0, min(last, menu.index + delta)))
+def menu_width(menu: MenuState | RepoMenuState) -> int:
+    """Content cells the widest level needs (and the title in the border), chrome excluded."""
+    levels: list[str | None] = [
+        None,
+        *(i.label for i in menu_entries(menu) if isinstance(i, MenuGroup)),
+    ]
+    widest = max(
+        (
+            menu_option_text(item, key).cell_len
+            for level in levels
+            for item, key in zip(
+                menu_entries(menu, level), menu_hotkeys(menu_entries(menu, level)), strict=True
+            )
+        ),
+        default=0,
+    )
+    title = max(cell_len(menu_title(menu, level)) for level in levels)
+    return max(widest, title + 2)
 
 
 # Each menu entry's own key, by leaf verb (labels carry counts) or group label.
@@ -241,7 +253,7 @@ _MENU_KEYS: dict[str, str] = {
     dact.REPO_DISK_USAGE: "u",
 }
 
-# Tokens the open menu already answers (`run`'s overlay branch); their keys
+# Tokens the open menu already answers (the menu box's own key handling); their keys
 # can never be an entry's own.
 _MENU_HANDLED_TOKENS = frozenset(
     {"up", "down", "enter", "cancel", "quit", "help", "settings", "interrupt"}
@@ -289,24 +301,3 @@ def menu_hotkeys(entries: Sequence[MenuItem]) -> list[str | None]:
         if key is not None:
             taken.add(key)
     return keys
-
-
-def hotkey_menu(menu: MenuState | RepoMenuState, data: bytes) -> MenuState | RepoMenuState | None:
-    """``menu`` with the cursor on the entry whose key ``data`` is, else None."""
-    try:
-        typed = data.decode()
-    except UnicodeDecodeError:
-        return None
-    keys = menu_hotkeys(_menu_entries(menu))
-    if typed not in keys:
-        return None
-    return replace(menu, index=keys.index(typed))
-
-
-def menu_verb(menu: MenuState | RepoMenuState) -> str | None:
-    """Selected leaf verb, or None for a group or an empty menu."""
-    entries = _menu_entries(menu)
-    if not 0 <= menu.index < len(entries):
-        return None
-    entry = entries[menu.index]
-    return None if isinstance(entry, MenuGroup) else entry[1]

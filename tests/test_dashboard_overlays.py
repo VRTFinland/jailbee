@@ -80,22 +80,12 @@ def test_pr_number_validation():
     assert outcome == "editing" and p.error == "PR number must be a positive whole number"
 
 
-def test_picker_moves_clamped_and_picks():
-    pk = ov.Picker("x", "Pick", (ov.PickerEntry("A", "a"), ov.PickerEntry("B", "b")))
-    assert ov.picked(pk) == ov.PickerEntry("A", "a")
-    assert ov.move_picker(pk, -1).index == 0
-    assert ov.move_picker(ov.move_picker(pk, 1), 1).index == 1
-    assert ov.picked(ov.move_picker(pk, 1)) == ov.PickerEntry("B", "b")
-    assert ov.picked(ov.Picker("x", "Empty", ())) is None
-
-
 def test_renderers_show_label_text_error_and_cursor():
     console = Console(width=80, record=True)
     # typing clears the error, so it is set after the text is entered
     console.print(ov.render_prompt(replace(_type(_prompt(), "abc"), error="oops")))
-    console.print(ov.render_picker(ov.Picker("x", "Pick one", (ov.PickerEntry("Alpha", "a"),))))
     text = console.export_text()
-    for expected in ("New container", "New branch", "abc", "oops", "Pick one", "Alpha"):
+    for expected in ("New container", "New branch", "abc", "oops"):
         assert expected in text
 
 
@@ -164,15 +154,6 @@ def test_window_lines_always_fits_its_budget_and_shows_the_cursor():
                 window = ov.window_lines(_rows(count), index, limit)
                 assert len(window) <= max(limit, ov.MIN_LIST_ROWS)
                 assert f"row {index}" in window
-
-
-def test_render_picker_windows_its_entries_to_max_rows():
-    entries = tuple(ov.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
-    console = Console(width=80, record=True)
-    console.print(ov.render_picker(ov.Picker("x", "Pick one", entries, index=20), max_rows=5))
-    text = console.export_text()
-    assert "Entry 20" in text and "Entry 0" not in text and "Entry 29" not in text
-    assert "↑" in text and "↓" in text
 
 
 _DOWN = b"\x1b[B"

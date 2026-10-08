@@ -1,7 +1,7 @@
 """What the editor draws, without a terminal.
 
 Every function under test is `state -> fragments`, the same split
-`dashboard_settings.render_settings` uses on the Rich side. The assertions read
+the dashboard's settings box makes between `dashboard_settings` and its widgets. The assertions read
 the flattened text, so they survive a restyling.
 """
 

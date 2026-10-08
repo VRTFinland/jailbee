@@ -1,18 +1,17 @@
-"""Tests for the TUI dashboard's settings overlay state machine."""
+"""Tests for the TUI dashboard's settings overlay data: rows, toggles, tabs."""
 
 from __future__ import annotations
 
 import pytest
-from rich.console import Console
+
+import jailbee.dashboard.settings as ds
 
 FIELDS = ("name", "state", "network", "pr", "ip")
 REPOS = ("alpha", "beta")
 VISIBILITY_REPOS = ("alpha", "beta", "gamma")
 
 
-def _state(**over):
-    from jailbee.dashboard.settings import open_settings
-
+def _state(**over):  # type: ignore[no-untyped-def]
     kwargs = dict(
         field_names=FIELDS,
         enabled=frozenset({"name", "state"}),
@@ -23,279 +22,127 @@ def _state(**over):
         hidden_repos=frozenset(),
     )
     kwargs.update(over)
-    return open_settings(**kwargs)
+    return ds.open_settings(**kwargs)
 
 
-def test_opens_on_the_fields_tab_at_the_top():
+def test_setting_rows_per_tab():
+    state = _state(hidden_repos=frozenset({"alpha"}), visibility_repo_prefixes=REPOS)
+    assert ds.setting_rows(state, "fields") == (
+        ds.SettingRow("name", "name", True),
+        ds.SettingRow("state", "state", True),
+        ds.SettingRow("network", "network", False),
+        ds.SettingRow("pr", "pr", False),
+        ds.SettingRow("ip", "ip", False),
+    )
+    assert ds.setting_rows(state, "repos") == (
+        ds.SettingRow("alpha", "alpha", True),
+        ds.SettingRow("beta", "beta", False),
+    )
+    assert ds.setting_rows(state, "visibility") == (
+        ds.SettingRow(ds.SHOW_EMPTY, "Show empty repos", True),
+        ds.SettingRow("alpha", "alpha", False),
+        ds.SettingRow("beta", "beta", True),
+    )
+
+
+def test_toggle_setting_flips_one_row_per_tab():
+    state = _state(hidden_repos=frozenset({"alpha"}))
+    assert ds.toggle_setting(state, "fields", "pr").enabled == {"name", "state", "pr"}
+    assert ds.toggle_setting(state, "repos", "beta").folded == frozenset()
+    assert ds.toggle_setting(state, "visibility", ds.SHOW_EMPTY).show_empty_repos is False
+    assert ds.toggle_setting(state, "visibility", "alpha").hidden_repos == frozenset()
+
+
+def test_the_last_column_cannot_be_turned_off():
+    state = _state(enabled=frozenset({"name"}))
+    assert ds.toggle_setting(state, "fields", "name") == state
+
+
+def test_an_unknown_key_changes_nothing():
     state = _state()
-    assert state.tab == "fields"
-    assert state.index == 0
+    assert ds.toggle_setting(state, "fields", "nope") == state
+    assert ds.toggle_setting(state, "repos", ds.SHOW_EMPTY) == state
+    assert ds.toggle_setting(state, "visibility", "nope") == state
 
 
-def test_move_clamps_within_the_current_tabs_list():
-    from jailbee.dashboard.settings import move_settings
+def test_next_tab_cycles():
+    assert [ds.next_tab(t) for t, _ in ds.TABS] == ["repos", "visibility", "fields"]
 
+
+def test_show_empty_can_never_be_a_repo_prefix():
+    assert ds.SHOW_EMPTY.startswith("\x00")
+
+
+def test_toggle_flips_the_field_both_ways():
     state = _state()
-    assert move_settings(state, -1).index == 0  # clamp at top
-    assert move_settings(state, 1).index == 1
-    bottom = _state()
-    for _ in range(len(FIELDS) + 3):
-        bottom = move_settings(bottom, 1)
-    assert bottom.index == len(FIELDS) - 1  # clamp at bottom, not past it
-
-
-def test_switching_tab_cycles_through_visibility_and_resets_the_cursor():
-    """The tab lists have different lengths, so carrying an index across
-    would let the cursor land past the end of the shorter one."""
-    from jailbee.dashboard.settings import move_settings, switch_tab
-
-    state = move_settings(_state(), 3)
-    assert state.index == 3
-    switched = switch_tab(state)
-    assert switched.tab == "repos"
-    assert switched.index == 0
-    visibility = switch_tab(move_settings(switched, 1))
-    assert visibility.tab == "visibility"
-    assert visibility.index == 0
-    assert switch_tab(visibility).tab == "fields"
-    assert switch_tab(visibility).index == 0
-
-
-def test_toggle_flips_the_field_under_the_cursor():
-    from jailbee.dashboard.settings import toggle_current
-
-    state = _state()  # cursor on "name", which is enabled
-    flipped = toggle_current(state)
+    flipped = ds.toggle_setting(state, "fields", "name")
     assert "name" not in flipped.enabled
-    assert "name" in toggle_current(flipped).enabled
+    assert "name" in ds.toggle_setting(flipped, "fields", "name").enabled
 
 
-def test_toggle_flips_the_repo_under_the_cursor():
-    from jailbee.dashboard.settings import switch_tab, toggle_current
-
-    state = switch_tab(_state())  # repos tab, cursor on "alpha", unfolded
-    flipped = toggle_current(state)
-    assert "alpha" in flipped.folded
-    assert "beta" in flipped.folded  # untouched
+def test_toggle_flips_the_repo_and_leaves_the_others():
+    flipped = ds.toggle_setting(_state(), "repos", "alpha")  # alpha was unfolded
+    assert flipped.folded == frozenset({"alpha", "beta"})
 
 
 def test_visibility_global_toggle_only_changes_show_empty_repos():
     """A missing first-row branch would toggle a made-up repo instead."""
-    from jailbee.dashboard.settings import switch_tab, toggle_current
-
-    visibility = switch_tab(switch_tab(_state(hidden_repos=frozenset({"beta"}))))
-    toggled = toggle_current(visibility)
-
+    state = _state(hidden_repos=frozenset({"beta"}))
+    toggled = ds.toggle_setting(state, "visibility", ds.SHOW_EMPTY)
     assert not toggled.show_empty_repos
     assert toggled.hidden_repos == frozenset({"beta"})
 
 
 def test_visibility_repo_toggle_only_changes_the_selected_hidden_prefix():
     """A prefix toggle must not alter the independent global empty setting."""
-    from jailbee.dashboard.settings import move_settings, switch_tab, toggle_current
-
-    visibility = switch_tab(switch_tab(_state(show_empty_repos=False)))
-    alpha = move_settings(visibility, 1)
-    toggled = toggle_current(alpha)
-
+    toggled = ds.toggle_setting(_state(show_empty_repos=False), "visibility", "alpha")
     assert toggled.show_empty_repos is False
     assert toggled.hidden_repos == frozenset({"alpha"})
 
 
+def test_visibility_toggles_do_not_change_folded_repos():
+    """Visibility and folding remain distinct preference families."""
+    toggled = ds.toggle_setting(_state(), "visibility", "alpha")
+    assert toggled.folded == frozenset({"beta"})
+
+
 def test_visibility_keeps_hidden_repos_listed_when_empty_repos_are_off():
     """Turning off empty groups must not remove their restoration control."""
-    from jailbee.dashboard.settings import render_settings, switch_tab
-
     state = _state(show_empty_repos=False, hidden_repos=frozenset({"gamma"}))
-    visibility = switch_tab(switch_tab(state))
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(visibility, dynamic=frozenset()))
+    assert ds.SettingRow("gamma", "gamma", False) in ds.setting_rows(state, "visibility")
 
-    assert "gamma" in cap.get()
+
+def test_visibility_rows_follow_the_checkbox_polarity():
+    """Checked means shown: a hidden repo and a disabled "show empty" are unchecked."""
+    state = _state(show_empty_repos=False, hidden_repos=frozenset({"beta"}))
+    checked = {row.label: row.checked for row in ds.setting_rows(state, "visibility")}
+    assert checked == {
+        "Show empty repos": False,
+        "alpha": True,
+        "beta": False,
+        "gamma": True,
+    }
+
+
+def test_repos_rows_follow_the_checkbox_polarity():
+    """Folded means unchecked; checking only that both names appear would pass inverted."""
+    checked = {row.label: row.checked for row in ds.setting_rows(_state(), "repos")}
+    assert checked == {"alpha": True, "beta": False}
 
 
 def test_enabled_names_is_canonical_order_not_toggle_order():
     """Stored order must not depend on the order the user happened to click,
     because rendering order comes from the field-spec list either way."""
-    from jailbee.dashboard.settings import enabled_names, move_settings, toggle_current
-
     state = _state(enabled=frozenset({"name"}))
-    state = toggle_current(move_settings(state, 4))  # enable "ip"
-    state = toggle_current(move_settings(state, -3))  # enable "state"
-    assert enabled_names(state) == ("name", "state", "ip")
-
-
-def test_the_last_enabled_field_cannot_be_turned_off():
-    """There is no such thing as a table with zero columns, and a dashboard
-    that rendered none would look broken rather than configured."""
-    from jailbee.dashboard.settings import toggle_current
-
-    state = _state(enabled=frozenset({"name"}))  # cursor on the only one
-    assert toggle_current(state).enabled == frozenset({"name"})
-
-
-def test_render_marks_state_and_flags_dynamic_columns():
-    from jailbee.dashboard.settings import render_settings
-
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(_state(), dynamic=frozenset({"pr"})))
-    out = cap.get()
-
-    assert "name" in out and "state" in out
-    assert "only when it applies" in out  # the `pr` row explains its pruning
-    assert "Fields" in out and "Repos" in out and "Visibility" in out
-
-
-def test_render_highlights_the_cursor_row_in_the_shared_cursor_style():
-    """The overlay's cursor row reads as the same cursor as the dashboard's."""
-    from jailbee.dashboard.settings import CURSOR_STYLE, render_settings
-
-    console = Console(width=90, force_terminal=True, color_system="standard", no_color=False)
-    with console.capture() as cap:
-        console.print(render_settings(_state(), dynamic=frozenset()))
-    out = cap.get()
-    with console.capture() as cap:
-        console.print(f"[{CURSOR_STYLE}]name[/]", end="")
-
-    assert cap.get() in out  # the first row, `name`, is under the cursor
-
-
-def test_render_repos_tab_shows_folded_state():
-    """Repos tab shows folded state: unchecked ([ ]) if folded, checked ([x]) if not.
-
-    A checkbox semantically reads as "shown", so folded means unchecked. The
-    fixture has beta folded and alpha unfolded, so the test must assert that
-    beta's marker is [ ] and alpha's is [x] — just checking that both names
-    appear in the output would pass under inverted polarity."""
-    from jailbee.dashboard.settings import render_settings, switch_tab
-
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(switch_tab(_state()), dynamic=frozenset()))
-    out = cap.get()
-
-    lines = out.split("\n")
-    alpha_line = next(line for line in lines if " alpha " in line)
-    beta_line = next(line for line in lines if " beta " in line)
-
-    # alpha is not folded → checkbox is [x]
-    assert "[x]  alpha" in alpha_line
-    # beta is folded → checkbox is [ ]
-    assert "[ ]  beta" in beta_line
-
-
-def test_render_visibility_shows_global_and_repo_checkboxes():
-    """A wrong polarity or omitted global control would hide visibility state."""
-    from jailbee.dashboard.settings import render_settings, switch_tab
-
-    state = _state(show_empty_repos=False, hidden_repos=frozenset({"beta"}))
-    visibility = switch_tab(switch_tab(state))
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(visibility, dynamic=frozenset()))
-    lines = cap.get().split("\n")
-
-    global_line = next(line for line in lines if "Show empty repos" in line)
-    alpha_line = next(line for line in lines if " alpha " in line)
-    beta_line = next(line for line in lines if " beta " in line)
-    assert "[ ]  Show empty repos" in global_line
-    assert "[x]  alpha" in alpha_line
-    assert "[ ]  beta" in beta_line
-
-
-def test_render_visibility_windows_long_repo_list_and_keeps_cursor_visible():
-    """An unwindowed visibility list would grow the overlay beyond its budget."""
-    from jailbee.dashboard.settings import move_settings, render_settings, switch_tab
-
-    prefixes = tuple(f"repo{i}" for i in range(40))
-    state = _state(visibility_repo_prefixes=prefixes)
-    visibility = move_settings(switch_tab(switch_tab(state)), 38)
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(visibility, dynamic=frozenset()))
-    out = cap.get()
-
-    assert "repo37" in out
-    assert "repo0" not in out
-
-
-def test_visibility_toggles_do_not_change_folded_repos():
-    """Visibility and folding remain distinct preference families."""
-    from jailbee.dashboard.settings import move_settings, switch_tab, toggle_current
-
-    visibility = move_settings(switch_tab(switch_tab(_state())), 1)
-    toggled = toggle_current(visibility)
-
-    assert toggled.folded == frozenset({"beta"})
-
-
-def test_render_windows_a_long_field_vocabulary():
-    """A vocabulary longer than the visible window must not draw every row —
-    that's exactly the unbounded-height bug the whole-branch review found:
-    the overlay drew all 22+ fields below the live table and Rich's
-    bottom-cropping ate the overlay first. This fails against the old
-    unwindowed renderer, which prints every one of the 40 names."""
-    from jailbee.dashboard.settings import render_settings
-
-    many_fields = tuple(f"field{i}" for i in range(40))
-    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(state, dynamic=frozenset()))
-    out = cap.get()
-
-    shown = sum(1 for name in many_fields if name in out)
-    assert shown < len(many_fields)
-
-
-def test_render_keeps_the_cursor_row_visible_near_the_end_of_a_long_list():
-    """The row under the cursor must always be in the rendered output. This
-    is the one that fails today: with the cursor near the bottom of a long
-    list, the unwindowed renderer still draws every row (so it would
-    trivially pass), but a windowed renderer that doesn't scroll to follow
-    the cursor would clip exactly this row."""
-    from jailbee.dashboard.settings import move_settings, render_settings
-
-    many_fields = tuple(f"field{i}" for i in range(40))
-    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
-    state = move_settings(state, 37)  # cursor near the end of the list
-    assert state.index == 37
-
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(state, dynamic=frozenset()))
-    out = cap.get()
-
-    assert "field37" in out
-
-
-def test_render_shows_continuation_markers_only_when_something_is_hidden():
-    from jailbee.dashboard.settings import move_settings, render_settings
-
-    many_fields = tuple(f"field{i}" for i in range(40))
-    state = _state(field_names=many_fields, enabled=frozenset({"field0"}))
-
-    console = Console(width=90, no_color=True)
-    with console.capture() as cap:
-        console.print(render_settings(state, dynamic=frozenset()))
-    top_lines = cap.get().split("\n")
-    assert not any("more" in line and "↑" in line for line in top_lines)
-    assert any("more" in line and "↓" in line for line in top_lines)
-
-    bottom = move_settings(state, 39)
-    with console.capture() as cap:
-        console.print(render_settings(bottom, dynamic=frozenset()))
-    bottom_lines = cap.get().split("\n")
-    assert any("more" in line and "↑" in line for line in bottom_lines)
-    assert not any("more" in line and "↓" in line for line in bottom_lines)
+    state = ds.toggle_setting(state, "fields", "ip")
+    state = ds.toggle_setting(state, "fields", "state")
+    assert ds.enabled_names(state) == ("name", "state", "ip")
 
 
 def test_open_settings_rejects_an_empty_field_vocabulary():
     """A guard against a caller that resolved its field list wrongly: an
     empty overlay is indistinguishable from a broken one."""
-    from jailbee.dashboard.settings import open_settings
-
     with pytest.raises(ValueError):
-        open_settings(field_names=(), enabled=frozenset(), repo_prefixes=REPOS, folded=frozenset())
+        ds.open_settings(
+            field_names=(), enabled=frozenset(), repo_prefixes=REPOS, folded=frozenset()
+        )
