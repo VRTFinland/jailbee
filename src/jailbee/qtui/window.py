@@ -1,7 +1,7 @@
 """Main window for the Qt dashboard.
 
 A repo-grouped QTreeWidget over the shared dashboard data layer. Actions come
-from ``dashboard.actions_for_container`` so the GUI and TUI stay in sync. The
+from ``jailbee.dashboard.menus.actions_for_container`` so the GUI and TUI stay in sync. The
 window is passive: it renders snapshots pushed via ``set_groups`` and emits
 ``actionRequested(verb, container_name)`` — the app layer performs the launch.
 """
@@ -23,17 +23,15 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from jailbee.dashboard import (
-    MenuGroup,
-    RepoTarget,
+from jailbee.dashboard.columns import (
     all_column_names,
     default_columns,
     dynamic_column_names,
-    group_menu_actions,
-    view_only_note,
     visible_fields,
 )
-from jailbee.dashboard_visibility import visible_repo_groups
+from jailbee.dashboard.menus import MenuGroup, group_menu_actions, view_only_note
+from jailbee.dashboard.model import RepoTarget
+from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.qtui.action_menu import populate_action_menu
 from jailbee.qtui.cards import CardView
 from jailbee.qtui.model import (
@@ -48,7 +46,7 @@ from jailbee.qtui.model import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
 
 # Custom role storing the full container name on a tree item.
 _NAME_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -512,7 +510,7 @@ class MainWindow(QMainWindow):
         ]
 
     def _actions_for(self, container_name: str) -> list[tuple[str, str]]:
-        from jailbee.dashboard import actions_for_container
+        from jailbee.dashboard.menus import actions_for_container
 
         return actions_for_container(self._groups, container_name)
 

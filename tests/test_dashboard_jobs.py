@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.dashboard_jobs import (
+from jailbee.dashboard.jobs import (
     NEEDS_TERMINAL_MARKERS,
     JobResult,
     JobRunner,

@@ -1204,7 +1204,7 @@ def test_new_net_loose_is_unchanged_when_the_host_is_unrestricted(monkeypatch) -
 
 
 def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None:
-    from jailbee.dashboard_commands import permitted
+    from jailbee.dashboard.commands import permitted
 
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     off = RemoteSSHConfig(commands=FULL)

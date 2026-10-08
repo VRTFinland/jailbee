@@ -1748,7 +1748,7 @@ def upgrade_cmd(
     their dockerd and LiteLLM instances are never restarted: those that need it
     are named, and `jailbee apply` in the repo offers the restart.
     """
-    from jailbee.dashboard import registered_repo_roots
+    from jailbee.dashboard.model import registered_repo_roots
     from jailbee.incus import Incus
     from jailbee.upgrade_all import run_upgrade_all
 
@@ -2754,7 +2754,7 @@ def new_cmd(
 
         # `--config` only when there is a file: a scratch directory has none,
         # and the worker re-synthesizes the same config from the `cwd` below.
-        # Same shape as `dashboard.RepoTarget.flags()`.
+        # Same shape as `jailbee.dashboard.model.RepoTarget.flags()`.
         worker_config_path = _resolve_config_path_or_none(config)
         worker_argv = [
             sys.executable,
@@ -3793,7 +3793,7 @@ def _run_dashboard(
     registered repos only — the server's working directory is no repo anyone
     chose — and skips the setup offer, whose steps run on the host. A
     *restricted* session additionally gets the TUI in its restricted form
-    (see `dashboard.run`'s `remote`).
+    (see `jailbee.dashboard.tui.session.DashboardSession`'s `remote`).
     """
     from pydantic import ValidationError
 
@@ -3866,7 +3866,7 @@ def _run_dashboard(
             return qtui_app.run(cwd_root=cwd_root)
 
         if qtui_app.preflight(cwd_root) is None:
-            from jailbee.dashboard import NOTHING_TO_SHOW
+            from jailbee.dashboard.model import NOTHING_TO_SHOW
 
             error(NOTHING_TO_SHOW)
             return 1
@@ -3884,9 +3884,9 @@ def _run_dashboard(
         info(f"Launched jailbee dashboard GUI in the background (logs: {log_path}).")
         return 0
 
-    from jailbee import dashboard
+    from jailbee.dashboard.tui import app as tapp
 
-    return dashboard.run(
+    return tapp.run(
         Incus(),
         cwd_root=cwd_root,
         remote=remote,
@@ -3913,7 +3913,7 @@ if TYPE_CHECKING:
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
-    from jailbee.dashboard import TableWindow
+    from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.doctor_scroll import ScrollState
@@ -4489,7 +4489,7 @@ def _spawn_boot_worker(
     `config_path` is `None` in a scratch directory, where no config file
     exists: `--config` is then omitted and the worker re-synthesizes the same
     config from the `cwd` it is started in (always `cfg.repo_root`). Same
-    shape as `dashboard.RepoTarget.flags()`.
+    shape as `jailbee.dashboard.model.RepoTarget.flags()`.
 
     Refuses while another job for this container is still live. Unlike a
     create or a destroy, a boot is not the last thing to happen to the
@@ -16602,7 +16602,7 @@ class _DoctorLiveView:
         self._scroll = scroll
 
     def __rich_console__(self, console: "Console", options: "ConsoleOptions") -> "RenderResult":
-        from jailbee.dashboard import window_rows
+        from jailbee.dashboard.columns import window_rows
 
         count = len(self._results)
         if not console.is_terminal:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.global_config import GlobalConfig
 from jailbee.state_service import paths
 from jailbee.state_service.protocol import (
@@ -343,7 +343,7 @@ def test_run_service_replaces_a_stale_socket(runtime_dir, mocker):
         bound.append(path.exists())
 
     mocker.patch.object(StateServer, "serve", fake_serve)
-    mocker.patch("jailbee.dashboard.global_config_or_defaults", return_value=GlobalConfig())
+    mocker.patch("jailbee.dashboard.model.global_config_or_defaults", return_value=GlobalConfig())
     assert run_service(mocker.Mock()) == 0
     assert bound == [False]  # unlinked before serving
     assert not paths.socket_path().exists()

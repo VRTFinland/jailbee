@@ -2,7 +2,7 @@
 
 import pytest
 
-from jailbee.dashboard_viewport import MARK_COST, Viewport, column_viewport
+from jailbee.dashboard.viewport import MARK_COST, Viewport, column_viewport
 
 
 @pytest.mark.parametrize(

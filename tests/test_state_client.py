@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.state_service import StateServiceUnavailable, paths
 from jailbee.state_service import client as client_module

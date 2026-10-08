@@ -2,7 +2,8 @@
 
 Pure: every function here takes a state and returns text, so what the editor
 draws is testable without a terminal — the same split
-`dashboard_settings.render_settings` uses on the Rich side. `app.py` owns the
+the dashboard's settings box makes between `jailbee.dashboard.settings` and its
+widgets. `app.py` owns the
 `Application`; this module owns every character it paints.
 
 Origin markers follow spec 10.1 option (b): `state.origins` describes the

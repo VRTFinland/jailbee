@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.dashboard import RepoTarget
+from jailbee.dashboard.model import RepoTarget
 from jailbee.qtui import actions as a
 from jailbee.qtui.terminal import TerminalSpec
 

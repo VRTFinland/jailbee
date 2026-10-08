@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from jailbee import dashboard_actions as dact
 from jailbee.config.models_remote import RemoteSSHConfig
-from jailbee.dashboard import prompt_target_kind
-from jailbee.dashboard_overlays import validate_answer
+from jailbee.dashboard import actions as dact
+from jailbee.dashboard.model import prompt_target_kind
+from jailbee.dashboard.overlays import validate_answer
 from jailbee.lifecycle import ContainerInfo
 
 PolicyCase = tuple[bool, dict[str, object] | None]
@@ -400,4 +400,6 @@ def test_every_snapshot_question_is_about_the_container():
 
 
 def test_the_tag_prompt_refuses_an_empty_answer():
-    assert validate_answer(dact.snapshot_tag_prompt("alpha-x")) == "Snapshot tag cannot be empty"
+    assert (
+        validate_answer(dact.snapshot_tag_prompt("alpha-x"), "") == "Snapshot tag cannot be empty"
+    )

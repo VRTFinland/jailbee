@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from jailbee.dashboard import RepoTarget, actions_for_container, view_only_note, visible_fields
+from jailbee.dashboard.columns import visible_fields
+from jailbee.dashboard.menus import actions_for_container, view_only_note
+from jailbee.dashboard.model import RepoTarget
 from jailbee.qtui.action_menu import populate_action_menu
 from jailbee.qtui.flow_layout import FlowLayout
 from jailbee.qtui.model import (
@@ -43,7 +45,7 @@ if TYPE_CHECKING:
     from PySide6.QtCore import QPoint
     from PySide6.QtGui import QContextMenuEvent
 
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
 
 # Minimum card width — the FlowLayout fits as many columns as this allows.
 _CARD_MIN_WIDTH = 260
@@ -84,7 +86,7 @@ def _clear_layout(layout: QLayout) -> None:
 
 
 # Verb dispatched when the PR pill is clicked — mirrors the "Open PR" context
-# action (dashboard.menu_actions), so the pill runs `jailbee pr --open <name>`.
+# action (jailbee.dashboard.menus.menu_actions), so the pill runs `jailbee pr --open <name>`.
 _OPEN_PR_VERB = "pr --open"
 
 

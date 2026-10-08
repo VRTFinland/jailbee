@@ -878,7 +878,7 @@ def _sanitize_columns(cfg: Config) -> Config:
     # Early return: both blocks already look exactly like their defaults
     # (the common case — most repos never touch column config), so skip
     # building `lifecycle.ls_field_specs`'s full field list just to confirm
-    # nothing needs fixing. `dashboard.gather_rows` calls this loader once
+    # nothing needs fixing. `jailbee.dashboard.model.gather_rows` calls this loader once
     # per registered repo on every refresh tick, so the saved work is not
     # one-time — the repo-layer twin of `global_config.load_global_config`'s
     # short-circuit for the global layer.

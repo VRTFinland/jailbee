@@ -76,7 +76,7 @@ def test_dashboard_without_flag_uses_tui(mocker):
     mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigNotFoundError("none"))
     mocker.patch("jailbee.incus.Incus")
     qrun = mocker.patch("jailbee.qtui.app.run", return_value=0)
-    drun = mocker.patch("jailbee.dashboard.run", return_value=0)
+    drun = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
     popen = mocker.patch("subprocess.Popen")
 
     result = runner.invoke(app, ["dashboard"])

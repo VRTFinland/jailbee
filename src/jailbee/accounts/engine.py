@@ -305,7 +305,7 @@ def members(
 
     A repo that shares nothing is its own only member, with no registry read.
     An unreadable member is *named*, not skipped: skipping is right for a
-    read-only listing (`dashboard.py:240`), but here it would leave that
+    read-only listing (`jailbee.dashboard.model.gather_rows`), but here it would leave that
     repo's `oauthAccount` stale and silently naming the wrong account.
 
     **The calling repo is a member only when it resolves to this holder's

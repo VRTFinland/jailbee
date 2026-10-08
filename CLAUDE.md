@@ -68,7 +68,13 @@ isolated per-branch development environments using Incus system containers. See
   `Incus` wrapper and calls no `subprocess` of its own.
 - **The dashboards gather nothing themselves.** `state_service/` holds the only
   gather loop (`gatherer.Gatherer`), run by one on-demand per-user server;
-  `dashboard.run` and the Qt app render what `StateClient` holds.
+  `jailbee.dashboard.tui.app` (a `DashboardSession` in a Textual app) and the Qt app
+  render what `StateClient` holds.
+- **`jailbee.dashboard` is a package: shared core first, terminal frontend
+  in `tui/`.** `model`, `columns`, `menus`, `dispatch` and the moved
+  `accounts`/`egress`/`overlays`/… modules are frontend-agnostic; the state
+  service and the Qt app import those and never `jailbee.dashboard.tui`.
+  The package `__init__` stays import-free.
 - **`accounts/` is the agent account pool: the engine knows no agent, an
   adapter knows one.** `accounts/engine.py` is the generic store —
   park/switch/remove, slot naming, member resolution — driven only through

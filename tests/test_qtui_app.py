@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.git_status import GitStatus
 from jailbee.qtui import app as qapp
 from jailbee.qtui.window import MainWindow
@@ -39,9 +39,9 @@ def test_run_returns_1_when_no_configs(mocker):
 def test_the_launch_guard_message_is_the_tuis_own(mocker):
     """The TUI, the Qt window and `cli`'s pre-detach check all print the same
     sentence — one constant rather than three copies that drift apart."""
-    import jailbee.dashboard as dash
+    from jailbee.dashboard import model as dmodel
 
-    assert qapp.NOTHING_TO_SHOW is dash.NOTHING_TO_SHOW
+    assert qapp.NOTHING_TO_SHOW is dmodel.NOTHING_TO_SHOW
 
 
 def test_on_groups_updates_tree_and_status_bar(mocker):
@@ -565,7 +565,7 @@ def _controller_with_group(
     ``with_config=False`` builds the scratch case: a real repo root with no
     config file, whose ``RepoGroup.config_path`` is None.
     """
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
     from jailbee.lifecycle import ContainerInfo
 
     window = mocker.Mock()
@@ -612,7 +612,7 @@ def _controller_with_group(
 
 
 def test_outbox_action_opens_native_not_terminal(mocker, tmp_path):
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
 
     controller = _controller_with_group(mocker, tmp_path)
     native = mocker.patch.object(controller, "_open_outbox", create=True)
@@ -649,7 +649,7 @@ def test_outbox_over_any_ssh_keeps_terminal_browser(mocker, tmp_path, monkeypatc
 def test_outbox_publish_command_and_dialog_lifetime(qtbot, mocker, tmp_path):
     from PySide6.QtCore import Signal
 
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
     from jailbee.qtui.terminal import TerminalSpec
 
     class Dialog(QDialog):
@@ -698,7 +698,7 @@ def test_outbox_publish_command_and_dialog_lifetime(qtbot, mocker, tmp_path):
 
 @pytest.mark.parametrize("with_config", [True, False])
 def test_outbox_publish_builder_validates_tokens_and_preserves_target(tmp_path, with_config):
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
     from jailbee.qtui.actions import build_outbox_publish
 
     target = RepoTarget(tmp_path, tmp_path / "config.yaml" if with_config else None)
@@ -721,7 +721,7 @@ def test_outbox_publish_builder_validates_tokens_and_preserves_target(tmp_path, 
 
 
 def test_outbox_publish_missing_terminal_warns_without_launch(mocker, tmp_path):
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
 
     controller = _controller_with_group(mocker, tmp_path)
     mocker.patch("jailbee.qtui.app.detect_terminal", return_value=None)
@@ -738,7 +738,7 @@ def test_controller_retains_closing_dialog_until_blocked_delete_completes(
 ):
     from threading import Event
 
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
     from jailbee.outbox_io import JournalStore
     from jailbee.qtui import outbox
     from tests.outbox_support import IDENTITY
@@ -1708,7 +1708,7 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
 ):
     from threading import Event, Thread
 
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
     from jailbee.db.models import GuiState
     from jailbee.db.view_prefs import ViewState
     from jailbee.outbox_io import JournalStore

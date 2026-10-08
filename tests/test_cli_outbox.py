@@ -404,7 +404,8 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
 
 @pytest.mark.parametrize("accepted", [False, True], ids=["decline", "approve"])
 def test_dashboard_description_publish_warns_before_consent(publication_env, mocker, accepted):
-    from jailbee import dashboard_outbox, pr
+    from jailbee import pr
+    from jailbee.dashboard import outbox as dashboard_outbox
 
     env = publication_env[0]
     _unowned(env)

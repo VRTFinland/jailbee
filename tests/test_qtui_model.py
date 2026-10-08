@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from jailbee import dashboard
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard import columns as dcolumns
+from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.qtui import model as m
 
@@ -26,7 +26,7 @@ def _ci(name: str, repo: str, state: str = "Running") -> ContainerInfo:
 
 def test_container_cells_are_plain_no_rich_markup():
     c = _container()
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
     cells = m.container_cells(c, fields)
     assert len(cells) == len(fields)
     # Plain values only — no Rich markup tags leak through.
@@ -41,7 +41,7 @@ def test_container_cells_none_renders_cell_placeholder():
     )
     # IP is no longer a default column in the dashboard, so select it explicitly
     # to test that fields with None values fall back to their FieldSpec.cell placeholder.
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c], ["ip", "network"])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c], ["ip", "network"])
     cells = m.container_cells(c, fields)
     by_name = dict(zip([f.name for f in fields], cells, strict=True))
     # These fields fall back to FieldSpec.cell's own placeholder, not "".
@@ -60,7 +60,7 @@ def test_container_cells_mem_is_human_text_not_dict():
         repo="p",
     )
     c.memory_usage = 500_000_000
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
     cells = m.container_cells(c, fields)
     by_name = dict(zip([f.name for f in fields], cells, strict=True))
     mem_cell = by_name["mem"]
@@ -79,7 +79,7 @@ def test_group_header_normal_and_orphan():
 
 def test_column_headers():
     c = _container()
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
     headers = m.column_headers(fields)
     assert headers[0] == "NAME"
     assert "ST" in headers
@@ -95,7 +95,7 @@ def test_state_colors_are_hex_strings():
 def test_card_content_splits_name_state_and_keeps_fields_in_order():
     from datetime import UTC, timedelta
 
-    from jailbee.dashboard import visible_fields
+    from jailbee.dashboard.columns import visible_fields
     from jailbee.qtui.model import CardField, card_content
 
     now = datetime(2026, 10, 7, 12, tzinfo=UTC)
@@ -322,7 +322,7 @@ def test_card_content_carries_the_job_error():
         job_kind="create",
         job_error="autostart step 'deps' failed",
     )
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
     cc = m.card_content(c, fields, datetime.now().astimezone())
     assert cc.job_error == "autostart step 'deps' failed"
 
@@ -342,7 +342,7 @@ def test_card_content_carries_the_agent_tooltip_and_waiting_flag():
             AgentSummary("codex", "busy", None, None, 1),
         ),
     )
-    fields = dashboard.visible_fields(datetime.now().astimezone(), [c])
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
     cc = m.card_content(c, fields)
 
     assert m.card_field(cc, "agent_compact") == "◆ ●"
@@ -355,7 +355,7 @@ def test_card_content_without_agents_has_no_tooltip():
     c = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip=None, memory_limit=None, repo="p"
     )
-    cc = m.card_content(c, dashboard.visible_fields(datetime.now().astimezone(), [c]))
+    cc = m.card_content(c, dcolumns.visible_fields(datetime.now().astimezone(), [c]))
 
     assert (cc.agent_tooltip, cc.agent_waiting) == (None, False)
 

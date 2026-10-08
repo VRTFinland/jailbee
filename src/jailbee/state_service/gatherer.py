@@ -16,14 +16,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.agent_activity import ActivityReader
-from jailbee.dashboard import carry_forward_git_status, gather_live, sample_activity
+from jailbee.dashboard.model import carry_forward_git_status, gather_live, sample_activity
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from jailbee.dashboard import RepoGroup
+    from jailbee.dashboard.model import RepoGroup
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
 

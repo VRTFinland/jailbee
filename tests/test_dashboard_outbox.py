@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from jailbee import dashboard_outbox as dob
-from jailbee.dashboard import prompt_target_kind
+from jailbee.dashboard import outbox as dob
+from jailbee.dashboard.model import prompt_target_kind
 
 
 def _proposal(pid: str = "pr/a.json", **over: object) -> dict[str, object]:

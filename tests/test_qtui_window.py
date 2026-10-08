@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt
 
-from jailbee.dashboard import RepoGroup
+from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.qtui.window import MainWindow
 
@@ -45,14 +45,8 @@ def test_set_groups_forwards_a_non_default_columns_to_headers(qtbot):
 
 
 def test_menu_labels_match_menu_actions_for_running(qtbot):
-    from jailbee.dashboard import (
-        AppMenuEntry,
-        MenuContext,
-        MenuGroup,
-        RepoGroup,
-        group_menu_actions,
-        menu_actions,
-    )
+    from jailbee.dashboard.menus import MenuContext, MenuGroup, group_menu_actions, menu_actions
+    from jailbee.dashboard.model import AppMenuEntry, RepoGroup
 
     running = ContainerInfo(
         name="p-foo", state="Running", network="strict", ip="10.0.0.5", memory_limit="2GB", repo="p"
@@ -99,7 +93,7 @@ def test_menu_labels_match_menu_actions_for_running(qtbot):
 
 @pytest.mark.parametrize("config_path", [Path("/repo/.jailbee/config.yaml"), None])
 def test_outbox_browse_launches_in_terminal_with_repo_target(config_path):
-    from jailbee.dashboard import RepoTarget
+    from jailbee.dashboard.model import RepoTarget
     from jailbee.qtui.actions import (
         TerminalNotFoundError,
         build_action,
@@ -406,7 +400,7 @@ def test_table_header_state_returns_pending_before_first_set_groups(qtbot):
 
 
 def test_columns_menu_reflects_the_enabled_set(qtbot):
-    from jailbee.dashboard import all_column_names, dynamic_column_names
+    from jailbee.dashboard.columns import all_column_names, dynamic_column_names
 
     win = MainWindow(enabled_columns=("name", "state"))
     qtbot.addWidget(win)
@@ -427,7 +421,7 @@ def test_columns_menu_marks_the_dynamic_columns(qtbot):
     suffix, driven by the same `dynamic_column_names()` this
     branch's TUI already uses. Fails if the menu goes back to a bare
     `menu.addAction(name)` per column."""
-    from jailbee.dashboard import dynamic_column_names
+    from jailbee.dashboard.columns import dynamic_column_names
 
     win = MainWindow()
     qtbot.addWidget(win)
