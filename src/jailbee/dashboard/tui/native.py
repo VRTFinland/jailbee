@@ -463,6 +463,8 @@ class SettingsTabs(Tabs, can_focus=False):
     SettingsTabs { background: ansi_default; color: ansi_default; }
     SettingsTabs Tab { background: ansi_default; color: ansi_default; }
     SettingsTabs Tab.-active { text-style: bold reverse; }
+    /* Textual's own `Tab:ansi.-active` sets `not dim bold`; this outranks it */
+    SettingsTabs Tab:ansi.-active { text-style: not dim bold reverse; }
     SettingsTabs Underline > .underline--bar { background: ansi_default; color: ansi_default; }
     """
 

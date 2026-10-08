@@ -1781,18 +1781,44 @@ def test_every_native_box_paints_no_background(mocker, tmp_path, monkeypatch, ki
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     fake_accounts_cli(mocker)
     mocker.patch.object(tsession, "load_egress_rows", return_value=FIRST)
+    expected_box = {
+        "help": "HelpBox",
+        "menu": "MenuBox",
+        "picker": "PickerBox",
+        "settings": "SettingsBox",
+        "egress": "EgressBox",
+        "accounts": "AccountsBox",
+    }[kind]
     seen: list[tuple[set[str], str | None]] = []
     run = drive(
         mocker,
         [
             *_open_each_box(group)[kind],
             lambda app: seen.append(
-                (backgrounds(app), None if app.frame.native_box is None else kind)
+                (
+                    backgrounds(app),
+                    None if app.frame.native_box is None else type(app.frame.native_box).__name__,
+                )
             ),
         ],
         [group],
     )
     assert run.natives  # the app ran
     scanned, box_kind = seen[0]
-    assert box_kind == kind  # a native box was open when the screen was scanned
+    assert box_kind == expected_box  # the right native box was open when the screen was scanned
     assert scanned and scanned <= {"default"}
+
+
+def test_the_active_settings_tab_is_reversed_and_the_others_are_not(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    seen: dict[str, bool | None] = {}
+
+    def probe(app):  # type: ignore[no-untyped-def]
+        for strip in app.screen._compositor.render_strips():
+            for segment in strip:
+                if segment.text.strip() in ("Fields", "Repos", "Visibility"):
+                    seen[segment.text.strip()] = segment.style.reverse if segment.style else None
+
+    drive(mocker, ["S", probe], [alpha_group(tmp_path)])
+    assert seen["Fields"] is True  # a terminal attribute, not a painted background
+    assert not seen["Repos"] and not seen["Visibility"]
