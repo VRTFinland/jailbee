@@ -3037,17 +3037,6 @@ def _render_text(renderable: RenderableType, width: int = 200) -> str:
     return console.export_text()
 
 
-def _render_ansi_lines(renderable: RenderableType, width: int = 200) -> list[str]:
-    """The frame's lines with their ANSI styling, for asserting on highlights."""
-    # `no_color=False` overrides the suite's NO_COLOR, which would strip the
-    # very colour these assertions look for.
-    console = Console(
-        record=True, width=width, force_terminal=True, color_system="standard", no_color=False
-    )
-    console.print(renderable)
-    return console.export_text(styles=True).splitlines()
-
-
 def _cursor_lines(lines: list[str]) -> list[str]:
     """Lines carrying the cursor highlight — the only cursor indicator."""
     console = Console(force_terminal=True, color_system="standard", no_color=False)
@@ -6166,10 +6155,6 @@ def test_present_drops_groups_the_scope_excludes():
     groups = [_group("alpha", "/a"), _group("secret", "/s"), _group("gamma")]
     shown = dmodel.present(groups, None, RemoteRepoScope(frozenset({"secret"})))
     assert [g.prefix for g in shown] == ["alpha", "gamma"]
-
-
-def _data_line(frame: RenderableType, marker: str) -> str:
-    return next(line for line in _render_text(frame).splitlines() if marker in line)
 
 
 def test_live_cpu_value_growing_does_not_shift_later_columns(tmp_path):
