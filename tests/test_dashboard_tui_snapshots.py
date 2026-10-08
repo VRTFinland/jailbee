@@ -30,6 +30,7 @@ def fixed_timezone():
 @pytest.fixture
 def groups(mocker):
     mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    mocker.patch.object(tsession, "save_view_state")
     return [
         dmodel.RepoGroup(
             prefix,
