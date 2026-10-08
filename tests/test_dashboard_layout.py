@@ -7,7 +7,6 @@ from collections.abc import Callable
 import pytest
 
 from jailbee.dashboard.overlays import MIN_LIST_ROWS
-from jailbee.dashboard.tui import frame as tframe
 
 
 def _bottom(*, details: bool = False, overlay_lines: int = 0) -> Callable[[int, int | None], int]:
@@ -153,8 +152,7 @@ def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected, wid
     assert lines[-1].startswith("╰")
 
 
-def test_layout_constants_preserve_the_frame_export():
+def test_layout_constants_values():
     from jailbee.dashboard.tui.layout import MIN_DETAILS_ROWS, MIN_TABLE_ROWS, OVERLAY_BORDER_ROWS
 
     assert (MIN_TABLE_ROWS, OVERLAY_BORDER_ROWS, MIN_DETAILS_ROWS) == (5, 2, 2)
-    assert tframe.MIN_TABLE_ROWS == MIN_TABLE_ROWS

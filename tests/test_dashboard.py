@@ -28,6 +28,7 @@ from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import overlay as toverlay
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import terminal as tterm
+from jailbee.dashboard.tui.layout import MIN_TABLE_ROWS
 from jailbee.git_status import GitStatus
 from jailbee.lifecycle import ContainerInfo
 from tests.dashboard_fixtures import WIDE as _WIDE
@@ -6037,7 +6038,7 @@ def test_long_table_keeps_min_rows_and_the_cursor_with_details(tmp_path):
     assert "row39" in text and "row00" not in text
     header = next(i for i, ln in enumerate(lines) if "NAME" in ln)
     panel_top = next(i for i, ln in enumerate(lines) if "╭─ row39" in ln)
-    assert panel_top - header - 1 >= tframe.MIN_TABLE_ROWS
+    assert panel_top - header - 1 >= MIN_TABLE_ROWS
     assert lines[-1].startswith("╰")
 
 

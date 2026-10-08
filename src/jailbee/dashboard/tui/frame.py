@@ -36,7 +36,6 @@ from jailbee.dashboard.settings import (
     render_settings,
 )
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
-from jailbee.dashboard.tui.layout import MIN_TABLE_ROWS as MIN_TABLE_ROWS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 
