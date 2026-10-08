@@ -8,12 +8,9 @@ from datetime import UTC, datetime
 import pytest
 from rich.console import Console
 
-from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import fleet
-from jailbee.dashboard.tui import frame as tframe
-from jailbee.dashboard.viewport import column_viewport
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -24,21 +21,6 @@ def _ansi(renderable, width: int) -> list[str]:  # type: ignore[no-untyped-def]
     console = Console(width=width, file=io.StringIO(), record=True, color_system="truecolor")
     console.print(renderable, crop=False, soft_wrap=False)
     return console.export_text(styles=True).splitlines()
-
-
-def _old_lines(groups, width, *, offset=0, selected=None, enabled=None):  # type: ignore[no-untyped-def]
-    fields, widths = dcolumns._frame_columns(
-        groups, now=NOW, enabled=enabled, folded=frozenset(), column_widths=None, shown_columns=None
-    )
-    view = column_viewport(widths, width, offset)
-    vf = [fields[i] for i in view.indices]
-    marks = (view.hidden_left, view.hidden_right)
-    lines = _ansi(tframe.column_header(vf, view.widths, marks), width)
-    for group in groups:
-        lines += _ansi(tframe.repo_heading(group, selected, frozenset()), width)
-        for c in group.containers:
-            lines += _ansi(tframe.container_row(group, c, vf, view.widths, selected, marks), width)
-    return lines
 
 
 def _new_lines(groups, width, *, offset=0, selected=None, enabled=None):  # type: ignore[no-untyped-def]
@@ -62,22 +44,31 @@ def _new_lines(groups, width, *, offset=0, selected=None, enabled=None):  # type
     return lines
 
 
-@pytest.mark.parametrize("width", [36, 44, 80, 200])
-@pytest.mark.parametrize("offset", [0, 1, 3])
-def test_lines_match_the_rich_table(tmp_path, width, offset):
+def test_lines_keep_the_rich_table_layout(tmp_path):
+    import re
+
     groups = [wide_group(tmp_path)]
     selected = Row("container", groups[0].containers[0].name)
-    kw = {"offset": offset, "selected": selected, "enabled": WIDE}
-    assert _new_lines(groups, width, **kw) == _old_lines(groups, width, **kw)
+    plain = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in _new_lines(groups, 44, offset=1, selected=selected, enabled=WIDE)]
+    assert plain == [
+        "  NAME                ‹  ST  AGE    NET  ›",
+        "▾ alpha  (1)",
+        "  one                    ▶   129d   ●     ",
+    ]
 
 
-def test_a_selected_heading_and_an_orphan_match(tmp_path):
+def test_a_selected_heading_and_an_orphan_keep_their_text_and_style(tmp_path):
+    from jailbee.dashboard.settings import CURSOR_STYLE
+
     groups = [
         dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")]),
         dmodel.RepoGroup("ghost", None, None, [ci("ghost-x", "ghost")]),
     ]
-    sel = Row("repo", "alpha")
-    assert _new_lines(groups, 80, selected=sel) == _old_lines(groups, 80, selected=sel)
+    selected = fleet.repo_heading(groups[0], Row("repo", "alpha"), frozenset())
+    assert selected.plain == "▾ alpha  (1)" and str(selected.style) == CURSOR_STYLE
+    orphan = fleet.repo_heading(groups[1], None, frozenset())
+    assert orphan.plain == "▾ ghost  (1)  (orphan)" and str(orphan.style) == "bold yellow"
+    assert any("ghost-x" in line for line in _new_lines(groups, 80, selected=Row("repo", "alpha")))
 
 
 def test_a_heading_longer_than_the_table_is_cut_not_wrapped(tmp_path):

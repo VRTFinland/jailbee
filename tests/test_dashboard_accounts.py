@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -339,17 +338,9 @@ def test_verdict_marker_beats_an_earlier_warning_and_stops_at_the_next_verdict(
 
 def _frame(tmp_path: Path, notice: str, width: int = 100) -> list[str]:
     group = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [])
-    console = Console(record=True, width=width)
-    console.print(
-        tframe.render(
-            [group],
-            selected=None,
-            now=datetime(2026, 6, 8, 12, 0, tzinfo=UTC),
-            git_enabled=True,
-            notice=notice,
-        )
-    )
-    return console.export_text().rstrip().splitlines()
+    from tests.dashboard_pilot import paint, view_of
+
+    return paint(view_of([group], notice=notice), size=(width, 200))
 
 
 def _flat(lines: list[str]) -> str:

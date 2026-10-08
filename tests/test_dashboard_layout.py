@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 import pytest
-from rich.console import Console
-from rich.text import Text
 
 from jailbee.dashboard.overlays import MIN_LIST_ROWS
 from jailbee.dashboard.tui import frame as tframe
@@ -126,33 +123,31 @@ def test_notice_loses_rows_before_the_bottom_is_cropped():
     assert layout.crop_top == 0
 
 
-@pytest.mark.parametrize("height, expected", [(2, ["middle", "remedy"]), (0, [])])
-def test_rich_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(height, expected):
-    console = Console(width=80)
-    sections = tframe._RepoSections(
-        [], datetime(2026, 10, 8, tzinfo=UTC), None, frozenset(), None, None, 0, False, None
-    )
-    body = tframe._FrameBody(sections, Text("verdict\nmiddle\nremedy"), None, max_height=height)
-    lines = console.render_lines(body, console.options, pad=False)
-    assert ["".join(segment.text for segment in line) for line in lines] == expected
+@pytest.mark.parametrize("height, expected", [(4, ["middle", "remedy"]), (2, [])])
+def test_native_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(height, expected):
+    from tests.dashboard_pilot import paint, view_of
+
+    # Long enough to route inline; explicit lines distinguish a suffix from a prefix.
+    notice = "verdict " + "x" * 80 + "\nmiddle\nremedy"
+    lines = paint(view_of([], notice=notice), size=(100, height))
+    content = [line.strip(" │") for line in lines[1:-1]]
+    assert content == expected
+    assert len(lines) == height and lines[-1].startswith("╰")
 
 
 @pytest.mark.parametrize(
     "hidden, expected",
-    [
-        (False, "(no containers found)"),
-        (True, "All repositories are hidden — open Settings > Visibility to show them"),
-    ],
+    [(False, "(no containers found)"),
+     (True, "All repositories are hidden — open Settings > Visibility to show them")],
 )
 def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected):
-    console = Console(width=20)
-    sections = tframe._RepoSections(
-        [], datetime(2026, 10, 8, tzinfo=UTC), None, frozenset(), None, None, 0, hidden, None
-    )
-    body = tframe._FrameBody(sections, None, None, max_height=10)
-    lines = console.render_lines(body, console.options, pad=False)
-    words = " ".join("".join(segment.text for segment in line).strip() for line in lines)
+    from tests.dashboard_pilot import paint, view_of
+
+    lines = paint(view_of([], hidden_by_preferences=hidden), size=(24, 12))
+    words = " ".join(" ".join(line.strip(" │") for line in lines[1:-1]).split())
     assert words == expected
+    assert len(lines) <= 12 and all(len(line) <= 24 for line in lines)
+    assert lines[-1].startswith("╰")
 
 
 def test_layout_constants_preserve_the_frame_export():

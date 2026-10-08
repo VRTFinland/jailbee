@@ -9,7 +9,6 @@ then after every key that did not quit).
 from __future__ import annotations
 
 import asyncio
-import io
 import itertools
 import subprocess
 from collections.abc import Callable, Iterable
@@ -18,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
 from textual import _wait as textual_wait
 from textual import events
 from textual.app import App, ComposeResult
@@ -30,7 +28,7 @@ from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
-from jailbee.dashboard.tui.frame import DashboardView, render_view
+from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
@@ -346,14 +344,6 @@ def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]
     )
     session.tick()
     return session, terminal
-
-
-def render_text(view: DashboardView, size: tuple[int, int] = (80, 25)) -> str:
-    """``view`` as plain text, as `drive` would have drawn it at ``size``."""
-    width, height = size
-    console = Console(width=width, height=height, file=io.StringIO(), record=True)
-    console.print(render_view(view, height=height))
-    return console.export_text()
 
 
 def patch_pause(mocker):  # type: ignore[no-untyped-def]

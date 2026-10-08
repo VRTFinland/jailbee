@@ -100,7 +100,7 @@ class FleetTable(ScrollView, can_focus=False):
             or previous.empty_text != model.empty_text
         )
         if structural:
-            self.virtual_size = Size(model.geometry.width, model.line_count)
+            self.virtual_size = Size(model.geometry.width, len(drawn))
             self.refresh()
         else:
             for virtual_y, (old, new) in enumerate(zip(self._drawn, drawn, strict=True)):
@@ -152,7 +152,7 @@ class FleetTable(ScrollView, can_focus=False):
 
     def _signatures(self, model: TableModel) -> tuple[tuple[object, ...], ...]:
         if model.empty_text is not None:
-            return (("empty", model.empty_text),)
+            return tuple(("empty", line.plain) for line in Text(model.empty_text).wrap(self.app.console, max(1, model.geometry.width)))
         hover = self._hover
         lines: list[tuple[object, ...]] = []
         if model.has_header:
@@ -195,7 +195,7 @@ class FleetTable(ScrollView, can_focus=False):
         strip = self._strips.get(key)
         if strip is None:
             if model.empty_text is not None:
-                text = Text(model.empty_text, no_wrap=True, end="")
+                text = Text(str(lines[virtual_y][1]), no_wrap=True, end="")
             elif model.has_header and virtual_y == 0:
                 text = header_line(model.geometry)
             else:
@@ -452,6 +452,10 @@ class DashboardFrame(Vertical):
             return max(shown_details, lines(overlay_renderable(list_rows), overlay_at))
 
         table_lines = fleet.line_count(view.groups, view.folded)
+        if not view.groups:
+            # The model counts one logical placeholder; its instruction wraps on screen.
+            placeholder = fleet.HIDDEN_TEXT if view.hidden_by_preferences else fleet.EMPTY_TEXT
+            table_lines = len(Text(placeholder).wrap(console, max(1, width)))
         layout = frame_layout(
             height=height,
             table_lines=table_lines,

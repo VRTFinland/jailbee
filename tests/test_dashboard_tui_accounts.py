@@ -24,7 +24,6 @@ from tests.dashboard_pilot import (
     drive,
     keys,
     open_container_group_picker,
-    render_text,
 )
 
 # --- Credential group… in the repo menu --------------------------------------
@@ -428,7 +427,7 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
     cli = fake_accounts_cli(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    run = drive(mocker, ["A"], [group], size=(200, 25))
+    run = drive(mocker, ["A"], [group], size=(200, 25), screens=True)
     assert run.rc == 0
 
     assert cli.call_args_list == [mocker.call(ACCOUNT_LS, cwd=tmp_path)]
@@ -438,7 +437,8 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
     state = views[-1].overlay
     assert [r.account for r in state.rows] == ["a@x.io#org12345", "b@x.io~2", None]
     assert (state.index, state.prefix) == (0, "alpha")
-    out = render_text(views[-1], (200, 25))
+    at = max(i for i, view in enumerate(run.trace) if isinstance(view.overlay, tsession.da.AccountsState))
+    out = run.screens[at]
     assert "NAME" in out and "zebra" in out  # the container table is still drawn
     assert "credential groups and logins" in out
     assert "b@x.io~2" in out
@@ -522,14 +522,14 @@ def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, re
 def test_accounts_panel_with_an_empty_pool_says_so(mocker, tmp_path):
     cli = fake_accounts_cli(mocker, listing=groups_listing("[]"))
 
-    run = drive(mocker, ["A", "enter", "j"], [alpha_group(tmp_path)])
+    run = drive(mocker, ["A", "enter", "j"], [alpha_group(tmp_path)], screens=True)
     assert run.rc == 0
 
     assert cli.call_count == 1  # Enter on nothing ran nothing
     assert isinstance(run.last.overlay, tsession.da.AccountsState)
     assert run.last.overlay.rows == ()
     assert run.last.notice == "No actions for this row"
-    assert "(no logins or groups on this host)" in render_text(run.last)
+    assert "(no logins or groups on this host)" in run.screens[-1]
     assert not run.of_type(tsession.Picker)
 
 
