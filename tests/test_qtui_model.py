@@ -405,7 +405,6 @@ def test_no_reason_and_no_activity_is_no_tooltip():
     assert m.card_content(_agent_container(summary), []).agent_tooltip is None
 
 
-
 def test_card_content_carries_the_memory_limit_for_the_chip_tooltip():
     c = _container()
     cc = m.card_content(c, dcolumns.visible_fields(datetime.now().astimezone(), [c]))
