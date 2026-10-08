@@ -1067,7 +1067,7 @@ def test_v14_db_gains_show_details_defaulting_true() -> None:
     assert row is not None
     assert row.show_details is True
     assert row.columns == '["name"]' and row.show_empty_repos is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 15
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v15_is_idempotent() -> None:
@@ -1078,3 +1078,36 @@ def test_migrate_to_v15_is_idempotent() -> None:
     with engine.begin() as conn:
         _migrate_to_v15(conn)
         _migrate_to_v15(conn)
+
+
+def test_v15_db_gains_columns_version_defaulting_zero() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, ViewPrefs
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=15))
+        session.add(ViewPrefs(frontend="qt", columns='["name", "mem"]', show_details=False))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE view_prefs DROP COLUMN columns_version")
+
+    _ensure_schema(engine)
+    with Session(engine) as session:
+        row = session.get(ViewPrefs, "qt")
+        meta = session.get(SchemaMeta, 1)
+    assert row is not None
+    assert row.columns_version == 0
+    assert row.columns == '["name", "mem"]' and row.show_details is False
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 16
+
+
+def test_migrate_to_v16_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v16
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _migrate_to_v16(conn)
+        _migrate_to_v16(conn)
