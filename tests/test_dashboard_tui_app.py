@@ -300,6 +300,7 @@ def test_a_failed_first_gather_never_starts_textual(mocker):
 def test_the_app_module_is_the_only_one_importing_textual():
     code = (
         "import sys, jailbee.cli, jailbee.dashboard.tui.session, jailbee.dashboard.tui.frame, "
-        "jailbee.dashboard.tui.key_adapter; sys.exit('textual' in sys.modules)"
+        "jailbee.dashboard.tui.key_adapter, jailbee.dashboard.tui.fleet, "
+        "jailbee.dashboard.tui.layout; sys.exit('textual' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0

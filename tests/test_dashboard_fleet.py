@@ -124,6 +124,25 @@ def test_the_model_rows_follow_selectable_rows(tmp_path):
     assert list(model.rows) == dmodel.selectable_rows([a], frozenset())
 
 
+@pytest.mark.parametrize("folded", [frozenset({"a"}), frozenset({"a", "b"})])
+def test_folded_models_entries_header_and_count(tmp_path, folded):
+    groups = [
+        dmodel.RepoGroup("a", str(tmp_path), None, [ci("a-1", "a")]),
+        dmodel.RepoGroup("b", str(tmp_path), None, [ci("b-1", "b")]),
+    ]
+    model = fleet.table_model(
+        groups, now=NOW, enabled=None, folded=folded, column_widths=None,
+        shown_columns=None, column_offset=0, hidden_by_preferences=False, width=80,
+    )
+    expected = [Row("repo", "a"), Row("repo", "b")]
+    if "b" not in folded:
+        expected.append(Row("container", "b-1"))
+    assert [entry.row for entry in model.entries] == expected
+    assert model.has_header == ("b" not in folded)
+    assert model.line_count == len(expected) + int(model.has_header)
+    assert model.line_count == fleet.line_count(groups, folded)
+
+
 def test_empty_and_hidden_texts(tmp_path):
     kw = dict(
         now=NOW,
