@@ -28,6 +28,7 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Checkbox, OptionList, SelectionList, Static, Tab, Tabs
+from textual.widgets._tabs import Underline
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
@@ -461,6 +462,21 @@ class SettingsTabs(Tabs, can_focus=False):
     SettingsTabs Underline > .underline--bar { background: ansi_default; color: ansi_default; }
     """
 
+    def __init__(self, *tabs: Tab, active: str, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(*tabs, active=active)
+        self.mouse_enabled = mouse_enabled
+
+    # Tab.Clicked and Underline.Clicked bubble here; with the mouse off neither switches a tab.
+    async def _on_tab_clicked(self, event: Tab.Clicked) -> None:
+        if not self.mouse_enabled():
+            event.stop()
+            event.prevent_default()
+
+    def _on_underline_clicked(self, event: Underline.Clicked) -> None:
+        if not self.mouse_enabled():
+            event.stop()
+            event.prevent_default()
+
 
 class SettingsList(SelectionList[str], can_focus=True):
     """The checkbox rows: j/k, one-line wheel, gated clicks, the dashboard's hover."""
@@ -503,6 +519,8 @@ class SettingsList(SelectionList[str], can_focus=True):
         _wheel(self, event, -1, self.mouse_enabled())
 
     def render_line(self, y: int) -> Strip:
+        # Textual 8.2.8 internals: `_selected` (selected values) and the button drawn as
+        # segments [left, inner, right, ...] with `Checkbox.BUTTON_INNER` at index 1.
         strip = super().render_line(y)
         index = self.scroll_offset.y + y
         if 0 <= index < self.option_count and (
@@ -543,7 +561,11 @@ class SettingsBox(OverlayBox):
         ]
 
     def compose(self) -> ComposeResult:
-        yield SettingsTabs(*(Tab(label, id=tab) for tab, label in TABS), active=self.tab)
+        yield SettingsTabs(
+            *(Tab(label, id=tab) for tab, label in TABS),
+            active=self.tab,
+            mouse_enabled=self.mouse_enabled,
+        )
         yield SettingsList(*self._selections(), mouse_enabled=self.mouse_enabled)
 
     def _list(self) -> SettingsList:

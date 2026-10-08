@@ -1058,6 +1058,24 @@ def test_a_tab_click_keeps_the_list_focused(mocker, tmp_path):
     assert focused == ["native-list"]
 
 
+def test_a_tab_click_switches_with_the_mouse_on_and_not_with_it_off(mocker, tmp_path):
+    on = drive(mocker, ["S", PickTab("repos")], [alpha_group(tmp_path)])
+    assert on.natives[2] == NativeState("settings", 0, tab="repos")  # control
+    off = drive(mocker, ["S", PickTab("repos")], [alpha_group(tmp_path)], mouse=False)
+    assert off.natives[2] == NativeState("settings", 0, tab="fields")
+
+
+def test_a_click_on_the_tab_underline_with_the_mouse_off_switches_nothing(mocker, tmp_path):
+    def click_underline(app):  # type: ignore[no-untyped-def]
+        from jailbee.dashboard.tui.native import Underline
+
+        underline = app.query_one(Underline)
+        underline.post_message(Underline.Clicked(underline.region.x + 70))  # far right: last tab
+
+    off = drive(mocker, ["S", click_underline], [alpha_group(tmp_path)], mouse=False)
+    assert off.natives[2] == NativeState("settings", 0, tab="fields")
+
+
 def test_a_click_while_the_mouse_is_off_toggles_nothing(mocker, tmp_path):
     save = mocker.patch.object(tsession, "save_view_state")
     run = drive(mocker, ["S", Pick(1)], [alpha_group(tmp_path)], mouse=False)
@@ -1143,8 +1161,8 @@ def test_a_stale_toggled_message_is_ignored(mocker, tmp_path):
 
 
 def test_a_tick_resyncs_a_checkbox_changed_behind_the_box(mocker, tmp_path):
-    mocker.patch.object(tsession, "save_view_state")
     """`show` re-syncs both ways: a state that turned a column on or off redraws it."""
+    mocker.patch.object(tsession, "save_view_state")
     selected = []
 
     def flip(app):  # type: ignore[no-untyped-def]
