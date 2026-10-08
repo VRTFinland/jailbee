@@ -225,6 +225,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         own = getattr(box, "on_key", None)
         if own is not None:
             own(event)
+            # TODO(Task 3): private _stop_propagation; this path is deleted there
             if event._stop_propagation:  # Textual keeps no public flag for a stopped event
                 return
         if event.key in ("tab", "shift+tab"):

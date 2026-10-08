@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from textual import events
 from textual.widgets import Input
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.overlays import TextPrompt, validate_answer
 from jailbee.dashboard.tui import session as tsession
+from jailbee.dashboard.tui.native import PromptBox
 from jailbee.dashboard.tui.overlay import CommandState, NativeState, overlay_key
 from tests.dashboard_fixtures import ci, fake_branches, retarget_group
 from tests.dashboard_pilot import (
@@ -18,6 +22,7 @@ from tests.dashboard_pilot import (
     burst,
     drive,
     keys,
+    make_app,
     patch_pause,
 )
 
@@ -330,3 +335,32 @@ def test_an_arrow_typed_after_a_paste_moves_in_the_list_of_the_pasted_text(mocke
     run = _retarget(mocker, tmp_path, [burst(Paste("e"), ("down", None))])
     last = _prompt_states(run)[-1]
     assert (last.text, last.matches, last.cursor) == ("e", ("develop",), 0)
+
+
+def test_the_box_answers_a_key_before_it_yields(mocker, tmp_path):
+    """`e` then ↓ with no yield between: the highlight is on the first match of `e`.
+
+    A real terminal read can post keys back to back, so the box's message pump may not
+    have delivered `Input.Changed` yet; `handle_key` itself must bring the matches up
+    to the text.
+    """
+    mocker.patch.object(tsession, "host_branches", side_effect=fake_branches)
+    app = make_app(mocker, [retarget_group(tmp_path)])
+
+    async def script() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press(*RETARGET)
+            await pilot.pause()
+            box = app.frame.native_box
+            assert isinstance(box, PromptBox)
+            await box.handle_key(events.Key("e", "e"))
+            states.append(app.frame.native_state())
+            await box.handle_key(events.Key("down", None))
+            states.append(app.frame.native_state())
+
+    states: list[NativeState | None] = []
+    asyncio.run(script())
+    typed, arrowed = states
+    assert typed is not None and arrowed is not None
+    assert (typed.text, typed.matches) == ("e", ("develop",))
+    assert (arrowed.text, arrowed.matches, arrowed.cursor) == ("e", ("develop",), 0)
