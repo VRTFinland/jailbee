@@ -131,8 +131,15 @@ def test_folded_models_entries_header_and_count(tmp_path, folded):
         dmodel.RepoGroup("b", str(tmp_path), None, [ci("b-1", "b")]),
     ]
     model = fleet.table_model(
-        groups, now=NOW, enabled=None, folded=folded, column_widths=None,
-        shown_columns=None, column_offset=0, hidden_by_preferences=False, width=80,
+        groups,
+        now=NOW,
+        enabled=None,
+        folded=folded,
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
     )
     expected = [Row("repo", "a"), Row("repo", "b")]
     if "b" not in folded:

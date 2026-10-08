@@ -1,4 +1,5 @@
 """FleetTable's standalone line rendering and delivered input policy."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,12 +21,20 @@ Row = dmodel.Row
 
 
 def _model(n=50, *, now=NOW, age=False, folded=frozenset()):  # type: ignore[no-untyped-def]
-    containers = [replace(ci(f"alpha-{i:03}", "alpha"), created_at=NOW - timedelta(seconds=59)) for i in range(n)]
+    containers = [
+        replace(ci(f"alpha-{i:03}", "alpha"), created_at=NOW - timedelta(seconds=59))
+        for i in range(n)
+    ]
     return fleet.table_model(
         [dmodel.RepoGroup("alpha", "/r", None, containers)] if n else [],
-        now=now, enabled=("name", "created") if age else ("name",), folded=folded,
-        column_widths={"name": 20, "created": 8}, shown_columns=None, column_offset=0,
-        hidden_by_preferences=False, width=60,
+        now=now,
+        enabled=("name", "created") if age else ("name",),
+        folded=folded,
+        column_widths={"name": 20, "created": 8},
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=60,
     )
 
 
@@ -58,6 +67,7 @@ def _run(script):  # type: ignore[no-untyped-def]
         app = _Host()
         async with app.run_test(size=(64, 20)) as pilot:
             await script(app, app.query_one(_Counting), pilot)
+
     asyncio.run(main())
 
 
@@ -81,6 +91,7 @@ def test_frozen_header_scrolled_hits_and_incremental_hover():
         table.show(model, None, Hit("row", ("alpha-012",)))
         await pilot.pause()
         assert sorted(set(table.lines)) == [3, 4]
+
     _run(script)
 
 
@@ -97,6 +108,7 @@ def test_clock_alone_and_unchanged_selection_hover_repaint_nothing(age):
         await pilot.pause()
         assert table.lines == []
         assert table._model is latest
+
     _run(script)
 
 
@@ -110,15 +122,22 @@ def test_age_boundary_updates_cells_and_cached_strip():
         await pilot.pause()
         assert _screen(app)[2] != before
         assert sorted(set(table.lines)) == [2, 3]
+
     _run(script)
 
 
 def test_header_hover_is_invalidated_at_screen_zero_when_scrolled():
     async def script(app, table, pilot):  # type: ignore[no-untyped-def]
         model = fleet.table_model(
-            [_model().entries[0].group], now=NOW, enabled=("name", "state", "created"), folded=frozenset(),
-            column_widths={"name": 10, "state": 10, "created": 10}, shown_columns=("name", "state", "created"), column_offset=0,
-            hidden_by_preferences=False, width=32,
+            [_model().entries[0].group],
+            now=NOW,
+            enabled=("name", "state", "created"),
+            folded=frozenset(),
+            column_widths={"name": 10, "state": 10, "created": 10},
+            shown_columns=("name", "state", "created"),
+            column_offset=0,
+            hidden_by_preferences=False,
+            width=32,
         )
         table.show(model, None, None)
         await pilot.pause()
@@ -132,6 +151,7 @@ def test_header_hover_is_invalidated_at_screen_zero_when_scrolled():
         table.show(model, None, Hit("scroll", (1,)))
         await pilot.pause()
         assert table.lines == []
+
     _run(script)
 
 
@@ -144,6 +164,7 @@ def test_selection_repaints_only_changed_rows():
         table.show(model, Row("container", "alpha-002"), None)
         await pilot.pause()
         assert sorted(set(table.lines)) == [3, 4]
+
     _run(script)
 
 
@@ -153,18 +174,23 @@ def test_wheel_same_selection_and_ctrl_vertical_shift_horizontal():
         table.show(_model(), selected, None)
         await pilot.pause()
         for _ in range(5):
-            await pilot._post_mouse_events([events.MouseScrollDown], widget=table, offset=(1, 1), control=True)
+            await pilot._post_mouse_events(
+                [events.MouseScrollDown], widget=table, offset=(1, 1), control=True
+            )
         await pilot.pause()
         assert table.scroll_y == 5
         table.show(_model(now=NOW + timedelta(seconds=1)), selected, None)
         await pilot.pause()
         assert table.scroll_y == 5
-        await pilot._post_mouse_events([events.MouseScrollDown], widget=table, offset=(1, 1), shift=True)
+        await pilot._post_mouse_events(
+            [events.MouseScrollDown], widget=table, offset=(1, 1), shift=True
+        )
         await pilot._post_mouse_events([events.MouseScrollLeft], widget=table, offset=(1, 1))
         await pilot.pause()
         assert app.columns == [1, -1] and table.scroll_y == 5
         await pilot.press("down", "pagedown")
         assert table.scroll_y == 5 and app.focused is None
+
     _run(script)
 
 
@@ -181,6 +207,7 @@ def test_mouse_policy_blocks_wheel_and_scrollbar_but_not_programmatic_scroll():
         table.scroll_to(y=5, animate=False)
         await pilot.pause()
         assert table.scroll_y == 5
+
     _run(script)
 
 
@@ -195,6 +222,7 @@ def test_width_and_height_changes_redraw_and_reveal_selection():
         await pilot.pause()
         assert any("040" in line for line in _screen(app)[:6])
         assert table.content_width == 39
+
     _run(script)
 
 
@@ -217,4 +245,5 @@ def test_large_table_visible_only_selection_and_structural_changes():
         table.show(_model(0), None, None)
         await pilot.pause()
         assert fleet.EMPTY_TEXT in _screen(app)[0]
+
     _run(script)

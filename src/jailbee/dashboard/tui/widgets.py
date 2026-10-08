@@ -1,4 +1,5 @@
 """Textual fleet widgets; the remaining table and frame parts are pure."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -44,7 +45,7 @@ class FleetTable(ScrollView, can_focus=False):
 
     def __init__(
         self, *, id: str | None = None, mouse_enabled: Callable[[], bool] | None = None
-    ) -> None:  # noqa: A002 - Textual's widget identifier
+    ) -> None:
         super().__init__(id=id)
         self.mouse_enabled = mouse_enabled or (lambda: True)
         self._model: TableModel | None = None
@@ -79,7 +80,9 @@ class FleetTable(ScrollView, can_focus=False):
                     # refresh_line maps virtual rows, but the frozen header is screen y=0.
                     if model.has_header and virtual_y == 0:
                         self.refresh(Region(0, 0, self.size.width, 1))
-                    elif int(model.has_header) <= virtual_y - self.scroll_offset.y < self.size.height:
+                    elif (
+                        int(model.has_header) <= virtual_y - self.scroll_offset.y < self.size.height
+                    ):
                         self.refresh_line(virtual_y)
         self._drawn = drawn
         height = self.size.height
@@ -101,8 +104,10 @@ class FleetTable(ScrollView, can_focus=False):
             return
         y = model.rows.index(row) + int(model.has_header)
         self.scroll_to_region(
-            Region(0, y, 1, 1), spacing=Spacing(top=int(model.has_header)),
-            animate=False, immediate=True,
+            Region(0, y, 1, 1),
+            spacing=Spacing(top=int(model.has_header)),
+            animate=False,
+            immediate=True,
         )
 
     def _paint(self, text: Text) -> tuple[Segment, ...]:
@@ -115,10 +120,15 @@ class FleetTable(ScrollView, can_focus=False):
             return (self._paint(Text(model.empty_text, no_wrap=True, end="")),)
         lines = [self._paint(header_line(model.geometry))] if model.has_header else []
         lines.extend(
-            self._paint(entry_line(
-                entry, model.geometry, model.folded,
-                selected=entry.row == self._selected, width=width,
-            ))
+            self._paint(
+                entry_line(
+                    entry,
+                    model.geometry,
+                    model.folded,
+                    selected=entry.row == self._selected,
+                    width=width,
+                )
+            )
             for entry in model.entries
         )
         # Compare actual drawn cells/styles/hits, not model.now or closure identity.
@@ -140,7 +150,12 @@ class FleetTable(ScrollView, can_focus=False):
         if strip is None:
             if len(self._strips) >= _CACHE_MAX:
                 self._strips.clear()
-            strip = Strip(segments).apply_style(Style(color="default")).extend_cell_length(width, Style(color="default")).crop(0, width)
+            strip = (
+                Strip(segments)
+                .apply_style(Style(color="default"))
+                .extend_cell_length(width, Style(color="default"))
+                .crop(0, width)
+            )
             self._strips[key] = strip
         return strip
 
