@@ -8042,6 +8042,92 @@ def test_merge_container_into_container_same_branch_uses_ff_only(mocker, make_cf
     assert result.fast_forward_only is True
 
 
+# The same-name case that `push_and_merge` already had a way out of: two
+# containers on one branch, both worked in, are diverged by construction, and
+# a bare `--ff-only` could only fail on them.
+
+
+def _same_branch_relay(mocker, make_cfg, tmp_path, *, divergence):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path, target_branch="feat/a")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    probe = mocker.patch("jailbee.sync._container_divergence", return_value=divergence)
+    merge = mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+    mocker.patch("jailbee.sync._submodule_moves_between", return_value=[])
+    return cfg, incus, probe, merge
+
+
+def test_merge_container_into_container_diverged_same_branch_asks(mocker, make_cfg, tmp_path):
+    cfg, incus, probe, merge = _same_branch_relay(mocker, make_cfg, tmp_path, divergence=(3, 2))
+    asked: list[str] = []
+
+    def _confirm(msg: str) -> bool:
+        asked.append(msg)
+        return True
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2", confirm=_confirm)
+
+    assert asked, "a diverged same-name merge must ask before making a merge commit"
+    assert probe.call_args.args[3] == "refs/jailbee/from/c1/feat/a"
+    assert merge.call_args.kwargs["ff_only"] is False
+    assert result.fast_forward_only is False
+
+
+def test_merge_container_into_container_diverged_same_branch_declined(mocker, make_cfg, tmp_path):
+    cfg, incus, _probe, merge = _same_branch_relay(mocker, make_cfg, tmp_path, divergence=(3, 2))
+
+    with pytest.raises(sync.SyncError, match="refs/jailbee/from/c1/feat/a"):
+        sync.merge_container_into_container(cfg, incus, "c1", "c2", confirm=lambda _m: False)
+
+    merge.assert_not_called()
+
+
+def test_merge_container_into_container_diverged_without_a_tty_names_no_ff(
+    mocker, make_cfg, tmp_path
+):
+    cfg, incus, _probe, merge = _same_branch_relay(mocker, make_cfg, tmp_path, divergence=(3, 2))
+
+    with pytest.raises(sync.SyncError, match="--no-ff") as excinfo:
+        sync.merge_container_into_container(cfg, incus, "c1", "c2", confirm=None)
+
+    assert "3 commit(s) not on the pushed ref" in str(excinfo.value)
+    merge.assert_not_called()
+
+
+def test_merge_container_into_container_no_ff_skips_the_question(mocker, make_cfg, tmp_path):
+    cfg, incus, probe, merge = _same_branch_relay(mocker, make_cfg, tmp_path, divergence=(3, 2))
+
+    def _confirm(_msg: str) -> bool:
+        raise AssertionError("--no-ff must not ask")
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2", no_ff=True, confirm=_confirm)
+
+    probe.assert_not_called()
+    assert merge.call_args.kwargs["ff_only"] is False
+
+
+def test_merge_container_into_container_ff_demands_a_fast_forward_across_branches(
+    mocker, make_cfg, tmp_path
+):
+    cfg, incus = _merge_relay_wiring(mocker, make_cfg, tmp_path, target_branch="feat/b")
+    mocker.patch("jailbee.submodules._container_submodule_paths", return_value=[])
+    merge = mocker.patch("jailbee.sync._merge_ref_in_container", return_value="mergedsha")
+    mocker.patch("jailbee.sync._submodule_moves_between", return_value=[])
+
+    result = sync.merge_container_into_container(cfg, incus, "c1", "c2", no_ff=False)
+
+    assert merge.call_args.kwargs["ff_only"] is True
+    assert result.fast_forward_only is True
+
+
+def test_merge_container_into_container_plain_never_probes(mocker, make_cfg, tmp_path):
+    cfg, incus, probe, merge = _same_branch_relay(mocker, make_cfg, tmp_path, divergence=(3, 2))
+
+    sync.merge_container_into_container(cfg, incus, "c1", "c2", plain=True, confirm=None)
+
+    probe.assert_not_called()
+    merge.assert_not_called()
+
+
 def test_merge_container_into_container_preflights_the_target_before_transport(
     mocker, make_cfg, tmp_path
 ):

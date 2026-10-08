@@ -114,6 +114,13 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **`jailbee git merge` can merge two containers on the same branch.** When
+  both containers had their own commits on that branch, the merge always failed
+  with git's "Not possible to fast-forward". It now works like `jailbee git push
+  --merge`: it shows how many commits each side has and asks whether to make a
+  merge commit; off a TTY it stops and names `--no-ff`. The new `--ff`/`--no-ff`
+  flags decide in advance. The fast-forward hint also names the actual ref
+  instead of `refs/jailbee/from/<source>/<branch>`.
 - **opencode's model catalogue is reachable in strict mode.** Current opencode
   fetches it from `models.opencode.ai` rather than `models.dev`, which the
   `opencode` preset did not allow. Run `jailbee apply` to pick it up.

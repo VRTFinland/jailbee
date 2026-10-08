@@ -1031,6 +1031,7 @@ target on whatever it has checked out, so conflicts are resolved there, in
 | `--into <name>` | Container to merge INTO. Never inferred, but asked for when omitted on a TTY. |
 | `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. **Not submodule-safe** — the transport enumerates the source's *checked-out* state, so a submodule that exists only on `<b>` never travels and the target's `submodule update` fails after the merge commit is written. Check the branch out in the container and merge without `-b` instead. |
 | `--plain` | Transport the refs only; run no merge. The report says "transported", not "merged" — `--plain` is not a kind of merge. |
+| `--ff` / `--no-ff` | How the merge runs; exit 2 with `--plain`. `--no-ff` always writes a merge commit; `--ff` demands a fast-forward and fails on divergence. Default is neither: a fast-forward when the target is on the branch read from the source, a merge commit otherwise — and when that fast-forward is impossible (both containers have commits of their own), JailBee prints both commit counts and asks whether to make a merge commit instead. Without a TTY it errors and names `--no-ff`. |
 
 Several sources are merged **one at a time, in the order given**. The run
 stops at the first conflict or failure and always prints what landed, what
@@ -1055,6 +1056,7 @@ jailbee git merge c1 --into c4
 jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
 jailbee git merge c1                     # pick the target only
 jailbee git merge c1 --into c4 --plain   # transport only
+jailbee git merge c1 --into c4 --no-ff   # always a merge commit
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```
 

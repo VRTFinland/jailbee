@@ -317,6 +317,7 @@ both keys, means something different in each direction:
 | `jailbee git pull --into <other>` / `--checkout`, target **not** checked out and fast-forwardable | fast-forwarded at ref level | fast-forwarded at ref level | fast-forwarded at ref level |
 | `jailbee git pull --checkout`, target diverged | merge commit | merge commit (a fast-forward isn't possible here, so `auto` behaves like `never`) | error — refuses to merge |
 | `jailbee git push --merge` | always a merge commit | fast-forward when the container is already on the pushed branch (true of every `--pr` push), merge commit otherwise — asks (TTY) or errors (no TTY) if that fast-forward turns out impossible | demand a fast-forward; error on divergence |
+| `jailbee git merge` (flag only, no config key) | always a merge commit | fast-forward when the target is on the branch read from the source, merge commit otherwise — asks (TTY) or errors (no TTY) if that fast-forward turns out impossible | demand a fast-forward; error on divergence |
 
 A target branch that is **not checked out** is fast-forwarded at ref level
 under every value of `ff` — that is a ref move (`git.fast_forward_branch`),
@@ -347,6 +348,7 @@ jailbee git merge c1 c2 c3 --into c4     # one at a time, stop on conflict
 jailbee git merge c1 --into c4 --into c5 # both targets take c1
 jailbee git merge c1                     # pick the targets only
 jailbee git merge c1 --into c4 --plain   # transport only
+jailbee git merge c1 --into c4 --no-ff   # always a merge commit
 jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
 ```
 
@@ -388,8 +390,16 @@ Summary: 1 of 2 targets complete
   c5  ok       merged c1, c2, c3
 ```
 
+The merge fast-forwards when the target is on the same branch the source's
+was read from, and writes a merge commit otherwise. Two containers on one
+branch that have both been worked in cannot fast-forward: you are shown both
+commit counts and asked whether to make a merge commit instead, and off a TTY
+the run stops naming `--no-ff`. `--no-ff` answers that up front; `--ff`
+refuses it and fails on divergence. See [Fast-forward policy](#fast-forward-policy).
+
 `--plain` transports the refs only and runs no merge; its report says
 "transported", not "merged" — do not read `--plain` as a kind of merge.
+`--ff`/`--no-ff` with `--plain` is exit 2.
 `-b`/`--branch` reads a specific branch from the source and only applies with
 exactly one source. **It does not carry submodules reliably** — the transport
 enumerates the source container's *checked-out* state, not the branch being

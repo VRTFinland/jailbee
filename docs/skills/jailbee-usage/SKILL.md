@@ -399,6 +399,12 @@ container to merge into instead of quietly merging into the host.
     in the container first and merge without `-b`.
   - `--plain` — transport the refs only; run no merge. The summary then says
     "transported", not "merged" — `--plain` is not a kind of merge.
+  - `--ff` / `--no-ff` — the merge fast-forwards when the target is on the
+    branch read from the source, and writes a merge commit otherwise. Two
+    containers on one branch with commits of their own cannot fast-forward:
+    JailBee prints both commit counts and asks (off a TTY it errors naming
+    `--no-ff`). `--no-ff` always writes a merge commit; `--ff` fails on
+    divergence. Exit 2 with `--plain`.
   - Several sources are merged into each target **one at a time, in the order
     given**, and stop at that target's first conflict or failure — the next
     source would land on a tree left in merge state. Targets are separate
@@ -417,6 +423,7 @@ container to merge into instead of quietly merging into the host.
   jailbee git merge c1 --into c4 --into c5 # both targets take c1
   jailbee git merge c1                     # pick the targets only
   jailbee git merge c1 --into c4 --plain   # transport only
+  jailbee git merge c1 --into c4 --no-ff   # always a merge commit
   jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
   ```
 

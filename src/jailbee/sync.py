@@ -2689,6 +2689,62 @@ def _resolve_gitlinks_and_commit_host(cfg: Config, *, branch: str, location: str
         raise SyncError("Submodule gitlinks resolved, but finalizing the merge commit failed.")
 
 
+def _decide_fast_forward_only(
+    incus: Incus,
+    full_name: str,
+    repo_dir: str,
+    *,
+    ref: str,
+    source: str,
+    container_branch: str,
+    no_ff: bool | None,
+    confirm: ConfirmFn | None,
+    short: str,
+    uid: int,
+    declined_hint: str,
+) -> bool:
+    """Whether a merge of `ref` into the container's HEAD runs `--ff-only`.
+
+    `no_ff` is the tri-state `push_and_merge` and
+    `merge_container_into_container` both take: `True` always makes a merge
+    commit, `False` always demands a fast-forward, and `None` is automatic —
+    `--ff-only` when the container is already on `source`, a merge commit
+    otherwise. A same-name branch is a copy of the one arriving, so a merge
+    commit there would be noise — unless the container has commits of its own,
+    in which case no fast-forward exists and `confirm` is asked whether to make
+    a merge commit instead. `confirm=None` is the non-interactive path and
+    raises naming `--no-ff` rather than guessing.
+
+    Raises `SyncError` when the merge cannot or may not go ahead; nothing has
+    been merged then, and `declined_hint` closes the declined message with what
+    the caller's own command needs to finish the job.
+    """
+    from jailbee.tui import warn_plain
+
+    if no_ff is not None:
+        return not no_ff
+    if container_branch != source:
+        return False
+    divergence = _container_divergence(incus, full_name, repo_dir, ref, uid=uid)
+    # `divergence is None` is "unknown", and falls through to `--ff-only` on
+    # purpose — see `_container_divergence`.
+    if divergence is None or divergence[0] == 0:
+        return True
+    report = _divergence_report(source, container_branch, divergence[0], divergence[1])
+    if confirm is None:
+        raise SyncError(
+            f"{report}\nRe-run with --no-ff to merge with a merge commit instead, "
+            f"or resolve it yourself in `jailbee shell {short}`."
+        )
+    warn_plain(report)
+    if not confirm("Merge with a merge commit instead?"):
+        raise SyncError(
+            f"Merge of '{source}' into '{container_branch}' declined — a "
+            f"fast-forward is not possible and no merge commit was made. {declined_hint}"
+        )
+    return False
+
+
 def push_and_merge(
     cfg: Config,
     incus: Incus,
@@ -2736,7 +2792,6 @@ def push_and_merge(
     `push_to_container`.
     """
     from jailbee.lifecycle import container_repo_dir, resolve_container_name
-    from jailbee.tui import warn_plain
 
     full_name = resolve_container_name(cfg, incus, short)
 
@@ -2765,35 +2820,20 @@ def push_and_merge(
         tags=tags,
     )
 
-    if no_ff is not None:
-        fast_forward_only = not no_ff
-    else:
-        fast_forward_only = container_branch == push_result.source
-        if fast_forward_only:
-            divergence = _container_divergence(
-                incus, full_name, repo_dir, push_result.container_ref, uid=uid
-            )
-            # `divergence is None` is "unknown", and falls through to
-            # `--ff-only` on purpose — see `_container_divergence`.
-            if divergence is not None and divergence[0] > 0:
-                divergence_report = _divergence_report(
-                    push_result.source, container_branch, divergence[0], divergence[1]
-                )
-                if confirm is None:
-                    raise SyncError(
-                        f"{divergence_report}\nRe-run with --no-ff to merge with a "
-                        f"merge commit instead, or resolve it yourself in "
-                        f"`jailbee shell {short}`."
-                    )
-                warn_plain(divergence_report)
-                if not confirm("Merge with a merge commit instead?"):
-                    raise SyncError(
-                        f"Merge of '{push_result.source}' into '{container_branch}' "
-                        f"declined — a fast-forward is not possible and no merge "
-                        f"commit was made. The pushed ref is in place, so "
-                        f"--no-ff will finish the job without pushing again."
-                    )
-                fast_forward_only = False
+    fast_forward_only = _decide_fast_forward_only(
+        incus,
+        full_name,
+        repo_dir,
+        ref=push_result.container_ref,
+        source=push_result.source,
+        container_branch=container_branch,
+        no_ff=no_ff,
+        confirm=confirm,
+        short=short,
+        uid=uid,
+        declined_hint="The pushed ref is in place, so --no-ff will finish the job "
+        "without pushing again.",
+    )
 
     head_oid = _merge_ref_in_container(
         incus,
@@ -2822,6 +2862,8 @@ def merge_container_into_container(
     *,
     branch: str | None = None,
     plain: bool = False,
+    no_ff: bool | None = None,
+    confirm: ConfirmFn | None = None,
 ) -> MergeInContainerResult:
     """Merge container `source_short`'s branch into container `target_short`.
 
@@ -2861,6 +2903,12 @@ def merge_container_into_container(
     (unchanged by this call) and `fast_forward_only` is `False` as a sentinel
     for "no merge was attempted" — it is not meaningful, and a caller must not
     render fast-forward semantics from it.
+
+    `no_ff` / `confirm` pick the merge mode exactly as for `push_and_merge`
+    (see `_decide_fast_forward_only`). The automatic case matters more here
+    than there: two containers on the same branch name that have both been
+    worked in are diverged by construction, and a bare `--ff-only` could only
+    fail on them.
 
     Raises `SyncError` for user-visible problems and `MergeConflictError` when
     the merge leaves conflicts.
@@ -2924,7 +2972,20 @@ def merge_container_into_container(
             head_oid=_container_head_oid(incus, target_full, target_repo_dir, uid=uid),
         )
 
-    fast_forward_only = target_branch == fetch_result.branch
+    fast_forward_only = _decide_fast_forward_only(
+        incus,
+        target_full,
+        target_repo_dir,
+        ref=push_result.container_ref,
+        source=fetch_result.branch,
+        container_branch=target_branch,
+        no_ff=no_ff,
+        confirm=confirm,
+        short=target_short,
+        uid=uid,
+        declined_hint=f"The objects are in place as {push_result.container_ref}; "
+        f"re-run with --no-ff to make the merge commit.",
+    )
     # Read *before* the merge, and after the transport rather than with the
     # preflight: the transport cannot move it (`ff_container_branch` skips
     # HEAD's own branch), so both points are equivalent, and taking it here

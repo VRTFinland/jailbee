@@ -7252,34 +7252,33 @@ def _ff_only_divergence_hint(
 ) -> str | None:
     """Name the one merge failure whose git text does not explain itself.
 
-    `merge_container_into_container` merges with `--ff-only` exactly when the
-    branch read from the source is the one the target has checked out (the rule
-    is inherited from `push_and_merge`, which must not write a merge commit for
-    a same-name merge). git then refuses with "Not possible to fast-forward"
-    whenever the target has commits that branch does not contain — and the
-    `SyncError` carries only git's own line, which says nothing about there
-    being two containers involved.
+    `merge_container_into_container` checks for divergence before an automatic
+    `--ff-only` and turns it into a question (or an error naming `--no-ff`), so
+    git's own "Not possible to fast-forward" now surfaces only when the user
+    demanded a fast-forward with `--ff`, or when the divergence probe could not
+    be read. Either way the `SyncError` carries only git's line, which says
+    nothing about there being two containers involved — or about the objects
+    having already landed in the target.
+
+    The ref is read off git's command line in `reason` when it is there: `-b`
+    is usually not given, and the branch the source had checked out is known
+    only to `sync`. `<branch>` is the last resort, never the first.
 
     Returns None for every other failure. The exception's own text is reported
     either way; this is an addition to it, never a replacement.
-
-    Takes no `plain` flag on purpose: the closing advice names `--plain`
-    unconditionally because this cannot fire during a plain run.
-    `merge_container_into_container(plain=True)` returns before
-    `_merge_ref_in_container` is reached, so no merge — and no `--ff-only`
-    refusal — can happen there, and `ff_container_branch`, which does run under
-    `plain`, is best-effort and never raises. Should a plain run ever grow a
-    merge, this needs the flag.
     """
     if "Not possible to fast-forward" not in reason:
         return None
-    ref = f"refs/jailbee/from/{source}/{branch if branch is not None else '<branch>'}"
+    match = re.search(rf"refs/jailbee/from/{re.escape(source)}/[^\s`]+", reason)
+    if match is not None:
+        ref = match.group(0)
+    else:
+        ref = f"refs/jailbee/from/{source}/{branch if branch is not None else '<branch>'}"
     return (
-        f"the branch read from '{source}' is the one '{target}' has checked "
-        f"out, so the merge ran with --ff-only and git refused it: '{target}' "
-        f"has commits that branch does not. The objects did land in '{target}' "
-        f"as {ref} — merge them by hand there ('jailbee shell {target}', then "
-        f"'git merge {ref}'), or re-run with --plain to transport only."
+        f"'{target}' has commits that {ref} does not, so no fast-forward exists. "
+        f"The objects did land in '{target}' — merge them by hand there "
+        f"('jailbee shell {target}', then 'git merge {ref}'), or re-run with "
+        f"--no-ff to make a merge commit."
     )
 
 
@@ -7291,6 +7290,7 @@ def _print_merge_summary(
     *,
     plain: bool,
     branch: str | None,
+    ff: bool | None,
 ) -> None:
     """Say what landed in `target` and what did not — on every exit path.
 
@@ -7302,8 +7302,9 @@ def _print_merge_summary(
     would report work that did not happen.
 
     The resume recipe carries the flags that were in effect. Without them,
-    a `--plain` run's recipe would tell the user to run a real merge and a
-    `-b` run's would read the wrong branch.
+    a `--plain` run's recipe would tell the user to run a real merge, a
+    `-b` run's would read the wrong branch and an `--ff` run's would quietly
+    accept the merge commit the user refused.
 
     `warn_plain`/`info_plain`: `reason` is an exception's text, which is
     exactly the case those exist for — pydantic and git detail can carry
@@ -7328,6 +7329,8 @@ def _print_merge_summary(
         flags += f" -b {branch}"
     if plain:
         flags += " --plain"
+    if ff is not None:
+        flags += " --ff" if ff else " --no-ff"
     # The conflicted source is re-run too: the merge is finished by hand inside
     # the target, which makes the re-run a no-op fast-forward — and dropping it
     # would be wrong if the user aborts the merge instead of committing it.
@@ -7387,6 +7390,7 @@ def _merge_sources_into_target(
     *,
     branch: str | None,
     plain: bool,
+    ff: bool | None,
     heading: bool,
 ) -> _TargetOutcome:
     """Merge every source into one target, stopping at the first failure.
@@ -7406,9 +7410,13 @@ def _merge_sources_into_target(
     targets, where one target's per-source lines otherwise follow the previous
     target's resume recipe with nothing between them; a single target needs no
     boundary because there is nothing for it to be a boundary to.
+
+    `ff` is the `--ff/--no-ff` flag as given, `None` for neither. Only an
+    interactive run may be asked about a divergence, as for `jailbee git push
+    --merge`: off a TTY `confirm` is None and `sync` raises naming `--no-ff`.
     """
     from jailbee import git as git_helpers
-    from jailbee import sync
+    from jailbee import prompting, sync
     from jailbee.tui import console
 
     if heading:
@@ -7422,7 +7430,14 @@ def _merge_sources_into_target(
     for index, source in enumerate(sources):
         try:
             result = sync.merge_container_into_container(
-                cfg, incus, source, target, branch=branch, plain=plain
+                cfg,
+                incus,
+                source,
+                target,
+                branch=branch,
+                plain=plain,
+                no_ff=None if ff is None else not ff,
+                confirm=default_confirm if prompting.is_interactive() else None,
             )
         except sync.MergeConflictError as exc:
             error_plain(str(exc))
@@ -7446,7 +7461,7 @@ def _merge_sources_into_target(
         _print_container_merge_result(source, target, result, plain=plain)
         merged.append(source)
 
-    _print_merge_summary(target, merged, failure, remaining, plain=plain, branch=branch)
+    _print_merge_summary(target, merged, failure, remaining, plain=plain, branch=branch, ff=ff)
     return _TargetOutcome(target, merged, failure, remaining)
 
 
@@ -7640,6 +7655,16 @@ def git_merge(
         bool,
         typer.Option("--plain", help="Transport the refs only; run no merge."),
     ] = False,
+    ff: Annotated[
+        bool | None,
+        typer.Option(
+            "--ff/--no-ff",
+            help="How the merge runs. --no-ff always writes a merge commit; --ff "
+            "demands a fast-forward and fails on divergence. Default: fast-forward "
+            "when the target is on the branch read from the source, merge commit "
+            "otherwise, and a question first if that fast-forward is impossible.",
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Merge one container's branch into another, without a host checkout.
@@ -7665,6 +7690,13 @@ def git_merge(
     hide the rows the other end holds, and a typed collision is refused before
     anything is merged.
 
+    The merge is a fast-forward when the target is on the same branch the
+    source's was read from, and a merge commit otherwise. Two containers on
+    the same branch that have both been worked in cannot fast-forward: you
+    are shown both commit counts and asked whether to make a merge commit
+    instead (off a TTY the run stops naming --no-ff). --no-ff answers that up
+    front, and --ff refuses it.
+
     Either end may be left out on a TTY and is then asked for — the sources
     first, the targets second. Off a TTY both must be given.
 
@@ -7676,6 +7708,7 @@ def git_merge(
       jailbee git merge c1 --into c4 --into c5 # both targets take c1
       jailbee git merge c1                     # pick the targets only
       jailbee git merge c1 --into c4 --plain   # transport only
+      jailbee git merge c1 --into c4 --no-ff   # always a merge commit
       jailbee git merge c1 --into c4 -b feat/x # read feat/x from c1
     """
     from jailbee.lifecycle import short_name
@@ -7688,6 +7721,9 @@ def git_merge(
     # as many targets as were named.
     if branch is not None and sources is not None and len(sources) > 1:
         error("-b/--branch applies to a single source; pass one source or drop the flag.")
+        raise typer.Exit(2)
+    if ff is not None and plain:
+        error(f"{'--ff' if ff else '--no-ff'} chooses how the merge runs; --plain runs none.")
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
@@ -7732,7 +7768,14 @@ def git_merge(
 
     outcomes = [
         _merge_sources_into_target(
-            cfg, incus, resolved, target, branch=branch, plain=plain, heading=len(targets) > 1
+            cfg,
+            incus,
+            resolved,
+            target,
+            branch=branch,
+            plain=plain,
+            ff=ff,
+            heading=len(targets) > 1,
         )
         for target in targets
     ]

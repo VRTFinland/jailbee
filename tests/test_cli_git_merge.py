@@ -117,7 +117,10 @@ def test_git_merge_processes_sources_in_order(merge_repo, mocker):
     assert all(c.args[3] == "c4" for c in called.call_args_list)
     # cfg and incus are threaded through.
     assert all(c.args[0] is cfg and c.args[1] is incus for c in called.call_args_list)
-    assert all(c.kwargs == {"branch": None, "plain": False} for c in called.call_args_list)
+    assert all(
+        c.kwargs == {"branch": None, "plain": False, "no_ff": None, "confirm": None}
+        for c in called.call_args_list
+    )
     assert "merged into c4: c1, c2" in flat_output(result.output)
 
 
@@ -155,7 +158,7 @@ def test_git_merge_prints_the_submodule_moves_of_each_source(merge_repo, mocker)
     its own block, since each is a separate merge commit in the target.
     """
 
-    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False, **_kw):
         return _result(source=source, submodule_moves=(_move(f"deps/{source}-sub"),))
 
     mocker.patch("jailbee.sync.merge_container_into_container", side_effect=side_effect)
@@ -207,7 +210,7 @@ def test_git_merge_plain_reports_a_transport_not_a_merge(merge_repo, mocker):
 def test_git_merge_stops_at_the_first_conflict_and_says_what_landed(merge_repo, mocker):
     report = _conflict_report()
 
-    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False, **_kw):
         if source == "c2":
             raise MergeConflictError("conflicts", report=report)
         return _result(source=source)
@@ -298,25 +301,43 @@ def test_git_merge_resume_recipe_carries_the_branch_override(merge_repo, mocker)
 # --- the two outcomes that used to surface as raw git text ---------------------
 
 
-def test_git_merge_explains_a_same_name_ff_only_refusal(merge_repo, mocker):
-    """git's "Not possible to fast-forward" says nothing about two containers."""
+def test_git_merge_explains_a_fast_forward_refusal(merge_repo, mocker):
+    """git's "Not possible to fast-forward" says nothing about two containers.
+
+    The ref is read off git's own command line rather than left as a
+    `<branch>` placeholder: without `-b` the branch is known only to `sync`.
+    """
     mocker.patch(
         "jailbee.sync.merge_container_into_container",
         side_effect=SyncError(
-            "git merge failed in container 'c4': `incus exec c4` failed "
+            "git merge failed in container 'c4': `incus exec c4 -- git -C /repo merge "
+            "--ff-only refs/jailbee/from/c1/feat/a` failed "
             "(exit 128): fatal: Not possible to fast-forward, aborting."
         ),
     )
 
-    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", "--ff"])
 
     assert result.exit_code == 1
     flat = flat_output(result.output)
-    assert "the branch read from 'c1' is the one 'c4' has checked out" in flat
-    assert "--ff-only" in flat
-    assert "refs/jailbee/from/c1/<branch>" in flat
+    assert "'c4' has commits that refs/jailbee/from/c1/feat/a does not" in flat
+    assert "'git merge refs/jailbee/from/c1/feat/a'" in flat
+    assert "<branch>" not in flat
+    assert "re-run with --no-ff" in flat
     # git's own words are still reported, not replaced by the diagnosis.
     assert "Not possible to fast-forward" in flat
+
+
+def test_git_merge_hint_falls_back_to_the_branch_override(merge_repo, mocker):
+    mocker.patch(
+        "jailbee.sync.merge_container_into_container",
+        side_effect=SyncError("fatal: Not possible to fast-forward, aborting."),
+    )
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", "-b", "feat/x"])
+
+    assert result.exit_code == 1
+    assert "refs/jailbee/from/c1/feat/x" in flat_output(result.output)
 
 
 def test_git_merge_hint_is_silent_for_any_other_failure(merge_repo, mocker):
@@ -328,7 +349,55 @@ def test_git_merge_hint_is_silent_for_any_other_failure(merge_repo, mocker):
     result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
 
     assert result.exit_code == 1
-    assert "--ff-only" not in flat_output(result.output)
+    assert "no fast-forward exists" not in flat_output(result.output)
+
+
+# --- --ff / --no-ff ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("flag", "no_ff"), [("--ff", False), ("--no-ff", True)])
+def test_git_merge_threads_the_ff_flag_as_no_ff(flag, no_ff, merge_repo, mocker):
+    """`--ff` is "fast-forward only", the negation of `sync`'s `no_ff`."""
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", flag])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["no_ff"] is no_ff
+
+
+def test_git_merge_asks_about_a_divergence_only_on_a_tty(merge_repo, mocker):
+    """A piped run gets the error naming --no-ff, never a prompt it cannot answer."""
+    from jailbee.tui import default_confirm
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert called.call_args.kwargs["confirm"] is default_confirm
+
+
+@pytest.mark.parametrize("flag", ["--ff", "--no-ff"])
+def test_git_merge_rejects_an_ff_flag_with_plain(flag, merge_repo, mocker):
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", "--plain", flag])
+
+    assert result.exit_code == 2
+    called.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", ["--ff", "--no-ff"])
+def test_git_merge_resume_recipe_carries_the_ff_flag(flag, merge_repo, mocker):
+    """A `--ff` run's recipe must not quietly accept the merge commit it refused."""
+    mocker.patch("jailbee.sync.merge_container_into_container", side_effect=SyncError("boom"))
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4", flag])
+
+    assert result.exit_code == 1
+    assert f"jailbee git merge c1 --into c4 {flag}" in flat_output(result.output)
 
 
 def test_git_merge_warns_when_the_targets_own_branch_diverged(merge_repo, mocker):
@@ -430,7 +499,7 @@ def test_git_merge_carries_on_to_the_next_target_after_a_failure(merge_repo, moc
     working tree, untouched by that conflict, and is attempted in full.
     """
 
-    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False, **_kw):
         if (source, target) == ("c1", "t1"):
             raise MergeConflictError("conflicts", report=_conflict_report())
         return _result(source=source)
@@ -459,7 +528,7 @@ def test_git_merge_rolls_up_what_each_target_ended_with(merge_repo, mocker):
     attempted.
     """
 
-    def side_effect(cfg, incus, source, target, *, branch=None, plain=False):
+    def side_effect(cfg, incus, source, target, *, branch=None, plain=False, **_kw):
         if (source, target) == ("c2", "t1"):
             raise SyncError("Container 'c2' is not running.")
         return _result(source=source)
