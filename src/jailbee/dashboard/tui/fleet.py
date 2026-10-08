@@ -110,6 +110,7 @@ def table_model(
         folded=folded,
         column_widths=column_widths,
         shown_columns=shown_columns,
+        available=width,
     )
     view = column_viewport(widths, width, column_offset)
     shown = tuple(fields[index] for index in view.indices)

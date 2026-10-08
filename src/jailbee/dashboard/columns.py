@@ -411,9 +411,17 @@ def optimize_column_widths(
 
 
 def _dashboard_column_widths(
-    fields: list[FieldSpecCI], overrides: Mapping[str, int] | None = None
+    fields: list[FieldSpecCI],
+    overrides: Mapping[str, int] | None = None,
+    *,
+    widest: Mapping[str, int] | None = None,
+    available: int | None = None,
 ) -> tuple[int, ...]:
-    """Choose stable per-column budgets from field metadata and headers."""
+    """Choose stable per-column budgets from field metadata and headers.
+
+    Given ``available`` and each capped field's ``widest`` cell, width the
+    table leaves unused goes to those fields (see :func:`_spend_slack`).
+    """
     widths: list[int] = []
     for index, field_spec in enumerate(fields):
         cells = max(
@@ -426,7 +434,41 @@ def _dashboard_column_widths(
         if overrides is not None and field_spec.name in overrides:
             cells = overrides[field_spec.name]
         widths.append(cells + (2 if index == 0 else 0))
+    if widest is not None and available is not None:
+        _spend_slack(fields, widths, widest, available)
     return tuple(widths)
+
+
+# Columns whose cut text spare width may reveal. Only values that hold still
+# between refreshes: `doing` (process names, new every tick) would shift every
+# column to its right on each refresh if it grew with its content.
+SLACK_FIELDS = frozenset({"agent", "job"})
+
+
+def _spend_slack(
+    fields: list[FieldSpecCI], widths: list[int], widest: Mapping[str, int], available: int
+) -> None:
+    """Widen ``SLACK_FIELDS`` toward their widest cell with width nothing else uses.
+
+    Costs follow :mod:`jailbee.dashboard.viewport`: the first column its width,
+    each later one its width plus 2. Slack goes to ``SLACK_FIELDS``, in field
+    order, and never past the widest cell —
+    it shows truncated text, it never pads. With no slack nothing changes, so
+    the offset clamp, which only matters when columns do not fit, needs none.
+    """
+    if not widths:
+        return
+    slack = available - (widths[0] + sum(width + 2 for width in widths[1:]))
+    for index, field_spec in enumerate(fields):
+        if slack <= 0:
+            return
+        if field_spec.name not in SLACK_FIELDS:
+            continue
+        indent = 2 if index == 0 else 0
+        grow = min(slack, widest.get(field_spec.name, 0) + indent - widths[index])
+        if grow > 0:
+            widths[index] += grow
+            slack -= grow
 
 
 def _frame_columns(
@@ -437,10 +479,13 @@ def _frame_columns(
     folded: frozenset[str],
     column_widths: Mapping[str, int] | None,
     shown_columns: Sequence[str] | None,
+    available: int | None = None,
 ) -> tuple[list[FieldSpecCI], tuple[int, ...]]:
     """The frame's columns and their budgets: what :func:`render` lays out.
 
     Shared with the key loop's offset clamp, so both see the same columns.
+    ``available``: the table's width, to spend slack on capped columns; None
+    keeps the budgets.
     """
     visible = [c for g in groups if g.prefix not in folded for c in g.containers]
     fields = _select_visible_fields(
@@ -451,7 +496,18 @@ def _frame_columns(
         else shown_columns,
         apply_conditions=False,
     )
-    return fields, _dashboard_column_widths(fields, column_widths)
+    widest = (
+        None
+        if available is None
+        else {
+            spec.name: max((Text.from_markup(spec.cell(c)).cell_len for c in visible), default=0)
+            for spec in fields
+            if spec.dashboard_max_width is not None
+        }
+    )
+    return fields, _dashboard_column_widths(
+        fields, column_widths, widest=widest, available=available
+    )
 
 
 def clamp_column_offset(
