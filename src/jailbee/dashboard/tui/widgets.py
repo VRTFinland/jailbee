@@ -462,8 +462,8 @@ class DashboardFrame(Vertical):
         if old is None:
             self._mount_native(box)
         else:
-            # Both boxes hold a child with the fixed id `native-list`; Textual
-            # refuses the duplicate until the old box has left the DOM.
+            # Never have two boxes mounted (and focusable) at once: the replacement
+            # is mounted only after the old one has left the DOM.
             self.app.call_later(self._swap_native, old, box)
         return box
 

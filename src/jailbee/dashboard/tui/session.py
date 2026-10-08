@@ -1769,7 +1769,7 @@ class DashboardSession:
         return None
 
     def overlay_move(self, step: int) -> None:
-        """Move the open list overlay's cursor; other overlays ignore it."""
+        """Move the highlight of the text prompt's suggestions; no other overlay takes it."""
         overlay = self.overlay
         if isinstance(overlay, TextPrompt) and overlay.suggestions:
             self._prompt_key(overlay, b"\x1b[B" if step > 0 else b"\x1b[A")
@@ -2007,7 +2007,7 @@ class DashboardSession:
                 self._prompt_key(replace(overlay, highlight=index), b"\r")
 
     def wheel(self, step: int, *, columns: bool = False) -> None:
-        """A wheel notch: the open list's cursor, or columns sideways without an overlay."""
+        """A wheel notch: the prompt's suggestions, or columns sideways without an overlay."""
         if columns:
             if self.overlay is None:
                 self.scroll_columns(step)

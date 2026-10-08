@@ -1822,3 +1822,41 @@ def test_the_active_settings_tab_is_reversed_and_the_others_are_not(mocker, tmp_
     drive(mocker, ["S", probe], [alpha_group(tmp_path)])
     assert seen["Fields"] is True  # a terminal attribute, not a painted background
     assert not seen["Repos"] and not seen["Visibility"]
+
+
+def test_a_double_click_on_a_menu_group_opens_it_and_dispatches_nothing(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    dispatched = mocker.patch.object(tsession.DashboardSession, "dispatch", autospec=True)
+    run = drive(mocker, ["j", "enter", Pick(_group_row(menu, "Git →"), times=2)], [group])
+    assert run.natives[3] == NativeState("menu", 0, level="Git →")
+    dispatched.assert_not_called()  # the second click must not land on the new level's row
+
+
+def test_a_double_click_on_a_settings_row_toggles_it_once(mocker, tmp_path):
+    save = mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", Pick(2, times=2)], [alpha_group(tmp_path)])
+    field = run.trace[1].overlay.field_names[2]
+    assert (field in run.trace[2].overlay.enabled) != (field in run.trace[1].overlay.enabled)
+    assert save.call_count == 1
+
+
+def test_a_triple_click_on_an_accounts_row_opens_the_actions_and_picks_none(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    chosen = mocker.patch.object(
+        tsession.DashboardSession, "submit_picker", autospec=True, return_value=None
+    )
+    run = drive(mocker, ["A", Pick(1, times=3)], [alpha_group(tmp_path)])
+    assert isinstance(run.trace[2].overlay, tsession.Picker)
+    assert run.trace[2].overlay.title == "Login b@x.io~2 (claude)"
+    chosen.assert_not_called()
+
+
+def test_a_double_click_on_a_picker_entry_chooses_once(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    chosen = mocker.patch.object(
+        tsession.DashboardSession, "submit_picker", autospec=True, return_value=None
+    )
+    drive(mocker, [*_apply_picker(group), Pick(1, times=2)], [group])
+    assert chosen.call_count == 1

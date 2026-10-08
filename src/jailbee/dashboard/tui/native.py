@@ -111,13 +111,14 @@ def _hovered(lst: OptionList, y: int, strip: Strip) -> Strip:
     hover is painted here. Reads two private attributes of Textual 8.2.8's
     OptionList: ``_mouse_hovering_over`` (option index) and ``_lines``
     ((option index, line offset) per virtual line). The highlighted option
-    keeps its own style, as Textual's precedence does.
+    keeps its own style, as Textual's precedence does. Read with ``getattr``: a
+    renamed attribute (this pins Textual 8.2.8) degrades to no hover paint.
     """
-    hovered = lst._mouse_hovering_over
+    hovered = getattr(lst, "_mouse_hovering_over", None)
     if hovered is None or hovered == lst.highlighted:
         return strip
     line = lst.scroll_offset.y + y
-    lines = lst._lines
+    lines = getattr(lst, "_lines", None) or []
     if 0 <= line < len(lines) and lines[line][0] == hovered:
         # post_style: the option's own (default) background would win over a plain apply_style
         return Strip(Segment.apply_style(strip, post_style=HOVER_STYLE), strip.cell_length)
@@ -148,6 +149,12 @@ class OverlayList(OptionList, can_focus=True):
             event.stop()
             event.prevent_default()
             return
+        # Only the first click (or, for the double-click lists, the second) acts: a
+        # repeat would land on whatever the first one opened under the pointer.
+        if event.chain > (2 if self.double_click_chooses else 1):
+            event.stop()
+            event.prevent_default()
+            return
         if not self.double_click_chooses:
             return  # OptionList's own handler highlights and chooses
         # Egress and accounts rows: one click highlights, the second chooses.
@@ -155,7 +162,7 @@ class OverlayList(OptionList, can_focus=True):
         index = event.style.meta.get("option")
         if isinstance(index, int) and not self.get_option_at_index(index).disabled:
             self.highlighted = index
-            if event.chain >= 2:
+            if event.chain == 2:
                 self.action_select()
 
     def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
@@ -514,7 +521,7 @@ class SettingsList(SelectionList[str], can_focus=True):
         self.mouse_enabled = mouse_enabled
 
     async def _on_click(self, event: events.Click) -> None:
-        if not self.mouse_enabled():
+        if not self.mouse_enabled() or event.chain > 1:  # a double click must not toggle twice
             event.stop()
             event.prevent_default()
 

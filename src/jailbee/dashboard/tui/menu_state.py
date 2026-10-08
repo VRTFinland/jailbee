@@ -253,7 +253,7 @@ _MENU_KEYS: dict[str, str] = {
     dact.REPO_DISK_USAGE: "u",
 }
 
-# Tokens the open menu already answers (`run`'s overlay branch); their keys
+# Tokens the open menu already answers (the menu box's own key handling); their keys
 # can never be an entry's own.
 _MENU_HANDLED_TOKENS = frozenset(
     {"up", "down", "enter", "cancel", "quit", "help", "settings", "interrupt"}
