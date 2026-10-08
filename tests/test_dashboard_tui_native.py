@@ -36,6 +36,7 @@ from tests.dashboard_fixtures import (
     ACCOUNT_ROWS,
     alpha_group,
     cfg_group,
+    ci,
     fake_accounts_cli,
     groups_listing,
     named_rows_group,
@@ -1761,3 +1762,37 @@ def test_n_posts_the_highlighted_row_as_the_index(mocker, tmp_path):
     fake_accounts_cli(mocker)
     run = drive(mocker, ["A", "j", "n"], [alpha_group(tmp_path)])
     assert run.trace[3].overlay.back.start_index == 1
+
+
+def _open_each_box(group):  # type: ignore[no-untyped-def]
+    return {
+        "help": ["h"],
+        "menu": ["j", "enter"],
+        "picker": repo_menu_keys(group, "apply"),
+        "settings": ["S"],
+        "egress": container_egress_keys(group),
+        "accounts": ["A"],
+    }
+
+
+@pytest.mark.parametrize("kind", ["help", "menu", "picker", "settings", "egress", "accounts"])
+def test_every_native_box_paints_no_background(mocker, tmp_path, monkeypatch, kind):
+    monkeypatch.delenv("NO_COLOR")  # else Textual strips every colour and the scan proves nothing
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    fake_accounts_cli(mocker)
+    mocker.patch.object(tsession, "load_egress_rows", return_value=FIRST)
+    seen: list[tuple[set[str], str | None]] = []
+    run = drive(
+        mocker,
+        [
+            *_open_each_box(group)[kind],
+            lambda app: seen.append(
+                (backgrounds(app), None if app.frame.native_box is None else kind)
+            ),
+        ],
+        [group],
+    )
+    assert run.natives  # the app ran
+    scanned, box_kind = seen[0]
+    assert box_kind == kind  # a native box was open when the screen was scanned
+    assert scanned and scanned <= {"default"}

@@ -10,7 +10,7 @@ import pytest
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.db.view_prefs import ViewState
-from tests.dashboard_fixtures import WIDE, ci
+from tests.dashboard_fixtures import WIDE, ci, fake_accounts_cli
 from tests.dashboard_pilot import FROZEN_NOW, make_app
 
 
@@ -53,7 +53,6 @@ def test_snapshot_table(snap_compare, mocker, groups):
     assert snap_compare(app, terminal_size=(100, 30))
 
 
-@pytest.mark.xfail(strict=True, reason="Task 7 regenerates")
 def test_snapshot_menu_details(snap_compare, mocker, groups):
     app = make_app(mocker, groups, view_state=ViewState(show_details=False))
 
@@ -67,7 +66,6 @@ def test_snapshot_menu_details(snap_compare, mocker, groups):
     assert snap_compare(app, terminal_size=(120, 30), run_before=open_menu)
 
 
-@pytest.mark.xfail(strict=True, reason="Task 7 regenerates")
 def test_snapshot_settings(snap_compare, mocker, groups):
     app = make_app(mocker, groups)
 
@@ -77,6 +75,18 @@ def test_snapshot_settings(snap_compare, mocker, groups):
         assert app.session.overlay is not None
 
     assert snap_compare(app, terminal_size=(100, 30), run_before=open_settings)
+
+
+def test_snapshot_accounts(snap_compare, mocker, groups):
+    fake_accounts_cli(mocker)
+    app = make_app(mocker, groups)
+
+    async def open_accounts(pilot):
+        await pilot.press("A")
+        await pilot.pause()
+        assert app.session.overlay is not None
+
+    assert snap_compare(app, terminal_size=(100, 30), run_before=open_accounts)
 
 
 def test_snapshot_narrow(snap_compare, mocker, groups):

@@ -1655,8 +1655,7 @@ class DashboardSession:
         if key == "interrupt":
             return "quit"
         if overlay is not None:
-            self._overlay_key(overlay, key, data)
-            return None
+            return None  # a native box has the focus; its keys never come through here
         if key == "quit":
             return "quit"
         return self._table_key(key)
@@ -1722,27 +1721,6 @@ class DashboardSession:
             self.overlay = self.submit_prompt(prompt)
         else:
             self.overlay = prompt
-
-    def _overlay_key(self, overlay: Overlay, key: str, data: bytes) -> None:
-        """A key while an overlay is open (not a text input, not a picker cancel)."""
-        if key == "quit":
-            self.overlay = None
-        elif key == "cancel":
-            self.overlay_cancel()
-        elif key == "help":
-            # One slot, so help replaces the menu rather than stacking on it —
-            # and toggles itself shut.
-            self.overlay = None if overlay == "help" else "help"
-        elif key == "settings":
-            # Mirrors help's own toggle, one line up: F2/S
-            # switches to settings from any other overlay (the
-            # action menu, help) instead of just closing it, and
-            # toggles itself shut when settings is already open.
-            self.overlay = (
-                None if isinstance(overlay, SettingsState) else self.open_settings_overlay()
-            )
-        elif key in ("up", "down"):
-            self.overlay_move(-1 if key == "up" else 1)
 
     def picker_chosen(self, entry: PickerEntry) -> None:
         """A picker entry was chosen: run its step and show what comes next."""

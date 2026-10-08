@@ -59,9 +59,9 @@ def _table(groups, *, width=120, enabled=None, column_offset=0):
 
 
 def test_hit_round_trips_through_style_meta_and_markup():
-    hit = dhit.Hit("picker", (3,))
-    assert dhit.Hit.of(dhit.hit_style("picker", 3).meta) == hit
-    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "picker", 3))
+    hit = dhit.Hit("suggestion", (3,))
+    assert dhit.Hit.of(dhit.hit_style("suggestion", 3).meta) == hit
+    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "suggestion", 3))
     assert dhit.Hit.of(text.spans[0].style.meta) == hit  # type: ignore[union-attr]  # markup spans carry Style objects
     assert dhit.Hit.of({}) is None
     assert dhit.Hit.of({dhit.HIT_KEY: "garbage"}) is None

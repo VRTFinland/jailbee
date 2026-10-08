@@ -132,8 +132,8 @@ def _hint_line(overlay: Overlay | None) -> str:
     return ""
 
 
-def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
-    """The overlay's panel; ``max_rows`` windows the scrollable list overlays."""
+def _render_overlay(overlay: Overlay) -> RenderableType:
+    """The panel of the prompt or the command line (the list overlays are native boxes)."""
     if isinstance(overlay, CommandState):
         lines = [f"> {overlay.text}▏"]
         if overlay.suggestions:

@@ -349,6 +349,8 @@ class _CropTop:
 
 
 class OverlayPanel(Static):
+    """The prompt and the command line, drawn by Rich until V3b; list overlays are native."""
+
     DEFAULT_CSS = (
         "OverlayPanel { width: auto; height: auto; background: ansi_default; color: ansi_default; }"
     )
@@ -518,10 +520,10 @@ class DashboardFrame(Vertical):
             else None
         )
 
-        def overlay_renderable(list_rows: int) -> RenderableType | None:
+        def overlay_renderable() -> RenderableType | None:
             if legacy is None:
                 return None
-            return HoverHighlight(_render_overlay(legacy, list_rows), overlay_hover)
+            return HoverHighlight(_render_overlay(legacy), overlay_hover)
 
         def bottom_lines(list_rows: int, details_rows: int | None) -> int:
             beside = details is not None and details_rows is not None and (overlay is None or menu)
@@ -529,7 +531,7 @@ class DashboardFrame(Vertical):
             if box is not None:
                 return max(shown_details, min(box.content_rows(), list_rows) + box.chrome_rows())
             overlay_at = menu_width if beside else width
-            return max(shown_details, lines(overlay_renderable(list_rows), overlay_at))
+            return max(shown_details, lines(overlay_renderable(), overlay_at))
 
         table_lines = fleet.line_count(view.groups, view.folded)
         if not view.groups:
@@ -598,7 +600,7 @@ class DashboardFrame(Vertical):
         panel.styles.width = menu_width if beside and legacy is not None else "1fr"
         overlay_input = (legacy, layout.list_rows, overlay_hover, layout.crop_top)
         if overlay_input != self._overlay_input:
-            panel.show(overlay_renderable(layout.list_rows), layout.crop_top)
+            panel.show(overlay_renderable(), layout.crop_top)
             self._overlay_input = overlay_input
         hint_widget = self.query_one("#hint", Static)
         hint_widget.display = hint is not None
