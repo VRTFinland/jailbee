@@ -2202,8 +2202,12 @@ something has one" still applies to a hidden-by-config column, unlike
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
 DIFF ±, ↑, ↓, MERGE, plus the dynamic columns below when they apply. The
-dashboards add MEM, CPU, DOING and AI (`agent_compact`); the
-compact agent status omits agent names to save width. The full AGENT column
+dashboards add USED and MEM% (`mem_used`, `mem_pct`), CPU, AI
+(`agent_compact`) and OUTBOX (`outbox`), and leave out ISSUES — OUTBOX carries
+that count together with the PR outbox's. The compact agent status omits agent
+names to save width. MEM (`mem`, used / limit), LIMIT (`memory_limit`), DOING
+and ISSUES stay selectable in the dashboard settings; the details panel always
+lists every busy process. The full AGENT column
 includes those names and is available by selecting it in dashboard settings.
 CPU and DOING are rates and have no value at all in a single reading, so `ls`
 takes a second one when you name either in `--fields`. Either agent field
@@ -2212,23 +2216,23 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
-**AGE** (elapsed seconds/minutes/hours/days), network **NET** (**●** strict,
-**○** loose), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
-limit **LIMIT**, loose deadline **UNTIL**, and pending issues **ISS**. **AI** uses
-◆ waiting, ● busy, ◐ shell, ○ idle, and ? for an unknown agent state. Full
+**AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline — Qt cards use the same marks), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
+limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
+◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
 for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
-the TUI's `h` help contains the legend. MERGE and PR retain their meanings.
+the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). The first time a dashboard opens after this change, a stored column set is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
 
-Six columns are dynamic and appear only when they have
+Seven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
 in loose mode), `pr` (a container tracks a PR), `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant),
-`issues` (a container has pending issue-outbox actions) and `group` (a
+`issues` (a container has pending issue-outbox actions), `outbox` (a
+container has staged PR or issue manifests) and `group` (a
 container resolves to a credential group).
 
 **Table output only.** `jailbee ls --format json` always emits its own built-in

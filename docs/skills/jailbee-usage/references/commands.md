@@ -606,8 +606,8 @@ in.
 
 The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
 columns. **IP**, **MEM**, **CPU**, **DOING**, **AGENT** and **AGENT_COMPACT** are *not* in
-it — reach any of them from `ls` with `--fields ip,mem,cpu,doing,agent,agent_compact`.
-The dashboards' own default set adds **MEM**, **CPU**, **DOING** and **AGENT_COMPACT**;
+it — reach any of them from `ls` with `--fields ip,mem,mem_used,mem_pct,cpu,doing,agent,agent_compact,outbox`.
+The dashboards' own default set adds **USED** and **MEM%** (`mem_used`, `mem_pct`), **CPU**, **AGENT_COMPACT** and **OUTBOX**, and drops **ISSUES** (OUTBOX counts PR and issue manifests together); **MEM**, **DOING** and **ISSUES** stay selectable in the dashboard settings;
 choose either agent column in dashboard settings. **IP** is off by default in
 both — enable it in the dashboard settings (see below) if you want it there
 instead. CPU and DOING are *rates*, measured between two readings, so `ls`
@@ -671,14 +671,14 @@ ignores `fields` entirely.
 ### `jailbee dashboard` (alias: `jailbee tui`)
 
 Both dashboards use compact presentation, without changing `ls` or JSON:
-ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), NET = ● strict / ○ loose,
+ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), LOOSE = empty for strict, red ● plus the remaining auto-revert time (`● 45m`, `● ∞` = no deadline) for loose,
 AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
-◐ shell, ○ idle). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
+◐ shell, ○ idle; a bright ○ went idle under 30 minutes ago). USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
 use ✓ for clean. DIFF compares against the host target, L DIFF against
 checked-out host HEAD. TUI details and Qt tooltips retain network expiry times;
-Qt cards also show the remaining TTL inline. DOING uses ×N process counts. JOB
+Qt cards show the same LOOSE marks. DOING uses ×N process counts. JOB
 shortens working verbs and uses auto:stage, while failed and (dead) remain distinct.
-Full AGENT, MERGE and PR stay unchanged. Qt table tooltips provide full
+Full AGENT and MERGE stay unchanged. Qt table tooltips provide full
 meanings, exact timestamps and agent details; `h` shows the TUI legend.
 
 Live, auto-refreshing TUI of all JailBee containers across registered repos + the cwd

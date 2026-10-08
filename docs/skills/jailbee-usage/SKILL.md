@@ -1428,10 +1428,8 @@ command that publishes them later.
 
 `jailbee ls`'s PR column shows `✉N` for N manifests waiting (even before any
 PR exists, since a container can hold a description ahead of `jailbee pr`
-opening one) — same marker on the dashboard cards, which also gain an
-"Apply N PR action(s)" entry. The ISSUES column right after PR shows the same
-`✉N` for the container's issue outbox (see **jailbee-issue-management**),
-with its own "Apply N issue action(s)" dashboard entry. `jailbee destroy`
+opening one). The ISSUES column right after PR shows the same
+`✉N` for the container's issue outbox (see **jailbee-issue-management**). The dashboards fold both into one OUTBOX column (`✉N` = PR plus issue manifests; their PR cell shows only the number), the Qt cards show the same `✉N`, and the container menu offers "Apply N PR action(s)" and "Apply N issue action(s)" entries. `jailbee destroy`
 warns about unapplied PR actions the same way it warns about an unpushed
 commit, since destroying the container takes the outbox with it — and about
 unapplied issue actions the same way.
@@ -1461,7 +1459,7 @@ it mutates anything. An action whose outcome could not be confirmed is
 journaled `uncertain` and blocks its manifest until `jailbee issue resolve
 [NAME] [MANIFEST] [ACTION] --applied --url URL` (it did land) or `--retry`;
 off a terminal the container, manifest, action, mode and URL must all be given. Pending
-issue actions show in `jailbee ls`'s ISSUES column, as an "Apply N issue
+issue actions show in `jailbee ls`'s ISSUES column and the dashboards' OUTBOX column, as an "Apply N issue
 action(s)" dashboard entry and in the pre-destroy warning. The manifest format
 is the **jailbee-issue-management** skill's; flags are in
 [`references/commands.md`](references/commands.md#issue-management-outbox).
