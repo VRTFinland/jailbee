@@ -173,7 +173,7 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def on_key(self, event: events.Key) -> None:
         if self.frame.native_box is not None:
-            self._native_key(event)
+            self._on_native_key(event)
             return
         data = legacy_bytes(event.key, event.character)
         if data is None:
@@ -182,7 +182,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         event.prevent_default()
         self._after(self.session.handle_input(data))
 
-    def _native_key(self, event: events.Key) -> None:
+    def _on_native_key(self, event: events.Key) -> None:
         """A key while a native overlay has the focus: only the global ones are ours.
 
         The box's own keys reach it through its `on_key` (before this handler)

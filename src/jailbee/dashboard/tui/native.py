@@ -248,6 +248,7 @@ class HelpBox(OverlayBox):
     def __init__(self, spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self._lines = help_lines()
+        self._rows = self._wrapped_rows()
         self.border_title = "keys"
 
     def compose(self) -> ComposeResult:
@@ -255,13 +256,16 @@ class HelpBox(OverlayBox):
             Static(Text.from_markup("\n".join(self._lines))), mouse_enabled=self.mouse_enabled
         )
 
-    def content_rows(self) -> int:
-        """Screen rows of the help once its long lines wrap inside the box."""
+    def _wrapped_rows(self) -> int:
         console = Console()
         return sum(
             max(1, len(Text.from_markup(line).wrap(console, self.WRAP_WIDTH)))
             for line in self._lines
         )
+
+    def content_rows(self) -> int:
+        """Screen rows of the help once its long lines wrap inside the box."""
+        return self._rows
 
     def natural_width(self) -> int | None:
         return self.HELP_WIDTH

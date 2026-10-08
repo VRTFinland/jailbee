@@ -428,7 +428,7 @@ class DashboardFrame(Vertical):
         self._notice_input: object = None
         self._hint_input: object = None
         self.native_box: OverlayBox | None = None
-        self._native_key: tuple[object, ...] | None = None
+        self._native_overlay_key: tuple[object, ...] | None = None
 
     def compose(self) -> ComposeResult:
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
@@ -446,20 +446,38 @@ class DashboardFrame(Vertical):
         """Keep, refresh, replace or drop the native box for ``overlay``."""
         key = overlay_key(overlay) if is_native(overlay) else None
         box = self.native_box
-        if box is not None and key == self._native_key:
+        if box is not None and key == self._native_overlay_key:
             assert overlay is not None
             box.show(overlay)
             return box
-        if box is not None:
-            box.remove()
-            self.native_box = None
-        self._native_key = key
+        old = box
+        self._native_overlay_key = key
+        self.native_box = None
         if key is None or overlay is None:
+            if old is not None and old.parent is not None:
+                old.remove()
             return None
         box = build_box(overlay, mouse_enabled=self.mouse_enabled)
-        self.query_one("#bottom", Horizontal).mount(box, before=self.query_one(OverlayPanel))
         self.native_box = box
+        if old is None:
+            self._mount_native(box)
+        else:
+            # Both boxes hold a child with the fixed id `native-list`; Textual
+            # refuses the duplicate until the old box has left the DOM.
+            self.app.call_later(self._swap_native, old, box)
         return box
+
+    def _mount_native(self, box: OverlayBox) -> None:
+        self.query_one("#bottom", Horizontal).mount(box, before=self.query_one(OverlayPanel))
+
+    async def _swap_native(self, old: OverlayBox, box: OverlayBox) -> None:
+        """Replace ``old`` by ``box`` once ``old`` is gone (unless superseded)."""
+        if old.parent is not None:
+            await old.remove()
+        if self.native_box is box:
+            await self.query_one("#bottom", Horizontal).mount(
+                box, before=self.query_one(OverlayPanel)
+            )
 
     def native_state(self) -> NativeState | None:
         box = self.native_box
