@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+from textual.widgets import Input
 
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui import frame as tframe
@@ -10,7 +13,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
 from tests.dashboard_fixtures import alpha_group
-from tests.dashboard_pilot import NATIVE_LIST, Click, backgrounds, drive
+from tests.dashboard_pilot import NATIVE_LIST, Click, backgrounds, drive, make_app
 
 
 def test_help_is_native_and_keyed():
@@ -74,10 +77,46 @@ def test_tab_in_help_keeps_focus(mocker, tmp_path):
     focused = []
     drive(
         mocker,
-        ["h", "tab", lambda app: focused.append(app.focused and app.focused.id)],
+        [
+            "h",
+            # A second focusable widget, so Screen's tab cycling has somewhere to go.
+            lambda app: app.screen.mount(Input(id="other")),
+            "tab",
+            lambda app: focused.append(app.focused and app.focused.id),
+        ],
         [alpha_group(tmp_path)],
     )
     assert focused == ["native-list"]
+
+
+def test_a_click_inside_the_help_box_leaves_it_open(mocker, tmp_path):
+    app = make_app(mocker, [alpha_group(tmp_path)])
+
+    async def main() -> None:
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause()
+            await pilot.press("h")
+            await pilot.pause()
+            await pilot.click(NATIVE_LIST)
+            await pilot.pause()
+
+    asyncio.run(main())
+    assert app.session.overlay == "help"
+
+
+def test_a_refresh_keeps_the_mounted_box(mocker, tmp_path):
+    boxes = []
+    drive(
+        mocker,
+        [
+            "h",
+            lambda app: boxes.append(app.frame.native_box),
+            lambda app: setattr(app, "_painted", None),  # the next refresh reaches `show`
+            lambda app: boxes.append(app.frame.native_box),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert boxes[0] is not None and boxes[1] is boxes[0]
 
 
 def test_s_from_help_opens_settings(mocker, tmp_path):
