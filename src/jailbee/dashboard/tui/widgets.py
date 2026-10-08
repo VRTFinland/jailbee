@@ -60,6 +60,12 @@ class FleetTable(ScrollView, can_focus=False):
         color: ansi_default;
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 0;
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
+        scrollbar-color: ansi_default;
+        scrollbar-color-hover: ansi_default;
+        scrollbar-color-active: ansi_default;
     }
     """
 

@@ -75,6 +75,27 @@ def _screen(app):  # type: ignore[no-untyped-def]
     return [s.text for s in app.screen._compositor.render_strips()]
 
 
+@pytest.mark.parametrize("state", ["normal", "hover", "active"])
+def test_scrollbar_uses_terminal_default_colors(state):
+    async def script(app, table, pilot):  # type: ignore[no-untyped-def]
+        table.show(_model(), None, None)
+        await pilot.pause()
+        bar = table.vertical_scrollbar
+        bar.mouse_over = state == "hover"
+        if state == "active":
+            from textual.geometry import Offset
+
+            bar.grabbed = Offset(0, 1)
+        rendered = list(app.console.render(bar.render()))
+        assert rendered
+        for segment in rendered:
+            if segment.style is not None:
+                assert segment.style.bgcolor is None or segment.style.bgcolor.is_default
+                assert segment.style.color is None or segment.style.color.is_default
+
+    _run(script)
+
+
 def test_frozen_header_scrolled_hits_and_incremental_hover():
     async def script(app, table, pilot):  # type: ignore[no-untyped-def]
         model = _model()
