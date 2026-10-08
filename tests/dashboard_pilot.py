@@ -36,6 +36,7 @@ from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
+_MAX_CALLBACK_PAUSES = 50  # pauses after a callable step before the run moves on regardless
 _MAX_SETTLE_PAUSES = 20  # pauses before a resize whose layout keeps changing fails
 # Pilot's wait_for_idle sleeps this long per poll (20 ms by default, twice per
 # key press); the session is synchronous, so a poll of 1 ms is as deterministic.
@@ -342,7 +343,12 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
     else:
         step(app)
         app.refresh_frame()
-        await pilot.pause()
+        # Under load one pause is not enough for posted keys to be handled and a
+        # box they open to mount; wait (bounded) until nothing is pending.
+        for _ in range(_MAX_CALLBACK_PAUSES):
+            await pilot.pause()
+            if not _in_flight(app):
+                break
 
 
 def make_app(  # type: ignore[no-untyped-def]
