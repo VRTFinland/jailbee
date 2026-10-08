@@ -137,6 +137,22 @@ def test_rich_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(heig
     assert ["".join(segment.text for segment in line) for line in lines] == expected
 
 
+@pytest.mark.parametrize(
+    "hidden, expected",
+    [(False, "(no containers found)"),
+     (True, "All repositories are hidden — open Settings > Visibility to show them")],
+)
+def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected):
+    console = Console(width=20)
+    sections = tframe._RepoSections(
+        [], datetime(2026, 10, 8, tzinfo=UTC), None, frozenset(), None, None, 0, hidden, None
+    )
+    body = tframe._FrameBody(sections, None, None, max_height=10)
+    lines = console.render_lines(body, console.options, pad=False)
+    words = " ".join("".join(segment.text for segment in line).strip() for line in lines)
+    assert words == expected
+
+
 def test_layout_constants_preserve_the_frame_export():
     from jailbee.dashboard.tui.layout import MIN_DETAILS_ROWS, MIN_TABLE_ROWS, OVERLAY_BORDER_ROWS
 

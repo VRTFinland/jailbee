@@ -503,9 +503,16 @@ class _FrameBody:
             bottom_lines_rendered = [] if bottom is None else lines_of(bottom)
             return len(bottom_lines_rendered)
 
+        # Fleet entries are one physical line; the no-groups instruction wraps.
+        placeholder_lines = lines_of(self.sections) if not self.sections.groups else None
+        natural_table_lines = (
+            len(placeholder_lines)
+            if placeholder_lines is not None
+            else line_count(self.sections.groups, self.sections.folded)
+        )
         layout = frame_layout(
             height=self.max_height,
-            table_lines=line_count(self.sections.groups, self.sections.folded),
+            table_lines=natural_table_lines,
             notice_lines=len(notice_lines),
             hint_lines=len(hint_lines),
             has_bottom=self.overlay is not None or self.details is not None,
@@ -514,7 +521,9 @@ class _FrameBody:
             bottom_lines=bottom_lines,
         )
         table_lines = (
-            lines_of(replace(self.sections, max_rows=layout.table_rows))
+            placeholder_lines
+            if placeholder_lines is not None
+            else lines_of(replace(self.sections, max_rows=layout.table_rows))
             if layout.table_rows
             else []
         )
