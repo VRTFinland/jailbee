@@ -35,6 +35,45 @@ if TYPE_CHECKING:
 
 FieldSpecCI = table_format.FieldSpec[ContainerInfo]
 
+# Changes to the dashboards' default column set that a stored view must follow,
+# as (version, retired name, replacement names at its position). A stored view
+# records the highest version it has been through in `view_prefs.columns_version`,
+# so each rule runs once: a user who turns a retired column back on keeps it.
+_COLUMN_SET_MIGRATIONS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    (1, "mem", ("mem_used", "mem_pct")),
+    (1, "issues", ("outbox",)),
+    (1, "doing", ()),
+)
+COLUMNS_VERSION = 1
+"""The newest version in `_COLUMN_SET_MIGRATIONS`; a seeded view starts here."""
+
+
+def migrate_column_set(
+    columns: Sequence[str], from_version: int
+) -> tuple[tuple[str, ...], list[str]]:
+    """``columns`` with every rule newer than ``from_version`` applied.
+
+    Returns the new set and one human-readable line per rule that changed it
+    (empty when none did). A replacement takes the retired name's position, and
+    a name the set already holds is not repeated.
+    """
+    result = list(columns)
+    applied: list[str] = []
+    for version, old, new in _COLUMN_SET_MIGRATIONS:
+        if version <= from_version or old not in result:
+            continue
+        result = [n for name in result for n in (new if name == old else (name,))]
+        applied.append(f"{old} → {' + '.join(new)}" if new else f"{old} removed")
+    return tuple(dict.fromkeys(result)), applied
+
+
+def column_set_migration_notice(applied: Sequence[str]) -> str:
+    """The one notice a front-end shows after :func:`migrate_column_set` changed its view."""
+    return (
+        f"Dashboard columns updated: {', '.join(applied)}. "
+        "Settings (S) can turn any of them back on."
+    )
+
 
 def seed_view_state(
     engine: Engine, frontend: str, *, on_migration: Callable[[str], None] | None = None
@@ -57,8 +96,11 @@ def seed_view_state(
     ``decode_names`` only validates JSON shape, not column vocabulary, so a
     renamed or removed column would otherwise reach both front-ends raw. The
     retired ``ahead_diff`` is migrated to ``target_diff`` with a visible notice
-    before this filter, and that rename alone is written back so the notice
-    appears once. Each
+    before this filter, and that rename is written back so the notice
+    appears once. The versioned column-set migration
+    (``_COLUMN_SET_MIGRATIONS``) runs before the filter too: it is applied once
+    per front-end, recorded in ``columns_version``, and raises one notice only
+    when a rule changed the set. Each
     front-end's own last-column guard (``jailbee.dashboard.settings.toggle_setting``
     here, ``MainWindow._toggle_column`` in the Qt window) counts the *stored*
     length, so a phantom name inflates that count without ever being a real,
@@ -66,8 +108,9 @@ def seed_view_state(
     toggle. Filtering here, before either guard sees the set, is what keeps
     that count honest.
 
-    Apart from that one rename, this function never writes: the filtered value is only returned,
-    not saved back over the stored row. That does **not** mean an unknown
+    Apart from those two write-backs (the ``ahead_diff`` rename and the
+    versioned column-set migration), this function never writes: the filtered
+    value is only returned, not saved back over the stored row. That does **not** mean an unknown
     name survives in storage, though — the filtered value becomes the
     long-lived ``enabled`` / ``self._enabled_columns`` each front-end holds
     for the rest of the session, and *unrelated* actions save that same
@@ -94,6 +137,16 @@ def seed_view_state(
             renamed = ("target_diff" if n == "ahead_diff" else n for n in state.columns)
             state = replace(state, columns=tuple(dict.fromkeys(renamed)))
             save_view_state(engine, frontend, state)
+        if state.columns is not None and state.columns_version < COLUMNS_VERSION:
+            migrated, applied = migrate_column_set(state.columns, state.columns_version)
+            if applied and on_migration is not None:
+                on_migration(column_set_migration_notice(applied))
+            # Written back even when no rule matched, so the version check is
+            # what stops a re-run — not the absence of the retired names.
+            state = replace(
+                state, columns=migrated or default_columns(), columns_version=COLUMNS_VERSION
+            )
+            save_view_state(engine, frontend, state)
         stored = state.columns or ()
         # Canonicalized *before* the filter: a stored set predating the
         # `claude_group` -> `group` rename holds a name `all_column_names` no
@@ -108,7 +161,11 @@ def seed_view_state(
         filtered = tuple(dict.fromkeys(c for n in stored if (c := canonical_ls_field(n)) in known))
         return replace(state, columns=filtered or default_columns())
     gcfg = global_config_or_defaults()
-    seeded = replace(state, columns=enabled_from_column_config(gcfg.dashboard))
+    seeded = replace(
+        state,
+        columns=enabled_from_column_config(gcfg.dashboard),
+        columns_version=COLUMNS_VERSION,
+    )
     save_view_state(engine, frontend, seeded)
     return seeded
 

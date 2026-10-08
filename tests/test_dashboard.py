@@ -6471,3 +6471,161 @@ def test_loose_cell_escapes_an_unknown_network_value():
     (field,) = dcolumns.visible_fields(now, [odd], ["network"])
 
     assert Text.from_markup(field.cell(odd)).plain == "[bold]x"
+
+
+
+def _view_engine():
+    from sqlmodel import SQLModel, create_engine
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    return engine
+
+
+@pytest.mark.parametrize("frontend", ["tui", "qt"])
+def test_seed_view_state_migrates_a_pre_version_set_once_with_one_notice(frontend):
+    from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    stored = ("name", "mem", "doing", "issues", "pr")
+    save_view_state(engine, frontend, ViewState(columns=stored, folded=frozenset({"p"})))
+
+    first: list[str] = []
+    state = dcolumns.seed_view_state(engine, frontend, on_migration=first.append)
+
+    assert state.columns == ("name", "mem_used", "mem_pct", "outbox", "pr")
+    assert len(first) == 1
+    assert "mem → mem_used + mem_pct" in first[0]
+    assert "issues → outbox" in first[0]
+    assert "doing removed" in first[0]
+    row = load_view_state(engine, frontend)
+    assert row.columns == ("name", "mem_used", "mem_pct", "outbox", "pr")
+    assert row.columns_version == dcolumns.COLUMNS_VERSION == 1
+    assert row.folded == frozenset({"p"})
+
+    second: list[str] = []
+    again = dcolumns.seed_view_state(engine, frontend, on_migration=second.append)
+    assert second == []
+    assert again.columns == state.columns
+
+
+def test_seed_view_state_puts_the_memory_replacements_at_mems_position():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("mem", "name", "state")))
+
+    dcolumns.seed_view_state(engine, FRONTEND_TUI)
+
+    assert load_view_state(engine, FRONTEND_TUI).columns == ("mem_used", "mem_pct", "name", "state")
+
+
+def test_seed_view_state_leaves_a_migrated_row_holding_retired_names_alone():
+    """A user who turned MEM or DOING back on after the migration keeps them."""
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    kept = ("name", "mem", "doing", "issues")
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=kept, columns_version=1))
+
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+
+    assert state.columns == kept
+    assert shown == []
+    assert load_view_state(engine, FRONTEND_TUI).columns == kept
+
+
+def test_seed_view_state_bumps_a_set_without_retired_names_silently():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "state")))
+
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+
+    assert state.columns == ("name", "state")
+    assert shown == []
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == 1
+
+
+def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
+    from jailbee.db.view_prefs import FRONTEND_QT, ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name", "mem")))
+    migrated = dcolumns.seed_view_state(engine, FRONTEND_QT)
+    assert migrated.columns is not None
+    # What both front-ends' fold/toggle saves look like: no version carried.
+    readded = (*migrated.columns, "mem")
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=readded, folded=frozenset({"p"})))
+
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_QT, on_migration=shown.append)
+
+    assert shown == []
+    assert state.columns == ("name", "mem_used", "mem_pct", "mem")
+    assert load_view_state(engine, FRONTEND_QT).columns_version == 1
+
+
+def test_seed_view_state_first_launch_seed_starts_at_the_current_version(mocker):
+    """A seeded set is already today's; it must never be migrated later."""
+    from jailbee.db.view_prefs import FRONTEND_TUI, load_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = _view_engine()
+    gcfg = GlobalConfig(dashboard={"fields": ["name", "mem"]})
+    mocker.patch.object(dmodel, "load_global_config", return_value=(gcfg, []))
+
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+
+    assert state.columns == ("name", "mem")
+    assert shown == []
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == dcolumns.COLUMNS_VERSION
+    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("name", "mem")
+
+
+def test_seed_view_state_a_set_of_only_retired_names_falls_back_to_the_defaults():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("doing",)))
+
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI)
+
+    assert state.columns == dcolumns.default_columns()
+    assert load_view_state(engine, FRONTEND_TUI).columns == dcolumns.default_columns()
+
+
+def test_seed_view_state_does_not_duplicate_an_existing_replacement():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("outbox", "name", "issues")))
+
+    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("outbox", "name")
+
+
+def test_seed_view_state_runs_the_diff_rename_and_the_column_set_migration_together():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "ahead_diff", "mem")))
+
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+
+    assert state.columns == ("name", "target_diff", "mem_used", "mem_pct")
+    assert len(shown) == 2
+    assert "ahead_diff" in shown[0] and "mem → mem_used + mem_pct" in shown[1]
+
+
+def test_columns_version_is_the_newest_migration_rule():
+    assert dcolumns.COLUMNS_VERSION == max(v for v, _, _ in dcolumns._COLUMN_SET_MIGRATIONS)
+    assert all(
+        new in dcolumns.all_column_names()
+        for _, _, n in dcolumns._COLUMN_SET_MIGRATIONS
+        for new in n
+    )
