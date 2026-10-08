@@ -2216,7 +2216,7 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
-**AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline — Qt cards use the same marks), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
+**AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
 limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
@@ -2225,7 +2225,7 @@ for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
-the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). The first time a dashboard opens after this change, a stored column set is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
+the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
 
 Seven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is

@@ -200,6 +200,10 @@ class ViewPrefs(SQLModel, table=True):
 
     ``columns_version`` is the newest dashboard column-set migration
     (``jailbee.dashboard.columns.COLUMNS_VERSION``) the stored ``columns`` have been through.
+    An older release's dashboard that is still running can write its old
+    column set back while ``columns_version`` stays at 1, so the one-time
+    migration will not re-run (accepted; restart the dashboard after
+    upgrading).
 
     Two concurrent dashboards of the *same* front-end (two `jailbee
     dashboard` processes, or two `jailbee gui` windows) share this one row

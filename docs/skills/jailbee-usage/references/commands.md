@@ -676,7 +676,7 @@ AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
 ◐ shell, ○ idle; a bright ○ went idle under 30 minutes ago). USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
 use ✓ for clean. DIFF compares against the host target, L DIFF against
 checked-out host HEAD. TUI details and Qt tooltips retain network expiry times;
-Qt cards show the same LOOSE marks. DOING uses ×N process counts. JOB
+Qt cards show the same LOOSE text without the colour. DOING uses ×N process counts. JOB
 shortens working verbs and uses auto:stage, while failed and (dead) remain distinct.
 Full AGENT and MERGE stay unchanged. Qt table tooltips provide full
 meanings, exact timestamps and agent details; `h` shows the TUI legend.
