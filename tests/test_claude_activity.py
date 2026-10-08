@@ -189,6 +189,19 @@ def test_control_characters_never_reach_the_result() -> None:
     assert _pair(raw) == (None, "a[31mred b")
 
 
+def test_control_characters_never_reach_recent_entries_or_the_last_message() -> None:
+    dirty = "a\x1b[31mred\x07\x00 b\r\nc"
+    raw = _tail(_assistant(_tool("Bash", command=dirty), _text(dirty)))
+
+    tail = ca.parse_tail(raw)
+
+    assert tail.recent  # premise: both events were recorded
+    texts = [event.text for event in tail.recent] + [tail.last_message or ""]
+    for text in texts:
+        assert not any(ch < " " or ch == "\x7f" for ch in text), repr(text)
+        assert "\x1b" not in text
+
+
 def test_an_empty_tail_has_nothing() -> None:
     assert _pair(b"") == (None, None)
 
