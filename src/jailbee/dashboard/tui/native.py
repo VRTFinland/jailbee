@@ -1,0 +1,283 @@
+"""Native overlay boxes: one bordered box per overlay kind.
+
+The session decides what is open and what a choice does (it never sees a
+cursor); a box shows its overlay's data, owns cursor, hover, scroll and focus,
+and posts what the user did. `DashboardFrame` mounts the box for the session's
+overlay, keeps it while `overlay_key` is unchanged, and sizes it from
+`content_rows`/`natural_width` through `frame_layout`.
+
+Keys: the focused list sees a key first (its ancestors' `on_key` next, then
+`DashboardApp.on_key`, then the list's bindings), so a box consumes its own
+letters in `on_key` with `stop()` + `prevent_default()`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import ClassVar
+
+from rich.console import Console
+from rich.text import Text
+from textual import events
+from textual.app import ComposeResult
+from textual.binding import Binding, BindingType
+from textual.containers import Vertical, VerticalScroll
+from textual.message import Message
+from textual.strip import Strip
+from textual.widget import Widget
+from textual.widgets import OptionList, Static
+from textual.widgets.option_list import Option
+
+from jailbee.dashboard.hit import HOVER_STYLE
+from jailbee.dashboard.tui.frame import help_lines
+from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
+
+NATIVE_LIST_ID = "native-list"
+
+# Every overlay list: no background but the hover, the cursor in CURSOR_STYLE
+# (bold magenta), and the V2 scrollbar colours (else Textual's theme paints RGB).
+_SCROLLBAR_CSS = """
+    scrollbar-size-vertical: 1;
+    scrollbar-size-horizontal: 0;
+    scrollbar-background: ansi_default;
+    scrollbar-background-hover: ansi_default;
+    scrollbar-background-active: ansi_default;
+    scrollbar-color: ansi_default;
+    scrollbar-color-hover: ansi_default;
+    scrollbar-color-active: ansi_default;
+"""
+
+
+def list_css(name: str) -> str:
+    """The shared look of one OptionList subclass ``name``."""
+    return f"""
+    {name} {{
+        width: 100%;
+        height: auto;
+        border: none;
+        padding: 0;
+        background: ansi_default;
+        color: ansi_default;
+        {_SCROLLBAR_CSS}
+    }}
+    {name}:focus {{ border: none; background-tint: initial; }}
+    {name} > .option-list--option,
+    {name} > .option-list--option-hover {{ background: ansi_default; color: ansi_default; }}
+    {name} > .option-list--option-highlighted,
+    {name}:focus > .option-list--option-highlighted {{
+        background: ansi_default;
+        color: ansi_magenta;
+        text-style: bold;
+    }}
+    {name} > .option-list--option-disabled {{ background: ansi_default; text-style: dim; }}
+    """
+
+
+def _wheel(widget: Widget, event: events.MouseEvent, step: int, enabled: bool) -> None:
+    """One line per notch (Textual's default is two); never the cursor."""
+    event.stop()
+    event.prevent_default()  # also skips the base classes' private scroll handlers
+    if enabled and not event.shift:
+        widget.scroll_relative(y=step, animate=False)
+
+
+def _hovered(lst: OptionList, y: int, strip: Strip) -> Strip:
+    """``strip`` painted with HOVER_STYLE when it is a line of the hovered option.
+
+    Textual CSS cannot name the 256-colour grey the table hovers with, so the
+    hover is painted here. Reads two private attributes of Textual 8.2.8's
+    OptionList: ``_mouse_hovering_over`` (option index) and ``_lines``
+    ((option index, line offset) per virtual line). The highlighted option
+    keeps its own style, as Textual's precedence does.
+    """
+    hovered = lst._mouse_hovering_over
+    if hovered is None or hovered == lst.highlighted:
+        return strip
+    line = lst.scroll_offset.y + y
+    lines = lst._lines
+    if 0 <= line < len(lines) and lines[line][0] == hovered:
+        return strip.apply_style(HOVER_STYLE)
+    return strip
+
+
+class OverlayList(OptionList, can_focus=True):
+    """An overlay's list: j/k, one-line wheel, gated clicks, the dashboard's hover."""
+
+    DEFAULT_CSS = list_css("OverlayList")
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+    ]
+
+    def __init__(
+        self,
+        *options: Option,
+        mouse_enabled: Callable[[], bool],
+        double_click_chooses: bool = False,
+    ) -> None:
+        super().__init__(*options, id=NATIVE_LIST_ID)
+        self.mouse_enabled = mouse_enabled
+        self.double_click_chooses = double_click_chooses
+
+    async def _on_click(self, event: events.Click) -> None:
+        if not self.mouse_enabled():
+            event.stop()
+            event.prevent_default()
+            return
+        if not self.double_click_chooses:
+            return  # OptionList's own handler highlights and chooses
+        # Egress and accounts rows: one click highlights, the second chooses.
+        event.prevent_default()
+        index = event.style.meta.get("option")
+        if isinstance(index, int) and not self.get_option_at_index(index).disabled:
+            self.highlighted = index
+            if event.chain >= 2:
+                self.action_select()
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        _wheel(self, event, 1, self.mouse_enabled())
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        _wheel(self, event, -1, self.mouse_enabled())
+
+    def render_line(self, y: int) -> Strip:
+        return _hovered(self, y, super().render_line(y))
+
+
+class OverlayBox(Vertical):
+    """One overlay in the bottom slot: a round border titled like the old panel."""
+
+    DEFAULT_CSS = """
+    OverlayBox {
+        width: 1fr;
+        height: auto;
+        border: round ansi_default;
+        border-title-align: left;
+        border-title-style: bold;
+        padding: 0 1;
+        background: ansi_default;
+        color: ansi_default;
+    }
+    """
+    HEADER_ROWS: ClassVar[int] = 0
+
+    class Cancelled(Message):
+        """Esc at the box's root; the session decides where that lands."""
+
+        def __init__(self, key: tuple[object, ...] | None) -> None:
+            super().__init__()
+            self.key = key
+
+    class Changed(Message):
+        """The box's content height or width changed (a menu level, a tab): lay out again."""
+
+    def __init__(self, spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__()
+        self.spec: Overlay = spec
+        self.mouse_enabled = mouse_enabled
+
+    @property
+    def key(self) -> tuple[object, ...] | None:
+        return overlay_key(self.spec)
+
+    def show(self, spec: Overlay) -> None:
+        """New data for the same overlay (`overlay_key` unchanged)."""
+        self.spec = spec
+
+    def content_rows(self) -> int:
+        """Lines the content wants, border and header excluded."""
+        raise NotImplementedError
+
+    def natural_width(self) -> int | None:
+        """Cells including border and padding, or None to fill the slot."""
+        return None
+
+    def chrome_rows(self) -> int:
+        return 2 + self.HEADER_ROWS
+
+    def focus_target(self) -> Widget:
+        return self.query_one(f"#{NATIVE_LIST_ID}")
+
+    def state(self) -> NativeState:
+        raise NotImplementedError
+
+    def cancel(self) -> None:
+        self.post_message(self.Cancelled(self.key))
+
+    def _ready(self) -> None:
+        """After mount, before focus: subclasses place their initial cursor here."""
+
+    def on_mount(self) -> None:
+        self._ready()
+        self.focus_target().focus()
+
+
+class HelpScroll(VerticalScroll, can_focus=True):
+    DEFAULT_CSS = f"""
+    HelpScroll {{
+        height: auto;
+        max-height: 100%;
+        background: ansi_default;
+        color: ansi_default;
+        {_SCROLLBAR_CSS}
+    }}
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "scroll_down", show=False),
+        Binding("k", "scroll_up", show=False),
+    ]
+
+    def __init__(self, *children: Widget, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(*children, id=NATIVE_LIST_ID)
+        self.mouse_enabled = mouse_enabled
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        _wheel(self, event, 1, self.mouse_enabled())
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        _wheel(self, event, -1, self.mouse_enabled())
+
+
+class HelpBox(OverlayBox):
+    """The key help; scrolls when the terminal is short."""
+
+    HELP_WIDTH = 72
+    # Border and padding take 4 cells, the scrollbar one more (it can appear).
+    WRAP_WIDTH = HELP_WIDTH - 5
+
+    def __init__(self, spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self._lines = help_lines()
+        self.border_title = "keys"
+
+    def compose(self) -> ComposeResult:
+        yield HelpScroll(
+            Static(Text.from_markup("\n".join(self._lines))), mouse_enabled=self.mouse_enabled
+        )
+
+    def content_rows(self) -> int:
+        """Screen rows of the help once its long lines wrap inside the box."""
+        console = Console()
+        return sum(
+            max(1, len(Text.from_markup(line).wrap(console, self.WRAP_WIDTH)))
+            for line in self._lines
+        )
+
+    def natural_width(self) -> int | None:
+        return self.HELP_WIDTH
+
+    def state(self) -> NativeState:
+        return NativeState("help", None)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.cancel()
+
+
+def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
+    """The box for a native overlay (see `is_native`)."""
+    if spec == "help":
+        return HelpBox(spec, mouse_enabled=mouse_enabled)
+    raise ValueError(f"no native box for {spec!r}")

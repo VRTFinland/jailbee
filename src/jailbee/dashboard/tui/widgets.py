@@ -42,6 +42,8 @@ from jailbee.dashboard.tui.frame import (
 )
 from jailbee.dashboard.tui.layout import FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.native import OverlayBox, build_box
+from jailbee.dashboard.tui.overlay import NativeState, Overlay, is_native, overlay_key
 
 _CACHE_MAX = 4096
 
@@ -425,6 +427,8 @@ class DashboardFrame(Vertical):
         self._overlay_input: object = None
         self._notice_input: object = None
         self._hint_input: object = None
+        self.native_box: OverlayBox | None = None
+        self._native_key: tuple[object, ...] | None = None
 
     def compose(self) -> ComposeResult:
         yield FleetTable(id="fleet", mouse_enabled=self.mouse_enabled)
@@ -437,6 +441,29 @@ class DashboardFrame(Vertical):
     @cached_property
     def table(self) -> FleetTable:
         return self.query_one(FleetTable)
+
+    def _sync_native(self, overlay: Overlay | None) -> OverlayBox | None:
+        """Keep, refresh, replace or drop the native box for ``overlay``."""
+        key = overlay_key(overlay) if is_native(overlay) else None
+        box = self.native_box
+        if box is not None and key == self._native_key:
+            assert overlay is not None
+            box.show(overlay)
+            return box
+        if box is not None:
+            box.remove()
+            self.native_box = None
+        self._native_key = key
+        if key is None or overlay is None:
+            return None
+        box = build_box(overlay, mouse_enabled=self.mouse_enabled)
+        self.query_one("#bottom", Horizontal).mount(box, before=self.query_one(OverlayPanel))
+        self.native_box = box
+        return box
+
+    def native_state(self) -> NativeState | None:
+        box = self.native_box
+        return box.state() if box is not None and box.is_mounted else None
 
     def show(self, view: DashboardView) -> None:
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
@@ -458,6 +485,8 @@ class DashboardFrame(Vertical):
         subtitle, inline = notice_parts(view.notice)
         self.border_subtitle = subtitle if subtitle is not None else ""
         overlay = view.overlay
+        box = self._sync_native(overlay)
+        legacy = overlay if box is None else None
         menu = isinstance(overlay, (MenuState, RepoMenuState))
         details = (
             details_for(view.groups, view.selected, view.now)
@@ -465,13 +494,14 @@ class DashboardFrame(Vertical):
             else None
         )
         hint = _hint_line(overlay) if overlay is not None else None
-        menu_width = (
-            Measurement.get(
-                console, console.options.update(width=width), _render_overlay(overlay)
+        if box is not None and menu:
+            menu_width = box.natural_width() or 0
+        elif legacy is not None and menu:
+            menu_width = Measurement.get(
+                console, console.options.update(width=width), _render_overlay(legacy)
             ).maximum
-            if isinstance(overlay, (MenuState, RepoMenuState))
-            else 0
-        )
+        else:
+            menu_width = 0
         details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
         overlay_hover = (
             view.hover
@@ -480,13 +510,15 @@ class DashboardFrame(Vertical):
         )
 
         def overlay_renderable(list_rows: int) -> RenderableType | None:
-            if overlay is None:
+            if legacy is None:
                 return None
-            return HoverHighlight(_render_overlay(overlay, list_rows), overlay_hover)
+            return HoverHighlight(_render_overlay(legacy, list_rows), overlay_hover)
 
         def bottom_lines(list_rows: int, details_rows: int | None) -> int:
             beside = details is not None and details_rows is not None and (overlay is None or menu)
             shown_details = details_rows + 2 if beside and details_rows is not None else 0
+            if box is not None:
+                return max(shown_details, min(box.content_rows(), list_rows) + box.chrome_rows())
             overlay_at = menu_width if beside else width
             return max(shown_details, lines(overlay_renderable(list_rows), overlay_at))
 
@@ -546,9 +578,16 @@ class DashboardFrame(Vertical):
             details is not None and layout.details_rows is not None and (overlay is None or menu)
         )
         self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
+        if box is not None:
+            rows = min(box.content_rows(), layout.list_rows) + box.chrome_rows() - layout.crop_top
+            box.display = rows > box.chrome_rows()
+            box.styles.height = max(0, rows)
+            natural = box.natural_width()
+            box.styles.width = menu_width if beside else natural if natural is not None else "1fr"
+            box.styles.max_width = "100%"
         panel = self.query_one(OverlayPanel)
-        panel.styles.width = menu_width if beside and overlay is not None else "1fr"
-        overlay_input = (view.overlay, layout.list_rows, overlay_hover, layout.crop_top)
+        panel.styles.width = menu_width if beside and legacy is not None else "1fr"
+        overlay_input = (legacy, layout.list_rows, overlay_hover, layout.crop_top)
         if overlay_input != self._overlay_input:
             panel.show(overlay_renderable(layout.list_rows), layout.crop_top)
             self._overlay_input = overlay_input

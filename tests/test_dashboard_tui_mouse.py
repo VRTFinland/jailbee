@@ -290,7 +290,9 @@ def test_a_double_click_on_an_accounts_row_means_enter(mocker, tmp_path):
         AccountRow("claude", "g", "side", "parked", (), ()),
     )
     state = AccountsState(rows, 0, "alpha")
-    acted = mocker.patch.object(tsession.DashboardSession, "account_actions_picker")
+    acted = mocker.patch.object(
+        tsession.DashboardSession, "account_actions_picker", return_value=None
+    )
     run = drive(
         mocker,
         [

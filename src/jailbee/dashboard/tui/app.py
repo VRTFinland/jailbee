@@ -21,8 +21,12 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
+from jailbee.dashboard.tui.keys import parse_key
+from jailbee.dashboard.tui.native import OverlayBox
+from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
+    OVERLAY_GLOBAL_TOKENS,
     DashboardSession,
     Outcome,
     Startup,
@@ -168,12 +172,50 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.call_after_refresh(self.refresh_frame)
 
     def on_key(self, event: events.Key) -> None:
+        if self.frame.native_box is not None:
+            self._native_key(event)
+            return
         data = legacy_bytes(event.key, event.character)
         if data is None:
             return
         event.stop()
         event.prevent_default()
         self._after(self.session.handle_input(data))
+
+    def _native_key(self, event: events.Key) -> None:
+        """A key while a native overlay has the focus: only the global ones are ours.
+
+        The box's own keys reach it through its `on_key` (before this handler)
+        and its bindings (after it); preventing anything else here would cancel
+        those bindings.
+        """
+        if event.key in ("tab", "shift+tab"):
+            event.prevent_default()  # Screen's focus cycling would take the overlay's focus
+            return
+        data = legacy_bytes(event.key, event.character)
+        token = parse_key(data) if data is not None else ""
+        if token in OVERLAY_GLOBAL_TOKENS:
+            event.stop()
+            event.prevent_default()  # also Screen's ctrl+c copy binding
+            self._after(self.session.overlay_global_key(token))
+
+    def _native_current(self, key: tuple[object, ...] | None) -> bool:
+        """Whether a box's message is about the overlay still open (a tick may have closed it)."""
+        return key is not None and key == overlay_key(self.session.overlay)
+
+    def _after_native(self) -> None:
+        # The box may show something the view does not carry (a level, a re-synced
+        # checkbox): repaint even when the view compares equal.
+        self._painted = None
+        self.refresh_frame()
+
+    def on_overlay_box_cancelled(self, message: OverlayBox.Cancelled) -> None:
+        if self._native_current(message.key):
+            self.session.overlay_cancel()
+        self._after_native()
+
+    def on_overlay_box_changed(self, _message: OverlayBox.Changed) -> None:
+        self._after_native()
 
     def on_paste(self, event: events.Paste) -> None:
         """A bracketed paste reaches the prompt or command line as one input.
@@ -231,6 +273,9 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_click(self, event: events.Click) -> None:
         if not self.mouse_on:
             return
+        box = self.frame.native_box
+        if box is not None and event.widget is not None and box in event.widget.ancestors_with_self:
+            return  # the box acted on it itself
         hit = Hit.of(event.style.meta)
         if event.chain > 1:
             # The first click of the pair already acted; only a row-like target

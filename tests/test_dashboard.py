@@ -44,7 +44,7 @@ from tests.dashboard_fixtures import repo_menu_verbs as _repo_menu_verbs
 from tests.dashboard_fixtures import table_ansi_lines, table_text
 from tests.dashboard_fixtures import wide_group as _wide_group
 from tests.dashboard_pilot import CREDENTIAL_GROUP_LEAF as _CREDENTIAL_GROUP_LEAF
-from tests.dashboard_pilot import paint, patch_pause, view_of
+from tests.dashboard_pilot import box_text, paint, patch_pause, view_of
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
@@ -5294,7 +5294,7 @@ def test_repo_menu_accounts_follows_the_ssh_policy(over_ssh, policy_kwargs, offe
 
 def test_accounts_key_is_documented_in_help():
     assert tkeys.parse_key(b"A") == "accounts"
-    out = _render_text(tframe._render_help())
+    out = "\n".join(box_text("help", size=(100, 100)))
     line = next(ln for ln in out.splitlines() if "credential groups and stored logins" in ln)
     assert line.split()[1] == "A"
     assert "Accounts panel: Enter acts on a login or group, n creates a group." in out
@@ -5669,7 +5669,7 @@ def test_container_menu_survives_an_empty_shared_action_list(
 
 
 def test_help_panel_points_at_the_repo_and_container_menu_entries():
-    text = _render_text(tframe._render_help())
+    text = "\n".join(box_text("help", size=(100, 100)))
     assert "Apply config…" in text
     assert "Snapshots…" in text
 

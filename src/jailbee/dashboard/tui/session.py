@@ -162,6 +162,10 @@ Outcome = Literal["quit", "toggle-mouse"] | None
 # already acted on the first click (a menu entry ran, a fold toggled).
 DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
 
+# With a native overlay focused, only these keys are the dashboard's own; every
+# other key belongs to the overlay (see `DashboardApp.on_key`).
+OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
+
 _OVERLAY_HITS = frozenset({"menu", "picker", "suggestion", "tab", "setting", "egress", "account"})
 
 
@@ -1772,6 +1776,26 @@ class DashboardSession:
         """Close the overlay and everything behind it (a click outside it)."""
         self.overlay = None
         self.egress_parent = None
+
+    def overlay_global_key(self, token: str) -> Outcome:
+        """A dashboard-wide key (:data:`OVERLAY_GLOBAL_TOKENS`) while a native overlay is open.
+
+        Ctrl-C quits, `q` closes the overlay and everything behind it, `h`
+        toggles help and F2/`S` settings — exactly as with a drawn overlay. A
+        picker answers Ctrl-C and `q` itself (they cancel the step), so they
+        never get here from one.
+        """
+        if token == "interrupt":
+            return "quit"
+        if token == "quit":
+            self.close_overlay()
+        elif token == "help":
+            self.overlay = None if self.overlay == "help" else "help"
+        elif token == "settings":
+            self.overlay = (
+                None if isinstance(self.overlay, SettingsState) else self.open_settings_overlay()
+            )
+        return None
 
     def overlay_move(self, step: int) -> None:
         """Move the open list overlay's cursor; other overlays ignore it."""

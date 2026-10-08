@@ -29,6 +29,7 @@ from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.frame import DashboardView
+from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
 from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
@@ -119,7 +120,43 @@ class Paste:
     text: str
 
 
-Step = str | Resize | Click | Wheel | Paste | Callable[["tapp.DashboardApp"], object]
+NATIVE_LIST = "#native-list"
+
+
+@dataclass(frozen=True)
+class Pick:
+    """A click on option ``index`` of the open native overlay list."""
+
+    index: int
+    times: int = 1
+    button: int = 1
+
+
+@dataclass(frozen=True)
+class PickTab:
+    """A click on a settings tab."""
+
+    tab: str
+
+
+@dataclass(frozen=True)
+class HoverOption:
+    """The pointer comes to rest on option ``index`` of the open native list."""
+
+    index: int
+
+
+Step = (
+    str
+    | Resize
+    | Click
+    | Wheel
+    | Paste
+    | Pick
+    | PickTab
+    | HoverOption
+    | Callable[["tapp.DashboardApp"], object]
+)
 
 
 def hit_offset(app: tapp.DashboardApp, hit: Hit) -> tuple[int, int]:
@@ -132,11 +169,34 @@ def hit_offset(app: tapp.DashboardApp, hit: Hit) -> tuple[int, int]:
     raise AssertionError(f"{hit} is not on screen")
 
 
+def option_offset(app: tapp.DashboardApp, index: int) -> tuple[int, int]:
+    """The first screen cell of the open native box whose style carries option ``index``."""
+    box = app.frame.native_box
+    assert box is not None, "no native overlay is open"
+    region = box.region
+    for y in range(region.y, region.bottom):
+        for x in range(region.x, region.right):
+            if app.screen.get_style_at(x, y).meta.get("option") == index:
+                return x, y
+    raise AssertionError(f"option {index} is not on screen")
+
+
+def backgrounds(app: App) -> set[str]:
+    """Every background colour on screen, by Rich name ("default" for none)."""
+    found: set[str] = set()
+    for strip in app.screen._compositor.render_strips():
+        for segment in strip:
+            if segment.style is not None and segment.style.bgcolor is not None:
+                found.add(segment.style.bgcolor.name)
+    return found
+
+
 @dataclass
 class Run:
     app: tapp.DashboardApp
     client: FakeStateClient
     trace: list[DashboardView] = field(default_factory=list)
+    natives: list[NativeState | None] = field(default_factory=list)
     screens: list[str] = field(default_factory=list)
     steps_taken: int = 0
     rc: int | None = None
@@ -252,6 +312,15 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
             [event], widget=step.at, offset=(1, 1), shift=step.shift, control=step.ctrl
         )
         await pilot.pause()
+    elif isinstance(step, Pick):
+        await pilot.click(
+            offset=option_offset(app, step.index), times=step.times, button=step.button
+        )
+    elif isinstance(step, PickTab):
+        await pilot.click(f"Tab#{step.tab}")
+    elif isinstance(step, HoverOption):
+        await pilot.hover(offset=option_offset(app, step.index))
+        await pilot.pause()
     else:
         step(app)
         app.refresh_frame()
@@ -352,6 +421,7 @@ def drive(  # type: ignore[no-untyped-def]
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             result.trace.append(app.session.view(app.hover))
+            result.natives.append(app.frame.native_state())
             if screens:
                 result.screens.append(screen_text(app))
             padding = itertools.repeat("ctrl+c", _MAX_PADDING)
@@ -361,6 +431,7 @@ def drive(  # type: ignore[no-untyped-def]
                 if app.quit_requested:
                     return
                 result.trace.append(app.session.view(app.hover))
+                result.natives.append(app.frame.native_state())
                 if screens:
                     result.screens.append(screen_text(app))
             raise AssertionError("the dashboard did not quit on Ctrl-C")
@@ -552,6 +623,35 @@ def paint(view: DashboardView, size: tuple[int, int] = (80, 25)) -> list[str]:
 
     async def main() -> None:
         app = _FrameHost(view)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            lines.extend(screen_text(app).splitlines())
+
+    asyncio.run(main())
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+class _BoxHost(App[None]):
+    CSS = "Screen { background: ansi_default; }"
+
+    def __init__(self, spec: object) -> None:
+        super().__init__(ansi_color=True)
+        self.spec = spec
+
+    def compose(self) -> ComposeResult:
+        from jailbee.dashboard.tui.native import build_box
+
+        yield build_box(self.spec, mouse_enabled=lambda: True)  # type: ignore[arg-type]  # test utility takes any overlay
+
+
+def box_text(spec: object, size: tuple[int, int] = (80, 25)) -> list[str]:
+    """One native box drawn alone; its screen lines without trailing blank ones."""
+    lines: list[str] = []
+
+    async def main() -> None:
+        app = _BoxHost(spec)
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             lines.extend(screen_text(app).splitlines())

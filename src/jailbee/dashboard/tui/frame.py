@@ -102,8 +102,8 @@ def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -
     )
 
 
-def _render_help() -> RenderableType:
-    """The keybinding help as a bordered panel, grouped as the table declares.
+def help_lines() -> list[str]:
+    """The keybinding help as markup lines, grouped as the key table declares.
 
     Rows come from :data:`KEY_BINDINGS`, so a new key documents itself. The
     closing note explains why an action key can decline to fire — without it
@@ -120,7 +120,8 @@ def _render_help() -> RenderableType:
             for b in KEY_BINDINGS
             if b.group == group and b.hint
         ]
-    lines += [
+    return [
+        *lines,
         "",
         "ST: ▶ running, ■ stopped, Ⅱ frozen; NET: ● strict, ○ loose.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle).",
@@ -133,18 +134,11 @@ def _render_help() -> RenderableType:
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
         "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
         "Mouse: click selects; double- or right-click opens the menu;",
-        "▾/▸ folds, ‹ › scroll columns, the wheel moves; Shift-drag selects text.",  # noqa: RUF001 - the arrows the frame draws
+        "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
+        "Shift-drag selects text.",
         "",
         f"[dim]{_GATE_NOTE}[/dim]",
     ]
-    return Panel(
-        "\n".join(lines),
-        title="[bold]keys[/]",
-        title_align="left",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        width=72,
-    )
 
 
 _MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
@@ -213,7 +207,7 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
         return render_picker(overlay, max_rows)
     if isinstance(overlay, da.AccountsState):
         return da.render_accounts(overlay)
-    return _render_help()
+    raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native
 
 
 @dataclass(frozen=True)
