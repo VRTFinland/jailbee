@@ -3280,7 +3280,7 @@ jailbee dashboard
 #  (`tmux send-keys -l $'…'`):
 #    Enter g        on a container row -> the menu opens at "Git →"
 #    !ls Enter j    -> `jailbee ls` runs; after it, j moves the selection
-#    n feat Enter dev
+#    n feat Enter Ctrl-U dev
 #                   -> the base-branch question shows "dev" (branch "feat")
 #    Enter h h h    -> help shows once, nothing crashes
 

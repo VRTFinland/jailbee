@@ -337,8 +337,7 @@ class TextBox(OverlayBox):
     def focus_target(self) -> Widget:
         return self.input
 
-    # Widget.handle_key (key_* method dispatch, -> bool) is never reached: the app routes keys.
-    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]  # see OverlayBox.handle_key
         key = event.key
         if key in _CANCEL_KEYS:
             return self.Cancelled(self.key)

@@ -64,11 +64,11 @@ before editing `## Unreleased`.
   terminal shows a scrollbar instead of "↑ N more" lines. Text questions and the
   `!` line edit like ordinary fields (←/→, Home/End, Ctrl-A/E/W/U/K, selection).
   Keys typed faster than the screen redraws — over a slow SSH link, or pasted —
-  act in order, each on what the key before it opened. Menu, picker and suggestion
-  lists wrap from the last entry to the first; the container table stops at its
-  ends. `m` turns the mouse off for the session and `dashboard.mouse: false` in
-  `global.yaml` by default; with it on, most terminals still select text with
-  Shift-drag.
+  act in order, each on what the key before it opened. Menu and picker lists wrap
+  from the last entry to the first; suggestion lists and the container table
+  stop at their ends. `m` turns the mouse off for the session and
+  `dashboard.mouse: false` in `global.yaml` by default; with it on, most
+  terminals still select text with Shift-drag.
 - **The terminal dashboard scrolls sideways instead of hiding columns.** Every
   column keeps its width at any terminal size. When they do not fit, the first
   column stays put and `←`/`→` scroll the rest one column at a time; a dim

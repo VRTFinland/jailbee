@@ -152,7 +152,7 @@ Outcome = Literal["quit", "toggle-mouse"] | None
 # already acted on the first click (a menu entry ran, a fold toggled).
 DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo"})
 
-# With a native overlay focused, only these keys are the dashboard's own; every
+# With a native overlay open, only these keys are the dashboard's own; every
 # other key belongs to the overlay (see `DashboardApp._route_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
