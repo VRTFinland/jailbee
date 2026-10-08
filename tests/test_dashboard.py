@@ -6352,3 +6352,35 @@ def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     c.network = "loose"
     c.loose_until = now + timedelta(hours=3, minutes=59)
     assert Text.from_markup(fields["ttl"].cell(c)).plain == "3h59m"
+
+
+
+@pytest.mark.parametrize(("minutes", "style"), [(29, "bold bright_white"), (30, "dim"), (31, "dim")])
+def test_dashboard_ai_cell_brightens_an_agent_idle_under_thirty_minutes(minutes, style):
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    c = dataclasses.replace(
+        _ci("p-one", "p"),
+        agent_status=(AgentSummary("claude", "idle", now - timedelta(minutes=minutes), None, 1),),
+    )
+    (field,) = dcolumns.visible_fields(now, [c], ["agent_compact"])
+
+    assert field.cell(c) == f"[{style}]○ {minutes}m[/{style}]"
+
+
+def test_dashboard_ai_cell_leaves_other_states_and_undated_idle_alone():
+    from jailbee.dashboard.format import RECENT_IDLE
+
+    assert timedelta(minutes=30) == RECENT_IDLE
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    (field,) = dcolumns.visible_fields(now, [_ci("p-one", "p")], ["agent_compact"])
+
+    def cell(state, since):
+        c = dataclasses.replace(
+            _ci("p-one", "p"), agent_status=(AgentSummary("claude", state, since, None, 1),)
+        )
+        return field.cell(c)
+
+    assert cell("busy", now - timedelta(minutes=5)) == "[green]● 5m[/green]"
+    assert cell("waiting", now - timedelta(minutes=5)) == "[yellow]◆ 5m[/yellow]"
+    assert cell("idle", None) == "[dim]○[/dim]"
+    assert cell("idle", now + timedelta(minutes=5)) == "[dim]○[/dim]"  # clock skew: no age

@@ -10469,3 +10469,29 @@ def test_ls_pr_cell_still_carries_the_outbox_marker():
         ),
     )
     assert _ls_spec("pr").cell(c) == "#7↓ ✉2"
+
+
+
+def test_agent_compact_cell_function_is_what_the_ls_field_renders():
+    from jailbee.lifecycle import agent_compact_cell
+
+    statuses = (
+        _agent("waiting", since=_AGENT_NOW - timedelta(minutes=4)),
+        _agent("idle", agent="codex", since=_AGENT_NOW - timedelta(minutes=5)),
+    )
+    expected = "[yellow]◆ 4m[/yellow] [dim]○ 5m[/dim]"
+    assert agent_compact_cell(statuses, _AGENT_NOW) == expected
+    assert _agent_spec("agent_compact").cell(_running(agent_status=statuses)) == expected
+    assert agent_compact_cell((), _AGENT_NOW) == "[dim]—[/dim]"
+
+
+def test_agent_compact_cell_brightens_a_recent_idle_only_when_asked():
+    from rich.text import Text
+
+    from jailbee.lifecycle import agent_compact_cell
+
+    fresh = (_agent("idle", since=_AGENT_NOW - timedelta(minutes=29)),)
+    assert agent_compact_cell(fresh, _AGENT_NOW) == "[dim]○ 29m[/dim]"  # `ls` stays dim
+    bright = agent_compact_cell(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
+    assert bright == "[bold bright_white]○ 29m[/bold bright_white]"
+    assert Text.from_markup(bright).plain == "○ 29m"  # valid markup, closes cleanly

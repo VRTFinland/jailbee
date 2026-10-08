@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
 from jailbee import background
-from jailbee.lifecycle import DOING_MAX_NAMES, format_duration_short
+from jailbee.lifecycle import DOING_MAX_NAMES, agent_compact_cell, format_duration_short
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -31,6 +31,9 @@ _HEADER_LABELS = {
 }
 _STATE_GLYPHS = {"Running": "▶", "Stopped": "■", "Frozen": "Ⅱ"}
 _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
+
+RECENT_IDLE = timedelta(minutes=30)
+"""An idle agent younger than this reads as "just finished" in AI."""
 
 
 def dashboard_header(field: FieldSpec[ContainerInfo]) -> str:
@@ -77,6 +80,8 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return _STATE_GLYPHS.get(container.state, escape(container.state))
     if field.name == "network":
         return _network(container)
+    if field.name == "agent_compact":
+        return agent_compact_cell(container.agent_status, now, recent_idle=RECENT_IDLE)
     if field.name == "created":
         return _age(container.created_at, now)
     if field.name == "base":

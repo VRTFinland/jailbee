@@ -2724,6 +2724,42 @@ _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
 """The `agent_compact` mark and Rich style per known state."""
 
 
+def agent_compact_cell(
+    statuses: Sequence[AgentSummary],
+    now: datetime,
+    *,
+    recent_idle: timedelta | None = None,
+    recent_idle_style: str = "bold bright_white",
+) -> str:
+    """The `agent_compact` cell: one glyph (and coarse age) per distinct state.
+
+    ``recent_idle`` is the dashboards' "just finished" window: an ``idle``
+    agent whose ``since`` is younger than it is drawn in ``recent_idle_style``
+    instead of dim. ``None`` — what `jailbee ls` passes — keeps every idle
+    agent dim.
+    """
+    if not statuses:
+        return "[dim]—[/dim]"
+
+    def text_of(s: AgentSummary) -> str:
+        glyph, colour = _AGENT_GLYPHS.get(s.state, ("?", None))
+        text = glyph
+        if s.state not in _AGENT_GLYPHS:
+            # The state is raw text from a file the container wrote.
+            text += f" {escape(s.state)}"
+        if s.since is not None and s.since <= now:
+            age = now - s.since
+            text += f" {format_duration_coarse(age)}"
+            if recent_idle is not None and s.state == "idle" and age < recent_idle:
+                colour = recent_idle_style
+        return f"[{colour}]{text}[/{colour}]" if colour else text
+
+    # One mark per distinct state: agents arrive in `agent_status._rank`
+    # order, so the first of a state is its longest wait or latest change.
+    first_of_state = {s.state: s for s in reversed(statuses)}
+    return " ".join(text_of(s) for s in statuses if first_of_state[s.state] is s)
+
+
 def repo_has_submodules(cfg: Config) -> bool:
     """True iff the repo declares submodules (a ``.gitmodules`` file exists)."""
     return (cfg.repo_root / ".gitmodules").exists()
@@ -2983,26 +3019,6 @@ def ls_field_specs(
         if not c.agent_status:
             return "[dim]—[/dim]"
         return ", ".join(_agent_text(s) for s in c.agent_status)
-
-    def _agent_compact_text(s: AgentSummary) -> str:
-        glyph, colour = _AGENT_GLYPHS.get(s.state, ("?", None))
-        text = glyph
-        if s.state not in _AGENT_GLYPHS:
-            # The state is raw text from a file the container wrote.
-            text += f" {escape(s.state)}"
-        if s.since is not None and s.since <= now:
-            text += f" {format_duration_coarse(now - s.since)}"
-        return f"[{colour}]{text}[/{colour}]" if colour else text
-
-    def _agent_compact_cell(c: ContainerInfo) -> str:
-        if not c.agent_status:
-            return "[dim]—[/dim]"
-        # One mark per distinct state: agents arrive in `agent_status._rank`
-        # order, so the first of a state is its longest wait or latest change.
-        first_of_state = {s.state: s for s in reversed(c.agent_status)}
-        return " ".join(
-            _agent_compact_text(s) for s in c.agent_status if first_of_state[s.state] is s
-        )
 
     def _agent_json(c: ContainerInfo) -> list[dict[str, object]]:
         return [
@@ -3271,7 +3287,7 @@ def ls_field_specs(
         table_format.FieldSpec(
             name="agent_compact",
             header="AGENT*",
-            cell=_agent_compact_cell,
+            cell=lambda c: agent_compact_cell(c.agent_status, now),
             json=_agent_json,
             default_table=False,
             default_dashboard=True,
