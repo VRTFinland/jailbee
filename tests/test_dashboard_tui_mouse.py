@@ -8,7 +8,6 @@ from rich.style import Style
 from textual.drivers.linux_driver import LinuxDriver
 
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.accounts import AccountRow, AccountsState
 from jailbee.dashboard.actions import APPLY_NO_RESTART
 from jailbee.dashboard.hit import HIT_KEY, Hit
 from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
@@ -275,29 +274,6 @@ def test_the_second_click_of_a_right_click_pair_is_ignored(mocker, tmp_path):
     )
     assert isinstance(run.trace[3].overlay, MenuState)
     assert run.natives[3] == NativeState("menu", 1, level=None)  # not closed and reopened at 0
-
-
-def test_a_double_click_on_an_accounts_row_means_enter(mocker, tmp_path):
-    rows = (
-        AccountRow("claude", "g", "main", "parked", (), ()),
-        AccountRow("claude", "g", "side", "parked", (), ()),
-    )
-    state = AccountsState(rows, 0, "alpha")
-    acted = mocker.patch.object(
-        tsession.DashboardSession, "account_actions_picker", return_value=None
-    )
-    run = drive(
-        mocker,
-        [
-            lambda app: setattr(app.session, "overlay", state),
-            Click(Hit("account", (1,))),
-            Click(Hit("account", (1,)), times=2),
-        ],
-        [_two(tmp_path)],
-    )
-    assert run.trace[2].overlay.index == 1  # type: ignore[union-attr]  # a single click only selects
-    assert acted.call_count == 1  # only the pair's second click acted
-    assert run.rc == 0
 
 
 def test_a_stale_row_click_keeps_the_open_menu(mocker, tmp_path):

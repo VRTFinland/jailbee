@@ -152,13 +152,13 @@ Outcome = Literal["quit", "toggle-mouse"] | None
 
 # Hits whose second click of a double-click means Enter there. Any other hit
 # already acted on the first click (a menu entry ran, a fold toggled).
-DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
+DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo"})
 
 # With a native overlay focused, only these keys are the dashboard's own; every
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
-_OVERLAY_HITS = frozenset({"suggestion", "account"})
+_OVERLAY_HITS = frozenset({"suggestion"})
 
 
 def _now() -> datetime:
@@ -1183,11 +1183,28 @@ class DashboardSession:
             return None
         return self.load_accounts(prefix)
 
-    def account_actions_picker(self, state: da.AccountsState) -> Overlay:
-        """What can be done with the highlighted row, or the panel with a notice."""
-        row = da.selected_account(state)
-        actions = da.account_actions(row, state.rows) if row is not None else ()
-        if row is None or not actions:
+    def account_chosen(self, row: da.AccountRow, index: int) -> None:
+        """Enter on an Accounts row: what can be done with it; a cancel lands back on ``index``."""
+        state = self.overlay
+        assert isinstance(state, da.AccountsState)
+        self.overlay = self.account_actions_picker(replace(state, start_index=index), row)
+
+    def account_new_group(self, index: int) -> None:
+        """`n` on the Accounts panel: ask for the new group's name."""
+        state = self.overlay
+        assert isinstance(state, da.AccountsState)
+        self.overlay = TextPrompt(
+            "acct-group-new",
+            "New credential group",
+            "Group name",
+            target=state.prefix,
+            back=replace(state, start_index=index),
+        )
+
+    def account_actions_picker(self, state: da.AccountsState, row: da.AccountRow) -> Overlay:
+        """What can be done with ``row``, or the panel with a notice."""
+        actions = da.account_actions(row, state.rows)
+        if not actions:
             self.set_notice("No actions for this row")
             return state
         title = (
@@ -1726,17 +1743,6 @@ class DashboardSession:
             )
         elif key in ("up", "down"):
             self.overlay_move(-1 if key == "up" else 1)
-        elif key == "enter":
-            self.overlay_enter()
-        elif isinstance(overlay, da.AccountsState):
-            if data == b"n":
-                self.overlay = TextPrompt(
-                    "acct-group-new",
-                    "New credential group",
-                    "Group name",
-                    target=overlay.prefix,
-                    back=overlay,
-                )
 
     def picker_chosen(self, entry: PickerEntry) -> None:
         """A picker entry was chosen: run its step and show what comes next."""
@@ -1787,16 +1793,8 @@ class DashboardSession:
     def overlay_move(self, step: int) -> None:
         """Move the open list overlay's cursor; other overlays ignore it."""
         overlay = self.overlay
-        if isinstance(overlay, da.AccountsState):
-            self.overlay = da.move_accounts(overlay, step)
-        elif isinstance(overlay, TextPrompt) and overlay.suggestions:
+        if isinstance(overlay, TextPrompt) and overlay.suggestions:
             self._prompt_key(overlay, b"\x1b[B" if step > 0 else b"\x1b[A")
-
-    def overlay_enter(self) -> None:
-        """Enter on the open overlay's highlighted entry."""
-        overlay = self.overlay
-        if isinstance(overlay, da.AccountsState):
-            self.overlay = self.account_actions_picker(overlay)
 
     def menu_chosen(self, verb: str, group: str | None, index: int) -> None:
         """A menu leaf was chosen at ``group``/``index``: a panel, a question, or a verb to run."""
@@ -1987,7 +1985,7 @@ class DashboardSession:
         """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules."""
         overlay = self.overlay
         if hit is not None and hit.kind in _OVERLAY_HITS:
-            self._click_overlay(hit, double=double)
+            self._click_overlay(hit)
             return
         if overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
@@ -2019,25 +2017,16 @@ class DashboardSession:
             return Row("container", name) in self.rows
         return any(group.prefix == name for group in self.groups)
 
-    def _click_overlay(self, hit: Hit, *, double: bool) -> None:
+    def _click_overlay(self, hit: Hit) -> None:
         """A click on one of the open overlay's own entries; a stale one is ignored."""
         overlay = self.overlay
         index = hit.args[0]
         if not isinstance(index, int):
             return
-        moved: Overlay | None = None
-        if hit.kind == "account" and isinstance(overlay, da.AccountsState):
-            moved = da.move_accounts(replace(overlay, index=0), index)
-        elif hit.kind == "suggestion" and isinstance(overlay, TextPrompt):
+        if hit.kind == "suggestion" and isinstance(overlay, TextPrompt):
             matches = filter_suggestions(overlay.suggestions, overlay.text)
             if 0 <= index < len(matches):
                 self._prompt_key(replace(overlay, highlight=index), b"\r")
-            return
-        if moved is None or getattr(moved, "index", None) != index:
-            return  # stale: the overlay changed since the frame was painted
-        self.overlay = moved
-        if hit.kind == "account" and double:
-            self.overlay_enter()
 
     def wheel(self, step: int, *, columns: bool = False) -> None:
         """A wheel notch: the open list's cursor, or columns sideways without an overlay."""

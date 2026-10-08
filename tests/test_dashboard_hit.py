@@ -107,13 +107,6 @@ def test_overlay_entries_are_tagged_by_index(tmp_path):
     }
 
 
-def test_account_rows_are_tagged_by_index():
-    from jailbee.dashboard import accounts as da
-
-    rows = (da.AccountRow("claude", "team", "a", "live", (), ()),)
-    assert dhit.Hit("account", (0,)) in _kinds(tframe._render_overlay(da.AccountsState(rows)))
-
-
 def test_hover_segments_paints_only_the_matching_target():
     from rich.segment import Segment
 

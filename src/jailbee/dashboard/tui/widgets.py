@@ -39,7 +39,7 @@ from jailbee.dashboard.tui.frame import (
     frame_title,
     notice_parts,
 )
-from jailbee.dashboard.tui.layout import FrameLayout, frame_layout
+from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import OverlayBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, is_native, overlay_key
@@ -312,7 +312,6 @@ class FleetTable(ScrollView, can_focus=False):
             self.scroll_page_right()
 
 
-FRAME_INSET_COLS = 4
 FRAME_BORDER_ROWS = 2
 
 

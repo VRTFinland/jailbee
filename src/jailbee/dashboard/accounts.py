@@ -19,19 +19,11 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich import box
-from rich.panel import Panel
-from rich.style import Style
+from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-
-from jailbee.dashboard import hit as dhit
-from jailbee.dashboard.settings import CURSOR_STYLE
-
-if TYPE_CHECKING:
-    from rich.console import RenderableType
 
 ACCOUNT_LS_FIELDS = "agent,group,account,state,repos,containers"
 
@@ -44,6 +36,8 @@ ACCOUNTS_HINT = (
 _FIXED_COLUMNS = {0: 20, 1: 12, 3: 8}
 # ACCOUNT and USED BY share the remaining width in these proportions.
 _FLEX_RATIOS = {2: 1, 4: 1}
+
+ACCOUNT_HEADERS = ("GROUP", "AGENT", "ACCOUNT", "STATE", "USED BY")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -76,7 +70,7 @@ class CliResult:
 @dataclass(frozen=True)
 class AccountsState:
     rows: tuple[AccountRow, ...]
-    index: int = 0
+    start_index: int = 0
     prefix: str = ""
 
 
@@ -263,21 +257,17 @@ def account_actions(row: AccountRow, rows: Sequence[AccountRow]) -> tuple[tuple[
     return tuple(actions)
 
 
-def move_accounts(state: AccountsState, delta: int) -> AccountsState:
-    if not state.rows:
-        return state
-    index = max(0, min(len(state.rows) - 1, state.index + delta))
-    return AccountsState(state.rows, index, state.prefix)
+def account_lines(
+    rows: Sequence[AccountRow], width: int
+) -> tuple[tuple[Text, ...], tuple[Text, ...]]:
+    """The panel's table at ``width``: its header lines, then exactly one line per row.
 
-
-def selected_account(state: AccountsState) -> AccountRow | None:
-    if 0 <= state.index < len(state.rows):
-        return state.rows[state.index]
-    return None
-
-
-def render_accounts(state: AccountsState) -> RenderableType:
-    table = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False)
+    GROUP, AGENT and STATE get a fixed width that fits their content (no-wrap
+    columns all shrink proportionally, so a long login would squeeze them to
+    nothing); ACCOUNT and USED BY share the rest. Drawn once by Rich and cut
+    into lines so a list widget can own the cursor while the header stays put.
+    """
+    table = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False, show_edge=False)
     cells_by_row = [
         (
             row.group or "-",
@@ -286,28 +276,28 @@ def render_accounts(state: AccountsState) -> RenderableType:
             row.state,
             ", ".join((*row.repos, *row.containers)) or "-",
         )
-        for row in state.rows
+        for row in rows
     ]
-    for column, header in enumerate(("GROUP", "AGENT", "ACCOUNT", "STATE", "USED BY")):
-        # No-wrap columns all shrink proportionally, so a long login or repo list
-        # squeezes the short ones to nothing. GROUP, AGENT and STATE therefore get
-        # a fixed width that fits their content; ACCOUNT and USED BY take the rest.
-        width = None
+    for column, header in enumerate(ACCOUNT_HEADERS):
+        fixed = None
         if column in _FIXED_COLUMNS:
-            width = max([len(header), *(len(cells[column]) for cells in cells_by_row)])
-            width = min(width, _FIXED_COLUMNS[column])
+            fixed = min(
+                max([len(header), *(len(cells[column]) for cells in cells_by_row)]),
+                _FIXED_COLUMNS[column],
+            )
         table.add_column(
-            header, overflow="ellipsis", no_wrap=True, width=width, ratio=_FLEX_RATIOS.get(column)
+            header, overflow="ellipsis", no_wrap=True, width=fixed, ratio=_FLEX_RATIOS.get(column)
         )
-    for i, cells in enumerate(cells_by_row):
-        style = CURSOR_STYLE if i == state.index else ""
-        row_style = (
-            Style.parse(style) + dhit.hit_style("account", i)
-            if style
-            else dhit.hit_style("account", i)
+    for cells in cells_by_row:
+        table.add_row(*(Text(c) for c in cells))
+    console = Console(width=max(20, width), color_system=None, legacy_windows=False)
+    # Explicit options: a dumb terminal's Console.size ignores the width given above.
+    options = console.options.update(width=max(20, width), height=None)
+    rendered = [
+        Text.assemble(
+            *((segment.text, segment.style or "") for segment in line if not segment.control)
         )
-        table.add_row(*(Text(c) for c in cells), style=row_style)
-    body: RenderableType = table
-    if not state.rows:
-        body = Text.from_markup("[dim](no logins or groups on this host)[/dim]")
-    return Panel(body, title="credential groups and logins", box=box.ROUNDED)
+        for line in console.render_lines(table, options, pad=False)
+    ]
+    head = len(rendered) - len(rows)
+    return tuple(rendered[:head]), tuple(rendered[head:])

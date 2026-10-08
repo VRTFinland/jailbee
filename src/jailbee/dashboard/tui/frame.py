@@ -141,8 +141,6 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
         return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
-    if isinstance(overlay, da.AccountsState):
-        return da.render_accounts(overlay)
     raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native
 
 

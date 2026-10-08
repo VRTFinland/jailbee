@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 from pytest_mock import MockerFixture
-from rich.console import Console
 
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import model as dmodel
@@ -194,20 +193,31 @@ def test_run_cli_quiet_success_timeout_and_oserror(mocker: MockerFixture) -> Non
     assert not result.ok and "not found" in result.message
 
 
-def test_accounts_state_navigation_and_render() -> None:
-    state = da.AccountsState(da.parse_account_rows(ROWS))
-    assert da.move_accounts(state, -1).index == 0
-    assert da.move_accounts(state, 99).index == 2
-    selected = da.selected_account(da.move_accounts(state, 1))
-    assert selected is not None and selected.account == "b@x.io~2"
-    console = Console(width=100, record=True)
-    console.print(da.render_accounts(state))
-    text = console.export_text()
-    assert "team" in text and "a@x.io#org12345" in text and "parked" in text
+def test_account_lines_one_line_per_row_under_a_header() -> None:
+    rows = da.parse_account_rows(ROWS)
+    header, lines = da.account_lines(rows, 90)
+    assert header[0].plain.split() == [
+        "GROUP",
+        "AGENT",
+        "ACCOUNT",
+        "STATE",
+        "USED",
+        "BY",
+    ]
+    assert len(header) == 2  # the titles and their rule
+    assert len(lines) == len(rows)
+    assert all(line.cell_len <= 90 for line in (*header, *lines))
+    assert "a@x.io#org12345" in lines[0].plain and "alpha, alpha-x" in lines[0].plain
+    assert "parked" in lines[1].plain and "team" in lines[0].plain
+
+
+def test_account_lines_of_no_rows_are_only_the_header() -> None:
+    header, lines = da.account_lines((), 80)
+    assert lines == () and header and "GROUP" in header[0].plain
 
 
 @pytest.mark.parametrize("width", [70, 90, 110])
-def test_render_accounts_keeps_the_short_columns_beside_long_values(width: int) -> None:
+def test_account_lines_keep_the_short_columns_beside_long_values(width: int) -> None:
     """A long login and repo list must squeeze ACCOUNT and USED BY, not GROUP/AGENT/STATE."""
     long_row = da.AccountRow(
         "claude",
@@ -217,25 +227,30 @@ def test_render_accounts_keeps_the_short_columns_beside_long_values(width: int) 
         ("gisgro-incus-env", "other-repo"),
         ("gisgro-incus-env-help", "other-main"),
     )
-    console = Console(width=width, record=True)
-    console.print(da.render_accounts(da.AccountsState((long_row,))))
-    lines = console.export_text().splitlines()
-    header = next(line for line in lines if "ACCOUNT" in line)
-    assert all(name in header for name in ("GROUP", "AGENT", "STATE", "USED BY"))
-    row = next(line for line in lines if "tuomas" in line)
-    assert "team" in row and "claude" in row and "live" in row
+    header, lines = da.account_lines((long_row,), width)
+    assert all(name in header[0].plain for name in ("GROUP", "AGENT", "STATE", "USED BY"))
+    assert "team" in lines[0].plain and "claude" in lines[0].plain and "live" in lines[0].plain
+    assert "tuomas" in lines[0].plain
 
 
-def test_render_accounts_empty_and_markup_safe() -> None:
-    console = Console(width=100, record=True)
-    console.print(da.render_accounts(da.AccountsState(())))
-    assert "no logins or groups on this host" in console.export_text()
-    assert da.selected_account(da.AccountsState(())) is None
+def test_account_lines_keep_short_columns_when_a_login_is_long() -> None:
+    rows = (da.AccountRow("claude", "team", "x" * 200, "live", (), ()),)
+    _header, lines = da.account_lines(rows, 80)
+    assert lines[0].plain.startswith("team") and "live" in lines[0].plain
+
+
+def test_account_lines_are_markup_safe_and_hold_one_line_each() -> None:
     weird = da.AccountRow("claude", "g[/x]", "[bold]a@x.io", "live", ("r[1]",), ())
-    console = Console(width=100, record=True)
-    console.print(da.render_accounts(da.AccountsState((weird,))))
-    text = console.export_text()
-    assert "[bold]a@x.io" in text and "g[/x]" in text
+    _header, lines = da.account_lines((weird, weird), 100)
+    assert len(lines) == 2
+    assert "[bold]a@x.io" in lines[0].plain and "g[/x]" in lines[0].plain
+
+
+def test_account_lines_hold_to_a_tiny_width() -> None:
+    rows = da.parse_account_rows(ROWS)
+    header, lines = da.account_lines(rows, 5)  # floored at 20 cells
+    assert len(lines) == len(rows) and len(header) == 2
+    assert all(line.cell_len <= 20 for line in (*header, *lines))
 
 
 def test_run_cli_quiet_decodes_leniently(mocker: MockerFixture) -> None:

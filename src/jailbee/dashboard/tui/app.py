@@ -22,7 +22,15 @@ from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.keys import parse_key
-from jailbee.dashboard.tui.native import EgressBox, MenuBox, OverlayBox, PickerBox, SettingsBox
+from jailbee.dashboard.tui.layout import FRAME_INSET_COLS
+from jailbee.dashboard.tui.native import (
+    AccountsBox,
+    EgressBox,
+    MenuBox,
+    OverlayBox,
+    PickerBox,
+    SettingsBox,
+)
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -33,7 +41,7 @@ from jailbee.dashboard.tui.session import (
     open_dashboard,
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
-from jailbee.dashboard.tui.widgets import FRAME_INSET_COLS, DashboardFrame, FleetTable, OverlayPanel
+from jailbee.dashboard.tui.widgets import DashboardFrame, FleetTable, OverlayPanel
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
@@ -232,6 +240,16 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_egress_box_remove(self, message: EgressBox.Remove) -> None:
         if self._native_current(message.key):
             self.session.egress_remove(message.row)
+        self._after_native()
+
+    def on_accounts_box_chosen(self, message: AccountsBox.Chosen) -> None:
+        if self._native_current(message.key):
+            self.session.account_chosen(message.row, message.index)
+        self._after_native()
+
+    def on_accounts_box_new_group(self, message: AccountsBox.NewGroup) -> None:
+        if self._native_current(message.key):
+            self.session.account_new_group(message.index)
         self._after_native()
 
     def on_settings_box_toggled(self, message: SettingsBox.Toggled) -> None:

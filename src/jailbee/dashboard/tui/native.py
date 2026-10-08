@@ -32,6 +32,7 @@ from textual.widgets._tabs import Underline
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
+from jailbee.dashboard.accounts import AccountRow, AccountsState, account_lines
 from jailbee.dashboard.egress import EgressState, egress_label
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
@@ -39,6 +40,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.settings import TABS, SettingsState, next_tab, setting_rows
 from jailbee.dashboard.settings import Tab as SettingsTab
 from jailbee.dashboard.tui.frame import help_lines
+from jailbee.dashboard.tui.layout import BOX_INSET_COLS, FRAME_INSET_COLS
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -722,6 +724,121 @@ class EgressBox(OverlayBox):
         return NativeState("egress", self._cursor())
 
 
+class AccountsBox(OverlayBox):
+    """Credential groups and stored logins: Enter acts on a row, `n` creates a group."""
+
+    DEFAULT_CSS = """
+    AccountsBox > #accounts-header { height: auto; background: ansi_default; color: ansi_default; }
+    AccountsBox > OverlayList { height: 1fr; }  /* the room the header leaves, not its own height */
+    """
+
+    class Chosen(Message):
+        def __init__(self, key: tuple[object, ...] | None, row: AccountRow, index: int) -> None:
+            super().__init__()
+            self.key = key
+            self.row = row
+            self.index = index
+
+    class NewGroup(Message):
+        def __init__(self, key: tuple[object, ...] | None, index: int) -> None:
+            super().__init__()
+            self.key = key
+            self.index = index
+
+    def __init__(self, spec: AccountsState, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.panel = spec
+        self._width = 0
+        self.border_title = "credential groups and logins"
+
+    def _lay_out(self, width: int) -> tuple[Text, list[Option]]:
+        """The header text and the options for the panel's rows at content ``width``."""
+        if not self.panel.rows:
+            placeholder = _one_line("(no logins or groups on this host)", "dim")
+            return Text(), [Option(placeholder, disabled=True)]
+        head, lines = account_lines(self.panel.rows, width - 1)  # the scrollbar's column
+        return Text("\n").join(head), [Option(line) for line in lines]
+
+    def compose(self) -> ComposeResult:
+        # The frame gives the box the whole slot, so its content width is known now;
+        # on_resize corrects it when it is not (a box shown on its own, a tiny screen).
+        self._width = max(1, self.app.size.width - FRAME_INSET_COLS - BOX_INSET_COLS)
+        header, options = self._lay_out(self._width)
+        yield Static(header, id="accounts-header")
+        yield OverlayList(*options, mouse_enabled=self.mouse_enabled, double_click_chooses=True)
+
+    def chrome_rows(self) -> int:
+        return 2 + (2 if self.panel.rows else 0)
+
+    def _rebuild(self, width: int, cursor: int) -> None:
+        """Lay the rows out again at ``width`` with the cursor on row ``cursor``."""
+        self._width = width
+        header, options = self._lay_out(width)
+        self.query_one("#accounts-header", Static).update(header)
+        self.query_one("#accounts-header", Static).display = bool(self.panel.rows)
+        lst = self.query_one(OverlayList)
+        lst.clear_options()
+        lst.add_options(options)
+        if self.panel.rows:
+            lst.highlighted = min(cursor, len(self.panel.rows) - 1)
+
+    def _cursor(self) -> int | None:
+        return self.query_one(OverlayList).highlighted if self.panel.rows else None
+
+    def show(self, spec: Overlay) -> None:
+        """Reloaded rows keep the cursor on the same login when it is still listed."""
+        super().show(spec)
+        assert isinstance(spec, AccountsState)
+        old, self.panel = self.panel, spec
+        if not self.is_mounted or spec.rows == old.rows:
+            return
+        cursor = self.query_one(OverlayList).highlighted if old.rows else None
+        keep = old.rows[cursor] if cursor is not None and cursor < len(old.rows) else None
+        self._rebuild(
+            self._width,
+            next(
+                (i for i, row in enumerate(spec.rows) if row == keep),
+                min(cursor or 0, max(0, len(spec.rows) - 1)),
+            ),
+        )
+        self.post_message(self.Changed())
+
+    def _ready(self) -> None:
+        self.query_one("#accounts-header", Static).display = bool(self.panel.rows)
+        if self.panel.rows:
+            self.query_one(OverlayList).highlighted = min(
+                self.panel.start_index, len(self.panel.rows) - 1
+            )
+
+    def on_resize(self, event: events.Resize) -> None:
+        width = self.content_size.width
+        if width > 0 and width != self._width:
+            self._rebuild(width, self._cursor() or 0)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if 0 <= event.option_index < len(self.panel.rows):
+            self.post_message(
+                self.Chosen(self.key, self.panel.rows[event.option_index], event.option_index)
+            )
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in ("escape", "n"):
+            return
+        event.stop()
+        event.prevent_default()
+        if event.key == "escape":
+            self.cancel()
+        else:
+            self.post_message(self.NewGroup(self.key, self._cursor() or 0))
+
+    def content_rows(self) -> int:
+        return max(1, len(self.panel.rows))
+
+    def state(self) -> NativeState:
+        return NativeState("accounts", self._cursor())
+
+
 def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
@@ -734,4 +851,6 @@ def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox
         return SettingsBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, EgressState):
         return EgressBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, AccountsState):
+        return AccountsBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

@@ -430,6 +430,7 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
 
     run = drive(mocker, ["A"], [group], size=(200, 25), screens=True)
     assert run.rc == 0
+    assert run.natives[1] == NativeState("accounts", 0)  # opens on the first row
 
     assert cli.call_args_list == [mocker.call(ACCOUNT_LS, cwd=tmp_path)]
     child.assert_not_called()
@@ -437,7 +438,7 @@ def test_key_a_opens_the_accounts_panel_with_rows_and_keeps_the_table(mocker, tm
     assert views, "the Accounts panel was never drawn"
     state = views[-1].overlay
     assert [r.account for r in state.rows] == ["a@x.io#org12345", "b@x.io~2", None]
-    assert (state.index, state.prefix) == (0, "alpha")
+    assert (state.start_index, state.prefix) == (0, "alpha")
     at = max(
         i for i, view in enumerate(run.trace) if isinstance(view.overlay, tsession.da.AccountsState)
     )
@@ -525,14 +526,33 @@ def test_accounts_panel_survives_a_failing_listing(mocker, tmp_path, listing, re
 def test_accounts_panel_with_an_empty_pool_says_so(mocker, tmp_path):
     cli = fake_accounts_cli(mocker, listing=groups_listing("[]"))
 
-    run = drive(mocker, ["A", "enter", "j"], [alpha_group(tmp_path)], screens=True)
+    run = drive(mocker, ["A", "enter", "j", "n"], [alpha_group(tmp_path)], screens=True)
     assert run.rc == 0
 
     assert cli.call_count == 1  # Enter on nothing ran nothing
-    assert isinstance(run.last.overlay, tsession.da.AccountsState)
-    assert run.last.overlay.rows == ()
-    assert run.last.notice == "No actions for this row"
-    assert "(no logins or groups on this host)" in run.screens[-1]
+    assert run.natives[1] == NativeState("accounts", None)  # no row to stand on
+    assert run.natives[3] == NativeState("accounts", None)
+    assert "(no logins or groups on this host)" in run.screens[1]
+    assert "GROUP" not in run.screens[1]  # no table header without rows
+    assert not run.of_type(tsession.Picker)
+    # `n` still asks for a group name, and Esc comes back to the empty panel
+    assert isinstance(run.trace[4].overlay, tsession.TextPrompt)
+
+
+def test_enter_on_a_row_without_actions_is_a_notice(mocker, tmp_path):
+    """A live login outside any group has nothing to park, use or remove."""
+    own = (
+        '[{"agent": "claude", "group": null, "account": "x@y.io", "state": "live",'
+        ' "repos": [], "containers": []}]'
+    )
+    fake_accounts_cli(mocker, listing=groups_listing(own))
+
+    run = drive(mocker, ["A", "enter"], [alpha_group(tmp_path)])
+    assert run.rc == 0
+
+    assert run.trace[2].notice == "No actions for this row"
+    assert isinstance(run.trace[2].overlay, tsession.da.AccountsState)
+    assert run.natives[2] == NativeState("accounts", 0)
     assert not run.of_type(tsession.Picker)
 
 
@@ -558,7 +578,7 @@ def test_accounts_actions_picker_offers_the_rows_actions(mocker, tmp_path):
     assert (parked.title, parked.carry) == ("Login b@x.io~2 (claude)", ("claude", "", "b@x.io~2"))
     assert [e.value for e in parked.entries] == ["use-in", "delete"]
     assert isinstance(parked.back, tsession.da.AccountsState)
-    assert parked.back.index == 1  # the panel remembers its cursor
+    assert parked.back.start_index == 1  # the panel remembers its cursor
 
 
 def test_accounts_questions_keep_the_cursor_where_the_key_was_pressed(mocker, tmp_path):
@@ -711,7 +731,7 @@ def test_accounts_confirmation_yes_runs_the_removal_and_closes(
 def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, open_keys):
     cli = fake_accounts_cli(mocker)
 
-    run = drive(mocker, [*open_keys, "enter"], [alpha_group(tmp_path)])
+    run = drive(mocker, [*open_keys, "enter", "j"], [alpha_group(tmp_path)])
     assert run.rc == 0
 
     assert cli.call_args_list == [mocker.call(ACCOUNT_LS, cwd=tmp_path)]
@@ -721,8 +741,18 @@ def test_accounts_confirmation_stray_enter_removes_nothing(mocker, tmp_path, ope
         if isinstance(v.overlay, tsession.Picker) and v.overlay.purpose == "acct-confirm"
     )
     back = run.trace[confirm_at + 1].overlay
+    asked = run.trace[confirm_at].overlay.back
     assert isinstance(back, tsession.da.AccountsState)
-    assert back is run.trace[confirm_at].overlay.back  # the same panel, not reloaded
+    # the same panel, not reloaded: its rows, repo and cursor row are the ones it had
+    assert (back.rows, back.prefix, back.start_index) == (
+        asked.rows,
+        asked.prefix,
+        asked.start_index,
+    )
+    # and its cursor is on the row the question was asked from: `j` moves on from there
+    assert run.natives[len(open_keys) + 2] == NativeState(
+        "accounts", (asked.start_index + 1) % len(asked.rows)
+    )
 
 
 def test_accounts_new_group_prompt_creates_the_typed_group_and_closes(mocker, tmp_path):
@@ -793,12 +823,17 @@ def test_accounts_cancel_at_every_question_returns_to_the_panel(
     question = run.trace[asked_at].overlay
     assert question.purpose == purpose
     after = run.trace[asked_at + 1].overlay
-    assert after is question.back
     assert isinstance(after, tsession.da.AccountsState)
+    assert (after.rows, after.prefix, after.start_index) == (
+        question.back.rows,
+        question.back.prefix,
+        question.back.start_index,
+    )
     assert run.trace[asked_at + 1].notice == "Cancelled"  # Esc says so, like Ctrl-C
-    moved = run.trace[asked_at + 2].overlay
-    assert isinstance(moved, tsession.da.AccountsState)
-    assert moved.index == min(after.index + 1, len(after.rows) - 1)
+    # the box is back on the row it was left on, and `j` moves on from there (the list wraps)
+    assert run.natives[asked_at + 2] == NativeState(
+        "accounts", (after.start_index + 1) % len(after.rows)
+    )
     assert cli.call_args_list == [mocker.call(ACCOUNT_LS, cwd=tmp_path)]
     child.assert_not_called()
 
@@ -817,13 +852,21 @@ def test_q_at_an_accounts_picker_steps_back_one_level_like_esc(mocker, tmp_path,
     """`q` in a nested picker must not close the whole Accounts panel."""
     cli = fake_accounts_cli(mocker)
 
-    run = drive(mocker, [*open_keys, "q"], [alpha_group(tmp_path)])
+    run = drive(mocker, [*open_keys, "q", "j"], [alpha_group(tmp_path)])
     assert run.rc == 0
 
     asked_at = max(i for i, v in enumerate(run.trace) if isinstance(v.overlay, tsession.Picker))
     after = run.trace[asked_at + 1]
-    assert after.overlay is run.trace[asked_at].overlay.back
+    asked = run.trace[asked_at].overlay.back
     assert isinstance(after.overlay, tsession.da.AccountsState)
+    assert (after.overlay.rows, after.overlay.prefix, after.overlay.start_index) == (
+        asked.rows,
+        asked.prefix,
+        asked.start_index,
+    )
+    assert run.natives[asked_at + 2] == NativeState(
+        "accounts", (asked.start_index + 1) % len(asked.rows)
+    )
     assert after.notice == "Cancelled"
     assert cli.call_args_list == [mocker.call(ACCOUNT_LS, cwd=tmp_path)]
 

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from jailbee.dashboard.overlays import MIN_LIST_ROWS
 
 MIN_TABLE_ROWS = 5
+FRAME_INSET_COLS = 4  # the dashboard frame's border and padding, either side
+BOX_INSET_COLS = 4  # an overlay box's border and padding, either side
 OVERLAY_BORDER_ROWS = 2
 MIN_DETAILS_ROWS = 2
 

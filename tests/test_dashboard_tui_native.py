@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
@@ -20,6 +21,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import widgets as twidgets
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import (
+    AccountsBox,
     EgressBox,
     MenuBox,
     OverlayBox,
@@ -30,13 +32,21 @@ from jailbee.dashboard.tui.native import (
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
 from jailbee.db.view_prefs import ViewState
 from jailbee.egress_scope import EntryRow
-from tests.dashboard_fixtures import alpha_group, cfg_group, fake_accounts_cli, named_rows_group
+from tests.dashboard_fixtures import (
+    ACCOUNT_ROWS,
+    alpha_group,
+    cfg_group,
+    fake_accounts_cli,
+    groups_listing,
+    named_rows_group,
+)
 from tests.dashboard_pilot import (
     NATIVE_LIST,
     Click,
     HoverOption,
     Pick,
     PickTab,
+    Resize,
     Wheel,
     backgrounds,
     box_text,
@@ -397,7 +407,7 @@ def test_a_picker_step_into_a_native_help_swaps_the_box(mocker, tmp_path):
     assert seen[0][0] == "HelpBox" and seen[0][1] is not None and seen[0][1].id == "native-list"
 
 
-def test_a_picker_back_to_a_panel_closes_the_box(mocker, tmp_path):
+def test_a_picker_back_to_a_panel_swaps_the_boxes(mocker, tmp_path):
     fake_accounts_cli(mocker)
     seen = []
     drive(
@@ -405,7 +415,7 @@ def test_a_picker_back_to_a_panel_closes_the_box(mocker, tmp_path):
         ["A", "enter", "escape", lambda app: seen.append(app.frame.native_box)],
         [alpha_group(tmp_path)],
     )
-    assert seen == [None]  # the accounts panel is still drawn, not native yet
+    assert isinstance(seen[0], AccountsBox)  # the picker's box gave way to the panel's
 
 
 # --- the list base: hover, wheel, gated clicks -----------------------------------
@@ -1508,3 +1518,246 @@ def test_the_egress_box_has_nothing_clickable_but_its_list(mocker, tmp_path):
         ],
     )
     assert seen == [["OverlayList"]]
+
+
+# --- the accounts panel ----------------------------------------------------------
+
+
+def _accounts_state(rows_json: str = ACCOUNT_ROWS, **kw):  # type: ignore[no-untyped-def]
+    return tsession.da.AccountsState(tsession.da.parse_account_rows(rows_json), **kw)
+
+
+def _many_accounts(count: int) -> str:
+    return (
+        "["
+        + ",".join(
+            f'{{"agent": "claude", "group": "g{i}", "account": null, "state": "empty",'
+            ' "repos": [], "containers": []}'
+            for i in range(count)
+        )
+        + "]"
+    )
+
+
+def test_accounts_is_native_and_keyed_by_its_repo():
+    assert is_native(_accounts_state())
+    assert overlay_key(_accounts_state(prefix="alpha")) == ("accounts", "alpha")
+    assert overlay_key(_accounts_state(start_index=2, prefix="alpha")) == ("accounts", "alpha")
+
+
+def test_accounts_is_native_and_enter_opens_actions_for_the_row(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "j", "enter"], [alpha_group(tmp_path)])
+    assert run.natives[2] == NativeState("accounts", 1)
+    picker = run.trace[3].overlay
+    assert isinstance(picker, tsession.Picker) and picker.purpose == "acct-action"
+    assert picker.title == "Login b@x.io~2 (claude)"
+    assert picker.back.start_index == 1  # a cancel returns to this row
+
+
+def test_cancelled_actions_return_to_the_same_row(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "j", "enter", "escape"], [alpha_group(tmp_path)])
+    assert run.natives[4] == NativeState("accounts", 1)
+
+
+def test_n_asks_for_a_group_and_escape_returns_to_the_row(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "j", "j", "n", "escape"], [alpha_group(tmp_path)])
+    prompt = run.trace[4].overlay
+    assert isinstance(prompt, tsession.TextPrompt) and prompt.back.start_index == 2
+    assert run.natives[4] is None  # the question is not a box
+    assert run.natives[5] == NativeState("accounts", 2)
+
+
+def test_one_click_selects_and_a_double_click_opens_actions(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", Pick(2), Pick(1, times=2)], [alpha_group(tmp_path)])
+    assert run.natives[2] == NativeState("accounts", 2)  # one click only highlights
+    assert isinstance(run.trace[2].overlay, tsession.da.AccountsState)
+    assert isinstance(run.trace[3].overlay, tsession.Picker)
+    assert run.trace[3].overlay.title == "Login b@x.io~2 (claude)"  # row 1, as double-clicked
+
+
+def test_accounts_clicks_do_nothing_with_the_mouse_off(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", Pick(2), Pick(1, times=2)], [alpha_group(tmp_path)], mouse=False)
+    assert run.natives[3] == NativeState("accounts", 0)
+    assert isinstance(run.trace[3].overlay, tsession.da.AccountsState)
+
+
+def test_the_header_stays_while_the_list_scrolls(mocker, tmp_path):
+    fake_accounts_cli(mocker, listing=groups_listing(_many_accounts(30)))
+    steps = ["A", *["j"] * 25]
+    run = drive(mocker, steps, [alpha_group(tmp_path)], size=(100, 24), screens=True)
+    assert run.natives[len(steps)] == NativeState("accounts", 25)
+    out = run.screens[len(steps)]
+    assert "GROUP" in out and "g25" in out  # the header and the cursor row, both on screen
+    assert "g0 " not in out  # the list scrolled
+
+
+def test_a_short_terminal_clips_the_list_not_the_header_or_the_cursor(mocker, tmp_path):
+    fake_accounts_cli(mocker, listing=groups_listing(_many_accounts(10)))
+    steps = ["A", *["j"] * 9]
+    run = drive(mocker, steps, [alpha_group(tmp_path)], size=(100, 14), screens=True)
+    out = run.screens[len(steps)]
+    assert "GROUP" in out and "g9" in out
+    assert "credential groups and logins" in out
+
+
+def test_the_accounts_box_draws_a_header_over_one_line_per_row():
+    out = box_text(_accounts_state(), size=(100, 14))
+    assert "credential groups and logins" in out[0]
+    assert out[1].split()[1:7] == ["GROUP", "AGENT", "ACCOUNT", "STATE", "USED", "BY"]
+    assert "a@x.io#org12345" in out[3] and "alpha, alpha-x" in out[3]
+    assert "b@x.io~2" in out[4] and "spare" in out[5]
+    assert not out[6].strip("│ ")  # nothing below the three rows
+
+
+def test_the_accounts_box_fits_a_narrow_terminal():
+    out = box_text(_accounts_state(), size=(44, 14))
+    assert all(len(line) <= 44 for line in out)
+    assert "GROUP" in out[1] and "a@x" in out[3] and "spare" in out[5]
+
+
+def test_an_empty_accounts_box_says_so_without_a_header():
+    out = "\n".join(box_text(_accounts_state("[]"), size=(80, 8)))
+    assert "(no logins or groups on this host)" in out
+    assert "GROUP" not in out
+    lines = box_text(_accounts_state("[]"), size=(80, 8))
+    assert "(no logins or groups on this host)" in lines[1]  # right under the border: no header gap
+
+
+def test_accounts_opens_on_the_remembered_row(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "j", "j", "n", "escape", "k"], [alpha_group(tmp_path)])
+    assert run.natives[6] == NativeState("accounts", 1)  # reopened on row 2, then k
+
+
+def test_new_rows_from_a_reload_are_drawn_and_keep_the_cursor_on_its_login(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+
+    def reload(app):  # type: ignore[no-untyped-def]
+        state = app.session.overlay
+        fresh = tsession.da.AccountRow("claude", "fresh", None, "empty", (), ())
+        # a new first row pushes the highlighted login (b@x.io~2) down by one
+        app.session.overlay = replace(state, rows=(fresh, *state.rows))
+
+    steps = ["A", "j", reload]
+    run = drive(mocker, steps, [alpha_group(tmp_path)], size=(100, 20), screens=True)
+    assert run.natives[3] == NativeState("accounts", 2)  # still on b@x.io~2
+    assert "fresh" in run.screens[3]
+
+
+def test_an_accounts_reload_to_no_rows_shows_the_empty_note(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+
+    def clear(app):  # type: ignore[no-untyped-def]
+        app.session.overlay = replace(app.session.overlay, rows=())
+
+    run = drive(mocker, ["A", "j", clear], [alpha_group(tmp_path)], size=(100, 20), screens=True)
+    assert run.natives[3] == NativeState("accounts", None)
+    assert "(no logins or groups on this host)" in run.screens[3]
+    assert "GROUP" not in run.screens[3]
+    below = run.screens[3].splitlines()
+    title = next(i for i, line in enumerate(below) if "credential groups and logins" in line)
+    assert "(no logins or groups on this host)" in below[title + 1]
+
+
+def test_rows_arriving_in_an_empty_accounts_panel_bring_the_header_back(mocker, tmp_path):
+    fake_accounts_cli(mocker, listing=groups_listing("[]"))
+    fresh = tsession.da.AccountRow("claude", "fresh", None, "empty", (), ())
+
+    def fill(app):  # type: ignore[no-untyped-def]
+        app.session.overlay = replace(app.session.overlay, rows=(fresh,))
+
+    run = drive(mocker, ["A", fill], [alpha_group(tmp_path)], size=(100, 20), screens=True)
+    assert run.natives[2] == NativeState("accounts", 0)
+    assert "GROUP" in run.screens[2] and "fresh" in run.screens[2]
+    assert "(no logins or groups on this host)" not in run.screens[2]
+
+
+def test_a_reload_that_drops_the_login_clamps_the_cursor(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+
+    def drop_last_two(app):  # type: ignore[no-untyped-def]
+        state = app.session.overlay
+        app.session.overlay = replace(state, rows=state.rows[:1])
+
+    run = drive(mocker, ["A", "j", "j", drop_last_two], [alpha_group(tmp_path)])
+    assert run.natives[4] == NativeState("accounts", 0)
+
+
+def test_a_resize_relays_the_rows_out_and_keeps_the_cursor(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    steps = ["A", "j", Resize(60, 20), Resize(120, 20)]
+    run = drive(mocker, steps, [alpha_group(tmp_path)], screens=True)
+    assert run.natives[3] == NativeState("accounts", 1)
+    assert run.natives[4] == NativeState("accounts", 1)
+    assert "alpha, alpha-x" not in run.screens[3]  # cut short at 60 columns
+    assert "alpha, alpha-x" in run.screens[4]  # ...and whole again at 120
+
+
+def test_the_accounts_header_and_list_paint_no_background_of_their_own(
+    mocker, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("NO_COLOR")
+    fake_accounts_cli(mocker)
+    seen: list[set[str]] = []
+    drive(
+        mocker,
+        ["A", lambda app: seen.append(backgrounds(app))],
+        [alpha_group(tmp_path)],
+    )
+    assert seen == [{"default"}]
+
+
+def test_hovering_an_account_row_paints_it_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    fake_accounts_cli(mocker)
+    seen = {}
+    run = drive(
+        mocker,
+        [
+            "A",
+            HoverOption(2),
+            lambda app: seen.update(hovered=[_bg(app, i) for i in range(3)]),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    grey = HOVER_STYLE.bgcolor.name
+    assert seen["hovered"][2] == grey
+    assert grey not in (seen["hovered"][0], seen["hovered"][1])
+    assert run.natives[3] == NativeState("accounts", 0)
+
+
+def test_the_accounts_box_has_nothing_clickable_but_its_list(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    seen: list[list[str]] = []
+    drive(
+        mocker,
+        [
+            "A",
+            lambda app: seen.append(
+                sorted(
+                    type(w).__name__
+                    for w in app.frame.native_box.query("*")
+                    if type(w).__name__ != "Static"
+                )
+            ),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert seen == [["OverlayList"]]
+
+
+def test_escape_closes_the_accounts_panel_to_the_table(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "escape"], [alpha_group(tmp_path)])
+    assert run.natives[2] is None and run.trace[2].overlay is None
+
+
+def test_n_posts_the_highlighted_row_as_the_index(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "j", "n"], [alpha_group(tmp_path)])
+    assert run.trace[3].overlay.back.start_index == 1
