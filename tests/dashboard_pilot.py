@@ -190,7 +190,7 @@ def _option_target(app: tapp.DashboardApp, index: int) -> tuple[Widget, tuple[in
     """
     box = app.frame.native_box
     assert box is not None, "no native overlay is open"
-    target = box.focus_target()
+    target = box.query_one(NATIVE_LIST)
     x, y = option_offset(app, index)
     return target, (x - target.region.x, y - target.region.y)
 
@@ -224,6 +224,10 @@ class Run:
 
     def notices(self) -> list[str | None]:
         return [view.notice for view in self.trace]
+
+    def prompts(self) -> list[NativeState]:
+        """The text prompt's box state after each step it was open (text, cursor, error)."""
+        return [n for n in self.natives if n is not None and n.kind == "prompt"]
 
     def of_type(self, kind: type) -> list[Any]:
         return [view.overlay for view in self.trace if isinstance(view.overlay, kind)]

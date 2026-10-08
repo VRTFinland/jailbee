@@ -1,6 +1,6 @@
 """Click targets in a rendered dashboard frame.
 
-A frame tags each clickable part with a Rich ``Style`` meta entry under
+A frame tags each clickable part of the table with a Rich ``Style`` meta entry under
 :data:`HIT_KEY`; a frontend reads it back from the style under the pointer.
 Plain data, no Textual: the renderers that tag live in the shared core.
 
@@ -25,10 +25,8 @@ HitKind = Literal[
     "repo",
     "fold",
     "scroll",
-    "suggestion",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
-TABLE_HIT_KINDS: frozenset[HitKind] = frozenset({"row", "repo", "fold", "scroll"})
 
 # A dim background, distinct from the cursor's bold magenta foreground.
 HOVER_STYLE = Style(bgcolor="grey23")
@@ -73,12 +71,3 @@ def hover_segments(segments: Iterable[Segment], hover: Hit | None) -> list[Segme
 def hit_style(kind: HitKind, *args: str | int) -> Style:
     """A style carrying only the tag; combine it with the segment's own style."""
     return Style(meta={HIT_KEY: (kind, *args)})
-
-
-def hit_markup(markup: str, kind: HitKind, *args: str | int) -> str:
-    """``markup`` wrapped in the tag, for renderers that build Rich markup lines.
-
-    Only for args whose ``repr`` is markup-safe (ints and fixed identifiers);
-    names go through :func:`hit_style` on a ``Text``.
-    """
-    return f"[{HIT_KEY}={(kind, *args)!r}]{markup}[/]"

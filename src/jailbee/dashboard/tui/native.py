@@ -38,7 +38,13 @@ from jailbee.dashboard.commands import apply_completion
 from jailbee.dashboard.egress import EgressState, egress_label
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
-from jailbee.dashboard.overlays import Picker, PickerEntry
+from jailbee.dashboard.overlays import (
+    SUGGESTION_ROWS,
+    Picker,
+    PickerEntry,
+    TextPrompt,
+    filter_suggestions,
+)
 from jailbee.dashboard.settings import CURSOR_STYLE, TABS, SettingsState, next_tab, setting_rows
 from jailbee.dashboard.settings import Tab as SettingsTab
 from jailbee.dashboard.tui.frame import help_lines
@@ -421,7 +427,12 @@ class CommandBox(TextBox):
         self.query_one("#command-candidates", Static).display = False
 
     def candidates_for(self, text: str) -> tuple[str, ...]:
-        """The session's completions for ``text``; the suggester asks for the same text again."""
+        """The session's completions for ``text``.
+
+        The one-entry cache keyed on the text only dedups the suggester's call for the
+        same edit (it and `on_input_changed` both ask); it must not be widened, or a
+        session whose candidates changed under the same text would answer stale.
+        """
         if self._memo is None or self._memo[0] != text:
             self._memo = (text, self._candidates_of(text))
         return self._memo[1]
@@ -470,6 +481,157 @@ class CommandBox(TextBox):
             self._index if self._index >= 0 else None,
             text=self.input.value,
             matches=self._shown,
+        )
+
+
+class SuggestionList(OverlayList, can_focus=False):
+    """A choice prompt's matches: the input keeps the focus and moves this highlight."""
+
+    DEFAULT_CSS = list_css("SuggestionList") + "SuggestionList { height: 1fr; }"
+
+
+class _PrefixSuggester(Suggester):
+    """The ghost answer: the first listed suggestion that starts with the text."""
+
+    def __init__(self, suggestions: tuple[str, ...]) -> None:
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.suggestions = suggestions
+
+    async def get_suggestion(self, value: str) -> str | None:
+        return next((s for s in self.suggestions if s != value and s.startswith(value)), None)
+
+
+def _one_line(label: str, style: str = "") -> Text:
+    return Text(label, style=style, no_wrap=True, overflow="ellipsis")
+
+
+class PromptBox(TextBox):
+    """A question: label, input, for a typed choice the matches, and the refusal."""
+
+    class Submitted(Message):
+        def __init__(self, key: tuple[object, ...] | None, text: str) -> None:
+            super().__init__()
+            self.key = key
+            self.text = text
+
+    def __init__(self, spec: TextPrompt, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.prompt = spec
+        self._matches = filter_suggestions(spec.suggestions, spec.initial)
+        self._error: str | None = None
+        self._error_for: str | None = None  # the text the error answers
+        self.border_title = _one_line(spec.title, "bold")
+
+    def _options(self) -> list[Option]:
+        return [Option(_one_line(m)) for m in self._matches] or [
+            Option(_one_line("(no matching branch)", "dim"), disabled=True)
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield Static(_one_line(self.prompt.label), classes="line")
+        with Horizontal(classes="line"):
+            yield Static("> ", classes="input-mark")
+            yield OverlayInput(
+                self.prompt.initial,
+                suggester=_PrefixSuggester(self.prompt.suggestions)
+                if self.prompt.suggestions
+                else None,
+            )
+        if self.prompt.suggestions:
+            yield SuggestionList(*self._options(), mouse_enabled=self.mouse_enabled)
+        yield Static(id="prompt-error", classes="line")
+
+    def _list(self) -> SuggestionList | None:
+        return self.query_one(SuggestionList) if self.prompt.suggestions else None
+
+    def _ready(self) -> None:
+        self.query_one("#prompt-error", Static).display = False
+        lst = self._list()
+        if lst is not None:
+            lst.highlighted = None  # OptionList highlights its first option on its own
+
+    def _highlight(self) -> int | None:
+        lst = self._list()
+        return lst.highlighted if lst is not None and self._matches else None
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        before = self.content_rows()
+        if self._error is not None and event.value != self._error_for:
+            self._error = None
+            self.query_one("#prompt-error", Static).display = False
+        lst = self._list()
+        if lst is not None:
+            matches = filter_suggestions(self.prompt.suggestions, event.value)
+            if matches != self._matches:
+                self._matches = matches
+                lst.clear_options()
+                lst.add_options(self._options())
+            lst.highlighted = None  # any edit drops the highlight
+        if self.content_rows() != before:
+            self.post_message(self.Changed())
+
+    def on_key(self, event: events.Key) -> None:
+        # Runs before TextBox.on_key (MRO dispatch); prevent_default keeps that one out.
+        lst = self._list()
+        if lst is None or event.key not in ("up", "down"):
+            return
+        event.stop()
+        event.prevent_default()
+        if not self._matches:
+            return
+        current = lst.highlighted
+        if event.key == "down":
+            lst.highlighted = 0 if current is None else min(current + 1, len(self._matches) - 1)
+        else:
+            lst.highlighted = None if current is None or current == 0 else current - 1
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()  # a click on a match: choose it, as Enter on it would
+        lst = self._list()
+        if lst is not None and 0 <= event.option_index < len(self._matches):
+            lst.highlighted = event.option_index
+            self.submit()
+
+    def complete(self) -> None:
+        if not self._matches:
+            return
+        current = self._highlight()
+        chosen = self._matches[current if current is not None else 0]
+        self.input.value = chosen
+        self.input.cursor_position = len(chosen)
+
+    def submit(self) -> None:
+        current = self._highlight()
+        text = self._matches[current] if current is not None else self.input.value
+        if text != self.input.value:
+            self.input.value = text
+            self.input.cursor_position = len(text)
+        self.post_message(self.Submitted(self.key, text))
+
+    def show_error(self, error: str) -> None:
+        """The session refused the answer: say why until the text changes."""
+        before = self.content_rows()
+        self._error, self._error_for = error, self.input.value
+        line = self.query_one("#prompt-error", Static)
+        line.update(Text(error, style="red", no_wrap=True, overflow="ellipsis"))
+        line.display = True
+        if self.content_rows() != before:
+            self.post_message(self.Changed())
+
+    def content_rows(self) -> int:
+        rows = 2 + int(self._error is not None)
+        if self.prompt.suggestions:
+            rows += min(max(1, len(self._matches)), SUGGESTION_ROWS)
+        return rows
+
+    def state(self) -> NativeState:
+        return NativeState(
+            "prompt",
+            self._highlight(),
+            text=self.input.value,
+            error=self._error,
+            matches=tuple(self._matches),
         )
 
 
@@ -539,10 +701,6 @@ class HelpBox(OverlayBox):
             event.stop()
             event.prevent_default()
             self.cancel()
-
-
-def _one_line(label: str, style: str = "") -> Text:
-    return Text(label, style=style, no_wrap=True, overflow="ellipsis")
 
 
 class PickerBox(OverlayBox):
@@ -1084,7 +1242,7 @@ def build_box(
     mouse_enabled: Callable[[], bool],
     candidates: Callable[[str], tuple[str, ...]] = _no_candidates,
 ) -> OverlayBox:
-    """The box for a native overlay (see `is_native`)."""
+    """The box for ``spec``: every overlay is drawn by a native box."""
     if spec == "help":
         return HelpBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, Picker):
@@ -1097,6 +1255,8 @@ def build_box(
         return EgressBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, AccountsState):
         return AccountsBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, TextPrompt):
+        return PromptBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, CommandState):
         return CommandBox(spec, mouse_enabled=mouse_enabled, candidates=candidates)
     raise ValueError(f"no native box for {spec!r}")

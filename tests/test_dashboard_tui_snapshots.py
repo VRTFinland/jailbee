@@ -10,7 +10,7 @@ import pytest
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.db.view_prefs import ViewState
-from tests.dashboard_fixtures import WIDE, ci, fake_accounts_cli
+from tests.dashboard_fixtures import WIDE, ci, fake_accounts_cli, fake_branches
 from tests.dashboard_pilot import FROZEN_NOW, make_app
 
 
@@ -119,3 +119,21 @@ def test_snapshot_command_line(snap_compare, mocker, groups):
         assert app.frame.native_state().text == "shell"
 
     assert snap_compare(app, terminal_size=(100, 30), run_before=type_command)
+
+
+def test_snapshot_choice_prompt(snap_compare, mocker):
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    mocker.patch.object(tsession, "save_view_state")
+    mocker.patch.object(tsession, "host_branches", side_effect=fake_branches)
+    info = replace(
+        ci("alpha-x", "alpha"), base_branch="feat/a", created_at=FROZEN_NOW - timedelta(hours=2)
+    )
+    app = make_app(mocker, [dmodel.RepoGroup("alpha", "/repos/alpha", None, [info])])
+
+    async def open_prompt(pilot):
+        await pilot.pause()
+        await pilot.press("j", "enter", "g", "b", "down")
+        await pilot.pause()
+        assert app.frame.native_state().cursor == 0
+
+    assert snap_compare(app, terminal_size=(100, 30), run_before=open_prompt)

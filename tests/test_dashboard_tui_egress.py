@@ -150,10 +150,9 @@ def test_egress_add_escape_returns_to_the_panel_with_a_notice(mocker, tmp_path, 
 
     prompt.assert_not_called()
     child.assert_not_called()
-    assert any(
-        isinstance(prompt_overlay, tsession.TextPrompt) and prompt_overlay.text == "x"
-        for prompt_overlay in run.overlays()
-    ), "the typed text never reached the inline prompt"
+    assert any(n.text == "x" for n in run.prompts()), (
+        "the typed text never reached the inline prompt"
+    )
     # Cancelling answers the question, not the dashboard: the panel is back.
     last = run.last.overlay
     assert isinstance(last, tsession.EgressState)
@@ -188,10 +187,9 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
     run = drive(mocker, steps, groups=[group], remote=True, over_ssh=True, ssh_policy=policy)
     assert run.rc == 0
 
-    assert any(
-        isinstance(overlay, tsession.TextPrompt) and overlay.text == "example.com"
-        for overlay in run.overlays()
-    ), "the add question never opened under the permissive policy"
+    assert any(n.text == "example.com" for n in run.prompts()), (
+        "the add question never opened under the permissive policy"
+    )
     child.assert_not_called()
     assert "net egress add is not permitted by the SSH policy" in run.notices()
     assert isinstance(run.last.overlay, tsession.EgressState)
@@ -209,9 +207,9 @@ def test_egress_add_blank_destination_is_rejected_inline(mocker, tmp_path):
     child.assert_not_called()
     # Enter keeps the question open with the reason (the trailing Ctrl-C
     # then cancels it, so this is not the last frame).
-    rejected = [p for p in run.of_type(tsession.TextPrompt) if p.error is not None]
-    assert [(p.purpose, p.error) for p in rejected] == [
-        ("egress-add", "Destination (host, host:port, *.domain, IPv4, or CIDR) cannot be empty")
+    rejected = [n for n in run.prompts() if n.error is not None]
+    assert [n.error for n in rejected] == [
+        "Destination (host, host:port, *.domain, IPv4, or CIDR) cannot be empty"
     ]
 
 
@@ -258,10 +256,9 @@ def test_egress_panel_closes_when_container_disappears(mocker, tmp_path):
     assert run.rc == 0
 
     child.assert_not_called()
-    assert any(
-        isinstance(overlay, tsession.TextPrompt) and overlay.text == "example.comx"
-        for overlay in run.overlays()
-    ), "the prompt must still be open, with the text typed after the removal"
+    assert any(n.text == "example.comx" for n in run.prompts()), (
+        "the prompt must still be open, with the text typed after the removal"
+    )
     assert not isinstance(run.last.overlay, (tsession.EgressState, tsession.TextPrompt))
     assert "Egress target is no longer available" in run.notices()
 

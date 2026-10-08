@@ -120,8 +120,7 @@ def test_a_click_outside_a_prompt_is_ignored(mocker, tmp_path):
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     run = drive(mocker, ["n", "x", Click(Hit("row", ("alpha-two",)))], [_two(tmp_path)])
     # trace[3]: `run.last` is after the padding Ctrl-C, which cancels the prompt.
-    prompt = run.trace[3].overlay
-    assert isinstance(prompt, TextPrompt) and prompt.text == "x"
+    assert isinstance(run.trace[3].overlay, TextPrompt) and run.natives[3].text == "x"
     assert run.trace[3].selected == run.trace[2].selected
 
 

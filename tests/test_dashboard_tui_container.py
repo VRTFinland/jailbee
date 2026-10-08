@@ -315,7 +315,7 @@ def test_snapshot_tag_prompt_rejects_a_blank_tag_inline(mocker, tmp_path):
     assert run.rc == 0
 
     child.assert_not_called()
-    assert any(p.error == "Snapshot tag cannot be empty" for p in _snapshot_tag_prompts(run))
+    assert any(n.error == "Snapshot tag cannot be empty" for n in run.prompts())
 
 
 def test_snapshot_picker_escape_runs_nothing(mocker, tmp_path):

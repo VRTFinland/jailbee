@@ -202,7 +202,7 @@ def test_new_group_name_prompt_esc_runs_nothing(mocker, tmp_path):
 
     prompts = run.of_type(tsession.TextPrompt)
     assert prompts and prompts[0].purpose == "repo-group-name"
-    assert prompts[-1].text == "fresh"
+    assert run.prompts()[-1].text == "fresh"
     assert cli.call_count == 1  # only the listing
     assert run.last.overlay is None
     assert run.last.notice == "Cancelled"
@@ -783,7 +783,7 @@ def test_accounts_new_group_prompt_rejects_a_blank_name_inline(mocker, tmp_path)
     assert run.rc == 0
 
     assert cli.call_count == 1  # the listing only
-    prompts = run.of_type(tsession.TextPrompt)
+    prompts = run.prompts()
     assert prompts[-1].error is None and prompts[-1].text == " z"  # still editing after
     assert any(p.error == "Group name cannot be empty" for p in prompts)
 

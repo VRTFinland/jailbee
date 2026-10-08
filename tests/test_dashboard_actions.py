@@ -400,4 +400,6 @@ def test_every_snapshot_question_is_about_the_container():
 
 
 def test_the_tag_prompt_refuses_an_empty_answer():
-    assert validate_answer(dact.snapshot_tag_prompt("alpha-x")) == "Snapshot tag cannot be empty"
+    assert (
+        validate_answer(dact.snapshot_tag_prompt("alpha-x"), "") == "Snapshot tag cannot be empty"
+    )

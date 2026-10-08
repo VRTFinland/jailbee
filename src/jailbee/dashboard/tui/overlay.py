@@ -73,22 +73,6 @@ class NativeState:
     matches: tuple[str, ...] = ()
 
 
-def is_native(overlay: Overlay | None) -> bool:
-    """Whether ``overlay`` is drawn by a native box (the rest by `_render_overlay`)."""
-    return overlay == "help" or isinstance(
-        overlay,
-        (
-            Picker,
-            MenuState,
-            RepoMenuState,
-            SettingsState,
-            EgressState,
-            da.AccountsState,
-            CommandState,
-        ),
-    )
-
-
 def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:
     """Which overlay this is, ignoring its data and initial cursor.
 

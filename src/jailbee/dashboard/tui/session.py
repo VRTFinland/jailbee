@@ -95,9 +95,8 @@ from jailbee.dashboard.overlays import (
     Picker,
     PickerEntry,
     TextPrompt,
-    filter_suggestions,
-    handle_prompt_key,
     parse_pr_number,
+    validate_answer,
 )
 from jailbee.dashboard.settings import (
     SettingsState,
@@ -156,8 +155,6 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo"})
 # With a native overlay focused, only these keys are the dashboard's own; every
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
-
-_OVERLAY_HITS = frozenset({"suggestion"})
 
 
 def _now() -> datetime:
@@ -1295,13 +1292,13 @@ class DashboardSession:
             )
         return state
 
-    def submit_prompt(self, prompt: TextPrompt) -> Overlay | None:
+    def submit_prompt(self, prompt: TextPrompt, text: str) -> Overlay | None:
         """Act on a confirmed answer; return the overlay to show next.
 
         None closes the overlay. Every purpose returns explicitly: the
         caller shows exactly what this returns, with no fallback.
         """
-        answer = prompt.text.strip()
+        answer = text.strip()
         if prompt.purpose == "new-pr":
             number = parse_pr_number(answer)
             assert number is not None  # validate_answer guaranteed it
@@ -1320,7 +1317,7 @@ class DashboardSession:
                 "new-base",
                 prompt.title,
                 "Base branch",
-                text=prompt.carry[0],
+                initial=prompt.carry[0],
                 target=prompt.target,
                 carry=(answer,),
                 suggestions=host_branches(
@@ -1636,17 +1633,9 @@ class DashboardSession:
         if self.selected in self.rows:
             self.sel_index = self.rows.index(self.selected)
 
-    @property
-    def text_input_open(self) -> bool:
-        """Whether the prompt is taking typed text."""
-        return isinstance(self.overlay, TextPrompt)
-
     def handle_input(self, data: bytes) -> Outcome:
         """Apply one key, as the terminal sends it; ``"quit"`` ends the dashboard."""
         overlay = self.overlay
-        if isinstance(overlay, TextPrompt):
-            self._prompt_key(overlay, data)
-            return None
         key = parse_key(data)
         if key == "interrupt":
             return "quit"
@@ -1698,21 +1687,19 @@ class DashboardSession:
         self.overlay = None
         self.run_command(text)
 
-    def _prompt_key(self, prompt: TextPrompt, data: bytes) -> None:
-        """A key while a text prompt is open."""
-        # Raw bytes, like the command line: every key is text
-        # here, so none of the table's shortcuts may fire.
-        prompt, outcome = handle_prompt_key(prompt, data)
-        if outcome == "cancel":
-            # Esc/Ctrl-C answer the prompt, never the dashboard.
-            self.overlay = prompt.back
-            self.set_notice(
-                "Egress change cancelled" if prompt.purpose == "egress-add" else "Cancelled"
-            )
-        elif outcome == "submit":
-            self.overlay = self.submit_prompt(prompt)
-        else:
-            self.overlay = prompt
+    def prompt_submitted(self, text: str) -> str | None:
+        """Enter on the prompt: why ``text`` cannot answer it, or None once it was acted on.
+
+        The check runs here, not in the box, so it sees the session's current
+        prompt; the box shows a refusal until the text changes.
+        """
+        prompt = self.overlay
+        assert isinstance(prompt, TextPrompt)
+        error = validate_answer(prompt, text)
+        if error is not None:
+            return error
+        self.overlay = self.submit_prompt(prompt, text)
+        return None
 
     def picker_chosen(self, entry: PickerEntry) -> None:
         """A picker entry was chosen: run its step and show what comes next."""
@@ -1731,7 +1718,11 @@ class DashboardSession:
             self.overlay = overlay.back
             self.set_notice("Cancelled")
         elif isinstance(overlay, TextPrompt):
-            self._prompt_key(overlay, b"\x1b")
+            # Esc/Ctrl-C answer the prompt, never the dashboard.
+            self.overlay = overlay.back
+            self.set_notice(
+                "Egress change cancelled" if overlay.purpose == "egress-add" else "Cancelled"
+            )
         else:
             self.overlay = None
 
@@ -1759,12 +1750,6 @@ class DashboardSession:
                 None if isinstance(self.overlay, SettingsState) else self.open_settings_overlay()
             )
         return None
-
-    def overlay_move(self, step: int) -> None:
-        """Move the highlight of the text prompt's suggestions; no other overlay takes it."""
-        overlay = self.overlay
-        if isinstance(overlay, TextPrompt) and overlay.suggestions:
-            self._prompt_key(overlay, b"\x1b[B" if step > 0 else b"\x1b[A")
 
     def menu_chosen(self, verb: str, group: str | None, index: int) -> None:
         """A menu leaf was chosen at ``group``/``index``: a panel, a question, or a verb to run."""
@@ -1954,9 +1939,6 @@ class DashboardSession:
     def click(self, hit: Hit | None, *, double: bool = False, right: bool = False) -> None:
         """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules."""
         overlay = self.overlay
-        if hit is not None and hit.kind in _OVERLAY_HITS:
-            self._click_overlay(hit)
-            return
         if overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
         ):
@@ -1987,25 +1969,10 @@ class DashboardSession:
             return Row("container", name) in self.rows
         return any(group.prefix == name for group in self.groups)
 
-    def _click_overlay(self, hit: Hit) -> None:
-        """A click on one of the open overlay's own entries; a stale one is ignored."""
-        overlay = self.overlay
-        index = hit.args[0]
-        if not isinstance(index, int):
-            return
-        if hit.kind == "suggestion" and isinstance(overlay, TextPrompt):
-            matches = filter_suggestions(overlay.suggestions, overlay.text)
-            if 0 <= index < len(matches):
-                self._prompt_key(replace(overlay, highlight=index), b"\r")
-
-    def wheel(self, step: int, *, columns: bool = False) -> None:
-        """A wheel notch: the prompt's suggestions, or columns sideways without an overlay."""
-        if columns:
-            if self.overlay is None:
-                self.scroll_columns(step)
-            return
-        if self.overlay is not None:
-            self.overlay_move(step)
+    def wheel_columns(self, step: int) -> None:
+        """Shift+wheel or a sideways wheel over the table: columns, while no overlay is open."""
+        if self.overlay is None:
+            self.scroll_columns(step)
 
     def toggle_fold(self, prefix: str | None = None) -> None:
         """Fold or unfold ``prefix`` (default: the selected repo) and park the cursor on it."""

@@ -49,7 +49,7 @@ def test_run_new_prompt_is_drawn_in_the_frame_and_keeps_the_table(mocker, tmp_pa
 
     prompts = _prompts(run)
     assert prompts[-1].label == "New branch"
-    assert prompts[-1].text == "fe"
+    assert run.prompts()[-1].text == "fe"
     # the table is still drawn behind the prompt, the cursor where `n` was pressed
     last = next(view for view in reversed(run.trace) if view.overlay is prompts[-1])
     assert last.groups == [group]
@@ -89,7 +89,7 @@ def test_run_new_blank_branch_is_rejected_inline_not_dispatched(mocker, tmp_path
     run = drive(mocker, ["n", *keys("  "), "enter"], [group])
 
     child.assert_not_called()
-    assert any(p.error == "New branch cannot be empty" for p in _prompts(run))
+    assert any(n.error == "New branch cannot be empty" for n in run.prompts())
 
 
 def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path):
@@ -113,7 +113,7 @@ def test_run_new_trims_answers_and_rejects_a_blank_base_inline(mocker, tmp_path)
     run = drive(mocker, steps, [group])
     assert run.rc == 0
 
-    assert any(p.error == "Base branch cannot be empty" for p in _prompts(run))
+    assert any(n.error == "Base branch cannot be empty" for n in run.prompts())
     child.assert_called_once_with(
         ["jailbee", "new", "--background", "--", "feature", "dev"], check=False, cwd=tmp_path
     )
@@ -146,7 +146,7 @@ def test_run_retarget_refuses_an_unknown_branch_inline(mocker, tmp_path):
     run = drive(mocker, ["j", "enter", "g", "b", *keys("nope"), "enter"], [group])
 
     child.assert_not_called()
-    assert any(p.error == "'nope' is not one of the listed branches" for p in _prompts(run))
+    assert any(n.error == "'nope' is not one of the listed branches" for n in run.prompts())
 
 
 def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path):
@@ -182,7 +182,8 @@ def test_run_new_base_prompt_offers_the_host_branches(mocker, tmp_path):
     base = [p for p in _prompts(run) if p.purpose == "new-base"]
     assert base and base[-1].suggestions == ("main", "feat/a", "develop")
     assert base[-1].require_suggestion is False
-    assert base[-1].text == "main"
+    assert base[-1].initial == "main"
+    assert [n.text for n in run.prompts()][-1] == "main"
 
 
 @pytest.mark.parametrize(
@@ -358,8 +359,9 @@ def test_run_open_prompt_closes_when_its_repo_vanishes_before_any_submit(mocker,
     child.assert_not_called()
     overlays = run.overlays()
     prompts = [o for o in overlays if isinstance(o, tsession.TextPrompt)]
-    assert prompts[-1].text == "f"
-    closed_at = overlays.index(prompts[-1]) + 1
+    assert run.prompts()[-1].text == "f"
+    # prompts compare equal frame to frame (the text lives in the box): take the last one
+    closed_at = len(overlays) - overlays[::-1].index(prompts[-1])
     assert overlays[closed_at] is None
     assert "'alpha' is gone — prompt closed" in str(run.trace[closed_at].notice)
 
@@ -525,10 +527,9 @@ def test_repo_menu_new_from_pr_rejects_nonpositive_or_non_numeric_input(
     assert run.rc == 0
 
     child.assert_not_called()
-    prompts = _prompts(run)
-    assert prompts[-1].purpose == "new-pr"
-    assert prompts[-1].text == answer
-    assert prompts[-1].error == error
+    assert _prompts(run)[-1].purpose == "new-pr"
+    assert run.prompts()[-1].text == answer
+    assert run.prompts()[-1].error == error
 
 
 @pytest.mark.parametrize(
@@ -545,7 +546,8 @@ def test_a_paste_into_the_prompt_lands_as_one_input_without_line_breaks(
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
     mocker.patch.object(tsession, "new_container_base_default", return_value="main")
     run = drive(mocker, ["n", Paste(pasted), "ctrl+c"], [group])
-    assert run.trace[2].overlay.text == typed  # one frame for the whole paste
+    assert run.prompts()[-1].text == typed
+    assert len(run.prompts()) == 2  # opened empty, then one step for the whole paste
 
 
 def test_a_paste_into_the_command_line_lands_in_it(mocker, tmp_path):

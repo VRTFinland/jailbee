@@ -9,9 +9,7 @@ from rich.console import Console, Group, RenderableType
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.overlays import TextPrompt
 from jailbee.dashboard.tui import fleet
-from jailbee.dashboard.tui import frame as tframe
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 _NOW = datetime(2026, 10, 7, tzinfo=UTC)
@@ -58,11 +56,9 @@ def _table(groups, *, width=120, enabled=None, column_offset=0):
     )
 
 
-def test_hit_round_trips_through_style_meta_and_markup():
-    hit = dhit.Hit("suggestion", (3,))
-    assert dhit.Hit.of(dhit.hit_style("suggestion", 3).meta) == hit
-    text = Console().render_str(dhit.hit_markup("[bold]x[/]", "suggestion", 3))
-    assert dhit.Hit.of(text.spans[0].style.meta) == hit  # type: ignore[union-attr]  # markup spans carry Style objects
+def test_hit_round_trips_through_style_meta():
+    hit = dhit.Hit("row", (3,))
+    assert dhit.Hit.of(dhit.hit_style("row", 3).meta) == hit
     assert dhit.Hit.of({}) is None
     assert dhit.Hit.of({dhit.HIT_KEY: "garbage"}) is None
 
@@ -97,14 +93,6 @@ def test_scroll_marks_are_tagged_with_their_direction(tmp_path):
         width=44,
     )
     assert dhit.Hit("scroll", (-1,)) in kinds
-
-
-def test_overlay_entries_are_tagged_by_index(tmp_path):
-    prompt = TextPrompt("x", "T", "Base", suggestions=("main", "dev"))
-    assert _kinds(tframe._render_overlay(prompt)) == {
-        dhit.Hit("suggestion", (0,)),
-        dhit.Hit("suggestion", (1,)),
-    }
 
 
 def test_hover_segments_paints_only_the_matching_target():

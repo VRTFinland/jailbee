@@ -30,6 +30,7 @@ from jailbee.dashboard.tui.native import (
     MenuBox,
     OverlayBox,
     PickerBox,
+    PromptBox,
     SettingsBox,
     TextBox,
 )
@@ -43,7 +44,7 @@ from jailbee.dashboard.tui.session import (
     open_dashboard,
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
-from jailbee.dashboard.tui.widgets import DashboardFrame, FleetTable, OverlayPanel
+from jailbee.dashboard.tui.widgets import DashboardFrame, FleetTable
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:
@@ -279,20 +280,13 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_overlay_box_changed(self, _message: OverlayBox.Changed) -> None:
         self._after_native()
 
-    def on_paste(self, event: events.Paste) -> None:
-        """A bracketed paste reaches the prompt or command line as one input.
-
-        Line breaks are dropped (a trailing one, as copied lines carry, leaves
-        no stray character): the single-line inputs would otherwise reject
-        the whole chunk as non-printable. With no text input open the paste is
-        ignored — fed to the table it would fire shortcuts (a pasted ``q``).
-        """
-        event.stop()
-        if not self.session.text_input_open:
-            return
-        text = "".join(event.text.strip("\r\n").splitlines())
-        if text:
-            self._after(self.session.handle_input(text.encode()))
+    def on_prompt_box_submitted(self, message: PromptBox.Submitted) -> None:
+        if self._native_current(message.key):
+            error = self.session.prompt_submitted(message.text)
+            box = self.frame.native_box
+            if error is not None and isinstance(box, PromptBox) and box.key == message.key:
+                box.show_error(error)
+        self._after_native()
 
     # --- frame -------------------------------------------------------------
 
@@ -383,12 +377,7 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def on_fleet_table_column_scroll(self, message: FleetTable.ColumnScroll) -> None:
         if self.mouse_on:
-            self.session.wheel(message.step, columns=True)
-            self.refresh_frame()
-
-    def on_overlay_panel_wheel(self, message: OverlayPanel.Wheel) -> None:
-        if self.mouse_on:
-            self.session.wheel(message.step)
+            self.session.wheel_columns(message.step)
             self.refresh_frame()
 
     def _write_terminal(self, sequence: str) -> None:

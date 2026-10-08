@@ -23,13 +23,15 @@ from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import (
     AccountsBox,
     EgressBox,
+    HelpBox,
     MenuBox,
     OverlayBox,
     OverlayList,
     PickerBox,
     SettingsBox,
+    build_box,
 )
-from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
+from jailbee.dashboard.tui.overlay import NativeState, overlay_key
 from jailbee.db.view_prefs import ViewState
 from jailbee.egress_scope import EntryRow
 from tests.dashboard_fixtures import (
@@ -61,16 +63,18 @@ from tests.dashboard_pilot import (
 
 
 def test_menus_are_native_and_keyed_by_their_owner():
-    assert is_native(MenuState("alpha-x", [("Attach tmux", "tmux")]))
-    assert is_native(RepoMenuState("alpha", [("Fold", "fold")]))
-    assert overlay_key(RepoMenuState("alpha", [("Fold", "fold")])) == ("repo-menu", "alpha")
+    menu = MenuState("alpha-x", [("Attach tmux", "tmux")])
+    repo_menu = RepoMenuState("alpha", [("Fold", "fold")])
+    assert isinstance(build_box(menu, mouse_enabled=lambda: True), MenuBox)
+    assert isinstance(build_box(repo_menu, mouse_enabled=lambda: True), MenuBox)
+    assert overlay_key(menu) == ("menu", "alpha-x")
+    assert overlay_key(repo_menu) == ("repo-menu", "alpha")
 
 
 def test_help_is_native_and_keyed():
-    assert is_native("help")
+    assert isinstance(build_box("help", mouse_enabled=lambda: True), HelpBox)
     assert overlay_key("help") == ("help",)
     assert overlay_key(None) is None
-    assert not is_native(None)
 
 
 def test_overlay_key_ignores_initial_cursor_fields():
@@ -212,7 +216,6 @@ class _ProbeBox(OverlayBox):
 
 def _with_probe_kind(mocker, box_cls=_ProbeBox) -> None:  # type: ignore[no-untyped-def]
     """Make the string overlay ``"probe"`` a native kind next to help."""
-    mocker.patch.object(twidgets, "is_native", lambda o: o in ("help", "probe"))
     real_key = twidgets.overlay_key
     mocker.patch.object(
         twidgets, "overlay_key", lambda o: ("probe",) if o == "probe" else real_key(o)
@@ -935,7 +938,7 @@ def test_settings_are_native_and_keyed():
     state = ds.open_settings(
         field_names=("name",), enabled=frozenset({"name"}), repo_prefixes=(), folded=frozenset()
     )
-    assert is_native(state)
+    assert isinstance(build_box(state, mouse_enabled=lambda: True), SettingsBox)
     assert overlay_key(state) == ("settings",)
 
 
@@ -1346,7 +1349,9 @@ def _egress(mocker, tmp_path, steps, rows=FIRST, **kw):
 
 
 def test_the_egress_panel_is_native_and_keyed_by_its_scope():
-    assert is_native(tsession.EgressState("alpha", None, ()))
+    assert isinstance(
+        build_box(tsession.EgressState("alpha", None, ()), mouse_enabled=lambda: True), EgressBox
+    )
     assert overlay_key(tsession.EgressState("alpha", "alpha-x", FIRST)) == (
         "egress",
         "alpha",
@@ -1467,7 +1472,8 @@ def test_a_opens_the_question_and_escape_returns_to_the_same_row(mocker, tmp_pat
     run, n = _egress(mocker, tmp_path, ["j", "a", "escape"])
     prompt = run.trace[n + 2].overlay
     assert isinstance(prompt, tsession.TextPrompt) and prompt.purpose == "egress-add"
-    assert run.natives[n + 2] is None  # the question is not a box: the panel's is gone
+    # the question replaces the panel's box; the panel's own is gone
+    assert run.natives[n + 2] == NativeState("prompt", None, text="", matches=())
     assert run.natives[n + 3] == NativeState("egress", 1)  # and a new one opens on row 1
 
 
@@ -1541,7 +1547,7 @@ def _many_accounts(count: int) -> str:
 
 
 def test_accounts_is_native_and_keyed_by_its_repo():
-    assert is_native(_accounts_state())
+    assert isinstance(build_box(_accounts_state(), mouse_enabled=lambda: True), AccountsBox)
     assert overlay_key(_accounts_state(prefix="alpha")) == ("accounts", "alpha")
     assert overlay_key(_accounts_state(start_index=2, prefix="alpha")) == ("accounts", "alpha")
 
@@ -1567,7 +1573,7 @@ def test_n_asks_for_a_group_and_escape_returns_to_the_row(mocker, tmp_path):
     run = drive(mocker, ["A", "j", "j", "n", "escape"], [alpha_group(tmp_path)])
     prompt = run.trace[4].overlay
     assert isinstance(prompt, tsession.TextPrompt) and prompt.back.start_index == 2
-    assert run.natives[4] is None  # the question is not a box
+    assert run.natives[4] == NativeState("prompt", None, text="", matches=())  # replaces the panel
     assert run.natives[5] == NativeState("accounts", 2)
 
 

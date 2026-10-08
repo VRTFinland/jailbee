@@ -1,4 +1,4 @@
-"""The overlays' Rich renderers and frame border texts until V3 makes overlays native."""
+"""The frame's border texts, the help and hint lines, and the view the frame shows."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.text import Text
 
 from jailbee.dashboard import accounts as da
@@ -19,7 +18,6 @@ from jailbee.dashboard.overlays import (
     SUGGEST_HINT,
     Picker,
     TextPrompt,
-    render_prompt,
 )
 from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
@@ -130,24 +128,6 @@ def _hint_line(overlay: Overlay | None) -> str:
     return ""
 
 
-def _render_overlay(overlay: Overlay) -> RenderableType:
-    """The panel of the prompt or the command line (the list overlays are native boxes)."""
-    if isinstance(overlay, TextPrompt):
-        return render_prompt(overlay)
-    raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native
-
-
-@dataclass(frozen=True)
-class HoverHighlight:
-    """``renderable`` with the hovered click target given :data:`HOVER_STYLE`."""
-
-    renderable: RenderableType
-    hover: dhit.Hit | None
-
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        yield from dhit.hover_segments(console.render(self.renderable, options), self.hover)
-
-
 @dataclass(frozen=True)
 class DashboardView:
     """Everything the native frame shows, produced after each refresh and key.
@@ -168,4 +148,4 @@ class DashboardView:
     show_details: bool
     column_widths: Mapping[str, int] | None
     shown_columns: Sequence[str] | None
-    hover: dhit.Hit | None = None
+    hover: dhit.Hit | None = None  # the hovered table target

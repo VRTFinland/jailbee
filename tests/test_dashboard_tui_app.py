@@ -59,13 +59,6 @@ def test_control_aliases_of_backspace_and_enter_are_kept(key, expected):
     assert key_adapter.legacy_bytes(key, None) == expected
 
 
-def test_ctrl_h_deletes_a_character_in_a_prompt(mocker, tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    mocker.patch.object(tsession, "new_container_base_default", return_value="main")
-    run = drive(mocker, ["n", "a", "b", "ctrl+h", "ctrl+c"], [group])
-    assert run.trace[4].overlay.text == "a"
-
-
 def test_unmapped_and_non_printable_keys_are_dropped():
     assert key_adapter.legacy_bytes("ctrl+x", None) is None
     assert key_adapter.legacy_bytes("home", None) is None

@@ -288,9 +288,8 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
     Used by the CLI's submodule picker (``cli.py``); the dashboard scrolls a
     widget instead. ``heights`` are each row's rendered line count. A hidden
     end costs one line, which the caller fills with its own "more" marker
-    (the counts are in ``hidden_above`` / ``hidden_below``). Like
-    :func:`jailbee.dashboard.overlays.window_lines`, the window is derived
-    from the cursor alone: pinned to the top while the cursor fits there, to
+    (the counts are in ``hidden_above`` / ``hidden_below``). The window is
+    derived from the cursor alone: pinned to the top while the cursor fits there, to
     the bottom near the end, centred otherwise. A cursor row taller than the
     whole budget is still returned; the caller must clip it.
     """
