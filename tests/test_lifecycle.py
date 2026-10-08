@@ -10471,7 +10471,6 @@ def test_ls_pr_cell_still_carries_the_outbox_marker():
     assert _ls_spec("pr").cell(c) == "#7↓ ✉2"
 
 
-
 def test_agent_compact_cell_function_is_what_the_ls_field_renders():
     from jailbee.lifecycle import agent_compact_cell
 

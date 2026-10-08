@@ -6354,8 +6354,9 @@ def test_dashboard_remaining_compact_cells_preserve_canonical_data(mocker):
     assert Text.from_markup(fields["ttl"].cell(c)).plain == "3h59m"
 
 
-
-@pytest.mark.parametrize(("minutes", "style"), [(29, "bold bright_white"), (30, "dim"), (31, "dim")])
+@pytest.mark.parametrize(
+    ("minutes", "style"), [(29, "bold bright_white"), (30, "dim"), (31, "dim")]
+)
 def test_dashboard_ai_cell_brightens_an_agent_idle_under_thirty_minutes(minutes, style):
     now = datetime(2026, 10, 7, 12, tzinfo=UTC)
     c = dataclasses.replace(
