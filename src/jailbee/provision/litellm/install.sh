@@ -13,7 +13,5 @@ if [ "${JAILBEE_LITELLM_UNLOCKED_VERSION:-}" != "" ]; then
 else
     /opt/litellm/bin/pip install --require-hashes --no-deps -r /root/litellm-requirements.lock
 fi
-# Temporary: backport of litellm#41235 for 1.104.0 (a no-op on any other version).
-/opt/litellm/bin/python /root/litellm-chatgpt-stream-fix.py
 install -m 0644 /root/jailbee-litellm@.service /etc/systemd/system/jailbee-litellm@.service
 systemctl daemon-reload

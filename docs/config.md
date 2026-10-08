@@ -2620,7 +2620,7 @@ host-local per-repo file may carry a narrower override (`routes`, `profiles`,
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | Permit `jailbee litellm up` and dev-container proxy settings. |
-| `version` | pinned `1.104.0` | LiteLLM version. An explicit version bypasses the bundled hash lock and warns. |
+| `version` | pinned `1.106.0.dev2` | LiteLLM version. An explicit version bypasses the bundled hash lock and warns. |
 | `default_profile` | `codex` | Profile used by `claude-jb` unless overridden by its `--profile` or `JAILBEE_LITELLM_PROFILE`. |
 | `autostart` | `false` | Start the Claude autostart window with `claude-jb` instead of `claude`. A repo's host-local file can override it. See [Autostart](litellm.md#autostart). |
 | `accounts` | `[default]` | Logins (ChatGPT or xAI), one proxy instance each. The built-in `codex` profile uses `default`. |
