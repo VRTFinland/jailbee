@@ -11,10 +11,11 @@ hover (:data:`HOVER_STYLE`) instead.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, get_args
 
+from rich.segment import Segment
 from rich.style import Style
 
 HIT_KEY = "@jb.hit"
@@ -33,6 +34,7 @@ HitKind = Literal[
     "account",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
+TABLE_HIT_KINDS: frozenset[HitKind] = frozenset({"row", "repo", "fold", "scroll"})
 
 # A dim background, distinct from the cursor's bold magenta foreground.
 HOVER_STYLE = Style(bgcolor="grey23")
@@ -58,6 +60,20 @@ class Hit:
 
     def meta_value(self) -> tuple[str | int, ...]:
         return (self.kind, *self.args)
+
+
+def hover_segments(segments: Iterable[Segment], hover: Hit | None) -> list[Segment]:
+    """Apply the hover style to segments tagged for ``hover``."""
+    rendered = list(segments)
+    if hover is None:
+        return rendered
+    target = hover.meta_value()
+    return [
+        Segment(segment.text, segment.style + HOVER_STYLE, segment.control)
+        if segment.style is not None and segment.style.meta.get(HIT_KEY) == target
+        else segment
+        for segment in rendered
+    ]
 
 
 def hit_style(kind: HitKind, *args: str | int) -> Style:

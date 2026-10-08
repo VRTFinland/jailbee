@@ -148,6 +148,23 @@ def test_egress_and_account_rows_are_tagged_by_index():
     assert dhit.Hit("account", (0,)) in _kinds(tframe._render_overlay(da.AccountsState(rows)))
 
 
+def test_hover_segments_paints_only_the_matching_target():
+    from rich.segment import Segment
+
+    row = dhit.hit_style("row", "a")
+    other = dhit.hit_style("row", "b")
+    segment = Segment("x", row, control=("control",))
+    out = dhit.hover_segments(
+        [segment, Segment("y", other), Segment("z")], dhit.Hit("row", ("a",))
+    )
+
+    assert out[0].style == row + dhit.HOVER_STYLE
+    assert out[0].style.meta == row.meta
+    assert out[0].control == segment.control
+    assert out[1].style == other and out[2].style is None
+    assert dhit.hover_segments([Segment("x", row)], None) == [Segment("x", row)]
+
+
 def test_hover_paints_only_the_hovered_target(tmp_path):
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")]

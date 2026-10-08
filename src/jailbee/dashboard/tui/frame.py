@@ -654,16 +654,7 @@ class HoverHighlight:
     hover: dhit.Hit | None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        if self.hover is None:
-            yield self.renderable
-            return
-        target = self.hover.meta_value()
-        for segment in console.render(self.renderable, options):
-            style = segment.style
-            if style is not None and style.meta.get(dhit.HIT_KEY) == target:
-                yield Segment(segment.text, style + dhit.HOVER_STYLE, segment.control)
-            else:
-                yield segment
+        yield from dhit.hover_segments(console.render(self.renderable, options), self.hover)
 
 
 @dataclass(frozen=True)
