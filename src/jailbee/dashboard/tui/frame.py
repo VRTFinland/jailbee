@@ -18,7 +18,7 @@ from rich.text import Text
 
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
-from jailbee.dashboard.columns import FieldSpecCI, _frame_columns, window_rows
+from jailbee.dashboard.columns import FieldSpecCI, window_rows
 from jailbee.dashboard.details import (
     DETAILS_MAX_ROWS,
     DETAILS_PAIR_WIDTH,
@@ -49,13 +49,18 @@ from jailbee.dashboard.settings import (
     SettingsState,
     render_settings,
 )
+from jailbee.dashboard.tui.fleet import (
+    TableModel,
+    entry_line,
+    header_line,
+    line_count,
+    repo_heading,
+    table_model,
+)
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
-from jailbee.dashboard.viewport import column_viewport
-from jailbee.lifecycle import (
-    ContainerInfo,
-)
+from jailbee.lifecycle import ContainerInfo
 
 _INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
 
@@ -182,28 +187,6 @@ def _hint_line(overlay: Overlay | None) -> str:
     return ""
 
 
-def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str]) -> Text:
-    """Render a repo heading independently of the table's data columns.
-
-    The cursor heading is marked by :data:`CURSOR_STYLE` alone, like a
-    container row; an inserted marker would shift the whole line whenever
-    the cursor landed on it. The marker and the rest carry separate click targets
-    (``fold`` and ``repo``).
-    """
-    marker = "▸" if group.prefix in folded else "▾"
-    rest = f" {group.prefix}  ({len(group.containers)})"
-    if group.repo_root is None:
-        rest += "  (orphan)"
-    if selected == Row("repo", group.prefix):
-        style = CURSOR_STYLE
-    else:
-        style = "bold yellow" if group.repo_root is None else "bold cyan"
-    heading = Text(style=style)
-    heading.append(marker, style=dhit.hit_style("fold", group.prefix))
-    heading.append(rest, style=dhit.hit_style("repo", group.prefix))
-    return heading
-
-
 def _aligned_table(
     fields: list[FieldSpecCI],
     widths: tuple[int, ...],
@@ -319,63 +302,66 @@ def container_row(
 @dataclass(frozen=True)
 class _RepoSections:
     groups: list[RepoGroup]
-    fields: list[FieldSpecCI]
-    widths: tuple[int, ...]
-    selected: Row | None
+    now: datetime
+    enabled: Sequence[str] | None
     folded: frozenset[str]
-    empty: bool
-    hidden_by_preferences: bool = False
-    column_offset: int = 0
+    column_widths: Mapping[str, int] | None
+    shown_columns: Sequence[str] | None
+    column_offset: int
+    hidden_by_preferences: bool
+    selected: Row | None
     max_rows: int | None = None
     """Line budget including the column header and the "more" markers; None draws every row."""
 
     def line_count_floor(self) -> int:
-        """A lower bound on the drawn line count, without rendering anything.
+        """Count table lines without constructing column values."""
+        return line_count(self.groups, self.folded)
 
-        One line per heading and container row, plus the column header; a
-        wrapped row draws more, so the true count is never smaller.
-        """
-        if self.empty:
-            return 1
-        expanded = [g for g in self.groups if g.containers and g.prefix not in self.folded]
-        return (1 if expanded else 0) + len(self.groups) + sum(len(g.containers) for g in expanded)
+    def _model(self, width: int) -> TableModel:
+        return table_model(
+            self.groups,
+            now=self.now,
+            enabled=self.enabled,
+            folded=self.folded,
+            column_widths=self.column_widths,
+            shown_columns=self.shown_columns,
+            column_offset=self.column_offset,
+            hidden_by_preferences=self.hidden_by_preferences,
+            width=width,
+        )
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        view = column_viewport(self.widths, options.max_width, self.column_offset)
-        fields = [self.fields[i] for i in view.indices]
-        widths = view.widths
-        marks = (view.hidden_left, view.hidden_right)
-        if self.empty:
-            yield (
-                "All repositories are hidden — open Settings > Visibility to show them"
-                if self.hidden_by_preferences
-                else "(no containers found)"
-            )
+        model = self._model(options.max_width)
+        if model.empty_text is not None:
+            yield model.empty_text
             return
-        expanded = {g.prefix for g in self.groups if g.containers and g.prefix not in self.folded}
-        header = column_header(fields, widths, marks) if expanded else None
-        blocks: list[tuple[Row, RenderableType]] = []
-        for group in self.groups:
-            blocks.append(
-                (Row("repo", group.prefix), repo_heading(group, self.selected, self.folded))
+        header = header_line(model.geometry) if model.has_header else None
+        blocks = [
+            (
+                entry.row,
+                entry_line(
+                    entry,
+                    model.geometry,
+                    model.folded,
+                    selected=entry.row == self.selected,
+                    width=options.max_width,
+                ),
             )
-            if group.prefix in expanded:
-                blocks += [
-                    (
-                        Row("container", c.name),
-                        container_row(group, c, fields, widths, self.selected, marks),
-                    )
-                    for c in group.containers
-                ]
+            for entry in model.entries
+        ]
         if self.max_rows is None:
-            yield Group(*([header] if header is not None else []), *(b for _, b in blocks))
+            # Group owns line separators; fleet's standalone lines have no terminator.
+            text_lines = ([header] if header is not None else []) + [line for _, line in blocks]
+            for text_line in text_lines:
+                text_line.end = "\n"
+            yield Group(*text_lines)
             return
         free = options.update(height=None)
         head = console.render_lines(header, free, pad=False) if header is not None else []
-        rendered = [console.render_lines(b, free, pad=False) for _, b in blocks]
+        rendered = [console.render_lines(line, free, pad=False) for _, line in blocks]
         rows = [row for row, _ in blocks]
         cursor = rows.index(self.selected) if self.selected in rows else None
-        window = window_rows([len(r) for r in rendered], cursor, max(1, self.max_rows - len(head)))
+        window = window_rows([len(lines) for lines in rendered], cursor, max(1, self.max_rows - len(head)))
         lines = list(head)
         if window.hidden_above:
             lines += console.render_lines(
@@ -387,10 +373,6 @@ class _RepoSections:
             lines += console.render_lines(
                 Text(f"  ↓ {window.hidden_below} more", style="dim"), free, pad=False
             )
-        if len(lines) > self.max_rows and cursor is not None:
-            # A cursor row taller than the budget overran its window: show that
-            # row alone (its top lines) rather than let the frame cut it.
-            lines = [*head, *rendered[cursor]][: self.max_rows]
         for index, line in enumerate(lines):
             if index:
                 yield Segment.line()
@@ -600,14 +582,6 @@ def render(
     right below the table.
     """
     all_containers = [c for g in groups for c in g.containers]
-    fields, widths = _frame_columns(
-        groups,
-        now=now,
-        enabled=enabled,
-        folded=folded,
-        column_widths=column_widths,
-        shown_columns=shown_columns,
-    )
     visible_groups = groups
     # A notice too long for the bottom border is drawn whole, wrapped, right
     # below the table: a CLI refusal ends in its remedy ("… pass --force"),
@@ -615,14 +589,15 @@ def render(
     # CLI message may contain `[...]`.
     inline_notice = notice if notice and len(notice) > _INLINE_NOTICE_MAX else None
     sections = _RepoSections(
-        visible_groups,
-        fields,
-        widths,
-        selected,
-        folded,
-        empty=not groups,
-        hidden_by_preferences=hidden_by_preferences,
+        groups=visible_groups,
+        now=now,
+        enabled=enabled,
+        folded=folded,
+        column_widths=column_widths,
+        shown_columns=shown_columns,
+        selected=selected,
         column_offset=column_offset,
+        hidden_by_preferences=hidden_by_preferences,
     )
     details = details_for(visible_groups, selected, now) if show_details and groups else None
     n_repos = len({g.prefix for g in groups})

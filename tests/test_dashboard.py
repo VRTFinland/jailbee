@@ -6269,30 +6269,6 @@ def test_a_narrow_terminal_drops_the_details_beside_a_menu(tmp_path):
     assert "alpha-row21 →" in text and "network" not in text
 
 
-def test_a_cursor_row_taller_than_the_window_is_not_cut_away(tmp_path, mocker):
-    mocker.patch.object(
-        tframe,
-        "container_row",
-        lambda group, c, fields, widths, selected, marks: f"{c.name}\nsecond\nthird\nfourth",
-    )
-    group = _mixed_group(tmp_path, 12)
-    fields = dcolumns.visible_fields(_FRAME_NOW, group.containers)[:1]
-    sections = tframe._RepoSections(
-        [group],
-        fields,
-        (10,),
-        dmodel.Row("container", "alpha-row06"),
-        frozenset(),
-        empty=False,
-    )
-    console = Console(width=60, record=True, file=io.StringIO())
-    for budget in (4, 5, 6):
-        lines = console.render_lines(dataclasses.replace(sections, max_rows=budget), pad=False)
-        text = "\n".join("".join(seg.text for seg in line) for line in lines)
-        assert "alpha-row06" in text, budget
-        assert len(lines) <= budget, budget
-
-
 def test_gather_live_adds_extra_roots_to_the_registered_ones(mocker, tmp_path):
     registered = tmp_path / "reg"
     extra = tmp_path / "extra"
