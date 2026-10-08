@@ -505,7 +505,7 @@ class DashboardFrame(Vertical):
                 notice_lines=lines(inline, width),
                 hint_lines=lines(hint, width),
                 has_bottom=overlay is not None or details is not None,
-                details_cap=DETAILS_MAX_ROWS if details is None else details.max_rows,
+                details_cap=DETAILS_MAX_ROWS if details is None else details.base_rows,
                 details_fit=details_fit,
                 bottom_lines=bottom_lines,
             )

@@ -9,7 +9,7 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from jailbee.accounts.models import AgentActivity
+from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
@@ -368,29 +368,74 @@ def _with_activity(**kw: Any) -> ContainerInfo:
     return _c(agent_status=(summary,))
 
 
-def test_activity_lines_are_escaped_and_the_message_is_dim() -> None:
-    lines = dd.activity_lines(_with_activity(), NOW)
+def test_activity_block_is_escaped_and_the_message_is_dim() -> None:
+    block = dd.activity_block(_with_activity(), NOW)
 
-    assert [_plain(line) for line in lines] == [
+    assert [_plain(line) for line in block.lines] == [
         "busy 2m · ~2 subagents · 1 shell",
         "↳ Bash  uv run pytest -x",
-        "“all [red]green[/red] <b>”",  # markup is shown, not interpreted
     ]
-    assert lines[2].startswith("[dim]")
+    assert block.message is not None
+    assert _plain(block.message) == "“all [red]green[/red] <b>”"  # shown, not interpreted
+    assert block.message.startswith("[dim]")
 
 
-def test_no_activity_is_no_lines() -> None:
-    assert dd.activity_lines(_c(), NOW) == ()
+def test_history_is_newest_first_escaped_and_tools_dim() -> None:
+    recent = (
+        ActivityEvent("tool", "Read  /a.py"),
+        ActivityEvent("message", "[red]x[/red] \\"),
+        ActivityEvent("tool", "Bash  echo [/dim]"),
+        ActivityEvent("tool", "Bash  ls"),  # the last tool: shown above, not repeated
+    )
+    activity = AgentActivity("Bash  ls", None, recent=recent)
+    summary = AgentSummary("claude", "busy", None, None, 1, activity=activity)
+
+    history = dd.activity_block(_c(agent_status=(summary,)), NOW).history
+
+    assert [_plain(h) for h in history] == [
+        "Bash  echo [/dim]",
+        "“[red]x[/red] \\”",
+        "Read  /a.py",
+    ]
+    assert history[0].startswith("[dim]") and history[2].startswith("[dim]")
+    assert not history[1].startswith("[dim]")
+
+
+def test_history_skips_the_tool_and_message_already_shown_above() -> None:
+    recent = (
+        ActivityEvent("message", "older"),
+        ActivityEvent("tool", "Read  /a.py"),
+        ActivityEvent("message", "done"),
+        ActivityEvent("tool", "Bash  ls"),
+    )
+    busy = AgentSummary(
+        "claude", "busy", None, None, 1, activity=AgentActivity("Bash  ls", "done", recent=recent)
+    )
+    # Idle shows no tool line, so the last tool stays in the history.
+    idle = AgentSummary(
+        "claude", "idle", None, None, 1, activity=AgentActivity("Bash  ls", "done", recent=recent)
+    )
+
+    on_busy = dd.activity_block(_c(agent_status=(busy,)), NOW).history
+    on_idle = dd.activity_block(_c(agent_status=(idle,)), NOW).history
+
+    assert [_plain(h) for h in on_busy] == ["Read  /a.py", "“older”"]
+    assert [_plain(h) for h in on_idle] == ["Bash  ls", "Read  /a.py", "“older”"]
+
+
+def test_no_activity_is_an_empty_block() -> None:
+    assert dd.activity_block(_c(), NOW) == dd.ActivityBlock()
     s = AgentSummary("claude", "busy", None, None, 1)
-    assert dd.activity_lines(_c(agent_status=(s,)), NOW) == ()
+    assert dd.activity_block(_c(agent_status=(s,)), NOW) == dd.ActivityBlock()
 
 
 def test_the_first_agent_that_has_activity_speaks() -> None:
     quiet = AgentSummary("claude", "waiting", None, None, 1)
     loud = AgentSummary("codex", "busy", None, None, 1, activity=AgentActivity("Edit  x", None))
-    lines = dd.activity_lines(_c(agent_status=(quiet, loud)), NOW)
+    block = dd.activity_block(_c(agent_status=(quiet, loud)), NOW)
 
-    assert [_plain(line) for line in lines] == ["busy", "↳ Edit  x"]
+    assert [_plain(line) for line in block.lines] == ["busy", "↳ Edit  x"]
+    assert block.message is None and block.history == ()
 
 
 def _group(*containers: ContainerInfo) -> dmodel.RepoGroup:
@@ -407,9 +452,9 @@ def test_rows_are_reserved_for_every_view_once_any_container_has_activity() -> N
 
     assert on_busy is not None and on_idle is not None and on_repo is not None
     assert (on_busy.reserve_rows, on_idle.reserve_rows, on_repo.reserve_rows) == (3, 3, 3)
-    assert len(on_busy.activity) == 3
+    assert len(on_busy.activity) == 2 and on_busy.message is not None
     assert on_idle.activity == () and on_repo.activity == ()
-    assert on_busy.max_rows == dd.DETAILS_MAX_ROWS + 3
+    assert on_busy.base_rows == dd.DETAILS_MAX_ROWS + 3
 
 
 def test_nothing_is_reserved_when_no_container_has_activity() -> None:
@@ -417,7 +462,7 @@ def test_nothing_is_reserved_when_no_container_has_activity() -> None:
     view = dd.details_for([_group(plain)], dmodel.Row("container", plain.name), NOW)
 
     assert view is not None
-    assert (view.reserve_rows, view.max_rows) == (0, dd.DETAILS_MAX_ROWS)
+    assert (view.reserve_rows, view.base_rows) == (0, dd.DETAILS_MAX_ROWS)
 
 
 def _view(activity: tuple[str, ...], reserve: int = 3) -> dd.DetailsView:
@@ -491,3 +536,89 @@ def test_a_panel_without_a_reservation_renders_as_before() -> None:
     new = _text(dd.render_details(_view((), reserve=0), 8), width=120)
 
     assert new == old
+
+
+HEAD = ("busy 2m", "↳ Bash  ls")
+MESSAGE = "[dim]“done”[/dim]"
+
+
+def _full(history: int = 6, message: str | None = MESSAGE) -> dd.DetailsView:
+    items = tuple(dd.DetailItem(f"k{i}", f"v{i}") for i in range(6))
+    return dd.DetailsView("t", items, HEAD, 3, message, tuple(f"h{i}" for i in range(history)))
+
+
+def test_uncapped_activity_runs_head_message_then_history() -> None:
+    body = _body(_full(), None)
+
+    assert body[-9:] == ["busy 2m", "↳ Bash  ls", "“done”", "h0", "h1", "h2", "h3", "h4", "h5"]
+
+
+def test_details_rows_base_is_the_reservation_and_want_is_everything() -> None:
+    console = Console(width=120)
+
+    rows = dd.details_rows(_full(), console, 120)
+
+    assert rows == dd.DetailsRows(base=dd.DETAILS_MAX_ROWS + 3, want=8 + 2 + 1 + 6)
+    body = _body(_full(), rows.want, fixed=True)
+    assert len(body) == rows.want
+    assert body[-6:] == ["h0", "h1", "h2", "h3", "h4", "h5"]
+    assert "…" not in body
+
+
+def test_a_view_without_activity_wants_only_its_base() -> None:
+    plain = dd.DetailsView("t", _full().items, (), 3)
+    assert dd.details_rows(plain, Console(width=120), 120) == dd.DetailsRows(11, 11)
+    bare = dd.DetailsView("t", _full().items)
+    assert dd.details_rows(bare, Console(width=120), 120) == dd.DetailsRows(8, 8)
+
+
+def test_history_that_does_not_fit_ends_in_an_ellipsis_row() -> None:
+    body = _body(_full(), 8 + 2 + 1 + 3, fixed=True)
+
+    assert body[-5:] == ["↳ Bash  ls", "“done”", "h0", "h1", "…"]
+
+
+def test_a_long_message_is_wrapped_in_full() -> None:
+    words = " ".join(f"w{i:02d}" for i in range(60))
+    view = _full(history=0, message=f"[dim]“{words}”[/dim]")
+    rows = dd.details_rows(view, Console(width=60), 60)
+
+    lines = _text(dd.render_details(view, rows.want, fixed=True), width=60).splitlines()[1:-1]
+    shown = " ".join(ln[2:-2] for ln in lines)
+
+    assert rows.want > 8 + 2 + 1  # the message really wrapped
+    assert len(lines) == rows.want
+    assert all(f"w{i:02d}" in shown for i in range(60))
+    assert "…" not in shown
+
+
+def test_a_message_cut_short_ends_in_an_ellipsis() -> None:
+    words = " ".join(f"w{i:02d}" for i in range(60))
+    view = _full(history=0, message=f"[dim]“{words}”[/dim]")
+    rows = dd.details_rows(view, Console(width=60), 60)
+
+    lines = _text(dd.render_details(view, rows.want - 1, fixed=True), width=60).splitlines()
+    content = [ln[2:-2].rstrip() for ln in lines[1:-1]]
+
+    assert len(content) == rows.want - 1
+    assert content[-1].endswith("…")
+    assert "w59" not in " ".join(content)
+
+
+def test_hostile_transcript_text_renders_literally() -> None:
+    recent = (
+        ActivityEvent("tool", "Bash  echo [/dim] \\"),
+        ActivityEvent("message", "[red]x[/red] \\"),
+        ActivityEvent("message", "last [bold]"),
+        ActivityEvent("tool", "Bash  ls"),
+    )
+    activity = AgentActivity("Bash  ls", "last [bold]", recent=recent)
+    summary = AgentSummary("claude", "busy", None, None, 1, activity=activity)
+    block = dd.activity_block(_c(agent_status=(summary,)), NOW)
+    view = dd.DetailsView("t", _full().items, block.lines, 3, block.message, block.history)
+
+    body = _body(view, None)
+
+    assert "“last [bold]”" in body
+    assert "Bash  echo [/dim] \\" in body
+    assert "“[red]x[/red] \\”" in body
