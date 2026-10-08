@@ -2301,7 +2301,7 @@ and its own folded repo groups, because a
 live view can own the state you are looking at:
 
 - In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
-  `Space` toggles, `Tab` switches between Fields and Repos, `Esc` closes.
+  `Space` toggles, `Tab` switches between the Fields, Repos and Visibility tabs, `Esc` closes.
   Changes apply immediately — the table stays on screen behind the panel.
 - In the GUI, use **View ▸ Columns**.
 
@@ -2378,7 +2378,10 @@ for 30 seconds — close every dashboard to apply a change. The dashboards'
 
 Global config only. On by default: click a row to select it, double- or
 right-click to open its menu, click `▾`/`▸` to fold a repo and `‹`/`›` to
-scroll the columns; the wheel moves the selection or an open list.
+scroll the columns; menu, picker and suggestion entries and the settings tabs
+are clickable too. The wheel scrolls the table or list under the pointer and
+never moves the selection; Shift+wheel or a horizontal wheel steps the
+columns. The row under the pointer is shaded.
 
 ```yaml
 dashboard:

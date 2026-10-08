@@ -3161,7 +3161,7 @@ interpret a pass here as checking the remote server's live state.
 
 ## `jailbee dashboard` smoke test
 
-> Host-only. Requires a TTY (raw-mode input + alternate screen). Shows
+> Host-only. Requires a terminal on stdin, stdout and stderr (alternate screen). Shows
 > every jailbee-managed container across all registered repos plus the cwd
 > repo, grouped by repo.
 
@@ -3227,8 +3227,8 @@ jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git 
 #     its container rows disappear; Enter again, then Unfold -> rows return.
 #  Select New container… -> asks for branch/base, then runs `jailbee new` in
 #     the selected repo. On an orphan header the menu offers only Fold/Unfold.
-#  Enter on a container row -> opens that container's action menu; Space does
-#     not fold groups from the live table.
+#  Enter on a container row -> opens that container's action menu; Space on a
+#     repo header folds/unfolds it.
 #  Fold a group, then jailbee new inside it in another terminal -> the new
 #     container's row stays hidden until you unfold; the header's count goes
 #     up regardless.
@@ -3238,7 +3238,7 @@ jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git 
 
 # The settings overlay (F2 or S):
 jailbee dashboard
-#  F2 -> opens a panel below the table: "Fields" and "Repos" tabs, ↑/↓ move,
+#  F2 -> opens a panel below the table: "Fields", "Repos" and "Visibility" tabs, ↑/↓ move,
 #     Space toggles, Tab switches tabs, Esc closes. Changes apply and persist
 #     immediately -- there is no OK/Cancel; watch the live table update
 #     behind the panel as you toggle a column.
@@ -3257,11 +3257,32 @@ jailbee dashboard
 #  Switch to the Repos tab (Tab) -> toggle a repo's fold state from here too;
 #     confirm it matches Fold/Unfold from the live-table header's menu.
 #  A field vocabulary this long does not fit under a normal terminal height:
-#     confirm the panel shows only a window of rows around the cursor (not
-#     all ~20+ fields at once), with a dim "↑ N more" / "↓ N more" line when
-#     rows are hidden above/below, and that moving to the very last field
-#     scrolls it into view rather than losing it off the bottom.
+#     confirm the list scrolls with a scrollbar on the right and that moving
+#     to the very last field scrolls it into view rather than losing it.
 #  Esc -> closes the overlay, back to the plain table.
+
+# Mouse (on by default; `m` toggles it for the session):
+#  Click a container row -> it is selected. Double-click or right-click ->
+#     its menu opens. Click ▾/▸ on a repo header -> the repo folds/unfolds.
+#  Narrow the terminal until › appears; click it -> the columns step right.
+#  With a menu open, hover an entry -> only that row is shaded, the bold
+#     highlight stays put; click it -> it runs.
+#  Wheel over the table -> the view scrolls, the selection does not move;
+#     the next j/k moves from the selection and brings it back into view.
+#  Shift-drag -> the terminal selects text. m -> notice "mouse off — terminal
+#     text selection active"; a plain drag now selects, clicks do nothing;
+#     m again -> "mouse on".
+#  Try at least two terminals (e.g. GNOME Terminal and kitty or WezTerm), and
+#     once through `jailbee remote ssh` (`ssh -t … dashboard`).
+
+# Typing ahead (keys faster than the screen redraws):
+#  Paste or type these very fast, or send each as one write
+#  (`tmux send-keys -l $'…'`):
+#    Enter g        on a container row -> the menu opens at "Git →"
+#    !ls Enter j    -> `jailbee ls` runs; after it, j moves the selection
+#    n feat Enter dev
+#                   -> the base-branch question shows "dev" (branch "feat")
+#    Enter h h h    -> help shows once, nothing crashes
 
 # TUI and GUI settings are independent:
 #  With the TUI dashboard open, toggle a column or fold a repo in its

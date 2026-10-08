@@ -689,14 +689,14 @@ only offer Fold/Unfold; on a container, its action menu),
 `Space` fold/unfold the selected repo (in the settings overlay: toggle the
 selected setting), `v` show/hide the details panel (the highlighted row's full
 details under the table; the action menu opens to its right; persisted),
-`F2`/`S` settings overlay (columns + folding), `o` recompute nonempty selected columns and optimize widths once
+`F2`/`S` settings overlay (Fields, Repos and Visibility tabs: columns, folding, which repos show), `o` recompute nonempty selected columns and optimize widths once
 from unfolded visible data (also snapshotted on opening and recomputed on settings
 changes; enabled preferences unchanged; session-only; retained on refresh and resize; press again to recompute),
 `←`/`→` scroll the columns sideways when they do not fit the terminal: the first
 column stays put, a dim `‹`/`›` marks columns out of view, and a column cut by
 the edge ends in `…` (session-only; reset by `o` and settings changes), `r` force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
-dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible; `↑/↓` then move the
+dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible (with a scrollbar; the wheel scrolls without moving the selection); `↑/↓` then move the
 menu cursor, `Enter` runs the entry — or press the key shown in brackets beside it (`[g] Git →`, then `[u]` inside; keys are per menu level) — `Esc`/`q` closes it (`Ctrl-C` quits from
 the plain view, menus and panels; at an inline prompt or picker it cancels just
 that question).
@@ -797,7 +797,7 @@ headers only offer Fold/Unfold because there is no directory to create in.
 
 `F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
 move, `Space` toggles the row under the cursor, `Tab` switches between the
-Fields and Repos tabs, `Esc` closes. Changes apply and persist immediately
+Fields, Repos and Visibility tabs, `Esc` closes. Changes apply and persist immediately
 — there is no OK/Cancel. This is where the TUI's own column set and folded
 repo groups live now (in `state.sqlite`'s `view_prefs` table); the `dashboard:`
 config block is deprecated (still accepted, but ignored — see
@@ -822,7 +822,12 @@ and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
 make the service gather. Requires a TTY on stdin, stdout and stderr (`jailbee dashboard 2>file` is refused). Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
-`m` toggles mouse support (clicks, wheel, hover; on by default, `dashboard.mouse: false` in the global config turns it off).
+Mouse (on by default; `m` toggles it for the session, `dashboard.mouse: false` in
+the global config turns it off): click selects a row, double- or right-click opens
+its menu, `▾`/`▸` folds a repo, `‹`/`›` scroll the columns, menu and picker entries,
+suggestions and settings tabs are clickable; the wheel scrolls the view, never the
+selection; Shift-drag still selects text. The `!` line and every question edit like a
+text field, and keys typed ahead act in order on what the key before them opened.
 
 `jailbee dashboard --gui` (alias: `jailbee gui`) launches a **graphical Qt** dashboard
 instead of the terminal TUI; it detaches to the background by default (`--foreground`

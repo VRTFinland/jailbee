@@ -55,6 +55,19 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **The terminal dashboard runs on Textual and takes the mouse.** Click a row to
+  select it, double- or right-click it to open its menu, click `▾`/`▸` to fold a
+  repo and `‹`/`›` to scroll the columns; menu, picker and suggestion entries and
+  the settings tabs are clickable, and the row under the pointer is shaded. The
+  wheel scrolls the table or list under the pointer without moving the selection
+  (Shift or a horizontal wheel steps the columns), and a table taller than the
+  terminal shows a scrollbar instead of "↑ N more" lines. Text questions and the
+  `!` line edit like ordinary fields (←/→, Home/End, Ctrl-A/E/W/U/K, selection).
+  Keys typed faster than the screen redraws — over a slow SSH link, or pasted —
+  act in order, each on what the key before it opened. Lists wrap from the last
+  entry to the first. `m` turns the mouse off for the session and
+  `dashboard.mouse: false` in `global.yaml` by default; with it on, most
+  terminals still select text with Shift-drag.
 - **The terminal dashboard scrolls sideways instead of hiding columns.** Every
   column keeps its width at any terminal size. When they do not fit, the first
   column stays put and `←`/`→` scroll the rest one column at a time; a dim
