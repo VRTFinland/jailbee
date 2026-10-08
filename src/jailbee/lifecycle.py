@@ -153,6 +153,45 @@ def _parse_cpu_limit(raw: str | None) -> int | None:
     return total or None
 
 
+_MEMORY_UNITS: dict[str, int] = {
+    "": 1,
+    "b": 1,
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+    "pb": 1000**5,
+    "eb": 1000**6,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+    "pib": 1024**5,
+    "eib": 1024**6,
+}
+_MEMORY_LIMIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([A-Za-z]*)")
+
+
+def _parse_memory_limit(raw: str | None) -> int | None:
+    """Bytes a ``limits.memory`` value grants, or None if it names no fixed size.
+
+    Incus takes a byte count (``"1073741824"``) or a size with a decimal
+    (``kB``/``MB``/``GB``…) or binary (``KiB``/``MiB``/``GiB``…) suffix. A
+    percentage (``"50%"``) is a share of the *host's* memory, which this
+    module does not know, so it — like anything unrecognised — returns None
+    and MEM% shows no value rather than a wrong one.
+    """
+    if not raw:
+        return None
+    match = _MEMORY_LIMIT_RE.fullmatch(raw.strip())
+    if match is None:
+        return None
+    multiplier = _MEMORY_UNITS.get(match.group(2).lower())
+    if multiplier is None:
+        return None
+    return int(float(match.group(1)) * multiplier) or None
+
+
 def _parse_incus_timestamp(raw: object) -> datetime | None:
     """Parse an Incus ``created_at`` string into an aware datetime, or None.
 
@@ -2894,6 +2933,24 @@ def ls_field_specs(
         used = _format_bytes(c.memory_usage)
         return f"{used} / {c.memory_limit}" if c.memory_limit else used
 
+    def _mem_used(c: ContainerInfo) -> int | None:
+        return c.memory_usage if c.state == "Running" else None
+
+    def _mem_used_cell(c: ContainerInfo) -> str:
+        used = _mem_used(c)
+        return "[dim]—[/dim]" if used is None else _format_bytes(used)
+
+    def _mem_pct(c: ContainerInfo) -> int | None:
+        used = _mem_used(c)
+        limit = _parse_memory_limit(c.memory_limit)
+        if used is None or limit is None:
+            return None
+        return round(used / limit * 100)
+
+    def _mem_pct_cell(c: ContainerInfo) -> str:
+        pct = _mem_pct(c)
+        return "[dim]—[/dim]" if pct is None else f"{pct}%"
+
     def _cpu_cell(c: ContainerInfo) -> str:
         if c.cpu_percent is None:
             return "[dim]—[/dim]"
@@ -2995,6 +3052,15 @@ def ls_field_specs(
     def _issues_json(c: ContainerInfo) -> dict[str, object] | None:
         pending = _pending_issue_actions(c)
         return {"pending_actions": pending} if pending else None
+
+    def _outbox_cell(c: ContainerInfo) -> str:
+        # One count for both outboxes: the dashboards' "is there staged work"
+        # glance. `pr` and `issues` still split it for `jailbee ls`.
+        pending = _pending_pr_actions(c) + _pending_issue_actions(c)
+        return f"✉{pending}" if pending else ""
+
+    def _outbox_json(c: ContainerInfo) -> dict[str, int]:
+        return {"pr": _pending_pr_actions(c), "issues": _pending_issue_actions(c)}
 
     return [
         table_format.FieldSpec(
@@ -3123,12 +3189,37 @@ def ls_field_specs(
             # A live number, and therefore a dashboard column rather than an
             # `ls` one: in a one-shot listing it is a single stale sample,
             # while in a view that refreshes it is the reason to keep the
-            # view open. `--fields mem` still reaches it from `ls`.
+            # view open. `--fields mem` still reaches it from `ls`. The
+            # dashboards default to the narrower `mem_used` + `mem_pct` pair.
             default_table=False,
-            default_dashboard=True,
+            default_dashboard=False,
             default_json=False,
             # "1023.9M / 16GiB": room for the usage at its widest.
             dashboard_min_width=15,
+        ),
+        table_format.FieldSpec(
+            name="mem_used",
+            header="MEM USED",
+            cell=_mem_used_cell,
+            json=_mem_used,
+            justify="right",
+            # `mem` split in two for the dashboards: the used figure and its
+            # share of the limit read at a glance in a third of the width.
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+            dashboard_min_width=6,
+        ),
+        table_format.FieldSpec(
+            name="mem_pct",
+            header="MEM%",
+            cell=_mem_pct_cell,
+            json=_mem_pct,
+            justify="right",
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+            dashboard_min_width=4,
         ),
         table_format.FieldSpec(
             name="cpu",
@@ -3153,8 +3244,10 @@ def ls_field_specs(
             json=lambda c: [
                 {"comm": p.comm, "percent": p.percent, "count": p.count} for p in c.activity
             ],
+            # Off in the dashboards' default set too: the details panel
+            # lists every busy process, and the column cost 20+ cells.
             default_table=False,
-            default_dashboard=True,
+            default_dashboard=False,
             default_json=False,
             # Process names change every refresh; the column holds its width
             # and an ellipsis takes what does not fit.
@@ -3269,6 +3362,20 @@ def ls_field_specs(
             cell=_issues_cell,
             json=_issues_json,
             show_if=lambda rows: any(_pending_issue_actions(c) for c in rows),
+            # The dashboards fold this count into `outbox`.
+            default_dashboard=False,
+        ),
+        table_format.FieldSpec(
+            name="outbox",
+            header="OUTBOX",
+            cell=_outbox_cell,
+            json=_outbox_json,
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+            show_if=lambda rows: any(
+                _pending_pr_actions(c) + _pending_issue_actions(c) for c in rows
+            ),
         ),
         table_format.FieldSpec(
             name="group",

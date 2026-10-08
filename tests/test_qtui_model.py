@@ -60,7 +60,8 @@ def test_container_cells_mem_is_human_text_not_dict():
         repo="p",
     )
     c.memory_usage = 500_000_000
-    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
+    # `mem` is no longer a dashboard default; it stays selectable.
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c], ["name", "mem"])
     cells = m.container_cells(c, fields)
     by_name = dict(zip([f.name for f in fields], cells, strict=True))
     mem_cell = by_name["mem"]

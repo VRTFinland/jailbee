@@ -2330,14 +2330,12 @@ def test_visible_fields_excludes_hidden_and_respects_default_table():
     assert "network" in names
 
 
-def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
-    """MEM is the one deliberate difference between the two default sets.
-
-    MEM is a live sample: it earns its width in a view that refreshes and not
-    in a one-shot listing. IP is off in both — `jailbee apply` writes
-    /etc/hosts entries, so the address is rarely how a container is reached,
-    and the dashboards used to pay 15 columns for it. Both stay reachable:
-    IP via the settings UI or `ls --fields ip`, MEM via `ls --fields mem`.
+def test_dashboard_keeps_memory_that_ls_drops_and_ip_is_off_in_both():
+    """USED and MEM% are dashboard-only: a live sample earns its width in a
+    view that refreshes and not in a one-shot listing. IP is off in both —
+    `jailbee apply` writes /etc/hosts entries, so the address is rarely how a
+    container is reached. All stay reachable: IP via the settings UI or
+    `ls --fields ip`, memory via `ls --fields mem_used,mem_pct` (or `mem`).
     """
     from datetime import UTC, datetime
 
@@ -2351,7 +2349,9 @@ def test_dashboard_keeps_mem_that_ls_drops_and_ip_is_off_in_both():
     dashboard_names = [f.name for f in dcolumns.visible_fields(now, [c])]
     ls_names = [f.name for f in ls_field_specs(now=now, all_repos=False) if f.default_table]
 
-    assert "mem" in dashboard_names and "mem" not in ls_names
+    for name in ("mem_used", "mem_pct"):
+        assert name in dashboard_names and name not in ls_names
+    assert "mem" not in dashboard_names and "mem" not in ls_names
     assert "ip" not in dashboard_names and "ip" not in ls_names
 
 
@@ -2602,7 +2602,8 @@ def test_default_columns_matches_the_built_in_dashboard_set():
 
     names = dcolumns.default_columns()
     assert "name" in names
-    assert "mem" in names  # the dashboard-only default
+    assert {"mem_used", "mem_pct", "outbox"} <= set(names)  # dashboard-only defaults
+    assert not {"mem", "doing", "issues"} & set(names)  # still selectable, not default
     assert "agent_compact" in names
     assert "agent" not in names
     assert "ip" not in names  # Task 1
@@ -4017,10 +4018,9 @@ def test_render_shows_memory_used_and_limit(tmp_path):
     g = dmodel.RepoGroup("alpha", "/repos/alpha", tmp_path / "a.yaml", [c])
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
     out = "\n".join(table_text([g], selected=None, now=now))
-    assert "3.7G" in out  # used
-    assert "8GiB" in out  # limit
-    assert "MEM" in out  # the new column header
-    assert "MEMORY LIMIT" not in out  # bare-limit column was swapped out
+    assert "47%" in out  # 4e9 of 8 GiB
+    assert "USED" in out and "MEM%" in out
+    assert "8GiB" not in out  # the limit itself is opt-in (LIMIT)
 
 
 def test_dashboard_command_delegates_to_run(mocker):
@@ -4528,7 +4528,7 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
     assert dcolumns.dynamic_column_names() == frozenset(
-        {"job", "ttl", "pr", "issues", "mode", "group"}
+        {"job", "ttl", "pr", "issues", "outbox", "mode", "group"}
     )
 
 

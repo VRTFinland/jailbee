@@ -450,13 +450,16 @@ def test_memory_columns_are_dashboard_only_and_json_stays_stable():
 
     specs = ls_field_specs(now=datetime(2026, 6, 8, tzinfo=UTC), all_repos=False)
     by_name = {f.name: f for f in specs}
-    assert by_name["mem"].default_table is False
-    assert by_name["memory_limit"].default_table is False
-    assert shows_by_default_in_dashboard(by_name["mem"]) is True
+    for name in ("mem", "mem_used", "mem_pct", "memory_limit"):
+        assert by_name[name].default_table is False
+    assert shows_by_default_in_dashboard(by_name["mem_used"]) is True
+    assert shows_by_default_in_dashboard(by_name["mem_pct"]) is True
+    assert shows_by_default_in_dashboard(by_name["mem"]) is False
     assert shows_by_default_in_dashboard(by_name["memory_limit"]) is False
-    # JSON stays backward-compatible: memory_limit is emitted, mem is opt-in.
+    # JSON stays backward-compatible: memory_limit is emitted, the rest opt-in.
     assert by_name["memory_limit"].default_json is True
-    assert by_name["mem"].default_json is False
+    for name in ("mem", "mem_used", "mem_pct"):
+        assert by_name[name].default_json is False
     # IP matches `ls`: off in the default table and in the dashboards alike.
     # It stays on in JSON, where scripts depend on it.
     assert by_name["ip"].default_table is False
@@ -9488,16 +9491,18 @@ def test_doing_cell_is_a_dash_when_nothing_is_working():
     assert "—" in _cpu_spec("doing").cell(_running())
 
 
-def test_cpu_and_doing_are_dashboard_only_columns():
-    """Like `mem`: a live rate is the reason to keep a view open, and
-    meaningless as a single sample in a one-shot listing."""
+def test_cpu_and_doing_are_off_in_ls_and_only_cpu_is_a_dashboard_default():
+    """A live rate is meaningless as a single sample in a one-shot listing.
+    DOING left the dashboards' defaults too: the details panel lists every
+    busy process, and the column cost 20+ cells."""
     from jailbee.table_format import shows_by_default_in_dashboard
 
     for name in ("cpu", "doing"):
         spec = _cpu_spec(name)
         assert spec.default_table is False
         assert spec.default_json is False
-        assert shows_by_default_in_dashboard(spec) is True
+    assert shows_by_default_in_dashboard(_cpu_spec("cpu")) is True
+    assert shows_by_default_in_dashboard(_cpu_spec("doing")) is False
 
 
 def test_cpu_json_carries_the_parsed_cap():
@@ -10281,3 +10286,186 @@ def test_resolver_single_auto_pick_notes_the_container_on_stderr(
     assert got == "app-a"
     assert "Using container a" in err
     assert out == ""
+
+
+# ---- MEM USED / MEM% / OUTBOX ----
+
+_LS_NOW = datetime(2026, 6, 8, tzinfo=UTC)
+
+
+def _ls_spec(name):
+    from jailbee.lifecycle import ls_field_specs
+
+    return next(f for f in ls_field_specs(now=_LS_NOW) if f.name == name)
+
+
+def test_ls_default_table_and_json_sets_are_pinned():
+    """Regression pin: the dashboard column work must not change `jailbee ls`."""
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = ls_field_specs(now=_LS_NOW)
+    assert [f.name for f in specs if f.default_table] == [
+        "name", "mode", "base", "state", "created", "job", "network", "ttl", "wt",
+        "target_diff", "ahead_count", "behind_count", "conflict", "pr", "issues", "group",
+    ]  # fmt: skip
+    assert [f.name for f in specs if f.default_json] == [
+        "name", "mode", "base", "state", "created", "network", "ip", "memory_limit",
+        "git_status", "pr", "issues", "group",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("8GiB", 8 * 1024**3),
+        ("4 GiB", 4 * 1024**3),
+        ("2GB", 2 * 10**9),
+        ("512MiB", 512 * 1024**2),
+        ("1.5GiB", int(1.5 * 1024**3)),
+        ("1073741824", 1073741824),
+        ("16gib", 16 * 1024**3),
+        ("50%", None),
+        ("8XB", None),
+        ("lots", None),
+        ("0", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_memory_limit(raw, expected):
+    from jailbee.lifecycle import _parse_memory_limit
+
+    assert _parse_memory_limit(raw) == expected
+
+
+def test_mem_used_cell_is_the_used_bytes_while_running():
+    c = _running(memory_usage=4_000_000_000, memory_limit="8GiB")
+
+    assert _ls_spec("mem_used").cell(c) == "3.7G"
+    assert _ls_spec("mem_used").json(c) == 4_000_000_000
+
+
+@pytest.mark.parametrize(
+    "kw", [{"state": "Stopped", "memory_usage": 10**9}, {"memory_usage": None}]
+)
+def test_mem_used_cell_is_a_dash_when_stopped_or_unknown(kw):
+    c = _running(memory_limit="8GiB", **kw)
+
+    assert _ls_spec("mem_used").cell(c) == "[dim]—[/dim]"
+    assert _ls_spec("mem_used").json(c) is None
+
+
+def test_mem_pct_cell_rounds_usage_over_the_parsed_limit():
+    c = _running(memory_usage=4_000_000_000, memory_limit="8GiB")
+
+    assert _ls_spec("mem_pct").cell(c) == "47%"  # 4e9 / 8 GiB = 46.6 %
+    assert _ls_spec("mem_pct").json(c) == 47
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"memory_usage": 10**9, "memory_limit": None},
+        {"memory_usage": 10**9, "memory_limit": "50%"},
+        {"memory_usage": 10**9, "memory_limit": "lots"},
+        {"memory_usage": None, "memory_limit": "8GiB"},
+        {"state": "Stopped", "memory_usage": 10**9, "memory_limit": "8GiB"},
+    ],
+)
+def test_mem_pct_cell_is_a_dash_without_a_usable_limit_or_usage(kw):
+    c = _running(**kw)
+
+    assert _ls_spec("mem_pct").cell(c) == "[dim]—[/dim]"
+    assert _ls_spec("mem_pct").json(c) is None
+
+
+def test_mem_used_and_mem_pct_are_right_justified_dashboard_only_defaults():
+    from jailbee.table_format import shows_by_default_in_dashboard
+
+    for name, header in (("mem_used", "MEM USED"), ("mem_pct", "MEM%")):
+        spec = _ls_spec(name)
+        assert spec.header == header
+        assert spec.justify == "right"
+        assert spec.default_table is False
+        assert spec.default_json is False
+        assert shows_by_default_in_dashboard(spec) is True
+
+
+def _outbox_container(pr_actions, issue_actions):
+    from jailbee.git_status import GitStatus
+
+    return _running(
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=pr_actions,
+            pending_issue_actions=issue_actions,
+        )
+    )
+
+
+def test_outbox_cell_sums_pending_pr_and_issue_actions():
+    c = _outbox_container(1, 2)
+
+    assert _ls_spec("outbox").cell(c) == "✉3"
+    assert _ls_spec("outbox").json(c) == {"pr": 1, "issues": 2}
+
+
+@pytest.mark.parametrize("counts", [(0, 0), (None, None), (None, 0)])
+def test_outbox_cell_is_empty_at_zero(counts):
+    c = _outbox_container(*counts)
+
+    assert _ls_spec("outbox").cell(c) == ""
+    assert _ls_spec("outbox").json(c) == {"pr": 0, "issues": 0}
+
+
+def test_outbox_cell_is_empty_without_git_status():
+    assert _ls_spec("outbox").cell(_running()) == ""
+
+
+def test_outbox_shows_only_when_some_row_has_staged_work():
+    spec = _ls_spec("outbox")
+
+    assert spec.show_if is not None
+    assert spec.show_if([_running(), _outbox_container(0, None)]) is False
+    assert spec.show_if([_running(), _outbox_container(0, 1)]) is True
+    assert spec.show_if([_outbox_container(2, 0)]) is True
+
+
+def test_outbox_is_a_dashboard_only_default():
+    from jailbee.table_format import shows_by_default_in_dashboard
+
+    spec = _ls_spec("outbox")
+    assert spec.header == "OUTBOX"
+    assert spec.default_table is False
+    assert spec.default_json is False
+    assert shows_by_default_in_dashboard(spec) is True
+
+
+def test_mem_doing_and_issues_leave_the_dashboard_defaults_only():
+    """Still selectable everywhere; `issues` keeps its `ls` default."""
+    from jailbee.table_format import shows_by_default_in_dashboard
+
+    for name in ("mem", "doing", "issues"):
+        assert shows_by_default_in_dashboard(_ls_spec(name)) is False
+    assert _ls_spec("issues").default_table is True
+
+
+def test_ls_pr_cell_still_carries_the_outbox_marker():
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    c = ContainerInfo(
+        name="r-x",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        pr_number=7,
+        git_status=GitStatus(
+            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pending_pr_actions=2
+        ),
+    )
+    assert _ls_spec("pr").cell(c) == "#7↓ ✉2"
