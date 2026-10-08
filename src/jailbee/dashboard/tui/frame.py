@@ -6,9 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from rich import box
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
-from rich.panel import Panel
 from rich.text import Text
 
 from jailbee.dashboard import accounts as da
@@ -134,11 +132,6 @@ def _hint_line(overlay: Overlay | None) -> str:
 
 def _render_overlay(overlay: Overlay) -> RenderableType:
     """The panel of the prompt or the command line (the list overlays are native boxes)."""
-    if isinstance(overlay, CommandState):
-        lines = [f"> {overlay.text}▏"]
-        if overlay.suggestions:
-            lines.append("  " + "   ".join(overlay.suggestions))
-        return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
     raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native

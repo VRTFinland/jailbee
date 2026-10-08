@@ -50,64 +50,27 @@ from tests.dashboard_pilot import box_text, paint, patch_pause, view_of
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
 
-def test_inline_editor_keeps_shortcuts_as_text():
-    state = toverlay.CommandState(text="", suggestions=(), index=0)
-    assert toverlay.edit_command(state, b"q").text == "q"
-
-
-def test_inline_editor_handles_editing_and_utf8():
-    state = toverlay.CommandState(text="", suggestions=(), index=0)
-    state = toverlay.edit_command(state, "é shell".encode())
-    state = toverlay.edit_command(state, b"\x7f")
-    assert state.text == "é shel"
-
-
-def test_inline_editor_backspace_clears_pending_utf8_before_completed_text():
-    state = toverlay.CommandState(text="a")
-    state = toverlay.edit_command(state, b"\xc3")
-    assert state.pending_utf8 == b"\xc3"
-
-    state = toverlay.edit_command(state, b"\x7f")
-
-    assert state.text == "a"
-    assert state.pending_utf8 == b""
-
-
-def test_inline_editor_tab_cycles_candidates():
-    state = toverlay.CommandState(text="me", suggestions=("merge", "menu"), index=0)
-    state = toverlay.edit_command(state, b"\t")
-    assert state.text == "menu"
-    assert state.index == 1
-
-
-def test_inline_editor_tab_without_candidates_is_safe():
-    state = toverlay.CommandState(text="merge '", suggestions=())
-    assert toverlay.edit_command(state, b"\t") == state
-
-
 def test_inline_editor_completion_preserves_unfinished_quote():
     from jailbee.dashboard.commands import completion_candidates
 
-    text = "shell 'feature"
-    state = toverlay.CommandState(
-        text=text, suggestions=completion_candidates(text, ("feature branch",))
-    )
-    assert "feature branch" in state.suggestions
+    assert "feature branch" in completion_candidates("shell 'feature", ("feature branch",))
 
 
 def test_command_binding_and_inline_render_keep_table_visible():
     group = dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-x", "alpha")])
-    overlay = toverlay.CommandState(text="git d", suggestions=("git diff",))
     rendered = "\n".join(
         paint(
-            view_of([group], selected=dmodel.Row("container", "alpha-x"), overlay=overlay),
+            view_of(
+                [group],
+                selected=dmodel.Row("container", "alpha-x"),
+                overlay=toverlay.CommandState(),
+            ),
             size=(100, 200),
         )
     )
     assert tkeys.parse_key(b"!") == "command"
     assert "  x" in rendered
-    assert "git d" in rendered
-    assert "git diff" in rendered
+    assert "command" in rendered
 
 
 def test_render_title_has_no_refresh_clock():

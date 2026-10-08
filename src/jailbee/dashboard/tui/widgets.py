@@ -82,10 +82,15 @@ class FleetTable(ScrollView, can_focus=False):
             self.step = step
 
     def __init__(
-        self, *, id: str | None = None, mouse_enabled: Callable[[], bool] | None = None
+        self,
+        *,
+        id: str | None = None,
+        mouse_enabled: Callable[[], bool] | None = None,
+        candidates: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
         super().__init__(id=id)
         self.mouse_enabled = mouse_enabled or (lambda: True)
+        self.candidates = candidates or (lambda _text: ())
         self._model: TableModel | None = None
         self._selected: Row | None = None
         self._hover: dhit.Hit | None = None
@@ -420,10 +425,15 @@ class DashboardFrame(Vertical):
     """
 
     def __init__(
-        self, *, id: str | None = None, mouse_enabled: Callable[[], bool] | None = None
+        self,
+        *,
+        id: str | None = None,
+        mouse_enabled: Callable[[], bool] | None = None,
+        candidates: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
         super().__init__(id=id)
         self.mouse_enabled = mouse_enabled or (lambda: True)
+        self.candidates = candidates or (lambda _text: ())
         self._overlay_input: object = None
         self._notice_input: object = None
         self._hint_input: object = None
@@ -457,7 +467,7 @@ class DashboardFrame(Vertical):
             if old is not None and old.parent is not None:
                 old.remove()
             return None
-        box = build_box(overlay, mouse_enabled=self.mouse_enabled)
+        box = build_box(overlay, mouse_enabled=self.mouse_enabled, candidates=self.candidates)
         self.native_box = box
         if old is None:
             self._mount_native(box)

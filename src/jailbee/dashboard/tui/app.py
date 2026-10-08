@@ -25,11 +25,13 @@ from jailbee.dashboard.tui.keys import parse_key
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS
 from jailbee.dashboard.tui.native import (
     AccountsBox,
+    CommandBox,
     EgressBox,
     MenuBox,
     OverlayBox,
     PickerBox,
     SettingsBox,
+    TextBox,
 )
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
@@ -162,7 +164,11 @@ class DashboardApp(App[int], inherit_bindings=False):
     # --- Textual -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield DashboardFrame(id="frame", mouse_enabled=lambda: self.mouse_on)
+        yield DashboardFrame(
+            id="frame",
+            mouse_enabled=lambda: self.mouse_on,
+            candidates=self.session.command_candidates,
+        )
 
     @cached_property
     def frame(self) -> DashboardFrame:
@@ -180,8 +186,9 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.call_after_refresh(self.refresh_frame)
 
     def on_key(self, event: events.Key) -> None:
-        if self.frame.native_box is not None:
-            self._on_native_key(event)
+        box = self.frame.native_box
+        if box is not None:
+            self._on_native_key(box, event)
             return
         data = legacy_bytes(event.key, event.character)
         if data is None:
@@ -190,15 +197,22 @@ class DashboardApp(App[int], inherit_bindings=False):
         event.prevent_default()
         self._after(self.session.handle_input(data))
 
-    def _on_native_key(self, event: events.Key) -> None:
-        """A key while a native overlay has the focus: only the global ones are ours.
+    def _on_native_key(self, box: OverlayBox, event: events.Key) -> None:
+        """A key while a native overlay is open: only the global ones are ours.
 
         The box's own keys reach it through its `on_key` (before this handler)
         and its bindings (after it); preventing anything else here would cancel
-        those bindings.
+        those bindings. A text box takes every key; one that arrives before its
+        input has the focus would be lost, so the box keeps it (`type_ahead`).
         """
         if event.key in ("tab", "shift+tab"):
             event.prevent_default()  # Screen's focus cycling would take the overlay's focus
+            return
+        if isinstance(box, TextBox):
+            if not box.has_focus_within:
+                event.stop()
+                event.prevent_default()
+                box.type_ahead(event.key, event.character)
             return
         data = legacy_bytes(event.key, event.character)
         token = parse_key(data) if data is not None else ""
@@ -256,6 +270,11 @@ class DashboardApp(App[int], inherit_bindings=False):
         if self._native_current(message.key):
             self.session.setting_toggled(message.tab, message.row_key)
         self._after_native()  # also re-syncs a refused checkbox
+
+    def on_command_box_submitted(self, message: CommandBox.Submitted) -> None:
+        if self._native_current(message.key):
+            self.session.command_submitted(message.text)
+        self._after_native()
 
     def on_overlay_box_changed(self, _message: OverlayBox.Changed) -> None:
         self._after_native()

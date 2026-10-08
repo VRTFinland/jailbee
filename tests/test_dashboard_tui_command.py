@@ -6,7 +6,6 @@ import pytest
 
 from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.tui import overlay as toverlay
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import drive, keys, patch_pause
@@ -103,7 +102,4 @@ def test_inline_command_reports_vanished_repo_and_returns_to_loop(mocker, tmp_pa
 def test_q_inside_inline_editor_is_text_and_does_not_quit(mocker):
     run = drive(mocker, ["!", "q", "escape", "q"])
 
-    assert any(
-        isinstance(overlay, toverlay.CommandState) and overlay.text == "q"
-        for overlay in run.overlays()
-    )
+    assert any(n is not None and n.kind == "command" and n.text == "q" for n in run.natives)

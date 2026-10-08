@@ -6,16 +6,12 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from jailbee.dashboard import accounts as da
-from jailbee.dashboard.commands import (
-    apply_completion,
-)
 from jailbee.dashboard.egress import (
     EgressState,
 )
 from jailbee.dashboard.overlays import (
     Picker,
     TextPrompt,
-    decode_input,
 )
 from jailbee.dashboard.settings import (
     SettingsState,
@@ -27,35 +23,7 @@ from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 # construction — no combination of them is a representable state.
 @dataclass(frozen=True)
 class CommandState:
-    """Inline command editor state, independent of terminal/input handling."""
-
-    text: str
-    suggestions: tuple[str, ...] = ()
-    index: int = -1
-    pending_utf8: bytes = b""
-
-
-def edit_command(state: CommandState, key: bytes) -> CommandState:
-    """Apply one editor key, keeping ordinary dashboard shortcuts as text."""
-    if key in (b"\x7f", b"\x08"):
-        if state.pending_utf8:
-            return replace(state, pending_utf8=b"")
-        return replace(state, text=state.text[:-1], index=-1)
-    if key == b"\t":
-        if not state.suggestions:
-            return state
-        index = (state.index + 1) % len(state.suggestions)
-        return replace(
-            state,
-            text=apply_completion(state.text, state.suggestions[index]),
-            index=index,
-        )
-    if key in (b"\r", b"\n", b"\x1b", b"\x03", b""):
-        return state
-    appended, pending = decode_input(state.pending_utf8, key)
-    if not appended:
-        return replace(state, pending_utf8=pending)
-    return replace(state, text=state.text + appended, index=-1, pending_utf8=pending)
+    """The ``!`` command line is open; its text and completions live in `CommandBox`."""
 
 
 Overlay = (
@@ -100,12 +68,24 @@ class NativeState:
     cursor: int | None
     level: str | None = None
     tab: str | None = None
+    text: str | None = None
+    error: str | None = None
+    matches: tuple[str, ...] = ()
 
 
 def is_native(overlay: Overlay | None) -> bool:
     """Whether ``overlay`` is drawn by a native box (the rest by `_render_overlay`)."""
     return overlay == "help" or isinstance(
-        overlay, (Picker, MenuState, RepoMenuState, SettingsState, EgressState, da.AccountsState)
+        overlay,
+        (
+            Picker,
+            MenuState,
+            RepoMenuState,
+            SettingsState,
+            EgressState,
+            da.AccountsState,
+            CommandState,
+        ),
     )
 
 

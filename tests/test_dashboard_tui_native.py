@@ -221,10 +221,10 @@ def _with_probe_kind(mocker, box_cls=_ProbeBox) -> None:  # type: ignore[no-unty
     mocker.patch.object(
         twidgets,
         "build_box",
-        lambda o, *, mouse_enabled: (
+        lambda o, *, mouse_enabled, candidates: (
             box_cls(o, mouse_enabled=mouse_enabled)
             if o == "probe"
-            else real_build(o, mouse_enabled=mouse_enabled)
+            else real_build(o, mouse_enabled=mouse_enabled, candidates=candidates)
         ),
     )
 

@@ -104,3 +104,18 @@ def test_snapshot_narrow(snap_compare, mocker, groups):
         assert app.session.column_offset == 1
 
     assert snap_compare(app, terminal_size=(60, 20), run_before=scroll)
+
+
+def test_snapshot_command_line(snap_compare, mocker, groups):
+    mocker.patch.object(
+        tsession.DashboardSession, "command_candidates", return_value=("shell", "show")
+    )
+    app = make_app(mocker, groups)
+
+    async def type_command(pilot):
+        await pilot.pause()
+        await pilot.press("exclamation_mark", "s", "h", "tab")
+        await pilot.pause()
+        assert app.frame.native_state().text == "shell"
+
+    assert snap_compare(app, terminal_size=(100, 30), run_before=type_command)

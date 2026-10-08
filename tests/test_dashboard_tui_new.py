@@ -551,7 +551,9 @@ def test_a_paste_into_the_prompt_lands_as_one_input_without_line_breaks(
 def test_a_paste_into_the_command_line_lands_in_it(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     run = drive(mocker, ["!", Paste("ls -l\n"), "ctrl+c"], [group])
-    assert run.trace[2].overlay.text == "ls -l"
+    texts = [n.text for n in run.natives if n is not None and n.kind == "command"]
+    assert texts[-1] == "ls -l"
+    assert len(texts) == 2  # opened empty, then one step for the whole paste
 
 
 def test_a_paste_with_no_text_input_open_is_ignored(mocker, tmp_path):

@@ -119,7 +119,6 @@ from jailbee.dashboard.tui.overlay import (
     Overlay,
     _egress_panel,
     _with_egress_panel,
-    edit_command,
 )
 from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
@@ -1466,7 +1465,7 @@ class DashboardSession:
             self.set_notice(f"'jailbee config edit' exited {rc}")
         self.client.refresh()  # config may have changed under every row
 
-    def run_command(self, command: CommandState) -> None:
+    def run_command(self, text: str) -> None:
         """Authorize and run the edited argv in the selected repo."""
         name = container_of(self.selected)
         if self.selected is None:
@@ -1488,7 +1487,7 @@ class DashboardSession:
             )
             return
         try:
-            argv = command_argv(command.text, name)
+            argv = command_argv(text, name)
             if not self.over_ssh:
                 argv = insert_options_before_separator(argv, repo.flags())
             check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
@@ -1639,15 +1638,12 @@ class DashboardSession:
 
     @property
     def text_input_open(self) -> bool:
-        """Whether the prompt or the command line is taking typed text."""
-        return isinstance(self.overlay, (CommandState, TextPrompt))
+        """Whether the prompt is taking typed text."""
+        return isinstance(self.overlay, TextPrompt)
 
     def handle_input(self, data: bytes) -> Outcome:
         """Apply one key, as the terminal sends it; ``"quit"`` ends the dashboard."""
         overlay = self.overlay
-        if isinstance(overlay, CommandState):
-            self._command_key(overlay, data)
-            return None
         if isinstance(overlay, TextPrompt):
             self._prompt_key(overlay, data)
             return None
@@ -1660,51 +1656,47 @@ class DashboardSession:
             return "quit"
         return self._table_key(key)
 
-    def _command_key(self, command: CommandState, data: bytes) -> None:
-        """A key while the command line is open."""
-        if data in (b"\x1b", b"\x03", b""):
-            self.overlay = None
-        elif data in (b"\r", b"\n"):
-            self.overlay = None
-            self.run_command(command)
-        else:
-            selected_group = (
-                _find_group(self.groups, container_of(self.selected))
-                if container_of(self.selected) is not None
-                else next(
-                    (
-                        group
-                        for group in self.groups
-                        if self.selected and group.prefix == self.selected.key
-                    ),
-                    None,
-                )
-            )
-            allowed_paths: frozenset[str] | None = None
-            if self.over_ssh:
-                if self.ssh_policy is None:
-                    allowed_paths = frozenset()
-                else:
-                    allowed_paths = ssh_router.allowed_command_paths(
-                        self.ssh_policy.commands,
-                        restrict_host=self.ssh_policy.restrict_host,
-                        scope=self.scope,
-                        unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy),
-                    )
-            candidates = completion_candidates(
-                command.text,
-                tuple(c.name for c in selected_group.containers)
-                if selected_group is not None
-                else (),
-                allowed_paths,
-                restrict_host=bool(
-                    self.over_ssh
-                    and self.ssh_policy is not None
-                    and host_restricted(self.ssh_policy.restrict_host)
+    def command_candidates(self, text: str) -> tuple[str, ...]:
+        """Completions for the `!` line's ``text``, filtered by this session's SSH policy."""
+        selected_group = (
+            _find_group(self.groups, container_of(self.selected))
+            if container_of(self.selected) is not None
+            else next(
+                (
+                    group
+                    for group in self.groups
+                    if self.selected and group.prefix == self.selected.key
                 ),
-                unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy if self.over_ssh else None),
+                None,
             )
-            self.overlay = edit_command(replace(command, suggestions=candidates), data)
+        )
+        allowed_paths: frozenset[str] | None = None
+        if self.over_ssh:
+            if self.ssh_policy is None:
+                allowed_paths = frozenset()
+            else:
+                allowed_paths = ssh_router.allowed_command_paths(
+                    self.ssh_policy.commands,
+                    restrict_host=self.ssh_policy.restrict_host,
+                    scope=self.scope,
+                    unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy),
+                )
+        return completion_candidates(
+            text,
+            tuple(c.name for c in selected_group.containers) if selected_group is not None else (),
+            allowed_paths,
+            restrict_host=bool(
+                self.over_ssh
+                and self.ssh_policy is not None
+                and host_restricted(self.ssh_policy.restrict_host)
+            ),
+            unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy if self.over_ssh else None),
+        )
+
+    def command_submitted(self, text: str) -> None:
+        """Enter on the `!` line: close it and run ``text``."""
+        self.overlay = None
+        self.run_command(text)
 
     def _prompt_key(self, prompt: TextPrompt, data: bytes) -> None:
         """A key while a text prompt is open."""
@@ -1865,7 +1857,7 @@ class DashboardSession:
         elif key == "help":
             self.overlay = "help"
         elif key == "command":
-            self.overlay = CommandState("")
+            self.overlay = CommandState()
         elif key == "settings":
             self.overlay = self.open_settings_overlay()
         elif key.startswith("action:"):

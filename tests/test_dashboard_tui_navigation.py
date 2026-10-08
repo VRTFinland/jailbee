@@ -35,13 +35,12 @@ RIGHT_MORE = chr(0x203A)
 
 def test_inline_editor_takes_a_non_ascii_character(mocker):
     # Textual decodes UTF-8 before the app sees a key, so a character split
-    # across two reads cannot reach the app; the pure `edit_command` tests
-    # cover the split-bytes case.
+    # across two reads cannot reach the app.
     run = drive(mocker, ["!", "é"])
 
     assert run.rc == 0
     assert isinstance(run.trace[2].overlay, toverlay.CommandState)
-    assert run.trace[2].overlay.text == "é"
+    assert [n.text for n in run.natives if n is not None and n.kind == "command"][-1] == "é"
 
 
 # --- SSH sessions --------------------------------------------------------------

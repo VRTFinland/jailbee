@@ -23,21 +23,23 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.strip import Strip
+from textual.suggester import Suggester
 from textual.widget import Widget
-from textual.widgets import Checkbox, OptionList, SelectionList, Static, Tab, Tabs
+from textual.widgets import Checkbox, Input, OptionList, SelectionList, Static, Tab, Tabs
 from textual.widgets._tabs import Underline
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
 from jailbee.dashboard.accounts import AccountRow, AccountsState, account_lines
+from jailbee.dashboard.commands import apply_completion
 from jailbee.dashboard.egress import EgressState, egress_label
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
 from jailbee.dashboard.overlays import Picker, PickerEntry
-from jailbee.dashboard.settings import TABS, SettingsState, next_tab, setting_rows
+from jailbee.dashboard.settings import CURSOR_STYLE, TABS, SettingsState, next_tab, setting_rows
 from jailbee.dashboard.settings import Tab as SettingsTab
 from jailbee.dashboard.tui.frame import help_lines
 from jailbee.dashboard.tui.layout import BOX_INSET_COLS, FRAME_INSET_COLS
@@ -50,7 +52,7 @@ from jailbee.dashboard.tui.menu_state import (
     menu_title,
     menu_width,
 )
-from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
+from jailbee.dashboard.tui.overlay import CommandState, NativeState, Overlay, overlay_key
 from jailbee.egress_scope import EntryRow
 
 NATIVE_LIST_ID = "native-list"
@@ -241,6 +243,234 @@ class OverlayBox(Vertical):
     def on_mount(self) -> None:
         self._ready()
         self.focus_target().focus()
+
+
+INPUT_ID = "native-input"
+_CANCEL_KEYS = frozenset({"escape", "ctrl+c"})
+# Enter's control aliases: the old cbreak loop took a bare LF (Ctrl-J) as Enter.
+_SUBMIT_KEYS = frozenset({"ctrl+j", "ctrl+m"})
+
+
+class OverlayInput(Input):
+    """One line of typed text: no select-all on focus, no blink, the dashboard's colours.
+
+    A paste keeps every line, joined (Textual's own handler keeps only the
+    first), and a chunk carrying a control character is dropped whole, as
+    the byte loop before V3b did.
+    """
+
+    DEFAULT_CSS = """
+    OverlayInput, OverlayInput:focus {
+        width: 1fr;
+        background: ansi_default;
+        color: ansi_default;
+        background-tint: initial;
+    }
+    OverlayInput > .input--cursor, OverlayInput:ansi > .input--cursor,
+    OverlayInput > .input--selection, OverlayInput:ansi > .input--selection {
+        background: ansi_default;
+        color: ansi_default;
+        text-style: reverse;
+    }
+    OverlayInput > .input--suggestion, OverlayInput:ansi > .input--suggestion {
+        background: ansi_default;
+        color: ansi_default;
+        text-style: dim;
+    }
+    """
+
+    def __init__(self, value: str = "", *, suggester: Suggester | None = None) -> None:
+        super().__init__(
+            value, suggester=suggester, select_on_focus=False, compact=True, id=INPUT_ID
+        )
+        self.cursor_blink = False
+
+    def _on_paste(self, event: events.Paste) -> None:
+        event.stop()
+        event.prevent_default()  # else Input's handler inserts the first line as well
+        text = "".join(event.text.strip("\r\n").splitlines())
+        if text and text.isprintable():
+            self.insert_text_at_cursor(text)
+
+
+class TextBox(OverlayBox):
+    """A box answered by typing.
+
+    Every printable key is text (the input consumes it before anyone else
+    sees it), so no dashboard shortcut fires while the box is open. Esc and
+    Ctrl-C cancel just this input; Tab is `complete`, never focus cycling.
+
+    Keys that arrive before the input has the focus — typed in the same
+    terminal read as the key that opened the box — reach the app with nothing
+    to type into. The app hands them to `type_ahead`; the box replays them
+    once its input is focused.
+    """
+
+    DEFAULT_CSS = """
+    TextBox > .line { height: 1; background: ansi_default; color: ansi_default; }
+    TextBox .input-mark { width: 2; background: ansi_default; color: ansi_default; }
+    """
+
+    def __init__(self, spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self._ahead: list[tuple[str, str | None]] = []
+
+    @property
+    def input(self) -> OverlayInput:
+        return self.query_one(OverlayInput)
+
+    def focus_target(self) -> Widget:
+        return self.input
+
+    def type_ahead(self, key: str, character: str | None) -> None:
+        """Keep a key that came before the focus; ask for the focus again if it was lost."""
+        self._ahead.append((key, character))
+        if self.is_mounted:
+            self.input.focus()
+
+    def on_descendant_focus(self, _event: events.DescendantFocus) -> None:
+        ahead, self._ahead = self._ahead, []
+        for key, character in ahead:
+            if key in _CANCEL_KEYS:
+                self.cancel()
+                return
+            if key == "enter" or key in _SUBMIT_KEYS:
+                self.submit()
+                return
+            if key in ("backspace", "ctrl+h"):
+                self.input.action_delete_left()
+            elif character is not None and len(character) == 1 and character.isprintable():
+                self.input.insert_text_at_cursor(character)
+
+    def submit(self) -> None:
+        """Enter: post the answer."""
+        raise NotImplementedError
+
+    def complete(self) -> None:
+        """Tab: complete the answer if the box can."""
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.submit()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in _CANCEL_KEYS:
+            self.cancel()
+        elif event.key in _SUBMIT_KEYS:
+            self.submit()
+        elif event.key == "ctrl+h":
+            self.input.action_delete_left()
+        elif event.key in ("tab", "shift+tab"):
+            self.complete()
+        else:
+            return
+        event.stop()
+        event.prevent_default()  # Input's ctrl+c copy, Screen's tab focus cycling
+
+
+def _no_candidates(_text: str) -> tuple[str, ...]:
+    return ()
+
+
+class _CommandSuggester(Suggester):
+    """The ghost completion of the `!` line: only when exactly one candidate fits."""
+
+    def __init__(self, box: CommandBox) -> None:
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.box = box
+
+    async def get_suggestion(self, value: str) -> str | None:
+        candidates = self.box.candidates_for(value)
+        if len(candidates) != 1:
+            return None
+        done = apply_completion(value, candidates[0])
+        return done if done != value and done.startswith(value) else None
+
+
+class CommandBox(TextBox):
+    """The `!` line: the completions are listed under it, Tab cycles them, Enter runs it."""
+
+    class Submitted(Message):
+        def __init__(self, key: tuple[object, ...] | None, text: str) -> None:
+            super().__init__()
+            self.key = key
+            self.text = text
+
+    def __init__(
+        self,
+        spec: CommandState,
+        *,
+        mouse_enabled: Callable[[], bool],
+        candidates: Callable[[str], tuple[str, ...]],
+    ) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self._candidates_of = candidates
+        self._memo: tuple[str, tuple[str, ...]] | None = None
+        self._base = ""  # the text the listed candidates complete
+        self._shown: tuple[str, ...] = ()
+        self._index = -1  # the Tab-cycled candidate; -1 while none is
+        self.border_title = "command"
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="line"):
+            yield Static("> ", classes="input-mark")
+            yield OverlayInput(suggester=_CommandSuggester(self))
+        yield Static(id="command-candidates", classes="line")
+
+    def _ready(self) -> None:
+        self.query_one("#command-candidates", Static).display = False
+
+    def candidates_for(self, text: str) -> tuple[str, ...]:
+        """The session's completions for ``text``; the suggester asks for the same text again."""
+        if self._memo is None or self._memo[0] != text:
+            self._memo = (text, self._candidates_of(text))
+        return self._memo[1]
+
+    def _list(self, shown: tuple[str, ...]) -> None:
+        before = self.content_rows()
+        self._shown = shown
+        line = Text("  ", no_wrap=True, overflow="ellipsis")
+        for i, candidate in enumerate(shown):
+            if i:
+                line.append("   ")
+            line.append(candidate, style=CURSOR_STYLE if i == self._index else "")
+        widget = self.query_one("#command-candidates", Static)
+        widget.update(line)
+        widget.display = bool(shown)
+        if self.content_rows() != before:
+            self.post_message(self.Changed())
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        if 0 <= self._index < len(self._shown) and event.value == apply_completion(
+            self._base, self._shown[self._index]
+        ):
+            return  # the box's own Tab completion, not an edit
+        self._base, self._index = event.value, -1
+        self._list(self.candidates_for(event.value))
+
+    def complete(self) -> None:
+        if not self._shown:
+            return
+        self._index = (self._index + 1) % len(self._shown)
+        completed = apply_completion(self._base, self._shown[self._index])
+        self.input.value = completed
+        self.input.cursor_position = len(completed)
+        self._list(self._shown)  # repaint the marked candidate
+
+    def submit(self) -> None:
+        self.post_message(self.Submitted(self.key, self.input.value))
+
+    def content_rows(self) -> int:
+        return 1 + int(bool(self._shown))
+
+    def state(self) -> NativeState:
+        return NativeState(
+            "command",
+            self._index if self._index >= 0 else None,
+            text=self.input.value,
+            matches=self._shown,
+        )
 
 
 class HelpScroll(VerticalScroll, can_focus=True):
@@ -848,7 +1078,12 @@ class AccountsBox(OverlayBox):
         return NativeState("accounts", self._cursor())
 
 
-def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
+def build_box(
+    spec: Overlay,
+    *,
+    mouse_enabled: Callable[[], bool],
+    candidates: Callable[[str], tuple[str, ...]] = _no_candidates,
+) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
         return HelpBox(spec, mouse_enabled=mouse_enabled)
@@ -862,4 +1097,6 @@ def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox
         return EgressBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, AccountsState):
         return AccountsBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, CommandState):
+        return CommandBox(spec, mouse_enabled=mouse_enabled, candidates=candidates)
     raise ValueError(f"no native box for {spec!r}")
