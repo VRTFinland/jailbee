@@ -5074,7 +5074,7 @@ job runs to completion — this guards against a rename across the new
 Host or nested rig. Start a Claude session in a container and leave it busy,
 then run `jailbee dashboard` under `tmux` and press `v` on the container row.
 
-1. Three lines appear under the grid; the state line matches the AGENT column.
+1. The head line (state, matching the AGENT column) and the tool line appear under the grid, then the last message wrapped in full, then the recent history when rows allow.
 2. A background command shows as `N shells` (its bash is a direct child of the
    `claude` process); a running subagent shows as `~N subagents` while it
    works and drops about 30 s after it finishes.
@@ -5085,7 +5085,7 @@ then run `jailbee dashboard` under `tmux` and press `v` on the container row.
    message is cut first (its last line ends in `…`).
 5. Moving the cursor between a container, an idle container and a repo
    heading does not resize the table.
-6. In the Qt dashboard the same lines are in the agent tooltip.
+6. In the Qt dashboard the agent tooltip carries the state, the tool and the message cut at 200 characters (the terminal panel shows up to 1000, wrapped).
 7. Full-screen frame: at 80×24, 120×40 and 200×60 (`tmux resize-window -x W -y H`) the frame's bottom border is on the last terminal row; with a short table the panel sits at the bottom with blank rows above it, and at 120×40 and larger the history under the message fills the panel, newest first, ending in a `…` row when it does not fit. A picker (e.g. `Snapshots…`) without the details panel still opens right under the table.
 
 ## Unified outbox: isolated inspection and deletion
