@@ -6,6 +6,7 @@ import dataclasses
 from datetime import UTC, datetime
 
 import pytest
+from textual.app import App
 
 from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard import model as dmodel
@@ -225,6 +226,34 @@ def test_run_arrows_clamp_after_resize_before_stepping(mocker, tmp_path):
     offsets = _offsets(run)
     assert 0 < new_maximum < max(offsets)
     assert offsets[-1] == new_maximum - 1
+
+
+def test_resize_step_lays_out_before_the_next_key_without_textuals_debounce(mocker, tmp_path):
+    """The harness's `Resize` must not race Textual's resize debounce.
+
+    Textual hands a resize to the screen from a 1/120 s timer, which Pilot's
+    pause never waits for; a key that beat it was clamped against the table's
+    pre-resize width. With that timer held off for an hour, the step after a
+    `Resize` must still see the new width and the reclamped offset.
+    """
+    set_timer = App.set_timer
+
+    def held_resize_timer(self, delay, callback=None, **kwargs):  # type: ignore[no-untyped-def]
+        if getattr(callback, "__func__", None) is App._check_resize:
+            delay = 3600
+        return set_timer(self, delay, callback, **kwargs)
+
+    mocker.patch.object(App, "set_timer", held_resize_timer)
+    widths: list[int] = []
+    run = drive(
+        mocker,
+        [*["right"] * 12, Resize(52, 25), lambda app: widths.append(app.table_width), "left"],
+        [wide_group(tmp_path)],
+        view_state=ViewState(columns=WIDE),
+        size=(44, 25),
+    )
+    assert widths == [48]
+    assert _offsets(run)[-3:] == [1, 1, 0]
 
 
 @pytest.mark.parametrize("reset_keys", [["o"], ["S", "space", "escape"]])

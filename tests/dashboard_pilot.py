@@ -34,6 +34,7 @@ from jailbee.global_config import DashboardConfig, GlobalConfig
 from jailbee.state_service.protocol import Snapshot
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
+_MAX_SETTLE_PAUSES = 20  # pauses before a resize whose layout keeps changing fails
 # Pilot's wait_for_idle sleeps this long per poll (20 ms by default, twice per
 # key press); the session is synchronous, so a poll of 1 ms is as deterministic.
 _SLEEP_GRANULARITY = 0.001
@@ -194,6 +195,39 @@ def keys(text: str) -> list[str]:
     return ["space" if ch == " " else ch for ch in text]
 
 
+def _in_flight(app: tapp.DashboardApp) -> bool:
+    """Whether a resize, layout, message or after-refresh callback is still pending."""
+    screen = app.screen
+    return bool(
+        app._resize_event is not None
+        or screen._layout_required
+        or screen._callbacks
+        or any(
+            node.message_queue_size or node._next_callbacks
+            for node in (app, *screen.walk_children(with_self=True))
+        )
+    )
+
+
+async def _settle_resize(pilot, app: tapp.DashboardApp) -> None:  # type: ignore[no-untyped-def]
+    """Lay the resized screen out before the next step, as a person sees it.
+
+    Textual 8.2.8 debounces a resize: `App._on_resize` only arms a 1/120 s
+    timer whose `_check_resize` hands the Resize to the screen, and Pilot's
+    pause waits for messages, never timers. With the 1 ms idle poll the next
+    key could reach the session before the table was laid out at the new
+    width. Hand the Resize over now (the timer then finds nothing to do), then
+    pause until nothing is in flight: the layout, the widgets' Resize
+    messages, and the reclamps they trigger.
+    """
+    app._check_resize()
+    for _ in range(_MAX_SETTLE_PAUSES):
+        await pilot.pause()
+        if not _in_flight(app):
+            return
+    raise AssertionError("the resized layout did not settle")
+
+
 async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ignore[no-untyped-def]
     if isinstance(step, bytes):
         raise TypeError(f"ported tests press key names, not legacy bytes: {step!r}")
@@ -202,9 +236,7 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         await pilot.pause()
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
-        await pilot.pause()
-        # pause flushes layout at its end; then drain resulting child Resize messages.
-        await pilot.pause()
+        await _settle_resize(pilot, app)
     elif isinstance(step, Paste):
         app.post_message(events.Paste(step.text))
         await pilot.pause()
