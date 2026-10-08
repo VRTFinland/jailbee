@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.overlays import TextPrompt
+from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.tui import session as tsession
+from jailbee.dashboard.tui.overlay import NativeState
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import Paste, burst, drive, patch_pause
 
@@ -100,4 +102,62 @@ def test_a_quick_key_that_hands_off_keeps_the_keys_after_it(mocker, tmp_path):
     patch_pause(mocker)
     run = drive(mocker, ["j", burst(("t", "t"), ("j", "j"))], [_group(tmp_path)])
     child.assert_called_once()
+    assert run.last.selected == dmodel.Row("container", "alpha-two")
+
+
+def test_menu_keys_typed_ahead_reach_the_menu(mocker, tmp_path):
+    run = drive(mocker, ["j", burst(("enter", "\r"), ("j", "j"))], [_group(tmp_path)])
+    assert run.natives[-1] is not None and run.natives[-1].cursor == 1
+
+
+def test_a_hotkey_typed_ahead_opens_its_level(mocker, tmp_path):
+    """`⏎g` in one read: the menu opens and `g` opens Git → inside it (V3b parked item 1)."""
+    run = drive(mocker, ["j", burst(("enter", "\r"), ("g", "g"))], [_group(tmp_path)])
+    assert run.natives[-1] is not None and run.natives[-1].level == "Git →"
+
+
+def test_keys_after_closing_the_menu_reach_the_table(mocker, tmp_path):
+    run = drive(
+        mocker,
+        [
+            "j",
+            burst(("enter", "\r"), ("g", "g"), ("escape", "\x1b"), ("escape", "\x1b"), ("j", "j")),
+        ],
+        [_group(tmp_path)],
+    )
+    assert run.last.overlay is None
+    assert run.last.selected == dmodel.Row("container", "alpha-two")
+
+
+def test_q_typed_ahead_closes_the_menu_then_the_table_moves(mocker, tmp_path):
+    run = drive(mocker, ["j", burst(("enter", "\r"), ("q", "q"), ("j", "j"))], [_group(tmp_path)])
+    assert run.last.overlay is None
+    assert run.last.selected == dmodel.Row("container", "alpha-two")
+
+
+def test_space_typed_ahead_toggles_in_settings(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, [burst(("S", "S"), ("space", " "))], [_group(tmp_path)])
+    settings = run.of_type(SettingsState)[-1]
+    assert "name" not in settings.enabled
+
+
+def test_a_box_that_lost_the_focus_still_gets_its_keys(mocker, tmp_path):
+    """Bindings are found through the focus chain; a key re-focuses the box first."""
+    run = drive(
+        mocker,
+        ["j", "enter", lambda app: app.screen.set_focus(None), "j"],
+        [_group(tmp_path)],
+    )
+    assert run.natives[-1] == NativeState("menu", 1, level=None)
+
+
+def test_a_leaf_hotkey_typed_ahead_runs_before_the_next_key(mocker, tmp_path):
+    """`⏎t j` in one read: the menu's `t` runs tmux and closes it, then `j` moves the table."""
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+    run = drive(mocker, ["j", burst(("enter", "\r"), ("t", "t"), ("j", "j"))], [_group(tmp_path)])
+    child.assert_called_once()
+    assert run.last.overlay is None
     assert run.last.selected == dmodel.Row("container", "alpha-two")

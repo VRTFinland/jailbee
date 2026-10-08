@@ -33,7 +33,6 @@ from jailbee.dashboard.tui.native import (
     PromptBox,
     SettingsBox,
     TextBox,
-    _run_binding,
 )
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
@@ -207,34 +206,16 @@ class DashboardApp(App[int], inherit_bindings=False):
             token = parse_key(event.key)
             if token:
                 self._after(self.session.handle_key(token))
-        elif isinstance(box, TextBox):
+        else:
             outcome = await box.handle_key(event)
             if isinstance(outcome, Message):
                 self._apply(outcome)
-        else:
-            await self._on_native_key(box, event)
+            elif not outcome:
+                # A key the box leaves to the dashboard: q, h, S, Ctrl-C.
+                token = parse_key(event.key)
+                if token in OVERLAY_GLOBAL_TOKENS:
+                    self._after(self.session.overlay_global_key(token))
         await self.frame.settle_native()
-
-    async def _on_native_key(self, box: OverlayBox, event: events.Key) -> None:
-        """A key while a list box is open (until they answer keys themselves).
-
-        The box's own `on_key`, then the dashboard's global keys, then the
-        box's bindings: the order the focus chain gave them, but now, not
-        whenever Textual gets to it.
-        """
-        own = getattr(box, "on_key", None)
-        if own is not None:
-            own(event)
-            # TODO(Task 3): private _stop_propagation; this path is deleted there
-            if event._stop_propagation:  # Textual keeps no public flag for a stopped event
-                return
-        if event.key in ("tab", "shift+tab"):
-            return  # Screen's focus cycling would take the overlay's focus
-        token = parse_key(event.key)
-        if token in OVERLAY_GLOBAL_TOKENS:
-            self._after(self.session.overlay_global_key(token))
-        else:
-            await _run_binding(box, event)
 
     async def _route_paste(self, text: str) -> None:
         await self.frame.settle_native()

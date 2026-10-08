@@ -14,7 +14,6 @@ from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import settings as ds
 from jailbee.dashboard.hit import HOVER_STYLE, Hit
 from jailbee.dashboard.overlays import Picker, PickerEntry
-from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
@@ -711,11 +710,13 @@ def test_a_hotkey_does_not_also_reach_the_dashboard(mocker, tmp_path):
 
 
 def test_a_menu_hotkey_is_consumed_by_the_menu(mocker, tmp_path):
-    """The key stops at the box: it never bubbles on to the app's own key handler."""
-    reached = mocker.spy(tapp.DashboardApp, "_on_native_key")
+    """The key stops at the box: neither the table nor the dashboard-wide keys see it."""
+    table = mocker.spy(tsession.DashboardSession, "handle_key")
+    global_keys = mocker.spy(tsession.DashboardSession, "overlay_global_key")
     drive(mocker, ["j", "enter", "g"], [alpha_group(tmp_path)])
-    seen = [call.args[1].key for call in reached.call_args_list]
-    assert seen and "g" not in seen  # the spy sees the padding Ctrl-C, so it is wired
+    assert [call.args[1] for call in table.call_args_list] == ["down", "enter"]
+    # Only the padding Ctrl-C reaches the global keys, so the spy is wired.
+    assert [call.args[1] for call in global_keys.call_args_list] == ["interrupt"]
 
 
 def test_a_group_row_opens_in_place_on_enter(mocker, tmp_path):
@@ -1872,7 +1873,7 @@ def test_a_double_click_on_a_picker_entry_chooses_once(mocker, tmp_path):
 def test_a_box_replaced_before_it_mounted_does_not_crash(mocker, tmp_path):
     """Enter, then help on, off, on in one read: the menu leaves before it ever mounted.
 
-    The menu's `on_mount` used to run after `_swap_native` had removed it and
+    The menu's `on_mount` used to run after the slot swap had removed it and
     raise NoMatches, which ends the app.
     """
     boxes = []

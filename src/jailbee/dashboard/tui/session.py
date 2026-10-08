@@ -153,7 +153,7 @@ Outcome = Literal["quit", "toggle-mouse"] | None
 DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo"})
 
 # With a native overlay focused, only these keys are the dashboard's own; every
-# other key belongs to the overlay (see `DashboardApp.on_key`).
+# other key belongs to the overlay (see `DashboardApp._route_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
 
@@ -1638,7 +1638,7 @@ class DashboardSession:
         if token == "interrupt":
             return "quit"
         if self.overlay is not None:
-            return None  # a native box has the focus; its keys never come through here
+            return None  # a native box is open; the app routes its keys to the box
         if token == "quit":
             return "quit"
         return self._table_key(token)

@@ -246,8 +246,11 @@ class OverlayBox(Vertical):
     def state(self) -> NativeState:
         raise NotImplementedError
 
-    def cancel(self) -> None:
-        self.post_message(self.Cancelled(self.key))
+    # Widget.handle_key (key_* method dispatch, -> bool) is never reached: the app routes keys.
+    # Every override below repeats the `type: ignore[override]` for the same reason.
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+        """A routed key: by default the binding the box's list has for it (↑/↓, j/k, PgUp…)."""
+        return await _run_binding(self, event)
 
     def _ready(self) -> None:
         """After mount, before focus: subclasses place their initial cursor here."""
@@ -717,11 +720,10 @@ class HelpBox(OverlayBox):
     def state(self) -> NativeState:
         return NativeState("help", None)
 
-    def on_key(self, event: events.Key) -> None:
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
         if event.key == "escape":
-            event.stop()
-            event.prevent_default()
-            self.cancel()
+            return self.Cancelled(self.key)
+        return await super().handle_key(event)
 
 
 class PickerBox(OverlayBox):
@@ -755,16 +757,23 @@ class PickerBox(OverlayBox):
     def state(self) -> NativeState:
         return NativeState("picker", self.query_one(OverlayList).highlighted)
 
+    def _chosen(self, index: int | None) -> PickerBox.Chosen | None:
+        if index is not None and 0 <= index < len(self.picker.entries):
+            return self.Chosen(self.key, self.picker.entries[index])
+        return None
+
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        if 0 <= event.option_index < len(self.picker.entries):
-            self.post_message(self.Chosen(self.key, self.picker.entries[event.option_index]))
+        chosen = self._chosen(event.option_index)
+        if chosen is not None:
+            self.post_message(chosen)
 
-    def on_key(self, event: events.Key) -> None:
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
         if event.key in ("escape", "q", "ctrl+c"):
-            event.stop()
-            event.prevent_default()
-            self.cancel()
+            return self.Cancelled(self.key)
+        if event.key == "enter":
+            return self._chosen(self.query_one(OverlayList).highlighted) or True
+        return await super().handle_key(event)
 
 
 class MenuBox(OverlayBox):
@@ -829,38 +838,39 @@ class MenuBox(OverlayBox):
         self.border_title = _one_line(menu_title(self.menu, group), "bold")
         self.post_message(self.Changed())
 
-    def _choose(self, index: int) -> None:
+    def _choose(self, index: int | None) -> MenuBox.Chosen | None:
         entries = self._entries()
-        if not 0 <= index < len(entries):
-            return
+        if index is None or not 0 <= index < len(entries):
+            return None
         item = entries[index]
         if isinstance(item, MenuGroup):
             self._parent_index = index
             self._load(item.label, 0)
-        else:
-            self.post_message(self.Chosen(self.key, item[1], self.group, index))
+            return None
+        return self.Chosen(self.key, item[1], self.group, index)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        self._choose(event.option_index)
+        chosen = self._choose(event.option_index)
+        if chosen is not None:
+            self.post_message(chosen)
 
-    def on_key(self, event: events.Key) -> None:
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+        lst = self.query_one(OverlayList)
         if event.key == "escape":
-            event.stop()
-            event.prevent_default()
             if self.group is None:
-                self.cancel()
-            else:
-                self._load(None, self._parent_index)
-            return
+                return self.Cancelled(self.key)
+            self._load(None, self._parent_index)
+            return True
+        if event.key == "enter":
+            return self._choose(lst.highlighted) or True
         keys = menu_hotkeys(self._entries())
         if event.character is not None and event.character in keys:
             # An entry's own key is Enter on that entry.
-            event.stop()
-            event.prevent_default()
             index = keys.index(event.character)
-            self.query_one(OverlayList).highlighted = index
-            self._choose(index)
+            lst.highlighted = index
+            return self._choose(index) or True
+        return await super().handle_key(event)
 
     def content_rows(self) -> int:
         return max(1, len(self._entries()))
@@ -1021,14 +1031,22 @@ class SettingsBox(OverlayBox):
                 elif not row.checked and row.key in selected:
                     lst.deselect(row.key)
 
-    def on_key(self, event: events.Key) -> None:
-        if event.key in ("escape", "tab", "enter"):
-            event.stop()
-            event.prevent_default()
-            if event.key == "escape":
-                self.cancel()
-            elif event.key == "tab":
-                self._switch(next_tab(self.tab))
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+        key = event.key
+        if key == "escape":
+            return self.Cancelled(self.key)
+        if key == "tab":
+            self._switch(next_tab(self.tab))
+            return True
+        if key == "enter":
+            return True  # SelectionList would toggle on Enter too; only Space does here
+        if key == "space":
+            lst = self._list()
+            index = lst.highlighted
+            if index is None:
+                return True
+            return self.Toggled(self.key, self.tab, lst.get_option_at_index(index).value)
+        return await super().handle_key(event)
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         event.stop()
@@ -1121,19 +1139,18 @@ class EgressBox(OverlayBox):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()  # Enter on a row does nothing, as before
 
-    def on_key(self, event: events.Key) -> None:
-        if event.key not in ("escape", "a", "r"):
-            return
-        event.stop()
-        event.prevent_default()
-        if event.key == "escape":
-            self.cancel()
-        elif event.key == "a":
-            self.post_message(self.Add(self.key, self._cursor() or 0))
-        else:
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
+        key = event.key
+        if key == "escape":
+            return self.Cancelled(self.key)
+        if key == "a":
+            return self.Add(self.key, self._cursor() or 0)
+        if key == "r":
             cursor = self._cursor()
-            if cursor is not None:
-                self.post_message(self.Remove(self.key, self.panel.rows[cursor]))
+            return self.Remove(self.key, self.panel.rows[cursor]) if cursor is not None else True
+        if key == "enter":
+            return True  # Enter on a row does nothing, as before
+        return await super().handle_key(event)
 
     def content_rows(self) -> int:
         return max(1, len(self.panel.rows))
@@ -1233,22 +1250,25 @@ class AccountsBox(OverlayBox):
         if width > 0 and width != self._width:
             self._rebuild(width, self._cursor() or 0)
 
+    def _chosen(self, index: int | None) -> AccountsBox.Chosen | None:
+        if index is not None and 0 <= index < len(self.panel.rows):
+            return self.Chosen(self.key, self.panel.rows[index], index)
+        return None
+
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        if 0 <= event.option_index < len(self.panel.rows):
-            self.post_message(
-                self.Chosen(self.key, self.panel.rows[event.option_index], event.option_index)
-            )
+        chosen = self._chosen(event.option_index)
+        if chosen is not None:
+            self.post_message(chosen)
 
-    def on_key(self, event: events.Key) -> None:
-        if event.key not in ("escape", "n"):
-            return
-        event.stop()
-        event.prevent_default()
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
         if event.key == "escape":
-            self.cancel()
-        else:
-            self.post_message(self.NewGroup(self.key, self._cursor() or 0))
+            return self.Cancelled(self.key)
+        if event.key == "n":
+            return self.NewGroup(self.key, self._cursor() or 0)
+        if event.key == "enter":
+            return self._chosen(self._cursor()) or True
+        return await super().handle_key(event)
 
     def content_rows(self) -> int:
         return max(1, len(self.panel.rows))
