@@ -388,7 +388,7 @@ def window_rows(heights: Sequence[int], cursor: int | None, budget: int) -> Tabl
 _DASHBOARD_COLUMN_BUDGETS = {
     "name": 18,
     "state": 2,
-    "network": 3,
+    "network": 7,
     "created": 5,
     "mem": 15,
     "mem_used": 6,

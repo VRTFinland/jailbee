@@ -191,3 +191,19 @@ def test_row_hits_cover_the_padding_and_the_fold_marker_one_cell(tmp_path):
         if s.style and dhit.Hit.of(s.style.meta) == dhit.Hit("fold", ("alpha",))
     ]
     assert sum(len(s.text) for s in fold) == 1
+
+
+def test_a_loose_ttl_cell_is_not_cut_in_the_default_table(tmp_path):
+    import dataclasses
+    import re
+    from datetime import timedelta
+
+    group = wide_group(tmp_path)
+    group.containers[0] = dataclasses.replace(
+        group.containers[0], loose_until=NOW + timedelta(hours=1, minutes=59, seconds=30)
+    )
+    plain = [
+        re.sub(r"\x1b\[[0-9;]*m", "", line)
+        for line in _new_lines([group], 80, enabled=("name", "network"))
+    ]
+    assert "● 1h59m" in plain[-1] and "…" not in plain[-1]

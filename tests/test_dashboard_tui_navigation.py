@@ -135,7 +135,7 @@ def test_run_arrows_scroll_and_clamp_overshoot(mocker, tmp_path):
     assert offsets[-2:] == [peak, peak - 1]
 
 
-@pytest.mark.parametrize("width", [34, 35, 36])
+@pytest.mark.parametrize("width", [36, 37, 38])
 def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, tmp_path, width):
     enabled = ("name", "mode", "state", "created", "network")
     run = drive(
@@ -167,7 +167,7 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
             columns=enabled,
             folded=frozenset({"alpha"}) if initially_folded else frozenset(),
         ),
-        size=(34, 25),
+        size=(36, 25),
     )
     before = run.trace[6]
     final = run.last
@@ -175,7 +175,7 @@ def test_repo_menu_fold_refreshes_scroll_snapshot(mocker, tmp_path, initially_fo
     assert set(final.shown_columns) == (set(enabled) if initially_folded else {"name"})
     assert final.column_offset == (3 if initially_folded else 0)
     text = frame_at(
-        [group], width=34, offset=final.column_offset, enabled=enabled, folded=final.folded
+        [group], width=36, offset=final.column_offset, enabled=enabled, folded=final.folded
     )
     if initially_folded:
         assert "LOOSE" in header(text).split()
@@ -246,12 +246,12 @@ def test_resize_step_lays_out_before_the_next_key_without_textuals_debounce(mock
     widths: list[int] = []
     run = drive(
         mocker,
-        [*["right"] * 12, Resize(54, 25), lambda app: widths.append(app.table_width), "left"],
+        [*["right"] * 12, Resize(56, 25), lambda app: widths.append(app.table_width), "left"],
         [wide_group(tmp_path)],
         view_state=ViewState(columns=WIDE),
         size=(44, 25),
     )
-    assert widths == [50]
+    assert widths == [52]
     assert _offsets(run)[-3:] == [1, 1, 0]
 
 
