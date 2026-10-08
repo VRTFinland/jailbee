@@ -59,6 +59,8 @@ from jailbee.dashboard.tui.fleet import (
 from jailbee.dashboard.tui.fleet import (
     repo_heading as repo_heading,
 )
+from jailbee.dashboard.tui.layout import MIN_TABLE_ROWS as MIN_TABLE_ROWS
+from jailbee.dashboard.tui.layout import frame_layout
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
@@ -315,10 +317,6 @@ class _RepoSections:
     max_rows: int | None = None
     """Line budget including the column header and the "more" markers; None draws every row."""
 
-    def line_count_floor(self) -> int:
-        """Count table lines without constructing column values."""
-        return line_count(self.groups, self.folded)
-
     def _model(self, width: int) -> TableModel:
         return table_model(
             self.groups,
@@ -409,13 +407,7 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
     return _render_help()
 
 
-# Panel border rows: around a windowed overlay's list, and around the frame.
-_OVERLAY_BORDER_ROWS = 2
 _FRAME_BORDER_ROWS = 2
-# Content rows a details panel needs to say anything; with fewer it is left out.
-_MIN_DETAILS_ROWS = 2
-# Table rows (column header not counted) kept on screen under the bottom area.
-MIN_TABLE_ROWS = 5
 
 
 @dataclass(frozen=True)
@@ -504,38 +496,42 @@ class _FrameBody:
 
         notice_lines = lines_of(Group(*extras)) if extras else []
         hint_lines = lines_of(hint) if hint is not None else []
-        rest = self.max_height - len(notice_lines) - len(hint_lines)
-        has_bottom = self.overlay is not None or self.details is not None
-        gap_lines = lines_of(Text("")) if has_bottom else []
-        bottom_lines: list[list[Segment]] = []
-        if has_bottom:
-            # The table's line count is only needed against thresholds, and a
-            # table with more rows than the floor has at least that many lines.
-            count = self.sections.line_count_floor()
-            full = None if count > MIN_TABLE_ROWS + 1 else len(lines_of(self.sections))
-            natural = count if full is None else full
-            floor = min(natural, MIN_TABLE_ROWS + 1)  # + the column header
-            room = max(0, rest - len(gap_lines) - floor) - _OVERLAY_BORDER_ROWS
-            # A panel with fewer than two content rows says nothing: leave it out.
-            details_rows = min(self._details_cap(), room)
-            with_details = details_fit and details_rows >= _MIN_DETAILS_ROWS
-            # Keep the panel's shape when selection or live content changes,
-            # even when the table fits without scrolling.
-            fixed = with_details
-            bottom = self._bottom(
-                max(room, MIN_LIST_ROWS), details_rows if with_details else None, fixed=fixed
-            )
-            if bottom is not None:
-                bottom_lines = lines_of(bottom)
-            else:
-                gap_lines = []
-        table_rows = max(0, rest - len(gap_lines) - len(bottom_lines))
-        table_lines = lines_of(replace(self.sections, max_rows=table_rows))
-        out = [*table_lines, *notice_lines, *gap_lines, *bottom_lines, *hint_lines]
-        if len(out) > self.max_height:
-            # Even the minimum bottom area does not fit: lose the top, never
-            # the hint or the frame's bottom border.
-            out = out[len(out) - self.max_height :]
+        bottom_lines_rendered: list[list[Segment]] = []
+
+        def bottom_lines(list_rows: int, details_rows: int | None) -> int:
+            nonlocal bottom_lines_rendered
+            bottom = self._bottom(list_rows, details_rows, fixed=details_rows is not None)
+            bottom_lines_rendered = [] if bottom is None else lines_of(bottom)
+            return len(bottom_lines_rendered)
+
+        layout = frame_layout(
+            height=self.max_height,
+            table_lines=line_count(self.sections.groups, self.sections.folded),
+            notice_lines=len(notice_lines),
+            hint_lines=len(hint_lines),
+            has_bottom=self.overlay is not None or self.details is not None,
+            details_cap=self._details_cap(),
+            details_fit=details_fit,
+            bottom_lines=bottom_lines,
+        )
+        table_lines = (
+            lines_of(replace(self.sections, max_rows=layout.table_rows))
+            if layout.table_rows
+            else []
+        )
+        # window_rows may exceed a tiny budget to retain its cursor and markers.
+        # The old whole-frame crop removed these excess lines from the table's top.
+        table_lines = table_lines[-layout.table_rows :] if layout.table_rows else []
+        # Keep the remedy at the end; [-0:] would incorrectly keep the whole notice.
+        shown_notice = notice_lines[-layout.notice_rows :] if layout.notice_rows else []
+        gap_lines = lines_of(Text("")) if layout.gap else []
+        out = [
+            *table_lines,
+            *shown_notice,
+            *gap_lines,
+            *bottom_lines_rendered[layout.crop_top :],
+            *hint_lines,
+        ]
         for index, line in enumerate(out):
             if index:
                 yield Segment.line()
