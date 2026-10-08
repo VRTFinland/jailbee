@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.accounts.models import AgentActivity
+from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
 from jailbee.lifecycle import ContainerInfo
 from jailbee.procstat import ProcessActivity
+from jailbee.state_service import protocol
 from jailbee.state_service.protocol import (
     PROTOCOL,
     Active,
@@ -110,6 +111,10 @@ def _full_snapshot() -> Snapshot:
                             modified=123.5,
                             state="idle",
                             since=T0 - timedelta(hours=1),
+                            recent=(
+                                ActivityEvent("tool", "Read  /a.py"),
+                                ActivityEvent("message", "[b]plan[/b]"),
+                            ),
                         )
                     ),
                 ),
@@ -169,6 +174,9 @@ def test_a_snapshot_decodes_to_the_real_types():
     assert isinstance(container.activity, tuple)
     assert isinstance(container.git_status.submodules[0], SubmoduleChange)
     assert container.created_at == T0
+    activity = container.agent_status[0].activity
+    assert isinstance(activity.recent, tuple)
+    assert [type(e) for e in activity.recent] == [ActivityEvent, ActivityEvent]
 
 
 @pytest.mark.parametrize(
@@ -187,5 +195,20 @@ def test_a_snapshot_decodes_to_the_real_types():
     ],
 )
 def test_garbage_is_a_protocol_error(line):
+    with pytest.raises(ProtocolError):
+        decode(line)
+
+
+def test_the_protocol_version_and_namespace_carry_the_activity_history():
+    # Bumped for AgentActivity.recent: an older client must restart the server.
+    assert PROTOCOL == 4
+    # Pinned so the entry survives ActivityEvent ever moving to a module that
+    # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
+    assert protocol._NAMESPACE["ActivityEvent"] is ActivityEvent
+
+
+def test_an_unknown_activity_event_kind_is_a_protocol_error():
+    line = encode(_full_snapshot()).replace(b'"kind":"tool"', b'"kind":"bogus"', 1)
+    assert b'"kind":"bogus"' in line
     with pytest.raises(ProtocolError):
         decode(line)

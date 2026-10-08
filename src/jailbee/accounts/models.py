@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 LIVE_UNIDENTIFIED = "(unknown)"
 """Display name for a live credential whose account cannot be identified.
@@ -262,6 +262,21 @@ class AgentSession:
     session_id: str | None = None
 
 
+RECENT_EVENTS = 20
+"""How many recent tool calls / messages an `AgentActivity` carries at most."""
+
+
+@dataclass(frozen=True)
+class ActivityEvent:
+    """One recent step of an agent session: a tool call or a message it wrote.
+
+    Plain text, untrusted, already one line; renderers escape it.
+    """
+
+    kind: Literal["tool", "message"]
+    text: str
+
+
 @dataclass(frozen=True)
 class AgentActivity:
     """What one live agent session is doing, from what the agent itself wrote.
@@ -277,6 +292,8 @@ class AgentActivity:
     modified: float | None = None
     state: str | None = None
     since: datetime | None = None
+    recent: tuple[ActivityEvent, ...] = ()
+    """Up to `RECENT_EVENTS` steps, oldest first; `()` for an agent whose adapter reads none."""
 
 
 @dataclass(frozen=True)
