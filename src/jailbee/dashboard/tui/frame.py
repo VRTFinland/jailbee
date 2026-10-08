@@ -34,7 +34,6 @@ from jailbee.dashboard.egress import (
 from jailbee.dashboard.menus import MenuGroup
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.overlays import (
-    MIN_LIST_ROWS,
     PICKER_HINT,
     PROMPT_HINT,
     SUGGEST_HINT,
@@ -59,9 +58,9 @@ from jailbee.dashboard.tui.fleet import (
 from jailbee.dashboard.tui.fleet import (
     repo_heading as repo_heading,
 )
+from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.layout import MIN_TABLE_ROWS as MIN_TABLE_ROWS
 from jailbee.dashboard.tui.layout import frame_layout
-from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 from jailbee.lifecycle import ContainerInfo

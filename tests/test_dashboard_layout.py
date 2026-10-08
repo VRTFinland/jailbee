@@ -82,9 +82,13 @@ def test_details_that_do_not_fit_beside_a_menu_are_left_out():
 
 
 def test_a_long_menu_is_windowed_but_never_below_min_list_rows():
-    layout = _layout(height=20, table_lines=40, has_bottom=True, bottom_lines=_bottom(overlay_lines=60))
+    layout = _layout(
+        height=20, table_lines=40, has_bottom=True, bottom_lines=_bottom(overlay_lines=60)
+    )
     assert layout.list_rows == 11
-    tiny = _layout(height=8, table_lines=40, has_bottom=True, bottom_lines=_bottom(overlay_lines=60))
+    tiny = _layout(
+        height=8, table_lines=40, has_bottom=True, bottom_lines=_bottom(overlay_lines=60)
+    )
     assert tiny.list_rows == MIN_LIST_ROWS
 
 
@@ -96,10 +100,20 @@ def test_notice_and_hint_lines_come_off_the_top_budget():
 @pytest.mark.parametrize("height", [4, 6, 8])
 def test_even_the_minimum_is_cropped_from_the_top_to_fit(height):
     layout = _layout(
-        height=height, table_lines=40, hint_lines=1, has_bottom=True,
+        height=height,
+        table_lines=40,
+        hint_lines=1,
+        has_bottom=True,
         bottom_lines=_bottom(overlay_lines=60),
     )
-    total = layout.table_rows + layout.notice_rows + int(layout.gap) + layout.bottom_rows - layout.crop_top + 1
+    total = (
+        layout.table_rows
+        + layout.notice_rows
+        + int(layout.gap)
+        + layout.bottom_rows
+        - layout.crop_top
+        + 1
+    )
     assert total == height
     assert layout.table_rows == max(0, height - (MIN_LIST_ROWS + 2 + 2))
     assert layout.gap == (height >= MIN_LIST_ROWS + 2 + 2)
