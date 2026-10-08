@@ -12,7 +12,7 @@ import pytest
 
 from jailbee.accounts.adapters import claude_activity as ca
 from jailbee.accounts.adapters.claude import ClaudeAdapter, read_session_files
-from jailbee.accounts.models import ActivityPaths, AgentSession
+from jailbee.accounts.models import RECENT_EVENTS, ActivityEvent, ActivityPaths, AgentSession
 
 SID = "569e3205-9e79-44d7-8aea-f91ebd716f8c"
 
@@ -66,6 +66,11 @@ def _tail(*lines: str) -> bytes:
     return "\n".join(lines).encode()
 
 
+def _pair(raw: bytes) -> tuple[str | None, str | None]:
+    tail = ca.parse_tail(raw)
+    return tail.last_tool, tail.last_message
+
+
 def test_the_latest_tool_and_the_latest_message_win_even_from_different_records() -> None:
     raw = _tail(
         _assistant(_tool("Read", file_path="/a.py")),
@@ -75,7 +80,7 @@ def test_the_latest_tool_and_the_latest_message_win_even_from_different_records(
         _assistant(_tool("Edit", file_path="/b.py")),
     )
 
-    assert ca.parse_tail(raw) == ("Edit  /b.py", "all green now")
+    assert _pair(raw) == ("Edit  /b.py", "all green now")
 
 
 def test_only_assistant_records_count() -> None:
@@ -85,7 +90,7 @@ def test_only_assistant_records_count() -> None:
         json.dumps({"type": "attachment", "attachment": {"text": "x"}}),
     )
 
-    assert ca.parse_tail(raw) == (None, "the real message")
+    assert _pair(raw) == (None, "the real message")
 
 
 def test_garbage_and_oddly_shaped_lines_are_skipped() -> None:
@@ -98,46 +103,98 @@ def test_garbage_and_oddly_shaped_lines_are_skipped() -> None:
         json.dumps({"type": "assistant", "message": {"content": [7, None]}}),
     )
 
-    assert ca.parse_tail(raw) == (None, "kept")
+    assert _pair(raw) == (None, "kept")
 
 
 def test_a_tool_without_a_known_argument_shows_its_name_only() -> None:
-    assert ca.parse_tail(_tail(_assistant(_tool("Whatever", x=1)))) == ("Whatever", None)
-    assert ca.parse_tail(_tail(_assistant(_tool("Bash", command=5)))) == ("Bash", None)
+    assert _pair(_tail(_assistant(_tool("Whatever", x=1)))) == ("Whatever", None)
+    assert _pair(_tail(_assistant(_tool("Bash", command=5)))) == ("Bash", None)
     bad_input = json.dumps(
         {
             "type": "assistant",
             "message": {"content": [{"type": "tool_use", "name": "Bash", "input": "x"}]},
         }
     )
-    assert ca.parse_tail(_tail(bad_input)) == ("Bash", None)
+    assert _pair(_tail(bad_input)) == ("Bash", None)
 
 
 def test_long_arguments_and_messages_are_cut_with_an_ellipsis() -> None:
     raw = _tail(
         _assistant(_tool("Bash", command="x" * 500)),
-        _assistant(_text("y" * 500)),
+        _assistant(_text("y" * 1500)),
     )
 
-    tool, message = ca.parse_tail(raw)
+    tail = ca.parse_tail(raw)
 
-    assert tool is not None and message is not None
-    assert tool.split("  ", 1)[1] == "x" * (ca.ARG_CHARS - 1) + "…"
-    assert message == "y" * (ca.MESSAGE_CHARS - 1) + "…"
+    assert tail.last_tool is not None and tail.last_message is not None
+    assert tail.last_tool.split("  ", 1)[1] == "x" * (ca.ARG_CHARS - 1) + "…"
+    assert tail.last_message == "y" * (ca.LAST_MESSAGE_CHARS - 1) + "…"
+    assert ca.LAST_MESSAGE_CHARS == 1000
+    # The history keeps the short cut.
+    assert tail.recent[-1] == ActivityEvent("message", "y" * (ca.MESSAGE_CHARS - 1) + "…")
+
+
+def test_recent_events_are_chronological_and_mix_tools_and_messages() -> None:
+    raw = _tail(
+        _assistant(_text("plan"), _tool("Read", file_path="/a.py")),
+        "not json",
+        json.dumps({"type": "user", "message": {"content": [_text("a prompt")]}}),
+        _assistant(_tool("Bash", command="ls")),
+        _assistant(_text("all\n green")),
+    )
+
+    assert ca.parse_tail(raw).recent == (
+        ActivityEvent("message", "plan"),
+        ActivityEvent("tool", "Read  /a.py"),
+        ActivityEvent("tool", "Bash  ls"),
+        ActivityEvent("message", "all green"),
+    )
+
+
+def test_recent_keeps_only_the_newest_twenty() -> None:
+    raw = _tail(*(_assistant(_tool("Bash", command=f"step{i:02d}")) for i in range(25)))
+
+    recent = ca.parse_tail(raw).recent
+
+    assert RECENT_EVENTS == 20
+    assert [e.text for e in recent] == [f"Bash  step{i:02d}" for i in range(5, 25)]
+
+
+def test_a_full_history_does_not_stop_the_search_for_the_last_message() -> None:
+    raw = _tail(
+        _assistant(_text("the one message")),
+        *(_assistant(_tool("Bash", command=f"s{i}")) for i in range(30)),
+    )
+
+    tail = ca.parse_tail(raw)
+
+    assert tail.last_message == "the one message"
+    assert len(tail.recent) == RECENT_EVENTS
+    assert all(e.kind == "tool" for e in tail.recent)
+
+
+def test_empty_texts_and_nameless_tools_make_no_event() -> None:
+    raw = _tail(
+        _assistant(_text("   ")),
+        _assistant({"type": "tool_use", "input": {}}),
+        _assistant(_text("kept")),
+    )
+
+    assert ca.parse_tail(raw).recent == (ActivityEvent("message", "kept"),)
 
 
 def test_control_characters_never_reach_the_result() -> None:
     raw = _tail(_assistant(_text("a\x1b[31mred\x07\x00 b")))
 
-    assert ca.parse_tail(raw) == (None, "a[31mred b")
+    assert _pair(raw) == (None, "a[31mred b")
 
 
 def test_an_empty_tail_has_nothing() -> None:
-    assert ca.parse_tail(b"") == (None, None)
+    assert _pair(b"") == (None, None)
 
 
 def test_a_tool_input_that_is_all_whitespace_shows_the_name_only() -> None:
-    assert ca.parse_tail(_tail(_assistant(_tool("Bash", command="  \n ")))) == ("Bash", None)
+    assert _pair(_tail(_assistant(_tool("Bash", command="  \n ")))) == ("Bash", None)
 
 
 def test_read_tail_of_a_small_file_is_the_whole_file(tmp_path: Path) -> None:
@@ -274,6 +331,10 @@ def test_read_activity_combines_the_tail_and_the_subagent_count(tmp_path: Path) 
 
     assert activity is not None
     assert (activity.last_tool, activity.last_message) == ("Edit  /x.py", "done")
+    assert activity.recent == (
+        ActivityEvent("tool", "Edit  /x.py"),
+        ActivityEvent("message", "done"),
+    )
     assert activity.subagents == 1
     assert activity.shells is None  # not the adapter's to know
     assert activity.modified == paths.transcript.stat().st_mtime

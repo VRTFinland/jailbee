@@ -14,12 +14,16 @@ import json
 import os
 import re
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
-from jailbee.accounts.models import ActivityPaths, AgentActivity
+from jailbee.accounts.models import RECENT_EVENTS, ActivityEvent, ActivityPaths, AgentActivity
 
 TAIL_BYTES = 64 * 1024
 MESSAGE_CHARS = 200
+LAST_MESSAGE_CHARS = 1000
+"""The latest message's own cap: the details panel wraps it in full. History
+entries keep `MESSAGE_CHARS`."""
 ARG_CHARS = 80
 SUBAGENT_FRESH_SECONDS = 30.0
 """A subagent file modified within this window counts as running. An estimate:
@@ -112,16 +116,33 @@ def _tool_text(block: dict[str, object]) -> str | None:
     return shown
 
 
-def parse_tail(raw: bytes) -> tuple[str | None, str | None]:
-    """`(last tool call, last assistant text)` from the tail of a transcript.
+@dataclass(frozen=True)
+class TailActivity:
+    """What the tail of a transcript says the session last did."""
 
-    Each is the latest of its kind and may come from different records. Only
-    `assistant` records are read; everything else in the file is ignored.
+    last_tool: str | None = None
+    last_message: str | None = None
+    recent: tuple[ActivityEvent, ...] = ()
+    """Up to `RECENT_EVENTS` tool calls and messages, oldest first."""
+
+
+def parse_tail(raw: bytes) -> TailActivity:
+    """The latest tool call, the latest assistant text and the recent events.
+
+    The latest tool and text may come from different records. Only
+    `assistant` records are read; everything else in the file is ignored. One
+    pass over the same buffer: events are collected newest first and returned
+    in chronological order.
     """
     last_tool: str | None = None
     last_message: str | None = None
+    newest_first: list[ActivityEvent] = []
     for line in reversed(raw.splitlines()):
-        if last_tool is not None and last_message is not None:
+        if (
+            last_tool is not None
+            and last_message is not None
+            and len(newest_first) >= RECENT_EVENTS
+        ):
             break
         try:
             record = json.loads(line)
@@ -137,13 +158,29 @@ def parse_tail(raw: bytes) -> tuple[str | None, str | None]:
             if not isinstance(block, dict):
                 continue
             kind = block.get("type")
-            if kind == "tool_use" and last_tool is None:
-                last_tool = _tool_text(block)
-            elif kind == "text" and last_message is None:
+            event: ActivityEvent
+            if kind == "tool_use":
+                tool = _tool_text(block)
+                if tool is None:
+                    continue
+                if last_tool is None:
+                    last_tool = tool
+                event = ActivityEvent("tool", tool)
+            elif kind == "text":
                 text = block.get("text")
-                if isinstance(text, str):
-                    last_message = _one_line(text, MESSAGE_CHARS) or None
-    return last_tool, last_message
+                if not isinstance(text, str):
+                    continue
+                if last_message is None:
+                    last_message = _one_line(text, LAST_MESSAGE_CHARS) or None
+                short = _one_line(text, MESSAGE_CHARS)
+                if not short:
+                    continue
+                event = ActivityEvent("message", short)
+            else:
+                continue
+            if len(newest_first) < RECENT_EVENTS:
+                newest_first.append(event)
+    return TailActivity(last_tool, last_message, tuple(reversed(newest_first)))
 
 
 def locate(config_home: Path, session_id: str | None) -> ActivityPaths | None:
@@ -210,10 +247,11 @@ def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
         modified = info.st_mtime if stat.S_ISREG(info.st_mode) else None
     except OSError:
         modified = None
-    last_tool, last_message = parse_tail(tail)
+    parsed = parse_tail(tail)
     return AgentActivity(
-        last_tool=last_tool,
-        last_message=last_message,
+        last_tool=parsed.last_tool,
+        last_message=parsed.last_message,
         subagents=count_fresh_subagents(paths.subagents, now),
         modified=modified,
+        recent=parsed.recent,
     )
