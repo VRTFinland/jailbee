@@ -323,3 +323,27 @@ def test_large_table_visible_only_selection_and_structural_changes():
         assert fleet.EMPTY_TEXT in _screen(app)[0]
 
     _run(script)
+
+
+def test_placeholder_rewraps_on_resize_and_uses_scrollbar_content_width():
+    async def script(app, table, pilot):
+        model = replace(_model(n=0), empty_text=fleet.HIDDEN_TEXT)
+        table.styles.height = 2
+        table.show(model, None, None)
+        await pilot.pause()
+        assert " ".join(" ".join(line[1] for line in table._drawn).split()) == fleet.HIDDEN_TEXT
+        assert len(table._drawn) == 2
+        await pilot.resize_terminal(20, 20)
+        await pilot.pause()
+        assert table.content_width == 19
+        assert table.virtual_size.height == len(table._drawn) > 2
+        assert all(len(line[1]) <= 19 for line in table._drawn)
+        table.scroll_to(y=table.max_scroll_y, animate=False)
+        await pilot.pause()
+        assert "show them" in " ".join(" ".join(_screen(app)[:2]).split())
+        await pilot.resize_terminal(80, 20)
+        await pilot.pause()
+        assert len(table._drawn) == table.virtual_size.height == 1
+        assert fleet.HIDDEN_TEXT in _screen(app)[0]
+
+    _run(script)

@@ -6115,9 +6115,8 @@ def test_the_table_keeps_min_rows_with_the_panel_at_height_14(tmp_path):
     lines = _frame(
         [_mixed_group(tmp_path)], dmodel.Row("container", "alpha-row21"), height=14, width=80
     )
-    # Literal on purpose: MIN_TABLE_ROWS (5) lines under the header, two of
-    # them taken by the "more" markers.
-    assert _rows_shown(lines) >= 3
+    # Literal floor: native scrolling draws five body rows, without more-marker rows.
+    assert _rows_shown(lines) >= 5
 
 
 def test_a_narrow_terminal_drops_the_details_beside_a_menu(tmp_path):

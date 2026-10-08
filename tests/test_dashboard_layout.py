@@ -135,6 +135,7 @@ def test_native_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(he
     assert len(lines) == height and lines[-1].startswith("╰")
 
 
+@pytest.mark.parametrize("width", [24, 80])
 @pytest.mark.parametrize(
     "hidden, expected",
     [
@@ -142,13 +143,13 @@ def test_native_frame_preserves_the_notice_suffix_and_hides_a_zero_row_notice(he
         (True, "All repositories are hidden — open Settings > Visibility to show them"),
     ],
 )
-def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected):
+def test_narrow_placeholder_keeps_the_complete_instruction(hidden, expected, width):
     from tests.dashboard_pilot import paint, view_of
 
-    lines = paint(view_of([], hidden_by_preferences=hidden), size=(24, 12))
+    lines = paint(view_of([], hidden_by_preferences=hidden), size=(width, 12))
     words = " ".join(" ".join(line.strip(" │") for line in lines[1:-1]).split())
     assert words == expected
-    assert len(lines) <= 12 and all(len(line) <= 24 for line in lines)
+    assert len(lines) <= 12 and all(len(line) <= width for line in lines)
     assert lines[-1].startswith("╰")
 
 

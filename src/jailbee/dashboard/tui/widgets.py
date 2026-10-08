@@ -40,7 +40,7 @@ from jailbee.dashboard.tui.frame import (
     frame_title,
     notice_parts,
 )
-from jailbee.dashboard.tui.layout import frame_layout
+from jailbee.dashboard.tui.layout import FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 
 _CACHE_MAX = 4096
@@ -79,6 +79,7 @@ class FleetTable(ScrollView, can_focus=False):
         self._model: TableModel | None = None
         self._selected: Row | None = None
         self._hover: dhit.Hit | None = None
+        self._placeholder_width = 0
         self._height = -1
         self._drawn: tuple[tuple[object, ...], ...] = ()
         self._strips: dict[tuple[object, ...], Strip] = {}
@@ -87,20 +88,26 @@ class FleetTable(ScrollView, can_focus=False):
     def content_width(self) -> int:
         return self.scrollable_content_region.width
 
-    def show(self, model: TableModel, selected: Row | None, hover: dhit.Hit | None) -> None:
+    def show(
+        self, model: TableModel, selected: Row | None, hover: dhit.Hit | None,
+        *, width: int | None = None,
+    ) -> None:
         previous = self._model
         old_selected = self._selected
         self._model, self._selected, self._hover = model, selected, hover
+        if model.empty_text is not None:
+            self._placeholder_width = max(1, width if width is not None else self.content_width or self.app.size.width)
         drawn = self._signatures(model)
         structural = (
             previous is None
+            or (model.empty_text is not None and drawn != self._drawn)
             or previous.geometry != model.geometry
             or previous.rows != model.rows
             or previous.has_header != model.has_header
             or previous.empty_text != model.empty_text
         )
         if structural:
-            self.virtual_size = Size(model.geometry.width, len(drawn))
+            self.virtual_size = Size(self._placeholder_width if model.empty_text is not None else model.geometry.width, len(drawn))
             self.refresh()
         else:
             for virtual_y, (old, new) in enumerate(zip(self._drawn, drawn, strict=True)):
@@ -125,10 +132,17 @@ class FleetTable(ScrollView, can_focus=False):
     def on_resize(self, event: events.Resize) -> None:
         self.post_message(self.GeometryChanged())
         if self._model is not None:
+            if self._model.empty_text is not None:
+                self.show(self._model, self._selected, self._hover, width=self.content_width)
+                self.call_after_refresh(self._rewrap_placeholder)
             self.refresh()
             if self._selected is not None and self.size.height != self._height:
                 self.scroll_to_row(self._selected)
             self._height = self.size.height
+
+    def _rewrap_placeholder(self) -> None:
+        if self._model is not None and self._model.empty_text is not None:
+            self.show(self._model, self._selected, self._hover, width=self.content_width)
 
     def _reveal_selection(self, row: Row) -> None:
         if self._selected == row:
@@ -155,7 +169,7 @@ class FleetTable(ScrollView, can_focus=False):
             return tuple(
                 ("empty", line.plain)
                 for line in Text(model.empty_text).wrap(
-                    self.app.console, max(1, model.geometry.width)
+                    self.app.console, self._placeholder_width
                 )
             )
         hover = self._hover
@@ -461,17 +475,22 @@ class DashboardFrame(Vertical):
             # The model counts one logical placeholder; its instruction wraps on screen.
             placeholder = fleet.HIDDEN_TEXT if view.hidden_by_preferences else fleet.EMPTY_TEXT
             table_lines = len(Text(placeholder).wrap(console, max(1, width)))
-        layout = frame_layout(
-            height=height,
-            table_lines=table_lines,
-            notice_lines=lines(inline, width),
-            hint_lines=lines(hint, width),
-            has_bottom=overlay is not None or details is not None,
-            details_cap=DETAILS_MAX_ROWS if details is None else details.max_rows,
-            details_fit=details_fit,
-            bottom_lines=bottom_lines,
-        )
+        def fit(table_lines: int) -> FrameLayout:
+            return frame_layout(
+                height=height,
+                table_lines=table_lines,
+                notice_lines=lines(inline, width),
+                hint_lines=lines(hint, width),
+                has_bottom=overlay is not None or details is not None,
+                details_cap=DETAILS_MAX_ROWS if details is None else details.max_rows,
+                details_fit=details_fit,
+                bottom_lines=bottom_lines,
+            )
+        layout = fit(table_lines)
         scrollbar = 1 if layout.table_rows < table_lines else 0
+        if not view.groups and scrollbar:
+            table_lines = len(Text(placeholder).wrap(console, max(1, width - scrollbar)))
+            layout = fit(table_lines)
         model = fleet.table_model(
             view.groups,
             now=view.now,
@@ -490,7 +509,7 @@ class DashboardFrame(Vertical):
         table_hover = (
             view.hover if view.hover is not None and view.hover.kind in TABLE_HIT_KINDS else None
         )
-        table.show(model, view.selected, table_hover)
+        table.show(model, view.selected, table_hover, width=max(1, width - scrollbar))
         notice = self.query_one("#notice", Static)
         notice.display = inline is not None and layout.notice_rows > 0
         if inline is not None:
