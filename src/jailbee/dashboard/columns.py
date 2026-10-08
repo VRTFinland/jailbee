@@ -440,9 +440,11 @@ def _dashboard_column_widths(
 
 
 # Columns whose cut text spare width may reveal. Only values that hold still
-# between refreshes: `doing` (process names, new every tick) would shift every
-# column to its right on each refresh if it grew with its content.
-SLACK_FIELDS = frozenset({"agent", "job"})
+# between refreshes: `doing` (process names) and `agent` (live state and a
+# ticking duration, e.g. "claude: working 59s") change on almost every refresh,
+# so growing with their content would shift every column to their right each
+# time. `job` changes only with its phase.
+SLACK_FIELDS = frozenset({"job"})
 
 
 def _spend_slack(
@@ -502,7 +504,7 @@ def _frame_columns(
         else {
             spec.name: max((Text.from_markup(spec.cell(c)).cell_len for c in visible), default=0)
             for spec in fields
-            if spec.dashboard_max_width is not None
+            if spec.name in SLACK_FIELDS
         }
     )
     return fields, _dashboard_column_widths(

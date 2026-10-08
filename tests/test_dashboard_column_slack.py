@@ -132,7 +132,8 @@ def _slack_widths(group, enabled, width):
     )
 
 
-def test_agent_column_widens_to_its_widest_cell(tmp_path):
+def test_agent_column_is_not_widened_by_spare_width(tmp_path):
+    # AGENT text ticks ("working 59s"); growing with it would shift later columns.
     group = _agent_group(tmp_path)
     enabled = ("name", "agent", "mode", "doing")
     names, budgets, wide = _slack_widths(group, enabled, 300)
@@ -142,11 +143,10 @@ def test_agent_column_widens_to_its_widest_cell(tmp_path):
     )
     widest = max(Text.from_markup(spec.cell(c)).cell_len for c in group.containers)
     assert widest > budgets["agent"]  # premise: cut today
-    assert wide["agent"] == widest
-    assert wide["name"] == budgets["name"]
+    assert wide["agent"] == budgets["agent"]
 
 
-@pytest.mark.parametrize("first", ["agent", "job"])
+@pytest.mark.parametrize("first", ["job"])
 def test_a_slack_field_in_first_position_keeps_its_indent(tmp_path, first):
     group = _agent_group(tmp_path)
     enabled = (first,)
