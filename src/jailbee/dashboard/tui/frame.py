@@ -13,11 +13,7 @@ from rich.text import Text
 
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
-from jailbee.dashboard.egress import (
-    EgressState,
-    removable_entry,
-    render_egress,
-)
+from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.overlays import (
     PICKER_HINT,
@@ -111,10 +107,13 @@ def _hint_line(overlay: Overlay | None) -> str:
             "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
         )
     if isinstance(overlay, EgressState):
-        return (
-            "[bold]↑/↓[/bold] move  ·  [bold]a[/bold] add  ·  "
-            "[bold]r[/bold] remove  ·  [bold]Esc[/bold] back"
-        )
+        parts = ["[bold]↑/↓[/bold] move"]
+        if overlay.can_add:
+            parts.append("[bold]a[/bold] add")
+        if overlay.can_rm:
+            parts.append("[bold]r[/bold] remove")
+        parts.append("[bold]Esc[/bold] back")
+        return "  ·  ".join(parts)
     if isinstance(overlay, SettingsState):
         return (
             "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
@@ -135,12 +134,6 @@ def _hint_line(overlay: Overlay | None) -> str:
 
 def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> RenderableType:
     """The overlay's panel; ``max_rows`` windows the scrollable list overlays."""
-    if isinstance(overlay, EgressState):
-        return render_egress(
-            overlay,
-            can_add=overlay.can_add,
-            can_rm=overlay.can_rm and removable_entry(overlay) is not None,
-        )
     if isinstance(overlay, CommandState):
         lines = [f"> {overlay.text}▏"]
         if overlay.suggestions:

@@ -20,6 +20,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import widgets as twidgets
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import (
+    EgressBox,
     MenuBox,
     OverlayBox,
     OverlayList,
@@ -28,6 +29,7 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
 from jailbee.db.view_prefs import ViewState
+from jailbee.egress_scope import EntryRow
 from tests.dashboard_fixtures import alpha_group, cfg_group, fake_accounts_cli, named_rows_group
 from tests.dashboard_pilot import (
     NATIVE_LIST,
@@ -778,8 +780,9 @@ def test_the_menu_gives_way_to_the_egress_panel_and_back(mocker, tmp_path):
         [group],
     )
     assert isinstance(run.trace[len(keys)].overlay, tsession.EgressState)
-    assert boxes == [None]  # the panel is not native yet: the menu box is gone
-    assert run.natives[len(keys) + 2] is not None  # Esc brought the menu box back
+    assert isinstance(boxes[0], EgressBox)  # the menu box gave way to the panel's
+    assert run.natives[len(keys)] == NativeState("egress", None)
+    assert run.natives[len(keys) + 2].kind == "menu"  # Esc brought the menu box back
     assert isinstance(run.trace[len(keys) + 2].overlay, MenuState)
 
 
@@ -1315,3 +1318,193 @@ def test_an_unchecked_setting_is_an_empty_box_even_without_colour(mocker, tmp_pa
     network = next(line for line in lines if " network " in line and "▐" in line)
     assert "▐X▌ name" in name
     assert "▐ ▌ network" in network
+
+
+FIRST = (
+    EntryRow("from-config.example", "config"),
+    EntryRow("container-only.example", "container"),
+)
+
+
+def _egress(mocker, tmp_path, steps, rows=FIRST, **kw):
+    """Open the first container's Egress panel over ``rows``, then ``steps``; (run, keys used)."""
+    group = alpha_group(tmp_path)
+    mocker.patch.object(tsession, "load_egress_rows", return_value=rows)
+    opened = container_egress_keys(group)
+    return drive(mocker, [*opened, *steps], [group], **kw), len(opened)
+
+
+def test_the_egress_panel_is_native_and_keyed_by_its_scope():
+    assert is_native(tsession.EgressState("alpha", None, ()))
+    assert overlay_key(tsession.EgressState("alpha", "alpha-x", FIRST)) == (
+        "egress",
+        "alpha",
+        "alpha-x",
+    )
+    assert overlay_key(tsession.EgressState("alpha", None, FIRST, start_index=1)) == (
+        "egress",
+        "alpha",
+        None,
+    )
+
+
+def test_the_egress_box_shows_its_scope_rows_and_notes():
+    rows = (EntryRow("*.x.io", "local"), EntryRow("*.x.io", "db (legacy)", redundant=True))
+    out = "\n".join(box_text(tsession.EgressState("alpha", None, rows), size=(100, 12)))
+    assert "Egress · repo" in out
+    assert "*.x.io  [local; removes both repo copies]  [proxy]" in out
+    assert "(redundant)" in out
+    ctr = "\n".join(box_text(tsession.EgressState("alpha", "alpha-x", FIRST), size=(100, 12)))
+    assert "Egress · container alpha-x" in ctr and "[container]" in ctr
+
+
+def test_an_empty_egress_scope_says_so_and_ignores_r(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, ["r", "j"], rows=())
+    assert "No egress entries in this scope." in "\n".join(
+        box_text(tsession.EgressState("alpha", None, ()))
+    )
+    assert run.natives[n] == NativeState("egress", None)
+    assert run.natives[n + 2] == NativeState("egress", None)
+    assert "Select a removable override first" not in run.notices()
+
+
+def test_the_egress_cursor_opens_on_the_first_row(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, [])
+    assert run.natives[n] == NativeState("egress", 0)
+
+
+def test_tab_in_egress_keeps_focus(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, ["tab", "j"])
+    assert run.natives[n + 2] == NativeState("egress", 1)
+
+
+def test_enter_on_an_egress_row_does_nothing(mocker, tmp_path):
+    child = mocker.patch.object(tsession.subprocess, "run")
+    run, n = _egress(mocker, tmp_path, ["j", "enter"])
+    child.assert_not_called()
+    assert run.natives[n + 2] == NativeState("egress", 1)
+    assert isinstance(run.trace[n + 2].overlay, tsession.EgressState)
+
+
+def test_r_removes_the_highlighted_override(mocker, tmp_path):
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    _egress(mocker, tmp_path, ["j", "r"])
+    assert child.call_args.args[0] == [
+        "jailbee",
+        "net",
+        "egress",
+        "rm",
+        "container-only.example",
+        "alpha-x",
+    ]
+
+
+def test_r_on_a_config_row_removes_nothing(mocker, tmp_path):
+    child = mocker.patch.object(tsession.subprocess, "run")
+    run, n = _egress(mocker, tmp_path, ["r"])
+    child.assert_not_called()
+    assert "Select a removable override first" in run.notices()
+    assert isinstance(run.trace[n + 1].overlay, tsession.EgressState)  # the panel stays
+
+
+def test_a_failed_change_reloads_rows_and_keeps_the_entry(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    second = (EntryRow("new-top.example", "config"), *FIRST)
+    mocker.patch.object(tsession, "load_egress_rows", side_effect=[FIRST, second, second])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 1
+    opened = container_egress_keys(group)
+    steps = [*opened, "j", "r", lambda app: None]  # the last delivers the job's result
+    run = drive(mocker, steps, [group])
+    panel = run.trace[len(steps)].overlay
+    assert isinstance(panel, tsession.EgressState) and panel.rows == second
+    assert run.natives[len(steps)] == NativeState("egress", 2)  # still container-only.example
+
+
+def test_a_reload_that_drops_the_entry_clamps_the_cursor(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    gone = (FIRST[0],)
+    mocker.patch.object(tsession, "load_egress_rows", side_effect=[FIRST, gone, gone])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 1
+    steps = [*container_egress_keys(group), "j", "r", lambda app: None]
+    run = drive(mocker, steps, [group])
+    assert run.natives[len(steps)] == NativeState("egress", 0)
+
+
+def test_a_reload_to_no_rows_shows_the_empty_note(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    mocker.patch.object(tsession, "load_egress_rows", side_effect=[FIRST, (), ()])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 1
+    seen: list[list[str]] = []
+    steps = [
+        *container_egress_keys(group),
+        "j",
+        "r",
+        lambda app: seen.append(
+            [str(o.prompt) for o in app.frame.native_box.query_one(NATIVE_LIST)._options]
+        ),
+    ]
+    run = drive(mocker, steps, [group])
+    assert seen == [["No egress entries in this scope."]]
+    assert run.natives[len(steps)] == NativeState("egress", None)
+
+
+def test_a_opens_the_question_and_escape_returns_to_the_same_row(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, ["j", "a", "escape"])
+    prompt = run.trace[n + 2].overlay
+    assert isinstance(prompt, tsession.TextPrompt) and prompt.purpose == "egress-add"
+    assert run.natives[n + 2] is None  # the question is not a box: the panel's is gone
+    assert run.natives[n + 3] == NativeState("egress", 1)  # and a new one opens on row 1
+
+
+def test_a_on_an_empty_scope_still_asks(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, ["a", "escape"], rows=())
+    assert isinstance(run.trace[n + 1].overlay, tsession.TextPrompt)
+    assert run.natives[n + 2] == NativeState("egress", None)
+
+
+def test_egress_hint_names_only_permitted_actions():
+    both = tframe._hint_line(tsession.EgressState("alpha", "alpha-x", FIRST))
+    assert "add" in both and "remove" in both
+    no_add = tframe._hint_line(tsession.EgressState("alpha", "alpha-x", FIRST, can_add=False))
+    assert "add" not in no_add and "remove" in no_add
+    no_rm = tframe._hint_line(tsession.EgressState("alpha", "alpha-x", FIRST, can_rm=False))
+    assert "add" in no_rm and "remove" not in no_rm
+
+
+def test_one_click_highlights_an_egress_row_and_runs_nothing(mocker, tmp_path):
+    child = mocker.patch.object(tsession.subprocess, "run")
+    run, n = _egress(mocker, tmp_path, [Pick(1)])
+    child.assert_not_called()
+    assert run.natives[n + 1] == NativeState("egress", 1)
+    assert isinstance(run.trace[n + 1].overlay, tsession.EgressState)
+
+
+def test_a_double_click_on_an_egress_row_is_a_no_op_enter(mocker, tmp_path):
+    child = mocker.patch.object(tsession.subprocess, "run")
+    run, n = _egress(mocker, tmp_path, [Pick(1, times=2)])
+    child.assert_not_called()
+    assert run.natives[n + 1] == NativeState("egress", 1)
+    assert isinstance(run.trace[n + 1].overlay, tsession.EgressState)  # no question, no menu
+
+
+def test_the_egress_list_ignores_clicks_with_the_mouse_off(mocker, tmp_path):
+    run, n = _egress(mocker, tmp_path, [Pick(1)], mouse=False)
+    assert run.natives[n + 1] == NativeState("egress", 0)
+
+
+def test_the_egress_box_has_nothing_clickable_but_its_list(mocker, tmp_path):
+    seen: list[list[str]] = []
+    _egress(
+        mocker,
+        tmp_path,
+        [
+            lambda app: seen.append(
+                sorted(type(w).__name__ for w in app.frame.native_box.query("*"))
+            )
+        ],
+    )
+    assert seen == [["OverlayList"]]

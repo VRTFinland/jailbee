@@ -51,9 +51,7 @@ from jailbee.dashboard.dispatch import (
 from jailbee.dashboard.egress import (
     EgressState,
     egress_argv,
-    move_egress,
     removable_entry,
-    replace_egress_rows,
 )
 from jailbee.dashboard.egress_data import load_egress_rows
 from jailbee.dashboard.hit import Hit
@@ -139,6 +137,7 @@ from jailbee.tui import console, error
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from jailbee.egress_scope import EntryRow
     from jailbee.incus import Incus
     from jailbee.state_service.client import StateClient
 
@@ -159,7 +158,7 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
-_OVERLAY_HITS = frozenset({"suggestion", "egress", "account"})
+_OVERLAY_HITS = frozenset({"suggestion", "account"})
 
 
 def _now() -> datetime:
@@ -555,8 +554,25 @@ class DashboardSession:
             back=state,
         )
 
+    def egress_add(self, index: int) -> None:
+        """`a` on the Egress panel: the destination question; Esc lands back on row ``index``."""
+        state = self.overlay
+        assert isinstance(state, EgressState)
+        self.overlay = self.begin_egress_add(replace(state, start_index=index))
+
+    def egress_remove(self, row: EntryRow) -> None:
+        """`r` on the Egress panel: remove ``row``'s override at this scope."""
+        state = self.overlay
+        assert isinstance(state, EgressState)
+        self.overlay = self.mutate_egress(state, "rm", row=row)
+
     def mutate_egress(
-        self, state: EgressState, action: Literal["add", "rm"], entry: str | None = None
+        self,
+        state: EgressState,
+        action: Literal["add", "rm"],
+        entry: str | None = None,
+        *,
+        row: EntryRow | None = None,
     ) -> EgressState | None:
         """Reauthorize and start one scoped mutation, detached.
 
@@ -572,7 +588,7 @@ class DashboardSession:
             self.set_notice("Egress target is no longer available")
             return None
         if action == "rm":
-            entry = removable_entry(state)
+            entry = removable_entry(state, row) if row is not None else None
             if not entry:
                 self.set_notice("Select a removable override first")
                 return state
@@ -624,7 +640,7 @@ class DashboardSession:
             except Exception as exc:
                 self.set_notice(f"could not refresh egress entries: {exc}")
                 return
-            self.overlay = _with_egress_panel(self.overlay, replace_egress_rows(panel, rows))
+            self.overlay = _with_egress_panel(self.overlay, replace(panel, rows=rows))
 
         try:
             self.jobs.start(
@@ -1712,11 +1728,6 @@ class DashboardSession:
             self.overlay_move(-1 if key == "up" else 1)
         elif key == "enter":
             self.overlay_enter()
-        elif isinstance(overlay, EgressState):
-            if data == b"a":
-                self.overlay = self.begin_egress_add(overlay)
-            elif data == b"r":
-                self.overlay = self.mutate_egress(overlay, "rm")
         elif isinstance(overlay, da.AccountsState):
             if data == b"n":
                 self.overlay = TextPrompt(
@@ -1776,9 +1787,7 @@ class DashboardSession:
     def overlay_move(self, step: int) -> None:
         """Move the open list overlay's cursor; other overlays ignore it."""
         overlay = self.overlay
-        if isinstance(overlay, EgressState):
-            self.overlay = move_egress(overlay, step)
-        elif isinstance(overlay, da.AccountsState):
+        if isinstance(overlay, da.AccountsState):
             self.overlay = da.move_accounts(overlay, step)
         elif isinstance(overlay, TextPrompt) and overlay.suggestions:
             self._prompt_key(overlay, b"\x1b[B" if step > 0 else b"\x1b[A")
@@ -2017,9 +2026,7 @@ class DashboardSession:
         if not isinstance(index, int):
             return
         moved: Overlay | None = None
-        if hit.kind == "egress" and isinstance(overlay, EgressState):
-            moved = move_egress(replace(overlay, index=0), index)
-        elif hit.kind == "account" and isinstance(overlay, da.AccountsState):
+        if hit.kind == "account" and isinstance(overlay, da.AccountsState):
             moved = da.move_accounts(replace(overlay, index=0), index)
         elif hit.kind == "suggestion" and isinstance(overlay, TextPrompt):
             matches = filter_suggestions(overlay.suggestions, overlay.text)

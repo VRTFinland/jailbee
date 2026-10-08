@@ -9,7 +9,6 @@ from rich.console import Console, Group, RenderableType
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.overlays import TextPrompt
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
@@ -108,16 +107,9 @@ def test_overlay_entries_are_tagged_by_index(tmp_path):
     }
 
 
-def test_egress_and_account_rows_are_tagged_by_index():
+def test_account_rows_are_tagged_by_index():
     from jailbee.dashboard import accounts as da
-    from jailbee.egress_scope import EntryRow
 
-    egress = EgressState(
-        "alpha", None, (EntryRow("a.example", "local"), EntryRow("b.example", "local"))
-    )
-    assert {dhit.Hit("egress", (0,)), dhit.Hit("egress", (1,))} <= _kinds(
-        tframe._render_overlay(egress)
-    )
     rows = (da.AccountRow("claude", "team", "a", "live", (), ()),)
     assert dhit.Hit("account", (0,)) in _kinds(tframe._render_overlay(da.AccountsState(rows)))
 

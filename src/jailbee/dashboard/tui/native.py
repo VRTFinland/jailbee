@@ -32,6 +32,7 @@ from textual.widgets._tabs import Underline
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
+from jailbee.dashboard.egress import EgressState, egress_label
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
 from jailbee.dashboard.overlays import Picker, PickerEntry
@@ -48,6 +49,7 @@ from jailbee.dashboard.tui.menu_state import (
     menu_width,
 )
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
+from jailbee.egress_scope import EntryRow
 
 NATIVE_LIST_ID = "native-list"
 
@@ -633,6 +635,93 @@ class SettingsBox(OverlayBox):
         return NativeState("settings", self._list().highlighted, tab=self.tab)
 
 
+class EgressBox(OverlayBox):
+    """One scope's egress overrides: `a` adds, `r` removes the highlighted one."""
+
+    class Add(Message):
+        def __init__(self, key: tuple[object, ...] | None, index: int) -> None:
+            super().__init__()
+            self.key = key
+            self.index = index
+
+    class Remove(Message):
+        def __init__(self, key: tuple[object, ...] | None, row: EntryRow) -> None:
+            super().__init__()
+            self.key = key
+            self.row = row
+
+    def __init__(self, spec: EgressState, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.panel = spec
+        scope = "repo" if spec.container is None else f"container {spec.container}"
+        self.border_title = _one_line(f"Egress · {scope}")
+
+    def _options(self) -> list[Option]:
+        return [Option(egress_label(self.panel, row)) for row in self.panel.rows] or [
+            Option(_one_line("No egress entries in this scope."), disabled=True)
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield OverlayList(
+            *self._options(), mouse_enabled=self.mouse_enabled, double_click_chooses=True
+        )
+
+    def _ready(self) -> None:
+        if self.panel.rows:
+            self.query_one(OverlayList).highlighted = min(
+                self.panel.start_index, len(self.panel.rows) - 1
+            )
+
+    def _cursor(self) -> int | None:
+        return self.query_one(OverlayList).highlighted if self.panel.rows else None
+
+    def show(self, spec: Overlay) -> None:
+        """Reloaded rows keep the cursor on the same entry and source when it is still listed."""
+        super().show(spec)
+        assert isinstance(spec, EgressState)
+        old, self.panel = self.panel, spec
+        if not self.is_mounted or spec.rows == old.rows:
+            return
+        lst = self.query_one(OverlayList)
+        cursor = lst.highlighted if old.rows else None  # still the old options' cursor
+        keep = old.rows[cursor] if cursor is not None and cursor < len(old.rows) else None
+        lst.clear_options()
+        lst.add_options(self._options())
+        if spec.rows:
+            lst.highlighted = next(
+                (
+                    i
+                    for i, row in enumerate(spec.rows)
+                    if keep is not None and (row.entry, row.source) == (keep.entry, keep.source)
+                ),
+                min(cursor or 0, len(spec.rows) - 1),
+            )
+        self.post_message(self.Changed())
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()  # Enter on a row does nothing, as before
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in ("escape", "a", "r"):
+            return
+        event.stop()
+        event.prevent_default()
+        if event.key == "escape":
+            self.cancel()
+        elif event.key == "a":
+            self.post_message(self.Add(self.key, self._cursor() or 0))
+        else:
+            cursor = self._cursor()
+            if cursor is not None:
+                self.post_message(self.Remove(self.key, self.panel.rows[cursor]))
+
+    def content_rows(self) -> int:
+        return max(1, len(self.panel.rows))
+
+    def state(self) -> NativeState:
+        return NativeState("egress", self._cursor())
+
+
 def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
@@ -643,4 +732,6 @@ def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox
         return MenuBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, SettingsState):
         return SettingsBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, EgressState):
+        return EgressBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

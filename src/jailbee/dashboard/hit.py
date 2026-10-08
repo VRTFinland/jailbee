@@ -30,7 +30,6 @@ HitKind = Literal[
     "suggestion",
     "tab",
     "setting",
-    "egress",
     "account",
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
