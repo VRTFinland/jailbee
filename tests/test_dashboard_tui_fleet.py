@@ -235,6 +235,7 @@ def test_short_to_long_reveals_new_selection_after_layout():
         await pilot.pause()
         assert table.scroll_y > 0
         assert any("049" in line for line in _screen(app)[:10])
+
     _run(script)
 
 
@@ -255,6 +256,7 @@ def test_updates_only_build_rich_lines_for_changed_visible_rows(mocker):
         table.show(_model(1000), Row("container", "alpha-002"), Hit("row", ("alpha-001",)))
         await pilot.pause()
         assert build.call_count == 1
+
     _run(script)
 
 
@@ -263,10 +265,17 @@ def test_scrollbar_removal_rebuilds_heading_at_current_width():
         def long_heading(n):  # type: ignore[no-untyped-def]
             group = replace(_model(n).entries[0].group, prefix="a" * 70)
             return fleet.table_model(
-                [group], now=NOW, enabled=("name",), folded=frozenset(),
-                column_widths=None, shown_columns=None, column_offset=0,
-                hidden_by_preferences=False, width=60,
+                [group],
+                now=NOW,
+                enabled=("name",),
+                folded=frozenset(),
+                column_widths=None,
+                shown_columns=None,
+                column_offset=0,
+                hidden_by_preferences=False,
+                width=60,
             )
+
         table.show(long_heading(50), None, None)
         await pilot.pause()
         assert table.content_width == 63
@@ -275,6 +284,7 @@ def test_scrollbar_removal_rebuilds_heading_at_current_width():
         assert table.content_width == 64
         assert _screen(app)[1][63] == "…"
         assert _screen(app)[1][62] == "a"
+
     _run(script)
 
 
@@ -288,6 +298,7 @@ def test_delivered_scrollbar_drag_is_blocked_by_mouse_policy():
         table.post_message(ScrollTo(y=20, animate=False))
         await pilot.pause()
         assert table.scroll_y == 0
+
     _run(script)
 
 

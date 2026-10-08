@@ -127,7 +127,9 @@ class FleetTable(ScrollView, can_focus=False):
         hover = self._hover
         lines: list[tuple[object, ...]] = []
         if model.has_header:
-            lines.append(("header", model.geometry, hover if hover and hover.kind == "scroll" else None))
+            lines.append(
+                ("header", model.geometry, hover if hover and hover.kind == "scroll" else None)
+            )
         for entry in model.entries:
             target = None
             if hover and hover.args and hover.args[0] == entry.row.key:
@@ -135,11 +137,18 @@ class FleetTable(ScrollView, can_focus=False):
                     entry.row.kind == "repo" and hover.kind in ("repo", "fold")
                 ):
                     target = hover
-            lines.append((
-                "entry", entry.row, entry.heading, entry_cells(entry, model.geometry),
-                model.geometry, entry.row.key in model.folded if entry.heading is not None else False,
-                entry.row == self._selected, target,
-            ))
+            lines.append(
+                (
+                    "entry",
+                    entry.row,
+                    entry.heading,
+                    entry_cells(entry, model.geometry),
+                    model.geometry,
+                    entry.row.key in model.folded if entry.heading is not None else False,
+                    entry.row == self._selected,
+                    target,
+                )
+            )
         # Lightweight cell values capture fresh AGE closures without building Rich lines.
         return tuple(lines)
 
@@ -163,8 +172,11 @@ class FleetTable(ScrollView, can_focus=False):
             else:
                 entry = model.entries[virtual_y - int(model.has_header)]
                 text = entry_line(
-                    entry, model.geometry, model.folded,
-                    selected=entry.row == self._selected, width=width,
+                    entry,
+                    model.geometry,
+                    model.folded,
+                    selected=entry.row == self._selected,
+                    width=width,
                 )
             segments = self._paint(text)
             if len(self._strips) >= _CACHE_MAX:
