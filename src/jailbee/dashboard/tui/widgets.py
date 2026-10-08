@@ -6,7 +6,6 @@ from collections.abc import Callable
 from functools import cached_property
 
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
-from rich.measure import Measurement
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -512,14 +511,7 @@ class DashboardFrame(Vertical):
             else None
         )
         hint = _hint_line(overlay) if overlay is not None else None
-        if box is not None and menu:
-            menu_width = box.natural_width() or 0
-        elif legacy is not None and menu:
-            menu_width = Measurement.get(
-                console, console.options.update(width=width), _render_overlay(legacy)
-            ).maximum
-        else:
-            menu_width = 0
+        menu_width = (box.natural_width() or 0) if box is not None and menu else 0
         details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
         overlay_hover = (
             view.hover

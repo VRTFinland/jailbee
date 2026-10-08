@@ -322,10 +322,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
     )
 
     assert run.rc == 0
-    assert any(
-        isinstance(overlay, tmenu.MenuState) and overlay.active_group == "PR →"
-        for overlay in run.overlays()
-    )
+    assert any(state is not None and state.level == "PR →" for state in run.natives)
     assert any(call.args[0] == ["jailbee", "pr", "alpha-x"] for call in child.call_args_list)
 
 
@@ -362,8 +359,8 @@ def test_run_menu_unknown_key_leaves_the_menu_untouched(mocker, tmp_path):
 
     run = drive(mocker, ["j", "enter", "z"], groups=[group])
 
-    menus = [overlay for overlay in run.overlays() if overlay]
-    assert menus and isinstance(menus[-1], tmenu.MenuState) and menus[-1].index == 0
+    assert isinstance(run.trace[3].overlay, tmenu.MenuState)
+    assert run.natives[3] == toverlay.NativeState("menu", 0, level=None)  # `z` is nobody's key
     child.assert_not_called()
 
 
@@ -377,9 +374,8 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
         groups=[group],
     )
 
-    overlays = run.overlays()
-    menus = run.of_type(tmenu.MenuState)
-    assert [menu.active_group for menu in menus] == [
+    # natives[n] is the state after step n-1; the menu opens at natives[2].
+    assert [state.level for state in run.natives[2:9] if state is not None] == [
         None,
         None,
         None,
@@ -388,8 +384,11 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
         None,
         "PR →",
     ]
-    assert menus[5].index == 3
-    assert overlays[-1] is None
+    assert run.natives[7] == toverlay.NativeState(
+        "menu", 3, level=None
+    )  # Esc lands on the PR → row
+    assert run.trace[9].overlay is None
+    assert run.steps_taken > 9
     child.assert_not_called()
 
 
@@ -412,10 +411,7 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
     )
 
     assert run.rc == 0
-    assert any(
-        isinstance(overlay, tmenu.MenuState) and overlay.active_group == "PR →"
-        for overlay in run.overlays()
-    )
+    assert any(state is not None and state.level == "PR →" for state in run.natives)
     assert any("menu closed" in str(notice) for notice in run.notices())
 
 

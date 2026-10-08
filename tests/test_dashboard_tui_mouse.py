@@ -16,8 +16,10 @@ from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.overlay import NativeState
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 from tests.dashboard_pilot import (
+    NATIVE_LIST,
     Click,
     Pick,
     Wheel,
@@ -93,7 +95,7 @@ def test_a_menu_row_click_runs_that_entry(mocker, tmp_path):
     menu = run.last.overlay
     assert isinstance(menu, MenuState)
     tmux_index = next(i for i, (_, verb) in enumerate(menu.actions) if verb == "tmux")
-    run = drive(mocker, ["j", "enter", Click(Hit("menu", (tmux_index,)))], [group])
+    run = drive(mocker, ["j", "enter", Pick(tmux_index)], [group])
     assert any("tmux" in call.args[0] for call in child.call_args_list)
     assert run.last.overlay is None
 
@@ -105,7 +107,7 @@ def test_a_double_click_on_a_menu_entry_does_not_act_on_the_table_underneath(moc
     first = drive(mocker, ["j", "enter"], [group]).last.overlay
     assert isinstance(first, MenuState)
     tmux_index = next(i for i, (_, verb) in enumerate(first.actions) if verb == "tmux")
-    run = drive(mocker, ["j", "enter", Click(Hit("menu", (tmux_index,)), times=2)], [group])
+    run = drive(mocker, ["j", "enter", Pick(tmux_index, times=2)], [group])
     assert run.last.overlay is None  # no second menu opened by the second click
 
 
@@ -149,10 +151,10 @@ def test_settings_tab_and_row_clicks(mocker, tmp_path):
     assert run.trace[3].folded == frozenset({"alpha"})  # row 0 of Repos is alpha, now folded
 
 
-def test_wheel_scrolls_the_table_and_moves_the_open_list(mocker, tmp_path):
-    run = drive(mocker, [Wheel(1), "enter", Wheel(1, at="#overlay")], [_two(tmp_path)])
+def test_wheel_scrolls_the_table_and_never_moves_an_open_menus_cursor(mocker, tmp_path):
+    run = drive(mocker, [Wheel(1), "enter", Wheel(1, at=NATIVE_LIST)], [_two(tmp_path)])
     assert run.trace[1].selected == run.trace[0].selected
-    assert run.trace[3].overlay.index == 1  # type: ignore[union-attr]  # menu cursor
+    assert run.natives[2] == run.natives[3] == NativeState("menu", 0, level=None)
 
 
 def test_shift_wheel_and_horizontal_wheel_scroll_columns(mocker, tmp_path):
@@ -164,16 +166,6 @@ def test_shift_wheel_and_horizontal_wheel_scroll_columns(mocker, tmp_path):
         size=(44, 25),
     )
     assert run.trace[1].column_offset == 1 and run.trace[2].column_offset == 0
-
-
-def test_hover_over_a_menu_row_moves_its_cursor(mocker, tmp_path):
-    session = _bare_session(mocker, tmp_path)
-    session.handle_input(b"j")
-    session.tick()
-    session.handle_input(b"\r")
-    assert isinstance(session.overlay, MenuState)
-    session.hover(Hit("menu", (2,)))
-    assert session.overlay.index == 2
 
 
 def test_m_toggles_mouse_reporting_and_says_so(mocker, tmp_path):
@@ -210,7 +202,9 @@ def test_dashboard_mouse_false_starts_with_reporting_off(mocker, tmp_path):
 
 def _click_event(mocker, hit, *, chain=1, button=1):
     """What `DashboardApp.on_click` reads of a Textual click: the tagged style, chain, button."""
-    return mocker.Mock(chain=chain, button=button, style=Style(meta={HIT_KEY: hit.meta_value()}))
+    return mocker.Mock(
+        chain=chain, button=button, widget=None, style=Style(meta={HIT_KEY: hit.meta_value()})
+    )
 
 
 def test_a_double_click_acts_only_on_the_row_its_first_click_hit(mocker, tmp_path):
@@ -259,13 +253,13 @@ def test_a_triple_click_opens_the_menu_once(mocker, tmp_path):
         [
             lambda app: app.on_click(_click_event(mocker, one)),
             lambda app: app.on_click(_click_event(mocker, one, chain=2)),
-            lambda app: app.session.overlay_move(1),
+            "j",
             lambda app: app.on_click(_click_event(mocker, one, chain=3)),
         ],
         [_two(tmp_path)],
     )
-    menu = run.trace[4].overlay
-    assert isinstance(menu, MenuState) and menu.index == 1  # not closed and reopened at 0
+    assert isinstance(run.trace[4].overlay, MenuState)
+    assert run.natives[4] == NativeState("menu", 1, level=None)  # not closed and reopened at 0
 
 
 def test_the_second_click_of_a_right_click_pair_is_ignored(mocker, tmp_path):
@@ -274,13 +268,13 @@ def test_the_second_click_of_a_right_click_pair_is_ignored(mocker, tmp_path):
         mocker,
         [
             lambda app: app.on_click(_click_event(mocker, one, button=3)),
-            lambda app: app.session.overlay_move(1),
+            "j",
             lambda app: app.on_click(_click_event(mocker, one, chain=2, button=3)),
         ],
         [_two(tmp_path)],
     )
-    menu = run.trace[3].overlay
-    assert isinstance(menu, MenuState) and menu.index == 1  # not closed and reopened at 0
+    assert isinstance(run.trace[3].overlay, MenuState)
+    assert run.natives[3] == NativeState("menu", 1, level=None)  # not closed and reopened at 0
 
 
 def test_a_double_click_on_an_accounts_row_means_enter(mocker, tmp_path):
@@ -306,20 +300,14 @@ def test_a_double_click_on_an_accounts_row_means_enter(mocker, tmp_path):
     assert run.rc == 0
 
 
-def test_stale_indices_are_ignored_not_acted_on(mocker, tmp_path):
+def test_a_stale_row_click_keeps_the_open_menu(mocker, tmp_path):
     session = _bare_session(mocker, tmp_path)
     session.handle_input(b"j")
     session.tick()
     session.handle_input(b"\r")
     menu = session.overlay
     assert isinstance(menu, MenuState)
-    dispatch = mocker.patch.object(tsession.DashboardSession, "dispatch")
-    session.click(Hit("menu", (99,)))
-    assert session.overlay == menu
-    dispatch.assert_not_called()
-    session.click(Hit("menu", (-1,)))
-    assert session.overlay == menu
-    # a stale row click keeps the open menu too: nothing was clicked
+    # nothing was clicked: a row that left the listing keeps the open menu
     session.click(Hit("row", ("gone",)))
     assert session.overlay == menu
     assert session.selected == Row("container", "alpha-one")

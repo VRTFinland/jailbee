@@ -521,7 +521,7 @@ def container_egress_keys(group: dmodel.RepoGroup, **menu_kwargs: Any) -> list[s
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
-    root = tmenu._menu_entries(menu)
+    root = tmenu.menu_entries(menu)
     network_index = next(
         i
         for i, item in enumerate(root)
@@ -558,7 +558,7 @@ def container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) 
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
-    entries = list(tmenu._menu_entries(menu))
+    entries = list(tmenu.menu_entries(menu))
     at = next(
         i
         for i, entry in enumerate(entries)
@@ -580,7 +580,7 @@ def open_container_group_picker(group: dmodel.RepoGroup, **menu_kwargs: Any) -> 
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None
-    at = list(tmenu._menu_entries(menu)).index(CREDENTIAL_GROUP_LEAF)
+    at = list(tmenu.menu_entries(menu)).index(CREDENTIAL_GROUP_LEAF)
     return ["j", "enter", *["j"] * at, "enter"]
 
 

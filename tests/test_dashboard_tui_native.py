@@ -9,13 +9,16 @@ from textual.app import ComposeResult
 from textual.widgets import Input
 from textual.widgets.option_list import Option
 
+from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard.hit import HOVER_STYLE, Hit
 from jailbee.dashboard.overlays import Picker, PickerEntry
+from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import frame as tframe
+from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import widgets as twidgets
-from jailbee.dashboard.tui.menu_state import MenuState
-from jailbee.dashboard.tui.native import OverlayBox, OverlayList, PickerBox
+from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
+from jailbee.dashboard.tui.native import MenuBox, OverlayBox, OverlayList, PickerBox
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
 from tests.dashboard_fixtures import alpha_group, cfg_group, fake_accounts_cli, named_rows_group
 from tests.dashboard_pilot import (
@@ -26,11 +29,19 @@ from tests.dashboard_pilot import (
     Wheel,
     backgrounds,
     box_text,
+    container_egress_keys,
     drive,
     make_app,
+    open_container_group_picker,
     option_offset,
     repo_menu_keys,
 )
+
+
+def test_menus_are_native_and_keyed_by_their_owner():
+    assert is_native(MenuState("alpha-x", [("Attach tmux", "tmux")]))
+    assert is_native(RepoMenuState("alpha", [("Fold", "fold")]))
+    assert overlay_key(RepoMenuState("alpha", [("Fold", "fold")])) == ("repo-menu", "alpha")
 
 
 def test_help_is_native_and_keyed():
@@ -40,7 +51,6 @@ def test_help_is_native_and_keyed():
     assert not is_native(None)
 
 
-@pytest.mark.xfail(strict=True, reason="Task 3")
 def test_overlay_key_ignores_initial_cursor_fields():
     a = MenuState("alpha-x", [("Attach tmux", "tmux")])
     b = MenuState("alpha-x", [("Attach tmux", "tmux")], start_group="Git →", start_index=2)
@@ -557,3 +567,302 @@ def test_an_option_selection_does_not_leak_past_its_box(mocker, tmp_path):
     mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
     drive(mocker, [_open(Picker("x", "P", _entries("Alpha"))), "enter"], [alpha_group(tmp_path)])
     assert seen == []
+
+
+# --- the action menus ---------------------------------------------------------------
+
+
+def _group_row(menu, label: str) -> int:  # type: ignore[no-untyped-def]
+    return next(
+        i
+        for i, item in enumerate(tmenu.menu_entries(menu))
+        if isinstance(item, dmenus.MenuGroup) and item.label == label
+    )
+
+
+def test_menu_entries_by_level(tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    root = tmenu.menu_entries(menu)
+    git = next(i for i in root if isinstance(i, dmenus.MenuGroup) and i.label == "Git →")
+    assert tmenu.menu_entries(menu, "Git →") == git.actions
+    assert tmenu.menu_title(menu, None) == "alpha-x →"
+    assert tmenu.menu_title(menu, "Git →") == "alpha-x → Git"
+
+
+def test_menu_width_covers_every_level(tmp_path):
+    menu = tmenu.open_menu([alpha_group(tmp_path)], "alpha-x")
+    assert menu is not None
+    levels = (
+        None,
+        *(i.label for i in tmenu.menu_entries(menu) if isinstance(i, dmenus.MenuGroup)),
+    )
+    widest = max(
+        tmenu.menu_option_text(item, key).cell_len
+        for level in levels
+        for item, key in zip(
+            tmenu.menu_entries(menu, level),
+            tmenu.menu_hotkeys(tmenu.menu_entries(menu, level)),
+            strict=True,
+        )
+    )
+    assert tmenu.menu_width(menu) >= widest
+    # ...and the title too, which can be the wider of the two.
+    long_title = MenuState("x" * 60, [("A", "a")])
+    assert tmenu.menu_width(long_title) >= len("x" * 60 + " →") + 2
+
+
+def test_a_menu_box_is_as_wide_as_its_widest_level(mocker, tmp_path):
+    menu = tmenu.open_menu([alpha_group(tmp_path)], "alpha-x")
+    assert menu is not None
+    sizes = []
+    drive(
+        mocker,
+        [
+            "j",
+            "enter",
+            lambda app: sizes.append(app.frame.native_box.region.width),
+            "g",
+            lambda app: sizes.append(app.frame.native_box.region.width),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert sizes[0] == sizes[1] == tmenu.menu_width(menu) + 5  # opening a level never resizes
+
+
+def test_a_menu_is_native_with_focus_and_its_title(mocker, tmp_path):
+    seen = []
+    run = drive(
+        mocker,
+        [
+            "j",
+            "enter",
+            lambda app: seen.append(
+                (type(app.frame.native_box), app.focused, app.frame.native_box.border_title)
+            ),
+        ],
+        [alpha_group(tmp_path)],
+        screens=True,
+    )
+    box_type, focused, title = seen[0]
+    assert box_type is MenuBox and focused is not None and focused.id == "native-list"
+    assert "alpha-x →" in str(title)
+    assert "╭─ alpha-x →" in run.screens[2]
+    assert "[t] Attach tmux" in run.screens[2]
+
+
+def test_j_in_a_menu_moves_only_the_menu(mocker, tmp_path):
+    run = drive(mocker, ["j", "enter", "j"], [alpha_group(tmp_path)])
+    assert run.natives[3] == NativeState("menu", 1, level=None)
+    assert run.trace[3].selected == run.trace[2].selected
+
+
+def test_ctrl_c_in_a_menu_quits_and_q_closes(mocker, tmp_path):
+    quit_run = drive(mocker, ["j", "enter", "ctrl+c"], [alpha_group(tmp_path)])
+    assert quit_run.rc == 0 and quit_run.steps_taken == 3
+    close_run = drive(mocker, ["j", "enter", "q"], [alpha_group(tmp_path)])
+    assert close_run.trace[3].overlay is None and close_run.steps_taken > 3
+
+
+def test_hotkey_opens_a_group_and_escape_returns_to_its_row(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    git_row = _group_row(menu, "Git →")
+    run = drive(mocker, ["j", "enter", "g", "escape"], [group])
+    assert run.natives[3] == NativeState("menu", 0, level="Git →")
+    assert run.natives[4] == NativeState("menu", git_row, level=None)
+    assert git_row > 0  # the row differs from the top, so landing on it proves the restore
+
+
+def test_a_hotkey_does_not_also_reach_the_dashboard(mocker, tmp_path):
+    """`g` opens Git → inside the menu; the table underneath never sees it."""
+    run = drive(mocker, ["j", "enter", "g"], [alpha_group(tmp_path)])
+    assert run.natives[3].level == "Git →"
+    assert run.trace[3].selected == run.trace[2].selected
+    assert run.trace[3].notice == run.trace[2].notice
+
+
+def test_a_menu_hotkey_is_consumed_by_the_menu(mocker, tmp_path):
+    """The key stops at the box: it never bubbles on to the app's own key handler."""
+    reached = mocker.spy(tapp.DashboardApp, "_on_native_key")
+    drive(mocker, ["j", "enter", "g"], [alpha_group(tmp_path)])
+    seen = [call.args[1].key for call in reached.call_args_list]
+    assert seen and "g" not in seen  # the spy sees the padding Ctrl-C, so it is wired
+
+
+def test_a_group_row_opens_in_place_on_enter(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    row = _group_row(menu, "Git →")
+    run = drive(mocker, ["j", "enter", *["j"] * row, "enter"], [group])
+    assert run.natives[2 + row + 1] == NativeState("menu", 0, level="Git →")
+
+
+def test_escape_at_the_root_closes(mocker, tmp_path):
+    run = drive(mocker, ["j", "enter", "escape"], [alpha_group(tmp_path)])
+    assert run.trace[3].overlay is None
+
+
+def test_the_level_shown_survives_a_refresh(mocker, tmp_path):
+    tick = lambda app: None  # noqa: E731 - each callable step is followed by a tick
+    run = drive(mocker, ["j", "enter", "g", tick, tick], [alpha_group(tmp_path)])
+    assert run.natives[4] == run.natives[5] == NativeState("menu", 0, level="Git →")
+
+
+def test_egress_escape_reopens_the_network_level_at_egress(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    keys = [*container_egress_keys(group), "escape"]
+    run = drive(mocker, keys, [group])
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    network = next(
+        i
+        for i in tmenu.menu_entries(menu)
+        if isinstance(i, dmenus.MenuGroup) and i.label == "Network →"
+    )
+    egress_row = next(i for i, (_, verb) in enumerate(network.actions) if verb == "net egress ls")
+    assert egress_row > 0
+    assert run.natives[len(keys)] == NativeState("menu", egress_row, level="Network →")
+
+
+def test_the_menu_gives_way_to_the_egress_panel_and_back(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    keys = container_egress_keys(group)
+    boxes = []
+    run = drive(
+        mocker,
+        [*keys, lambda app: boxes.append(app.frame.native_box), "escape"],
+        [group],
+    )
+    assert isinstance(run.trace[len(keys)].overlay, tsession.EgressState)
+    assert boxes == [None]  # the panel is not native yet: the menu box is gone
+    assert run.natives[len(keys) + 2] is not None  # Esc brought the menu box back
+    assert isinstance(run.trace[len(keys) + 2].overlay, MenuState)
+
+
+def test_a_repo_menus_egress_escape_reopens_its_network_level(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    mocker.patch.object(tsession, "load_egress_rows", return_value=())
+    keys = [*repo_menu_keys(group, "net egress ls"), "escape"]
+    run = drive(mocker, keys, [group])
+    menu = tmenu.open_repo_menu([group], "alpha", frozenset())
+    assert menu is not None
+    network_row = _group_row(menu, "Network →")
+    state = run.natives[len(keys)]
+    assert state == NativeState("menu", 0, level="Network →")
+    assert isinstance(run.trace[len(keys)].overlay, RepoMenuState)
+    assert network_row > 0
+    # Esc once more goes up to the group's own row.
+    again = drive(mocker, [*keys, "escape"], [group])
+    assert again.natives[len(keys) + 1] == NativeState("menu", network_row, level=None)
+
+
+def test_the_menu_gives_way_to_a_picker(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    mocker.patch.object(
+        tsession.DashboardSession,
+        "open_group_picker",
+        return_value=Picker("container-group", "Group", _entries("Alpha"), "alpha-x"),
+    )
+    keys = open_container_group_picker(group)
+    seen = []
+    run = drive(
+        mocker,
+        [*keys, lambda app: seen.append((type(app.frame.native_box), app.focused))],
+        [group],
+    )
+    assert seen[0][0] is PickerBox and seen[0][1] is not None and seen[0][1].id == "native-list"
+    assert run.natives[len(keys)] == NativeState("picker", 0)
+
+
+def test_a_menu_leaf_dispatches_through_the_session(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    dispatch = mocker.patch.object(tsession.DashboardSession, "dispatch")
+    run = drive(mocker, ["j", "enter", "g", "j", "enter"], [group])
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    verb = tmenu.menu_entries(menu, "Git →")[1][1]  # type: ignore[index]  # a leaf
+    dispatch.assert_called_once_with("alpha-x", verb)
+    assert run.trace[5].overlay is None
+
+
+def test_a_stale_menu_choice_is_ignored(mocker, tmp_path):
+    """A menu's Chosen reaches the session only while its own menu is still open."""
+    group = alpha_group(tmp_path)
+    chosen = mocker.patch.object(tsession.DashboardSession, "menu_chosen")
+
+    def closed(app):  # type: ignore[no-untyped-def]
+        box = app.frame.native_box
+        box.post_message(MenuBox.Chosen(box.key, "tmux", None, 0))
+        app.session.overlay = None
+
+    drive(mocker, ["j", "enter", closed], [group])
+    chosen.assert_not_called()
+
+
+def test_a_menu_click_on_a_group_opens_it(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    run = drive(mocker, ["j", "enter", Pick(_group_row(menu, "Git →"))], [group])
+    assert run.natives[3] == NativeState("menu", 0, level="Git →")
+
+
+def test_a_click_while_the_mouse_is_off_opens_nothing(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    assert menu is not None
+    run = drive(mocker, ["j", "enter", Pick(_group_row(menu, "Git →"))], [group], mouse=False)
+    assert run.natives[3] == NativeState("menu", 0, level=None)
+
+
+def test_menu_hover_paints_grey_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")  # the suite sets it, and Textual then strips every colour
+    seen = []
+    run = drive(
+        mocker,
+        [
+            "j",
+            "enter",
+            HoverOption(2),
+            lambda app: seen.append((backgrounds(app), app.frame.native_state())),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    colours, state = seen[0]
+    grey = HOVER_STYLE.bgcolor.name
+    assert grey in colours and colours <= {"default", grey}
+    assert state == NativeState("menu", 0, level=None)
+    assert run.natives[3] == NativeState("menu", 0, level=None)
+
+
+def test_a_menu_opens_on_its_start_group_and_row(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    opened = tmenu.open_menu([group], "alpha-x")
+    assert opened is not None
+    lifecycle_row = _group_row(opened, "Lifecycle →")
+    menu = tmenu.MenuState(
+        opened.container, opened.actions, start_group="Lifecycle →", start_index=1
+    )
+    run = drive(mocker, [_open(menu), "escape"], [group])
+    assert run.natives[1] == NativeState("menu", 1, level="Lifecycle →")
+    assert run.natives[2] == NativeState("menu", lifecycle_row, level=None)
+
+
+def test_a_start_index_past_the_end_is_clamped(mocker, tmp_path):
+    menu = tmenu.MenuState("alpha-x", [("Attach tmux", "tmux"), ("Stop", "stop")], start_index=9)
+    run = drive(mocker, [_open(menu)], [alpha_group(tmp_path)])
+    assert run.natives[1] == NativeState("menu", 1, level=None)
+
+
+def test_a_menu_taller_than_the_screen_scrolls_to_its_start_row(mocker, tmp_path):
+    menu = tmenu.MenuState("alpha-x", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=25)
+    settle = lambda app: None  # noqa: E731 - lets the new box be laid out and scrolled
+    run = drive(mocker, [_open(menu), settle], [alpha_group(tmp_path)], size=(80, 20), screens=True)
+    assert run.natives[2] == NativeState("menu", 25, level=None)
+    assert "Action 25" in run.screens[2] and "Action 0 " not in run.screens[2]

@@ -22,7 +22,7 @@ from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.keys import parse_key
-from jailbee.dashboard.tui.native import OverlayBox, PickerBox
+from jailbee.dashboard.tui.native import MenuBox, OverlayBox, PickerBox
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -219,6 +219,11 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.session.picker_chosen(message.entry)
         self._after_native()
 
+    def on_menu_box_chosen(self, message: MenuBox.Chosen) -> None:
+        if self._native_current(message.key):
+            self.session.menu_chosen(message.verb, message.group, message.index)
+        self._after_native()
+
     def on_overlay_box_changed(self, _message: OverlayBox.Changed) -> None:
         self._after_native()
 
@@ -309,7 +314,6 @@ class DashboardApp(App[int], inherit_bindings=False):
         if hit == self.hover:
             return
         self.hover = hit
-        self.session.hover(hit)
         self.refresh_frame()
 
     def on_fleet_table_wheel_scrolled(self, _message: FleetTable.WheelScrolled) -> None:

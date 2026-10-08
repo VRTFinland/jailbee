@@ -18,7 +18,6 @@ from jailbee.dashboard.egress import (
     removable_entry,
     render_egress,
 )
-from jailbee.dashboard.menus import MenuGroup
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.overlays import (
     PICKER_HINT,
@@ -27,15 +26,13 @@ from jailbee.dashboard.overlays import (
     Picker,
     TextPrompt,
     render_prompt,
-    window_lines,
 )
 from jailbee.dashboard.settings import (
-    CURSOR_STYLE,
     SettingsState,
     render_settings,
 )
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
-from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
+from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 
 INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the border
@@ -65,40 +62,6 @@ def notice_parts(notice: str | None) -> tuple[Text | None, Text | None]:
         return None, Text(notice, style="yellow")
     # Keep the verdict at the start when the border is narrower than the notice.
     return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
-
-
-def _render_menu(menu: MenuState | RepoMenuState, max_rows: int | None = None) -> RenderableType:
-    """The action menu as a bordered panel: one row per action, cursor on the
-    highlighted one, windowed to ``max_rows`` around the cursor."""
-    entries = _menu_entries(menu)
-    lines = []
-    for i, (item, key) in enumerate(zip(entries, menu_hotkeys(entries), strict=True)):
-        label = item.label if isinstance(item, MenuGroup) else item[0]
-        tag = f"[bold]\\[{key}][/]" if key else "   "
-        line = (
-            f"[bold cyan]▸[/] {tag} [{CURSOR_STYLE}]{label}[/]"
-            if i == menu.index
-            else f"  {tag} {label}"
-        )
-        lines.append(dhit.hit_markup(line, "menu", i))
-    if isinstance(menu, RepoMenuState):
-        title = (
-            f"{menu.repo} → {menu.active_group.removesuffix(' →')}"
-            if menu.active_group
-            else f"{menu.repo} →"
-        )
-    elif menu.active_group:
-        title = f"{menu.container} → {menu.active_group.removesuffix(' →')}"
-    else:
-        title = f"{menu.container} →"
-    return Panel(
-        "\n".join(window_lines(lines, menu.index, max_rows)),
-        title=f"[bold]{title}[/]",
-        title_align="left",
-        box=box.ROUNDED,
-        padding=(0, 1),
-        expand=False,
-    )
 
 
 def help_lines() -> list[str]:
@@ -145,20 +108,10 @@ _MENU_PICK_HINT = "[bold]\\[key][/bold] pick"
 
 def _hint_line(overlay: Overlay | None) -> str:
     """Contextual controls shown only while an overlay is open."""
-    if isinstance(overlay, MenuState):
-        if overlay.active_group is not None:
-            return (
-                f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] run  ·  "
-                "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
-            )
+    if isinstance(overlay, (MenuState, RepoMenuState)):
         return (
-            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
-            "[bold]Enter[/bold] open/run  ·  [bold]Esc[/bold] cancel"
-        )
-    if isinstance(overlay, RepoMenuState):
-        return (
-            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  "
-            "[bold]Enter[/bold] run  ·  [bold]Esc[/bold] cancel"
+            f"[bold]↑/↓[/bold] move  ·  {_MENU_PICK_HINT}  ·  [bold]Enter[/bold] open/run  ·  "
+            "[bold]Esc[/bold] back  ·  [bold]q[/bold] close"
         )
     if isinstance(overlay, EgressState):
         return (
@@ -191,8 +144,6 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
             can_add=overlay.can_add,
             can_rm=overlay.can_rm and removable_entry(overlay) is not None,
         )
-    if isinstance(overlay, (MenuState, RepoMenuState)):
-        return _render_menu(overlay, max_rows)
     if isinstance(overlay, CommandState):
         lines = [f"> {overlay.text}▏"]
         if overlay.suggestions:

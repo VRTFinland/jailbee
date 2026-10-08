@@ -8,8 +8,9 @@ from rich.cells import cell_len
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
+from jailbee.dashboard.tui.overlay import NativeState
 from tests.dashboard_fixtures import WIDE, ci, wide_group
-from tests.dashboard_pilot import Wheel, drive, paint, view_of
+from tests.dashboard_pilot import NATIVE_LIST, Wheel, drive, paint, view_of
 
 Row = dmodel.Row
 
@@ -87,9 +88,21 @@ def test_fixed_coordinate_click_after_wheel_selects_the_drawn_row(mocker, tmp_pa
     assert run.trace[11].selected == Row("container", "row11")
 
 
-def test_wheel_over_the_open_menu_moves_its_cursor(mocker, tmp_path):
-    run = drive(mocker, ["j", "enter", Wheel(1, at="#overlay")], [_long(tmp_path, 3)])
-    assert isinstance(run.trace[3].overlay, MenuState) and run.trace[3].overlay.index == 1
+def test_wheel_over_the_open_menu_scrolls_it_and_never_moves_its_cursor(mocker, tmp_path):
+    ys = []
+    run = drive(
+        mocker,
+        [
+            "j",
+            "enter",
+            Wheel(1, at=NATIVE_LIST),
+            lambda app: ys.append(int(app.query_one(NATIVE_LIST).scroll_y)),
+        ],
+        [_long(tmp_path, 3)],
+        size=(80, 12),
+    )
+    assert ys == [1]  # one line per notch, in a menu taller than its box
+    assert run.natives[3] == NativeState("menu", 0, level=None)
     assert run.trace[3].selected == run.trace[2].selected
 
 

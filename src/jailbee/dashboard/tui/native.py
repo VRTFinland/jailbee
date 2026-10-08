@@ -13,7 +13,7 @@ letters in `on_key` with `stop()` + `prevent_default()`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import ClassVar
 
 from rich.cells import cell_len
@@ -31,8 +31,18 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from jailbee.dashboard.hit import HOVER_STYLE
+from jailbee.dashboard.menus import MenuGroup, MenuItem
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui.frame import help_lines
+from jailbee.dashboard.tui.menu_state import (
+    MenuState,
+    RepoMenuState,
+    menu_entries,
+    menu_hotkeys,
+    menu_option_text,
+    menu_title,
+    menu_width,
+)
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
 NATIVE_LIST_ID = "native-list"
@@ -333,10 +343,113 @@ class PickerBox(OverlayBox):
             self.cancel()
 
 
+class MenuBox(OverlayBox):
+    """An action menu: a `▸` group opens in place, Esc goes back a level, a key picks."""
+
+    class Chosen(Message):
+        """A leaf ``verb`` at ``group``/``index`` (the session keeps them for a way back)."""
+
+        def __init__(
+            self, key: tuple[object, ...] | None, verb: str, group: str | None, index: int
+        ) -> None:
+            super().__init__()
+            self.key = key
+            self.verb = verb
+            self.group = group
+            self.index = index
+
+    def __init__(
+        self, spec: MenuState | RepoMenuState, *, mouse_enabled: Callable[[], bool]
+    ) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.menu = spec
+        self.group = spec.start_group
+        # Esc from a level returns to that group's own row at the root.
+        self._parent_index = next(
+            (
+                i
+                for i, item in enumerate(menu_entries(spec))
+                if isinstance(item, MenuGroup) and item.label == spec.start_group
+            ),
+            0,
+        )
+        self.border_title = _one_line(menu_title(spec, self.group), "bold")
+
+    def _entries(self) -> Sequence[MenuItem]:
+        return menu_entries(self.menu, self.group)
+
+    def _options(self) -> list[Option]:
+        entries = self._entries()
+        return [
+            Option(menu_option_text(item, key))
+            for item, key in zip(entries, menu_hotkeys(entries), strict=True)
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield OverlayList(*self._options(), mouse_enabled=self.mouse_enabled)
+
+    def _ready(self) -> None:
+        last = max(0, len(self._entries()) - 1)
+        self.query_one(OverlayList).highlighted = min(self.menu.start_index, last)
+
+    def _load(self, group: str | None, cursor: int) -> None:
+        self.group = group
+        lst = self.query_one(OverlayList)
+        lst.clear_options()
+        lst.add_options(self._options())
+        lst.highlighted = cursor
+        self.border_title = _one_line(menu_title(self.menu, group), "bold")
+        self.post_message(self.Changed())
+
+    def _choose(self, index: int) -> None:
+        entries = self._entries()
+        if not 0 <= index < len(entries):
+            return
+        item = entries[index]
+        if isinstance(item, MenuGroup):
+            self._parent_index = index
+            self._load(item.label, 0)
+        else:
+            self.post_message(self.Chosen(self.key, item[1], self.group, index))
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self._choose(event.option_index)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            if self.group is None:
+                self.cancel()
+            else:
+                self._load(None, self._parent_index)
+            return
+        keys = menu_hotkeys(self._entries())
+        if event.character is not None and event.character in keys:
+            # An entry's own key is Enter on that entry.
+            event.stop()
+            event.prevent_default()
+            index = keys.index(event.character)
+            self.query_one(OverlayList).highlighted = index
+            self._choose(index)
+
+    def content_rows(self) -> int:
+        return max(1, len(self._entries()))
+
+    def natural_width(self) -> int | None:
+        return menu_width(self.menu) + 5  # border 2 + padding 2 + scrollbar 1
+
+    def state(self) -> NativeState:
+        return NativeState("menu", self.query_one(OverlayList).highlighted, level=self.group)
+
+
 def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
         return HelpBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, Picker):
         return PickerBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, (MenuState, RepoMenuState)):
+        return MenuBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

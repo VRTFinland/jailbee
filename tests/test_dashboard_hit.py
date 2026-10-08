@@ -14,7 +14,6 @@ from jailbee.dashboard.overlays import TextPrompt
 from jailbee.dashboard.settings import open_settings
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
-from jailbee.dashboard.tui.menu_state import open_repo_menu
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 _NOW = datetime(2026, 10, 7, tzinfo=UTC)
@@ -103,10 +102,6 @@ def test_scroll_marks_are_tagged_with_their_direction(tmp_path):
 
 
 def test_overlay_entries_are_tagged_by_index(tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [])
-    menu = open_repo_menu([group], "alpha", frozenset())
-    assert menu is not None
-    assert {dhit.Hit("menu", (0,)), dhit.Hit("menu", (1,))} <= _kinds(tframe._render_overlay(menu))
     prompt = TextPrompt("x", "T", "Base", suggestions=("main", "dev"))
     assert _kinds(tframe._render_overlay(prompt)) == {
         dhit.Hit("suggestion", (0,)),

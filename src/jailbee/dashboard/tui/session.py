@@ -114,10 +114,6 @@ from jailbee.dashboard.tui.keys import parse_key, quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
-    back_menu,
-    enter_menu,
-    hotkey_menu,
-    move_menu,
     open_menu,
     open_repo_menu,
 )
@@ -164,7 +160,7 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
-_OVERLAY_HITS = frozenset({"menu", "suggestion", "tab", "setting", "egress", "account"})
+_OVERLAY_HITS = frozenset({"suggestion", "tab", "setting", "egress", "account"})
 
 
 def _now() -> datetime:
@@ -1736,13 +1732,6 @@ class DashboardSession:
                     target=overlay.prefix,
                     back=overlay,
                 )
-        elif isinstance(overlay, (MenuState, RepoMenuState)):
-            # An entry's own key is Enter on that entry, so both
-            # take this one path to its group or verb.
-            chosen = hotkey_menu(overlay, data)
-            if chosen is not None:
-                self.overlay = chosen
-                self.overlay_enter()
 
     def picker_chosen(self, entry: PickerEntry) -> None:
         """A picker entry was chosen: run its step and show what comes next."""
@@ -1754,9 +1743,7 @@ class DashboardSession:
     def overlay_cancel(self) -> None:
         """Esc on the open overlay: one level back, or closed."""
         overlay = self.overlay
-        if isinstance(overlay, (MenuState, RepoMenuState)):
-            self.overlay = back_menu(overlay)
-        elif isinstance(overlay, EgressState):
+        if isinstance(overlay, EgressState):
             self.overlay = self.egress_parent
             self.egress_parent = None
         elif isinstance(overlay, Picker):
@@ -1801,8 +1788,6 @@ class DashboardSession:
             self.overlay = move_egress(overlay, step)
         elif isinstance(overlay, da.AccountsState):
             self.overlay = da.move_accounts(overlay, step)
-        elif isinstance(overlay, (MenuState, RepoMenuState)):
-            self.overlay = move_menu(overlay, step)
         elif isinstance(overlay, TextPrompt) and overlay.suggestions:
             self._prompt_key(overlay, b"\x1b[B" if step > 0 else b"\x1b[A")
 
@@ -1811,19 +1796,16 @@ class DashboardSession:
         overlay = self.overlay
         if isinstance(overlay, da.AccountsState):
             self.overlay = self.account_actions_picker(overlay)
-        elif isinstance(overlay, (MenuState, RepoMenuState)):
-            self._menu_enter(overlay)
 
-    def _menu_enter(self, menu: MenuState | RepoMenuState) -> None:
-        """Enter on a menu's highlighted entry: a deeper menu, a panel, or a verb to run."""
-
-        next_menu, verb = enter_menu(menu)
-        if verb is None:
-            self.overlay = next_menu
-            return
+    def menu_chosen(self, verb: str, group: str | None, index: int) -> None:
+        """A menu leaf was chosen at ``group``/``index``: a panel, a question, or a verb to run."""
+        menu = self.overlay
+        assert isinstance(menu, (MenuState, RepoMenuState))
+        # Where the menu reopens if the panel this opens is backed out of.
+        parent = replace(menu, start_group=group, start_index=index)
         if isinstance(menu, RepoMenuState):
             target = menu.repo
-            repo_parent = next_menu
+            repo_parent = parent
             self.overlay = None
             if verb == "new":
                 self.overlay = self.start_new_container()
@@ -1852,13 +1834,13 @@ class DashboardSession:
                 self.overlay = self.open_egress(target, None)
         else:
             target = menu.container
-            assert isinstance(next_menu, MenuState)
-            container_parent = next_menu
+            assert isinstance(parent, MenuState)
+            container_parent = parent
             self.overlay = None
             if verb == "net egress ls":
-                group = _find_group(self.groups, target)
+                owner = _find_group(self.groups, target)
                 self.egress_parent = container_parent
-                self.overlay = self.open_egress(group.prefix, target) if group else None
+                self.overlay = self.open_egress(owner.prefix, target) if owner else None
             elif verb == "credential-group":
                 # Handled here: it is not a CLI verb to dispatch.
                 self.overlay = self.open_group_picker("container-group", target)
@@ -2051,9 +2033,7 @@ class DashboardSession:
         if not isinstance(index, int):
             return
         moved: Overlay | None = None
-        if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
-            moved = move_menu(replace(overlay, index=0), index)
-        elif hit.kind == "setting" and isinstance(overlay, SettingsState):
+        if hit.kind == "setting" and isinstance(overlay, SettingsState):
             moved = move_settings(replace(overlay, index=0), index)
         elif hit.kind == "egress" and isinstance(overlay, EgressState):
             moved = move_egress(replace(overlay, index=0), index)
@@ -2067,9 +2047,7 @@ class DashboardSession:
         if moved is None or getattr(moved, "index", None) != index:
             return  # stale: the overlay changed since the frame was painted
         self.overlay = moved
-        if hit.kind == "menu":
-            self.overlay_enter()
-        elif hit.kind == "setting":
+        if hit.kind == "setting":
             self.toggle_setting()
         elif hit.kind == "account" and double:
             self.overlay_enter()
@@ -2082,20 +2060,6 @@ class DashboardSession:
             return
         if self.overlay is not None:
             self.overlay_move(step)
-
-    def hover(self, hit: Hit | None) -> None:
-        """The pointer rests on ``hit``: a menu or picker row takes the cursor."""
-        overlay = self.overlay
-        if hit is None or not hit.args or not isinstance(hit.args[0], int):
-            return
-        index = hit.args[0]
-        moved: MenuState | RepoMenuState
-        if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
-            moved = move_menu(replace(overlay, index=0), index)
-        else:
-            return
-        if moved.index == index:
-            self.overlay = moved
 
     def toggle_fold(self, prefix: str | None = None) -> None:
         """Fold or unfold ``prefix`` (default: the selected repo) and park the cursor on it."""
