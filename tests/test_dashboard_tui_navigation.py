@@ -19,7 +19,6 @@ from tests.dashboard_pilot import (
     drive,
     keys,
     patch_pause,
-    render_text,
     repo_menu_keys,
 )
 
@@ -145,9 +144,11 @@ def test_run_narrow_arrows_reach_final_column_through_returned_offsets(mocker, t
         [wide_group(tmp_path)],
         view_state=ViewState(columns=enabled),
         size=(width, 25),
+        screens=True,
     )
     assert _offsets(run) == [0, 1, 2, 3, 3, 3, 3, 2]
-    rendered = [render_text(view, (width, 25)) for view in run.trace]
+    rendered = run.screens
+    assert len(rendered) == len(run.trace)
     assert "NET" in header(rendered[-2]).split()
     assert LEFT_MORE in header(rendered[-2]) and RIGHT_MORE not in header(rendered[-2])
     assert all(len(line) <= width for text in rendered for line in text.splitlines())
@@ -677,12 +678,13 @@ def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker,
         mocker,
         ["o", "space"],
         [group],
+        screens=True,
         view_state=ViewState(columns=("name", "state", "network"), folded=frozenset({"alpha"})),
     )
     initial, optimized, unfolded = run.trace[:3]
     assert initial.shown_columns == optimized.shown_columns == ("name",)
     assert unfolded.shown_columns == ("name", "state", "network")
     assert unfolded.column_widths == optimized.column_widths
-    output = render_text(unfolded)
+    output = run.screens[2]
     assert "ST" in output and "NET" in output
     assert "●" in output

@@ -5,13 +5,14 @@ from __future__ import annotations
 import io
 from datetime import UTC, datetime
 
-from rich.console import Console, RenderableType
+from rich.console import Console, Group, RenderableType
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 from jailbee.dashboard.settings import open_settings
+from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui.menu_state import open_repo_menu
 from tests.dashboard_fixtures import WIDE, ci, wide_group
@@ -37,23 +38,17 @@ def _kinds(renderable: RenderableType, width: int = 120) -> set[dhit.Hit]:
     return {hit for _, _, hit in _hits(renderable, width)}
 
 
-def _view(groups, **kw) -> tframe.DashboardView:
-    base = dict(
-        groups=groups,
-        selected=None,
-        now=_NOW,
-        git_enabled=False,
-        enabled=None,
-        overlay=None,
-        notice=None,
-        folded=frozenset(),
-        column_offset=0,
-        hidden_by_preferences=False,
-        show_details=False,
-        column_widths=None,
-        shown_columns=None,
-    )
-    return tframe.DashboardView(**(base | kw))
+def _table(groups, *, width=120, enabled=None, column_offset=0):
+    """Tagged pure header/entry lines at the old frame's content width."""
+    inner = width - 4
+    model = fleet.table_model(groups, now=_NOW, enabled=enabled, folded=frozenset(),
+                              column_widths=None, shown_columns=None,
+                              column_offset=column_offset, hidden_by_preferences=False,
+                              width=inner)
+    return Group(fleet.header_line(model.geometry), *[
+        fleet.entry_line(e, model.geometry, model.folded, selected=False, width=inner)
+        for e in model.entries
+    ])
 
 
 def test_hit_round_trips_through_style_meta_and_markup():
@@ -67,7 +62,7 @@ def test_hit_round_trips_through_style_meta_and_markup():
 
 def test_container_rows_headings_and_markers_are_tagged(tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    kinds = _kinds(tframe.render([group], None, now=_NOW, git_enabled=False))
+    kinds = _kinds(_table([group]))
     assert dhit.Hit("row", ("alpha-one",)) in kinds
     assert dhit.Hit("repo", ("alpha",)) in kinds
     assert dhit.Hit("fold", ("alpha",)) in kinds
@@ -77,7 +72,7 @@ def test_the_fold_hit_covers_only_the_marker(tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     cells = [
         (x, y)
-        for x, y, h in _hits(tframe.render([group], None, now=_NOW, git_enabled=False))
+        for x, y, h in _hits(_table([group]))
         if h == dhit.Hit("fold", ("alpha",))
     ]
     assert len(cells) == 1
@@ -85,7 +80,7 @@ def test_the_fold_hit_covers_only_the_marker(tmp_path):
 
 def test_a_row_hit_covers_the_cell_padding_too(tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    hits = _hits(tframe.render([group], None, now=_NOW, git_enabled=False))
+    hits = _hits(_table([group]))
     row_y = {y for _, y, h in hits if h.kind == "row"}
     assert len(row_y) == 1
     xs = sorted(x for x, y, h in hits if h.kind == "row")
@@ -95,7 +90,7 @@ def test_a_row_hit_covers_the_cell_padding_too(tmp_path):
 def test_scroll_marks_are_tagged_with_their_direction(tmp_path):
     group = wide_group(tmp_path)
     kinds = _kinds(
-        tframe.render([group], None, now=_NOW, git_enabled=False, enabled=WIDE, column_offset=1),
+        _table([group], width=44, enabled=WIDE, column_offset=1),
         width=44,
     )
     assert dhit.Hit("scroll", (-1,)) in kinds
@@ -167,11 +162,9 @@ def test_hover_paints_only_the_hovered_target(tmp_path):
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")]
     )
-    plain = _view([group])
-    hovered = _view([group], hover=dhit.Hit("row", ("alpha-two",)))
     console = Console(width=120, file=io.StringIO(), color_system="truecolor")
-    before = console.render_lines(tframe.render_view(plain, height=None), pad=False)
-    after = console.render_lines(tframe.render_view(hovered, height=None), pad=False)
+    before = console.render_lines(_table([group]), pad=False)
+    after = [dhit.hover_segments(line, dhit.Hit("row", ("alpha-two",))) for line in before]
     changed = [
         dhit.Hit.of(a.style.meta)
         for line_a, line_b in zip(after, before, strict=True)
@@ -187,20 +180,21 @@ def test_hover_paints_only_the_hovered_target(tmp_path):
     )
 
 
-def test_render_view_matches_render_with_the_same_arguments(tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    view = _view([group], selected=dmodel.Row("container", "alpha-one"), notice="hi")
-    console = Console(width=100, height=30, file=io.StringIO(), record=True)
-    console.print(tframe.render_view(view, height=30))
-    a = console.export_text()
-    console.print(tframe.render(**view.render_kwargs(), height=30))
-    assert console.export_text() == a
-    assert "hover" not in view.render_kwargs()
-
-
-def test_hit_tags_do_not_change_the_rendered_text(tmp_path):
+def test_hit_tags_do_not_change_the_rendered_text(mocker, tmp_path):
     """Meta is invisible: no escape sequence, no width change."""
+    from rich.style import Style
+
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     console = Console(width=100, file=io.StringIO(), color_system="truecolor", record=True)
-    console.print(tframe.render([group], None, now=_NOW, git_enabled=False))
-    assert "\x1b]8" not in console.export_text(styles=True)  # no OSC 8 link
+    console.print(_table([group], width=100))
+    tagged = console.export_text(styles=True)
+    assert "\x1b]8" not in tagged
+    mocker.patch.object(dhit, "hit_style", return_value=Style())
+    console.print(_table([group], width=100))
+    from rich.text import Text
+
+    untagged = console.export_text(styles=True)
+    assert "\x1b]8" not in untagged
+    # Metadata can split adjacent SGR runs, but must not change visible cells.
+    assert Text.from_ansi(untagged).plain == Text.from_ansi(tagged).plain
+    assert Text.from_ansi(untagged).cell_len == Text.from_ansi(tagged).cell_len

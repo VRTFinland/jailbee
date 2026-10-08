@@ -383,4 +383,6 @@ def test_a_short_notice_stays_on_the_bottom_border(tmp_path: Path) -> None:
 
 def test_a_long_notice_with_markup_characters_renders_literally(tmp_path: Path) -> None:
     notice = "✗ bad [/x] value [bold]not bold[/bold] " + "and more words " * 10
-    assert "[/x] value [bold]not bold[/bold]" in _flat(_frame(tmp_path, notice))
+    subtitle, inline = tframe.notice_parts(notice)
+    assert subtitle is None and inline is not None
+    assert inline.plain == notice and not inline.spans

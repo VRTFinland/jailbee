@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from rich.console import Console
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui.frame import INLINE_NOTICE_MAX, frame_title, notice_parts
@@ -23,7 +24,13 @@ def test_the_title_counts_repos_containers_and_folds(tmp_path):
     assert title.plain == (
         "🐝 jailbee dashboard  ·  h/? help  ·  3 repos · 3 containers · 1 folded  ·  12:00:05"
     )
-    assert title.spans  # Preserve the bold title and dim help cue, not only their text.
+    console = Console()
+    brand_end = title.plain.index("  ·")
+    help_start = title.plain.index("h/? help")
+    assert all(title.get_style_at_offset(console, i).bold for i in range(brand_end))
+    assert all(title.get_style_at_offset(console, i).dim for i in range(help_start, help_start + len("h/? help")))
+    assert not title.get_style_at_offset(console, title.plain.index("3 repos")).bold
+    assert not title.get_style_at_offset(console, title.plain.index("3 repos")).dim
 
 
 def test_the_title_marks_no_git():
