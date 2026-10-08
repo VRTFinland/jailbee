@@ -99,9 +99,7 @@ from jailbee.dashboard.overlays import (
     TextPrompt,
     filter_suggestions,
     handle_prompt_key,
-    move_picker,
     parse_pr_number,
-    picked,
 )
 from jailbee.dashboard.settings import (
     SettingsState,
@@ -166,7 +164,7 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
-_OVERLAY_HITS = frozenset({"menu", "picker", "suggestion", "tab", "setting", "egress", "account"})
+_OVERLAY_HITS = frozenset({"menu", "suggestion", "tab", "setting", "egress", "account"})
 
 
 def _now() -> datetime:
@@ -1625,16 +1623,6 @@ class DashboardSession:
         if isinstance(overlay, TextPrompt):
             self._prompt_key(overlay, data)
             return None
-        if isinstance(overlay, Picker) and (
-            data == b"\x03" or parse_key(data) in ("cancel", "quit")
-        ):
-            # A picker is one step of a question flow, like the prompt it can
-            # lead to: Ctrl-C, Esc and `q` all cancel the step — a nested
-            # picker returns to the panel it was opened from — never the
-            # dashboard.
-            self.overlay = overlay.back
-            self.set_notice("Cancelled")
-            return None
         key = parse_key(data)
         if key == "interrupt":
             return "quit"
@@ -1756,6 +1744,13 @@ class DashboardSession:
                 self.overlay = chosen
                 self.overlay_enter()
 
+    def picker_chosen(self, entry: PickerEntry) -> None:
+        """A picker entry was chosen: run its step and show what comes next."""
+        picker = self.overlay
+        assert isinstance(picker, Picker)
+        self.overlay = picker.back
+        self.overlay = self.submit_picker(picker, entry)
+
     def overlay_cancel(self) -> None:
         """Esc on the open overlay: one level back, or closed."""
         overlay = self.overlay
@@ -1806,8 +1801,6 @@ class DashboardSession:
             self.overlay = move_egress(overlay, step)
         elif isinstance(overlay, da.AccountsState):
             self.overlay = da.move_accounts(overlay, step)
-        elif isinstance(overlay, Picker):
-            self.overlay = move_picker(overlay, step)
         elif isinstance(overlay, (MenuState, RepoMenuState)):
             self.overlay = move_menu(overlay, step)
         elif isinstance(overlay, TextPrompt) and overlay.suggestions:
@@ -1818,11 +1811,6 @@ class DashboardSession:
         overlay = self.overlay
         if isinstance(overlay, da.AccountsState):
             self.overlay = self.account_actions_picker(overlay)
-        elif isinstance(overlay, Picker):
-            chosen = picked(overlay)
-            self.overlay = overlay.back
-            if chosen is not None:
-                self.overlay = self.submit_picker(overlay, chosen)
         elif isinstance(overlay, (MenuState, RepoMenuState)):
             self._menu_enter(overlay)
 
@@ -2065,8 +2053,6 @@ class DashboardSession:
         moved: Overlay | None = None
         if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
             moved = move_menu(replace(overlay, index=0), index)
-        elif hit.kind == "picker" and isinstance(overlay, Picker):
-            moved = move_picker(replace(overlay, index=0), index)
         elif hit.kind == "setting" and isinstance(overlay, SettingsState):
             moved = move_settings(replace(overlay, index=0), index)
         elif hit.kind == "egress" and isinstance(overlay, EgressState):
@@ -2081,7 +2067,7 @@ class DashboardSession:
         if moved is None or getattr(moved, "index", None) != index:
             return  # stale: the overlay changed since the frame was painted
         self.overlay = moved
-        if hit.kind in ("menu", "picker"):
+        if hit.kind == "menu":
             self.overlay_enter()
         elif hit.kind == "setting":
             self.toggle_setting()
@@ -2103,11 +2089,9 @@ class DashboardSession:
         if hit is None or not hit.args or not isinstance(hit.args[0], int):
             return
         index = hit.args[0]
-        moved: MenuState | RepoMenuState | Picker
+        moved: MenuState | RepoMenuState
         if hit.kind == "menu" and isinstance(overlay, (MenuState, RepoMenuState)):
             moved = move_menu(replace(overlay, index=0), index)
-        elif hit.kind == "picker" and isinstance(overlay, Picker):
-            moved = move_picker(replace(overlay, index=0), index)
         else:
             return
         if moved.index == index:

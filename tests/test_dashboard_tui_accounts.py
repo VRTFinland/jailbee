@@ -10,6 +10,7 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
+from jailbee.dashboard.tui.overlay import NativeState
 from tests.dashboard_fixtures import (
     ACCOUNT_LS,
     TEAM_ROWS,
@@ -693,7 +694,8 @@ def test_accounts_confirmation_yes_runs_the_removal_and_closes(
         ("No", "no"),
         ("Yes, delete", "yes"),
     ]
-    assert confirm.index == 0  # "No" is where the cursor starts
+    at = min(i for i, v in enumerate(run.trace) if v.overlay is confirm)
+    assert run.natives[at] == NativeState("picker", 0)  # "No" is where the cursor starts
     assert cli.call_args_list == [
         mocker.call(ACCOUNT_LS, cwd=tmp_path),
         mocker.call(argv, cwd=tmp_path),

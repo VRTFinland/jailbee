@@ -26,7 +26,6 @@ from jailbee.dashboard.overlays import (
     SUGGEST_HINT,
     Picker,
     TextPrompt,
-    render_picker,
     render_prompt,
     window_lines,
 )
@@ -203,8 +202,6 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
         return render_settings(overlay, dynamic=frozenset())
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
-    if isinstance(overlay, Picker):
-        return render_picker(overlay, max_rows)
     if isinstance(overlay, da.AccountsState):
         return da.render_accounts(overlay)
     raise ValueError(f"{overlay!r} is drawn by a native box")  # see is_native

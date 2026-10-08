@@ -3076,14 +3076,6 @@ def test_render_scrolls_a_menu_taller_than_the_screen_to_its_cursor(tmp_path):
     assert lines[-1].startswith("╰")  # the frame's bottom border is on screen
 
 
-def test_render_scrolls_a_picker_taller_than_the_screen_to_its_cursor(tmp_path):
-    entries = tuple(tsession.PickerEntry(f"Entry {i}", str(i)) for i in range(30))
-    picker = tsession.Picker("x", "Pick one", entries, index=29)
-    lines = _screen_lines([_tall_group(tmp_path, 3)], picker, height=20)
-    assert len(lines) <= 20
-    assert "▸ Entry 29" in "\n".join(lines)
-
-
 def test_render_cuts_a_table_taller_than_the_screen_to_keep_the_menu_visible(tmp_path):
     menu = tmenu.MenuState("alpha-0", [(f"Action {i}", f"v{i}") for i in range(30)], index=12)
     lines = _screen_lines([_tall_group(tmp_path, 40)], menu, height=20)

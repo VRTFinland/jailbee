@@ -20,6 +20,7 @@ from typing import Any
 from textual import _wait as textual_wait
 from textual import events
 from textual.app import App, ComposeResult
+from textual.widget import Widget
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
@@ -181,6 +182,19 @@ def option_offset(app: tapp.DashboardApp, index: int) -> tuple[int, int]:
     raise AssertionError(f"option {index} is not on screen")
 
 
+def _option_target(app: tapp.DashboardApp, index: int) -> tuple[Widget, tuple[int, int]]:
+    """The open box's list and option ``index``'s cell relative to it.
+
+    A pilot event aimed at the widget carries it as `event.widget`, as a real
+    mouse event does; one given only a screen offset names the Screen instead.
+    """
+    box = app.frame.native_box
+    assert box is not None, "no native overlay is open"
+    target = box.focus_target()
+    x, y = option_offset(app, index)
+    return target, (x - target.region.x, y - target.region.y)
+
+
 def backgrounds(app: App) -> set[str]:
     """Every background colour on screen, by Rich name ("default" for none)."""
     found: set[str] = set()
@@ -313,13 +327,13 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         )
         await pilot.pause()
     elif isinstance(step, Pick):
-        await pilot.click(
-            offset=option_offset(app, step.index), times=step.times, button=step.button
-        )
+        widget, offset = _option_target(app, step.index)
+        await pilot.click(widget, offset=offset, times=step.times, button=step.button)
     elif isinstance(step, PickTab):
         await pilot.click(f"Tab#{step.tab}")
     elif isinstance(step, HoverOption):
-        await pilot.hover(offset=option_offset(app, step.index))
+        widget, offset = _option_target(app, step.index)
+        await pilot.hover(widget, offset=offset)
         await pilot.pause()
     else:
         step(app)

@@ -16,7 +16,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import ClassVar
 
+from rich.cells import cell_len
 from rich.console import Console
+from rich.segment import Segment
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -29,6 +31,7 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from jailbee.dashboard.hit import HOVER_STYLE
+from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui.frame import help_lines
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
@@ -58,6 +61,8 @@ def list_css(name: str) -> str:
         padding: 0;
         background: ansi_default;
         color: ansi_default;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
         {_SCROLLBAR_CSS}
     }}
     {name}:focus {{ border: none; background-tint: initial; }}
@@ -96,7 +101,8 @@ def _hovered(lst: OptionList, y: int, strip: Strip) -> Strip:
     line = lst.scroll_offset.y + y
     lines = lst._lines
     if 0 <= line < len(lines) and lines[line][0] == hovered:
-        return strip.apply_style(HOVER_STYLE)
+        # post_style: the option's own (default) background would win over a plain apply_style
+        return Strip(Segment.apply_style(strip, post_style=HOVER_STYLE), strip.cell_length)
     return strip
 
 
@@ -280,8 +286,57 @@ class HelpBox(OverlayBox):
             self.cancel()
 
 
+def _one_line(label: str, style: str = "") -> Text:
+    return Text(label, style=style, no_wrap=True, overflow="ellipsis")
+
+
+class PickerBox(OverlayBox):
+    """A short list to choose from; Esc, `q` and Ctrl-C cancel just this step."""
+
+    class Chosen(Message):
+        def __init__(self, key: tuple[object, ...] | None, entry: PickerEntry) -> None:
+            super().__init__()
+            self.key = key
+            self.entry = entry
+
+    def __init__(self, spec: Picker, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.picker = spec
+        self.border_title = _one_line(spec.title, "bold")
+
+    def compose(self) -> ComposeResult:
+        options = [Option(_one_line(entry.label)) for entry in self.picker.entries] or [
+            Option(_one_line("(nothing to choose)", "dim"), disabled=True)
+        ]
+        yield OverlayList(*options, mouse_enabled=self.mouse_enabled)
+
+    def content_rows(self) -> int:
+        return max(1, len(self.picker.entries))
+
+    def natural_width(self) -> int | None:
+        widest = max((cell_len(e.label) for e in self.picker.entries), default=20)
+        # border 2 + padding 2 + scrollbar 1; the title needs its own room in the border
+        return max(widest + 5, cell_len(self.picker.title) + 6)
+
+    def state(self) -> NativeState:
+        return NativeState("picker", self.query_one(OverlayList).highlighted)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if 0 <= event.option_index < len(self.picker.entries):
+            self.post_message(self.Chosen(self.key, self.picker.entries[event.option_index]))
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "q", "ctrl+c"):
+            event.stop()
+            event.prevent_default()
+            self.cancel()
+
+
 def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
         return HelpBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, Picker):
+        return PickerBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

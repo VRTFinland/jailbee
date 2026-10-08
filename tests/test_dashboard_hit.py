@@ -10,7 +10,7 @@ from rich.console import Console, Group, RenderableType
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.egress import EgressState
-from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
+from jailbee.dashboard.overlays import TextPrompt
 from jailbee.dashboard.settings import open_settings
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
@@ -107,11 +107,6 @@ def test_overlay_entries_are_tagged_by_index(tmp_path):
     menu = open_repo_menu([group], "alpha", frozenset())
     assert menu is not None
     assert {dhit.Hit("menu", (0,)), dhit.Hit("menu", (1,))} <= _kinds(tframe._render_overlay(menu))
-    picker = Picker("p", "Pick", (PickerEntry("a", "a"), PickerEntry("b", "b")))
-    assert _kinds(tframe._render_overlay(picker)) == {
-        dhit.Hit("picker", (0,)),
-        dhit.Hit("picker", (1,)),
-    }
     prompt = TextPrompt("x", "T", "Base", suggestions=("main", "dev"))
     assert _kinds(tframe._render_overlay(prompt)) == {
         dhit.Hit("suggestion", (0,)),

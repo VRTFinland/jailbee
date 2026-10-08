@@ -22,7 +22,7 @@ from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.keys import parse_key
-from jailbee.dashboard.tui.native import OverlayBox
+from jailbee.dashboard.tui.native import OverlayBox, PickerBox
 from jailbee.dashboard.tui.overlay import overlay_key
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -212,6 +212,11 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_overlay_box_cancelled(self, message: OverlayBox.Cancelled) -> None:
         if self._native_current(message.key):
             self.session.overlay_cancel()
+        self._after_native()
+
+    def on_picker_box_chosen(self, message: PickerBox.Chosen) -> None:
+        if self._native_current(message.key):
+            self.session.picker_chosen(message.entry)
         self._after_native()
 
     def on_overlay_box_changed(self, _message: OverlayBox.Changed) -> None:

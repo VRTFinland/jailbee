@@ -17,7 +17,15 @@ from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from tests.dashboard_fixtures import WIDE, ci, wide_group
-from tests.dashboard_pilot import Click, Wheel, bare_session, drive, patch_pause, start_session
+from tests.dashboard_pilot import (
+    Click,
+    Pick,
+    Wheel,
+    bare_session,
+    drive,
+    patch_pause,
+    start_session,
+)
 
 Row = dmodel.Row
 
@@ -125,20 +133,11 @@ def test_a_picker_row_click_chooses_it(mocker, tmp_path):
     chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
     run = drive(
         mocker,
-        [lambda app: setattr(app.session, "overlay", picker), Click(Hit("picker", (1,)))],
+        [lambda app: setattr(app.session, "overlay", picker), Pick(1)],
         [_two(tmp_path)],
     )
     assert chosen.call_args.args[1] == PickerEntry("Apply, no restart", APPLY_NO_RESTART)
     assert run.last.overlay is None
-
-
-def test_a_stale_index_is_ignored(mocker, tmp_path):
-    session = _bare_session(mocker, tmp_path)
-    session.overlay = Picker("x", "P", (PickerEntry("a", "a"),))
-    chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker")
-    session.click(Hit("picker", (3,)))
-    chosen.assert_not_called()
-    assert session.overlay is not None
 
 
 def test_settings_tab_and_row_clicks(mocker, tmp_path):

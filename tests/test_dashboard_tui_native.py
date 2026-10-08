@@ -9,15 +9,28 @@ from textual.app import ComposeResult
 from textual.widgets import Input
 from textual.widgets.option_list import Option
 
-from jailbee.dashboard.hit import Hit
+from jailbee.dashboard.hit import HOVER_STYLE, Hit
+from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import widgets as twidgets
 from jailbee.dashboard.tui.menu_state import MenuState
-from jailbee.dashboard.tui.native import OverlayBox, OverlayList
+from jailbee.dashboard.tui.native import OverlayBox, OverlayList, PickerBox
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
-from tests.dashboard_fixtures import alpha_group, named_rows_group
-from tests.dashboard_pilot import NATIVE_LIST, Click, backgrounds, drive, make_app
+from tests.dashboard_fixtures import alpha_group, cfg_group, fake_accounts_cli, named_rows_group
+from tests.dashboard_pilot import (
+    NATIVE_LIST,
+    Click,
+    HoverOption,
+    Pick,
+    Wheel,
+    backgrounds,
+    box_text,
+    drive,
+    make_app,
+    option_offset,
+    repo_menu_keys,
+)
 
 
 def test_help_is_native_and_keyed():
@@ -73,7 +86,7 @@ def test_j_in_help_scrolls_help_not_the_table(mocker, tmp_path):
     scrolls = []
     run = drive(
         mocker,
-        ["h", "j", "j", lambda app: scrolls.append(app.query_one(NATIVE_LIST).scroll_y)],
+        ["h", "j", "j", lambda app: scrolls.append(app.query_one(NATIVE_LIST).scroll_target_y)],
         [group],
         size=(80, 20),
     )
@@ -138,7 +151,8 @@ def test_a_table_click_closes_help_and_selects(mocker, tmp_path):
     assert run.trace[-1].selected == tsession.Row("container", "alpha-x")
 
 
-def test_help_paints_no_background(mocker, tmp_path):
+def test_help_paints_no_background(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")  # else Textual strips every colour and the scan proves nothing
     seen = []
     drive(mocker, ["h", lambda app: seen.append(backgrounds(app))], [alpha_group(tmp_path)])
     assert seen[0] and seen[0] <= {"default"}  # the screen was scanned, and nothing is painted
@@ -164,7 +178,7 @@ class _ProbeBox(OverlayBox):
         return NativeState("probe", 0)
 
 
-def _with_probe_kind(mocker) -> None:  # type: ignore[no-untyped-def]
+def _with_probe_kind(mocker, box_cls=_ProbeBox) -> None:  # type: ignore[no-untyped-def]
     """Make the string overlay ``"probe"`` a native kind next to help."""
     mocker.patch.object(twidgets, "is_native", lambda o: o in ("help", "probe"))
     real_key = twidgets.overlay_key
@@ -176,7 +190,7 @@ def _with_probe_kind(mocker) -> None:  # type: ignore[no-untyped-def]
         twidgets,
         "build_box",
         lambda o, *, mouse_enabled: (
-            _ProbeBox(o, mouse_enabled=mouse_enabled)
+            box_cls(o, mouse_enabled=mouse_enabled)
             if o == "probe"
             else real_build(o, mouse_enabled=mouse_enabled)
         ),
@@ -219,3 +233,327 @@ def test_rapid_native_swaps_never_duplicate_the_list_id(mocker, tmp_path):
 
     run = drive(mocker, ["h", flip, flip], [alpha_group(tmp_path)])
     assert run.rc == 0
+
+
+# --- the picker ---------------------------------------------------------------
+
+
+def _apply_picker(group):  # type: ignore[no-untyped-def]
+    return repo_menu_keys(group, "apply")
+
+
+def _entries(*labels: str) -> tuple[PickerEntry, ...]:
+    return tuple(PickerEntry(label, label.lower()) for label in labels)
+
+
+def _open(overlay: object):  # type: ignore[no-untyped-def]
+    return lambda app: setattr(app.session, "overlay", overlay)
+
+
+def test_picker_is_native(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    steps = [*_apply_picker(group), "j"]
+    run = drive(mocker, steps, [group])
+    assert run.natives[len(steps)] == NativeState("picker", 1)  # [-1] is after the padding Ctrl-C
+
+
+def test_ticks_keep_the_picker_cursor(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    tick = lambda app: None  # noqa: E731 - each callable step is followed by a tick
+    steps = [*_apply_picker(group), "j", *[tick] * 5]
+    run = drive(mocker, steps, [group])
+    assert [n.cursor for n in run.natives[len(steps) - 5 : len(steps) + 1]] == [1] * 6
+
+
+def test_click_on_an_option_chooses_it(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    chosen = mocker.patch.object(
+        tsession.DashboardSession, "submit_picker", autospec=True, return_value=None
+    )
+    run = drive(mocker, [*_apply_picker(group), Pick(1)], [group])
+    (_session, picker, entry), _ = chosen.call_args
+    assert picker.purpose == "repo-apply" and entry.value == "no-restart"
+    assert "Cancelled" not in run.notices()
+    assert run.trace[-1].overlay is None
+
+
+@pytest.mark.parametrize("key", ["ctrl+c", "q", "escape"])
+def test_ctrl_c_and_q_cancel_a_picker(mocker, tmp_path, key):
+    group = cfg_group(tmp_path)
+    steps = [*_apply_picker(group), key]
+    run = drive(mocker, steps, [group])
+    assert run.steps_taken > len(steps)  # the dashboard survived the key
+    assert run.trace[len(steps)].overlay is None  # an apply picker has no `back`
+    assert run.trace[len(steps)].notice == "Cancelled"
+
+
+def test_a_cancelled_picker_returns_to_its_panel(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    run = drive(mocker, ["A", "enter", "escape"], [alpha_group(tmp_path)])
+    assert isinstance(run.trace[2].overlay, tsession.Picker)  # acct-action on the live login
+    assert isinstance(run.trace[3].overlay, tsession.da.AccountsState)
+    assert run.trace[3].notice == "Cancelled"
+
+
+def test_enter_chooses_the_highlighted_entry(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta", "Gamma"))
+    chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
+    run = drive(mocker, [_open(picker), "j", "j", "enter"], [alpha_group(tmp_path)])
+    assert chosen.call_args.args[1] == PickerEntry("Gamma", "gamma")
+    assert run.trace[-1].overlay is None
+
+
+def test_a_picker_shows_its_title_and_entries(mocker, tmp_path):
+    lines = box_text(Picker("x", "Pick one", _entries("Alpha", "Beta")))
+    text = "\n".join(lines)
+    assert "Pick one" in lines[0] and "Alpha" in text and "Beta" in text
+
+
+def test_a_long_label_is_cut_to_one_line(mocker, tmp_path):
+    lines = box_text(Picker("x", "T", _entries("x" * 200)), size=(40, 10))
+    assert len(lines) == 3  # border, one row, border
+    assert "…" in lines[1]
+
+
+def test_a_picker_taller_than_the_screen_scrolls_to_its_cursor(mocker, tmp_path):
+    picker = Picker("x", "Pick one", _entries(*[f"Entry {i}" for i in range(30)]))
+    run = drive(
+        mocker, [_open(picker), "end"], [named_rows_group(tmp_path, 3)], size=(80, 20), screens=True
+    )
+    assert run.natives[2] == NativeState("picker", 29)
+    assert len(run.screens[2].splitlines()) <= 20
+    assert "Entry 29" in run.screens[2] and "Entry 0 " not in run.screens[2]
+
+
+def test_an_empty_picker_chooses_nothing(mocker, tmp_path):
+    chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
+    run = drive(
+        mocker, [_open(Picker("x", "Empty", ())), "enter"], [alpha_group(tmp_path)], screens=True
+    )
+    chosen.assert_not_called()
+    assert isinstance(run.trace[2].overlay, Picker)
+    assert "(nothing to choose)" in run.screens[1]
+
+
+def test_a_click_outside_a_picker_closes_it(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta"))
+    run = drive(
+        mocker,
+        [_open(picker), Click(Hit("row", ("alpha-x",)))],
+        [alpha_group(tmp_path)],
+    )
+    assert run.trace[-1].overlay is None and run.trace[-1].selected is not None
+
+
+def test_a_picker_step_into_another_picker_mounts_the_new_box(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    focused = []
+    run = drive(
+        mocker,
+        ["A", "enter", "enter", lambda app: focused.append(app.focused and app.focused.id)],
+        [alpha_group(tmp_path)],
+    )
+    purposes = [o.purpose for o in run.of_type(Picker)]
+    assert purposes[0] == "acct-action" and "acct-use" in purposes  # `use` opens the login list
+    assert run.natives[3] == NativeState("picker", 0)  # a new box, cursor back at the top
+    assert focused == ["native-list"]
+
+
+def test_a_picker_step_into_a_native_help_swaps_the_box(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries("Alpha"))
+    mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value="help")
+    seen = []
+    run = drive(
+        mocker,
+        [
+            _open(picker),
+            "enter",
+            lambda app: seen.append((type(app.frame.native_box).__name__, app.focused)),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert run.rc == 0
+    assert seen[0][0] == "HelpBox" and seen[0][1] is not None and seen[0][1].id == "native-list"
+
+
+def test_a_picker_back_to_a_panel_closes_the_box(mocker, tmp_path):
+    fake_accounts_cli(mocker)
+    seen = []
+    drive(
+        mocker,
+        ["A", "enter", "escape", lambda app: seen.append(app.frame.native_box)],
+        [alpha_group(tmp_path)],
+    )
+    assert seen == [None]  # the accounts panel is still drawn, not native yet
+
+
+# --- the list base: hover, wheel, gated clicks -----------------------------------
+
+
+def _bg(app, index: int):  # type: ignore[no-untyped-def]
+    """The background colour name of option ``index``'s first cell, as composited."""
+    x, y = option_offset(app, index)
+    at = 0
+    for segment in app.screen._compositor.render_strips()[y]:
+        at += segment.cell_length
+        if at > x:
+            return segment.style.bgcolor.name if segment.style and segment.style.bgcolor else None
+    raise AssertionError("cell is off screen")
+
+
+def test_hovering_an_option_paints_it_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")  # the suite sets it, and Textual then strips every colour
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta", "Gamma"))
+    seen = {}
+    run = drive(
+        mocker,
+        [
+            _open(picker),
+            HoverOption(2),
+            lambda app: seen.update(hovered=[_bg(app, i) for i in range(3)]),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    grey = HOVER_STYLE.bgcolor.name
+    assert seen["hovered"][2] == grey
+    assert seen["hovered"][0] != grey and seen["hovered"][1] != grey  # only that option
+    assert run.natives[3] == NativeState("picker", 0)  # the highlight stays put
+
+
+def test_the_highlighted_option_keeps_its_own_style_when_hovered(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta"))
+    seen = []
+    drive(
+        mocker,
+        [_open(picker), HoverOption(0), lambda app: seen.append(_bg(app, 0))],
+        [alpha_group(tmp_path)],
+    )
+    assert seen[0] != HOVER_STYLE.bgcolor.name
+
+
+def _scroll_y(app) -> int:  # type: ignore[no-untyped-def]
+    return int(app.query_one(NATIVE_LIST).scroll_y)
+
+
+def test_one_wheel_notch_scrolls_one_line_and_never_moves_the_cursor(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries(*[f"Entry {i}" for i in range(30)]))
+    ys = []
+    run = drive(
+        mocker,
+        [
+            _open(picker),
+            Wheel(1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+            Wheel(1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+            Wheel(-1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+        ],
+        [named_rows_group(tmp_path, 3)],
+        size=(80, 14),
+    )
+    assert ys == [1, 2, 1]
+    assert run.natives[7] == NativeState("picker", 0)
+
+
+def test_the_wheel_does_nothing_with_the_mouse_off(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries(*[f"Entry {i}" for i in range(30)]))
+    ys = []
+    run = drive(
+        mocker,
+        [_open(picker), Wheel(1, at=NATIVE_LIST), lambda app: ys.append(_scroll_y(app))],
+        [named_rows_group(tmp_path, 3)],
+        size=(80, 14),
+        mouse=False,
+    )
+    assert ys == [0]
+    assert run.natives[3] == NativeState("picker", 0)
+
+
+def test_a_click_while_the_mouse_is_off_chooses_nothing(mocker, tmp_path):
+    picker = Picker("x", "Pick", _entries("Alpha", "Beta"))
+    chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
+    run = drive(mocker, [_open(picker), Pick(1)], [alpha_group(tmp_path)], mouse=False)
+    chosen.assert_not_called()
+    assert isinstance(run.trace[2].overlay, Picker)
+    assert run.natives[2] == NativeState("picker", 0)  # not even highlighted
+
+
+class _DoubleBox(OverlayBox):
+    """A list whose rows are chosen by a double click, like egress and accounts."""
+
+    def __init__(self, spec, *, mouse_enabled):  # type: ignore[no-untyped-def]
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.chosen: list[int] = []
+
+    def compose(self) -> ComposeResult:
+        yield OverlayList(
+            Option("one"),
+            Option("two"),
+            mouse_enabled=self.mouse_enabled,
+            double_click_chooses=True,
+        )
+
+    def content_rows(self) -> int:
+        return 2
+
+    def state(self) -> NativeState:
+        return NativeState("double", self.query_one(OverlayList).highlighted)
+
+    def on_option_list_option_selected(self, event) -> None:  # type: ignore[no-untyped-def]
+        event.stop()
+        self.chosen.append(event.option_index)
+
+
+def test_double_click_chooses_highlights_on_one_click_and_chooses_on_two(mocker, tmp_path):
+    _with_probe_kind(mocker, _DoubleBox)
+    seen = []
+    run = drive(
+        mocker,
+        [
+            lambda app: setattr(app.session, "overlay", "probe"),
+            Pick(1),
+            lambda app: seen.append(list(app.frame.native_box.chosen)),
+            Pick(1, times=2),
+            lambda app: seen.append(list(app.frame.native_box.chosen)),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert run.natives[2] == NativeState("double", 1)  # one click highlights...
+    assert seen == [[], [1]]  # ...and only the second chooses
+
+
+def test_a_stale_chosen_message_is_ignored(mocker, tmp_path):
+    """A box's message reaches the session only while its own overlay is still open."""
+    first = Picker("x", "First", _entries("Alpha"))
+    second = Picker("y", "Second", _entries("Beta"))
+    chosen = mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
+
+    def swapped(app):  # type: ignore[no-untyped-def]
+        # The user's choice is queued, then a tick replaces the overlay before it is handled.
+        box = app.frame.native_box
+        box.post_message(PickerBox.Chosen(box.key, first.entries[0]))
+        app.session.overlay = second
+
+    def closed(app):  # type: ignore[no-untyped-def]
+        box = app.frame.native_box
+        box.post_message(PickerBox.Chosen(box.key, second.entries[0]))
+        app.session.overlay = None
+
+    run = drive(mocker, [_open(first), swapped, closed], [alpha_group(tmp_path)])
+    chosen.assert_not_called()
+    assert run.rc == 0 and run.trace[2].overlay is second
+
+
+def test_an_option_selection_does_not_leak_past_its_box(mocker, tmp_path):
+    seen = []
+    mocker.patch.object(
+        twidgets.DashboardFrame,
+        "on_option_list_option_selected",
+        lambda self, event: seen.append(event),
+        create=True,
+    )
+    mocker.patch.object(tsession.DashboardSession, "submit_picker", return_value=None)
+    drive(mocker, [_open(Picker("x", "P", _entries("Alpha"))), "enter"], [alpha_group(tmp_path)])
+    assert seen == []
