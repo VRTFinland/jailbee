@@ -370,8 +370,9 @@ def test_real_app_thousand_rows_bounds_each_key_render_work(mocker):
         assert 0 < render.call_count <= 2 * 40
         assert 0 < build.call_count <= 2 * 40
 
-    result = drive(mocker, [clear, "j", check, clear, "j", check, clear, "j", check],
-                   [group], size=(120, 40))
+    result = drive(
+        mocker, [clear, "j", check, clear, "j", check, clear, "j", check], [group], size=(120, 40)
+    )
     assert result.last.selected == Row("container", "alpha-002")
     assert len(counts) == 3
     print(f"per-key (render_line, entry_line): {counts}")

@@ -299,9 +299,19 @@ def drive(  # type: ignore[no-untyped-def]
     its input.
     """
     app = make_app(
-        mocker, groups, remote=remote, over_ssh=over_ssh, ssh_policy=ssh_policy,
-        view_state=view_state, git_enabled=git_enabled, status=status, scope=scope,
-        cwd_root=cwd_root, client=client, mouse=mouse, jobs=jobs,
+        mocker,
+        groups,
+        remote=remote,
+        over_ssh=over_ssh,
+        ssh_policy=ssh_policy,
+        view_state=view_state,
+        git_enabled=git_enabled,
+        status=status,
+        scope=scope,
+        cwd_root=cwd_root,
+        client=client,
+        mouse=mouse,
+        jobs=jobs,
     )
     client = app.session.client
     result = Run(app, client)

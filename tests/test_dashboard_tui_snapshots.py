@@ -1,10 +1,9 @@
 """Stable whole-app SVGs, including native frame and real overlay composition."""
 
-from dataclasses import replace
-from datetime import timedelta
-
 import os
 import time
+from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -80,8 +79,7 @@ def test_snapshot_settings(snap_compare, mocker, groups):
 def test_snapshot_narrow(snap_compare, mocker, groups):
     for group in groups:
         group.containers = [
-            replace(info, name=f"{info.name}-long-feature-branch-name")
-            for info in group.containers
+            replace(info, name=f"{info.name}-long-feature-branch-name") for info in group.containers
         ]
     app = make_app(mocker, groups, view_state=ViewState(columns=WIDE))
     app.session.column_widths = dict.fromkeys(WIDE, 24)
