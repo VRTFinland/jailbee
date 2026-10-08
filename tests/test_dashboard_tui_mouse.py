@@ -277,9 +277,9 @@ def test_the_second_click_of_a_right_click_pair_is_ignored(mocker, tmp_path):
 
 def test_a_stale_row_click_keeps_the_open_menu(mocker, tmp_path):
     session = _bare_session(mocker, tmp_path)
-    session.handle_input(b"j")
+    session.handle_key("down")
     session.tick()
-    session.handle_input(b"\r")
+    session.handle_key("enter")
     menu = session.overlay
     assert isinstance(menu, MenuState)
     # nothing was clicked: a row that left the listing keeps the open menu
@@ -299,7 +299,7 @@ def test_stale_fold_and_repo_clicks_change_nothing(mocker, tmp_path):
 
 def test_a_click_outside_help_closes_it(mocker, tmp_path):
     session = _bare_session(mocker, tmp_path)
-    session.handle_input(b"h")
+    session.handle_key("help")
     assert session.overlay == "help"
     session.click(Hit("row", ("alpha-two",)))
     assert session.overlay is None and session.selected == Row("container", "alpha-two")
@@ -307,9 +307,9 @@ def test_a_click_outside_help_closes_it(mocker, tmp_path):
 
 def test_a_fold_marker_click_with_a_menu_open_only_selects_the_heading(mocker, tmp_path):
     session = _bare_session(mocker, tmp_path)
-    session.handle_input(b"j")
+    session.handle_key("down")
     session.tick()
-    session.handle_input(b"\r")
+    session.handle_key("enter")
     session.click(Hit("fold", ("alpha",)))
     assert session.overlay is None and session.selected == Row("repo", "alpha")
     assert session.folded == frozenset()

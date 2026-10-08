@@ -259,11 +259,11 @@ _MENU_HANDLED_TOKENS = frozenset(
     {"up", "down", "enter", "cancel", "quit", "help", "settings", "interrupt"}
 )
 _MENU_RESERVED_KEYS = frozenset(
-    key.decode()
+    key
     for b in KEY_BINDINGS
     if b.token in _MENU_HANDLED_TOKENS
     for key in b.keys
-    if len(key) == 1 and key.isascii() and key.decode().isprintable()
+    if len(key) == 1 and key.isascii() and key.isprintable()
 )
 
 

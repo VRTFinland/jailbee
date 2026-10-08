@@ -34,7 +34,7 @@ class KeyBinding:
     """
 
     token: str
-    keys: tuple[bytes, ...]
+    keys: tuple[str, ...]  # Textual key names (`events.Key.key`)
     hint: str
     label: str
     group: str
@@ -42,36 +42,40 @@ class KeyBinding:
 
 
 KEY_BINDINGS: tuple[KeyBinding, ...] = (
-    KeyBinding("up", (b"\x1b[A", b"k"), "↑/↓ (j/k)", "move the highlight", "Navigate"),
-    KeyBinding("down", (b"\x1b[B", b"j"), "", "", "Navigate"),
-    KeyBinding("scroll-left", (b"\x1b[D",), "←/→", "scroll columns", "Navigate"),
-    KeyBinding("scroll-right", (b"\x1b[C",), "", "", "Navigate"),
+    KeyBinding("up", ("up", "k"), "↑/↓ (j/k)", "move the highlight", "Navigate"),
+    KeyBinding("down", ("down", "j"), "", "", "Navigate"),
+    KeyBinding("scroll-left", ("left",), "←/→", "scroll columns", "Navigate"),
+    KeyBinding("scroll-right", ("right",), "", "", "Navigate"),
     KeyBinding(
-        "enter", (b"\r", b"\n"), "Enter", "open a container or repo menu (fold there)", "Navigate"
+        "enter",
+        ("enter", "ctrl+j", "ctrl+m"),
+        "Enter",
+        "open a container or repo menu (fold there)",
+        "Navigate",
     ),
     KeyBinding(
-        "cancel", (b"\x1b",), "Esc", "close a menu, panel or help; cancel a question", "Navigate"
+        "cancel", ("escape",), "Esc", "close a menu, panel or help; cancel a question", "Navigate"
     ),
     KeyBinding(
         "space",
-        (b" ",),
+        ("space",),
         "Space",
         "fold/unfold the selected repo (Settings: toggle)",
         "Navigate",
     ),
-    KeyBinding("action:tmux", (b"t",), "t", "attach tmux", "Actions", verb="tmux"),
-    KeyBinding("action:shell", (b"s",), "s", "open a shell", "Actions", verb="shell"),
-    KeyBinding("action:ide", (b"i",), "i", "launch the IDE", "Actions", verb="ide"),
-    KeyBinding("action:chrome", (b"c",), "c", "launch Chrome", "Actions", verb="chrome"),
-    KeyBinding("action:pr", (b"p",), "p", "open the PR", "Actions", verb="pr --open"),
-    KeyBinding("action:pr-update", (b"P",), "P", "create or update the PR", "Actions", verb="pr"),
-    KeyBinding("action:push", (b"u",), "u", "update from base", "Actions", verb="git push"),
-    KeyBinding("action:diff", (b"d",), "d", "show the diff", "Actions", verb="git diff"),
+    KeyBinding("action:tmux", ("t",), "t", "attach tmux", "Actions", verb="tmux"),
+    KeyBinding("action:shell", ("s",), "s", "open a shell", "Actions", verb="shell"),
+    KeyBinding("action:ide", ("i",), "i", "launch the IDE", "Actions", verb="ide"),
+    KeyBinding("action:chrome", ("c",), "c", "launch Chrome", "Actions", verb="chrome"),
+    KeyBinding("action:pr", ("p",), "p", "open the PR", "Actions", verb="pr --open"),
+    KeyBinding("action:pr-update", ("P",), "P", "create or update the PR", "Actions", verb="pr"),
+    KeyBinding("action:push", ("u",), "u", "update from base", "Actions", verb="git push"),
+    KeyBinding("action:diff", ("d",), "d", "show the diff", "Actions", verb="git diff"),
     # Capital, so a stray `d` (diff) can never reach it. The confirmation is the
     # CLI's own `destroy` prompt, run in the terminal exactly as the menu entry.
     KeyBinding(
         "action:destroy",
-        (b"D",),
+        ("D",),
         "D",
         "destroy the container (asks to confirm)",
         "Actions",
@@ -80,46 +84,45 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
     # Repo-scoped, not container-scoped: no `verb`, so it never reaches
     # `quick_verb`/`actions_for_container` (those gate on a container's state).
     # `run`'s dispatch handles it directly, with its own guard.
-    KeyBinding("new", (b"n",), "n", "create a container in this repo", "Actions"),
+    KeyBinding("new", ("n",), "n", "create a container in this repo", "Actions"),
     # Repo-scoped like `new`: no `verb`, so neither reaches `quick_verb` — the
     # config being edited belongs to the repo, not to the highlighted container.
     KeyBinding(
         "config-edit",
-        (b"e",),
+        ("e",),
         "e / E",
         "edit this repo's config (E: the global one)",
         "Actions",
     ),
-    KeyBinding("config-edit-global", (b"E",), "", "", "Actions"),
+    KeyBinding("config-edit-global", ("E",), "", "", "Actions"),
     # Host-wide, not row-scoped: the selected row only picks which repo the
     # `jailbee account …` children are run in.
     KeyBinding(
         "accounts",
-        (b"A",),
+        ("A",),
         "A",
         "credential groups and stored logins",
         "Actions",
     ),
-    KeyBinding("optimize", (b"o",), "o", "optimize column widths once", "View"),
-    KeyBinding("refresh", (b"r",), "r", "force a full refresh", "View"),
-    KeyBinding("details", (b"v",), "v", "show/hide the details panel", "View"),
-    KeyBinding("mouse", (b"m",), "m", "mouse on/off (off: select text with the terminal)", "View"),
+    KeyBinding("optimize", ("o",), "o", "optimize column widths once", "View"),
+    KeyBinding("refresh", ("r",), "r", "force a full refresh", "View"),
+    KeyBinding("details", ("v",), "v", "show/hide the details panel", "View"),
+    KeyBinding("mouse", ("m",), "m", "mouse on/off (off: select text with the terminal)", "View"),
     KeyBinding(
         "settings",
-        (b"\x1bOQ", b"\x1b[12~", b"S"),
+        ("f2", "S"),
         "F2 / S",
         "columns and repo folding",
         "View",
     ),
-    KeyBinding("tab", (b"\t",), "", "", "View"),
-    KeyBinding("help", (b"h", b"?"), "h / ?", "this help", "View"),
-    KeyBinding("command", (b"!",), "!", "run a jailbee command", "Actions"),
-    KeyBinding("quit", (b"q",), "q", "quit (closes an overlay first)", "View"),
-    # b"" is a zero-length read: stdin hit EOF, so there is nothing left to quit to.
-    KeyBinding("interrupt", (b"\x03", b""), "Ctrl-C", "quit immediately", "View"),
+    KeyBinding("tab", ("tab",), "", "", "View"),
+    KeyBinding("help", ("h", "question_mark"), "h / ?", "this help", "View"),
+    KeyBinding("command", ("exclamation_mark",), "!", "run a jailbee command", "Actions"),
+    KeyBinding("quit", ("q",), "q", "quit (closes an overlay first)", "View"),
+    KeyBinding("interrupt", ("ctrl+c",), "Ctrl-C", "quit immediately", "View"),
 )
 
-_KEY_TOKENS: dict[bytes, str] = {k: b.token for b in KEY_BINDINGS for k in b.keys}
+_KEY_TOKENS: dict[str, str] = {k: b.token for b in KEY_BINDINGS for k in b.keys}
 
 _GATE_NOTE = (
     "Action keys only fire when that action is offered for the highlighted "
@@ -213,15 +216,15 @@ def quick_reject_note(
     return f"{what} is not available for '{name}'"
 
 
-def parse_key(data: bytes) -> str:
-    """Map a raw stdin read to a dashboard key token ('' if unmapped).
+def parse_key(key: str) -> str:
+    """Map a Textual key name to a dashboard key token ('' if unmapped).
 
     A pure lookup into :data:`KEY_BINDINGS`, so a key cannot be readable
     without also being documented in the help overlay.
 
-    Note the three ways out: ``cancel`` (bare Esc — arrows arrive as
-    ``\\x1b[…``) and ``quit`` (``q``) close an open overlay first, while
-    ``interrupt`` (Ctrl-C, EOF) always ends the dashboard. Folding them into
+    Note the three ways out: ``cancel`` (Esc) and ``quit`` (``q``) close an
+    open overlay first, while ``interrupt`` (Ctrl-C) always ends the
+    dashboard. Folding them into
     one token would leave Ctrl-C unable to do anything but shut the menu.
     """
-    return _KEY_TOKENS.get(data, "")
+    return _KEY_TOKENS.get(key, "")

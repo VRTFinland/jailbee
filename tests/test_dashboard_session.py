@@ -13,17 +13,17 @@ def test_keys_move_and_open_a_menu_without_any_terminal(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     session, _ = bare_session(mocker, [group])
     assert session.selected == dmodel.Row("repo", "alpha")
-    session.handle_input(b"j")
+    session.handle_key("down")
     session.tick()
     assert session.selected == dmodel.Row("container", "alpha-one")
-    session.handle_input(b"\r")
+    session.handle_key("enter")
     assert isinstance(session.overlay, MenuState)
 
 
 def test_quit_is_returned_not_raised(mocker, tmp_path):
     session, _ = bare_session(mocker, [])
-    assert session.handle_input(b"q") == "quit"
-    assert session.handle_input(b"\x03") == "quit"
+    assert session.handle_key("quit") == "quit"
+    assert session.handle_key("interrupt") == "quit"
 
 
 def test_the_view_carries_the_render_arguments_and_whole_seconds(mocker, tmp_path):
@@ -40,9 +40,9 @@ def test_a_dispatch_goes_through_the_terminal_hand_off(mocker, tmp_path):
     child.return_value.returncode = 0
     mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
     session, terminal = bare_session(mocker, [group])
-    session.handle_input(b"j")
+    session.handle_key("down")
     session.tick()
-    session.handle_input(b"t")  # tmux: a foreground dispatch
+    session.handle_key("action:tmux")  # tmux: a foreground dispatch
     assert len(terminal.handed) == 1
     child.assert_called_once()
 

@@ -68,7 +68,7 @@ def test_command_binding_and_inline_render_keep_table_visible():
             size=(100, 200),
         )
     )
-    assert tkeys.parse_key(b"!") == "command"
+    assert tkeys.parse_key("exclamation_mark") == "command"
     assert "  x" in rendered
     assert "command" in rendered
 
@@ -3719,32 +3719,32 @@ def test_new_pr_container_argv_targets_scratch_repo(tmp_path):
 
 
 def test_parse_key_maps_arrows_and_letters():
-    assert tkeys.parse_key(b"\x1b[A") == "up"
-    assert tkeys.parse_key(b"\x1b[B") == "down"
-    assert tkeys.parse_key(b"k") == "up"
-    assert tkeys.parse_key(b"j") == "down"
-    assert tkeys.parse_key(b"\r") == "enter"
-    assert tkeys.parse_key(b"\n") == "enter"
-    assert tkeys.parse_key(b"r") == "refresh"
-    assert tkeys.parse_key(b"q") == "quit"
-    assert tkeys.parse_key(b"Z") == ""  # unmapped
+    assert tkeys.parse_key("up") == "up"
+    assert tkeys.parse_key("down") == "down"
+    assert tkeys.parse_key("k") == "up"
+    assert tkeys.parse_key("j") == "down"
+    assert tkeys.parse_key("enter") == "enter"
+    assert tkeys.parse_key("ctrl+j") == "enter"
+    assert tkeys.parse_key("r") == "refresh"
+    assert tkeys.parse_key("q") == "quit"
+    assert tkeys.parse_key("Z") == ""  # unmapped
 
 
 def test_parse_key_maps_the_quick_action_keys():
-    assert tkeys.parse_key(b"t") == "action:tmux"
-    assert tkeys.parse_key(b"s") == "action:shell"
-    assert tkeys.parse_key(b"i") == "action:ide"
-    assert tkeys.parse_key(b"c") == "action:chrome"
-    assert tkeys.parse_key(b"p") == "action:pr"
-    assert tkeys.parse_key(b"h") == "help"
-    assert tkeys.parse_key(b"?") == "help"
+    assert tkeys.parse_key("t") == "action:tmux"
+    assert tkeys.parse_key("s") == "action:shell"
+    assert tkeys.parse_key("i") == "action:ide"
+    assert tkeys.parse_key("c") == "action:chrome"
+    assert tkeys.parse_key("p") == "action:pr"
+    assert tkeys.parse_key("h") == "help"
+    assert tkeys.parse_key("question_mark") == "help"
 
 
 def test_parse_key_maps_the_workflow_action_keys():
-    assert tkeys.parse_key(b"P") == "action:pr-update"
-    assert tkeys.parse_key(b"u") == "action:push"
-    assert tkeys.parse_key(b"d") == "action:diff"
-    assert tkeys.parse_key(b"D") == "action:destroy"
+    assert tkeys.parse_key("P") == "action:pr-update"
+    assert tkeys.parse_key("u") == "action:push"
+    assert tkeys.parse_key("d") == "action:diff"
+    assert tkeys.parse_key("D") == "action:destroy"
 
 
 def test_quick_verb_destroy_key_follows_the_menu_gate(tmp_path):
@@ -3794,7 +3794,7 @@ def test_quick_verb_workflow_keys_follow_the_menu_gate(tmp_path):
 def test_key_bindings_are_the_only_source_of_parse_key():
     """Every declared key sequence parses to its binding's token, and nothing
     is declared twice — the table is what `parse_key` is built from."""
-    seen: dict[bytes, str] = {}
+    seen: dict[str, str] = {}
     for b in tkeys.KEY_BINDINGS:
         assert b.keys, f"{b.token} declares no keys"
         for key in b.keys:
@@ -3992,14 +3992,13 @@ def test_render_menu_submenu_title_and_contextual_back_hint(tmp_path):
 
 
 def test_parse_key_separates_escape_from_interrupt():
-    """Esc/q close an overlay; Ctrl-C and EOF must always end the dashboard.
+    """Esc/q close an overlay; Ctrl-C must always end the dashboard.
 
     A single token for all of them would make Ctrl-C merely close the action
     menu, leaving no way out while an overlay is open.
     """
-    assert tkeys.parse_key(b"\x1b") == "cancel"  # bare Esc (arrows are \x1b[…)
-    assert tkeys.parse_key(b"\x03") == "interrupt"  # Ctrl-C
-    assert tkeys.parse_key(b"") == "interrupt"  # EOF (stdin closed)
+    assert tkeys.parse_key("escape") == "cancel"
+    assert tkeys.parse_key("ctrl+c") == "interrupt"  # Ctrl-C
 
 
 # ---------------------------------------------------------------------------
@@ -4492,26 +4491,24 @@ def test_folded_groups_retain_enabled_conditional_columns(tmp_path):
 
 
 def test_space_key_is_fold_key_and_enter_remains_bound():
-    assert tkeys.parse_key(b" ") == "space"
+    assert tkeys.parse_key("space") == "space"
     binding = tkeys.binding_for_token("space")
     assert binding is not None
     assert binding.hint and binding.label
-    assert tkeys.parse_key(b"\r") == "enter"
+    assert tkeys.parse_key("enter") == "enter"
 
 
 def test_space_is_the_fold_key_and_still_toggles_settings_binding():
-    assert tkeys.parse_key(b" ") == "space"
+    assert tkeys.parse_key("space") == "space"
     binding = tkeys.binding_for_token("space")
     assert binding is not None
     assert "fold" in binding.label and "Settings" in binding.label
 
 
 def test_settings_key_is_bound_to_f2_and_shift_s():
-    """Both F2 encodings, because terminals disagree, plus a letter that works
-    everywhere. `s` is already shell, so the alias is `S`."""
-    assert tkeys.parse_key(b"\x1bOQ") == "settings"
-    assert tkeys.parse_key(b"\x1b[12~") == "settings"
-    assert tkeys.parse_key(b"S") == "settings"
+    """F2, plus a letter that works everywhere. `s` is already shell, so the alias is `S`."""
+    assert tkeys.parse_key("f2") == "settings"
+    assert tkeys.parse_key("S") == "settings"
     binding = tkeys.binding_for_token("settings")
     assert binding is not None and binding.hint
 
@@ -4565,7 +4562,7 @@ def test_the_settings_box_draws_its_tabs_and_rows():
     assert "▐X▌ " + dcolumns.all_column_names()[0] in out
 
 
-_RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"
+_RIGHT, _LEFT = "right", "left"
 
 
 def test_arrow_keys_parse_and_are_documented():
@@ -4777,7 +4774,7 @@ def test_container_menu_credential_group_follows_the_ssh_policy(
 
 
 def test_parse_key_maps_n_to_the_new_container_token():
-    assert tkeys.parse_key(b"n") == "new"
+    assert tkeys.parse_key("n") == "new"
 
 
 def test_new_binding_is_not_a_container_verb():
@@ -4808,8 +4805,8 @@ def test_new_binding_appears_in_the_help_overlay(tmp_path):
 def test_e_and_shift_e_are_bound_and_documented():
     from jailbee.dashboard.tui.keys import KEY_BINDINGS, parse_key
 
-    assert parse_key(b"e") == "config-edit"
-    assert parse_key(b"E") == "config-edit-global"
+    assert parse_key("e") == "config-edit"
+    assert parse_key("E") == "config-edit-global"
     tokens = {b.token for b in KEY_BINDINGS}
     assert {"config-edit", "config-edit-global"} <= tokens
     # The pair documents itself once, the way up/down does.
@@ -5166,7 +5163,7 @@ def test_repo_menu_accounts_follows_the_ssh_policy(over_ssh, policy_kwargs, offe
 
 
 def test_accounts_key_is_documented_in_help():
-    assert tkeys.parse_key(b"A") == "accounts"
+    assert tkeys.parse_key("A") == "accounts"
     out = "\n".join(box_text("help", size=(100, 100)))
     line = next(ln for ln in out.splitlines() if "credential groups and stored logins" in ln)
     assert line.split()[1] == "A"
@@ -5931,7 +5928,7 @@ def test_short_terminals_never_overflow(tmp_path):
 
 
 def test_v_parses_to_the_details_toggle():
-    assert tkeys.parse_key(b"v") == "details"
+    assert tkeys.parse_key("v") == "details"
 
 
 def _mixed_group(tmp_path, n=40):
@@ -6111,7 +6108,7 @@ def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_pat
 
 
 def test_optimize_key_is_documented_and_parsed():
-    assert tkeys.parse_key(b"o") == "optimize"
+    assert tkeys.parse_key("o") == "optimize"
     out = "\n".join(
         paint(
             view_of(

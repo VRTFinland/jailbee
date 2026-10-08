@@ -8,11 +8,14 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
+from textual import events
+from textual._xterm_parser import (
+    XTermParser,
+)  # private: the only way to see what a terminal's bytes become
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 from jailbee.dashboard.tui import app as tapp
-from jailbee.dashboard.tui import key_adapter
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.keys import KEY_BINDINGS, parse_key
 from jailbee.dashboard.tui.menu_state import MenuState
@@ -21,48 +24,52 @@ from jailbee.state_service import StateServiceUnavailable
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import drive, patch_pause, start_session
 
-# Textual key name → what a terminal sent for it.
-_TEXTUAL_KEYS = {
-    "up": None,
-    "down": None,
-    "left": None,
-    "right": None,
-    "enter": None,
-    "escape": "\x1b",
-    "tab": "\t",
-    "backspace": None,
-    "ctrl+c": None,
-    "f2": None,
-    "space": " ",
-}
+# What a terminal sends for each bound key, in every encoding the old byte table knew.
+_TERMINAL_BYTES = (
+    "\x1b[A",
+    "\x1bOA",
+    "\x1b[B",
+    "\x1bOB",
+    "\x1b[C",
+    "\x1b[D",
+    "\r",
+    "\n",
+    "\x1b",
+    " ",
+    "\t",
+    "\x1bOQ",
+    "\x1b[12~",
+    "\x03",
+    "?",
+    "!",
+    *"tsicpPudDneEAovrmShjkq",
+)
 
 
-def test_every_bound_key_is_reachable_from_textual():
-    produced = {key_adapter.legacy_bytes(k, c) for k, c in _TEXTUAL_KEYS.items()}
-    produced |= {
-        key_adapter.legacy_bytes(ch, ch)
-        for b in KEY_BINDINGS
-        for k in b.keys
-        if len(k) == 1 and chr(k[0]).isprintable()
-        for ch in [k.decode()]
-    }
-    tokens = {parse_key(data) for data in produced if data is not None}
-    # EOF (b"") has no Textual key by design (plan refinement 4).
+def _key_names(data: str) -> list[str]:
+    parser = XTermParser()
+    events_ = [*parser.feed(data), *parser.feed("")]
+    return [e.key for e in events_ if isinstance(e, events.Key)]
+
+
+def test_every_bound_key_is_what_a_terminal_produces():
+    tokens = {parse_key(name) for data in _TERMINAL_BYTES for name in _key_names(data)}
     assert {b.token for b in KEY_BINDINGS} <= tokens
 
 
-@pytest.mark.parametrize(
-    ("key", "expected"),
-    [("ctrl+h", b"\x7f"), ("ctrl+j", b"\r"), ("ctrl+m", b"\r")],
-)
-def test_control_aliases_of_backspace_and_enter_are_kept(key, expected):
-    assert key_adapter.legacy_bytes(key, None) == expected
+def test_every_declared_key_name_is_one_a_terminal_produces():
+    produced = {name for data in _TERMINAL_BYTES for name in _key_names(data)}
+    declared = {key for b in KEY_BINDINGS for key in b.keys}
+    assert declared - produced <= {"ctrl+m"}  # Enter's other alias: a terminal sends \r as "enter"
 
 
-def test_unmapped_and_non_printable_keys_are_dropped():
-    assert key_adapter.legacy_bytes("ctrl+x", None) is None
-    assert key_adapter.legacy_bytes("home", None) is None
-    assert key_adapter.legacy_bytes("é", "é") == "é".encode()
+@pytest.mark.parametrize(("key", "token"), [("ctrl+j", "enter"), ("ctrl+m", "enter")])
+def test_enter_keeps_its_control_aliases(key, token):
+    assert parse_key(key) == token
+
+
+def test_unmapped_keys_are_dropped():
+    assert parse_key("ctrl+x") == parse_key("home") == parse_key("é") == ""
 
 
 def test_keys_move_the_selection_and_open_a_menu(mocker, tmp_path):
@@ -295,7 +302,8 @@ def test_a_failed_first_gather_never_starts_textual(mocker):
 def test_the_app_module_is_the_only_one_importing_textual():
     code = (
         "import sys, jailbee.cli, jailbee.dashboard.tui.session, jailbee.dashboard.tui.frame, "
-        "jailbee.dashboard.tui.key_adapter, jailbee.dashboard.tui.fleet, "
-        "jailbee.dashboard.tui.layout; sys.exit('textual' in sys.modules)"
+        "jailbee.dashboard.tui.fleet, jailbee.dashboard.tui.layout, "
+        "jailbee.dashboard.tui.keys, jailbee.dashboard.tui.overlay, "
+        "jailbee.dashboard.overlays; sys.exit('textual' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0

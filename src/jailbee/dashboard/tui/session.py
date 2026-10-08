@@ -106,7 +106,7 @@ from jailbee.dashboard.settings import (
     toggle_setting,
 )
 from jailbee.dashboard.tui.frame import DashboardView
-from jailbee.dashboard.tui.keys import parse_key, quick_reject_note, quick_verb
+from jailbee.dashboard.tui.keys import quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -1633,17 +1633,15 @@ class DashboardSession:
         if self.selected in self.rows:
             self.sel_index = self.rows.index(self.selected)
 
-    def handle_input(self, data: bytes) -> Outcome:
-        """Apply one key, as the terminal sends it; ``"quit"`` ends the dashboard."""
-        overlay = self.overlay
-        key = parse_key(data)
-        if key == "interrupt":
+    def handle_key(self, token: str) -> Outcome:
+        """A dashboard key (a :func:`parse_key` token); ``"quit"`` ends the dashboard."""
+        if token == "interrupt":
             return "quit"
-        if overlay is not None:
+        if self.overlay is not None:
             return None  # a native box has the focus; its keys never come through here
-        if key == "quit":
+        if token == "quit":
             return "quit"
-        return self._table_key(key)
+        return self._table_key(token)
 
     def command_candidates(self, text: str) -> tuple[str, ...]:
         """Completions for the `!` line's ``text``, filtered by this session's SSH policy."""

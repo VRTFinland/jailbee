@@ -1,7 +1,7 @@
 """The native terminal dashboard around one DashboardSession.
 
-Keys still use the transitional adapter; layout and mouse scrolling use
-DashboardFrame and its native fleet and overlay widgets.
+Keys, timer, hand-off, title and mouse; the frame and its widgets draw what
+the session holds.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from textual.geometry import Size
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
-from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.keys import parse_key
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS
 from jailbee.dashboard.tui.native import (
@@ -191,12 +190,12 @@ class DashboardApp(App[int], inherit_bindings=False):
         if box is not None:
             self._on_native_key(box, event)
             return
-        data = legacy_bytes(event.key, event.character)
-        if data is None:
+        token = parse_key(event.key)
+        if not token:
             return
         event.stop()
         event.prevent_default()
-        self._after(self.session.handle_input(data))
+        self._after(self.session.handle_key(token))
 
     def _on_native_key(self, box: OverlayBox, event: events.Key) -> None:
         """A key while a native overlay is open: only the global ones are ours.
@@ -215,8 +214,7 @@ class DashboardApp(App[int], inherit_bindings=False):
                 event.prevent_default()
                 box.type_ahead(event.key, event.character)
             return
-        data = legacy_bytes(event.key, event.character)
-        token = parse_key(data) if data is not None else ""
+        token = parse_key(event.key)
         if token in OVERLAY_GLOBAL_TOKENS:
             event.stop()
             event.prevent_default()  # also Screen's ctrl+c copy binding
