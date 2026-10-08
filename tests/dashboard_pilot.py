@@ -445,10 +445,20 @@ FROZEN_NOW = datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC)
 
 def view_of(groups, **overrides: Any) -> DashboardView:  # type: ignore[no-untyped-def]  # test utility
     base: dict[str, Any] = dict(
-        groups=groups, selected=None, now=FROZEN_NOW, git_enabled=True, enabled=None,
-        overlay=None, notice=None, folded=frozenset(), column_offset=0,
-        hidden_by_preferences=False, show_details=False, column_widths=None,
-        shown_columns=None, hover=None,
+        groups=groups,
+        selected=None,
+        now=FROZEN_NOW,
+        git_enabled=True,
+        enabled=None,
+        overlay=None,
+        notice=None,
+        folded=frozenset(),
+        column_offset=0,
+        hidden_by_preferences=False,
+        show_details=False,
+        column_widths=None,
+        shown_columns=None,
+        hover=None,
     )
     base.update(overrides)
     return DashboardView(**base)
@@ -468,10 +478,12 @@ class _FrameHost(App[None]):
 
     def compose(self) -> ComposeResult:
         from jailbee.dashboard.tui.widgets import DashboardFrame
+
         yield DashboardFrame(id="frame")
 
     def on_mount(self) -> None:
         from jailbee.dashboard.tui.widgets import DashboardFrame
+
         self.query_one(DashboardFrame).show(self.view)
 
 

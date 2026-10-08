@@ -9,8 +9,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
-from pathlib import Path
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual import events
@@ -20,7 +20,6 @@ from textual.geometry import Size
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui.frame import DashboardView
-from jailbee.dashboard.tui.widgets import FRAME_INSET_COLS, DashboardFrame, FleetTable, OverlayPanel
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -30,6 +29,7 @@ from jailbee.dashboard.tui.session import (
     open_dashboard,
 )
 from jailbee.dashboard.tui.terminal import terminal_title_scope, title_sequence
+from jailbee.dashboard.tui.widgets import FRAME_INSET_COLS, DashboardFrame, FleetTable, OverlayPanel
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 if TYPE_CHECKING:

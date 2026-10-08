@@ -223,6 +223,7 @@ def test_an_unchanged_view_is_not_repainted(mocker, tmp_path):
     # A fixed clock: the title's seconds would otherwise change the view.
     mocker.patch.object(tsession, "_now", return_value=datetime(2026, 10, 7, 12, tzinfo=UTC))
     from jailbee.dashboard.tui import widgets
+
     paint = mocker.spy(widgets.DashboardFrame, "show")
     counts: list[int] = []
     run = drive(
