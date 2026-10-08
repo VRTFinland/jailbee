@@ -27,12 +27,15 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
-from textual.widgets import OptionList, Static
+from textual.widgets import Checkbox, OptionList, SelectionList, Static, Tab, Tabs
 from textual.widgets.option_list import Option
+from textual.widgets.selection_list import Selection
 
 from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.menus import MenuGroup, MenuItem
 from jailbee.dashboard.overlays import Picker, PickerEntry
+from jailbee.dashboard.settings import TABS, SettingsState, next_tab, setting_rows
+from jailbee.dashboard.settings import Tab as SettingsTab
 from jailbee.dashboard.tui.frame import help_lines
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
@@ -363,7 +366,11 @@ class MenuBox(OverlayBox):
     ) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.menu = spec
-        self.group = spec.start_group
+        levels = {item.label for item in menu_entries(spec) if isinstance(item, MenuGroup)}
+        # A start level the menu does not have opens at the root, cursor at the top.
+        known = spec.start_group in levels
+        self.group = spec.start_group if known else None
+        self._start_index = spec.start_index if known or spec.start_group is None else 0
         # Esc from a level returns to that group's own row at the root.
         self._parent_index = next(
             (
@@ -390,7 +397,7 @@ class MenuBox(OverlayBox):
 
     def _ready(self) -> None:
         last = max(0, len(self._entries()) - 1)
-        self.query_one(OverlayList).highlighted = min(self.menu.start_index, last)
+        self.query_one(OverlayList).highlighted = min(self._start_index, last)
 
     def _load(self, group: str | None, cursor: int) -> None:
         self.group = group
@@ -444,6 +451,166 @@ class MenuBox(OverlayBox):
         return NativeState("menu", self.query_one(OverlayList).highlighted, level=self.group)
 
 
+class SettingsTabs(Tabs, can_focus=False):
+    """The tab row; clicked, never focused (the list keeps the keys)."""
+
+    DEFAULT_CSS = """
+    SettingsTabs { background: ansi_default; color: ansi_default; }
+    SettingsTabs Tab { background: ansi_default; color: ansi_default; }
+    SettingsTabs Tab.-active { text-style: bold reverse; }
+    SettingsTabs Underline > .underline--bar { background: ansi_default; color: ansi_default; }
+    """
+
+
+class SettingsList(SelectionList[str], can_focus=True):
+    """The checkbox rows: j/k, one-line wheel, gated clicks, the dashboard's hover."""
+
+    DEFAULT_CSS = (
+        list_css("SettingsList")
+        + """
+    SettingsList { height: 1fr; }  /* the room the tab row leaves; `auto` would overflow it */
+    SettingsList > .selection-list--button,
+    SettingsList > .selection-list--button-highlighted {
+        background: ansi_default;
+        color: ansi_default;
+    }
+    SettingsList > .selection-list--button-selected,
+    SettingsList > .selection-list--button-selected-highlighted {
+        background: ansi_default;
+        color: ansi_green;
+        text-style: bold;
+    }
+    """
+    )
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+    ]
+
+    def __init__(self, *selections: Selection[str], mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(*selections, id=NATIVE_LIST_ID)
+        self.mouse_enabled = mouse_enabled
+
+    async def _on_click(self, event: events.Click) -> None:
+        if not self.mouse_enabled():
+            event.stop()
+            event.prevent_default()
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        _wheel(self, event, 1, self.mouse_enabled())
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        _wheel(self, event, -1, self.mouse_enabled())
+
+    def render_line(self, y: int) -> Strip:
+        strip = super().render_line(y)
+        index = self.scroll_offset.y + y
+        if 0 <= index < self.option_count and (
+            self.get_option_at_index(index).value not in self._selected
+        ):
+            # The button always draws an "X" and shows its state by colour alone,
+            # which NO_COLOR and a 16-colour terminal lose: an unchecked box is empty.
+            segments = list(strip)
+            if len(segments) > 1 and segments[1].text == Checkbox.BUTTON_INNER:
+                segments[1] = Segment(" ", segments[1].style)
+                strip = Strip(segments, strip.cell_length)
+        return _hovered(self, y, strip)
+
+
+class SettingsBox(OverlayBox):
+    """Columns, folding, visibility: Space or a click toggles; Tab or a tab click switches."""
+
+    HEADER_ROWS = 2  # the tab row and its underline
+    WIDTH = 72
+
+    class Toggled(Message):
+        def __init__(self, key: tuple[object, ...] | None, tab: SettingsTab, row_key: str) -> None:
+            super().__init__()
+            self.key = key
+            self.tab = tab
+            self.row_key = row_key
+
+    def __init__(self, spec: SettingsState, *, mouse_enabled: Callable[[], bool]) -> None:
+        super().__init__(spec, mouse_enabled=mouse_enabled)
+        self.settings = spec
+        self.tab: SettingsTab = "fields"
+        self.border_title = "settings"
+
+    def _selections(self) -> list[Selection[str]]:
+        return [
+            Selection(_one_line(row.label), row.key, row.checked)
+            for row in setting_rows(self.settings, self.tab)
+        ]
+
+    def compose(self) -> ComposeResult:
+        yield SettingsTabs(*(Tab(label, id=tab) for tab, label in TABS), active=self.tab)
+        yield SettingsList(*self._selections(), mouse_enabled=self.mouse_enabled)
+
+    def _list(self) -> SettingsList:
+        return self.query_one(SettingsList)
+
+    def _switch(self, tab: SettingsTab) -> None:
+        self.tab = tab
+        lst = self._list()
+        with lst.prevent(SelectionList.SelectedChanged, SelectionList.SelectionToggled):
+            lst.clear_options()
+            lst.add_options(self._selections())
+        lst.highlighted = 0
+        tabs = self.query_one(SettingsTabs)
+        with tabs.prevent(Tabs.TabActivated):
+            tabs.active = tab
+        self.post_message(self.Changed())
+
+    def show(self, spec: Overlay) -> None:
+        """Re-sync every checkbox from the session (a refused toggle flips back)."""
+        super().show(spec)
+        assert isinstance(spec, SettingsState)
+        self.settings = spec
+        if not self.is_mounted:
+            return
+        lst = self._list()
+        selected = set(lst.selected)
+        with lst.prevent(SelectionList.SelectedChanged, SelectionList.SelectionToggled):
+            for row in setting_rows(spec, self.tab):
+                if row.checked and row.key not in selected:
+                    lst.select(row.key)
+                elif not row.checked and row.key in selected:
+                    lst.deselect(row.key)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "tab", "enter"):
+            event.stop()
+            event.prevent_default()
+            if event.key == "escape":
+                self.cancel()
+            elif event.key == "tab":
+                self._switch(next_tab(self.tab))
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        event.stop()
+        tab = event.tab.id
+        if tab in ("fields", "repos", "visibility") and tab != self.tab:
+            self._switch(tab)  # type: ignore[arg-type]  # narrowed by the membership test above
+
+    def on_selection_list_selection_toggled(
+        self, event: SelectionList.SelectionToggled[str]
+    ) -> None:
+        event.stop()
+        self.post_message(self.Toggled(self.key, self.tab, event.selection.value))
+
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged[str]) -> None:
+        event.stop()
+
+    def content_rows(self) -> int:
+        return max(1, len(setting_rows(self.settings, self.tab)))
+
+    def natural_width(self) -> int | None:
+        return self.WIDTH
+
+    def state(self) -> NativeState:
+        return NativeState("settings", self._list().highlighted, tab=self.tab)
+
+
 def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox:
     """The box for a native overlay (see `is_native`)."""
     if spec == "help":
@@ -452,4 +619,6 @@ def build_box(spec: Overlay, *, mouse_enabled: Callable[[], bool]) -> OverlayBox
         return PickerBox(spec, mouse_enabled=mouse_enabled)
     if isinstance(spec, (MenuState, RepoMenuState)):
         return MenuBox(spec, mouse_enabled=mouse_enabled)
+    if isinstance(spec, SettingsState):
+        return SettingsBox(spec, mouse_enabled=mouse_enabled)
     raise ValueError(f"no native box for {spec!r}")

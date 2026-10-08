@@ -103,11 +103,10 @@ from jailbee.dashboard.overlays import (
 )
 from jailbee.dashboard.settings import (
     SettingsState,
+    Tab,
     enabled_names,
-    move_settings,
     open_settings,
-    switch_tab,
-    toggle_current,
+    toggle_setting,
 )
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.keys import parse_key, quick_reject_note, quick_verb
@@ -160,7 +159,7 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo", "account"})
 # other key belongs to the overlay (see `DashboardApp.on_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
 
-_OVERLAY_HITS = frozenset({"suggestion", "tab", "setting", "egress", "account"})
+_OVERLAY_HITS = frozenset({"suggestion", "egress", "account"})
 
 
 def _now() -> datetime:
@@ -1713,11 +1712,6 @@ class DashboardSession:
             self.overlay_move(-1 if key == "up" else 1)
         elif key == "enter":
             self.overlay_enter()
-        elif isinstance(overlay, SettingsState):
-            if key == "tab":
-                self.overlay = switch_tab(overlay)
-            elif key == "space":
-                self.toggle_setting()
         elif isinstance(overlay, EgressState):
             if data == b"a":
                 self.overlay = self.begin_egress_add(overlay)
@@ -1782,9 +1776,7 @@ class DashboardSession:
     def overlay_move(self, step: int) -> None:
         """Move the open list overlay's cursor; other overlays ignore it."""
         overlay = self.overlay
-        if isinstance(overlay, SettingsState):
-            self.overlay = move_settings(overlay, step)
-        elif isinstance(overlay, EgressState):
+        if isinstance(overlay, EgressState):
             self.overlay = move_egress(overlay, step)
         elif isinstance(overlay, da.AccountsState):
             self.overlay = da.move_accounts(overlay, step)
@@ -1855,11 +1847,11 @@ class DashboardSession:
             else:
                 self.dispatch(target, verb)
 
-    def toggle_setting(self) -> None:
-        """Space in settings: flip the row, apply it to the view, persist it."""
+    def setting_toggled(self, tab: Tab, key: str) -> None:
+        """A settings row was toggled: apply it to the view and persist it."""
         overlay = self.overlay
         assert isinstance(overlay, SettingsState)
-        overlay = toggle_current(overlay)
+        overlay = toggle_setting(overlay, tab, key)
         self.overlay = overlay
         self.enabled = enabled_names(overlay)
         self.folded = overlay.folded
@@ -2022,20 +2014,10 @@ class DashboardSession:
         """A click on one of the open overlay's own entries; a stale one is ignored."""
         overlay = self.overlay
         index = hit.args[0]
-        if hit.kind == "tab" and isinstance(overlay, SettingsState):
-            state = overlay
-            for _ in range(3):
-                if state.tab == index:
-                    self.overlay = state
-                    return
-                state = switch_tab(state)
-            return
         if not isinstance(index, int):
             return
         moved: Overlay | None = None
-        if hit.kind == "setting" and isinstance(overlay, SettingsState):
-            moved = move_settings(replace(overlay, index=0), index)
-        elif hit.kind == "egress" and isinstance(overlay, EgressState):
+        if hit.kind == "egress" and isinstance(overlay, EgressState):
             moved = move_egress(replace(overlay, index=0), index)
         elif hit.kind == "account" and isinstance(overlay, da.AccountsState):
             moved = da.move_accounts(replace(overlay, index=0), index)
@@ -2047,9 +2029,7 @@ class DashboardSession:
         if moved is None or getattr(moved, "index", None) != index:
             return  # stale: the overlay changed since the frame was painted
         self.overlay = moved
-        if hit.kind == "setting":
-            self.toggle_setting()
-        elif hit.kind == "account" and double:
+        if hit.kind == "account" and double:
             self.overlay_enter()
 
     def wheel(self, step: int, *, columns: bool = False) -> None:

@@ -10,6 +10,7 @@ from textual.widgets import Input
 from textual.widgets.option_list import Option
 
 from jailbee.dashboard import menus as dmenus
+from jailbee.dashboard import settings as ds
 from jailbee.dashboard.hit import HOVER_STYLE, Hit
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import app as tapp
@@ -18,14 +19,22 @@ from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui import widgets as twidgets
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
-from jailbee.dashboard.tui.native import MenuBox, OverlayBox, OverlayList, PickerBox
+from jailbee.dashboard.tui.native import (
+    MenuBox,
+    OverlayBox,
+    OverlayList,
+    PickerBox,
+    SettingsBox,
+)
 from jailbee.dashboard.tui.overlay import NativeState, is_native, overlay_key
+from jailbee.db.view_prefs import ViewState
 from tests.dashboard_fixtures import alpha_group, cfg_group, fake_accounts_cli, named_rows_group
 from tests.dashboard_pilot import (
     NATIVE_LIST,
     Click,
     HoverOption,
     Pick,
+    PickTab,
     Wheel,
     backgrounds,
     box_text,
@@ -712,6 +721,35 @@ def test_the_level_shown_survives_a_refresh(mocker, tmp_path):
     assert run.natives[4] == run.natives[5] == NativeState("menu", 0, level="Git →")
 
 
+def test_ticks_keep_a_menus_moved_cursor(mocker, tmp_path):
+    """A cursor at the top proves nothing about a refresh: move it first."""
+    tick = lambda app: None  # noqa: E731
+    run = drive(mocker, ["j", "enter", "j", "j", tick, tick, tick], [alpha_group(tmp_path)])
+    assert run.natives[4] == NativeState("menu", 2, level=None)
+    assert {run.natives[i] for i in range(4, 8)} == {NativeState("menu", 2, level=None)}
+
+
+def test_tab_in_a_menu_keeps_focus_level_and_cursor(mocker, tmp_path):
+    focused = []
+    run = drive(
+        mocker,
+        [
+            "j",
+            "enter",
+            "j",
+            lambda app: app.screen.mount(Input(id="other")),  # somewhere for tab to go
+            "tab",
+            lambda app: focused.append(app.focused and app.focused.id),
+            "j",
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert focused == ["native-list"]
+    assert run.natives[3] == NativeState("menu", 1, level=None)
+    assert run.natives[5] == run.natives[6] == NativeState("menu", 1, level=None)  # tab: no change
+    assert run.natives[7] == NativeState("menu", 2, level=None)  # and `j` still moves the menu
+
+
 def test_egress_escape_reopens_the_network_level_at_egress(mocker, tmp_path):
     group = alpha_group(tmp_path)
     mocker.patch.object(tsession, "load_egress_rows", return_value=())
@@ -860,9 +898,402 @@ def test_a_start_index_past_the_end_is_clamped(mocker, tmp_path):
     assert run.natives[1] == NativeState("menu", 1, level=None)
 
 
+def test_an_unknown_start_group_opens_at_the_root_top(mocker, tmp_path):
+    menu = tmenu.MenuState(
+        "alpha-x", [("Attach tmux", "tmux"), ("Stop", "stop")], start_group="Gone →", start_index=1
+    )
+    run = drive(mocker, [_open(menu)], [alpha_group(tmp_path)])
+    assert run.natives[1] == NativeState("menu", 0, level=None)
+
+
 def test_a_menu_taller_than_the_screen_scrolls_to_its_start_row(mocker, tmp_path):
     menu = tmenu.MenuState("alpha-x", [(f"Action {i}", f"v{i}") for i in range(30)], start_index=25)
     settle = lambda app: None  # noqa: E731 - lets the new box be laid out and scrolled
     run = drive(mocker, [_open(menu), settle], [alpha_group(tmp_path)], size=(80, 20), screens=True)
     assert run.natives[2] == NativeState("menu", 25, level=None)
     assert "Action 25" in run.screens[2] and "Action 0 " not in run.screens[2]
+
+
+# --- settings ------------------------------------------------------------------
+
+
+def test_settings_are_native_and_keyed():
+    state = ds.open_settings(
+        field_names=("name",), enabled=frozenset({"name"}), repo_prefixes=(), folded=frozenset()
+    )
+    assert is_native(state)
+    assert overlay_key(state) == ("settings",)
+
+
+def test_settings_open_on_the_fields_tab_with_focus(mocker, tmp_path):
+    seen = []
+    run = drive(
+        mocker,
+        [
+            "S",
+            lambda app: seen.append(
+                (type(app.frame.native_box), app.focused, app.frame.native_box.border_title)
+            ),
+        ],
+        [alpha_group(tmp_path)],
+        screens=True,
+    )
+    assert run.natives[1] == NativeState("settings", 0, tab="fields")
+    box_type, focused, title = seen[0]
+    assert box_type is SettingsBox and focused is not None and focused.id == "native-list"
+    assert title == "settings"
+    assert "Fields" in run.screens[1] and "Repos" in run.screens[1]
+    assert "Visibility" in run.screens[1]
+
+
+def test_tab_switches_tab_and_keeps_focus(mocker, tmp_path):
+    focused = []
+    run = drive(
+        mocker,
+        ["S", "j", "tab", "j", lambda app: focused.append(app.focused and app.focused.id)],
+        [alpha_group(tmp_path)],
+    )
+    assert run.natives[2] == NativeState("settings", 1, tab="fields")
+    assert run.natives[3] == NativeState("settings", 0, tab="repos")  # the cursor resets
+    assert run.natives[4] == NativeState("settings", 0, tab="repos")  # one repo: j stays
+    assert focused == ["native-list"]
+
+
+def test_tab_cycles_through_all_three_tabs_and_back(mocker, tmp_path):
+    run = drive(mocker, ["S", "tab", "tab", "tab"], [alpha_group(tmp_path)])
+    assert [run.natives[i].tab for i in range(1, 5)] == ["fields", "repos", "visibility", "fields"]
+
+
+def test_space_toggles_a_column_and_persists(mocker, tmp_path):
+    save = mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", "j", "space"], [alpha_group(tmp_path)])
+    settings = run.trace[3].overlay
+    assert isinstance(settings, tsession.SettingsState)
+    field = settings.field_names[1]
+    assert (field in settings.enabled) != (field in run.trace[2].overlay.enabled)
+    save.assert_called()
+
+
+def test_space_toggles_the_row_under_the_cursor_on_each_tab(mocker, tmp_path):
+    save = mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", "tab", "space", "tab", "space"], [alpha_group(tmp_path)])
+    assert run.trace[3].folded == frozenset({"alpha"})  # Repos row 0
+    assert run.trace[5].overlay.show_empty_repos is False  # Visibility row 0
+    assert save.call_count == 2
+
+
+def test_a_refused_toggle_shows_the_checkbox_back_on(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    view_state = ViewState(columns=("name",))
+    checked = []
+    run = drive(
+        mocker,
+        ["S", "space", lambda app: checked.append(list(app.query_one(NATIVE_LIST).selected))],
+        [alpha_group(tmp_path)],
+        view_state=view_state,
+    )
+    assert checked == [["name"]]
+    assert run.trace[2].overlay.enabled == frozenset({"name"})
+
+
+def test_the_checkboxes_follow_the_state_they_show(mocker, tmp_path):
+    selected = []
+    drive(
+        mocker,
+        [
+            "S",
+            lambda app: selected.append(list(app.query_one(NATIVE_LIST).selected)),
+            "tab",
+            lambda app: selected.append(list(app.query_one(NATIVE_LIST).selected)),
+            "tab",
+            lambda app: selected.append(list(app.query_one(NATIVE_LIST).selected)),
+        ],
+        [alpha_group(tmp_path)],
+        view_state=ViewState(
+            columns=("name", "state"),
+            folded=frozenset({"alpha"}),
+            show_empty_repos=False,
+            hidden_repos=frozenset({"gone"}),
+        ),
+    )
+    assert selected[0] == ["name", "state"]
+    assert selected[1] == []  # alpha is folded: unchecked
+    assert selected[2] == ["alpha"]  # visible; "Show empty repos" is off
+
+
+def test_a_toggle_moves_no_cursor_and_ticks_keep_the_state(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    tick = lambda app: None  # noqa: E731
+    run = drive(mocker, ["S", "j", "j", "space", tick, tick], [alpha_group(tmp_path)])
+    assert {run.natives[i] for i in range(3, 7)} == {NativeState("settings", 2, tab="fields")}
+
+
+def test_clicks_toggle_a_row_and_switch_a_tab(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", PickTab("visibility"), Pick(0)], [alpha_group(tmp_path)])
+    assert run.natives[2].tab == "visibility"
+    assert run.trace[3].overlay.show_empty_repos != run.trace[2].overlay.show_empty_repos
+
+
+def test_a_row_click_toggles_that_row_and_highlights_it(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", Pick(2)], [alpha_group(tmp_path)])
+    field = run.trace[1].overlay.field_names[2]
+    assert (field in run.trace[2].overlay.enabled) != (field in run.trace[1].overlay.enabled)
+    assert run.natives[2] == NativeState("settings", 2, tab="fields")
+
+
+def test_clicking_the_active_tab_changes_nothing(mocker, tmp_path):
+    run = drive(mocker, ["S", "j", PickTab("fields")], [alpha_group(tmp_path)])
+    assert run.natives[3] == NativeState("settings", 1, tab="fields")
+
+
+def test_a_tab_click_keeps_the_list_focused(mocker, tmp_path):
+    focused = []
+    drive(
+        mocker,
+        ["S", PickTab("repos"), lambda app: focused.append(app.focused and app.focused.id)],
+        [alpha_group(tmp_path)],
+    )
+    assert focused == ["native-list"]
+
+
+def test_a_click_while_the_mouse_is_off_toggles_nothing(mocker, tmp_path):
+    save = mocker.patch.object(tsession, "save_view_state")
+    run = drive(mocker, ["S", Pick(1)], [alpha_group(tmp_path)], mouse=False)
+    save.assert_not_called()
+    assert run.trace[2].overlay == run.trace[1].overlay
+    assert run.natives[2] == NativeState("settings", 0, tab="fields")  # not even highlighted
+
+
+def test_settings_survive_ticks(mocker, tmp_path):
+    tick = lambda app: None  # noqa: E731
+    run = drive(mocker, ["S", "tab", "tab", "j", *[tick] * 3], [alpha_group(tmp_path)])
+    assert {run.natives[i] for i in range(4, 8)} == {NativeState("settings", 1, tab="visibility")}
+
+
+def test_enter_in_settings_does_nothing(mocker, tmp_path):
+    run = drive(mocker, ["S", "enter"], [alpha_group(tmp_path)])
+    assert run.trace[2].overlay == run.trace[1].overlay
+    assert run.natives[2] == run.natives[1]
+
+
+def test_escape_closes_settings_and_s_toggles_them_shut(mocker, tmp_path):
+    run = drive(mocker, ["S", "escape", "S", "S"], [alpha_group(tmp_path)])
+    assert run.trace[2].overlay is None
+    assert isinstance(run.trace[3].overlay, tsession.SettingsState)
+    assert run.trace[4].overlay is None
+
+
+def test_ctrl_c_in_settings_quits_and_q_closes(mocker, tmp_path):
+    quit_run = drive(mocker, ["S", "ctrl+c"], [alpha_group(tmp_path)])
+    assert quit_run.rc == 0 and quit_run.steps_taken == 2
+    close_run = drive(mocker, ["S", "q"], [alpha_group(tmp_path)])
+    assert close_run.trace[2].overlay is None and close_run.steps_taken > 2
+
+
+def test_tab_in_settings_never_cycles_the_screens_focus(mocker, tmp_path):
+    focused = []
+    drive(
+        mocker,
+        [
+            "S",
+            lambda app: app.screen.mount(Input(id="other")),
+            "tab",
+            "tab",
+            "tab",
+            lambda app: focused.append(app.focused and app.focused.id),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert focused == ["native-list"]
+
+
+def test_j_in_settings_moves_only_the_settings_list(mocker, tmp_path):
+    run = drive(mocker, ["S", "j", "j"], [named_rows_group(tmp_path, 3)])
+    assert run.natives[3] == NativeState("settings", 2, tab="fields")
+    assert {view.selected for view in run.trace[1:4]} == {run.trace[1].selected}
+
+
+def test_settings_swap_in_from_help_and_menu_and_out_to_help(mocker, tmp_path):
+    from_help = drive(mocker, ["h", "S", "h"], [alpha_group(tmp_path)])
+    assert from_help.natives[2] == NativeState("settings", 0, tab="fields")
+    assert from_help.natives[3] == NativeState("help", None)
+    from_menu = drive(mocker, ["j", "enter", "S", "j"], [alpha_group(tmp_path)])
+    assert from_menu.natives[3] == NativeState("settings", 0, tab="fields")
+    assert from_menu.natives[4] == NativeState("settings", 1, tab="fields")  # focus moved over
+
+
+def test_a_new_settings_overlay_starts_on_the_fields_tab_again(mocker, tmp_path):
+    run = drive(mocker, ["S", "tab", "escape", "S"], [alpha_group(tmp_path)])
+    assert run.natives[2].tab == "repos"
+    assert run.natives[4] == NativeState("settings", 0, tab="fields")
+
+
+def test_a_stale_toggled_message_is_ignored(mocker, tmp_path):
+    toggled = mocker.patch.object(tsession.DashboardSession, "setting_toggled")
+
+    def closed(app):  # type: ignore[no-untyped-def]
+        box = app.frame.native_box
+        box.post_message(SettingsBox.Toggled(box.key, "fields", "name"))
+        app.session.overlay = None
+
+    drive(mocker, ["S", closed], [alpha_group(tmp_path)])
+    toggled.assert_not_called()
+
+
+def test_a_tick_resyncs_a_checkbox_changed_behind_the_box(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    """`show` re-syncs both ways: a state that turned a column on or off redraws it."""
+    selected = []
+
+    def flip(app):  # type: ignore[no-untyped-def]
+        overlay = app.session.overlay
+        app.session.overlay = ds.toggle_setting(overlay, "fields", overlay.field_names[0])
+        app._painted = None
+
+    drive(
+        mocker,
+        ["S", flip, lambda app: selected.append(list(app.query_one(NATIVE_LIST).selected))],
+        [alpha_group(tmp_path)],
+        view_state=ViewState(columns=("name", "state")),
+    )
+    assert selected[0] == ["state"]
+
+
+def test_settings_paint_no_background_but_the_hover(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    seen = []
+    drive(mocker, ["S", lambda app: seen.append(backgrounds(app))], [alpha_group(tmp_path)])
+    assert seen[0] and seen[0] <= {"default"}
+
+
+def _fg(app, text: str):  # type: ignore[no-untyped-def]
+    """The foreground ANSI colour number and weight of the first segment holding ``text``."""
+    region = app.frame.native_box.region
+    for strip in app.screen._compositor.render_strips()[region.y : region.bottom]:
+        for segment in strip:
+            if text in segment.text and segment.style is not None:
+                color = segment.style.color
+                return (color.number if color else None), bool(segment.style.bold)
+    raise AssertionError(f"{text!r} is not on screen")
+
+
+def test_the_settings_cursor_row_is_bold_magenta(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    seen = []
+    drive(
+        mocker,
+        [
+            "S",
+            lambda app: seen.append(_fg(app, "name")),
+            "j",
+            lambda app: seen.append((_fg(app, "name"), _fg(app, "full_name"))),
+        ],
+        [alpha_group(tmp_path)],
+    )
+    assert seen[0] == (5, True)  # row 0 is under the cursor
+    assert seen[1][0] != (5, True)  # it left row 0 ...
+    assert seen[1][1] == (5, True)  # ... and the cursor row is the new one
+
+
+def test_settings_hover_paints_grey_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_COLOR")
+    seen = []
+    run = drive(
+        mocker,
+        ["S", HoverOption(2), lambda app: seen.append([_bg(app, i) for i in range(4)])],
+        [alpha_group(tmp_path)],
+    )
+    grey = HOVER_STYLE.bgcolor.name
+    assert seen[0][2] == grey
+    assert seen[0][0] != grey and seen[0][1] != grey and seen[0][3] != grey
+    assert run.natives[2] == NativeState("settings", 0, tab="fields")
+
+
+def test_the_highlighted_settings_row_keeps_its_own_style_when_hovered(
+    mocker, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("NO_COLOR")
+    seen = []
+    drive(
+        mocker,
+        ["S", HoverOption(0), lambda app: seen.append(_bg(app, 0))],
+        [alpha_group(tmp_path)],
+    )
+    assert seen[0] != HOVER_STYLE.bgcolor.name
+
+
+def _many_fields(count: int = 40) -> tuple[str, ...]:
+    return tuple(f"field{i}" for i in range(count))
+
+
+def _open_many(app):  # type: ignore[no-untyped-def]
+    app.session.overlay = ds.open_settings(
+        field_names=_many_fields(),
+        enabled=frozenset({"field0"}),
+        repo_prefixes=(),
+        folded=frozenset(),
+    )
+
+
+def test_one_wheel_notch_scrolls_settings_one_line_and_never_moves_the_cursor(mocker, tmp_path):
+    ys = []
+    run = drive(
+        mocker,
+        [
+            _open_many,
+            Wheel(1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+            Wheel(1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+            Wheel(-1, at=NATIVE_LIST),
+            lambda app: ys.append(_scroll_y(app)),
+        ],
+        [named_rows_group(tmp_path, 3)],
+        size=(80, 14),
+    )
+    assert ys == [1, 2, 1]
+    assert run.natives[7] == NativeState("settings", 0, tab="fields")
+
+
+def test_the_settings_wheel_does_nothing_with_the_mouse_off(mocker, tmp_path):
+    ys = []
+    drive(
+        mocker,
+        [_open_many, Wheel(1, at=NATIVE_LIST), lambda app: ys.append(_scroll_y(app))],
+        [named_rows_group(tmp_path, 3)],
+        size=(80, 14),
+        mouse=False,
+    )
+    assert ys == [0]
+
+
+def test_a_settings_list_taller_than_the_screen_follows_its_cursor(mocker, tmp_path):
+    run = drive(
+        mocker,
+        [_open_many, *["j"] * 30],
+        [named_rows_group(tmp_path, 3)],
+        size=(80, 16),
+        screens=True,
+    )
+    last = len(run.screens) - 1
+    assert run.natives[last] == NativeState("settings", 30, tab="fields")
+    assert len(run.screens[last].splitlines()) <= 16
+    assert "field30" in run.screens[last] and "field0 " not in run.screens[last]
+
+
+def test_an_unchecked_setting_is_an_empty_box_even_without_colour(mocker, tmp_path):
+    """The toggle button draws an X and tells its state by colour alone; NO_COLOR is on here."""
+    run = drive(
+        mocker,
+        ["S"],
+        [alpha_group(tmp_path)],
+        view_state=ViewState(columns=("name", "state")),
+        screens=True,
+    )
+    lines = run.screens[1].splitlines()
+    name = next(line for line in lines if " name " in line and "▐" in line)
+    network = next(line for line in lines if " network " in line and "▐" in line)
+    assert "▐X▌ name" in name
+    assert "▐ ▌ network" in network

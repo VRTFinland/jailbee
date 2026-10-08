@@ -22,6 +22,7 @@ from tests.dashboard_pilot import (
     NATIVE_LIST,
     Click,
     Pick,
+    PickTab,
     Wheel,
     bare_session,
     drive,
@@ -144,10 +145,9 @@ def test_a_picker_row_click_chooses_it(mocker, tmp_path):
 
 def test_settings_tab_and_row_clicks(mocker, tmp_path):
     mocker.patch.object(tsession, "save_view_state")
-    run = drive(
-        mocker, ["S", Click(Hit("tab", ("repos",))), Click(Hit("setting", (0,)))], [_two(tmp_path)]
-    )
-    assert isinstance(run.trace[2].overlay, SettingsState) and run.trace[2].overlay.tab == "repos"
+    run = drive(mocker, ["S", PickTab("repos"), Pick(0)], [_two(tmp_path)])
+    assert isinstance(run.trace[2].overlay, SettingsState)
+    assert run.natives[2] == NativeState("settings", 0, tab="repos")
     assert run.trace[3].folded == frozenset({"alpha"})  # row 0 of Repos is alpha, now folded
 
 

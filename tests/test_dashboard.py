@@ -4587,29 +4587,19 @@ def test_settings_repo_prefixes_keeps_a_folded_repo_that_is_not_on_screen():
     assert len(prefixes) == len(set(prefixes))  # no duplicate for a folded on-screen repo
 
 
-def test_render_draws_the_settings_overlay_below_the_table(tmp_path):
+def test_the_settings_box_draws_its_tabs_and_rows():
     from jailbee.dashboard.settings import open_settings
 
-    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
-    g = dmodel.RepoGroup("alpha", "/a", tmp_path / "a.yaml", [_ci("alpha-one", "alpha")])
     overlay = open_settings(
         field_names=dcolumns.all_column_names(),
         enabled=frozenset(dcolumns.default_columns()),
         repo_prefixes=("alpha",),
         folded=frozenset(),
     )
-    out = "\n".join(
-        paint(
-            view_of([g], selected=None, now=now, git_enabled=True, overlay=overlay), size=(200, 200)
-        )
-    )
-    # The live table stays on screen behind the panel — that is the whole
-    # reason the overlay is a panel and not a full-screen modal.
-    # (The container row renders as "one": display_name strips the repo
-    # prefix, same as the menu-overlay table-visibility check above.)
-    assert "one" in out
+    out = "\n".join(box_text(overlay, size=(100, 40)))
     assert "settings" in out
-    assert "Fields" in out
+    assert "Fields" in out and "Repos" in out and "Visibility" in out
+    assert "▐X▌ " + dcolumns.all_column_names()[0] in out
 
 
 _RIGHT, _LEFT = b"\x1b[C", b"\x1b[D"

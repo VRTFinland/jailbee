@@ -67,6 +67,7 @@ def test_snapshot_menu_details(snap_compare, mocker, groups):
     assert snap_compare(app, terminal_size=(120, 30), run_before=open_menu)
 
 
+@pytest.mark.xfail(strict=True, reason="Task 7 regenerates")
 def test_snapshot_settings(snap_compare, mocker, groups):
     app = make_app(mocker, groups)
 

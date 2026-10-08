@@ -570,11 +570,9 @@ def test_run_visibility_tab_uses_raw_prefixes_and_persists_complete_state(mocker
     )
     assert run.rc == 0
 
-    visibility = next(
-        overlay
-        for overlay in run.overlays()
-        if isinstance(overlay, SettingsState) and overlay.tab == "visibility"
-    )
+    assert run.natives[3] == toverlay.NativeState("settings", 0, tab="visibility")
+    visibility = run.trace[3].overlay
+    assert isinstance(visibility, SettingsState)
     assert visibility.visibility_repo_prefixes == ("alpha", "empty")
     state = save.call_args.args[2]
     assert state.columns == ("name",)

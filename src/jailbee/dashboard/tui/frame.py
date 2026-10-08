@@ -27,10 +27,7 @@ from jailbee.dashboard.overlays import (
     TextPrompt,
     render_prompt,
 )
-from jailbee.dashboard.settings import (
-    SettingsState,
-    render_settings,
-)
+from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
@@ -149,8 +146,6 @@ def _render_overlay(overlay: Overlay, max_rows: int | None = None) -> Renderable
         if overlay.suggestions:
             lines.append("  " + "   ".join(overlay.suggestions))
         return Panel("\n".join(lines), title="command", box=box.ROUNDED, expand=False)
-    if isinstance(overlay, SettingsState):
-        return render_settings(overlay, dynamic=frozenset())
     if isinstance(overlay, TextPrompt):
         return render_prompt(overlay)
     if isinstance(overlay, da.AccountsState):

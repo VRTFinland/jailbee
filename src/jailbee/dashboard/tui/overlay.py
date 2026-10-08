@@ -104,7 +104,9 @@ class NativeState:
 
 def is_native(overlay: Overlay | None) -> bool:
     """Whether ``overlay`` is drawn by a native box (the rest by `_render_overlay`)."""
-    return overlay == "help" or isinstance(overlay, (Picker, MenuState, RepoMenuState))
+    return overlay == "help" or isinstance(
+        overlay, (Picker, MenuState, RepoMenuState, SettingsState)
+    )
 
 
 def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:

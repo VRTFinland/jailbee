@@ -11,7 +11,6 @@ from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.overlays import TextPrompt
-from jailbee.dashboard.settings import open_settings
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
 from tests.dashboard_fixtures import WIDE, ci, wide_group
@@ -107,22 +106,6 @@ def test_overlay_entries_are_tagged_by_index(tmp_path):
         dhit.Hit("suggestion", (0,)),
         dhit.Hit("suggestion", (1,)),
     }
-    settings = open_settings(
-        field_names=("name", "state"),
-        enabled=frozenset({"name"}),
-        repo_prefixes=("alpha",),
-        folded=frozenset(),
-        visibility_repo_prefixes=("alpha",),
-        show_empty_repos=False,
-        hidden_repos=frozenset(),
-    )
-    kinds = _kinds(tframe._render_overlay(settings))
-    assert {
-        dhit.Hit("tab", ("fields",)),
-        dhit.Hit("tab", ("repos",)),
-        dhit.Hit("tab", ("visibility",)),
-    } <= kinds
-    assert {dhit.Hit("setting", (0,)), dhit.Hit("setting", (1,))} <= kinds
 
 
 def test_egress_and_account_rows_are_tagged_by_index():
