@@ -12,7 +12,7 @@ from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import ci, fake_branches, retarget_group
-from tests.dashboard_pilot import Paste, drive, keys, patch_in, patch_pause
+from tests.dashboard_pilot import FROZEN_NOW, Paste, drive, keys, patch_in, patch_pause
 
 pytestmark = pytest.mark.usefixtures("no_real_branch_listing")
 
@@ -556,6 +556,7 @@ def test_a_paste_into_the_command_line_lands_in_it(mocker, tmp_path):
 
 def test_a_paste_with_no_text_input_open_is_ignored(mocker, tmp_path):
     """Fed to the table, a pasted `q` or `j` would fire a shortcut."""
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     run = drive(mocker, [Paste("q"), Paste("j")], [group])
     assert run.trace[1] == run.trace[0] == run.trace[2]
