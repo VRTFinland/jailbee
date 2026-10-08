@@ -1,8 +1,7 @@
-"""The terminal dashboard as a Textual app around one :class:`DashboardSession`.
+"""The native terminal dashboard around one DashboardSession.
 
-V1 shows the whole frame (:func:`render_view`) in one ``Static`` and feeds
-keys to the session through the transitional key adapter; native widgets
-replace both in V2-V3.
+Keys still use the transitional adapter; layout and mouse scrolling use
+DashboardFrame and its native fleet and overlay widgets.
 """
 
 from __future__ import annotations
@@ -11,16 +10,17 @@ import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from textual import events
 from textual.app import App, ComposeResult
 from textual.geometry import Size
-from textual.widgets import Static
 
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard.hit import Hit
-from jailbee.dashboard.tui.frame import DashboardView, render_view
+from jailbee.dashboard.tui.frame import DashboardView
+from jailbee.dashboard.tui.widgets import FRAME_INSET_COLS, DashboardFrame, FleetTable, OverlayPanel
 from jailbee.dashboard.tui.key_adapter import legacy_bytes
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 TICK_SECONDS = 0.25
-FRAME_INSET_COLS = 4  # Panel border plus `padding=(0, 1)`.
 
 
 def _can_suspend(driver: Driver | None) -> bool:
@@ -120,6 +119,10 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     @property
     def table_width(self) -> int:
+        if self._is_mounted:
+            width = self.frame.table.content_width
+            if width > 0:
+                return width
         return max(0, self.size.width - FRAME_INSET_COLS)
 
     def hand_off(self, fn: Callable[[], int]) -> int:
@@ -145,11 +148,11 @@ class DashboardApp(App[int], inherit_bindings=False):
     # --- Textual -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        frame = Static(id="frame")
-        # Textual restyles `@click` links; the frame tags its own targets and
-        # paints its own hover (see `jailbee.dashboard.hit`).
-        frame.auto_links = False
-        yield frame
+        yield DashboardFrame(id="frame", mouse_enabled=lambda: self.mouse_on)
+
+    @cached_property
+    def frame(self) -> DashboardFrame:
+        return self.query_one(DashboardFrame)
 
     def on_mount(self) -> None:
         self.refresh_frame()
@@ -159,6 +162,8 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_resize(self, _event: events.Resize) -> None:
         self._painted = None
         self.refresh_frame()
+        # Clamp again after child geometry (including scrollbar allowance) settles.
+        self.call_after_refresh(self.refresh_frame)
 
     def on_key(self, event: events.Key) -> None:
         data = legacy_bytes(event.key, event.character)
@@ -198,7 +203,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         painted = (view, self.size)
         if painted == self._painted:
             return
-        self.query_one("#frame", Static).update(render_view(view, height=self.size.height))
+        self.frame.show(view)
         self._painted = painted
 
     def _after(self, outcome: Outcome) -> None:
@@ -222,6 +227,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_click(self, event: events.Click) -> None:
+        if not self.mouse_on:
+            return
         hit = Hit.of(event.style.meta)
         if event.chain > 1:
             # The first click of the pair already acted; only a row-like target
@@ -242,6 +249,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
+        if not self.mouse_on:
+            return
         hit = Hit.of(event.style.meta)
         if hit == self.hover:
             return
@@ -249,21 +258,18 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.session.hover(hit)
         self.refresh_frame()
 
-    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        self.session.wheel(1, columns=event.shift)
+    def on_fleet_table_geometry_changed(self, _message: FleetTable.GeometryChanged) -> None:
         self.refresh_frame()
 
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.session.wheel(-1, columns=event.shift)
-        self.refresh_frame()
+    def on_fleet_table_column_scroll(self, message: FleetTable.ColumnScroll) -> None:
+        if self.mouse_on:
+            self.session.wheel(message.step, columns=True)
+            self.refresh_frame()
 
-    def on_mouse_scroll_right(self, _event: events.MouseScrollRight) -> None:
-        self.session.wheel(1, columns=True)
-        self.refresh_frame()
-
-    def on_mouse_scroll_left(self, _event: events.MouseScrollLeft) -> None:
-        self.session.wheel(-1, columns=True)
-        self.refresh_frame()
+    def on_overlay_panel_wheel(self, message: OverlayPanel.Wheel) -> None:
+        if self.mouse_on:
+            self.session.wheel(message.step)
+            self.refresh_frame()
 
     def _write_terminal(self, sequence: str) -> None:
         """Write a raw control sequence in order with Textual's own output."""

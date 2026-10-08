@@ -21,6 +21,7 @@ from typing import Any
 from rich.console import Console
 from textual import _wait as textual_wait
 from textual import events
+from textual.app import App, ComposeResult
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
@@ -108,6 +109,8 @@ class Wheel:
     step: int
     shift: bool = False
     horizontal: bool = False
+    at: str = "#fleet"
+    ctrl: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,7 @@ class Run:
     app: tapp.DashboardApp
     client: FakeStateClient
     trace: list[DashboardView] = field(default_factory=list)
+    screens: list[str] = field(default_factory=list)
     steps_taken: int = 0
     rc: int | None = None
 
@@ -197,6 +201,7 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         raise TypeError(f"ported tests press key names, not legacy bytes: {step!r}")
     if isinstance(step, str):
         await pilot.press(step)
+        await pilot.pause()
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
         await pilot.pause()
@@ -211,7 +216,9 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         else:
             event = events.MouseScrollDown if step.step > 0 else events.MouseScrollUp
         # Pilot has no public wheel helper in Textual 8.2.8.
-        await pilot._post_mouse_events([event], offset=(1, 1), shift=step.shift)
+        await pilot._post_mouse_events(
+            [event], widget=step.at, offset=(1, 1), shift=step.shift, control=step.ctrl
+        )
         await pilot.pause()
     else:
         step(app)
@@ -236,6 +243,7 @@ def drive(  # type: ignore[no-untyped-def]
     client: FakeStateClient | None = None,
     mouse: bool = True,
     jobs: type[JobRunner] = SyncJobs,
+    screens: bool = False,
 ) -> Run:
     """Run a real `DashboardApp` headless through ``steps``; see the module docstring.
 
@@ -275,7 +283,10 @@ def drive(  # type: ignore[no-untyped-def]
 
     async def script() -> None:
         async with app.run_test(size=size) as pilot:
+            await pilot.pause()
             result.trace.append(app.session.view(app.hover))
+            if screens:
+                result.screens.append(screen_text(app))
             padding = itertools.repeat("ctrl+c", _MAX_PADDING)
             for step in itertools.chain(steps, padding):
                 await _apply(pilot, app, step)
@@ -283,6 +294,8 @@ def drive(  # type: ignore[no-untyped-def]
                 if app.quit_requested:
                     return
                 result.trace.append(app.session.view(app.hover))
+                if screens:
+                    result.screens.append(screen_text(app))
             raise AssertionError("the dashboard did not quit on Ctrl-C")
 
     asyncio.run(script())
@@ -425,3 +438,54 @@ def open_container_group_picker(group: dmodel.RepoGroup, **menu_kwargs: Any) -> 
     assert menu is not None
     at = list(tmenu._menu_entries(menu)).index(CREDENTIAL_GROUP_LEAF)
     return ["j", "enter", *["j"] * at, "enter"]
+
+
+FROZEN_NOW = datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC)
+
+
+def view_of(groups, **overrides: Any) -> DashboardView:  # type: ignore[no-untyped-def]  # test utility
+    base: dict[str, Any] = dict(
+        groups=groups, selected=None, now=FROZEN_NOW, git_enabled=True, enabled=None,
+        overlay=None, notice=None, folded=frozenset(), column_offset=0,
+        hidden_by_preferences=False, show_details=False, column_widths=None,
+        shown_columns=None, hover=None,
+    )
+    base.update(overrides)
+    return DashboardView(**base)
+
+
+def screen_text(app: App) -> str:
+    # Textual 8.2.8's only whole-screen export lives on the private compositor.
+    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+class _FrameHost(App[None]):
+    CSS = "Screen { background: ansi_default; }"
+
+    def __init__(self, view: DashboardView) -> None:
+        super().__init__(ansi_color=True)
+        self.view = view
+
+    def compose(self) -> ComposeResult:
+        from jailbee.dashboard.tui.widgets import DashboardFrame
+        yield DashboardFrame(id="frame")
+
+    def on_mount(self) -> None:
+        from jailbee.dashboard.tui.widgets import DashboardFrame
+        self.query_one(DashboardFrame).show(self.view)
+
+
+def paint(view: DashboardView, size: tuple[int, int] = (80, 25)) -> list[str]:
+    """Draw via real widgets without a corrective second show after layout."""
+    lines: list[str] = []
+
+    async def main() -> None:
+        app = _FrameHost(view)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            lines.extend(screen_text(app).splitlines())
+
+    asyncio.run(main())
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines

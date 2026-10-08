@@ -1,13 +1,19 @@
-"""Textual fleet widgets; the remaining table and frame parts are pure."""
+"""Native dashboard frame and fleet widgets over the pure layout and renderers."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import cached_property
 
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
+from rich.measure import Measurement
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from textual import events
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Static
 from textual.geometry import Region, Size, Spacing
 from textual.message import Message
 from textual.scroll_view import ScrollView
@@ -16,6 +22,12 @@ from textual.strip import Strip
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.model import Row
+from jailbee.dashboard.details import DETAILS_MAX_ROWS, DETAILS_PAIR_WIDTH, DetailsView, details_for, render_details
+from jailbee.dashboard.hit import TABLE_HIT_KINDS
+from jailbee.dashboard.tui import fleet
+from jailbee.dashboard.tui.frame import DashboardView, HoverHighlight, _hint_line, _render_overlay, frame_title, notice_parts
+from jailbee.dashboard.tui.layout import frame_layout
+from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.fleet import TableModel, entry_cells, entry_line, header_line
 
 _CACHE_MAX = 4096
@@ -37,6 +49,9 @@ class FleetTable(ScrollView, can_focus=False):
         scrollbar-size-horizontal: 0;
     }
     """
+
+    class GeometryChanged(Message):
+        """The actual content width has settled after layout."""
 
     class ColumnScroll(Message):
         def __init__(self, step: int) -> None:
@@ -95,6 +110,7 @@ class FleetTable(ScrollView, can_focus=False):
         self._height = height
 
     def on_resize(self, event: events.Resize) -> None:
+        self.post_message(self.GeometryChanged())
         if self._model is not None:
             self.refresh()
             if self._selected is not None and self.size.height != self._height:
@@ -243,3 +259,207 @@ class FleetTable(ScrollView, can_focus=False):
         message.prevent_default()
         if self.mouse_enabled():
             self.scroll_page_right()
+
+
+FRAME_INSET_COLS = 4
+FRAME_BORDER_ROWS = 2
+
+
+class DetailsPanel(Static):
+    DEFAULT_CSS = "DetailsPanel { width: 1fr; height: auto; background: ansi_default; color: ansi_default; }"
+
+    def __init__(self, *, id: str | None = None) -> None:  # noqa: A002
+        super().__init__(id=id)
+        self._shown: tuple[DetailsView, int] | None = None
+
+    def show(self, view: DetailsView | None, rows: int | None) -> None:
+        shown = None if view is None or rows is None else (view, rows)
+        self.display = shown is not None
+        if shown is not None and shown != self._shown:
+            self.update(render_details(shown[0], shown[1], fixed=True))
+        self._shown = shown
+
+
+class _CropTop:
+    """``renderable`` without its first ``lines`` lines."""
+
+    def __init__(self, renderable: RenderableType, lines: int) -> None:
+        self.renderable, self.lines = renderable, lines
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        kept = console.render_lines(self.renderable, options.update(height=None), pad=False)[self.lines :]
+        for index, line in enumerate(kept):
+            if index:
+                yield Segment.line()
+            yield from line
+
+
+class OverlayPanel(Static):
+    DEFAULT_CSS = "OverlayPanel { width: auto; height: auto; background: ansi_default; color: ansi_default; }"
+
+    class Wheel(Message):
+        def __init__(self, step: int) -> None:
+            super().__init__()
+            self.step = step
+
+    def __init__(self, *, id: str | None = None) -> None:  # noqa: A002
+        super().__init__(id=id)
+        self.mouse_enabled: Callable[[], bool] = lambda: True
+        self.auto_links = False  # the panel tags its own targets (see `jailbee.dashboard.hit`)
+
+    def show(self, renderable: RenderableType | None, crop_top: int) -> None:
+        self.display = renderable is not None
+        if renderable is not None:
+            self.update(_CropTop(renderable, crop_top) if crop_top else renderable)
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self._wheel(event, 1)
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._wheel(event, -1)
+
+
+    def _wheel(self, event: events.MouseEvent, step: int) -> None:
+        event.stop()
+        event.prevent_default()
+        if self.mouse_enabled() and not event.shift:
+            self.post_message(self.Wheel(step))
+
+    def _on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+        event.stop()
+        event.prevent_default()
+
+    def _on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+        event.stop()
+        event.prevent_default()
+
+
+class DashboardFrame(Vertical):
+    """The whole dashboard inside one rounded border.
+
+    Title: the summary and clock; subtitle: a short notice. Inside, top to
+    bottom: the table, a long notice, the bottom area (details and/or an
+    overlay) and the hint — sized by :func:`jailbee.dashboard.tui.layout.frame_layout`.
+    Each part repaints only when its own input changed; the clock touches
+    only the border.
+    """
+
+    DEFAULT_CSS = """
+    DashboardFrame {
+        width: 100%;
+        height: auto;
+        border: round ansi_default;
+        border-title-align: left;
+        border-subtitle-align: left;
+        padding: 0 1;
+        background: ansi_default;
+        color: ansi_default;
+    }
+    DashboardFrame > #notice { height: auto; background: ansi_default; }
+    DashboardFrame > #bottom { height: auto; }
+    DashboardFrame > #hint { height: auto; background: ansi_default; color: ansi_default; }
+    """
+
+    def __init__(self, *, id: str | None = None, mouse_enabled: Callable[[], bool] | None = None) -> None:
+        super().__init__(id=id)
+        self.mouse_enabled = mouse_enabled or (lambda: True)
+        self._overlay_input: object = None
+        self._notice_input: object = None
+        self._hint_input: object = None
+
+    def compose(self) -> ComposeResult:
+        yield FleetTable(id="fleet")
+        yield Static(id="notice")
+        with Horizontal(id="bottom"):
+            yield DetailsPanel(id="details")
+            yield OverlayPanel(id="overlay")
+        yield Static(id="hint")
+
+    @cached_property
+    def table(self) -> FleetTable:
+        return self.query_one(FleetTable)
+
+    def show(self, view: DashboardView) -> None:
+        width = max(0, self.app.size.width - FRAME_INSET_COLS)
+        height = max(0, self.app.size.height - FRAME_BORDER_ROWS)
+        console = self.app.console
+
+        def lines(renderable: RenderableType | None, at: int) -> int:
+            if renderable is None:
+                return 0
+            return len(console.render_lines(renderable, console.options.update(width=at, height=None), pad=False))
+
+        self.border_title = frame_title(view.groups, view.folded, git_enabled=view.git_enabled, now=view.now)
+        subtitle, inline = notice_parts(view.notice)
+        self.border_subtitle = subtitle if subtitle is not None else ""
+        overlay = view.overlay
+        menu = isinstance(overlay, (MenuState, RepoMenuState))
+        details = details_for(view.groups, view.selected, view.now) if view.show_details and view.groups else None
+        hint = _hint_line(overlay) if overlay is not None else None
+        menu_width = (
+            Measurement.get(console, console.options.update(width=width), _render_overlay(overlay)).maximum
+            if isinstance(overlay, (MenuState, RepoMenuState)) else 0
+        )
+        details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
+        overlay_hover = view.hover if view.hover is not None and view.hover.kind not in TABLE_HIT_KINDS else None
+
+        def overlay_renderable(list_rows: int) -> RenderableType | None:
+            if overlay is None:
+                return None
+            return HoverHighlight(_render_overlay(overlay, list_rows), overlay_hover)
+
+        def bottom_lines(list_rows: int, details_rows: int | None) -> int:
+            beside = details is not None and details_rows is not None and (overlay is None or menu)
+            shown_details = details_rows + 2 if beside and details_rows is not None else 0
+            overlay_at = menu_width if beside else width
+            return max(shown_details, lines(overlay_renderable(list_rows), overlay_at))
+
+        table_lines = fleet.line_count(view.groups, view.folded)
+        layout = frame_layout(
+            height=height,
+            table_lines=table_lines,
+            notice_lines=lines(inline, width),
+            hint_lines=lines(hint, width),
+            has_bottom=overlay is not None or details is not None,
+            details_cap=DETAILS_MAX_ROWS if details is None else details.max_rows,
+            details_fit=details_fit,
+            bottom_lines=bottom_lines,
+        )
+        scrollbar = 1 if layout.table_rows < table_lines else 0
+        model = fleet.table_model(
+            view.groups, now=view.now, enabled=view.enabled, folded=view.folded,
+            column_widths=view.column_widths, shown_columns=view.shown_columns,
+            column_offset=view.column_offset, hidden_by_preferences=view.hidden_by_preferences,
+            width=max(0, width - scrollbar),
+        )
+        table = self.table
+        table.mouse_enabled = self.mouse_enabled
+        table.display = layout.table_rows > 0
+        table.styles.height = layout.table_rows
+        table_hover = view.hover if view.hover is not None and view.hover.kind in TABLE_HIT_KINDS else None
+        table.show(model, view.selected, table_hover)
+        notice = self.query_one("#notice", Static)
+        notice.display = inline is not None and layout.notice_rows > 0
+        if inline is not None:
+            notice_input = (view.notice, width, layout.notice_rows)
+            if notice_input != self._notice_input:
+                notice.update(_CropTop(inline, max(0, lines(inline, width) - layout.notice_rows)))
+                self._notice_input = notice_input
+            notice.styles.height = layout.notice_rows
+        bottom = self.query_one("#bottom", Horizontal)
+        bottom.display = layout.bottom_rows > layout.crop_top
+        bottom.styles.margin = (1 if layout.gap else 0, 0, 0, 0)
+        beside = details is not None and layout.details_rows is not None and (overlay is None or menu)
+        self.query_one(DetailsPanel).show(details if beside else None, layout.details_rows)
+        panel = self.query_one(OverlayPanel)
+        panel.styles.width = menu_width if beside and overlay is not None else "1fr"
+        panel.mouse_enabled = self.mouse_enabled
+        overlay_input = (view.overlay, layout.list_rows, overlay_hover, layout.crop_top)
+        if overlay_input != self._overlay_input:
+            panel.show(overlay_renderable(layout.list_rows), layout.crop_top)
+            self._overlay_input = overlay_input
+        hint_widget = self.query_one("#hint", Static)
+        hint_widget.display = hint is not None
+        if hint is not None and hint != self._hint_input:
+            hint_widget.update(hint)
+        self._hint_input = hint

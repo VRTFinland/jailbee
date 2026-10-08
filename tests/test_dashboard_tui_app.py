@@ -222,7 +222,8 @@ def test_an_unchanged_view_is_not_repainted(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
     # A fixed clock: the title's seconds would otherwise change the view.
     mocker.patch.object(tsession, "_now", return_value=datetime(2026, 10, 7, 12, tzinfo=UTC))
-    paint = mocker.patch.object(tapp, "render_view", wraps=tapp.render_view)
+    from jailbee.dashboard.tui import widgets
+    paint = mocker.spy(widgets.DashboardFrame, "show")
     counts: list[int] = []
     run = drive(
         mocker,

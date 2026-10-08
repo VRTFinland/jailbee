@@ -2065,14 +2065,12 @@ class DashboardSession:
             self.overlay_enter()
 
     def wheel(self, step: int, *, columns: bool = False) -> None:
-        """A wheel notch: the open list's cursor or the selection; ``columns`` scrolls sideways."""
+        """A wheel notch: the open list's cursor, or columns sideways without an overlay."""
         if columns:
             if self.overlay is None:
                 self.scroll_columns(step)
             return
-        if self.overlay is None:
-            self.move(step)
-        else:
+        if self.overlay is not None:
             self.overlay_move(step)
 
     def hover(self, hit: Hit | None) -> None:

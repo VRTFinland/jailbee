@@ -150,10 +150,10 @@ def test_settings_tab_and_row_clicks(mocker, tmp_path):
     assert run.trace[3].folded == frozenset({"alpha"})  # row 0 of Repos is alpha, now folded
 
 
-def test_wheel_moves_the_selection_or_the_open_list(mocker, tmp_path):
-    run = drive(mocker, [Wheel(1), Wheel(1), "enter", Wheel(1)], [_two(tmp_path)])
-    assert run.trace[2].selected == Row("container", "alpha-two")
-    assert run.trace[4].overlay.index == 1  # type: ignore[union-attr]  # the menu's cursor moved
+def test_wheel_scrolls_the_table_and_moves_the_open_list(mocker, tmp_path):
+    run = drive(mocker, [Wheel(1), "enter", Wheel(1, at="#overlay")], [_two(tmp_path)])
+    assert run.trace[1].selected == run.trace[0].selected
+    assert run.trace[3].overlay.index == 1  # type: ignore[union-attr]  # menu cursor
 
 
 def test_shift_wheel_and_horizontal_wheel_scroll_columns(mocker, tmp_path):
