@@ -5082,10 +5082,11 @@ then run `jailbee dashboard` under `tmux` and press `v` on the container row.
    the state service exit (close every dashboard, wait 30 s). The lines are
    gone and the panel is the old 8-row shape.
 4. At a terminal height of about 24 rows the grid keeps two rows and the
-   message is cut first.
+   message is cut first (its last line ends in `…`).
 5. Moving the cursor between a container, an idle container and a repo
    heading does not resize the table.
 6. In the Qt dashboard the same lines are in the agent tooltip.
+7. Full-screen frame: at 80×24, 120×40 and 200×60 (`tmux resize-window -x W -y H`) the frame's bottom border is on the last terminal row; with a short table the panel sits at the bottom with blank rows above it, and at 120×40 and larger the history under the message fills the panel, newest first, ending in a `…` row when it does not fit. A picker (e.g. `Snapshots…`) without the details panel still opens right under the table.
 
 ## Unified outbox: isolated inspection and deletion
 

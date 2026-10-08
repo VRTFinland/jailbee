@@ -2363,10 +2363,12 @@ dashboard:
 ```
 
 For the live agent session with the most recently written readable transcript,
-the dashboard's details panel shows up to three lines: the state with its duration and `~N subagents` /
-`N shells`, the last tool call while the session is active, and the last assistant message. The Qt
-dashboard puts them in the agent tooltip. They come from the session
-transcript, which contains prompts and code, so turn `agent_activity` off on a
+the dashboard's details panel shows the state with its duration and `~N subagents` / `N shells`, the last
+tool call while the session is active, and the last assistant message, wrapped in full up to 1000 characters.
+When the terminal has room it then lists the session's recent tool calls and messages, newest first (the
+last 20 events, the newest already shown above, each cut at 200 characters). The Qt
+dashboard puts the state, the tool and the message (cut at 200 characters) in the agent tooltip. All of it
+comes from the session transcript, which contains prompts and code, so turn `agent_activity` off on a
 shared screen. The subagent count is an estimate (a subagent file written in
 the last 30 seconds).
 

@@ -688,7 +688,7 @@ menu with New container, New from PR, Credential group, `Network → Egress…`,
 only offer Fold/Unfold; on a container, its action menu),
 `Space` fold/unfold the selected repo (in the settings overlay: toggle the
 selected setting), `v` show/hide the details panel (the highlighted row's full
-details under the table; the action menu opens to its right; persisted),
+details at the bottom of the full-screen frame, growing into spare rows with a busy agent's full last message and recent steps; the action menu opens to its right; persisted),
 `F2`/`S` settings overlay (Fields, Repos and Visibility tabs: columns, folding, which repos show), `o` recompute nonempty selected columns and optimize widths once
 from unfolded visible data (also snapshotted on opening and recomputed on settings
 changes; enabled preferences unchanged; session-only; retained on refresh and resize; press again to recompute),
