@@ -305,10 +305,10 @@ class _CropTop:
         kept = console.render_lines(self.renderable, options.update(height=None), pad=False)[
             self.lines :
         ]
-        for index, line in enumerate(kept):
-            if index:
-                yield Segment.line()
+        for line in kept:
             yield from line
+            # RichVisual counts terminated lines; keep the suffix's final border too.
+            yield Segment.line()
 
 
 class OverlayPanel(Static):

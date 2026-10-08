@@ -205,6 +205,8 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
         await pilot.pause()
+        # pause flushes layout at its end; then drain resulting child Resize messages.
+        await pilot.pause()
     elif isinstance(step, Paste):
         app.post_message(events.Paste(step.text))
         await pilot.pause()

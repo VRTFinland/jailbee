@@ -55,7 +55,8 @@ def test_a_tiny_terminal_keeps_the_hint_and_the_bottom_border(tmp_path, height):
         view_of([_long(tmp_path)], selected=Row("container", "row01"), overlay=menu),
         size=(80, height),
     )
-    assert len(lines) <= height
+    assert len(lines) == height
+    assert any(line.startswith("│ ╰") for line in lines[:-2])
     assert lines[-1].startswith("╰") and "Esc" in lines[-2]
 
 
@@ -149,11 +150,16 @@ def test_advancing_clock_repaints_no_static_body(mocker, tmp_path):
         counts.append((updates.call_count, lines.call_count))
         now[0] += timedelta(seconds=1)
 
-    drive(
+    run = drive(
         mocker,
         [advance, advance, lambda app: counts.append((updates.call_count, lines.call_count))],
         [_long(tmp_path, 3)],
+        size=(120, 25),
+        screens=True,
     )
+    assert "12:00:05" in run.screens[0].splitlines()[0]
+    assert "12:00:06" in run.screens[1].splitlines()[0]
+    assert "12:00:07" in run.screens[2].splitlines()[0]
     assert counts[1:] == [counts[0], counts[0]]
 
 
@@ -165,21 +171,28 @@ def test_notice_crop_retains_remedy_suffix(tmp_path):
 
 
 def test_overlay_sideways_ignored_and_ctrl_table_wheel_vertical(mocker, tmp_path):
+    group = wide_group(tmp_path)
+    group.containers.extend(ci(f"x{i}", "alpha") for i in range(40))
+    positions = []
     run = drive(
         mocker,
         [
             Wheel(1, ctrl=True),
+            lambda app: positions.append(app.frame.table.scroll_y),
             "j",
             "enter",
             Wheel(1, shift=True, at="#overlay"),
             Wheel(1, horizontal=True, at="#overlay"),
             Wheel(1, shift=True),
+            "escape",
+            Wheel(1, shift=True),
         ],
-        [_long(tmp_path)],
-        size=(80, 20),
+        [group],
+        view_state=tsession.ViewState(columns=WIDE),
+        size=(44, 20),
     )
+    assert positions == [1]
     assert run.trace[1].selected == run.trace[0].selected
-    assert (
-        run.trace[3].overlay == run.trace[4].overlay == run.trace[5].overlay == run.trace[6].overlay
-    )
-    assert all(v.column_offset == 0 for v in run.trace)
+    assert run.trace[4].overlay == run.trace[5].overlay == run.trace[6].overlay == run.trace[7].overlay
+    assert all(v.column_offset == 0 for v in run.trace[:9])
+    assert run.trace[9].column_offset == 1  # same overflowing fleet scrolls once overlay closes
