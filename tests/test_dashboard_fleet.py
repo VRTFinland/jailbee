@@ -43,8 +43,15 @@ def _old_lines(groups, width, *, offset=0, selected=None, enabled=None):  # type
 
 def _new_lines(groups, width, *, offset=0, selected=None, enabled=None):  # type: ignore[no-untyped-def]
     model = fleet.table_model(
-        groups, now=NOW, enabled=enabled, folded=frozenset(), column_widths=None,
-        shown_columns=None, column_offset=offset, hidden_by_preferences=False, width=width,
+        groups,
+        now=NOW,
+        enabled=enabled,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=offset,
+        hidden_by_preferences=False,
+        width=width,
     )
     lines = _ansi(fleet.header_line(model.geometry), width)
     for entry in model.entries:
@@ -75,10 +82,20 @@ def test_a_selected_heading_and_an_orphan_match(tmp_path):
 
 def test_a_heading_longer_than_the_table_is_cut_not_wrapped(tmp_path):
     group = dmodel.RepoGroup("a" * 60, str(tmp_path), None, [ci("x", "a" * 60)])
-    model = fleet.table_model([group], now=NOW, enabled=None, folded=frozenset(),
-        column_widths=None, shown_columns=None, column_offset=0,
-        hidden_by_preferences=False, width=30)
-    line = fleet.entry_line(model.entries[0], model.geometry, model.folded, selected=False, width=30)
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=30,
+    )
+    line = fleet.entry_line(
+        model.entries[0], model.geometry, model.folded, selected=False, width=30
+    )
     assert line.cell_len <= 30 and line.plain.endswith("…")
 
 
@@ -93,28 +110,64 @@ def test_line_count_counts_headings_header_and_unfolded_rows(tmp_path):
 
 def test_the_model_rows_follow_selectable_rows(tmp_path):
     a = dmodel.RepoGroup("a", str(tmp_path), None, [ci("a-1", "a")])
-    model = fleet.table_model([a], now=NOW, enabled=None, folded=frozenset(), column_widths=None,
-        shown_columns=None, column_offset=0, hidden_by_preferences=False, width=80)
+    model = fleet.table_model(
+        [a],
+        now=NOW,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
     assert list(model.rows) == dmodel.selectable_rows([a], frozenset())
 
 
 def test_empty_and_hidden_texts(tmp_path):
-    kw = dict(now=NOW, enabled=None, folded=frozenset(), column_widths=None,
-              shown_columns=None, column_offset=0, width=80)
+    kw = dict(
+        now=NOW,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        width=80,
+    )
     assert fleet.table_model([], hidden_by_preferences=False, **kw).empty_text == fleet.EMPTY_TEXT
     assert fleet.table_model([], hidden_by_preferences=True, **kw).empty_text == fleet.HIDDEN_TEXT
 
 
 def test_row_hits_cover_the_padding_and_the_fold_marker_one_cell(tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
-    model = fleet.table_model([group], now=NOW, enabled=None, folded=frozenset(),
-        column_widths=None, shown_columns=None, column_offset=0,
-        hidden_by_preferences=False, width=80)
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
     console = Console(width=80, file=io.StringIO())
     heading, row = model.entries
-    row_segments = list(fleet.entry_line(row, model.geometry, model.folded, selected=False, width=80).render(console))
-    assert all(dhit.Hit.of(s.style.meta if s.style else {}) == dhit.Hit("row", ("alpha-one",))
-               for s in row_segments if s.text)
-    fold = [s for s in fleet.entry_line(heading, model.geometry, model.folded, selected=False, width=80).render(console)
-            if s.style and dhit.Hit.of(s.style.meta) == dhit.Hit("fold", ("alpha",))]
+    row_segments = list(
+        fleet.entry_line(row, model.geometry, model.folded, selected=False, width=80).render(
+            console
+        )
+    )
+    assert all(
+        dhit.Hit.of(s.style.meta if s.style else {}) == dhit.Hit("row", ("alpha-one",))
+        for s in row_segments
+        if s.text
+    )
+    fold = [
+        s
+        for s in fleet.entry_line(
+            heading, model.geometry, model.folded, selected=False, width=80
+        ).render(console)
+        if s.style and dhit.Hit.of(s.style.meta) == dhit.Hit("fold", ("alpha",))
+    ]
     assert sum(len(s.text) for s in fold) == 1

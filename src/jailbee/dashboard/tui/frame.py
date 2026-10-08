@@ -54,8 +54,10 @@ from jailbee.dashboard.tui.fleet import (
     entry_line,
     header_line,
     line_count,
-    repo_heading,
     table_model,
+)
+from jailbee.dashboard.tui.fleet import (
+    repo_heading as repo_heading,
 )
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState, _menu_entries, menu_hotkeys
@@ -361,7 +363,9 @@ class _RepoSections:
         rendered = [console.render_lines(line, free, pad=False) for _, line in blocks]
         rows = [row for row, _ in blocks]
         cursor = rows.index(self.selected) if self.selected in rows else None
-        window = window_rows([len(lines) for lines in rendered], cursor, max(1, self.max_rows - len(head)))
+        window = window_rows(
+            [len(lines) for lines in rendered], cursor, max(1, self.max_rows - len(head))
+        )
         lines = list(head)
         if window.hidden_above:
             lines += console.render_lines(

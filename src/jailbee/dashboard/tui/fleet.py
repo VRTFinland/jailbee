@@ -1,6 +1,6 @@
 """The fleet table's lines, Textual-free: one ``rich.Text`` per line.
 
-The table is a frozen header line (column titles and the ``‹``/``›`` marks)
+The table is a frozen header line (column titles and the left/right scroll marks)
 over one line per repo heading and per container of an unfolded repo, in
 :func:`jailbee.dashboard.model.selectable_rows` order. Columns come from
 :func:`jailbee.dashboard.columns._frame_columns` through
@@ -124,10 +124,18 @@ def table_model(
     entries: list[Entry] = []
     for group in groups:
         entries.append(
-            Entry(Row("repo", group.prefix), group, None, (len(group.containers), group.repo_root is None))
+            Entry(
+                Row("repo", group.prefix),
+                group,
+                None,
+                (len(group.containers), group.repo_root is None),
+            )
         )
         if group.prefix not in folded:
-            entries.extend(Entry(Row("container", container.name), group, container) for container in group.containers)
+            entries.extend(
+                Entry(Row("container", container.name), group, container)
+                for container in group.containers
+            )
     empty_text = None
     if not groups:
         empty_text = HIDDEN_TEXT if hidden_by_preferences else EMPTY_TEXT
@@ -146,7 +154,9 @@ def _cell(markup: str | Text, width: int, justify: str) -> Text:
     text.no_wrap = True
     text.end = ""
     text.truncate(width, overflow="ellipsis")
-    text.align("right" if justify == "right" else "center" if justify == "center" else "left", width)
+    text.align(
+        "right" if justify == "right" else "center" if justify == "center" else "left", width
+    )
     return text
 
 
@@ -180,7 +190,7 @@ def header_line(geometry: Geometry) -> Text:
     def mark(glyph: str, step: int) -> Text:
         return Text(glyph, style=_HEADER_STYLE + Style(dim=True) + dhit.hit_style("scroll", step))
 
-    return _join(_with_marks(cells, geometry, mark("‹", -1), mark("›", 1)), _HEADER_STYLE)
+    return _join(_with_marks(cells, geometry, mark("\u2039", -1), mark("\u203a", 1)), _HEADER_STYLE)
 
 
 def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
@@ -238,7 +248,9 @@ def entry_line(
     values = entry_cells(entry, geometry)
     cells = [
         _cell(value, cell_width, justify)
-        for value, cell_width, justify in zip(values, geometry.widths, geometry.justify, strict=True)
+        for value, cell_width, justify in zip(
+            values, geometry.widths, geometry.justify, strict=True
+        )
     ]
     hit = dhit.hit_style("row", entry.container.name)
     style = Style.parse(CURSOR_STYLE) + hit if selected else hit
