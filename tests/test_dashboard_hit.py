@@ -154,9 +154,7 @@ def test_hover_segments_paints_only_the_matching_target():
     row = dhit.hit_style("row", "a")
     other = dhit.hit_style("row", "b")
     segment = Segment("x", row, control=("control",))
-    out = dhit.hover_segments(
-        [segment, Segment("y", other), Segment("z")], dhit.Hit("row", ("a",))
-    )
+    out = dhit.hover_segments([segment, Segment("y", other), Segment("z")], dhit.Hit("row", ("a",)))
 
     assert out[0].style == row + dhit.HOVER_STYLE
     assert out[0].style.meta == row.meta
