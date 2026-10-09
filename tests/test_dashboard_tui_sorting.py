@@ -5,9 +5,10 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime, timedelta
 
+from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.model import RepoGroup, Row
-from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
+from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec, active_sort
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.keys import parse_key
 from jailbee.db.view_prefs import ViewState
@@ -28,9 +29,9 @@ def _names(session) -> list[str]:  # type: ignore[no-untyped-def]
     return [c.name for g in session.groups for c in g.containers]
 
 
-def _session_with(mocker, view_state: ViewState):  # type: ignore[no-untyped-def]
+def _session_with(mocker, view_state: ViewState, group=None):  # type: ignore[no-untyped-def]
     save = mocker.patch.object(tsession, "save_view_state")
-    startup = tsession.Startup(mocker.Mock(), BareClient([_group()]), view_state, None)  # type: ignore[arg-type]  # duck-typed client
+    startup = tsession.Startup(mocker.Mock(), BareClient([group or _group()]), view_state, None)  # type: ignore[arg-type]  # duck-typed client
     session = tsession.DashboardSession(
         startup, incus=mocker.Mock(), cwd_root=None, terminal=BareTerminal()
     )
@@ -148,3 +149,45 @@ def test_folding_keeps_the_stored_sort(mocker):
     session.handle_key("details")
     saved = save.call_args.args[2]
     assert (saved.sort_field, saved.sort_desc) == ("state", True)
+
+
+_AGENT_VIEW = ViewState(
+    columns=("name", "state", "agent_compact"), sort_field="agent_compact", sort_desc=False
+)
+
+
+def _agent_on_older(group: RepoGroup) -> None:
+    older = next(c for c in group.containers if c.name == "p-a")
+    older.agent_status = (AgentSummary("claude", "busy", T0, None, 1),)
+
+
+def test_a_sort_column_that_is_pruned_does_not_sort_and_shows_no_mark(mocker):
+    session, _ = _session_with(mocker, _AGENT_VIEW)
+    assert "agent_compact" not in session.shown_columns
+    assert _names(session) == ["p-b", "p-a"]  # the default order
+    assert session.sort == SortSpec("agent_compact", False)  # kept for when it is shown again
+    assert active_sort(session.sort, session.shown_columns, now=T0) == DEFAULT_SORT
+
+
+def test_a_pruned_sort_column_sorts_again_once_it_is_shown(mocker):
+    group = _group()
+    session, _ = _session_with(mocker, _AGENT_VIEW, group)
+    assert _names(session) == ["p-b", "p-a"]
+    _agent_on_older(group)
+    session.tick()
+    assert _names(session) == ["p-b", "p-a"]  # shown_columns is not recomputed on a tick
+    session.handle_key("optimize")
+    assert "agent_compact" in session.shown_columns
+    assert session.sort == SortSpec("agent_compact", False)  # kept, never cleared
+    assert _names(session) == ["p-a", "p-b"]
+
+
+def test_the_sort_keys_cycle_through_the_shown_columns_only(mocker):
+    session, _ = _session_with(mocker, ViewState(columns=("name", "state", "agent_compact")))
+    session.handle_key("sort-prev")  # wraps to the last *shown* stop
+    assert session.sort == SortSpec("state", False)
+    session.handle_key("sort-next")
+    assert session.sort == DEFAULT_SORT
+    session.handle_key("sort-next")
+    assert session.sort == SortSpec("name", False)
+    assert active_sort(session.sort, session.shown_columns, now=T0) == session.sort

@@ -1883,3 +1883,17 @@ def test_run_closes_the_client_even_when_persisting_fails(mocker):
         qapp.run(None)
 
     client.close.assert_called_once()
+
+
+def test_sort_persistence_survives_write_failure(mocker):
+    mocker.patch("jailbee.db.view_prefs.save_view_state", side_effect=OSError("disk full"))
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name", "state")
+    window.collapsed_repos.return_value = set()
+    window.hidden_repos.return_value = set()
+    controller = qapp.AppController(window, mocker.Mock(), engine=mocker.sentinel.engine)
+
+    controller.on_sort_changed()
+
+    window.set_status.assert_called_once()
+    assert "disk full" in window.set_status.call_args.args[0]

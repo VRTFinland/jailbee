@@ -227,7 +227,11 @@ class AppController(QObject):
     @Slot()
     def on_sort_changed(self) -> None:
         """A header click changed the row sort — the window re-sorted itself; persist it."""
-        self._persist_view_state()
+        try:
+            self._persist_view_state()
+        except Exception as exc:
+            log.warning("could not save Qt row sort preferences: %s", exc)
+            self._window.set_status(f"Could not save row sort: {exc}")
 
     @Slot()
     def on_repo_visibility_changed(self) -> None:

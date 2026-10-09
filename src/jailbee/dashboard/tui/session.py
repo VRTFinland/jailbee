@@ -309,15 +309,22 @@ class DashboardSession:
         assert snapshot is not None  # `wait_first_snapshot` returned
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
-        self.all_groups: list[RepoGroup] = self._sorted(self.presented)
+        self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows: list[Row] = selectable_rows(self.groups, self.folded)
+        # Row order does not change which columns are shown, so shown comes first:
+        # the sort applies only to a column that is on screen.
         self.shown_columns = nonempty_columns(
             self.groups, now=_now(), enabled=self.enabled, folded=self.folded
         )
+        self.all_groups = self._sorted(self.presented)
+        self.groups = visible_repo_groups(
+            self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
+        )
+        self.rows = selectable_rows(self.groups, self.folded)
 
     def tick(self) -> None:
         """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest."""
@@ -381,8 +388,19 @@ class DashboardSession:
         )
 
     def _sorted(self, groups: list[RepoGroup]) -> list[RepoGroup]:
-        enabled = self.enabled if self.enabled is not None else default_columns()
-        return sort_groups(groups, self.sort, enabled, now=_now())
+        # Only a column on screen sorts: shown_columns drops the all-empty ones.
+        return sort_groups(groups, self.sort, self.shown_columns, now=_now())
+
+    def _recompute_shown(self) -> None:
+        """Recompute the shown columns, then re-sort: the sort column may have come or gone."""
+        self.shown_columns = nonempty_columns(
+            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
+        )
+        self.all_groups = self._sorted(self.presented)
+        self.groups = visible_repo_groups(
+            self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
+        )
+        self.rows = selectable_rows(self.groups, self.folded)
 
     def set_sort(self, sort: SortSpec) -> None:
         """Sort by ``sort`` now (not on the next tick), keep the cursor's container, persist."""
@@ -1813,9 +1831,7 @@ class DashboardSession:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
             elif verb == "fold":
                 self.folded = toggle_folded(self.folded, target)
-                self.shown_columns = nonempty_columns(
-                    self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-                )
+                self._recompute_shown()
                 self.save_view()
             elif verb == "net egress ls":
                 self.egress_parent = repo_parent
@@ -1859,9 +1875,7 @@ class DashboardSession:
             show_empty_repos=self.show_empty_repos,
             hidden_repos=self.hidden_repos,
         )
-        self.shown_columns = nonempty_columns(
-            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-        )
+        self._recompute_shown()
         self.column_widths = None
         self.column_offset = 0
         self.save_view()
@@ -1875,9 +1889,7 @@ class DashboardSession:
             return
         self.overlay = moved
         self.enabled = enabled_names(moved)
-        self.shown_columns = nonempty_columns(
-            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-        )
+        self._recompute_shown()
         self.column_widths = None
         self.column_offset = 0
         self.save_view()
@@ -1928,9 +1940,7 @@ class DashboardSession:
         elif key in ("config-edit", "config-edit-global"):
             self.edit_config(global_layer=key == "config-edit-global")
         elif key == "optimize":
-            self.shown_columns = nonempty_columns(
-                self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-            )
+            self._recompute_shown()
             self.column_widths = optimize_column_widths(
                 self.groups, now=_now(), enabled=self.enabled, folded=self.folded
             )
@@ -2039,9 +2049,7 @@ class DashboardSession:
         if prefix is None:
             return
         self.folded = toggle_folded(self.folded, prefix)
-        self.shown_columns = nonempty_columns(
-            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-        )
+        self._recompute_shown()
         # The container rows just vanished under the cursor; park it on the
         # header rather than letting reconcile_selection pick a neighbour repo.
         self.selected = Row("repo", prefix)
