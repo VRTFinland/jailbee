@@ -1950,14 +1950,23 @@ class DashboardSession:
                 self.set_notice("Marks cleared")
         return None
 
+    def _marked_in_order(self) -> list[str]:
+        """The marked containers in listing order (repo by repo, as the table shows them).
+
+        A mark no longer listed (pruned at the next tick) follows, sorted.
+        """
+        listed = [c.name for g in self.groups for c in g.containers if c.name in self.marked]
+        return [*listed, *sorted(self.marked.difference(listed))]
+
     def _plan(self, verb: str) -> BulkAction:
         return plan_bulk(
             self.groups,
-            sorted(self.marked),
+            self._marked_in_order(),
             verb,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
             over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
         )
 
     def _run_planned(self, verb: str, extra: Sequence[str] = ()) -> None:
@@ -1970,13 +1979,14 @@ class DashboardSession:
 
     def bulk_menu(self) -> Picker | None:
         """The "N selected" list, or None after saying why it is empty."""
-        names = sorted(self.marked)
+        names = self._marked_in_order()
         actions = bulk_actions(
             self.groups,
             names,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
             over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
         )
         if not actions:
             noun = "container" if len(names) == 1 else "containers"

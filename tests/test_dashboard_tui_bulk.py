@@ -544,3 +544,30 @@ def test_a_destroy_entry_is_never_selectable_while_hidden(mocker, tmp_path, heig
     if height >= 8:
         assert "Yes, destroy 2" in shown
         assert " No " in shown
+
+
+def test_a_container_with_a_bulk_child_running_is_not_offered_another_verb(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.bulk_batches.append(tsession.BulkBatch("stop", pending={"alpha-a"}))
+
+    action = session._plan("destroy")
+
+    assert action.eligible == ("alpha-b",)
+    assert action.skipped == (("alpha-a", "busy"),)
+
+
+def test_marks_are_planned_in_listing_order_not_alphabetical(mocker, tmp_path):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("alpha-c", "alpha"), ci("alpha-a", "alpha"), ci("alpha-b", "alpha")],
+    )
+    session, _ = bare_session(mocker, [group])
+    session.marked = frozenset({"alpha-a", "alpha-b", "alpha-c"})
+
+    assert session._plan("destroy").eligible == ("alpha-c", "alpha-a", "alpha-b")
+    picker = session.begin_bulk("destroy")
+    assert isinstance(picker, Picker)
+    assert "alpha-c, alpha-a, alpha-b" in picker.title

@@ -229,3 +229,15 @@ def test_loose_ttl_entries_lead_with_the_default_and_end_with_never():
     assert entries[0] == PickerEntry("45m", "45m")
     assert entries[-1] == PickerEntry("never (no auto-revert)", "never")
     assert [e.value for e in bulk.loose_ttl_entries("1h")].count("1h") == 1
+
+
+def test_a_busy_container_is_skipped_by_every_verb(tmp_path):
+    groups = [_group(tmp_path, ci("alpha-a", "alpha"), ci("alpha-b", "alpha"))]
+    busy = frozenset({"alpha-a"})
+
+    action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b"], "destroy", busy=busy)
+    offered = bulk.bulk_actions(groups, ["alpha-a"], busy=busy)
+
+    assert action.eligible == ("alpha-b",)
+    assert action.skipped == (("alpha-a", "busy"),)
+    assert offered == []

@@ -123,14 +123,19 @@ def plan_bulk(
     remote: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
+    busy: frozenset[str] = frozenset(),
 ) -> BulkAction:
     """Split ``names`` into the containers that take ``verb`` and the rest, with reasons.
 
-    ``names`` keeps its order; a repeated name counts once.
+    ``names`` keeps its order; a repeated name counts once. A name in ``busy``
+    (an operation on it is still running) is skipped as "busy".
     """
     eligible: list[str] = []
     skipped: list[tuple[str, str]] = []
     for name in dict.fromkeys(names):
+        if name in busy:
+            skipped.append((name, "busy"))
+            continue
         if verb in _offered(groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh):
             eligible.append(name)
             continue
@@ -154,10 +159,13 @@ def bulk_actions(
     remote: bool = False,
     ssh_policy: RemoteSSHConfig | None = None,
     over_ssh: bool = False,
+    busy: frozenset[str] = frozenset(),
 ) -> list[BulkAction]:
     """Every bulk verb at least one of ``names`` takes, in :data:`BULK_VERBS` order."""
     plans = (
-        plan_bulk(groups, names, verb, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh)
+        plan_bulk(
+            groups, names, verb, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, busy=busy
+        )
         for verb in BULK_VERBS
     )
     return [plan for plan in plans if plan.eligible]
