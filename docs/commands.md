@@ -1,13 +1,17 @@
 # Commands
 
-The terminal dashboard's container details panel (`v`) also shows changed
-submodules: their paths and gitlink status, ahead/behind commit counts, the
-committed diff against the container's base, and working-tree diff counts.
-Unchanged submodules are omitted; `?` means the probe could not determine a value.
-Read each details column from top to bottom. Related fields stay together:
-the parent repository's Git status and each submodule form their own groups,
-never split across columns. Narrow terminals use one column. Each column marks
-omitted rows with an ellipsis when the panel has insufficient space.
+The terminal dashboard's container details panel (`v`) reads top to bottom. One
+summary line says what the container is doing: its state and any background
+job, the network mode, IP, PR and issues, the agent, and every busy process.
+Under it, a git table lists the container's own tree and then one row per
+changed submodule, with commits ahead (↑) and behind (↓), the committed diff
+against the base, the working-tree diff, and the merge prediction (plus the
+diff against the host's checked-out HEAD when the panel is wide enough). A dim
+footer line holds the rest: base, mode, credential group, age, optional mounts,
+memory and CPU. Unchanged submodules are omitted; `?` means the probe could
+not determine a value. When rows run short, the blank lines go first, then
+submodule rows, which a `… +N more submodules` row counts; the footer always
+stays on the panel's last row.
 
 ## Global repository option
 
