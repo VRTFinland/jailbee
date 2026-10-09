@@ -2337,11 +2337,12 @@ Every column keeps its width; when they do not all fit, the first column
 (normally NAME) stays put and `←`/`→` scroll the others one column at a
 time. A dim `‹` after the first column and `›` at the right edge mark
 columns out of view, and a column cut by the edge ends in `…`.
-Widths use fixed budgets by default. Press `o` to optimize them once from the
-currently visible data. These session-only budgets survive refreshes and
-resizes; press `o` again to measure new values and hide empty columns or
-restore populated ones. Changing settings recomputes column membership,
-resets widths to their default budgets and scrolls back to the first column.
+On opening, the widths are fitted to the visible data, and fitted once more
+when the first refresh after that arrives. These session-only budgets survive
+later refreshes and resizes; press `o` to measure new values and hide empty
+columns or restore populated ones. Changing settings recomputes column
+membership, resets widths to their fixed default budgets and scrolls back to
+the first column.
 Only unfolded, visible repositories contribute to the snapshot.
 
 `dashboard.auto_hide.hide_first`, which chose the columns to hide first, is

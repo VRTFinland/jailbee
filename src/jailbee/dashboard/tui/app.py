@@ -110,6 +110,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         ssh_policy: RemoteSSHConfig | None = None,
         scope: RemoteRepoScope | None = None,
         tick_seconds: float | None = TICK_SECONDS,
+        auto_optimize: bool = True,
     ) -> None:
         super().__init__(ansi_color=True)
         self.session = DashboardSession(
@@ -121,6 +122,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             over_ssh=over_ssh,
             ssh_policy=ssh_policy,
             scope=scope,
+            auto_optimize=auto_optimize,
         )
         self._tick_seconds = tick_seconds
         self._painted: tuple[DashboardView, Size] | None = None

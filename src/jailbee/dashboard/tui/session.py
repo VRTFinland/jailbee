@@ -324,6 +324,7 @@ class DashboardSession:
         over_ssh: bool = False,
         ssh_policy: RemoteSSHConfig | None = None,
         scope: RemoteRepoScope | None = None,
+        auto_optimize: bool = True,
     ) -> None:
         self.incus = incus
         self.cwd_root = cwd_root
@@ -343,6 +344,9 @@ class DashboardSession:
         self.show_details = view_state.show_details
         self.sort = SortSpec(view_state.sort_field, view_state.sort_desc)
         self.column_widths: dict[str, int] | None = None
+        # The snapshot the startup widths were fitted to: the next one fits them
+        # once more (a first gather can still be settling), then they hold.
+        self._auto_optimize_seq: int | None = None
         self.column_offset = 0
         self.selected: Row | None = None
         self.sel_index = 0
@@ -377,6 +381,9 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+        if auto_optimize:
+            self._optimize_widths()
+            self._auto_optimize_seq = snapshot.seq
 
     def tick(self) -> None:
         """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest."""
@@ -398,6 +405,9 @@ class DashboardSession:
         self._snap_merge_cursor()
         if self.notice is not None and time.monotonic() >= self.notice_until:
             self.notice = None
+        if self._auto_optimize_seq is not None and snapshot.seq != self._auto_optimize_seq:
+            self._auto_optimize_seq = None
+            self._optimize_widths()
         self.column_offset = self._clamped(self.column_offset)
 
     def view(self, hover: Hit | None = None) -> DashboardView:
@@ -481,6 +491,12 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+
+    def _optimize_widths(self) -> None:
+        """Fit the column widths to the cells on screen now (the `o` key)."""
+        self.column_widths = optimize_column_widths(
+            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
+        )
 
     def set_sort(self, sort: SortSpec) -> None:
         """Sort by ``sort`` now (not on the next tick), keep the cursor's container, persist."""
@@ -2032,6 +2048,7 @@ class DashboardSession:
         )
         self._recompute_shown()
         self.column_widths = None
+        self._auto_optimize_seq = None
         self.column_offset = 0
         self.save_view()
 
@@ -2046,6 +2063,7 @@ class DashboardSession:
         self.enabled = enabled_names(moved)
         self._recompute_shown()
         self.column_widths = None
+        self._auto_optimize_seq = None
         self.column_offset = 0
         self.save_view()
 
@@ -2102,10 +2120,9 @@ class DashboardSession:
         elif key in ("config-edit", "config-edit-global"):
             self.edit_config(global_layer=key == "config-edit-global")
         elif key == "optimize":
+            self._auto_optimize_seq = None
             self._recompute_shown()
-            self.column_widths = optimize_column_widths(
-                self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-            )
+            self._optimize_widths()
             self.column_offset = 0
         elif key == "refresh":
             self.client.refresh()

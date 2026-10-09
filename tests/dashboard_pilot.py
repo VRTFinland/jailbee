@@ -406,8 +406,13 @@ def make_app(  # type: ignore[no-untyped-def]
     client: FakeStateClient | None = None,
     mouse: bool = True,
     jobs: type[JobRunner] = SyncJobs,
+    auto_optimize: bool = False,
 ) -> tapp.DashboardApp:
-    """Build the real app with the same isolated startup for pilots and snapshots."""
+    """Build the real app with the same isolated startup for pilots and snapshots.
+
+    Startup width optimisation is off by default: most pilots exercise the
+    unoptimised layout (column scrolling, the stored snapshots).
+    """
     # Read at call time by `wait_for_idle(0)`, which `pilot.press`/`pause` use.
     mocker.patch.object(textual_wait, "SLEEP_GRANULARITY", _SLEEP_GRANULARITY)
     if client is None:
@@ -434,6 +439,7 @@ def make_app(  # type: ignore[no-untyped-def]
         ssh_policy=ssh_policy,
         scope=scope,
         tick_seconds=None,
+        auto_optimize=auto_optimize,
     )
 
 
@@ -510,10 +516,11 @@ class BareClient:
 
     def __init__(self, groups):  # type: ignore[no-untyped-def]
         self.groups = groups
+        self.seq = 1
         self.events: list[tuple[Any, ...]] = []
 
     def latest(self):  # type: ignore[no-untyped-def]
-        return Snapshot(1, datetime(2026, 10, 7, tzinfo=UTC), False, self.groups)
+        return Snapshot(self.seq, datetime(2026, 10, 7, tzinfo=UTC), False, self.groups)
 
     def status(self):  # type: ignore[no-untyped-def]
         return None

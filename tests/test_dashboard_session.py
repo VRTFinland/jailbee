@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from tests.dashboard_fixtures import ci, wide_group
-from tests.dashboard_pilot import bare_session
+from tests.dashboard_pilot import bare_session, make_app
 
 
 def test_keys_move_and_open_a_menu_without_any_terminal(mocker, tmp_path):
@@ -61,3 +62,46 @@ def test_the_session_module_imports_without_textual():
 
     code = "import sys, jailbee.dashboard.tui.session; sys.exit('textual' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def _optimized(session):  # type: ignore[no-untyped-def]
+    return dcolumns.optimize_column_widths(
+        session.groups, now=tsession._now(), enabled=session.enabled, folded=session.folded
+    )
+
+
+def test_column_widths_are_optimized_at_startup(mocker, tmp_path):
+    session, _ = bare_session(mocker, [wide_group(tmp_path)])
+    assert session.column_widths is not None
+    assert session.column_widths == _optimized(session)
+
+
+def test_the_first_new_snapshot_reoptimizes_once(mocker, tmp_path):
+    session, _ = bare_session(mocker, [wide_group(tmp_path)])
+    client = session.client
+    longer = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-" + "x" * 40, "alpha")])
+    client.groups = [longer]
+    client.seq = 2
+    session.tick()
+    assert session.column_widths == _optimized(session)
+    first = session.column_widths
+    client.groups = [dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("a", "alpha")])]
+    client.seq = 3
+    session.tick()
+    assert session.column_widths == first
+
+
+def test_a_manual_optimize_cancels_the_pending_reoptimize(mocker, tmp_path):
+    session, _ = bare_session(mocker, [wide_group(tmp_path)])
+    session.handle_key("optimize")
+    manual = session.column_widths
+    client = session.client
+    client.groups = [dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("a" * 50, "alpha")])]
+    client.seq = 2
+    session.tick()
+    assert session.column_widths == manual
+
+
+def test_the_app_starts_with_optimized_widths(mocker, tmp_path):
+    app = make_app(mocker, [wide_group(tmp_path)], auto_optimize=True)
+    assert app.session.column_widths == _optimized(app.session)
