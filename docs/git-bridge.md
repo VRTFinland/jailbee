@@ -1105,10 +1105,14 @@ The terminal browser offers containers, proposals, actions and comments,
 with Back, Refresh and Exit at each level. Without a TTY, the shorthand
 prints an overview rather than prompting. The terminal dashboard's
 **Outbox** entry lists the container's proposals in the same picker panels as
-its other menus: a proposal offers Show (paged), Publish… and Delete…, each
-change confirmed with "No" first and run as the explicit `outbox apply` or
-`outbox drop` pinned to the listed revision, and **Browse actions &
-comments…** opens this browser for deleting a single action or comment. Over
+its other menus: a proposal offers Show (paged), Publish… and Delete….
+A description awaiting a PR offers **Create PR…** instead of Publish…:
+it opens the existing `jb pr` or `jb submodule pr` flow for the resolved
+repository scope, with that command's own checks and confirmations. An
+unresolved scope is not offered for creation. Publish and Delete are
+confirmed with "No" first and run as the explicit `outbox apply` or
+`outbox drop` pinned to the listed revision. **Browse actions & comments…**
+opens this browser for deleting a single action or comment. Over
 remote SSH each entry appears only when the session's policy permits its
 command. The local Qt dashboard instead opens a native non-modal tree with
 plain, read-only proposal text, Refresh and Delete selected. Qt publication

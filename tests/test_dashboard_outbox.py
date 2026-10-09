@@ -42,6 +42,7 @@ def _row(**over: object) -> dob.ProposalRow:
         "actions": 2,
         "error": None,
         "edit_block": None,
+        "create_scope": None,
     }
     return dob.ProposalRow(**{**base, **over})  # type: ignore[arg-type]  # test-only overrides
 
@@ -119,17 +120,28 @@ def test_a_proposal_value_never_reads_as_the_browse_entry():
     ("row", "values"),
     [
         (_row(), [dob.SHOW, dob.PUBLISH, dob.DELETE]),
-        (_row(state="awaiting-pr"), [dob.SHOW, dob.PUBLISH, dob.DELETE]),
+        (_row(state="awaiting-pr", create_scope={"kind": "repo"}), [dob.SHOW, dob.CREATE_PR, dob.DELETE]),
+        (_row(state="awaiting-pr"), [dob.SHOW, dob.DELETE]),
         (_row(state="applied"), [dob.SHOW, dob.DELETE]),
         (_row(error="bad"), [dob.SHOW, dob.DELETE]),
         (_row(state="partial", edit_block="settle first"), [dob.SHOW, dob.PUBLISH]),
     ],
-    ids=["pending", "awaiting-pr", "applied", "invalid", "edit-block"],
+    ids=["pending", "awaiting-pr-scoped", "awaiting-pr-unscoped", "applied", "invalid", "edit-block"],
 )
 def test_proposal_picker_offers_what_the_proposal_allows(row, values):
     picker = dob.proposal_picker("alpha-x", row, can_show=True, can_publish=True, can_delete=True)
     assert [e.value for e in picker.entries] == values
     assert picker.carry == (row.id, row.revision, str(row.actions))
+    if row.state == "awaiting-pr" and row.create_scope is not None:
+        assert next(e for e in picker.entries if e.value == dob.CREATE_PR).label == "Create PR…"
+
+
+def test_create_pr_argv_uses_verified_scope_only():
+    assert dob.create_pr_argv("alpha-x", {"kind": "repo"}) == ["pr", "alpha-x"]
+    assert dob.create_pr_argv("alpha-x", {"kind": "submodule", "path": "libs/core"}) == [
+        "submodule", "pr", "alpha-x", "libs/core"
+    ]
+    assert dob.create_pr_argv("alpha-x", None) is None
 
 
 def test_proposal_picker_offers_only_permitted_entries():

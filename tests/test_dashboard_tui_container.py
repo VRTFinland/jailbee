@@ -1236,3 +1236,48 @@ def test_a_terminal_only_container_entry_never_reaches_the_shared_dispatcher(
     assert opened or spawned
     assert ["jailbee", verb, "alpha-x"] not in spawned
     assert all(argv[:2] != ["jailbee", verb] for argv in spawned)
+
+
+@pytest.mark.parametrize("scope,command", [
+    ({"kind": "repo"}, ["pr", "alpha-x"]),
+    ({"kind": "submodule", "path": "libs/core"}, ["submodule", "pr", "alpha-x", "libs/core"]),
+])
+def test_outbox_create_pr_launches_scoped_command_after_fresh_read(mocker, tmp_path, scope, command):
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    payload = json.loads(_OUTBOX_JSON)
+    proposal = payload["containers"][0]["proposals"][0]
+    proposal.update(state="awaiting-pr", create_scope=scope)
+    quiet = _fake_outbox_ls(mocker, tsession.da.CliResult(True, "done", json.dumps(payload)))
+    child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
+    patch_pause(mocker)
+    run = drive(mocker, [*container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, "j", "enter"], [group])
+    assert run.rc == 0
+    assert quiet.call_count == 2
+    child.assert_called_once_with(["jailbee", *command, "--config", str(group.config_path)], check=False, cwd=tmp_path)
+
+
+def test_outbox_create_pr_refuses_changed_revision(mocker, tmp_path):
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    payload = json.loads(_OUTBOX_JSON)
+    proposal = payload["containers"][0]["proposals"][0]
+    proposal.update(state="awaiting-pr", create_scope={"kind": "repo"})
+    before = json.dumps(payload)
+    proposal["revision"] = "r2"
+    quiet = _fake_outbox_ls(mocker)
+    quiet.side_effect = [tsession.da.CliResult(True, "done", before), tsession.da.CliResult(True, "done", json.dumps(payload))]
+    child = mocker.patch.object(tsession.subprocess, "run")
+    run = drive(mocker, [*container_menu_keys(group, "outbox browse"), *_TO_PROPOSAL, "j", "enter"], [group])
+    child.assert_not_called()
+    assert "Proposal changed; refresh the outbox before creating a PR" in run.notices()
+
+
+def test_outbox_apply_permission_does_not_authorize_create_pr(mocker, tmp_path):
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    policy = _allowlist("outbox browse", "outbox ls", "outbox show", "outbox apply")
+    payload = json.loads(_OUTBOX_JSON)
+    payload["containers"][0]["proposals"][0].update(state="awaiting-pr", create_scope={"kind": "repo"})
+    _fake_outbox_ls(mocker, tsession.da.CliResult(True, "done", json.dumps(payload)))
+    kwargs = _kwargs(True, policy)
+    run = drive(mocker, [*container_menu_keys(group, "outbox browse", **kwargs), *_TO_PROPOSAL], [group], **kwargs)
+    actions = [p for p in run.of_type(tsession.Picker) if p.purpose == "container-outbox-proposal"]
+    assert [e.value for e in actions[0].entries] == ["show"]

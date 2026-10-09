@@ -24,6 +24,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry
 BROWSE = "browse"
 SHOW = "show"
 PUBLISH = "publish"
+CREATE_PR = "create-pr"
 DELETE = "delete"
 
 # Listed proposals carry this prefix in their picker value, so no proposal id
@@ -44,6 +45,7 @@ class ProposalRow:
     actions: int
     error: str | None
     edit_block: str | None
+    create_scope: dict[str, str] | None = None
 
     @property
     def publishable(self) -> bool:
@@ -100,7 +102,20 @@ def _proposal_row(item: object) -> ProposalRow:
         len(actions),
         _opt_str(item.get("error")),
         _opt_str(item.get("edit_block")),
+        _scope(item.get("create_scope")),
     )
+
+
+def _scope(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    if value == {"kind": "repo"}:
+        return {"kind": "repo"}
+    if set(value) == {"kind", "path"} and value.get("kind") == "submodule":
+        path = value.get("path")
+        if isinstance(path, str) and path and path not in (".", ".."):
+            return {"kind": "submodule", "path": path}
+    return None
 
 
 def parse_outbox_listing(stdout: str, container: str) -> OutboxListing:
@@ -146,6 +161,14 @@ def outbox_show_argv(name: str, proposal: str) -> list[str]:
     return ["outbox", "show", name, proposal, "--color"]
 
 
+def create_pr_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
+    if scope == {"kind": "repo"}:
+        return ["pr", name]
+    if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
+        return ["submodule", "pr", name, scope["path"]]
+    return None
+
+
 def outbox_apply_argv(name: str, proposal: str, revision: str) -> list[str]:
     """Ask under the plan (including foreign-PR warnings), pinned to the listed revision."""
     return ["outbox", "apply", name, proposal, "--revision", revision]
@@ -187,7 +210,9 @@ def proposal_picker(
     entries: list[PickerEntry] = []
     if can_show:
         entries.append(PickerEntry("Show", SHOW))
-    if can_publish and row.publishable:
+    if can_publish and row.publishable and row.state == "awaiting-pr" and row.create_scope is not None:
+        entries.append(PickerEntry("Create PR…", CREATE_PR))
+    elif can_publish and row.publishable and row.state != "awaiting-pr":
         entries.append(PickerEntry("Publish…", PUBLISH))
     if can_delete and row.deletable:
         entries.append(PickerEntry("Delete…", DELETE))

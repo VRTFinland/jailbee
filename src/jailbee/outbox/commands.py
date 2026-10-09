@@ -230,6 +230,75 @@ def apply_selected(
     )
 
 
+def _attach_create_scopes(
+    cfg: Config, incus: Incus, containers: Sequence[ContainerView], payload: dict[str, object]
+) -> None:
+    from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX, candidate_scopes
+    from jailbee.pr_outbox import ManifestError, parse_manifest, scope_slug
+    from jailbee.submodule_pr import SubmodulePrState, recorded_paths
+
+    container_rows = payload.get("containers")
+    if not isinstance(container_rows, list):
+        return
+    by_name = {c.name: c for c in containers}
+    for row in container_rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            continue
+        container = by_name.get(row["name"])
+        proposals = row.get("proposals")
+        if container is None or not isinstance(proposals, list):
+            continue
+        if not any(isinstance(p, dict) and p.get("state") == "awaiting-pr" for p in proposals):
+            continue
+        try:
+            target_cfg, full_name = resolve_target(cfg, incus, container.name)
+            scopes = candidate_scopes(target_cfg, extra_paths=recorded_paths(incus, full_name))
+            slugs = [(scope, scope_slug(scope)) for scope in scopes]
+        except (OutboxError, OSError, RuntimeError, ValueError):
+            continue
+        views = {str(p.id): p for p in container.proposals}
+        pr_store = next((s.as_dict() for s in container.stores if s.kind == "pr"), {})
+        for proposal_row in proposals:
+            if (
+                not isinstance(proposal_row, dict)
+                or proposal_row.get("state") != "awaiting-pr"
+                or proposal_row.get("error") is not None
+            ):
+                continue
+            view = views.get(proposal_row.get("id", ""))
+            if view is None:
+                continue
+            try:
+                manifest = parse_manifest(view.id.name, view.raw_text, pr_store)
+            except ManifestError:
+                continue
+            matches = [scope for scope, slug in slugs if slug == manifest.repo]
+            if len(matches) != 1:
+                continue
+            scope = matches[0]
+            try:
+                if scope.subpath is None:
+                    recorded: str | int | None = None
+                    for prefix in (PR_LABEL_PREFIX, STACKED_LABEL_PREFIX):
+                        recorded = incus.config_get(full_name, prefix)
+                        if recorded is not None:
+                            break
+                else:
+                    recorded = SubmodulePrState(incus, full_name, scope.subpath).read().number
+            except IncusError:
+                continue
+            if recorded is not None:
+                proposal_row["state"] = "pending"
+                continue
+            if not any(action.kind == "description" and action.state == "pending" for action in view.actions):
+                continue
+            proposal_row["create_scope"] = (
+                {"kind": "submodule", "path": scope.subpath}
+                if scope.subpath is not None
+                else {"kind": "repo"}
+            )
+
+
 def show_overview(
     cfg: Config,
     incus: Incus,
@@ -241,7 +310,9 @@ def show_overview(
 ) -> int:
     containers = discover(cfg, incus, name, all_repos=all_repos, journal_store=journal_store)
     if output == "json":
-        print_lines((json.dumps(overview_json(containers), ensure_ascii=True),))
+        payload = overview_json(containers)
+        _attach_create_scopes(cfg, incus, containers, payload)
+        print_lines((json.dumps(payload, ensure_ascii=True),))
     else:
         from rich.table import Table
         from rich.text import Text

@@ -764,8 +764,10 @@ JetBrains IDE, and any `apps:` entries, in that order — empty repos get none),
 then `Outbox` (on a running container, left out while both its PR and
 issue outbox are empty — it moves to the very top as "Outbox (N pending)" while the PR or issue outbox
 holds staged manifests; it lists the proposals in a picker, each with Show,
-Publish… and Delete…, plus `Browse actions & comments…` for the full
-`outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
+Publish… and Delete…; a description awaiting a PR offers Create PR… instead
+of Publish…, using `pr` for the main repo or `submodule pr` for its resolved
+submodule. Unresolved targets are not offered for creation. The menu also has
+`Browse actions & comments…` for the full `outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` (`pr --open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,

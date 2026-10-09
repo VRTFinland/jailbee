@@ -1129,10 +1129,15 @@ class DashboardSession:
                 can_show=permitted(
                     dob.outbox_show_argv(container, row.id), self.ssh_policy, over_ssh=self.over_ssh
                 ),
-                can_publish=permitted(
-                    dob.outbox_apply_argv(container, row.id, row.revision),
-                    self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                can_publish=(
+                    ((create_argv := dob.create_pr_argv(container, row.create_scope)) is not None
+                    and permitted(create_argv, self.ssh_policy, over_ssh=self.over_ssh))
+                    if row.state == "awaiting-pr"
+                    else permitted(
+                        dob.outbox_apply_argv(container, row.id, row.revision),
+                        self.ssh_policy,
+                        over_ssh=self.over_ssh,
+                    )
                 ),
                 can_delete=permitted(
                     dob.outbox_drop_argv(container, row.id, row.revision),
@@ -1153,6 +1158,37 @@ class DashboardSession:
                     dob.outbox_show_argv(container, pid),
                     style="paged",
                 )
+                return None
+            if entry.value == dob.CREATE_PR:
+                row = next((r for r in self.outbox_rows.get(container, ()) if r.id == pid), None)
+                if row is None or row.state != "awaiting-pr" or row.create_scope is None:
+                    self.set_notice("Create PR is no longer available; refresh the outbox")
+                    return None
+                repo = self.repo_for(container, "container")
+                if repo is None:
+                    self.set_notice(f"'{container}' is gone")
+                    return None
+                fresh_argv = dact.addressed(dob.outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh)
+                try:
+                    check_dashboard_command(fresh_argv, self.ssh_policy, over_ssh=self.over_ssh)
+                    listing_result = da.run_cli_quiet(fresh_argv, cwd=repo.cwd())
+                    fresh = dob.parse_outbox_listing(listing_result.stdout, container)
+                    if not listing_result.ok or fresh.error is not None:
+                        raise dob.OutboxLoadError(fresh.error or listing_result.message)
+                except (RouteError, dob.OutboxLoadError) as exc:
+                    self.set_notice(f"could not verify the outbox: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+                    return None
+                current = next((r for r in fresh.rows if r.id == pid), None)
+                if current is None or (current.revision, current.state, current.create_scope) != (
+                    row.revision, row.state, row.create_scope
+                ):
+                    self.set_notice("Proposal changed; refresh the outbox before creating a PR")
+                    return None
+                argv = dob.create_pr_argv(container, row.create_scope)
+                if argv is None or not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+                    self.set_notice("Create PR is not permitted here")
+                    return None
+                self.run_dashboard_command(container, "container", argv)
                 return None
             if entry.value in (dob.PUBLISH, dob.DELETE):
                 return dob.outbox_confirm_picker(container, entry.value, pid, revision, int(count))
