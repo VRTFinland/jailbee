@@ -197,3 +197,16 @@ def test_a_failed_attended_fork_is_noticed_as_a_fork(mocker, tmp_path):
 
     notices = [str(n) for n in run.notices()]
     assert any("'jailbee fork' exited 3" in n for n in notices), notices
+
+
+@pytest.mark.parametrize(("key", "purpose"), [("f", "container-fork"), ("R", "container-rename")])
+def test_prompt_titles_name_the_short_container_name(mocker, tmp_path, key, purpose):
+    group, _ = _target(tmp_path)
+    mocker.patch.object(tsession.subprocess, "run").return_value.returncode = 0
+    patch_pause(mocker)
+
+    run = drive(mocker, ["j", "enter", key, "escape"], [group])
+
+    prompt = next(p for p in _prompts(run) if p.purpose == purpose)
+    assert "'x'" in prompt.title
+    assert "alpha-x" not in prompt.title

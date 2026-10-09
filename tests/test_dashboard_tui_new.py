@@ -134,6 +134,7 @@ def test_run_retarget_asks_inline_and_runs_the_cli_with_the_base(mocker, tmp_pat
     assert prompts[0].suggestions == ("main", "develop")  # current base left out
     assert prompts[0].require_suggestion is True
     assert "feat/a" in prompts[0].title
+    assert prompts[0].title.startswith("Retarget 'x' ")  # short name, not 'alpha-x'
     child.assert_called_once()
     assert child.call_args.args[0] == ["jailbee", "git", "retarget", "--", "alpha-x", "develop"]
 

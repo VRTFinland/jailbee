@@ -969,7 +969,7 @@ class DashboardSession:
         current = info.base_branch
         return TextPrompt(
             "container-retarget",
-            f"Retarget '{container}' (base: {current or 'unset'})",
+            f"Retarget '{info.display_name}' (base: {current or 'unset'})",
             "Base branch",
             target=container,
             suggestions=host_branches(group.repo_root, exclude=current),
@@ -980,9 +980,11 @@ class DashboardSession:
         """Ask for the fork's name inline; the CLI would ask on a blanked screen."""
         if self.dispatchable(container, "fork") is None:
             return None
+        found = self._listed_container(container)
+        shown = found[1].display_name if found is not None else container
         return TextPrompt(
             "container-fork",
-            f"Fork '{container}'",
+            f"Fork '{shown}'",
             "New container name",
             target=container,
         )
@@ -1002,7 +1004,7 @@ class DashboardSession:
             return None
         return TextPrompt(
             "container-rename",
-            f"Rename '{container}' (empty clears the alias)",
+            f"Rename '{info.display_name}' (empty clears the alias)",
             "Alias",
             initial=info.alias or "",
             target=container,
