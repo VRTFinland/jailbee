@@ -10451,7 +10451,7 @@ def test_ls_default_table_and_json_sets_are_pinned():
         "target_diff", "ahead_count", "behind_count", "conflict", "pr", "issues", "group",
     ]  # fmt: skip
     assert [f.name for f in specs if f.default_json] == [
-        "name", "mode", "base", "state", "created", "network", "ip", "memory_limit",
+        "name", "alias", "mode", "base", "state", "created", "network", "ip", "memory_limit",
         "git_status", "pr", "issues", "group",
     ]  # fmt: skip
 

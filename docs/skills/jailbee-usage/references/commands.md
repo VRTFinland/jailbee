@@ -479,7 +479,8 @@ new`. Over remote SSH, `--net loose` needs `remote.ssh.network`, as for `new`.
 
 Gives a container an alias instantly, running or not; the real Incus name never
 changes. Listings and the dashboard show the alias and every command accepts
-it. `--clear`, or an alias equal to the container's own short name, removes it.
+it; `jailbee ls --format json` carries it as `alias` (`null` when unset), with
+`name` still the short name. `--clear`, or an alias equal to the container's own short name, removes it.
 An alias is lowercase letters, digits and `-`, and cannot equal another
 container's name, short name or alias. `ALIAS` is asked for on a TTY when
 omitted; `--clear` and `ALIAS` are mutually exclusive.
