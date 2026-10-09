@@ -136,7 +136,7 @@ def test_a_child_that_cannot_start_fails_only_itself(mocker, tmp_path):
             raise OSError("gone")
         real_start(key, label, argv, cwd, on_done)
 
-    session.jobs.start = start  # type: ignore[method-assign]
+    mocker.patch.object(session.jobs, "start", side_effect=start)
     _stop(session, "alpha-a", "alpha-b")
     session.tick()
 
