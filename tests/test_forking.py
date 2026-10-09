@@ -24,6 +24,7 @@ def wired(mocker):
             branch="feat/a", old_oid=None, new_oid="abc123", base_oid=None, commits_added=0
         ),
     )
+    mocker.patch("jailbee.submodules.transport_submodules_to_host")
     return dirty, fetch
 
 
@@ -79,6 +80,22 @@ def test_prepare_fork_fetches_by_short_name(cfg, wired):
     incus = MagicMock()
     forking.prepare_fork(cfg, incus, "src")
     fetch.assert_called_once_with(cfg, incus, "src")
+
+
+def test_prepare_fork_brings_the_source_submodule_commits_to_the_host(cfg, wired, mocker):
+    # The fork's clone inits its submodules from the host sub-repos; a gitlink
+    # the source committed exists only in the source until it is transported.
+    _, fetch = wired
+    order = MagicMock()
+    order.attach_mock(fetch, "fetch")
+    transport = mocker.patch("jailbee.submodules.transport_submodules_to_host")
+    order.attach_mock(transport, "transport")
+    incus = MagicMock()
+    forking.prepare_fork(cfg, incus, "src")
+    transport.assert_called_once_with(
+        cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo"
+    )
+    assert [c[0] for c in order.mock_calls] == ["fetch", "transport"]
 
 
 def test_prepare_fork_unknown_source_is_a_fork_error(cfg, wired, mocker):

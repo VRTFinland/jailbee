@@ -1,7 +1,8 @@
 """`jailbee fork`: a new container at another container's committed state.
 
 Only git state is carried over. The source's commits are fetched to the host
-(`refs/jailbee/<source>/<branch>`) and the new container is an ordinary
+(`refs/jailbee/<source>/<branch>`), its submodules' commits into the host
+sub-repos (`refs/jailbee-sub/<source>/...`), and the new container is an ordinary
 `jailbee new`, pinned to that commit. That source ref is not what keeps the
 commit alive: `jailbee destroy <source>` deletes it and the source's next fetch
 moves it, while the fork's `--shared` clone borrows its objects from the host
@@ -48,7 +49,7 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
     and silently dropping work would surprise. ``git.GitError`` from the fetch
     propagates; the caller reports it.
     """
-    from jailbee import sync
+    from jailbee import submodules, sync
     from jailbee.lifecycle import container_repo_dir, short_name
 
     try:
@@ -61,6 +62,9 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
                 f"Commit or stash them in '{short}' first."
             )
         fetched = sync.fetch_from_container(cfg, incus, short)
+        # The fork inits its submodules from the host sub-repos, so a gitlink
+        # committed in the source must reach them first, as on `jailbee git pull`.
+        submodules.transport_submodules_to_host(cfg, incus, full, short, repo_dir=repo_dir)
     except ForkError:
         raise
     except (sync.SyncError, ValueError) as e:
