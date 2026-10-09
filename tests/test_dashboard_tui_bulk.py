@@ -400,15 +400,18 @@ def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
     pause.assert_called_once()
 
 
-def test_bulk_merge_passes_no_into(mocker, tmp_path):
+def test_bulk_merge_picks_its_targets_in_the_table_before_running(mocker, tmp_path):
     child = _children(mocker)
     patch_pause(mocker)
-    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session, terminal, _ = _session(mocker, tmp_path, "Running", "Running", "Running")
     session.marked = frozenset({"alpha-a", "alpha-b"})
 
     session.begin_bulk("merge")
 
-    assert child.call_args.args[0] == ["jailbee", "merge", "alpha-a", "alpha-b"]
+    child.assert_not_called()
+    assert terminal.handed == []
+    assert session.merge_pick is not None
+    assert session.merge_pick.sources == ("alpha-a", "alpha-b")
 
 
 def test_two_repos_get_one_run_each(mocker, tmp_path):

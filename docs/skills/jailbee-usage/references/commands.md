@@ -852,12 +852,24 @@ repo not registered) show view-only.
 Marked rows show `●`; while anything is marked, Enter on a container opens an *N selected*
 menu and `D`/`u` act on the marks. Start, stop, restart, network and destroy run in
 parallel (one notice at the end; succeeded rows are unmarked, failed or skipped stay
-marked; destroy asks once, "No" first). Git push, pull and merge run once per repo in the
+marked; destroy asks once, "No" first). Git push and pull run once per repo in the
 terminal through the CLI's multi-name form. The TTL picked for a bulk `net loose` is passed
 as `--for` to every marked container, including those of repos configured not to revert. In
 the terminal dashboard, with marks present, Enter or right-click on any container row opens
 the *N selected* menu for the marks, even if the cursor row is unmarked; the Qt table acts
 on the right-clicked row alone when it is not part of the selection.
+
+**Merge into…** (`Git →` `m`, or the *N selected* menu) picks its targets in the
+terminal dashboard's table, with every column in view: the sources (the
+highlighted container, or the marked ones — all in one repo) show `◆`, rows that
+cannot be a target (another repo, stopped, mount mode) are dimmed and skipped by
+`↑/↓`, and the cursor starts on the sources' fork source when that can be a
+target. `Space` marks a target and moves on, `Enter` runs
+`jailbee merge <sources> --into <t>…` over the marked targets (none marked: the
+highlighted row), `Esc` cancels and gives the bulk marks back; a successful
+merge unmarks its sources. A line under the table names the sources and targets
+throughout, and a source that disappears in a refresh ends the mode. The Qt
+dashboard still leaves the target to the CLI's picker.
 
 Mouse (on by default; `m` toggles it for the session, `dashboard.mouse: false` in
 the global config turns it off): click selects a row, double- or right-click opens

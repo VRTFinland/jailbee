@@ -65,6 +65,10 @@ class Entry:
     """For a heading: (container count, orphan, marked count) — what its text depends on."""
     marked: bool = False
     running: bool = False
+    source: bool = False
+    """A merge source while the dashboard picks merge targets: drawn with ``◆``."""
+    dim: bool = False
+    """Not a merge target while the dashboard picks them: drawn dim."""
 
 
 @dataclass(frozen=True)
@@ -110,8 +114,14 @@ def table_model(
     sort: SortSpec = DEFAULT_SORT,
     marked: frozenset[str] = frozenset(),
     running: frozenset[str] = frozenset(),
+    sources: frozenset[str] = frozenset(),
+    ineligible: frozenset[str] = frozenset(),
 ) -> TableModel:
-    """Everything the table draws at ``width`` cells, columns scrolled by ``column_offset``."""
+    """Everything the table draws at ``width`` cells, columns scrolled by ``column_offset``.
+
+    ``sources`` and ``ineligible`` are the merge-target mode's roles: the
+    containers being merged, and the rows that cannot be a target.
+    """
     fields, widths = _frame_columns(
         list(groups),
         now=now,
@@ -154,6 +164,8 @@ def table_model(
                     container,
                     marked=container.name in marked,
                     running=container.name in running,
+                    source=container.name in sources,
+                    dim=container.name in ineligible,
                 )
                 for container in group.containers
             )
@@ -232,7 +244,15 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
             if spec.name == "name" and entry.group.repo_root is None
             else spec.cell(entry.container)
         )
-        indent = "⟳ " if entry.running else "● " if entry.marked else "  "
+        indent = (
+            "◆ "
+            if entry.source
+            else "⟳ "
+            if entry.running
+            else "● "
+            if entry.marked
+            else "  "
+        )
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
 
@@ -292,6 +312,8 @@ def entry_line(
     ]
     hit = dhit.hit_style("row", entry.container.name)
     base = MARKED_STYLE + hit if entry.marked else hit
+    if entry.dim:
+        base += Style(dim=True)
     # The cursor's band wins over a mark's blue; the row's `●` still shows the mark.
     style = base + Style.parse(CURSOR_STYLE) if selected else base
     return _join(_with_marks(cells, geometry, Text(" "), Text(" ")), style)

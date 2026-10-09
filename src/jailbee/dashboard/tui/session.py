@@ -149,6 +149,8 @@ from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
 from jailbee.lifecycle import (
+    ContainerInfo,
+    merge_default_target,
     tracking_notices,
 )
 from jailbee.remote_ssh import router as ssh_router
@@ -181,6 +183,24 @@ DOUBLE_CLICK_KINDS: frozenset[str] = frozenset({"row", "repo"})
 # With a native overlay open, only these keys are the dashboard's own; every
 # other key belongs to the overlay (see `DashboardApp._route_key`).
 OVERLAY_GLOBAL_TOKENS: frozenset[str] = frozenset({"quit", "help", "settings", "interrupt"})
+
+
+MERGE_PICK_KEYS = "space mark · enter merge · esc cancel"
+
+
+@dataclass(frozen=True)
+class MergePick:
+    """The table's merge-target mode: ``sources`` merge into the rows picked here.
+
+    A mode of the table rather than an overlay, so every column stays in
+    view while the targets are chosen. ``targets`` is its own set, apart
+    from the bulk marks; those wait in ``saved_marks`` until the mode ends.
+    """
+
+    prefix: str  # the one repo all sources belong to
+    sources: tuple[str, ...]  # full names, listing order
+    targets: frozenset[str] = frozenset()
+    saved_marks: frozenset[str] = frozenset()  # bulk marks to restore on Esc
 
 
 def _now() -> datetime:
@@ -328,6 +348,8 @@ class DashboardSession:
         self.sel_index = 0
         # Container names marked for a bulk action; pruned to the listed ones each tick.
         self.marked: frozenset[str] = frozenset()
+        # The merge-target mode, while it is on (see `begin_merge_pick`).
+        self.merge_pick: MergePick | None = None
         self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
         self.egress_parent: MenuState | RepoMenuState | None = None
@@ -370,8 +392,10 @@ class DashboardSession:
         self.rows = selectable_rows(self.groups, self.folded)
         listed = {c.name for g in self.groups for c in g.containers}
         self.marked &= listed
+        self._prune_merge_pick(listed)
         self._close_vanished_overlay()
         self._pin_selection()
+        self._snap_merge_cursor()
         if self.notice is not None and time.monotonic() >= self.notice_until:
             self.notice = None
         self.column_offset = self._clamped(self.column_offset)
@@ -380,6 +404,29 @@ class DashboardSession:
         """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
         tracking = tracking_notices([c for g in self.all_groups for c in g.containers])
         tracking.extend(dashboard_group_notices(self.all_groups))
+        notice = (
+            self.notice
+            or self.client.status()
+            or "; ".join(self.jobs.active())
+            or ("; ".join(tracking) if tracking else None)
+        )
+        marked = self.marked
+        sources: frozenset[str] = frozenset()
+        ineligible: frozenset[str] = frozenset()
+        pick = self.merge_pick
+        if pick is not None:
+            # The mode's line is shown throughout; a notice raised while it
+            # is on (a refused Enter) is put in front of it, not in its place.
+            line = self._merge_pick_line(pick)
+            notice = line if self.notice is None else f"{self.notice} · {line}"
+            marked = pick.targets
+            sources = frozenset(pick.sources)
+            ineligible = frozenset(
+                c.name
+                for g in self.groups
+                for c in g.containers
+                if c.name not in sources and not self._merge_eligible(pick, c.name)
+            )
         return DashboardView(
             groups=self.groups,
             selected=self.selected,
@@ -387,10 +434,7 @@ class DashboardSession:
             git_enabled=self.git_enabled,
             enabled=self.enabled,
             overlay=self.overlay,
-            notice=self.notice
-            or self.client.status()
-            or "; ".join(self.jobs.active())
-            or ("; ".join(tracking) if tracking else None),
+            notice=notice,
             folded=self.folded,
             column_offset=self.column_offset,
             hidden_by_preferences=bool(self.all_groups) and not self.groups,
@@ -399,8 +443,10 @@ class DashboardSession:
             shown_columns=self.shown_columns,
             sort=self.sort,
             hover=hover,
-            marked=self.marked,
+            marked=marked,
             running=self.bulk_running(),
+            sources=sources,
+            ineligible=ineligible,
         )
 
     def title(self) -> str:
@@ -832,8 +878,10 @@ class DashboardSession:
         argv: list[str],
         *,
         style: DispatchStyle = "output",
-    ) -> None:
+    ) -> int | None:
         """Hand the terminal to one dashboard-built `jailbee` command; notice a failure.
+
+        Returns its exit code, or None when it was not run.
 
         ``target`` is re-resolved here because the row may have vanished
         while a picker was open. The policy is checked before `foreground`
@@ -843,12 +891,12 @@ class DashboardSession:
         repo = self.repo_for(target, kind)
         if repo is None:
             self.set_notice(f"'{target}' is gone")
-            return
+            return None
         try:
             check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
         except RouteError as exc:
             self.set_notice(str(exc), seconds=FAILURE_NOTICE_SECONDS)
-            return
+            return None
         try:
             rc = self.terminal.hand_off(
                 lambda: _run_cli_foreground(
@@ -862,13 +910,14 @@ class DashboardSession:
             )
         except RouteError as exc:
             self.set_notice(str(exc), seconds=FAILURE_NOTICE_SECONDS)
-            return
+            return None
         except OSError:
             self._report_vanished_repo(repo)
-            return
+            return None
         if rc != 0:
             self.set_notice(f"'jailbee {dact.command_label(argv)}' exited {rc}")
         self.client.refresh()  # the command likely changed state: refresh now
+        return rc
 
     def open_container_entry(self, container: str, verb: str) -> Overlay | None:
         """The first step of a terminal-only container entry; None once it has run."""
@@ -1955,6 +2004,10 @@ class DashboardSession:
                 self.overlay = self.open_fork(target)
             elif verb == "rename":
                 self.overlay = self.open_rename(target)
+            elif verb == "merge":
+                # The targets are picked in the table, not in the CLI's picker.
+                if self.dispatchable(target, verb) is not None:
+                    self.begin_merge_pick([target])
             else:
                 self.dispatch(target, verb)
 
@@ -1995,6 +2048,9 @@ class DashboardSession:
 
     def _table_key(self, key: str) -> Outcome:
         """A key with no overlay open; ``"toggle-mouse"`` asks the frontend to flip the mouse."""
+        if self.merge_pick is not None:
+            self._merge_pick_key(key)
+            return None
         if key in ("up", "down"):
             self.move(-1 if key == "up" else 1)
         elif key in ("scroll-left", "scroll-right"):
@@ -2132,6 +2188,9 @@ class DashboardSession:
         if not action.eligible:
             self.set_notice(nothing_to_do(action))
             return None
+        if verb == "merge":
+            self.begin_merge_pick(action.eligible)
+            return None
         if verb == "destroy":
             n = len(action.eligible)
             return Picker(
@@ -2211,6 +2270,11 @@ class DashboardSession:
             return
         self.bulk_batches.remove(batch)
         self.marked -= frozenset(batch.ok)
+        if self.merge_pick is not None:
+            # The bulk marks are parked while targets are picked: unmark there.
+            self.merge_pick = replace(
+                self.merge_pick, saved_marks=self.merge_pick.saved_marks - frozenset(batch.ok)
+            )
         self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if batch.failed else NOTICE_SECONDS)
 
     def _run_foreground(self, action: BulkAction) -> None:
@@ -2319,6 +2383,9 @@ class DashboardSession:
 
         Ctrl+click (``toggle``) marks or unmarks a container row while nothing is open.
         """
+        if self.merge_pick is not None:
+            self._merge_pick_click(hit, toggle=toggle)
+            return
         overlay = self.overlay
         if overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
@@ -2374,3 +2441,177 @@ class DashboardSession:
         # header rather than letting reconcile_selection pick a neighbour repo.
         self.selected = Row("repo", prefix)
         self.save_view()
+
+    # -- merge-target mode ------------------------------------------------
+
+    def _listed_container(self, name: str) -> tuple[RepoGroup, ContainerInfo] | None:
+        return next(
+            ((g, c) for g in self.groups for c in g.containers if c.name == name),
+            None,
+        )
+
+    def _listed_names(self) -> list[str]:
+        return [c.name for g in self.groups for c in g.containers]
+
+    def _merge_eligible(self, pick: MergePick, name: str) -> bool:
+        """Whether ``name`` can be a target of ``pick``.
+
+        The CLI's rule (`cli._eligible_merge_containers`: running, not mount
+        mode), narrowed to the sources' repo and never a source itself.
+        """
+        if name in pick.sources:
+            return False
+        found = self._listed_container(name)
+        if found is None:
+            return False
+        group, info = found
+        return group.prefix == pick.prefix and info.state == "Running" and info.mode != "mount"
+
+    def merge_target_eligible(self, name: str) -> bool:
+        """Whether ``name`` can be picked as a merge target now (False outside the mode)."""
+        return self.merge_pick is not None and self._merge_eligible(self.merge_pick, name)
+
+    def begin_merge_pick(self, sources: Sequence[str]) -> None:
+        """Enter the merge-target mode for ``sources``, or notice why it cannot start.
+
+        The bulk marks are parked until the mode ends; the cursor starts on
+        the sources' common fork source when that can be a target.
+        """
+        found = [self._listed_container(name) for name in sources]
+        infos = [item for item in found if item is not None]
+        if not infos or len(infos) != len(found):
+            self.set_notice("Merge source is gone")
+            return
+        prefixes = {group.prefix for group, _info in infos}
+        if len(prefixes) != 1:
+            self.set_notice("Merge sources must be in one repo")
+            return
+        wanted = set(sources)
+        pick = MergePick(
+            prefixes.pop(),
+            tuple(name for name in self._listed_names() if name in wanted),
+            saved_marks=self.marked,
+        )
+        eligible = [name for name in self._listed_names() if self._merge_eligible(pick, name)]
+        if not eligible:
+            self.set_notice("No running clone-mode container to merge into")
+            return
+        on_screen = [name for name in eligible if Row("container", name) in self.rows]
+        if not on_screen:
+            self.set_notice(f"Unfold '{pick.prefix}' to pick a merge target")
+            return
+        default = merge_default_target([info for _group, info in infos])
+        self.merge_pick = pick
+        self.marked = frozenset()
+        self.notice = None  # the mode's own line takes the notice slot
+        self.select(Row("container", default if default in on_screen else on_screen[0]))
+
+    def _merge_pick_line(self, pick: MergePick) -> str:
+        def short(name: str) -> str:
+            found = self._listed_container(name)
+            return found[1].display_name if found is not None else name
+
+        targets = [name for name in self._listed_names() if name in pick.targets]
+        return (
+            f"Merge {', '.join(short(n) for n in pick.sources)} into: "
+            f"{', '.join(short(n) for n in targets) or '—'}   {MERGE_PICK_KEYS}"
+        )
+
+    def _merge_pick_key(self, key: str) -> None:
+        """A key while picking merge targets; anything not listed here is ignored."""
+        pick = self.merge_pick
+        assert pick is not None
+        if key in ("up", "down"):
+            self._merge_move(-1 if key == "up" else 1)
+        elif key == "space":
+            name = container_of(self.selected)
+            if name is not None and self._merge_eligible(pick, name):
+                self.merge_pick = replace(pick, targets=pick.targets ^ {name})
+                self._merge_move(1)
+        elif key == "enter":
+            self._finish_merge_pick()
+        elif key == "cancel":
+            self.merge_pick = None
+            self.marked = pick.saved_marks
+            self.set_notice("Merge cancelled")
+        elif key in ("scroll-left", "scroll-right"):
+            self.scroll_columns(1 if key == "scroll-right" else -1)
+        elif key == "refresh":
+            self.client.refresh()
+
+    def _merge_move(self, step: int) -> None:
+        """Move to the next target-eligible row ``step``'s way; stay put when there is none."""
+        index = self.rows.index(self.selected) if self.selected in self.rows else self.sel_index
+        index += step
+        while 0 <= index < len(self.rows):
+            row = self.rows[index]
+            if row.kind == "container" and self.merge_target_eligible(row.key):
+                self.select(row)
+                return
+            index += step
+
+    def _snap_merge_cursor(self) -> None:
+        """After a refresh: off a row that can no longer be a target, onto the nearest one."""
+        if self.merge_pick is None:
+            return
+        name = container_of(self.selected)
+        if name is not None and self.merge_target_eligible(name):
+            return
+        before = self.selected
+        self._merge_move(1)
+        if self.selected == before:
+            self._merge_move(-1)
+
+    def _merge_pick_click(self, hit: Hit | None, *, toggle: bool) -> None:
+        """A click while picking: a target row is selected (Ctrl: toggled), nothing opens."""
+        if hit is None:
+            return
+        if hit.kind == "scroll":
+            self.scroll_columns(int(hit.args[0]))
+            return
+        if hit.kind != "row" or not self._listed(hit):
+            return
+        name = str(hit.args[0])
+        pick = self.merge_pick
+        if pick is None or not self._merge_eligible(pick, name):
+            return
+        self.select(Row("container", name))
+        if toggle:
+            self.merge_pick = replace(pick, targets=pick.targets ^ {name})
+
+    def _finish_merge_pick(self) -> None:
+        """Enter: merge into the marked targets, or the cursor row when none is marked."""
+        pick = self.merge_pick
+        assert pick is not None
+        targets = pick.targets
+        if not targets:
+            name = container_of(self.selected)
+            if name is None or not self._merge_eligible(pick, name):
+                self.set_notice("No merge target is highlighted")
+                return
+            targets = frozenset({name})
+        ordered = [name for name in self._listed_names() if name in targets]
+        argv = ["merge", *pick.sources, *[a for t in ordered for a in ("--into", t)]]
+        self.merge_pick = None
+        self.marked = pick.saved_marks
+        if self.run_dashboard_command(pick.sources[0], "container", argv) == 0:
+            # As a foreground bulk run does: what succeeded is unmarked.
+            self.marked -= frozenset(pick.sources)
+
+    def _prune_merge_pick(self, listed: set[str]) -> None:
+        """After a refresh: drop vanished sources and targets, or end the mode with none left."""
+        pick = self.merge_pick
+        if pick is None:
+            return
+        sources = tuple(name for name in pick.sources if name in listed)
+        saved = pick.saved_marks & listed
+        if not sources:
+            self.merge_pick = None
+            self.marked = saved
+            self.set_notice("Merge cancelled: source is gone")
+            return
+        pick = replace(pick, sources=sources, saved_marks=saved)
+        self.merge_pick = replace(
+            pick,
+            targets=frozenset(name for name in pick.targets if self._merge_eligible(pick, name)),
+        )

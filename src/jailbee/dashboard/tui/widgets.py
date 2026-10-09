@@ -553,6 +553,8 @@ class DashboardFrame(Vertical):
             sort=view.sort,
             marked=view.marked,
             running=view.running,
+            sources=view.sources,
+            ineligible=view.ineligible,
         )
         table = self.table
         table.display = layout.table_rows > 0

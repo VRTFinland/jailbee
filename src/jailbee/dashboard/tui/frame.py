@@ -161,3 +161,6 @@ class DashboardView:
     sort: SortSpec = DEFAULT_SORT
     marked: frozenset[str] = frozenset()
     running: frozenset[str] = frozenset()
+    # The merge-target mode's roles (see `fleet.table_model`); empty outside it.
+    sources: frozenset[str] = frozenset()
+    ineligible: frozenset[str] = frozenset()

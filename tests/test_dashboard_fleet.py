@@ -268,3 +268,41 @@ def test_a_folded_heading_counts_its_marks(tmp_path):  # type: ignore[no-untyped
 def test_the_frame_title_counts_the_marks():  # type: ignore[no-untyped-def]
     assert "3 selected" in frame_title([], frozenset(), git_enabled=True, now=NOW, marked=3).plain
     assert "selected" not in frame_title([], frozenset(), git_enabled=True, now=NOW).plain
+
+
+def test_merge_roles_mark_the_source_and_dim_the_ineligible(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup(
+        "r",
+        str(tmp_path),
+        None,
+        [ci("r-a", "r"), ci("r-b", "r"), ci("r-s", "r", "Stopped")],
+    )
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+        marked=frozenset({"r-a"}),
+        sources=frozenset({"r-b"}),
+        ineligible=frozenset({"r-s"}),
+    )
+    a, b, s = (e for e in model.entries if e.container)
+
+    assert [fleet.entry_cells(e, model.geometry)[0][:2] for e in (a, b, s)] == [
+        "● ",
+        "◆ ",
+        "  ",
+    ]
+
+    def line(entry):  # type: ignore[no-untyped-def]
+        return fleet.entry_line(entry, model.geometry, frozenset(), selected=False, width=80)
+
+    assert line(s).style.dim
+    assert not line(a).style.dim
+    assert not line(b).style.dim
+    assert line(a).style.bgcolor == fleet.MARKED_STYLE.bgcolor
