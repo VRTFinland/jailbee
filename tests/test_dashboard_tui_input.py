@@ -136,10 +136,11 @@ def test_q_typed_ahead_closes_the_menu_then_the_table_moves(mocker, tmp_path):
 
 
 def test_space_typed_ahead_toggles_in_settings(mocker, tmp_path):
+    """Row 0 of Fields is the locked `name`, so the typed-ahead `space` goes to the Repos tab."""
     mocker.patch.object(tsession, "save_view_state")
-    run = drive(mocker, [burst(("S", "S"), ("space", " "))], [_group(tmp_path)])
+    run = drive(mocker, [burst(("S", "S"), ("tab", "\t"), ("space", " "))], [_group(tmp_path)])
     settings = run.of_type(SettingsState)[-1]
-    assert "name" not in settings.enabled
+    assert settings.folded  # the first repo row was toggled by the space
 
 
 def test_a_box_that_lost_the_focus_still_gets_its_keys(mocker, tmp_path):

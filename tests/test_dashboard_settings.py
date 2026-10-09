@@ -14,7 +14,7 @@ VISIBILITY_REPOS = ("alpha", "beta", "gamma")
 def _state(**over):  # type: ignore[no-untyped-def]
     kwargs = dict(
         field_names=FIELDS,
-        enabled=frozenset({"name", "state"}),
+        enabled=("name", "state"),
         repo_prefixes=REPOS,
         folded=frozenset({"beta"}),
         visibility_repo_prefixes=VISIBILITY_REPOS,
@@ -28,11 +28,11 @@ def _state(**over):  # type: ignore[no-untyped-def]
 def test_setting_rows_per_tab():
     state = _state(hidden_repos=frozenset({"alpha"}), visibility_repo_prefixes=REPOS)
     assert ds.setting_rows(state, "fields") == (
-        ds.SettingRow("name", "name", True),
+        ds.SettingRow("name", "name (always first)", True),
         ds.SettingRow("state", "state", True),
+        ds.SettingRow("ip", "ip", False),
         ds.SettingRow("network", "network", False),
         ds.SettingRow("pr", "pr", False),
-        ds.SettingRow("ip", "ip", False),
     )
     assert ds.setting_rows(state, "repos") == (
         ds.SettingRow("alpha", "alpha", True),
@@ -47,14 +47,14 @@ def test_setting_rows_per_tab():
 
 def test_toggle_setting_flips_one_row_per_tab():
     state = _state(hidden_repos=frozenset({"alpha"}))
-    assert ds.toggle_setting(state, "fields", "pr").enabled == {"name", "state", "pr"}
+    assert ds.toggle_setting(state, "fields", "pr").enabled == ("name", "state", "pr")
     assert ds.toggle_setting(state, "repos", "beta").folded == frozenset()
     assert ds.toggle_setting(state, "visibility", ds.SHOW_EMPTY).show_empty_repos is False
     assert ds.toggle_setting(state, "visibility", "alpha").hidden_repos == frozenset()
 
 
 def test_the_last_column_cannot_be_turned_off():
-    state = _state(enabled=frozenset({"name"}))
+    state = _state(enabled=("name",))
     assert ds.toggle_setting(state, "fields", "name") == state
 
 
@@ -75,9 +75,9 @@ def test_show_empty_can_never_be_a_repo_prefix():
 
 def test_toggle_flips_the_field_both_ways():
     state = _state()
-    flipped = ds.toggle_setting(state, "fields", "name")
-    assert "name" not in flipped.enabled
-    assert "name" in ds.toggle_setting(flipped, "fields", "name").enabled
+    flipped = ds.toggle_setting(state, "fields", "state")
+    assert "state" not in flipped.enabled
+    assert "state" in ds.toggle_setting(flipped, "fields", "state").enabled
 
 
 def test_toggle_flips_the_repo_and_leaves_the_others():
@@ -130,19 +130,34 @@ def test_repos_rows_follow_the_checkbox_polarity():
     assert checked == {"alpha": True, "beta": False}
 
 
-def test_enabled_names_is_canonical_order_not_toggle_order():
-    """Stored order must not depend on the order the user happened to click,
-    because rendering order comes from the field-spec list either way."""
-    state = _state(enabled=frozenset({"name"}))
+def test_enabling_a_field_appends_it():
+    state = _state(enabled=("name",))
     state = ds.toggle_setting(state, "fields", "ip")
     state = ds.toggle_setting(state, "fields", "state")
-    assert ds.enabled_names(state) == ("name", "state", "ip")
+    assert ds.enabled_names(state) == ("name", "ip", "state")
+
+
+def test_name_cannot_be_turned_off():
+    state = _state(enabled=("name", "state"))
+    assert ds.toggle_setting(state, "fields", "name") == state
+
+
+def test_move_field_reorders_enabled_fields():
+    state = _state(enabled=("name", "state", "network", "pr"))
+    assert ds.enabled_names(ds.move_field(state, "pr", -1)) == ("name", "state", "pr", "network")
+    assert ds.enabled_names(ds.move_field(state, "state", 1)) == ("name", "network", "state", "pr")
+
+
+def test_move_field_never_crosses_name_or_the_disabled_block():
+    state = _state(enabled=("name", "state", "network"))
+    assert ds.move_field(state, "state", -1) == state  # would pass name
+    assert ds.move_field(state, "network", 1) == state  # would enter the disabled block
+    assert ds.move_field(state, "name", 1) == state  # name is locked
+    assert ds.move_field(state, "ip", -1) == state  # disabled fields do not move
 
 
 def test_open_settings_rejects_an_empty_field_vocabulary():
     """A guard against a caller that resolved its field list wrongly: an
     empty overlay is indistinguishable from a broken one."""
     with pytest.raises(ValueError):
-        ds.open_settings(
-            field_names=(), enabled=frozenset(), repo_prefixes=REPOS, folded=frozenset()
-        )
+        ds.open_settings(field_names=(), enabled=(), repo_prefixes=REPOS, folded=frozenset())

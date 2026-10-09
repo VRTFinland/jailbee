@@ -29,6 +29,7 @@ from jailbee.dashboard.columns import (
     clamp_column_offset,
     default_columns,
     nonempty_columns,
+    normalize_columns,
     optimize_column_widths,
     seed_view_state,
     settings_repo_prefixes,
@@ -399,7 +400,9 @@ class DashboardSession:
         """
         return open_settings(
             field_names=all_column_names(),
-            enabled=frozenset(self.enabled if self.enabled is not None else default_columns()),
+            enabled=normalize_columns(
+                self.enabled if self.enabled is not None else default_columns()
+            ),
             repo_prefixes=settings_repo_prefixes(self.all_groups, self.folded),
             folded=self.folded,
             visibility_repo_prefixes=tuple(dict.fromkeys(g.prefix for g in self.all_groups)),

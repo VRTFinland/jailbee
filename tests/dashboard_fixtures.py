@@ -61,7 +61,7 @@ def wide_group(tmp_path: Path) -> dmodel.RepoGroup:
     )
 
 
-WIDE = ("name", "state", "network", "mode", "pr", "created")
+WIDE = ("name", "mode", "state", "created", "network", "pr")
 
 
 def named_rows_group(tmp_path: Path, n: int) -> dmodel.RepoGroup:

@@ -159,11 +159,13 @@ def seed_view_state(
 
         known = frozenset(all_column_names())
         filtered = tuple(dict.fromkeys(c for n in stored if (c := canonical_ls_field(n)) in known))
-        return replace(state, columns=filtered or default_columns())
+        return replace(
+            state, columns=normalize_columns(filtered) if filtered else default_columns()
+        )
     gcfg = global_config_or_defaults()
     seeded = replace(
         state,
-        columns=enabled_from_column_config(gcfg.dashboard),
+        columns=normalize_columns(enabled_from_column_config(gcfg.dashboard)),
         columns_version=COLUMNS_VERSION,
     )
     save_view_state(engine, frontend, seeded)
@@ -228,7 +230,7 @@ def enabled_from_column_config(columns: ColumnConfig) -> tuple[str, ...]:
 
 
 def all_column_names() -> tuple[str, ...]:
-    """Every real column name, in canonical order — the Fields tab's list.
+    """Every real column name, in canonical order (the Fields tab orders its own rows).
 
     The same vocabulary ``jailbee ls --fields`` accepts, including columns off
     by default in both views (``full_name``, ``git_status``, ``ip``, …): an
@@ -237,6 +239,30 @@ def all_column_names() -> tuple[str, ...]:
     — the user may want it.
     """
     return tuple(f.name for f in ls_field_specs(now=datetime.now(UTC), all_repos=False))
+
+
+def normalize_columns(names: Sequence[str]) -> tuple[str, ...]:
+    """A column list as both dashboards keep it: known names, once each, ``name`` first.
+
+    The list's order is the user's column order. ``name`` is the row's
+    identity and the frozen column of the horizontal scroll, so it is always
+    present and always first, whatever was stored.
+    """
+    known = frozenset(all_column_names())
+    rest = (n for n in dict.fromkeys(names) if n in known and n != "name")
+    return ("name", *rest)
+
+
+def reorder_visible(enabled: Sequence[str], visible_order: Sequence[str]) -> tuple[str, ...]:
+    """``enabled`` with its visible columns rearranged into ``visible_order``.
+
+    A drag in the Qt header sees only the columns on screen; an enabled column
+    hidden by its ``show_if`` keeps its slot. Names not in ``enabled`` are ignored.
+    """
+    order = [n for n in visible_order if n in enabled]
+    moving = frozenset(order)
+    it = iter(order)
+    return tuple(next(it) if n in moving else n for n in enabled)
 
 
 def dynamic_column_names() -> frozenset[str]:
@@ -292,8 +318,7 @@ def _select_visible_fields(
     ``enabled`` is the front-end's enabled-name set; ``None`` means
     :func:`default_columns`. Membership decides inclusion — not
     ``default_table``, which is why a column off by default everywhere can
-    be turned on here — and the field-spec list's own order decides
-    rendering order, so a stored list's order is not significant.
+    be turned on here — and ``enabled`` order is rendering order.
 
     Qt's :func:`visible_fields` applies ``show_if`` on each render. The
     terminal applies it when taking a nonempty-column snapshot, then renders
@@ -308,13 +333,16 @@ def _select_visible_fields(
     Shared by the terminal's snapshot selection and both Qt views.
     """
 
-    wanted = frozenset(default_columns() if enabled is None else enabled)
+    names = default_columns() if enabled is None else enabled
+    by_name = {spec.name: spec for spec in ls_field_specs(now=now, all_repos=False)}
     fields = [
-        field_spec
-        for field_spec in ls_field_specs(now=now, all_repos=False)
-        if field_spec.name in wanted
+        by_name[name]
+        for name in dict.fromkeys(names)
+        if name in by_name
         and (
-            not apply_conditions or field_spec.show_if is None or field_spec.show_if(all_containers)
+            not apply_conditions
+            or by_name[name].show_if is None
+            or by_name[name].show_if(all_containers)  # type: ignore[misc]  # narrowed by the None test
         )
     ]
     widths = {"state": 2, "mem": 15, "mem_used": 6, "mem_pct": 4, "outbox": 3}

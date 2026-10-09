@@ -938,7 +938,7 @@ def test_a_menu_taller_than_the_screen_scrolls_to_its_start_row(mocker, tmp_path
 
 def test_settings_are_native_and_keyed():
     state = ds.open_settings(
-        field_names=("name",), enabled=frozenset({"name"}), repo_prefixes=(), folded=frozenset()
+        field_names=("name",), enabled=("name",), repo_prefixes=(), folded=frozenset()
     )
     assert isinstance(build_box(state, mouse_enabled=lambda: True), SettingsBox)
     assert overlay_key(state) == ("settings",)
@@ -988,7 +988,7 @@ def test_space_toggles_a_column_and_persists(mocker, tmp_path):
     run = drive(mocker, ["S", "j", "space"], [alpha_group(tmp_path)])
     settings = run.trace[3].overlay
     assert isinstance(settings, tsession.SettingsState)
-    field = settings.field_names[1]
+    field = ds.setting_rows(run.trace[2].overlay, "fields")[1].key
     assert (field in settings.enabled) != (field in run.trace[2].overlay.enabled)
     save.assert_called()
 
@@ -1012,7 +1012,7 @@ def test_a_refused_toggle_shows_the_checkbox_back_on(mocker, tmp_path):
         view_state=view_state,
     )
     assert checked == [["name"]]
-    assert run.trace[2].overlay.enabled == frozenset({"name"})
+    assert run.trace[2].overlay.enabled == ("name",)
 
 
 def test_the_checkboxes_follow_the_state_they_show(mocker, tmp_path):
@@ -1057,7 +1057,7 @@ def test_clicks_toggle_a_row_and_switch_a_tab(mocker, tmp_path):
 def test_a_row_click_toggles_that_row_and_highlights_it(mocker, tmp_path):
     mocker.patch.object(tsession, "save_view_state")
     run = drive(mocker, ["S", Pick(2)], [alpha_group(tmp_path)])
-    field = run.trace[1].overlay.field_names[2]
+    field = ds.setting_rows(run.trace[1].overlay, "fields")[2].key
     assert (field in run.trace[2].overlay.enabled) != (field in run.trace[1].overlay.enabled)
     assert run.natives[2] == NativeState("settings", 2, tab="fields")
 
@@ -1186,7 +1186,7 @@ def test_a_tick_resyncs_a_checkbox_changed_behind_the_box(mocker, tmp_path):
 
     def flip(app):  # type: ignore[no-untyped-def]
         overlay = app.session.overlay
-        app.session.overlay = ds.toggle_setting(overlay, "fields", overlay.field_names[0])
+        app.session.overlay = ds.toggle_setting(overlay, "fields", "state")
         app._painted = None
 
     drive(
@@ -1195,7 +1195,7 @@ def test_a_tick_resyncs_a_checkbox_changed_behind_the_box(mocker, tmp_path):
         [alpha_group(tmp_path)],
         view_state=ViewState(columns=("name", "state")),
     )
-    assert selected[0] == ["state"]
+    assert selected[0] == ["name"]
 
 
 def test_settings_paint_no_background_but_the_hover(mocker, tmp_path, monkeypatch):
@@ -1225,7 +1225,12 @@ def test_the_settings_cursor_row_is_bold_magenta(mocker, tmp_path, monkeypatch):
             "S",
             lambda app: seen.append(_fg(app, "name")),
             "j",
-            lambda app: seen.append((_fg(app, "name"), _fg(app, "full_name"))),
+            lambda app: seen.append(
+                (
+                    _fg(app, "name"),
+                    _fg(app, ds.setting_rows(app.session.overlay, "fields")[1].key),
+                )
+            ),
         ],
         [alpha_group(tmp_path)],
     )
@@ -1262,13 +1267,13 @@ def test_the_highlighted_settings_row_keeps_its_own_style_when_hovered(
 
 
 def _many_fields(count: int = 40) -> tuple[str, ...]:
-    return tuple(f"field{i}" for i in range(count))
+    return tuple(f"field{i:02d}" for i in range(count))
 
 
 def _open_many(app):  # type: ignore[no-untyped-def]
     app.session.overlay = ds.open_settings(
         field_names=_many_fields(),
-        enabled=frozenset({"field0"}),
+        enabled=("field00",),
         repo_prefixes=(),
         folded=frozenset(),
     )
@@ -1317,7 +1322,7 @@ def test_a_settings_list_taller_than_the_screen_follows_its_cursor(mocker, tmp_p
     last = len(run.screens) - 1
     assert run.natives[last] == NativeState("settings", 30, tab="fields")
     assert len(run.screens[last].splitlines()) <= 16
-    assert "field30" in run.screens[last] and "field0 " not in run.screens[last]
+    assert "field30" in run.screens[last] and "field00 " not in run.screens[last]
 
 
 def test_an_unchecked_setting_is_an_empty_box_even_without_colour(mocker, tmp_path):
@@ -1331,9 +1336,9 @@ def test_an_unchecked_setting_is_an_empty_box_even_without_colour(mocker, tmp_pa
     )
     lines = run.screens[1].splitlines()
     name = next(line for line in lines if " name " in line and "▐" in line)
-    network = next(line for line in lines if " network " in line and "▐" in line)
+    network = next(line for line in lines if " base " in line and "▐" in line)
     assert "▐X▌ name" in name
-    assert "▐ ▌ network" in network
+    assert "▐ ▌ base" in network
 
 
 FIRST = (
@@ -1845,7 +1850,7 @@ def test_a_double_click_on_a_menu_group_opens_it_and_dispatches_nothing(mocker, 
 def test_a_double_click_on_a_settings_row_toggles_it_once(mocker, tmp_path):
     save = mocker.patch.object(tsession, "save_view_state")
     run = drive(mocker, ["S", Pick(2, times=2)], [alpha_group(tmp_path)])
-    field = run.trace[1].overlay.field_names[2]
+    field = ds.setting_rows(run.trace[1].overlay, "fields")[2].key
     assert (field in run.trace[2].overlay.enabled) != (field in run.trace[1].overlay.enabled)
     assert save.call_count == 1
 

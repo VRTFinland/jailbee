@@ -27,6 +27,8 @@ TABS: tuple[tuple[Tab, str], ...] = (
 )
 # The Visibility tab's first row. NUL can never start a repo prefix.
 SHOW_EMPTY = "\x00show-empty"
+# The row's identity and the frozen column: always on, always first.
+LOCKED_FIELD = "name"
 
 # The cursor row's text style for every TUI dashboard surface: container
 # rows, repo headings, action menus and this overlay. It lives here, the
@@ -41,8 +43,8 @@ class SettingsState:
     """An open settings overlay (the tab and cursor are the settings widget's).
 
     ``field_names`` is the full column vocabulary in canonical order;
-    ``enabled`` is a set because stored order is not significant (see
-    :func:`enabled_names`). ``repo_prefixes`` is every group the user can
+    ``enabled`` is the column order, ``name`` first
+    (:data:`LOCKED_FIELD`). ``repo_prefixes`` is every group the user can
     reach — those on screen plus any folded prefix that is not currently
     present, so a repo whose containers are gone can still be unfolded.
     ``visibility_repo_prefixes`` likewise retains every prefix available for
@@ -50,7 +52,7 @@ class SettingsState:
     """
 
     field_names: tuple[str, ...]
-    enabled: frozenset[str]
+    enabled: tuple[str, ...]
     repo_prefixes: tuple[str, ...]
     folded: frozenset[str]
     visibility_repo_prefixes: tuple[str, ...]
@@ -61,7 +63,7 @@ class SettingsState:
 def open_settings(
     *,
     field_names: tuple[str, ...],
-    enabled: frozenset[str],
+    enabled: tuple[str, ...],
     repo_prefixes: tuple[str, ...],
     folded: frozenset[str],
     visibility_repo_prefixes: tuple[str, ...] = (),
@@ -92,7 +94,12 @@ class SettingRow:
 def setting_rows(state: SettingsState, tab: Tab) -> tuple[SettingRow, ...]:
     """One tab's rows: fields shown, repos unfolded, repos visible (after "Show empty repos")."""
     if tab == "fields":
-        return tuple(SettingRow(n, n, n in state.enabled) for n in state.field_names)
+        enabled = [n for n in state.enabled if n in state.field_names]
+        disabled = sorted(n for n in state.field_names if n not in state.enabled)
+        return tuple(
+            SettingRow(n, f"{n} (always first)" if n == LOCKED_FIELD else n, n in state.enabled)
+            for n in (*enabled, *disabled)
+        )
     if tab == "repos":
         return tuple(SettingRow(p, p, p not in state.folded) for p in state.repo_prefixes)
     return (
@@ -110,13 +117,13 @@ def toggle_setting(state: SettingsState, tab: Tab, key: str) -> SettingsState:
     stay on screen, so nothing becomes unreachable.
     """
     if tab == "fields":
-        if key not in state.field_names:
+        if key not in state.field_names or key == LOCKED_FIELD:
             return state
         if key in state.enabled:
-            return (
-                state if len(state.enabled) == 1 else replace(state, enabled=state.enabled - {key})
-            )
-        return replace(state, enabled=state.enabled | {key})
+            if len(state.enabled) == 1:
+                return state
+            return replace(state, enabled=tuple(n for n in state.enabled if n != key))
+        return replace(state, enabled=(*state.enabled, key))
     if tab == "repos":
         if key not in state.repo_prefixes:
             return state
@@ -134,12 +141,20 @@ def next_tab(tab: Tab) -> Tab:
     return order[(order.index(tab) + 1) % len(order)]
 
 
-def enabled_names(state: SettingsState) -> tuple[str, ...]:
-    """The enabled columns in canonical order.
+def move_field(state: SettingsState, key: str, step: int) -> SettingsState:
+    """Move an enabled field ``step`` places; unchanged past ``name`` or the enabled block."""
+    if key == LOCKED_FIELD or key not in state.enabled:
+        return state
+    order = list(state.enabled)
+    index = order.index(key)
+    target = index + step
+    floor = 1 if order and order[0] == LOCKED_FIELD else 0
+    if not floor <= target < len(order):
+        return state
+    order.insert(target, order.pop(index))
+    return replace(state, enabled=tuple(order))
 
-    Order comes from ``field_names``, never from the order the user clicked:
-    the dashboards render in field-spec order and filter by membership, so a
-    stored order that reflected clicks would imply a reordering feature that
-    does not exist.
-    """
-    return tuple(n for n in state.field_names if n in state.enabled)
+
+def enabled_names(state: SettingsState) -> tuple[str, ...]:
+    """The enabled columns in the user's order."""
+    return state.enabled

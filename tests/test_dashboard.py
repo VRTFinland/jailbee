@@ -2547,17 +2547,35 @@ def test_visible_fields_enabled_set_can_add_an_off_by_default_column():
     assert names == ["name", "memory_limit"]
 
 
-def test_visible_fields_renders_in_canonical_order_not_stored_order():
-    """Stored order is not significant: the dashboards iterate the field-spec
-    list and filter by membership. Column reordering is a separate feature,
-    and this keeps a stored list from half-implementing it."""
+def test_visible_fields_renders_in_stored_order():
+    """The stored list's order is the column order the user chose."""
     from datetime import UTC, datetime
 
     c = ContainerInfo(name="p-foo", state="Running", network="strict", ip=None, memory_limit=None)
     now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
-    names = [f.name for f in dcolumns.visible_fields(now, [c], ["state", "name"])]
-    assert names == ["name", "state"]
+    names = [f.name for f in dcolumns.visible_fields(now, [c], ["name", "memory_limit", "state"])]
+    assert names == ["name", "memory_limit", "state"]
+
+
+def test_normalize_columns_puts_name_first_and_drops_unknowns():
+    assert dcolumns.normalize_columns(["state", "nope", "name", "state"]) == ("name", "state")
+    assert dcolumns.normalize_columns(["cpu"]) == ("name", "cpu")
+    assert dcolumns.normalize_columns([]) == ("name",)
+
+
+def test_reorder_visible_keeps_hidden_columns_in_their_slots():
+    enabled = ("name", "pr", "state", "job", "cpu")
+    # pr and job are hidden (show_if); the user dragged cpu before state.
+    assert dcolumns.reorder_visible(enabled, ("name", "cpu", "state")) == (
+        "name",
+        "pr",
+        "cpu",
+        "job",
+        "state",
+    )
+    # A name not in enabled is ignored rather than inserted.
+    assert dcolumns.reorder_visible(("name", "state"), ("name", "ip", "state")) == ("name", "state")
 
 
 def test_visible_fields_still_applies_show_if_to_an_enabled_column():
@@ -2872,12 +2890,12 @@ def test_seed_view_state_does_not_duplicate_a_column_both_spellings_name(mocker)
 
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
-    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("group", "name", "claude_group")))
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "group", "claude_group")))
     mocker.patch.object(dmodel, "load_global_config", return_value=(GlobalConfig(), []))
 
     state = dcolumns.seed_view_state(engine, FRONTEND_TUI)
 
-    assert state.columns == ("group", "name")
+    assert state.columns == ("name", "group")
 
 
 def test_seed_view_state_falls_back_to_default_when_every_stored_name_is_stale(mocker):
@@ -6602,9 +6620,9 @@ def test_seed_view_state_does_not_duplicate_an_existing_replacement():
     from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
 
     engine = _view_engine()
-    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("outbox", "name", "issues")))
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "outbox", "issues")))
 
-    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("outbox", "name")
+    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("name", "outbox")
 
 
 def test_seed_view_state_runs_the_diff_rename_and_the_column_set_migration_together():

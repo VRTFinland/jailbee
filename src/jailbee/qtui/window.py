@@ -27,6 +27,7 @@ from jailbee.dashboard.columns import (
     all_column_names,
     default_columns,
     dynamic_column_names,
+    normalize_columns,
     visible_fields,
 )
 from jailbee.dashboard.menus import MenuGroup, group_menu_actions, view_only_note
@@ -64,17 +65,14 @@ _LAYOUT_INDEX = {"table": 0, "cards": 1}
 
 
 def _filtered_columns(names: Sequence[str]) -> tuple[str, ...]:
-    """``names`` reduced to real columns, in canonical order.
+    """``names`` reduced to real columns in their stored order, ``name`` first.
 
-    Falls back to :func:`default_columns` when nothing survives — a stale
-    or hand-edited set (a renamed/removed column, or a caller passing
-    arbitrary names directly) must not be able to leave the window with
-    zero enabled columns, the exact state the last-column guard in
-    ``_toggle_column`` exists to prevent. Used by ``__init__`` when
-    restoring a persisted column set via the ``enabled_columns`` keyword.
+    Falls back to :func:`default_columns` when no real column survives — a
+    stale or hand-edited set must not leave the window with only what the
+    normaliser forces in.
     """
-    filtered = tuple(n for n in all_column_names() if n in set(names))
-    return filtered or default_columns()
+    known = frozenset(all_column_names())
+    return normalize_columns(names) if any(n in known for n in names) else default_columns()
 
 
 class MainWindow(QMainWindow):
@@ -266,12 +264,13 @@ class MainWindow(QMainWindow):
         if not checked and len(self._enabled_columns) == 1:
             self._column_actions[name].setChecked(True)
             return
-        current = set(self._enabled_columns)
+        if name == "name":
+            self._column_actions[name].setChecked(True)
+            return
         if checked:
-            current.add(name)
+            self._enabled_columns = normalize_columns((*self._enabled_columns, name))
         else:
-            current.discard(name)
-        self._enabled_columns = tuple(n for n in all_column_names() if n in current)
+            self._enabled_columns = tuple(n for n in self._enabled_columns if n != name)
         self.columnsChanged.emit()
 
     def enabled_columns(self) -> tuple[str, ...]:

@@ -458,6 +458,20 @@ def test_toggling_a_columns_action_emits_and_updates(qtbot):
     assert seen  # the controller is told, so it can persist
 
 
+def test_toggling_a_column_on_appends_it(qtbot):
+    win = MainWindow(enabled_columns=("name", "state", "created"))
+    qtbot.addWidget(win)
+    act = next(a for a in win.columns_menu.actions() if a.text() == "ip")
+    act.trigger()  # see the note in test_toggling_a_columns_action_emits_and_updates
+    assert win.enabled_columns() == ("name", "state", "created", "ip")
+
+
+def test_a_restored_column_order_is_kept_with_name_first(qtbot):
+    win = MainWindow(enabled_columns=("state", "created", "name"))
+    qtbot.addWidget(win)
+    assert win.enabled_columns() == ("name", "state", "created")
+
+
 def test_the_last_column_cannot_be_unchecked(qtbot):
     """Same rule as the TUI overlay: a table with no columns looks broken."""
     win = MainWindow(enabled_columns=("name",))
