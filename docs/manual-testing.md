@@ -3259,7 +3259,22 @@ jailbee dashboard
 #  A field vocabulary this long does not fit under a normal terminal height:
 #     confirm the list scrolls with a scrollbar on the right and that moving
 #     to the very last field scrolls it into view rather than losing it.
+#  On the Fields tab, enabled fields come first in your order, then the
+#     disabled ones alphabetically. Shift+↓ on an enabled field -> it moves one
+#     place down and the table's column moves with it; Shift+↑ at the top of
+#     the enabled list, or on `name`, does nothing (`name` is always first).
+#     Enable a disabled field -> it is appended after the enabled ones.
 #  Esc -> closes the overlay, back to the plain table.
+
+# Sorting the rows (terminal dashboard):
+#  Press > -> rows sort by the next shown column and its header gains ▲/▼;
+#     < steps back, through a "default order" stop (newest first) with no
+#     indicator. I -> the direction flips.
+#  Click a header -> sorts by it, largest first for quantities and times, A→Z
+#     for text; click it again -> flips. Rows with no value stay last either way.
+#  Rows move inside their repo group only -- the groups keep their place.
+#  Quit and reopen `jailbee dashboard` -> the column order and the sort are
+#     both still there.
 
 # Mouse (on by default; `m` toggles it for the session):
 #  Click a container row -> it is selected. Double-click or right-click ->
@@ -3292,6 +3307,11 @@ jailbee dashboard
 #     reopen the TUI dashboard (or press F2 again) -- the TUI's own state is
 #     still exactly what you left it. Each front-end has its own row in
 #     state.sqlite's view_prefs table.
+#  The same goes for order and sort: in `jailbee gui` (table layout), click a
+#     header -> rows sort and the header shows an indicator; drag a header ->
+#     the column moves (`name` cannot be dragged); View ▸ Columns lists the
+#     enabled columns in that order, then the rest alphabetically. Close and
+#     reopen -> both are kept, and the TUI's order and sort are unchanged.
 
 # Refresh: base state (state/ip/op) updates every ~3s; git columns
 # (WT/DIFF ±/↑/↓/MERGE) every ~10s. The pace is `dashboard.refresh` in the

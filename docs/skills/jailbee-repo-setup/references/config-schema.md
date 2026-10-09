@@ -668,9 +668,10 @@ and rare.
 Each remembers its own columns and its own folded repo groups in
 `state.sqlite`'s `view_prefs` table, one row per front-end — a wide Qt
 table and a narrow TUI is a supported setup. Change it in the TUI with
-`F2` (or `S`): `↑`/`↓` move, `Space` toggle, `Tab` switch between Fields and
-Repos, `Esc` close — changes apply and persist immediately. In the GUI, use
-View ▸ Columns. Enabling a column still means "show it when it has
+`F2` (or `S`): `↑`/`↓` move, `Shift+↑`/`Shift+↓` moves a column, `Space` toggle, `Tab` switch between Fields and
+Repos, `Esc` close — changes apply and persist immediately. Column order and
+row sort (`<`/`>`/`I`, header click) are remembered per front-end too. In the GUI, use
+View ▸ Columns, and drag a header to reorder. Enabling a column still means "show it when it has
 something to say": the four dynamic columns (`job`, `ttl`, `pr`, `mode`)
 appear only when they apply, unlike `ls --fields`, where naming a column
 forces it on.

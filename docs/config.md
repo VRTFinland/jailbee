@@ -2307,11 +2307,19 @@ live view can own the state you are looking at:
 - In the TUI, press **F2** (or `S`) for the settings overlay: `↑`/`↓` moves,
   `Space` toggles, `Tab` switches between the Fields, Repos and Visibility tabs, `Esc` closes.
   Changes apply immediately — the table stays on screen behind the panel.
-- In the GUI, use **View ▸ Columns**.
+  The Fields tab lists the enabled fields in your order, then the disabled
+  ones alphabetically; `Shift+↑`/`Shift+↓` moves an enabled field (never across
+  `name`, which is always first and cannot be turned off), and a newly enabled
+  field is appended. Outside the overlay, `<`/`>` sort the rows by the
+  previous/next column, `I` reverses the sort and a header click sorts by that
+  column; the sorted column's header shows `▲`/`▼`.
+- In the GUI, use **View ▸ Columns** (enabled columns in order, then the rest
+  alphabetically); drag a header to reorder the columns (`name` stays first) and
+  click one to sort by it.
 
 The two are independent on purpose: a wide Qt table and a narrow TUI is a
 supported setup. State lives in `state.sqlite`'s `view_prefs` table, one row
-per front-end — machine-written, so it stays out of your hand-edited config.
+per front-end — the enabled columns, their order and the row sort are each remembered separately for the terminal and the Qt dashboard. It is machine-written, so it stays out of your hand-edited config.
 
 In the Qt dashboard, enabling a conditional column means "show it when it has
 something to say"; empty dynamic columns are omitted. The terminal dashboard

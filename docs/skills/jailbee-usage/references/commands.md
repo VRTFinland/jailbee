@@ -689,7 +689,7 @@ only offer Fold/Unfold; on a container, its action menu),
 `Space` fold/unfold the selected repo (in the settings overlay: toggle the
 selected setting), `v` show/hide the details panel (the highlighted row's full
 details at the bottom of the full-screen frame, growing into spare rows with a busy agent's full last message and recent steps; the action menu opens to its right; persisted),
-`F2`/`S` settings overlay (Fields, Repos and Visibility tabs: columns, folding, which repos show), `o` recompute nonempty selected columns and optimize widths once
+`F2`/`S` settings overlay (Fields, Repos and Visibility tabs: columns, folding, which repos show; on Fields, `Shift+↑`/`Shift+↓` moves an enabled column — never across `name`, which is always first and cannot be turned off; newly enabled columns are appended), `<`/`>` sort the rows by the previous/next shown column (with a "default order" stop: newest first), `I` reverses the sort, and a click on a column header sorts by it (the first click uses the column's first direction — quantities and times largest first, text A→Z — a second click flips); the sort column's header carries `▲`/`▼`, rows with no value go last in either direction, and rows sort inside each repo group (groups never move); a sort column that is not enabled sorts by the default order; sort and column order are remembered per front-end. `o` recompute nonempty selected columns and optimize widths once
 from unfolded visible data (also snapshotted on opening and recomputed on settings
 changes; enabled preferences unchanged; session-only; retained on refresh and resize; press again to recompute),
 `←`/`→` scroll the columns sideways when they do not fit the terminal: the first
@@ -797,13 +797,14 @@ headers only offer Fold/Unfold because there is no directory to create in.
 
 `F2` (or `S`) opens a settings overlay drawn below the live table: `↑`/`↓`
 move, `Space` toggles the row under the cursor, `Tab` switches between the
-Fields, Repos and Visibility tabs, `Esc` closes. Changes apply and persist immediately
+Fields, Repos and Visibility tabs, `Esc` closes. On Fields, `Shift+↑`/`Shift+↓`
+moves an enabled column (never across `name`, which is always first). Changes apply and persist immediately
 — there is no OK/Cancel. This is where the TUI's own column set and folded
-repo groups live now (in `state.sqlite`'s `view_prefs` table); the `dashboard:`
+repo groups live now, with its column order and row sort (in `state.sqlite`'s `view_prefs` table); the `dashboard:`
 config block is deprecated (still accepted, but ignored — see
 [Configuration](../../../config.md#ls--dashboard--remembered-columns)). The
 Qt dashboard (`jailbee gui`) keeps an independent set of its own, via
-View ▸ Columns.
+View ▸ Columns; there a header click sorts and a header drag reorders the columns.
 
 Output is not lost when an action prints something. `git diff` opens in
 `$PAGER` (`less -R`, then `more`), with colour forced past the pipe; `pr`,
@@ -862,8 +863,11 @@ Cards, the same menu picks a card style — **Compact** (default; hides clean
 git rows) or **Grid**; Compact renders a hardcoded field selection and
 ignores whichever columns are enabled — switch to Grid or Table to see one
 that Compact doesn't show. **View ▸ Columns** toggles which columns are
-enabled, independently of the TUI's own set (see `jailbee dashboard` above)
-— at least one must stay checked. Each repo's card group has a header that
+enabled, independently of the TUI's own set (see `jailbee dashboard` above),
+listing the enabled ones in column order and then the rest alphabetically
+— at least one must stay checked. A header click sorts the rows by that column
+(indicator in the header; a second click flips it) and dragging a header
+reorders the columns (`name` cannot be dragged); both are remembered. Each repo's card group has a header that
 can be clicked to collapse/expand it. It persists, between sessions, in the
 SQLite state DB: the chosen layout, card style, collapsed repo groups, the
 enabled columns, the table's column widths/order — but never the window size or position.
