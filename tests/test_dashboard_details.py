@@ -622,3 +622,171 @@ def test_hostile_transcript_text_renders_literally() -> None:
     assert "“last [bold]”" in body
     assert "Bash  echo [/dim] \\" in body
     assert "“[red]x[/red] \\”" in body
+
+
+def _panel_plain(parts: tuple[str, ...]) -> list[str]:
+    return [_plain(p) for p in parts]
+
+
+def test_state_label_pairs_the_glyph_with_the_name() -> None:
+    from jailbee.dashboard import format as dformat
+
+    assert dformat.state_label("Running") == "▶ Running"
+    assert dformat.state_label("Stopped") == "■ Stopped"
+    assert dformat.state_label("[odd]") == r"\[odd]"
+
+
+def test_summary_runs_state_network_ip_github_agent_doing_in_order() -> None:
+    until = NOW + timedelta(minutes=42)
+    agent = AgentSummary("claude", "busy", NOW - timedelta(minutes=3), None, 1)
+    c = _c(
+        network="loose",
+        loose_until=until,
+        ip="10.0.3.7",
+        pr_number=123,
+        pr_author=True,
+        agent_status=(agent,),
+        activity=(
+            ProcessActivity(comm="pytest", percent=90.0, count=3),
+            ProcessActivity(comm="node", percent=5.0, count=1),
+        ),
+    )
+    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
+    summary = _panel_plain(dd.container_panel(c, NOW).summary)
+
+    assert summary == [
+        "▶ Running",
+        f"● loose {_plain(cells['ttl'](c))} →{until.astimezone():%H:%M}",
+        "10.0.3.7",
+        f"PR {_plain(cells['pr'](c))}",
+        _plain(cells["agent"](c)),
+        "pytest x3, node",
+    ]
+
+
+def test_summary_leaves_out_what_is_absent_and_dims_strict() -> None:
+    panel = dd.container_panel(_c(), NOW)
+    assert _panel_plain(panel.summary) == ["▶ Running", "strict"]
+    assert panel.summary[1] == "[dim]strict[/dim]"
+
+
+def test_loose_without_a_deadline_reads_infinity() -> None:
+    summary = _panel_plain(dd.container_panel(_c(network="loose"), NOW).summary)
+    assert summary[1] == "● loose ∞"
+
+
+def test_job_and_its_first_error_line_follow_the_state() -> None:
+    c = _c(job_phase="failed", job_kind="new", job_error="boom [red]\nsecond line")
+    first = dd.container_panel(c, NOW).summary[0]
+    assert "boom [red]" in _plain(first)
+    assert "second line" not in _plain(first)
+    assert r"\[red]" in first
+
+
+def test_git_root_row_reuses_the_table_cells() -> None:
+    gs = GitStatus(
+        wt="+12 -3",
+        ahead_diff="+245 -18",
+        ahead_count="7",
+        conflict="ok",
+        target_diff="+245 -18",
+        behind_count="9",
+        local_diff="+1 -0",
+        local_count="5",
+    )
+    c = _c(git_status=gs, base_branch="dev")
+    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None and len(panel.git) == 1
+    root = panel.git[0]
+    assert _plain(root.name) == "feat"
+    # Distinct numbers, so a swapped field cannot pass on a coincidence.
+    assert (root.ahead, root.behind) == (cells["ahead_count"](c), cells["behind_count"](c))
+    assert (root.target, root.working) == (cells["target_diff"](c), cells["wt"](c))
+    assert _plain(root.note) == f"merge {_plain(cells['conflict'](c))}"
+    assert _plain(root.extra) == "host HEAD ↑5 +1 -0"
+
+
+def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        submodules=(
+            SubmoduleChange(
+                path="deps/[bold]widget",
+                status="modified",
+                ahead_commits=2,
+                behind_commits=1,
+                target_ins=7,
+                target_del=3,
+                wt_ins=4,
+                wt_del=0,
+            ),
+            SubmoduleChange(
+                path="second",
+                status="new",
+                ahead_commits=None,
+                behind_commits=None,
+                target_ins=None,
+                target_del=None,
+                wt_ins=None,
+                wt_del=None,
+            ),
+            SubmoduleChange(path="third", status="removed"),
+        ),
+    )
+    git = dd.container_panel(_c(git_status=status), NOW).git
+    assert git is not None
+    subs = git[1:]
+
+    assert [_plain(r.name) for r in subs] == ["deps/[bold]widget", "second", "third"]
+    assert r"\[bold]" in subs[0].name
+    assert [(_plain(r.ahead), _plain(r.behind)) for r in subs] == [
+        ("2", "1"),
+        ("?", "?"),
+        ("0", "0"),
+    ]
+    assert [_plain(r.target) for r in subs] == ["+7 -3", "?", "clean"]
+    assert [_plain(r.working) for r in subs] == ["+4 -0", "?", "clean"]
+    assert [_plain(r.note) for r in subs] == ["modified", "new", "removed"]
+    assert all(r.extra == "" for r in subs)
+
+
+def test_footer_carries_base_mode_group_created_mounts_and_resources() -> None:
+    created = NOW - timedelta(days=2)
+    c = _c(
+        base_branch="dev",
+        credential_group="[work]",
+        created_at=created,
+        optional_mounts=("ssh", "gpg"),
+        memory_usage=1_200_000_000,
+        memory_limit="4GiB",
+        cpu_percent=34.0,
+    )
+    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
+    footer = _panel_plain(dd.container_panel(c, NOW).footer)
+
+    assert footer == [
+        f"base {_plain(cells['base'](c))}",
+        "clone",
+        "group [work]",
+        f"created 48h ago ({_plain(cells['created'](c))})",
+        "mounts ssh, gpg",
+        f"mem {_plain(cells['mem'](c))}",
+        f"cpu {_plain(cells['cpu'](c))}",
+    ]
+
+
+def test_a_bare_container_panel() -> None:
+    panel = dd.container_panel(_c(state="Stopped", network=None), NOW)
+
+    assert _panel_plain(panel.summary) == ["■ Stopped"]
+    assert panel.git is None
+    assert panel.base == "base"
+    footer = _panel_plain(panel.footer)
+    assert "group inherits repo" in footer
+    assert not any(part.startswith("mounts") for part in footer)

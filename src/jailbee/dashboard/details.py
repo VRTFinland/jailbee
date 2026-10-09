@@ -25,6 +25,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jailbee.agent_activity import describe
+from jailbee.dashboard import format as dashboard_format
 from jailbee.lifecycle import (
     ContainerInfo,
     format_duration_short,
@@ -213,6 +214,140 @@ def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
         DetailItem("created", created, "identity"),
         DetailItem("mounts", _or_dash(", ".join(escape(m) for m in c.optional_mounts)), "mounts"),
     ]
+
+
+_STATE_STYLE = {"Running": "green", "Frozen": "blue"}
+
+
+@dataclass(frozen=True)
+class GitRow:
+    """One line of the details panel's git table; every field is Rich markup.
+
+    The container's own tree comes first, then one row per changed
+    submodule. ``extra`` is shown only when the panel is wide enough.
+    """
+
+    name: str
+    ahead: str
+    behind: str
+    target: str
+    working: str
+    note: str = ""
+    extra: str = ""
+
+
+@dataclass(frozen=True)
+class ContainerPanel:
+    """A container's details, read top to bottom; every part is Rich markup.
+
+    ``summary`` is one line of what the container is doing, ``git`` its
+    trees (None without a git status), ``footer`` one dim line of the rest.
+    ``base`` names the branch the git table's diff column compares with.
+    """
+
+    summary: tuple[str, ...]
+    base: str
+    git: tuple[GitRow, ...] | None
+    footer: tuple[str, ...]
+
+
+def _git_value(value: str) -> str:
+    """A submodule value styled the way the table styles its git cells."""
+    if value in ("", "0"):
+        return "[dim]0[/dim]"
+    if value == "clean":
+        return "[dim]clean[/dim]"
+    if value == "?":
+        return "[yellow]?[/yellow]"
+    return escape(value)
+
+
+def _present(markup: str) -> bool:
+    """Whether a cell shows a value, not an empty string or the dash placeholder."""
+    return Text.from_markup(markup).plain.strip() not in ("", "—")
+
+
+def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
+    """The container's details panel content: summary, git table, footer."""
+    cells = {f.name: f.cell for f in ls_field_specs(now=now, all_repos=False)}
+
+    def cell(name: str) -> str:
+        return cells[name](c)
+
+    style = _STATE_STYLE.get(c.state, "dim")
+    state = f"[{style}]{dashboard_format.state_label(c.state)}[/{style}]"
+    if c.job_phase is not None:
+        state += f" · {cell('job')}"
+    error = c.job_error.strip().splitlines()[0] if c.job_error and c.job_error.strip() else ""
+    if error:
+        state += f" · [red]{escape(error)}[/red]"
+    summary = [state]
+    if c.network == "loose":
+        ttl = cell("ttl") if c.loose_until is not None else "∞"
+        network = f"[red]●[/red] loose {ttl}"
+        if c.loose_until is not None:
+            network += f" →{c.loose_until.astimezone():%H:%M}"
+        summary.append(network)
+    elif c.network == "strict":
+        summary.append("[dim]strict[/dim]")
+    elif c.network:
+        summary.append(escape(c.network))
+    if c.ip:
+        summary.append(escape(c.ip))
+    pr, issues = cell("pr"), cell("issues")
+    github = " · ".join(
+        part
+        for part in (
+            f"PR {pr}" if _present(pr) else "",
+            f"issues {issues}" if _present(issues) else "",
+        )
+        if part
+    )
+    if github:
+        summary.append(github)
+    agent = cell("agent")
+    if _present(agent):
+        summary.append(agent)
+    # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
+    doing = ", ".join(
+        escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity
+    )
+    if doing:
+        summary.append(f"[dim]{doing}[/dim]")
+
+    git: tuple[GitRow, ...] | None = None
+    if c.git_status is not None:
+        root = GitRow(
+            name=f"[bold]{escape(c.display_name)}[/bold]",
+            ahead=cell("ahead_count"),
+            behind=cell("behind_count"),
+            target=cell("target_diff"),
+            working=cell("wt"),
+            note=f"[dim]merge[/dim] {cell('conflict')}",
+            extra=f"[dim]host HEAD[/dim] ↑{cell('local_count')} {cell('local_diff')}",
+        )
+        subs = tuple(
+            GitRow(
+                name=escape(sub.path),
+                ahead=_git_value(row["ahead_count"]),
+                behind=_git_value(row["behind_count"]),
+                target=_git_value(row["target_diff"]),
+                working=_git_value(row["wt"]),
+                note=f"[dim]{escape(sub.status)}[/dim]",
+            )
+            for sub, row in zip(c.git_status.submodules, submodule_sub_rows(c), strict=True)
+        )
+        git = (root, *subs)
+
+    created = cell("created")
+    if c.created_at is not None:
+        created = f"{format_duration_short(now - c.created_at)} ago ({created})"
+    group = escape(c.credential_group) if c.credential_group else "inherits repo"
+    footer = [f"base {cell('base')}", escape(c.mode), f"group {group}", f"created {created}"]
+    if c.optional_mounts:
+        footer.append(f"mounts {', '.join(escape(m) for m in c.optional_mounts)}")
+    footer += [f"mem {cell('mem')}", f"cpu {cell('cpu')}"]
+    return ContainerPanel(tuple(summary), escape(c.base_branch or "base"), git, tuple(footer))
 
 
 def repo_details(group: RepoGroup) -> list[DetailItem]:
