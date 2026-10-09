@@ -610,9 +610,10 @@ def test_github_token_not_part_of_run_autostart(tmp_path):
     assert applied == ["user-step"]
 
 
-def test_inject_github_token_applies_step_when_token_present(tmp_path):
-    """inject_github_token ensures a tmux session and runs the github-token
-    step directly, regardless of any autostart config."""
+def test_inject_github_token_writes_profile_without_a_tmux_session(tmp_path, mocker):
+    """The token file is written by one root `incus exec`, and no tmux session
+    is created for it: window 0 inherits the server's environment, so the file
+    has to exist before the first `ensure_session` (see `agents.ensure_agents`)."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
@@ -621,60 +622,35 @@ def test_inject_github_token_applies_step_when_token_present(tmp_path):
         container_prefix="sampleapp",
         github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_xxx"}},
     )
-
     incus = MagicMock()
-    applied: list[str] = []
+    ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
 
-    import jailbee.autostart as autostart_mod
+    inject_github_token(cfg, incus, "c1", "/r")
 
-    orig_apply = autostart_mod._apply_step
-    orig_ensure = autostart_mod.tmux.ensure_session
-    ensure_calls: list[str] = []
-    autostart_mod._apply_step = lambda _cfg, _incus, _container, step, _repo_dir, **_kw: (
-        applied.append(step.name)
-    )
-    autostart_mod.tmux.ensure_session = lambda _incus, container, start_dir=None: (
-        ensure_calls.append(container)
-    )
-    try:
-        inject_github_token(cfg, incus, "c1", "/r")
-    finally:
-        autostart_mod._apply_step = orig_apply
-        autostart_mod.tmux.ensure_session = orig_ensure
-
-    assert applied == ["github-token"]
-    assert ensure_calls == ["c1"]
+    ensure.assert_not_called()
+    apply_step.assert_not_called()
+    incus.exec.assert_called_once()
+    name, cmd = incus.exec.call_args.args
+    assert name == "c1"
+    assert incus.exec.call_args.kwargs.get("uid") is None
+    assert "/etc/profile.d/jailbee-github.sh" in cmd[-1]
+    assert "github_pat_xxx" in cmd[-1]
 
 
-def test_inject_github_token_noop_when_disabled(tmp_path):
-    """No token applies → no tmux session, no step."""
+def test_inject_github_token_noop_when_disabled(tmp_path, mocker):
+    """No token applies → nothing runs in the container."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(tmp_path, github={"enabled": False})
-
     incus = MagicMock()
-    applied: list[str] = []
+    ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
 
-    import jailbee.autostart as autostart_mod
+    inject_github_token(cfg, incus, "c1", "/r")
 
-    orig_apply = autostart_mod._apply_step
-    orig_ensure = autostart_mod.tmux.ensure_session
-    ensure_calls: list[str] = []
-    autostart_mod._apply_step = lambda _cfg, _incus, _container, step, _repo_dir, **_kw: (
-        applied.append(step.name)
-    )
-    autostart_mod.tmux.ensure_session = lambda _incus, container, start_dir=None: (
-        ensure_calls.append(container)
-    )
-    try:
-        inject_github_token(cfg, incus, "c1", "/r")
-    finally:
-        autostart_mod._apply_step = orig_apply
-        autostart_mod.tmux.ensure_session = orig_ensure
-
-    assert applied == []
-    assert ensure_calls == []
+    incus.exec.assert_not_called()
+    ensure.assert_not_called()
 
 
 def test_on_start_unchanged_when_github_token_step_returns_none(tmp_path):

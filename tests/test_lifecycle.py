@@ -2132,6 +2132,37 @@ def test_new_container_injects_github_token_even_with_no_autostart(tmp_path, moc
     run_autostart.assert_not_called()
 
 
+def test_new_container_injects_github_token_before_the_tmux_session_exists(tmp_path, mocker):
+    """Window 0 inherits the tmux server's environment, and `ensure_agents` is
+    the first thing to start the server — the token file must already exist."""
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    order: list[str] = []
+    mocker.patch(
+        "jailbee.autostart.inject_github_token", side_effect=lambda *a, **k: order.append("token")
+    )
+    mocker.patch("jailbee.agents.ensure_agents", side_effect=lambda *a, **k: order.append("agents"))
+
+    new_container(
+        cfg,
+        incus,
+        NewContainerOptions(
+            container_branch="feat/x",
+            name=None,
+            network="strict",
+            memory="8GiB",
+            cpu=4,
+            from_base="gisgro-base",
+            clone=True,
+            autostart=False,
+        ),
+    )
+
+    assert order == ["token", "agents"]
+
+
 def test_new_container_persists_user_gie_branch(tmp_path):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

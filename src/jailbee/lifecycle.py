@@ -1937,6 +1937,19 @@ def new_container(
 
     ensure_directories(cfg, incus, name)
 
+    # GH_TOKEN goes in before anything creates the autostart tmux session
+    # (`ensure_agents` below is the first): window 0 inherits the tmux
+    # server's environment, so a token written after the session exists never
+    # reaches the shell users land in. Deliberately `cfg`, not `effective_cfg`:
+    # this is jailbee's own step, and the fork's tree is already cloned in by
+    # now, so the branch's `autostart` must not reach it. Infrastructure, not a
+    # user autostart command — written regardless of --no-autostart so `gh`
+    # works in every container. No-op when the github integration is off or no
+    # token applies.
+    from jailbee.autostart import inject_github_token
+
+    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
+
     # Install/update every enabled agent before autostart execs them. Must
     # come after mounts are attached (each agent's shared cache, e.g.
     # claude-install, provides its persistent store) and after the network
@@ -1956,20 +1969,6 @@ def new_container(
         sync_agent_skills(cfg)
     except Exception as e:  # non-fatal
         warn(f"jailbee-skills sync failed (continuing): {e}")
-
-    # GH_TOKEN injection is auto-enabled infrastructure, not a user autostart
-    # command — write it regardless of --no-autostart so `gh` works in every
-    # container (mirrors the agent install/update above). No-op when the
-    # github integration is off or no token applies.
-    #
-    # Deliberately `cfg`, not `effective_cfg`: this is jailbee's own step, and
-    # `_apply_step` merges `cfg.autostart.env` (PATH included) into every step's
-    # environment. The step pipes the host's GitHub PAT through `sudo tee`, and
-    # the fork's tree is already cloned in by now, so the branch's `autostart`
-    # must not reach it. `inject_github_token` needs nothing from `autostart`.
-    from jailbee.autostart import inject_github_token
-
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
 
     if opts.autostart:
         _phase("autostart")

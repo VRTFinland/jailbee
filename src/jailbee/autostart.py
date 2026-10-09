@@ -250,9 +250,14 @@ def inject_github_token(
     step = _github_token_step(cfg)
     if step is None:
         return
-    tmux.ensure_session(incus, container, start_dir=repo_dir)
     info(f"Injecting GH_TOKEN into {container}")
-    _apply_step(cfg, incus, container, step, repo_dir)
+    # A root `incus exec`, not a tmux step: this must not create the tmux
+    # session. Window 0 is a non-login shell that inherits the *server's*
+    # environment, and the server is started by whichever `ensure_session`
+    # runs first (`agents.ensure_agents` on `jailbee new`) — if the file does
+    # not exist yet by then, window 0 never sees GH_TOKEN. Callers therefore
+    # invoke this before anything that creates the session.
+    incus.exec(container, ["bash", "-c", step.run])
 
 
 def litellm_autostart_on(cfg: Config) -> bool:
