@@ -56,11 +56,28 @@ def test_set_alias_to_own_short_name_clears(cfg):
     incus.config_set.assert_not_called()
 
 
-def test_set_alias_ignores_foreign_repo_names(cfg):
+def test_set_alias_ignores_foreign_repo_containers(cfg):
     incus = MagicMock()
-    incus.list_containers.return_value = [_raw("myrepo-a"), _raw("other-login", prefix="other")]
+    incus.list_containers.return_value = [
+        _raw("myrepo-a"),
+        _raw("myrepo-login", prefix="other"),
+        _raw("other-x", alias="login", prefix="other"),
+    ]
     aliases.set_alias(cfg, incus, "myrepo-a", "login")
-    incus.config_set.assert_called_once()
+    incus.config_set.assert_called_once_with("myrepo-a", "user.jailbee.alias", "login")
+
+
+@pytest.mark.parametrize("taken", ["myrepo-b", "myrepo-a", "other-x"])
+def test_set_alias_rejects_full_instance_names(cfg, taken):
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _raw("myrepo-a"),
+        _raw("myrepo-b"),
+        _raw("other-x", prefix="other"),
+    ]
+    with pytest.raises(aliases.AliasError, match="instance name"):
+        aliases.set_alias(cfg, incus, "myrepo-a", taken)
+    incus.config_set.assert_not_called()
 
 
 def test_clear_alias_unsets_label():

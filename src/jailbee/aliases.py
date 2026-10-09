@@ -36,6 +36,8 @@ def set_alias(cfg: Config, incus: Incus, full_name: str, alias: str) -> None:
         clear_alias(incus, full_name)
         return
     instances = incus.list_containers(fast=True)
+    if any(raw["name"] == alias for raw in instances):
+        raise AliasError(f"'{alias}' is an instance name; name resolution would shadow the alias")
     own_base = f"{cfg.container_prefix}-base"
     for raw in instances:
         if own_base in (raw.get("profiles") or []) and short_name(cfg, raw["name"]) == alias:
