@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from jailbee.dashboard import model as dmodel
-from jailbee.dashboard.bulk import plan_bulk
+from jailbee.dashboard.bulk import BulkAction, plan_bulk
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
 from tests.dashboard_fixtures import ci
-from tests.dashboard_pilot import SyncJobs, bare_session
+from tests.dashboard_pilot import SyncJobs, bare_session, box_text
 
 
 def _session(mocker, tmp_path, *states, config=None, **group_kw):
@@ -333,6 +333,48 @@ def test_the_destroy_confirm_with_nothing_left_runs_nothing(mocker, tmp_path):
     run = mocker.patch.object(session, "run_bulk")
 
     session.picker_chosen(PickerEntry("Yes, destroy 1", "yes"))
+
+    run.assert_not_called()
+    assert session.notice
+
+
+def test_many_risky_marks_cap_the_destroy_confirm_and_keep_its_entries(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", "Running")
+    names = [f"alpha-{i}" for i in range(9)]
+    mocker.patch.object(
+        tsession,
+        "destroy_risk_lines",
+        return_value=tuple(f"⚠ {n}: dirty" for n in names),
+    )
+    mocker.patch.object(session, "_plan", return_value=BulkAction("destroy", tuple(names)))
+
+    picker = session.begin_bulk("destroy")
+
+    assert isinstance(picker, Picker) and picker.purpose == "bulk-destroy-confirm"
+    assert len(picker.detail) == 5
+    assert picker.detail[:4] == tuple(f"⚠ {n}: dirty" for n in names[:4])
+    assert picker.detail[4] == "…and 5 more"
+    text = "\n".join(box_text(picker, size=(100, 12)))
+    assert "No" in text
+    assert "Yes, destroy 9" in text
+
+
+def test_cap_detail_boundaries():
+    four = tuple(str(i) for i in range(4))
+    five = tuple(str(i) for i in range(5))
+
+    assert tsession._cap_detail(four) == four
+    assert tsession._cap_detail(five) == (*four, "…and 1 more")
+
+
+def test_the_loose_ttl_submit_with_nothing_left_says_so(mocker, tmp_path):
+    session, _, group = _session(mocker, tmp_path, "Running", loose_ttl_default="5m")
+    session.marked = frozenset({"alpha-a"})
+    session.overlay = session.begin_bulk("net loose")
+    group.containers.clear()
+    run = mocker.patch.object(session, "run_bulk")
+
+    session.picker_chosen(PickerEntry("2h", "2h"))
 
     run.assert_not_called()
     assert session.notice
