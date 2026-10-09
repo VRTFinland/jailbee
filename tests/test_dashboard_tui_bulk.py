@@ -279,4 +279,60 @@ def test_every_marked_container_ineligible_for_the_picker_says_so(mocker, tmp_pa
     session.handle_key("enter")
 
     assert session.overlay is None
-    assert session.notice == "No action applies to the 1 marked containers"
+    assert session.notice == "No action applies to the 1 marked container"
+
+
+def test_u_with_marks_plans_git_push_over_the_marks_not_the_cursor(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    for _ in range(3):
+        session.handle_key("down")  # the cursor on alpha-c, unmarked
+    run = mocker.patch.object(session, "run_bulk")
+
+    session.handle_key("action:push")
+
+    run.assert_called_once()
+    action = run.call_args.args[0]
+    assert action.verb == "git push"
+    assert action.eligible == ("alpha-a", "alpha-b")
+
+
+def test_u_with_mixed_marks_plans_only_the_eligible(mocker, tmp_path):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("alpha-a", "alpha", "Running"), ci("alpha-m", "alpha", "Running", mode="mount")],
+    )
+    session, _ = bare_session(mocker, [group])
+    session.marked = frozenset({"alpha-a", "alpha-m"})
+    run = mocker.patch.object(session, "run_bulk")
+
+    session.handle_key("action:push")
+
+    action = run.call_args.args[0]
+    assert action.eligible == ("alpha-a",)
+    assert [name for name, _ in action.skipped] == ["alpha-m"]
+
+
+def test_a_long_risk_list_is_capped_with_a_remainder_line():
+    lines = tuple(f"⚠ c{i}: dirty" for i in range(10))
+
+    capped = tsession._cap_detail(lines)
+
+    assert capped[:4] == lines[:4]
+    assert capped[-1] == "…and 6 more"
+    assert len(capped) == 5
+
+
+def test_the_destroy_confirm_with_nothing_left_runs_nothing(mocker, tmp_path):
+    session, _, group = _session(mocker, tmp_path, "Running")
+    session.marked = frozenset({"alpha-a"})
+    session.overlay = session.begin_bulk("destroy")
+    group.containers.clear()  # it vanished under the open confirm
+    run = mocker.patch.object(session, "run_bulk")
+
+    session.picker_chosen(PickerEntry("Yes, destroy 1", "yes"))
+
+    run.assert_not_called()
+    assert session.notice

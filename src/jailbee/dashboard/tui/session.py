@@ -258,6 +258,17 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
     )
 
 
+# A picker's risk lines never outgrow the room left for its entries.
+MAX_DETAIL_LINES = 4
+
+
+def _cap_detail(lines: tuple[str, ...]) -> tuple[str, ...]:
+    """The first lines, then one "…and k more" line when there are too many."""
+    if len(lines) <= MAX_DETAIL_LINES:
+        return lines
+    return (*lines[:MAX_DETAIL_LINES], f"…and {len(lines) - MAX_DETAIL_LINES} more")
+
+
 class DashboardSession:
     """One open terminal dashboard (see the module docstring).
 
@@ -1450,12 +1461,12 @@ class DashboardSession:
             return self.begin_bulk(entry.value)
         if picker.purpose == "bulk-destroy-confirm":
             if entry.value == "yes":
-                self.run_bulk(self._plan("destroy"))
+                self._run_planned("destroy")
             else:
                 self.set_notice("Cancelled")
             return None
         if picker.purpose == "bulk-loose-ttl":
-            self.run_bulk(self._plan("net loose"), ("--for", entry.value))
+            self._run_planned("net loose", ("--for", entry.value))
             return None
         return picker.back
 
@@ -1947,6 +1958,14 @@ class DashboardSession:
             over_ssh=self.over_ssh,
         )
 
+    def _run_planned(self, verb: str, extra: Sequence[str] = ()) -> None:
+        """Plan ``verb`` over the marks as they are now and run it, or say there is nothing."""
+        action = self._plan(verb)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return
+        self.run_bulk(action, extra)
+
     def bulk_menu(self) -> Picker | None:
         """The "N selected" list, or None after saying why it is empty."""
         names = sorted(self.marked)
@@ -1958,7 +1977,8 @@ class DashboardSession:
             over_ssh=self.over_ssh,
         )
         if not actions:
-            self.set_notice(f"No action applies to the {len(names)} marked containers")
+            noun = "container" if len(names) == 1 else "containers"
+            self.set_notice(f"No action applies to the {len(names)} marked {noun}")
             return None
         return Picker(
             "bulk-action",
@@ -1982,7 +2002,7 @@ class DashboardSession:
                 "bulk-destroy-confirm",
                 f"Destroy {n} container{'s' if n != 1 else ''}: {', '.join(action.eligible)}?",
                 (PickerEntry("No", "no"), PickerEntry(f"Yes, destroy {n}", "yes")),
-                detail=destroy_risk_lines(self.groups, action.eligible),
+                detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
             )
         if verb == "net loose":
             default = bulk_loose_default(self.groups, action.eligible)
