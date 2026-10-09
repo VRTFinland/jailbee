@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from jailbee.cli import _resolve_ff_policy, app
@@ -454,3 +455,76 @@ def test_pull_omits_the_suffix_when_it_made_a_merge_commit(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "(fast-forward)" not in result.output
+
+
+def _wire_named(mocker, tmp_path, *, unknown: str | None = None):
+    """`_wire`, plus name resolution: `feat-a` resolves to `myrepo-feat-a`."""
+    cfg = _wire(mocker, tmp_path, containers=[], picked=None)
+
+    def resolve(_cfg, typed, **_kw):
+        if typed == unknown:
+            raise typer.Exit(1)
+        return mocker.Mock(), f"myrepo-{typed}"
+
+    mocker.patch("jailbee.cli._resolve_existing", side_effect=resolve)
+    return cfg
+
+
+def test_pull_several_names_pulls_each_in_order_without_a_picker(mocker, tmp_path):
+    _wire_named(mocker, tmp_path)
+    picker = mocker.patch("jailbee.tui.pick_containers_multi")
+    do_pull = mocker.patch("jailbee.cli._do_single_pull")
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[2] for c in do_pull.call_args_list] == ["feat-a", "feat-b"]
+    picker.assert_not_called()
+
+
+def test_pull_several_names_stops_at_the_first_failure(mocker, tmp_path):
+    from jailbee.sync import SyncError
+
+    _wire_named(mocker, tmp_path)
+    do_pull = mocker.patch(
+        "jailbee.cli._do_single_pull", side_effect=[SyncError("boom on a"), None]
+    )
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a", "feat-b"])
+
+    assert result.exit_code == 1
+    assert [c.args[2] for c in do_pull.call_args_list] == ["feat-a"]
+    combined = result.stdout + (result.stderr or "")
+    assert "boom on a" in combined and "feat-b" in combined
+    assert "not attempted" in combined.lower()
+
+
+def test_pull_several_names_never_show_the_auto_target_plan(mocker, tmp_path):
+    _wire_named(mocker, tmp_path)
+    plan = mocker.patch("jailbee.cli._confirm_plan_if_buildable")
+    mocker.patch("jailbee.cli._do_single_pull")
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    plan.assert_not_called()
+
+
+def test_pull_a_repeated_name_is_pulled_once(mocker, tmp_path):
+    _wire_named(mocker, tmp_path)
+    do_pull = mocker.patch("jailbee.cli._do_single_pull")
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a", "feat-b", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[2] for c in do_pull.call_args_list] == ["feat-a", "feat-b"]
+
+
+def test_pull_an_unknown_name_in_the_list_pulls_nothing(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, unknown="nope")
+    do_pull = mocker.patch("jailbee.cli._do_single_pull")
+
+    result = CliRunner().invoke(app, ["git", "pull", "feat-a", "nope"])
+
+    assert result.exit_code == 1
+    do_pull.assert_not_called()

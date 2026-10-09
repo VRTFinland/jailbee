@@ -3970,6 +3970,24 @@ def _resolve_existing(
     return incus, resolved
 
 
+def _resolve_many(cfg: "Config", names: list[str]) -> tuple["IncusType", list[str]]:
+    """Resolve several typed container names up front, before anything runs.
+
+    Each goes through :func:`_resolve_existing`, which exits on a name it cannot
+    resolve, so an unknown name anywhere in the list stops the command before
+    the first container is touched. A name given twice is acted on once, at its
+    first position.
+    """
+    resolved: list[str] = []
+    incus: IncusType | None = None
+    for typed in names:
+        incus, full = _resolve_existing(cfg, typed)
+        if full not in resolved:
+            resolved.append(full)
+    assert incus is not None  # `names` is never empty here
+    return incus, resolved
+
+
 def _pick_containers(
     cfg: "Config",
     containers: "list[ContainerInfo]",
@@ -5433,16 +5451,60 @@ app.command(
 )(checkout)
 
 
+def _pull_batch(
+    cfg: "Config",
+    incus: "IncusType",
+    selected: list[str],
+    *,
+    branch: str | None,
+    ff: "FfPolicy",
+    into: str | None,
+    allow_checkout: bool,
+    destroy_policy: Literal["prompt", "always", "never"],
+    branch_policy: Literal["prompt", "always", "never"],
+    tags: "TagPolicy",
+) -> None:
+    """Pull ``selected`` in order; stop at the first failure, naming the rest."""
+    from jailbee import git as git_helpers
+    from jailbee import sync
+    from jailbee.lifecycle import short_name
+
+    for idx, full in enumerate(selected):
+        short = short_name(cfg, full)
+        try:
+            _do_single_pull(
+                cfg,
+                incus,
+                short,
+                branch=branch,
+                ff=ff,
+                into=into,
+                allow_checkout=allow_checkout,
+                destroy_policy=destroy_policy,
+                branch_policy=branch_policy,
+                tags=tags,
+            )
+        except (sync.SyncError, git_helpers.GitError) as exc:
+            error(str(exc))
+            _emit_conflict_report(exc)
+            remaining = selected[idx + 1 :]
+            if remaining:
+                not_attempted = ", ".join(short_name(cfg, n) for n in remaining)
+                error(f"Stopping batch; {len(remaining)} not attempted: {not_attempted}.")
+            raise typer.Exit(1) from exc
+
+
 @git_app.command("pull")
 def pull(
-    name: Annotated[
-        str | None,
+    names: Annotated[
+        list[str] | None,
         typer.Argument(
             help=(
-                "Container to pull from, named in full or by its short name. "
-                "Omit it and jailbee picks among the containers eligible for a "
-                "pull (everything but mount mode): the only one is used, "
-                "otherwise a multi-select picker opens and each selection is "
+                "Container(s) to pull from, named in full or by their short name. "
+                "Several are pulled in the order given, stopping at the first "
+                "failure. Omit them and jailbee picks among the containers "
+                "eligible for a pull (everything but mount mode): the only one is "
+                "used, otherwise a multi-select picker opens and each selection is "
                 "pulled in turn (TTY required)."
             ),
             autocompletion=completion.complete_container,
@@ -5558,7 +5620,8 @@ def pull(
     With no arguments and a TTY, opens a multi-select picker (space to
     toggle, Enter to confirm). Selected containers are pulled in order
     with the same flags. The batch stops at the first failed pull —
-    remaining containers are listed but not attempted.
+    remaining containers are listed but not attempted. Several names run the
+    same batch without the picker.
 
     When jailbee picks the container itself — one eligible container and no name
     given — the pull is confirmed first: a block naming the container's
@@ -5576,6 +5639,7 @@ def pull(
       jailbee git pull feat-foo --current         # merge into the host's checked-out branch
       jailbee git pull feat-foo --checkout         # check out base branch and merge, stay on it
       jailbee git pull feat-foo --cleanup          # force destroy + delete branch
+      jailbee git pull feat-a feat-b               # several, in order
       jailbee git pull feat-foo --no-cleanup       # skip destroy + branch delete
       jailbee git pull feat-foo --ff --cleanup     # ff-only + force cleanup
       jailbee git pull --no-confirm                # skip the auto-target confirmation
@@ -5622,6 +5686,24 @@ def pull(
             raise typer.Exit(2)
         into = resolved_current
 
+    if names is not None and len(names) > 1:
+        # Named explicitly, so there is no auto-selected target to confirm.
+        incus, named = _resolve_many(cfg, names)
+        _pull_batch(
+            cfg,
+            incus,
+            named,
+            branch=branch,
+            ff=ff_policy,
+            into=into,
+            allow_checkout=checkout,
+            destroy_policy=destroy_policy,
+            branch_policy=branch_policy,
+            tags=tag_policy,
+        )
+        return
+    name = names[0] if names else None
+
     if name is None:
         from jailbee import prompting
         from jailbee.incus import Incus
@@ -5662,29 +5744,18 @@ def pull(
                     )
                 )
 
-            for idx, full in enumerate(selected):
-                short = short_name(cfg, full)
-                try:
-                    _do_single_pull(
-                        cfg,
-                        incus,
-                        short,
-                        branch=branch,
-                        ff=ff_policy,
-                        into=into,
-                        allow_checkout=checkout,
-                        destroy_policy=destroy_policy,
-                        branch_policy=branch_policy,
-                        tags=tag_policy,
-                    )
-                except (sync.SyncError, git_helpers.GitError) as exc:
-                    error(str(exc))
-                    _emit_conflict_report(exc)
-                    remaining = selected[idx + 1 :]
-                    if remaining:
-                        not_attempted = ", ".join(short_name(cfg, n) for n in remaining)
-                        error(f"Stopping batch; {len(remaining)} not attempted: {not_attempted}.")
-                    raise typer.Exit(1) from exc
+            _pull_batch(
+                cfg,
+                incus,
+                selected,
+                branch=branch,
+                ff=ff_policy,
+                into=into,
+                allow_checkout=checkout,
+                destroy_policy=destroy_policy,
+                branch_policy=branch_policy,
+                tags=tag_policy,
+            )
             return
 
     incus, resolved = _resolve_existing_detailed(cfg, name)
