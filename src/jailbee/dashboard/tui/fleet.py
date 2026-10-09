@@ -211,6 +211,16 @@ def _with_marks(cells: list[Text], geometry: Geometry, left: Text, right: Text) 
     return cells
 
 
+def _underline_on_hover(cell: Text, *, indented: bool) -> None:
+    """Exempt the cell's value — not its status glyph or padding — from the row's no-hover tag."""
+    plain = cell.plain
+    start = 2 if indented else 0
+    start += len(plain[start:]) - len(plain[start:].lstrip())
+    end = len(plain.rstrip())
+    if start < end:
+        cell.stylize(dhit.no_hover_style(enabled=False), start, end)
+
+
 def header_line(geometry: Geometry) -> Text:
     """The column titles, each a ``sort`` target; the first carries the rows' two-cell indent."""
     cells = [
@@ -302,7 +312,11 @@ def entry_line(
             values, geometry.widths, geometry.justify, strict=True
         )
     ]
-    hit = dhit.hit_style("row", entry.container.name)
+    if "name" in geometry.names:
+        index = geometry.names.index("name")
+        _underline_on_hover(cells[index], indented=index == 0)
+    # The whole row is clickable, but only the name is underlined on hover.
+    hit = dhit.hit_style("row", entry.container.name) + dhit.no_hover_style()
     base = MARKED_STYLE + hit if entry.marked else hit
     if entry.dim:
         base += Style(dim=True)

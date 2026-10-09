@@ -32,6 +32,10 @@ _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 # Deliberately quiet: an underline, so it never looks like the cursor's background band.
 HOVER_STYLE = Style(underline=True)
 
+# A segment that is part of a target (clickable) but not underlined when it is hovered:
+# a container row is clickable end to end, yet only its name is underlined.
+NO_HOVER_KEY = "@jb.nohover"
+
 
 @dataclass(frozen=True)
 class Hit:
@@ -63,10 +67,17 @@ def hover_segments(segments: Iterable[Segment], hover: Hit | None) -> list[Segme
     target = hover.meta_value()
     return [
         Segment(segment.text, segment.style + HOVER_STYLE, segment.control)
-        if segment.style is not None and segment.style.meta.get(HIT_KEY) == target
+        if segment.style is not None
+        and segment.style.meta.get(HIT_KEY) == target
+        and not segment.style.meta.get(NO_HOVER_KEY)
         else segment
         for segment in rendered
     ]
+
+
+def no_hover_style(*, enabled: bool = True) -> Style:
+    """Mark (or, layered on top, unmark) a target's segment as not underlined on hover."""
+    return Style(meta={NO_HOVER_KEY: enabled})
 
 
 def hit_style(kind: HitKind, *args: str | int) -> Style:
