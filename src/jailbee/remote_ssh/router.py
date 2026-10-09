@@ -370,6 +370,7 @@ _CONTAINER_COMMANDS = frozenset(
         "dismiss",
         "doctor",
         "exec",
+        "fork",
         "git checkout",
         "git diff",
         "git fetch",
@@ -494,12 +495,14 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
 # Parameters a remote caller may set only to a narrowing value unless
 # `remote.ssh.network` is on, by (canonical command path, parameter name). The
 # parameter itself stays usable, so `_REMOTE_DENIED_PARAMS` cannot express it.
-# `new --net loose` creates a container on the wide-egress network: the same
-# widening `net loose` is, which `RemoteUnlocks.network` already gates. Values
+# `new --net loose` (and `fork --net loose`) creates a container on the
+# wide-egress network: the same widening `net loose` is, which
+# `RemoteUnlocks.network` already gates. Values
 # compare stripped and lower-cased, as the leaf's own `str` option is not
 # normalised by Click.
 _NETWORK_WIDENING_VALUES: dict[tuple[str, str], frozenset[str]] = {
     ("new", "network"): frozenset({"loose"}),
+    ("fork", "network"): frozenset({"loose"}),
 }
 
 
@@ -699,6 +702,7 @@ def policy_allows(
             "git merge",
             "pr",
             "new",
+            "fork",
             "destroy",
             "start",
             "stop",

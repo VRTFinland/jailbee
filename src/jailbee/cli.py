@@ -2127,6 +2127,15 @@ def new_cmd(
             ),
         ),
     ] = False,
+    fork_of: Annotated[
+        str | None,
+        typer.Option(
+            "--fork-of",
+            hidden=True,
+            help="Internal, set by `jailbee fork`: start from this container's HEAD.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
     credential_group: Annotated[
         str | None,
         typer.Option(
@@ -2326,6 +2335,48 @@ def new_cmd(
         # silently — an explicitly requested one always wins or errors.
         attach_mode = "none"
 
+    # `jailbee fork` lands here. The source container's HEAD is fetched to the
+    # host and the clone is pinned to it, exactly like a PR head; everything
+    # else is an ordinary clone-mode `new`.
+    fork_source: "ForkSource | None" = None
+    if fork_of is not None:
+        conflicting = [
+            flag
+            for flag, given in (
+                ("--pr", pr is not None),
+                ("--mount", mount),
+                ("--current", current),
+                ("--no-clone", no_clone),
+                ("the BASE positional", base is not None),
+            )
+            if given
+        ]
+        if conflicting:
+            error(
+                "--fork-of starts from the source container's HEAD; "
+                f"{', '.join(conflicting)} is not applicable."
+            )
+            raise typer.Exit(2)
+        if name is None:
+            # A same-branch fork would derive the source's own name.
+            error("--fork-of requires --name (the new container's name).")
+            raise typer.Exit(2)
+
+        from jailbee import forking
+        from jailbee import git as git_helpers
+
+        try:
+            fork_source = forking.prepare_fork(cfg, Incus(), fork_of)
+        except forking.ForkError as e:
+            # `sync`'s detached-HEAD message suggests `--branch`, which on
+            # `jailbee fork` names the *new* branch, not the source's.
+            error(str(e).removesuffix(" Use --branch <name> to specify."))
+            raise typer.Exit(2) from e
+        except git_helpers.GitError as e:
+            error(str(e))
+            raise typer.Exit(1) from e
+        container_branch = container_branch or fork_source.branch
+
     if no_fetch and pr is None:
         error("--no-fetch requires --pr.")
         raise typer.Exit(2)
@@ -2479,8 +2530,9 @@ def new_cmd(
     # scripted use. With a base the branch is still reused (the base becomes
     # the container's base branch, not a fork point), so the prompt names the
     # base rather than suggesting one. In `--pr` mode the head was just
-    # fetched on purpose, so the prompt would always fire redundantly.
-    if not mount and not no_clone and pr is None:
+    # fetched on purpose, so the prompt would always fire redundantly; a fork
+    # usually stays on the source's (existing) branch, so the same holds.
+    if not mount and not no_clone and pr is None and fork_of is None:
         from jailbee.git import branch_exists_in_source
 
         assert container_branch is not None
@@ -2630,12 +2682,19 @@ def new_cmd(
             mirror_ca_path=mirror_ca_path,
             litellm_payload=litellm_payload,
             base=base,
-            base_branch_label=pr_info.base_ref if pr is not None else None,
+            base_branch_label=(
+                pr_info.base_ref
+                if pr is not None
+                else fork_source.base_branch
+                if fork_source is not None
+                else None
+            ),
             pr=pr,
             # A fork's head, not merely "a PR": an internal PR's head is a
             # branch in this repo's own origin.
             untrusted_head=pr is not None and pr_info.is_cross_repository,
-            clone_commit=pr_clone_commit,
+            clone_commit=(fork_source.commit if fork_source is not None else pr_clone_commit),
+            fork_of=fork_source.full_name if fork_source is not None else None,
             assume_yes=yes,
             credential_group=resolved_credential_group,
             autostart_override=autostart_override,
@@ -2836,6 +2895,170 @@ def new_cmd(
         raise typer.Exit(_attach_tmux(cfg, incus, created))
     if attach_mode == "shell":
         raise typer.Exit(_attach_shell(cfg, incus, created))
+
+
+@app.command("fork")
+def fork_cmd(
+    source: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="SOURCE",
+            help="Container to fork. Must be running, with no uncommitted changes.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    new_name: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="NAME",
+            help="Name of the new container (slugified like `jailbee new`'s NAME).",
+        ),
+    ] = None,
+    branch: Annotated[
+        str | None,
+        typer.Option(
+            "--branch",
+            help=(
+                "Branch for the new container's clone, created at SOURCE's HEAD. "
+                "Default: SOURCE's own branch."
+            ),
+            autocompletion=completion.complete_branch,
+        ),
+    ] = None,
+    network: Annotated[
+        str,
+        typer.Option(
+            "--net",
+            help="Network mode: 'strict' or 'loose'. Overrides `defaults.network`.",
+        ),
+    ] = "",
+    memory: Annotated[
+        str | None,
+        typer.Option("--memory", help="Memory limit. Overrides `defaults.memory`."),
+    ] = None,
+    cpu: Annotated[
+        int | None,
+        typer.Option("--cpu", help="CPU core limit. Overrides `defaults.cpu`."),
+    ] = None,
+    storage: Annotated[
+        str | None,
+        typer.Option(
+            "--storage", help="Incus storage pool. Overrides `defaults.storage_pool`."
+        ),
+    ] = None,
+    credential_group: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-group",
+            help="Credential group for this container only. Use `none` for no group.",
+            autocompletion=completion.complete_credential_group,
+        ),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip confirmation prompts."),
+    ] = False,
+    background: Annotated[
+        bool,
+        typer.Option("--background", "-b", help="Create the container in the background."),
+    ] = False,
+    no_background: Annotated[
+        bool,
+        typer.Option("--no-background", help="Force foreground creation."),
+    ] = False,
+    attach: Annotated[
+        str | None,
+        typer.Option(
+            "--attach",
+            help="After creation, attach: 'shell', 'tmux' or 'none'.",
+            autocompletion=completion.complete_choices("shell", "tmux", "none"),
+        ),
+    ] = None,
+    no_attach: Annotated[
+        bool,
+        typer.Option("--no-attach", help="Do not attach after creation."),
+    ] = False,
+    tmux_flag: Annotated[
+        bool,
+        typer.Option("--tmux", help="After creation, attach to the autostart tmux session."),
+    ] = False,
+    shell_flag: Annotated[
+        bool,
+        typer.Option("--shell", help="After creation, open a shell in the container."),
+    ] = False,
+    no_autostart: Annotated[
+        bool,
+        typer.Option("--no-autostart", help="Skip the `autostart:` commands and GUI apps."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Create a container from another container's committed state.
+
+    The new container starts at SOURCE's HEAD commit, on the same branch unless
+    --branch names a new one, and remembers SOURCE as its upstream: `jailbee ls`
+    shows `⑂ SOURCE` as its base, and `jailbee merge` offers SOURCE first.
+    SOURCE must be running and have no uncommitted changes.
+
+    Examples:
+
+      jailbee fork feat-a feat-a-try2
+      jailbee fork feat-a experiment --branch feat/a-experiment
+    """
+    from jailbee import prompting
+    from jailbee.lifecycle import derive_container_name, short_name
+
+    cfg = _load_or_exit(config)
+    _, source_full = _resolve_existing(cfg, source)
+
+    def _name_problem(text: str) -> str | None:
+        text = text.strip()
+        if not text:
+            return "enter a name"
+        try:
+            derive_container_name(cfg, text)
+        except ValueError as e:
+            return str(e)
+        return None
+
+    if new_name is None:
+        new_name = prompting.ask_text("name", validate=_name_problem).strip()
+    else:
+        problem = _name_problem(new_name)
+        if problem is not None:
+            error(problem)
+            raise typer.Exit(2)
+
+    # Every parameter by keyword: a reordered `new_cmd` signature cannot
+    # misroute a value, and a new one fails loudly here (no default to hide in).
+    new_cmd(
+        container_branch=branch,
+        base=None,
+        current=False,
+        name=derive_container_name(cfg, new_name),
+        network=network,
+        memory=memory,
+        cpu=cpu,
+        storage=storage,
+        from_base=None,
+        no_clone=False,
+        no_autostart=no_autostart,
+        mount=False,
+        attach=attach,
+        no_attach=no_attach,
+        tmux_flag=tmux_flag,
+        shell_flag=shell_flag,
+        pr=None,
+        no_fetch=False,
+        fork_of=short_name(cfg, source_full),
+        credential_group=credential_group,
+        claude_group=None,
+        yes=yes,
+        background=background,
+        no_background=no_background,
+        wait=False,
+        no_wait=False,
+        config=config,
+    )
 
 
 def _preflight_cache_pools(cfg: "Config") -> None:
@@ -3918,6 +4141,7 @@ if TYPE_CHECKING:
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
     from jailbee.doctor_scroll import ScrollState
+    from jailbee.forking import ForkSource
     from jailbee.incus import Incus as IncusType
     from jailbee.issue_manifest import IssueManifest
     from jailbee.issue_outbox import ApplyReport, OutboxSnapshot, PreparedBatch

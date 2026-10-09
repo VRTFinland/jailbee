@@ -457,6 +457,22 @@ carries the identical exposure; cancel the run before retrying. Neither
 guard fires for a run that is already blocking the foreground (nothing can
 race a stage the CLI itself is waiting on).
 
+### `jailbee fork [SOURCE] [NAME] [--branch B]`
+
+Creates a container from another container's committed state. SOURCE's HEAD
+commit is fetched to the host (`refs/jailbee/<source>/<branch>`, kept) and the
+new container is an ordinary clone-mode `jailbee new` pinned to it, on
+SOURCE's branch unless `--branch` names a new one. Only commits carry over:
+SOURCE must be running, in clone mode, and have no uncommitted changes
+(tracked or untracked), else exit 2; a failed fetch is exit 1. The fork
+records SOURCE in `user.jailbee.fork_of`: `jailbee ls` shows `⑂ SOURCE` as its
+base and `jailbee merge` offers SOURCE first. NAME is slugified into the
+container name like `jailbee new`'s; SOURCE and NAME are asked for on a TTY
+when omitted. Forwards `--net`, `--memory`, `--cpu`, `--storage`,
+`--credential-group`, `--yes`, `--background`/`--no-background`,
+`--attach`/`--no-attach`/`--tmux`/`--shell` and `--no-autostart` to `jailbee
+new`. Over remote SSH, `--net loose` needs `remote.ssh.network`, as for `new`.
+
 ### `jailbee rename [NAME] [ALIAS] [--clear]`
 
 Gives a container an alias instantly, running or not; the real Incus name never
