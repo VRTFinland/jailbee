@@ -354,6 +354,10 @@ def confirm_destroy_risk(unknown: Sequence[str], summaries: Sequence[RiskSummary
 
 def _choice_base(c: ContainerInfo) -> str:
     """BASE text for picker rows, including a tracking-ref fallback marker."""
+    from jailbee.lifecycle import fork_marker
+
+    if (marker := fork_marker(c)) is not None:
+        return marker
     if not c.base_branch:
         return "—"
     if c.git_status is not None and c.git_status.base_source == "tracking":
@@ -370,7 +374,7 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
     from jailbee.git_status import merge_label
 
     return {
-        "name": max(len(c.display_name) for c in containers),
+        "name": max(len(c.shown_name) for c in containers),
         "state": max(len(c.state) for c in containers),
         "net": max(len(c.network or "-") for c in containers),
         "ip": max(len(c.ip or "-") for c in containers),
@@ -404,7 +408,7 @@ def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
         behind = c.git_status.behind_count
     conflict = merge_label(c.git_status)[0]
     line = (
-        f"{c.display_name:<{widths['name']}}  "
+        f"{c.shown_name:<{widths['name']}}  "
         f"{c.state:<{widths['state']}}  "
         f"{(c.network or '-'):<{widths['net']}}  "
         f"{(c.ip or '-'):<{widths['ip']}}  "

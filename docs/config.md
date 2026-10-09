@@ -2241,7 +2241,7 @@ a personal display preference in `global.yaml` must never silently narrow
 machine-readable output a script depends on. An explicit `--fields` flag on
 the command line still wins in **every** format, table or JSON.
 
-Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`,
+Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,

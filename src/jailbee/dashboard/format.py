@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from jailbee import background
-from jailbee.lifecycle import DOING_MAX_NAMES, agent_compact_cell, format_duration_short
+from jailbee.lifecycle import (
+    DOING_MAX_NAMES,
+    agent_compact_cell,
+    fork_marker,
+    format_duration_short,
+)
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -105,6 +110,9 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
     if field.name == "created":
         return _age(container.created_at, now)
     if field.name == "base":
+        marker = fork_marker(container)
+        if marker is not None:
+            return escape(marker)
         base = escape(container.base_branch or "—")
         tracking = (
             container.base_branch

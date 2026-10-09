@@ -1792,7 +1792,7 @@ def list_cmd(
             "--fields",
             help=(
                 "Comma-separated list of fields to show. Allowed: name, "
-                "full_name, repo, mode, base, state, created, job, network, "
+                "full_name, alias, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, ip, memory_limit, mem, mem_used, mem_pct, cpu, doing, agent, "
                 "agent_compact, "
                 "wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, "

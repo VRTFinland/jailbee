@@ -99,6 +99,12 @@ class ContainerInfo:
     # own `optional-<kind>` disk devices (`mounts.DEVICE_NAME_PREFIX`). The
     # dashboard's Mount…/Unmount… pickers offer from this.
     optional_mounts: tuple[str, ...] = ()
+    # `user.jailbee.alias`: the user's rename (`jailbee rename`). The real
+    # name never changes; `shown_name` displays this, resolution accepts it.
+    alias: str | None = None
+    # `user.jailbee.fork_of`: the full name of the container this one was
+    # forked from (`jailbee fork`). May name a container that no longer exists.
+    fork_of: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -106,6 +112,27 @@ class ContainerInfo:
         if self.repo and self.name.startswith(f"{self.repo}-"):
             return self.name[len(self.repo) + 1 :]
         return self.name
+
+    @property
+    def shown_name(self) -> str:
+        """NAME as listed: ``"alias (short)"`` with an alias, else :attr:`display_name`.
+
+        Display only. Anything the user types back (pickers' values,
+        missing-value candidates) keeps using ``display_name``.
+        """
+        if self.alias:
+            return f"{self.alias} ({self.display_name})"
+        return self.display_name
+
+
+def fork_marker(c: ContainerInfo) -> str | None:
+    """BASE text for a fork, ``"⑂ <source short name>"``; None when not a fork."""
+    if not c.fork_of:
+        return None
+    source = c.fork_of
+    if c.repo and source.startswith(f"{c.repo}-"):
+        source = source[len(c.repo) + 1 :]
+    return f"⑂ {source}"
 
 
 # Trims sub-microsecond precision that Incus (Go's RFC3339Nano) emits but
@@ -481,6 +508,11 @@ def list_containers(
             base_branch_raw if isinstance(base_branch_raw, str) and base_branch_raw else None
         )
 
+        alias_raw = config.get("user.jailbee.alias")
+        alias = alias_raw if isinstance(alias_raw, str) and alias_raw else None
+        fork_of_raw = config.get("user.jailbee.fork_of")
+        fork_of = fork_of_raw if isinstance(fork_of_raw, str) and fork_of_raw else None
+
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
 
@@ -532,6 +564,8 @@ def list_containers(
                 cpu_usage_ns=cpu_usage_ns,
                 cpu_limit=cpu_limit,
                 optional_mounts=attached,
+                alias=alias,
+                fork_of=fork_of,
             )
         )
 
@@ -3200,9 +3234,9 @@ def ls_field_specs(
     return [
         table_format.FieldSpec(
             name="name",
-            sort=lambda c: _text_key(c.display_name),
+            sort=lambda c: _text_key(c.shown_name),
             header="NAME",
-            cell=lambda c: c.display_name,
+            cell=lambda c: c.shown_name,
             json=lambda c: c.display_name,
         ),
         table_format.FieldSpec(
@@ -3213,6 +3247,14 @@ def ls_field_specs(
             json=lambda c: c.name,
             default_table=False,
             default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="alias",
+            sort=lambda c: _text_key(c.alias),
+            header="ALIAS",
+            cell=lambda c: c.alias or "—",
+            json=lambda c: c.alias,
+            default_table=False,
         ),
         table_format.FieldSpec(
             name="repo",
@@ -3240,9 +3282,12 @@ def ls_field_specs(
             sort=lambda c: _text_key(c.base_branch),
             header="BASE",
             cell=lambda c: (
-                f"{c.base_branch} (tracking)"
-                if c.base_branch and c.git_status and c.git_status.base_source == "tracking"
-                else c.base_branch or "—"
+                fork_marker(c)
+                or (
+                    f"{c.base_branch} (tracking)"
+                    if c.base_branch and c.git_status and c.git_status.base_source == "tracking"
+                    else c.base_branch or "—"
+                )
             ),
             json=lambda c: c.base_branch,
         ),

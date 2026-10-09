@@ -1,5 +1,6 @@
 """Tests for lifecycle (new/start/stop/destroy/ls/shell)."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -116,6 +117,79 @@ def _container(
 
 
 # ---- list_containers ----
+
+
+def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-feat-x",
+            user_config={
+                "user.jailbee.mode": "clone",
+                "user.jailbee.alias": "login",
+                "user.jailbee.fork_of": "myrepo-feat-a",
+            },
+        )
+    ]
+    [info] = list_containers(cfg, incus)
+    assert info.alias == "login"
+    assert info.fork_of == "myrepo-feat-a"
+    assert info.display_name == "feat-x"
+    assert info.shown_name == "login (feat-x)"
+
+
+def test_shown_name_without_alias_is_display_name(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-feat-x", user_config={"user.jailbee.alias": ""})
+    ]
+    [info] = list_containers(cfg, incus)
+    assert info.alias is None
+    assert info.shown_name == "feat-x"
+
+
+def test_fork_marker_strips_repo_prefix():
+    from jailbee.lifecycle import ContainerInfo, fork_marker
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        fork_of="myrepo-feat-a",
+    )
+    assert fork_marker(c) == "⑂ feat-a"
+    assert fork_marker(replace(c, fork_of=None)) is None
+
+
+def test_ls_fields_render_alias_and_fork():
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+        alias="login",
+        fork_of="myrepo-a",
+    )
+    fields = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert fields["name"].cell(c) == "login (b)"
+    assert fields["name"].json(c) == "b"
+    assert fields["alias"].json(c) == "login"
+    assert fields["base"].cell(c) == "⑂ a"
+    assert fields["base"].json(c) == "main"
 
 
 def test_list_containers_reports_attached_optional_mounts(make_cfg, tmp_path):
@@ -10309,8 +10383,8 @@ def test_ls_default_table_and_json_sets_are_pinned():
         "target_diff", "ahead_count", "behind_count", "conflict", "pr", "issues", "group",
     ]  # fmt: skip
     assert [f.name for f in specs if f.default_json] == [
-        "name", "mode", "base", "state", "created", "network", "ip", "memory_limit",
-        "git_status", "pr", "issues", "group",
+        "name", "alias", "mode", "base", "state", "created", "network", "ip",
+        "memory_limit", "git_status", "pr", "issues", "group",
     ]  # fmt: skip
 
 

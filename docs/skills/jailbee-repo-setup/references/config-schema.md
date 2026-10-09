@@ -617,7 +617,7 @@ default (`local_diff`, `local_count`) or would otherwise be hidden by a
 dynamic rule (e.g. `pr` with nothing open) — naming a column is a request
 for exactly that column. `hide` only prunes the *built-in* default set.
 
-Allowed names: `name`, `full_name`, `repo`, `mode`, `base`, `state`,
+Allowed names: `name`, `full_name`, `alias`, `repo`, `mode`, `base`, `state`,
 `created`, `job`, `network`, `ttl`, `loose_until`, `ip`, `memory_limit`,
 `mem`, `wt`, `target_diff`, `ahead_count`, `behind_count`, `conflict`,
 `local_diff`, `local_count`, `git_status`, `pr`. Three things are problems: an unknown

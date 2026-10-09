@@ -125,6 +125,8 @@ def _full_snapshot() -> Snapshot:
             job_kind="create",
             job_error="boom",
             optional_mounts=("ssh",),
+            alias="login",
+            fork_of="alpha-y",
         )
     )
     group = RepoGroup(
