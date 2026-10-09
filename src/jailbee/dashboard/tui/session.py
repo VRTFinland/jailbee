@@ -77,12 +77,14 @@ from jailbee.dashboard.menus import (
     REMOTE_CONFIG_EDIT_NOTE,
     actions_for_container,
     config_edit_reject_note_for_prefix,
+    fork_container_argv,
     host_branches,
     new_container_argv,
     new_container_base_default,
     new_container_reject_note,
     new_container_target,
     new_pr_container_argv,
+    rename_argv,
     view_only_note,
 )
 from jailbee.dashboard.model import (
@@ -906,6 +908,38 @@ class DashboardSession:
             require_suggestion=True,
         )
 
+    def open_fork(self, container: str) -> TextPrompt | None:
+        """Ask for the fork's name inline; the CLI would ask on a blanked screen."""
+        if self.dispatchable(container, "fork") is None:
+            return None
+        return TextPrompt(
+            "container-fork",
+            f"Fork '{container}'",
+            "New container name",
+            target=container,
+        )
+
+    def open_rename(self, container: str) -> TextPrompt | None:
+        """Ask for the alias, starting on the current one; empty clears it."""
+        if self.dispatchable(container, "rename") is None:
+            return None
+        group = _find_group(self.groups, container)
+        info = (
+            next((c for c in group.containers if c.name == container), None)
+            if group is not None
+            else None
+        )
+        if info is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        return TextPrompt(
+            "container-rename",
+            f"Rename '{container}' (empty clears the alias)",
+            "Alias",
+            initial=info.alias or "",
+            target=container,
+        )
+
     def open_mount_picker(self, container: str, *, remove: bool) -> Picker | None:
         """The kinds Mount… (Unmount…) can act on right now, or a notice."""
         group = _find_group(self.groups, container)
@@ -1426,6 +1460,24 @@ class DashboardSession:
                 prompt.target, "container", dact.retarget_argv(prompt.target, answer)
             )
             return None
+        if prompt.purpose == "container-fork":
+            group = _find_group(self.groups, prompt.target)
+            if group is None:
+                self.set_notice(f"'{prompt.target}' is gone")
+                return None
+
+            def fork_argv(repo: RepoTarget) -> list[str]:
+                if self.over_ssh:
+                    return ["jailbee", "fork", "--background", "--", prompt.target, answer]
+                return fork_container_argv(repo, prompt.target, answer)
+
+            self.run_new_container(group.prefix, f"fork {answer}", fork_argv)
+            return None
+        if prompt.purpose == "container-rename":
+            self.run_dashboard_command(
+                prompt.target, "container", rename_argv(prompt.target, answer), style="plain"
+            )
+            return None
         if prompt.purpose == "egress-add":
             # begin_egress_add always sets it
             assert isinstance(prompt.back, EgressState)
@@ -1899,6 +1951,10 @@ class DashboardSession:
                 self.overlay = self.open_outbox(target)
             elif verb == "git retarget":
                 self.overlay = self.open_retarget(target)
+            elif verb == "fork":
+                self.overlay = self.open_fork(target)
+            elif verb == "rename":
+                self.overlay = self.open_rename(target)
             else:
                 self.dispatch(target, verb)
 

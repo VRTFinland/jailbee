@@ -967,7 +967,7 @@ def test_action_menu_has_no_apps_when_none_are_configured():
 
 def test_menu_actions_stopped():
     actions = dmenus.menu_actions(_ctx(state="Stopped"))
-    assert [a for _, a in actions] == ["start", "net egress ls", "destroy"]
+    assert [a for _, a in actions] == ["start", "rename", "net egress ls", "destroy"]
 
 
 def test_menu_actions_orphan_disabled():
@@ -1175,12 +1175,14 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     assert actions == [
         ("Start", "start"),
         ("Open PR", "pr --open"),
+        ("Rename…", "rename"),
         ("Egress…", "net egress ls"),
         ("Destroy", "destroy"),
     ]
     assert dmenus.group_menu_actions(actions, include_network=True) == [
         ("Start", "start"),
         dmenus.MenuGroup("PR →", (("Open PR", "pr --open"),)),
+        ("Rename…", "rename"),
         dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),)),
         ("Destroy", "destroy"),
     ]
@@ -1210,6 +1212,8 @@ def test_menu_actions_running_offers_the_workflow_verbs():
         "git push",
         "git retarget",
         "git diff",
+        "fork",
+        "rename",
         "net loose",
         "net egress ls",
         "restart",
@@ -1416,6 +1420,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
         "tmux",
         "shell",
         "outbox browse",
+        "rename",
         "net loose",
         "net egress ls",
         "restart",
@@ -1426,7 +1431,7 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
 
 def test_menu_actions_stopped_has_no_workflow_verbs():
     verbs = [v for _, v in dmenus.menu_actions(_ctx(state="Stopped"))]
-    assert verbs == ["start", "net egress ls", "destroy"]
+    assert verbs == ["start", "rename", "net egress ls", "destroy"]
 
 
 def test_menu_actions_hides_git_pull_when_nothing_is_ahead():
@@ -1578,6 +1583,8 @@ def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
         "PR →": "p",
         "Lifecycle →": "l",
         "Network →": "w",
+        "Fork…": "f",
+        "Rename…": "R",
     }
 
 
@@ -1601,7 +1608,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
 def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
     menu = tmenu.MenuState("alpha-x", dmenus.menu_actions(_ctx(state="Stopped")))
 
-    assert _hotkeys(menu) == {"Start": "s", "Network →": "w", "Destroy": "D"}
+    assert _hotkeys(menu) == {"Start": "s", "Rename…": "R", "Network →": "w", "Destroy": "D"}
 
 
 def test_menu_hotkeys_cover_the_repo_menu():

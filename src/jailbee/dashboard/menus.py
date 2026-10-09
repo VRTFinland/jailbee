@@ -303,6 +303,11 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         actions.append(("Change base branch (git retarget)", "git retarget"))
         if _has_diff_to_show(ctx.git_status):
             actions.append(("Show diff (git diff)", "git diff"))
+    if _bridge_possible(ctx):
+        actions.append(("Fork…", "fork"))
+    if ctx.state in ("Running", "Stopped"):
+        # An alias is metadata, so a stopped container takes one too.
+        actions.append(("Rename…", "rename"))
     if ctx.state == "Running":
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
@@ -612,6 +617,16 @@ def new_container_argv(target: RepoTarget, branch: str, base: str) -> list[str]:
     read as the option it spells.
     """
     return ["jailbee", "new", *target.flags(), "--background", "--", branch, base]
+
+
+def fork_container_argv(target: RepoTarget, source: str, name: str) -> list[str]:
+    """``jailbee fork --background <source> <name>``; both names follow ``--``."""
+    return ["jailbee", "fork", *target.flags(), "--background", "--", source, name]
+
+
+def rename_argv(container: str, alias: str) -> list[str]:
+    """``rename <container> <alias>``, or ``rename <container> --clear`` for an empty alias."""
+    return ["rename", container, alias] if alias else ["rename", container, "--clear"]
 
 
 def new_pr_container_argv(target: RepoTarget, number: int) -> list[str]:

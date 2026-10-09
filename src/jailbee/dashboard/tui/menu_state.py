@@ -224,6 +224,8 @@ _MENU_KEYS: dict[str, str] = {
     dact.MOUNT_REMOVE: "u",
     "credential-group": "c",
     "Network →": "w",
+    "fork": "f",
+    "rename": "R",
     # Git →
     "merge": "m",
     "git pull": "l",

@@ -80,7 +80,7 @@ def filter_suggestions(suggestions: Sequence[str], text: str) -> list[str]:
 def validate_answer(prompt: TextPrompt, text: str) -> str | None:
     """Why ``text`` cannot answer ``prompt``, or None when it can."""
     answer = text.strip()
-    if not answer:
+    if not answer and prompt.purpose != "container-rename":  # empty clears the alias
         return f"{prompt.label} cannot be empty"
     if prompt.purpose == "new-pr" and parse_pr_number(text) is None:
         return "PR number must be a positive whole number"

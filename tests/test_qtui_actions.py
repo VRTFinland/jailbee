@@ -320,6 +320,14 @@ def test_retarget_runs_as_output_with_the_base_last():
     assert cmd.argv[-1] == "develop"
 
 
+@pytest.mark.parametrize("verb", ["fork", "rename"])
+def test_fork_and_rename_hand_the_terminal_to_the_cli(verb):
+    """The CLI asks the name itself, so Qt only hands it a terminal."""
+    cmd = a.build_action(verb, "alpha-x", _t("/repo/.gie/config.yaml"))
+    assert cmd.launch == "terminal"
+    assert cmd.argv[:3] == ["jailbee", verb, "alpha-x"]
+
+
 def test_build_bulk_action_puts_every_name_before_the_config(tmp_path):
     target = RepoTarget(tmp_path, tmp_path / "c.yaml")
     action = a.build_bulk_action("git push", ["p-a", "p-b"], target, extra_flags=["--merge"])
