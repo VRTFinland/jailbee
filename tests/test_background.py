@@ -558,6 +558,44 @@ def test_job_to_opts_tolerates_a_job_file_without_assume_yes():
     assert restored.autofetch_done is False
 
 
+def test_fork_of_round_trips():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feature",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+        fork_of="myrepo-src",
+    )
+    job = op_to_job(opts, container_name="p-feature", log_path="/tmp/l.log")
+    restored, _name, _log = job_to_opts(job)
+    assert restored.fork_of == "myrepo-src"
+
+
+def test_job_without_fork_of_key_reads_none():
+    from jailbee.background import job_to_opts, op_to_job
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feature",
+        name=None,
+        network="strict",
+        memory="4GiB",
+        cpu=2,
+        from_base="base",
+        clone=True,
+    )
+    job = op_to_job(opts, container_name="p-feature", log_path="/tmp/l.log")
+    del job["opts"]["fork_of"]
+    restored, _name, _log = job_to_opts(job)
+    assert restored.fork_of is None
+
+
 def test_credential_group_survives_the_job_round_trip():
     from jailbee.background import job_to_opts, op_to_job
     from jailbee.lifecycle import NewContainerOptions

@@ -1032,6 +1032,11 @@ class NewContainerOptions:
     # `refs/jailbee/pr/<N>/head` and deliberately not in any branch (see
     # `pr.pr_head_ref`); a same-named host branch must not win over it.
     clone_commit: str | None = None
+    # Full name of the container this one is forked from (`jailbee fork`);
+    # written to `user.jailbee.fork_of`. The clone itself is pinned by
+    # `clone_commit`; this is only the remembered upstream. MUST be mirrored in
+    # `background.op_to_job`/`job_to_opts` — see `assume_yes`.
+    fork_of: str | None = None
     # Suppress interactive confirmations (`jailbee new --yes`). Consulted for the
     # branch-autostart escalation prompt. MUST be mirrored in both
     # `background.op_to_job` and `background.job_to_opts` — a field added to
@@ -1729,6 +1734,12 @@ def new_container(
             incus.config_set(name, "user.jailbee.pr", str(opts.pr))
         except Exception as e:
             warn(f"Container created, but failed to set PR label: {e}")
+
+    if opts.fork_of is not None:
+        try:
+            incus.config_set(name, "user.jailbee.fork_of", opts.fork_of)
+        except Exception as e:
+            warn(f"Container created, but failed to set fork label: {e}")
 
     # Repo source bind (RO). Per-container rather than in the
     # `<prefix>-binds` profile so multiple clones of the same upstream

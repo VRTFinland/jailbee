@@ -367,6 +367,7 @@ def op_to_job(
             "pr": opts.pr,
             "untrusted_head": opts.untrusted_head,
             "clone_commit": opts.clone_commit,
+            "fork_of": opts.fork_of,
             "assume_yes": opts.assume_yes,
             "approved_autostart_ref": opts.approved_autostart_ref,
             "autofetch_done": opts.autofetch_done,
@@ -403,6 +404,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         pr=o["pr"],
         untrusted_head=o.get("untrusted_head", False),
         clone_commit=o["clone_commit"],
+        fork_of=o.get("fork_of"),
         # `.get` not `[...]`: a job file written by an older jailbee predates these
         # keys, and an in-flight background `jailbee new` must survive an upgrade.
         assume_yes=o.get("assume_yes", False),

@@ -1287,6 +1287,40 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
     assert calls[0].args[2] == "develop"
 
 
+def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=False)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        **extra,
+    )
+    new_container(cfg, incus, opts)
+    return [c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.fork_of"]
+
+
+def test_new_container_writes_fork_of_label(make_cfg, tmp_path, mocker):
+    calls = _fork_label_calls(make_cfg, tmp_path, mocker, fork_of="myrepo-src")
+    assert len(calls) == 1
+    assert calls[0].args[2] == "myrepo-src"
+
+
+def test_new_container_without_fork_of_writes_no_label(make_cfg, tmp_path, mocker):
+    assert _fork_label_calls(make_cfg, tmp_path, mocker) == []
+
+
 def test_resolve_container_for_interactive_uses_with_git_status(make_cfg, tmp_path, mocker):
     """The interactive picker path fetches git status for richer labels."""
     repo = tmp_path / "myrepo"
