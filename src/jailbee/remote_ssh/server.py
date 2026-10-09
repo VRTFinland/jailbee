@@ -41,7 +41,7 @@ from jailbee.remote_ssh.router import (
     route,
 )
 from jailbee.remote_ssh.running import clear_running, installed_version, record_running
-from jailbee.remote_ssh.session import WaypipeSession, host_restricted
+from jailbee.remote_ssh.session import WaypipeSession, host_restricted, terminal_identity
 from jailbee.remote_ssh.sftp import MAX_CONCURRENT_EXECS, SFTPService
 
 if TYPE_CHECKING:
@@ -345,8 +345,10 @@ async def handle_process(
         # LC_* ...`) are accepted by the protocol but never consulted: the
         # child's environment is built from this service's own os.environ in
         # pty.py, never from process.env or the channel's raw environment
-        # bytes. Rejecting the session over an env request broke every stock
-        # OpenSSH client (see the SSH server final review, finding C1).
+        # bytes — bar the terminal's identity (`session.terminal_identity`),
+        # read where the child spec is built below. Rejecting the session
+        # over an env request broke every stock OpenSSH client (see the SSH
+        # server final review, finding C1).
         kind, prefix, path = _request_fields(process.command)
         global_config, _ = load_global_config(default_global_config_path())
         config = global_config.remote.ssh
@@ -423,6 +425,7 @@ async def handle_process(
                 and selected.kind == "command"
                 and is_gui_app_command(selected.argv)
             ),
+            terminal=tuple(terminal_identity(process.env).items()),
         )
         if selected.repo_root is None:
             spec.cwd.mkdir(parents=True, exist_ok=True)

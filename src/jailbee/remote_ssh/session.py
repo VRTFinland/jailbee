@@ -10,7 +10,8 @@ the one that is forgotten fails open.
 The marker only ever takes capability away, so a local user who sets it by
 hand restricts their own session and nothing else. The SSH client cannot
 remove it: client environment requests never reach the child (see
-`server.handle_process`).
+`server.handle_process`), bar the terminal's identity in
+`TERMINAL_IDENTITY_ENV`.
 
 `remote.ssh.restrict_host: false` is the one way to leave it off, and only
 for a server that is not itself running inside a restricted session: a
@@ -53,6 +54,19 @@ WAYPIPE_COMPRESS_ENV = "JAILBEE_WAYPIPE_COMPRESS"
 # attached, so the session (and the forward) lives as long as the app.
 WAYPIPE_ATTACH_ENV = "JAILBEE_WAYPIPE_ATTACH"
 _WAYPIPE_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+# The one exception to "client environment requests never reach the child":
+# the names a terminal uses to identify itself. Only the client knows which
+# terminal is at the other end, and Textual decides by them — it leaves
+# iTerm2's broken pixel-mouse mode off only when LC_TERMINAL/TERM_PROGRAM say
+# iTerm2, which iTerm2 sends over SSH (`SendEnv LC_*`) for exactly this.
+TERMINAL_IDENTITY_ENV = (
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "COLORTERM",
+)
+_TERMINAL_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,7 @@ def child_environment(
     gui_port: int | None = None,
     waypipe: WaypipeSession | None = None,
     waypipe_attach: bool = False,
+    terminal: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """The environment for a child of the SSH server, built from ``base``.
 
@@ -83,8 +98,14 @@ def child_environment(
     ``base`` already carries it. ``waypipe`` marks the child as part of that
     `waypipe ssh` session; ``waypipe_attach`` adds that its own command is a
     GUI launcher. Inherited waypipe markers are always removed.
+    ``terminal`` is the client's own terminal identity (`terminal_identity`);
+    the server's inherited values for those names describe the wrong
+    terminal and are always removed.
     """
     env = dict(base)
+    for name in TERMINAL_IDENTITY_ENV:
+        env.pop(name, None)
+    env.update(terminal or {})
     env[SSH_SESSION_ENV] = "1"
     env[SSH_EXCLUDED_REPOS_ENV] = json.dumps(list(excluded_repos))
     env.pop(SSH_GUI_ENV, None)
@@ -103,6 +124,20 @@ def child_environment(
     if term is not None:
         env["TERM"] = term
     return env
+
+
+def terminal_identity(client_env: Mapping[str, object]) -> dict[str, str]:
+    """The client's `TERMINAL_IDENTITY_ENV` entries that are plain identifiers.
+
+    Every other name, and any value that is not a short identifier, is dropped.
+    """
+    return {
+        name: value
+        for name, value in client_env.items()
+        if name in TERMINAL_IDENTITY_ENV
+        and isinstance(value, str)
+        and _TERMINAL_VALUE_RE.fullmatch(value)
+    }
 
 
 def is_remote_session(environ: Mapping[str, str] | None = None) -> bool:

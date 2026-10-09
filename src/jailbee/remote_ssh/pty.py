@@ -52,6 +52,8 @@ class ChildSpec:
     # when the session's own command is a GUI launcher.
     waypipe: WaypipeSession | None = None
     waypipe_attach: bool = False
+    # The client's terminal identity (`session.terminal_identity`), as pairs.
+    terminal: tuple[tuple[str, str], ...] = ()
 
 
 class _Reader(Protocol):
@@ -369,6 +371,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
         gui_port=spec.gui_port,
         waypipe=spec.waypipe,
         waypipe_attach=spec.waypipe_attach,
+        terminal=dict(spec.terminal),
     )
     pid, master = pty.fork()
     if pid == 0:
@@ -443,6 +446,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
                 gui_port=spec.gui_port,
                 waypipe=spec.waypipe,
                 waypipe_attach=spec.waypipe_attach,
+                terminal=dict(spec.terminal),
             ),
             start_new_session=True,
         )

@@ -745,6 +745,18 @@ def test_client_environment_requests_are_ignored_not_rejected(kwargs, child, con
     assert spec.argv == (sys.executable, "-m", "jailbee", "ls")
 
 
+def test_client_terminal_identity_reaches_the_child_spec(child, configured, repo):
+    # iTerm2 sends LC_TERMINAL over SSH so the remote side can tell which
+    # terminal it is; without it Textual turns on iTerm2's broken pixel mouse.
+    _, channel = session(
+        "--repo project ls",
+        env={"LC_TERMINAL": "iTerm2", "LD_PRELOAD": "client-secret", "LANG": "C"},
+    )
+    channel.exit.assert_called_once_with(7)
+    spec = child.await_args.args[1]
+    assert spec.terminal == (("LC_TERMINAL", "iTerm2"),)
+
+
 def test_client_environment_requests_do_not_block_commandless_help(child):
     _, channel = session(None, env={"LANG": "C.UTF-8"})
     assert output(channel) == help_text(RemoteSSHConfig()).encode()

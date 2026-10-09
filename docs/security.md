@@ -169,7 +169,11 @@ The SSH protocol surface is also fail-closed:
   subsystem is still refused;
 - client environment requests, including `SendEnv`, are accepted by the
   protocol but ignored: the client's environment never reaches the child
-  process, which is built from the service's own environment;
+  process, which is built from the service's own environment. The one
+  exception is the terminal's identity — `LC_TERMINAL`,
+  `LC_TERMINAL_VERSION`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and
+  `COLORTERM`, each only when its value is a short plain identifier — which
+  the dashboard needs to work around terminal-specific bugs (iTerm2's mouse);
 - the interactive `console` entry point is a restricted JailBee console, not a
   POSIX shell, and implements no pipes, redirection, expansion or executable
   lookup;
