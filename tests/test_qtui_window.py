@@ -461,15 +461,22 @@ def test_toggling_a_columns_action_emits_and_updates(qtbot):
 def test_toggling_a_column_on_appends_it(qtbot):
     win = MainWindow(enabled_columns=("name", "state", "created"))
     qtbot.addWidget(win)
-    act = next(a for a in win.columns_menu.actions() if a.text() == "ip")
+    # "mode" sits canonically before "state": a canonical re-sort would put it second.
+    act = next(a for a in win.columns_menu.actions() if a.text().startswith("mode"))
     act.trigger()  # see the note in test_toggling_a_columns_action_emits_and_updates
-    assert win.enabled_columns() == ("name", "state", "created", "ip")
+    assert win.enabled_columns() == ("name", "state", "created", "mode")
 
 
-def test_a_restored_column_order_is_kept_with_name_first(qtbot):
-    win = MainWindow(enabled_columns=("state", "created", "name"))
+def test_a_restored_column_order_is_kept(qtbot):
+    win = MainWindow(enabled_columns=("name", "created", "state"))
     qtbot.addWidget(win)
-    assert win.enabled_columns() == ("name", "state", "created")
+    assert win.enabled_columns() == ("name", "created", "state")
+
+
+def test_a_restored_order_without_name_first_gets_name_first_and_keeps_the_rest(qtbot):
+    win = MainWindow(enabled_columns=("created", "state", "name", "mode"))
+    qtbot.addWidget(win)
+    assert win.enabled_columns() == ("name", "created", "state", "mode")
 
 
 def test_the_last_column_cannot_be_unchecked(qtbot):

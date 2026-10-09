@@ -6625,6 +6625,15 @@ def test_seed_view_state_does_not_duplicate_an_existing_replacement():
     assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("name", "outbox")
 
 
+def test_seed_view_state_keeps_a_non_canonical_stored_order():
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+
+    engine = _view_engine()
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name", "created", "state")))
+
+    assert dcolumns.seed_view_state(engine, FRONTEND_TUI).columns == ("name", "created", "state")
+
+
 def test_seed_view_state_runs_the_diff_rename_and_the_column_set_migration_together():
     from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
 
