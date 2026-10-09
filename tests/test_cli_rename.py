@@ -56,3 +56,12 @@ def test_rename_alias_error_exits_2(rig):
     result = runner.invoke(app, ["rename", "a", "login", "--config", CFG])
     assert result.exit_code == 2
     assert "nope-x" in result.output
+
+
+@pytest.mark.parametrize("alias", ["login", "--clear", "-x"])
+def test_rename_accepts_the_alias_after_the_separator(rig, alias):
+    incus, set_alias, clear_alias = rig
+    result = runner.invoke(app, ["rename", "a", "--config", CFG, "--", alias])
+    assert result.exit_code == 0, result.output
+    assert set_alias.call_args.args[1:] == (incus, "myrepo-a", alias)
+    clear_alias.assert_not_called()

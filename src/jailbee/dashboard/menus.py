@@ -625,8 +625,12 @@ def fork_container_argv(target: RepoTarget, source: str, name: str) -> list[str]
 
 
 def rename_argv(container: str, alias: str) -> list[str]:
-    """``rename <container> <alias>``, or ``rename <container> --clear`` for an empty alias."""
-    return ["rename", container, alias] if alias else ["rename", container, "--clear"]
+    """``rename <container> -- <alias>``, or ``rename <container> --clear`` for an empty alias.
+
+    The alias follows ``--``: a typed ``--clear`` or ``-x`` is an alias for
+    `aliases.set_alias` to judge, never an option.
+    """
+    return ["rename", container, "--", alias] if alias else ["rename", container, "--clear"]
 
 
 def new_pr_container_argv(target: RepoTarget, number: int) -> list[str]:

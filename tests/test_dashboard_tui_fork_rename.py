@@ -40,7 +40,7 @@ def test_fork_argv_puts_the_names_after_the_separator(tmp_path):
 
 
 def test_rename_argv_clears_on_an_empty_alias():
-    assert dmenus.rename_argv("alpha-x", "login") == ["rename", "alpha-x", "login"]
+    assert dmenus.rename_argv("alpha-x", "login") == ["rename", "alpha-x", "--", "login"]
     assert dmenus.rename_argv("alpha-x", "") == ["rename", "alpha-x", "--clear"]
 
 
@@ -85,7 +85,15 @@ def test_rename_prompt_starts_on_the_current_alias_and_runs_the_cli(mocker, tmp_
     assert prompts[0].purpose == "container-rename"
     assert prompts[0].initial == "old"
     cfg = str(tmp_path / ".jailbee" / "config.yaml")
-    assert child.call_args.args[0] == ["jailbee", "rename", "alpha-x", "login", "--config", cfg]
+    assert child.call_args.args[0] == [
+        "jailbee",
+        "rename",
+        "alpha-x",
+        "--config",
+        cfg,
+        "--",
+        "login",
+    ]
 
 
 def test_rename_prompt_with_an_empty_answer_clears_the_alias(mocker, tmp_path):
@@ -107,3 +115,53 @@ def test_rename_is_offered_for_a_stopped_container_but_fork_is_not():
     verbs = [verb for _label, verb in dmenus.menu_actions(ctx)]
     assert "rename" in verbs
     assert "fork" not in verbs
+
+
+def _session(mocker, tmp_path, **kw):  # type: ignore[no-untyped-def]
+    from tests.dashboard_pilot import make_app
+
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    app = make_app(mocker, [group], **kw)
+    return app.session, group
+
+
+def test_fork_builder_over_ssh_addresses_the_repo_by_cwd(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session, _group = _session(
+        mocker,
+        tmp_path,
+        remote=True,
+        over_ssh=True,
+        ssh_policy=RemoteSSHConfig(restrict_host=False),
+    )
+    run_new = mocker.patch.object(session, "run_new_container")
+
+    prompt = doverlays.TextPrompt("container-fork", "t", "New container name", target="alpha-x")
+    session.submit_prompt(prompt, " b ")
+
+    prefix, what, builder = run_new.call_args.args
+    assert (prefix, what) == ("alpha", "fork b")
+    repo = dmodel.RepoTarget(tmp_path, tmp_path / "c.yaml")
+    assert builder(repo) == ["jailbee", "fork", "--background", "--", "alpha-x", "b"]
+
+
+def test_fork_submit_for_a_vanished_container_notices_and_runs_nothing(mocker, tmp_path):
+    session, _group = _session(mocker, tmp_path)
+    run_new = mocker.patch.object(session, "run_new_container")
+    session.groups = []
+
+    prompt = doverlays.TextPrompt("container-fork", "t", "New container name", target="alpha-x")
+    assert session.submit_prompt(prompt, "b") is None
+
+    run_new.assert_not_called()
+    assert "'alpha-x' is gone" in str(session.notice)
+
+
+def test_open_rename_for_a_vanished_container_notices(mocker, tmp_path):
+    session, group = _session(mocker, tmp_path)
+    mocker.patch.object(session, "dispatchable", return_value=dmodel.RepoTarget.of(group))
+    session.groups = [dataclasses.replace(group, containers=[])]
+
+    assert session.open_rename("alpha-x") is None
+    assert "'alpha-x' is gone" in str(session.notice)
