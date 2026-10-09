@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.bulk import BulkAction, plan_bulk
@@ -10,7 +12,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
 from jailbee.remote_ssh.router import RouteError
 from tests.dashboard_fixtures import ci
-from tests.dashboard_pilot import SyncJobs, bare_session, box_text, patch_pause
+from tests.dashboard_pilot import SyncJobs, bare_session, box_text, drive, patch_pause
 
 
 def _session(mocker, tmp_path, *states, config=None, **group_kw):
@@ -495,3 +497,19 @@ def test_a_run_that_cannot_start_still_pauses_once_and_keeps_earlier_results(moc
     assert "No such file or directory: jailbee" in session.notice
     assert "directory no longer exists" not in session.notice
     assert "1 ok" in session.notice
+
+
+@pytest.mark.parametrize("size", [(120, 40), (60, 40), (40, 40), (60, 10)])
+def test_the_destroy_confirm_keeps_both_entries_whatever_the_size(mocker, tmp_path, size):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("bulk-b", "alpha", "Running"), ci("bulk-c", "alpha", "Running")],
+    )
+
+    run = drive(mocker, ["down", "space", "space", "D"], [group], size=size, screens=True)
+
+    screen = run.screens[4]  # after the four steps, before the padding Ctrl-C
+    assert "No" in screen
+    assert "Yes, destroy 2" in screen

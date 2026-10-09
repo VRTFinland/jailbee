@@ -734,17 +734,28 @@ class PickerBox(OverlayBox):
             self.key = key
             self.entry = entry
 
+    DEFAULT_CSS = """
+    PickerBox > .picker-detail {
+        height: 1;
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    """
+
     def __init__(self, spec: Picker, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.picker = spec
         self.border_title = _one_line(spec.title, "bold")
 
     def compose(self) -> ComposeResult:
-        if self.picker.detail:
+        # One widget per line, each exactly one row: a long line is cut with an
+        # ellipsis instead of wrapping, so the height `chrome_rows` counts holds
+        # and the entries below can never be pushed out of the box.
+        for line in self.picker.detail:
             yield Static(
-                Text(
-                    "\n".join(self.picker.detail), style="yellow", no_wrap=True, overflow="ellipsis"
-                )
+                Text(line, style="yellow", no_wrap=True, overflow="ellipsis"),
+                classes="picker-detail",
             )
         options = [Option(_one_line(entry.label)) for entry in self.picker.entries] or [
             Option(_one_line("(nothing to choose)", "dim"), disabled=True)
