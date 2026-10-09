@@ -5493,7 +5493,6 @@ Needs the work network (`jb net migrate --yes`) and a repo with
 8. `jb net egress rm '*.iana.org' t1`, set `egress_proxy_always: false` and run
    `jb apply`. Expected: t1's proxy variables are cleared.
 
-
 ## Dashboard bulk actions
 
 Needs a repo with at least four containers (two of them clone-mode, for the
@@ -5503,14 +5502,14 @@ push step). Run `jb dashboard`.
    counts three, and the cursor moves down after every mark. On a repo header,
    `Space` folds instead, and the folded header shows how many of its
    containers are marked.
-2. Press Enter on a marked container. Expected: an *3 selected* menu with
+2. Press Enter on a marked container. Expected: a *3 selected* menu with
    start, stop, restart, network, git push/pull, merge and destroy as far as at
    least one of them can take them. Choose stop. Expected: `⟳` on each marked
    row while it runs, then one notice at the end; succeeded rows are unmarked.
 3. Mark the same three again and start them. Expected: the same `⟳` and single
    notice.
 4. Mark two containers and press `D`. Expected: one confirmation listing both
-   with what each would lose, "No" selected first. Answer No: nothing is
+   (the title names both; a container with something to lose also gets a risk line), "No" selected first. Answer No: nothing is
    destroyed and the marks stay. Press Esc to clear the marks.
 5. Mark two clone containers and press `u`. Expected: one terminal run of
    `jailbee git push a b`, a single source/action question, then a pause before

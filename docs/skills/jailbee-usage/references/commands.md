@@ -827,7 +827,11 @@ Marked rows show `●`; while anything is marked, Enter on a container opens an 
 menu and `D`/`u` act on the marks. Start, stop, restart, network and destroy run in
 parallel (one notice at the end; succeeded rows are unmarked, failed or skipped stay
 marked; destroy asks once, "No" first). Git push, pull and merge run once per repo in the
-terminal through the CLI's multi-name form.
+terminal through the CLI's multi-name form. The TTL picked for a bulk `net loose` is passed
+as `--for` to every marked container, including those of repos configured not to revert. In
+the terminal dashboard, with marks present, Enter or right-click on any container row opens
+the *N selected* menu for the marks, even if the cursor row is unmarked; the Qt table acts
+on the right-clicked row alone when it is not part of the selection.
 
 Mouse (on by default; `m` toggles it for the session, `dashboard.mouse: false` in
 the global config turns it off): click selects a row, double- or right-click opens
@@ -950,8 +954,10 @@ listing the container's actual branch names — it does not create anything.
 
 ### `jailbee git pull [NAME...]`
 
-Several names are pulled in order, stopping at the first failure. Fetch + **merge the container's branch into its base branch**
+Fetch + **merge the container's branch into its base branch**
 (`user.jailbee.base_branch`), default a `--no-ff` merge commit.
+
+Several names are pulled in order, stopping at the first failure.
 
 | Flag | Effect |
 |---|---|
@@ -975,10 +981,12 @@ same block for the container side.
 
 ### `jailbee git push [NAME...]`
 
-Several names are pushed to in order with source and action resolved once; `--pr` and
-`--force` take exactly one (exit 2 otherwise). Send a host branch into the container's clone. Source/action from flags, config
+Send a host branch into the container's clone. Source/action from flags, config
 defaults (`push.default_source`, `push.default_action`), or interactive when those
 are `ask`. CLI flags always win.
+
+Several names are pushed to in order with source and action resolved once; `--pr` and
+`--force` take exactly one (exit 2 otherwise).
 
 | Flag | Effect |
 |---|---|
