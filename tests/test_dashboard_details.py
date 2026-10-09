@@ -612,7 +612,9 @@ def _panel_view(c: ContainerInfo, **kw: Any) -> dd.DetailsView:
     return dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW), **kw)
 
 
-def _panel_body(view: dd.DetailsView, max_rows: int | None, width: int, *, fixed: bool = False) -> list[str]:
+def _panel_body(
+    view: dd.DetailsView, max_rows: int | None, width: int, *, fixed: bool = False
+) -> list[str]:
     lines = _text(dd.render_details(view, max_rows, fixed=fixed), width=width).splitlines()
     assert all(len(ln) == width for ln in lines), "every panel line is one terminal row"
     return [ln[2:-2].rstrip() for ln in lines[1:-1]]
@@ -626,15 +628,15 @@ def _fit(subs: int | None) -> dd.ContainerPanel:
 
 
 def test_panel_fit_drops_blanks_then_submodules_then_the_footer() -> None:
-    F = dd.PanelFit
-    assert dd.panel_fit(_fit(None), None) == F(True, True, 0, 0, True)
-    assert dd.panel_fit(_fit(2), 8) == F(True, True, 2, 0, True)  # 1+2+2+1 rows + 2 blanks
-    assert dd.panel_fit(_fit(2), 7) == F(False, True, 2, 0, True)
-    assert dd.panel_fit(_fit(10), 8) == F(False, True, 3, 7, True)  # 3 shown + "+7 more"
-    assert dd.panel_fit(_fit(1), 4) == F(False, True, 0, 0, True)
-    assert dd.panel_fit(_fit(None), 2) == F(False, True, 0, 0, False)
-    assert dd.panel_fit(_fit(2), 2) == F(False, False, 0, 0, True)
-    assert dd.panel_fit(_fit(2), 1) == F(False, False, 0, 0, False)
+    fit = dd.PanelFit
+    assert dd.panel_fit(_fit(None), None) == fit(True, True, 0, 0, True)
+    assert dd.panel_fit(_fit(2), 8) == fit(True, True, 2, 0, True)  # 1+2+2+1 rows + 2 blanks
+    assert dd.panel_fit(_fit(2), 7) == fit(False, True, 2, 0, True)
+    assert dd.panel_fit(_fit(10), 8) == fit(False, True, 3, 7, True)  # 3 shown + "+7 more"
+    assert dd.panel_fit(_fit(1), 4) == fit(False, True, 0, 0, True)
+    assert dd.panel_fit(_fit(None), 2) == fit(False, True, 0, 0, False)
+    assert dd.panel_fit(_fit(2), 2) == fit(False, False, 0, 0, True)
+    assert dd.panel_fit(_fit(2), 1) == fit(False, False, 0, 0, False)
 
 
 def test_the_panel_reads_summary_git_table_footer() -> None:
@@ -676,7 +678,9 @@ def test_a_narrow_panel_keeps_one_row_per_line_and_drops_host_head() -> None:
         assert len(body) == 8, width
         assert "host HEAD" not in "\n".join(body), width
         assert body[-1].startswith("base"), width
-    wide = _panel_body(_panel_view(_rich_container()), 8, dd._PANEL_WIDE + dd.PANEL_INSET_COLS, fixed=True)
+    wide = _panel_body(
+        _panel_view(_rich_container()), 8, dd._PANEL_WIDE + dd.PANEL_INSET_COLS, fixed=True
+    )
     assert "host HEAD" in "\n".join(wide)
 
 
@@ -719,7 +723,9 @@ def test_a_cramped_panel_keeps_the_summary_and_the_activity() -> None:
 
 def test_details_for_a_container_carries_its_panel() -> None:
     c = _rich_container()
-    view = dd.details_for([dmodel.RepoGroup("alpha", "/a", None, [c])], dmodel.Row("container", c.name), NOW)
+    view = dd.details_for(
+        [dmodel.RepoGroup("alpha", "/a", None, [c])], dmodel.Row("container", c.name), NOW
+    )
 
     assert view is not None and view.items == ()
     assert view.panel == dd.container_panel(c, NOW)

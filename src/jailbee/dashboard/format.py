@@ -42,6 +42,8 @@ def state_label(state: str) -> str:
     """The state as the details panel words it: glyph and name, escaped."""
     glyph = _STATE_GLYPHS.get(state)
     return f"{glyph} {escape(state)}" if glyph else escape(state)
+
+
 _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
 
 RECENT_IDLE = timedelta(minutes=30)
