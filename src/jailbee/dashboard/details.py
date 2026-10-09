@@ -56,6 +56,38 @@ class DetailItem:
 
 
 @dataclass(frozen=True)
+class GitRow:
+    """One line of the details panel's git table; every field is Rich markup.
+
+    The container's own tree comes first, then one row per changed
+    submodule. ``extra`` is shown only when the panel is wide enough.
+    """
+
+    name: str
+    ahead: str
+    behind: str
+    target: str
+    working: str
+    note: str = ""
+    extra: str = ""
+
+
+@dataclass(frozen=True)
+class ContainerPanel:
+    """A container's details, read top to bottom; every part is Rich markup.
+
+    ``summary`` is one line of what the container is doing, ``git`` its
+    trees (None without a git status), ``footer`` one dim line of the rest.
+    ``base`` names the branch the git table's diff column compares with.
+    """
+
+    summary: tuple[str, ...]
+    base: str
+    git: tuple[GitRow, ...] | None
+    footer: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DetailsView:
     """What the panel shows: a title and its rows, before any sizing.
 
@@ -64,7 +96,8 @@ class DetailsView:
     already escaped. ``reserve_rows`` is how many rows under the grid every
     view is guaranteed while any container has activity, so the table keeps
     its height as the cursor moves; the panel grows past it only into rows
-    the table does not need.
+    the table does not need. ``panel`` is a container's summary / git table /
+    footer, drawn in place of ``items``; a repo heading has none.
     """
 
     title: str
@@ -73,6 +106,7 @@ class DetailsView:
     reserve_rows: int = 0
     message: str | None = None
     history: tuple[str, ...] = ()
+    panel: ContainerPanel | None = None
 
     @property
     def base_rows(self) -> int:
@@ -128,127 +162,7 @@ def _or_dash(value: str) -> str:
     return value if value.strip() else _DASH
 
 
-def container_details(c: ContainerInfo, now: datetime) -> list[DetailItem]:
-    """The container's rows, most important first — a cut panel loses its tail."""
-    cells = {f.name: f.cell for f in ls_field_specs(now=now, all_repos=False)}
-
-    def cell(name: str) -> str:
-        return cells[name](c)
-
-    state = cell("state")
-    if c.job_phase is not None:
-        state += f" · {cell('job')}"
-    error = c.job_error.strip().splitlines()[0] if c.job_error and c.job_error.strip() else ""
-    if error:
-        state += f" · [red]{escape(error)}[/red]"
-
-    network = c.network or "—"
-    if c.network == "loose":
-        ttl = cell("ttl")
-        network += (
-            f" ({ttl}, until {c.loose_until.astimezone():%H:%M})"
-            if c.loose_until is not None
-            else f" ({ttl})"
-        )
-    network += f" · {c.ip or '—'}"
-
-    git = (
-        [DetailItem("git", _DASH, "git")]
-        if c.git_status is None
-        else [
-            DetailItem("git wt", cell("wt"), "git"),
-            DetailItem("commits", f"↑{cell('ahead_count')} ↓{cell('behind_count')}", "git"),
-            DetailItem("target +/-", cell("target_diff"), "git"),
-            DetailItem("conflict", cell("conflict"), "git"),
-            DetailItem(
-                "local +/-",
-                f"↑{cell('local_count')} · {cell('local_diff')}",
-                "git",
-            ),
-        ]
-    )
-    submodules: list[DetailItem] = []
-    if c.git_status is not None:
-        sub_rows = submodule_sub_rows(c)
-        for index, (sub, row) in enumerate(zip(c.git_status.submodules, sub_rows, strict=True)):
-            path = escape(sub.path)
-            group = f"submodule-{index}"
-            submodules.extend(
-                (
-                    DetailItem("submodule", path, group),
-                    DetailItem(
-                        "commits",
-                        f"{sub.status} · ↑{row['ahead_count'] or '0'} "
-                        f"↓{row['behind_count'] or '0'}",
-                        group,
-                    ),
-                    DetailItem("target +/-", row["target_diff"], group),
-                    DetailItem("working +/-", row["wt"], group),
-                )
-            )
-    # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
-    doing = ", ".join(
-        escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity
-    )
-    issues = cell("issues")
-    github = " · ".join(part for part in (cell("pr"), f"issues {issues}" if issues else "") if part)
-    created = cell("created")
-    if c.created_at is not None:
-        created = f"{format_duration_short(now - c.created_at)} ago · {created}"
-
-    return [
-        DetailItem("state", state, "runtime"),
-        DetailItem("network", network, "runtime"),
-        *git,
-        *submodules,
-        DetailItem("agent", cell("agent"), "activity"),
-        DetailItem("doing", _or_dash(doing), "activity"),
-        DetailItem("resources", f"mem {cell('mem')} · cpu {cell('cpu')}", "resources"),
-        DetailItem("mode / base", f"{escape(c.mode)} · {cell('base')}", "configuration"),
-        DetailItem("github", _or_dash(github), "github"),
-        DetailItem(
-            "group",
-            escape(c.credential_group) if c.credential_group else "[dim]inherits repo[/dim]",
-            "identity",
-        ),
-        DetailItem("created", created, "identity"),
-        DetailItem("mounts", _or_dash(", ".join(escape(m) for m in c.optional_mounts)), "mounts"),
-    ]
-
-
 _STATE_STYLE = {"Running": "green", "Frozen": "blue"}
-
-
-@dataclass(frozen=True)
-class GitRow:
-    """One line of the details panel's git table; every field is Rich markup.
-
-    The container's own tree comes first, then one row per changed
-    submodule. ``extra`` is shown only when the panel is wide enough.
-    """
-
-    name: str
-    ahead: str
-    behind: str
-    target: str
-    working: str
-    note: str = ""
-    extra: str = ""
-
-
-@dataclass(frozen=True)
-class ContainerPanel:
-    """A container's details, read top to bottom; every part is Rich markup.
-
-    ``summary`` is one line of what the container is doing, ``git`` its
-    trees (None without a git status), ``footer`` one dim line of the rest.
-    ``base`` names the branch the git table's diff column compares with.
-    """
-
-    summary: tuple[str, ...]
-    base: str
-    git: tuple[GitRow, ...] | None
-    footer: tuple[str, ...]
 
 
 def _git_value(value: str) -> str:
@@ -403,11 +317,12 @@ def details_for(
                 block = activity_block(c, now)
                 return DetailsView(
                     c.display_name,
-                    tuple(container_details(c, now)),
+                    (),
                     block.lines,
                     reserve,
                     block.message,
                     block.history,
+                    container_panel(c, now),
                 )
     return None
 
@@ -418,9 +333,101 @@ def _one_row(markup: str) -> Text:
     return text
 
 
+_PANEL_WIDE = 60  # columns from which the git table also shows each row's `extra`
+_SUMMARY_GAP = "  "
+
+
+@dataclass(frozen=True)
+class PanelFit:
+    """Which parts of a container panel fit the grid's rows."""
+
+    blanks: bool  # the blank lines around the git table
+    git: bool  # its header and the container's own row, or the "git —" line
+    subs: int  # submodule rows shown
+    more: int  # submodule rows counted by the "… +N more submodules" row
+    footer: bool
+
+
+def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
+    """What of ``panel`` fits ``cap`` rows (None: everything).
+
+    Blank lines go first, then submodule rows, which one row then counts;
+    the summary and the footer stay. Only a panel too short for the table's
+    head loses the table, and then the footer.
+    """
+    subs = 0 if panel.git is None else len(panel.git) - 1
+    head = 1 if panel.git is None else 2
+    full = 1 + head + subs + 1
+    if cap is None or full + 2 <= cap:
+        return PanelFit(True, True, subs, 0, True)
+    if full <= cap:
+        return PanelFit(False, True, subs, 0, True)
+    room = cap - 1 - head - 1  # rows left for submodules once summary, head and footer sit
+    if room >= 1:
+        return PanelFit(False, True, room - 1, subs - (room - 1), True)
+    git = cap - 1 >= head
+    return PanelFit(False, git, 0, 0, cap - 1 - (head if git else 0) >= 1)
+
+
+def _git_table(panel: ContainerPanel, fit: PanelFit, *, wide: bool) -> Table:
+    assert panel.git is not None  # the caller draws "git —" otherwise
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(no_wrap=True, overflow="ellipsis", max_width=32)
+    for _ in range(5):  # ↑, ↓, diff vs base, working tree, note
+        grid.add_column(no_wrap=True, overflow="ellipsis")
+    grid.add_row(
+        "[dim]git[/dim]",
+        "[dim]↑[/dim]",
+        "[dim]↓[/dim]",
+        f"[dim]vs {panel.base}[/dim]",
+        "[dim]working[/dim]",
+        "",
+    )
+    root, *subs = panel.git
+    for row in (root, *subs[: fit.subs]):
+        note = " · ".join(part for part in (row.note, row.extra if wide else "") if part)
+        grid.add_row(row.name, row.ahead, row.behind, row.target, row.working, note)
+    if fit.more:
+        grid.add_row(f"[dim]… +{fit.more} more submodules[/dim]", "", "", "", "", "")
+    return grid
+
+
+def _panel_lines(
+    panel: ContainerPanel,
+    console: Console,
+    options: ConsoleOptions,
+    cap: int | None,
+    pad_to: int | None,
+) -> list[list[Segment]]:
+    """``panel`` as lines; with ``pad_to`` the footer lands on that row."""
+    fit = panel_fit(panel, cap)
+    render = options.update(height=None)
+    lines: list[list[Segment]] = []
+
+    def one(markup: str) -> None:
+        lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
+
+    one(_SUMMARY_GAP.join(panel.summary))
+    if fit.blanks:
+        lines.append([_BLANK])
+    if fit.git:
+        if panel.git is None:
+            one("[dim]git —[/dim]")
+        else:
+            table = _git_table(panel, fit, wide=options.max_width >= _PANEL_WIDE)
+            lines.extend(console.render_lines(table, render, pad=False))
+    if fit.footer:
+        if fit.blanks:
+            lines.append([_BLANK])
+        if pad_to is not None:
+            lines += [[_BLANK] for _ in range(pad_to - len(lines) - 1)]
+        one(f"[dim]{' · '.join(panel.footer)}[/dim]")
+    return lines
+
+
 @dataclass(frozen=True)
 class _DetailsBody:
-    """Whole detail groups packed into the shortest column, then the agent activity.
+    """The label/value grid, or a container's panel, then the agent activity.
 
     With ``max_rows`` the grid keeps at most ``DETAILS_MAX_ROWS`` rows (two at
     the least, before the reservation) and everything under it is activity,
@@ -481,6 +488,9 @@ class _DetailsBody:
     def _grid_lines(
         self, console: Console, options: ConsoleOptions, cap: int | None
     ) -> list[list[Segment]]:
+        if self.view.panel is not None:
+            pad_to = cap if self.fixed else None
+            return _panel_lines(self.view.panel, console, options, cap, pad_to)
         pairs = max(1, min(DETAILS_MAX_PAIRS, options.max_width // DETAILS_PAIR_WIDTH))
         columns: list[list[DetailItem]] = [[] for _ in range(pairs)]
         groups: list[list[DetailItem]] = []

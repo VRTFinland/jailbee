@@ -47,225 +47,6 @@ def _text(renderable: Any, width: int) -> str:
     return console.export_text()
 
 
-def test_container_rows_are_one_per_concept_in_priority_order() -> None:
-    items = dd.container_details(_c(), NOW)
-    assert [i.label for i in items] == [
-        "state",
-        "network",
-        "git",
-        "agent",
-        "doing",
-        "resources",
-        "mode / base",
-        "github",
-        "group",
-        "created",
-        "mounts",
-    ]
-
-
-def test_values_reuse_the_table_cells() -> None:
-    gs = GitStatus(
-        wt="+12 -3",
-        ahead_diff="+245 -18",
-        ahead_count="7",
-        conflict="ok",
-        target_diff="+245 -18",
-        behind_count="9",
-        local_diff="+1 -0",
-        local_count="5",
-    )
-    c = _c(
-        git_status=gs,
-        pr_number=142,
-        pr_author=True,
-        memory_usage=1_200_000_000,
-        memory_limit="4GiB",
-        base_branch="dev",
-        cpu_percent=34.0,
-    )
-    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
-    items = dd.container_details(c, NOW)
-    for name, label in [
-        ("wt", "git wt"),
-        ("ahead_count", "commits"),
-        ("behind_count", "commits"),
-        ("target_diff", "target +/-"),
-        ("conflict", "conflict"),
-        ("local_diff", "local +/-"),
-        ("local_count", "local +/-"),
-        ("mem", "resources"),
-        ("cpu", "resources"),
-        ("pr", "github"),
-        ("base", "mode / base"),
-        ("state", "state"),
-    ]:
-        assert cells[name](c) in _value(items, label), (name, label)
-    # Distinct counts, so a swapped arrow cannot pass on a coincidence.
-    commits = _plain(_value(items, "commits"))
-    assert "↑7" in commits and "↓9" in commits
-    assert "↑5" in _plain(_value(items, "local +/-"))
-
-
-def test_absent_values_render_as_a_dash() -> None:
-    items = dd.container_details(_c(), NOW)
-    for label in ("git", "agent", "doing", "github", "mounts"):
-        assert _plain(_value(items, label)) == "—", label
-
-
-def test_changed_submodules_follow_git_with_escaped_paths_and_stats() -> None:
-    status = GitStatus(
-        wt="clean",
-        ahead_diff="clean",
-        ahead_count="0",
-        conflict="ok",
-        submodules=(
-            SubmoduleChange(
-                path="deps/" + "segment/" * 16 + "[bold]widget",
-                status="modified",
-                ahead_commits=2,
-                behind_commits=1,
-                target_ins=7,
-                target_del=3,
-                wt_ins=4,
-                wt_del=0,
-            ),
-        ),
-    )
-    items = dd.container_details(_c(git_status=status), NOW)
-
-    labels = [item.label for item in items]
-    assert labels[2:8] == [
-        "git wt",
-        "commits",
-        "target +/-",
-        "conflict",
-        "local +/-",
-        "submodule",
-    ]
-    assert _plain(items[7].value) == "deps/" + "segment/" * 16 + "[bold]widget"
-    assert r"\[bold]widget" in items[7].value
-    assert [_plain(item.value) for item in items[8:11]] == ["modified · ↑2 ↓1", "+7 -3", "+4 -0"]
-    rendered = _text(dd.render_details(dd.DetailsView("alpha", tuple(items)), None), width=120)
-    assert "modified" in rendered and "↑2 ↓1" in rendered
-    assert "+7 -3" in rendered and "+4 -0" in rendered
-
-
-def test_submodule_missing_status_and_empty_changes_add_no_rows() -> None:
-    assert [i.label for i in dd.container_details(_c(), NOW)].count("submodule") == 0
-    empty = GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok")
-    assert [i.label for i in dd.container_details(_c(git_status=empty), NOW)].count(
-        "submodule"
-    ) == 0
-
-
-def test_multiple_submodules_preserve_order_and_unknown_stats() -> None:
-    status = GitStatus(
-        wt="clean",
-        ahead_diff="clean",
-        ahead_count="0",
-        conflict="ok",
-        submodules=(
-            SubmoduleChange(
-                path="first",
-                status="new",
-                ahead_commits=None,
-                behind_commits=None,
-                target_ins=None,
-                target_del=None,
-                wt_ins=None,
-                wt_del=None,
-            ),
-            SubmoduleChange(
-                path="second",
-                status="removed",
-                ahead_commits=0,
-                behind_commits=0,
-                target_ins=0,
-                target_del=0,
-                wt_ins=0,
-                wt_del=0,
-            ),
-        ),
-    )
-    items = dd.container_details(_c(git_status=status), NOW)
-    rows = [i for i in items if i.label == "submodule"]
-
-    assert [_plain(row.value) for row in rows] == ["first", "second"]
-    assert [_plain(i.value) for i in items if i.label == "commits"] == [
-        "↑0 ↓?",
-        "new · ↑? ↓?",
-        "removed · ↑0 ↓0",
-    ]
-    assert [_plain(i.value) for i in items if i.label == "target +/-"] == ["?", "?", "clean"]
-    assert [_plain(i.value) for i in items if i.label == "working +/-"] == ["?", "clean"]
-
-
-def test_submodule_rows_obey_narrow_capped_grid_rendering() -> None:
-    status = GitStatus(
-        wt="clean",
-        ahead_diff="clean",
-        ahead_count="0",
-        conflict="ok",
-        submodules=tuple(
-            SubmoduleChange(
-                path=f"deps/module-{index}",
-                status="modified",
-                ahead_commits=index,
-                behind_commits=0,
-                target_ins=2,
-                target_del=1,
-                wt_ins=3,
-                wt_del=0,
-            )
-            for index in range(5)
-        ),
-    )
-    view = dd.DetailsView("alpha-feat", tuple(dd.container_details(_c(git_status=status), NOW)))
-    rendered = _text(dd.render_details(view, 8), width=120)
-    capped = _text(dd.render_details(view, 8), width=60)
-
-    assert "deps/module-0" in rendered and "↑0 ↓0" in rendered
-    assert "+2 -1" in rendered and "+3 -0" in rendered
-    assert len(capped.splitlines()) == 10
-    assert "…" in capped
-    assert "deps/module-4" not in capped
-
-
-def test_loose_network_carries_ttl_until_and_ip() -> None:
-    until = NOW + timedelta(minutes=12)
-    c = _c(network="loose", loose_until=until, ip="10.0.3.7")
-    ttl = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}["ttl"](c)
-    value = _plain(_value(dd.container_details(c, NOW), "network"))
-    assert value == f"loose ({ttl}, until {until.astimezone():%H:%M}) · 10.0.3.7"
-
-
-def test_doing_lists_every_process_and_escapes_markup() -> None:
-    names = ("node", "[bold]x", "pytest", "git")
-    acts = tuple(ProcessActivity(comm=n, percent=10.0, count=1) for n in names)
-    value = _value(dd.container_details(_c(activity=acts), NOW), "doing")
-    assert _plain(value) == "node, [bold]x, pytest, git"
-
-
-def test_failed_job_shows_its_escaped_first_error_line() -> None:
-    c = _c(job_phase="failed", job_kind="new", job_error="boom [red]\nsecond line")
-    value = _plain(_value(dd.container_details(c, NOW), "state"))
-    assert "boom [red]" in value
-    assert "second line" not in value
-
-
-def test_agent_row_is_the_full_form_not_the_compact_one() -> None:
-    s = AgentSummary(agent="claude", state="waiting", since=None, waiting_for=None, count=1)
-    value = _plain(_value(dd.container_details(_c(agent_status=(s,)), NOW), "agent"))
-    assert value == "claude: waiting"
-
-
-def test_group_says_when_it_inherits_and_escapes_a_name() -> None:
-    assert _plain(_value(dd.container_details(_c(), NOW), "group")) == "inherits repo"
-    named = _c(credential_group="[work]")
-    assert _plain(_value(dd.container_details(named, NOW), "group")) == "[work]"
-
-
 def test_repo_summary(tmp_path: Path) -> None:
     g = dmodel.RepoGroup(
         "alpha",
@@ -790,3 +571,155 @@ def test_a_bare_container_panel() -> None:
     footer = _panel_plain(panel.footer)
     assert "group inherits repo" in footer
     assert not any(part.startswith("mounts") for part in footer)
+
+
+def _rich_container(subs: int = 1) -> ContainerInfo:
+    status = GitStatus(
+        wt="+12 -3",
+        ahead_diff="+245 -18",
+        ahead_count="3",
+        conflict="ok",
+        target_diff="+245 -18",
+        behind_count="0",
+        local_diff="+10 -2",
+        local_count="1",
+        submodules=tuple(
+            SubmoduleChange(
+                path=f"deps/module-{i}",
+                status="modified",
+                ahead_commits=2,
+                behind_commits=0,
+                target_ins=40,
+                target_del=2,
+                wt_ins=5,
+                wt_del=0,
+            )
+            for i in range(subs)
+        ),
+    )
+    return _c(
+        git_status=status,
+        base_branch="dev",
+        network="loose",
+        loose_until=NOW + timedelta(minutes=42),
+        ip="10.0.3.7",
+        pr_number=123,
+        pr_author=True,
+    )
+
+
+def _panel_view(c: ContainerInfo, **kw: Any) -> dd.DetailsView:
+    return dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW), **kw)
+
+
+def _panel_body(view: dd.DetailsView, max_rows: int | None, width: int, *, fixed: bool = False) -> list[str]:
+    lines = _text(dd.render_details(view, max_rows, fixed=fixed), width=width).splitlines()
+    assert all(len(ln) == width for ln in lines), "every panel line is one terminal row"
+    return [ln[2:-2].rstrip() for ln in lines[1:-1]]
+
+
+def _fit(subs: int | None) -> dd.ContainerPanel:
+    """A panel with no git status (None) or a root row plus ``subs`` submodule rows."""
+    row = dd.GitRow("r", "0", "0", "clean", "clean")
+    git = None if subs is None else tuple(row for _ in range(subs + 1))
+    return dd.ContainerPanel(("s",), "dev", git, ("f",))
+
+
+def test_panel_fit_drops_blanks_then_submodules_then_the_footer() -> None:
+    F = dd.PanelFit
+    assert dd.panel_fit(_fit(None), None) == F(True, True, 0, 0, True)
+    assert dd.panel_fit(_fit(2), 8) == F(True, True, 2, 0, True)  # 1+2+2+1 rows + 2 blanks
+    assert dd.panel_fit(_fit(2), 7) == F(False, True, 2, 0, True)
+    assert dd.panel_fit(_fit(10), 8) == F(False, True, 3, 7, True)  # 3 shown + "+7 more"
+    assert dd.panel_fit(_fit(1), 4) == F(False, True, 0, 0, True)
+    assert dd.panel_fit(_fit(None), 2) == F(False, True, 0, 0, False)
+    assert dd.panel_fit(_fit(2), 2) == F(False, False, 0, 0, True)
+    assert dd.panel_fit(_fit(2), 1) == F(False, False, 0, 0, False)
+
+
+def test_the_panel_reads_summary_git_table_footer() -> None:
+    body = _panel_body(_panel_view(_rich_container()), None, 120)
+
+    assert "▶ Running" in body[0] and "10.0.3.7" in body[0] and "PR #123" in body[0]
+    assert body[1] == ""
+    assert body[2].startswith("git") and "vs dev" in body[2] and "working" in body[2]
+    assert body[3].startswith("feat") and "merge" in body[3] and "host HEAD" in body[3]
+    assert "deps/module-0" in body[4] and "modified" in body[4]
+    assert body[5] == ""
+    assert body[6].startswith("base dev") and "group inherits repo" in body[6]
+    # One column per fact: the diffs sit under "vs dev", the working trees under "working".
+    assert body[3].index("+245 -18") == body[2].index("vs dev") == body[4].index("+40 -2")
+    assert body[3].index("+12 -3") == body[2].index("working") == body[4].index("+5 -0")
+
+
+def test_many_submodules_collapse_into_a_more_row_and_keep_the_footer() -> None:
+    body = _panel_body(_panel_view(_rich_container(subs=10)), 8, 120, fixed=True)
+
+    assert len(body) == 8
+    assert "deps/module-2" in "\n".join(body) and "deps/module-3" not in "\n".join(body)
+    assert "… +7 more submodules" in body[6]
+    assert body[7].startswith("base dev")
+
+
+def test_a_fixed_panel_pins_the_footer_to_the_last_grid_row() -> None:
+    body = _panel_body(_panel_view(_rich_container(subs=0)), 8, 120, fixed=True)
+
+    assert len(body) == 8
+    assert body[0].startswith("▶ Running")
+    assert body[7].startswith("base dev")
+    assert body[4:7] == ["", "", ""]
+
+
+def test_a_narrow_panel_keeps_one_row_per_line_and_drops_host_head() -> None:
+    for width in (dd.DETAILS_PAIR_WIDTH, 59):
+        body = _panel_body(_panel_view(_rich_container(subs=2)), 8, width, fixed=True)
+        assert len(body) == 8, width
+        assert "host HEAD" not in "\n".join(body), width
+        assert body[-1].startswith("base"), width
+    wide = _panel_body(_panel_view(_rich_container()), 8, dd._PANEL_WIDE + dd.PANEL_INSET_COLS, fixed=True)
+    assert "host HEAD" in "\n".join(wide)
+
+
+def test_no_git_status_renders_one_git_line() -> None:
+    body = _panel_body(_panel_view(_c()), None, 80)
+    assert body == [body[0], "", "git —", "", body[-1]]
+    assert body[0].startswith("▶ Running") and body[-1].startswith("base")
+
+
+def test_container_written_text_renders_literally() -> None:
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        submodules=(SubmoduleChange(path="deps/[bold]x", status="modified", target_ins=1),),
+    )
+    c = _c(
+        git_status=status,
+        job_phase="failed",
+        job_kind="new",
+        job_error="boom [red]",
+        credential_group="[work]",
+        activity=(ProcessActivity(comm="[/dim]", percent=10.0, count=1),),
+    )
+    text = "\n".join(_panel_body(_panel_view(c), None, 160))
+
+    for literal in ("deps/[bold]x", "boom [red]", "group [work]", "[/dim]"):
+        assert literal in text, literal
+
+
+def test_a_cramped_panel_keeps_the_summary_and_the_activity() -> None:
+    view = _panel_view(_rich_container(), activity=LINES[:2], reserve_rows=3)
+    body = _panel_body(view, 4, 120, fixed=True)
+
+    assert len(body) == 4
+    assert body[0].startswith("▶ Running")
+    assert body[-2:] == ["busy 2m", "↳ Bash  ls"]
+
+
+def test_details_for_a_container_carries_its_panel() -> None:
+    c = _rich_container()
+    view = dd.details_for([dmodel.RepoGroup("alpha", "/a", None, [c])], dmodel.Row("container", c.name), NOW)
+
+    assert view is not None and view.items == ()
+    assert view.panel == dd.container_panel(c, NOW)
