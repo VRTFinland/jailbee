@@ -1180,3 +1180,52 @@ def test_git_merge_target_picker_ignores_a_fork_source_that_is_not_offered(merge
     runner.invoke(app, ["git", "merge"])
 
     assert p.initial["targets"] is None
+
+
+def _resolving(mocker, names: dict[str, str]) -> None:
+    """Make `resolve_container_name` map typed names (aliases too) to full ones."""
+
+    def resolve(_cfg, _incus, name):
+        if name in names:
+            return names[name]
+        raise ValueError(f"no such container: '{name}'")
+
+    mocker.patch("jailbee.lifecycle.resolve_container_name", side_effect=resolve)
+
+
+@pytest.mark.parametrize("typed", ["login", "sampleapp-b"], ids=["alias", "full-name"])
+def test_git_merge_typed_source_by_alias_or_full_name_gets_the_cursor_hint(
+    merge_pickers, mocker, typed
+):
+    from dataclasses import replace
+
+    p = merge_pickers
+    p.offer(_info("src"), replace(_info("b"), fork_of="sampleapp-src", alias="login"))
+    _resolving(mocker, {"login": "sampleapp-b", "sampleapp-b": "sampleapp-b"})
+    p.target_answer = ["sampleapp-src"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", typed])
+
+    assert result.exit_code == 0, result.output
+    assert p.initial["targets"] == "sampleapp-src"
+    # The source is never offered as its own target, whatever it was typed as.
+    assert p.offered["targets"] == ["sampleapp-src"]
+
+
+@pytest.mark.parametrize("typed", ["login", "sampleapp-c4"], ids=["alias", "full-name"])
+def test_git_merge_typed_target_by_alias_or_full_name_is_not_offered_as_a_source(
+    merge_pickers, mocker, typed
+):
+    from dataclasses import replace
+
+    p = merge_pickers
+    p.offer(_info("c1"), replace(_info("c4"), alias="login"))
+    _resolving(mocker, {"login": "sampleapp-c4", "sampleapp-c4": "sampleapp-c4"})
+    p.source_answer = ["sampleapp-c1"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "--into", typed])
+
+    assert result.exit_code == 0, result.output
+    assert p.offered["sources"] == ["sampleapp-c1"]

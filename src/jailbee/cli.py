@@ -7929,10 +7929,25 @@ def _prompt_merge_endpoints(
     """
     from jailbee import prompting, tui
     from jailbee.incus import Incus
-    from jailbee.lifecycle import merge_default_target, short_name
+    from jailbee.lifecycle import merge_default_target, resolve_container_name, short_name
 
     incus = Incus()
     candidates = _eligible_merge_containers(cfg, incus)
+
+    def full_names(typed: list[str] | None) -> list[str]:
+        # A typed end may be a short name, a full one or an alias; comparing
+        # it to the candidates needs the full name. One the resolver does not
+        # know is kept as typed: the caller's own resolution reports it.
+        resolved = []
+        for name in typed or []:
+            try:
+                resolved.append(resolve_container_name(cfg, incus, name))
+            except ValueError:
+                resolved.append(name)
+        return resolved
+
+    typed_sources = full_names(sources)
+    typed_into = full_names(into)
     if not candidates:
         raise prompting.MissingValue(
             "container",
@@ -7949,7 +7964,7 @@ def _prompt_merge_endpoints(
         source_noun = f"{source_noun} and {target_noun}"
 
     if sources is None:
-        offer = _without_containers(cfg, candidates, into or [])
+        offer = _without_containers(cfg, candidates, [*(into or []), *typed_into])
         if not offer:
             raise prompting.MissingValue(
                 "container",
@@ -7985,9 +8000,11 @@ def _prompt_merge_endpoints(
                 info("Nothing selected.")
                 raise typer.Exit(0)
             sources = [short_name(cfg, full) for full in picked]
+            typed_sources = picked
 
     if into is None:
-        offer = _without_containers(cfg, candidates, sources)
+        taken = {*sources, *typed_sources}
+        offer = _without_containers(cfg, candidates, sorted(taken))
         if not offer:
             raise prompting.MissingValue(
                 "container",
@@ -8000,7 +8017,7 @@ def _prompt_merge_endpoints(
         # target is never inferred — and a source that is not offered (stopped,
         # or itself a source) cannot be pointed at.
         initial = merge_default_target(
-            [c for c in candidates if short_name(cfg, c.name) in sources]
+            [c for c in candidates if c.name in taken or short_name(cfg, c.name) in taken]
         )
         if initial not in {c.name for c in offer}:
             initial = None
