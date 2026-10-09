@@ -1930,3 +1930,16 @@ def test_help_lines_explain_loose_ai_brightness_and_outbox():
     assert "LOOSE" in text and "NET:" not in text
     assert "30 min" in text
     assert "OUTBOX" in text
+
+
+def test_a_picker_draws_its_detail_lines_above_the_entries():
+    spec = Picker(
+        "bulk-destroy-confirm",
+        "Destroy 2?",
+        (PickerEntry("No", "no"), PickerEntry("Yes", "yes")),
+        detail=("⚠ alpha-a: dirty",),
+    )
+
+    text = "\n".join(box_text(spec))
+
+    assert text.index("⚠ alpha-a: dirty") < text.index("No")

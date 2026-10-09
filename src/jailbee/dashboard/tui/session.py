@@ -25,7 +25,17 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import outbox as dob
-from jailbee.dashboard.bulk import BulkAction, BulkBatch, bulk_argv
+from jailbee.dashboard.bulk import (
+    BulkAction,
+    BulkBatch,
+    bulk_actions,
+    bulk_argv,
+    bulk_loose_default,
+    destroy_risk_lines,
+    loose_ttl_entries,
+    nothing_to_do,
+    plan_bulk,
+)
 from jailbee.dashboard.columns import (
     all_column_names,
     clamp_column_offset,
@@ -1436,6 +1446,17 @@ class DashboardSession:
             # every account picker is opened from the Accounts panel
             assert isinstance(picker.back, da.AccountsState)
             return self.submit_account_picker(picker, entry, picker.back)
+        if picker.purpose == "bulk-action":
+            return self.begin_bulk(entry.value)
+        if picker.purpose == "bulk-destroy-confirm":
+            if entry.value == "yes":
+                self.run_bulk(self._plan("destroy"))
+            else:
+                self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "bulk-loose-ttl":
+            self.run_bulk(self._plan("net loose"), ("--for", entry.value))
+            return None
         return picker.back
 
     def edit_config(self, *, global_layer: bool) -> None:
@@ -1853,6 +1874,10 @@ class DashboardSession:
         elif key == "settings":
             self.overlay = self.open_settings_overlay()
         elif key.startswith("action:"):
+            binding_verb = {"action:destroy": "destroy", "action:push": "git push"}.get(key)
+            if self.marked and binding_verb is not None:
+                self.overlay = self.begin_bulk(binding_verb)
+                return None
             container = container_of(self.selected)
             verb = quick_verb(
                 self.groups,
@@ -1910,6 +1935,64 @@ class DashboardSession:
             if self.marked:
                 self.marked = frozenset()
                 self.set_notice("Marks cleared")
+        return None
+
+    def _plan(self, verb: str) -> BulkAction:
+        return plan_bulk(
+            self.groups,
+            sorted(self.marked),
+            verb,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+        )
+
+    def bulk_menu(self) -> Picker | None:
+        """The "N selected" list, or None after saying why it is empty."""
+        names = sorted(self.marked)
+        actions = bulk_actions(
+            self.groups,
+            names,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+        )
+        if not actions:
+            self.set_notice(f"No action applies to the {len(names)} marked containers")
+            return None
+        return Picker(
+            "bulk-action",
+            f"{len(names)} selected",
+            tuple(PickerEntry(a.label, a.verb) for a in actions),
+        )
+
+    def begin_bulk(self, verb: str) -> Overlay | None:
+        """Start ``verb`` on the marked containers: its question, or the run itself.
+
+        Planned again from the marks as they are now: a container may have
+        changed state since the menu was drawn.
+        """
+        action = self._plan(verb)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return None
+        if verb == "destroy":
+            n = len(action.eligible)
+            return Picker(
+                "bulk-destroy-confirm",
+                f"Destroy {n} container{'s' if n != 1 else ''}: {', '.join(action.eligible)}?",
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, destroy {n}", "yes")),
+                detail=destroy_risk_lines(self.groups, action.eligible),
+            )
+        if verb == "net loose":
+            default = bulk_loose_default(self.groups, action.eligible)
+            if default is not None:
+                return Picker(
+                    "bulk-loose-ttl",
+                    f"Keep {len(action.eligible)} in loose for how long?",
+                    loose_ttl_entries(default),
+                )
+        self.run_bulk(action)
         return None
 
     def bulk_running(self) -> frozenset[str]:
@@ -2018,6 +2101,9 @@ class DashboardSession:
                 over_ssh=self.over_ssh,
             )
         else:
+            if self.marked:
+                self.overlay = self.bulk_menu()
+                return
             container = container_of(self.selected)
             self.overlay = open_menu(
                 self.groups,

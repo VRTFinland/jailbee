@@ -740,6 +740,12 @@ class PickerBox(OverlayBox):
         self.border_title = _one_line(spec.title, "bold")
 
     def compose(self) -> ComposeResult:
+        if self.picker.detail:
+            yield Static(
+                Text(
+                    "\n".join(self.picker.detail), style="yellow", no_wrap=True, overflow="ellipsis"
+                )
+            )
         options = [Option(_one_line(entry.label)) for entry in self.picker.entries] or [
             Option(_one_line("(nothing to choose)", "dim"), disabled=True)
         ]
@@ -748,10 +754,14 @@ class PickerBox(OverlayBox):
     def content_rows(self) -> int:
         return max(1, len(self.picker.entries))
 
+    def chrome_rows(self) -> int:
+        return super().chrome_rows() + len(self.picker.detail)
+
     def natural_width(self) -> int | None:
         widest = max((cell_len(e.label) for e in self.picker.entries), default=20)
+        detail = max((cell_len(line) for line in self.picker.detail), default=0)
         # border 2 + padding 2 + scrollbar 1; the title needs its own room in the border
-        return max(widest + 5, cell_len(self.picker.title) + 6)
+        return max(widest + 5, detail + 4, cell_len(self.picker.title) + 6)
 
     def state(self) -> NativeState:
         return NativeState("picker", self.query_one(OverlayList).highlighted)

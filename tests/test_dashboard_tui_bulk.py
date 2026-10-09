@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.bulk import plan_bulk
+from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
+from jailbee.dashboard.tui.menu_state import RepoMenuState
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import SyncJobs, bare_session
 
@@ -135,3 +137,146 @@ def test_a_child_that_cannot_start_fails_only_itself(mocker, tmp_path):
     session.tick()
 
     assert session.notice.startswith("stop: 1 ok, 1 failed (alpha-a: ")
+
+
+def test_enter_with_marks_opens_the_bulk_picker(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    session.handle_key("enter")
+
+    assert isinstance(session.overlay, Picker)
+    assert session.overlay.purpose == "bulk-action"
+    assert session.overlay.title == "2 selected"
+    assert [e.value for e in session.overlay.entries] == [
+        "stop",
+        "restart",
+        "net loose",
+        "git push",
+        "git pull",
+        "merge",
+        "destroy",
+    ]
+
+
+def test_enter_on_a_repo_header_with_marks_still_opens_the_repo_menu(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    session.marked = frozenset({"alpha-a"})
+
+    session.handle_key("enter")  # the cursor starts on the header
+
+    assert isinstance(session.overlay, RepoMenuState)
+
+
+def test_choosing_stop_in_the_bulk_picker_runs_the_batch(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+    session.handle_key("enter")
+
+    session.picker_chosen(PickerEntry("Stop (2)", "stop"))
+
+    assert len(child.call_args_list) == 2
+    assert session.overlay is None
+
+
+def test_no_eligible_container_explains_itself(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Stopped", "Stopped")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+
+    assert session.begin_bulk("stop") is None
+
+    child.assert_not_called()
+    assert (
+        session.notice == "Stop: nothing to do (alpha-a: already stopped; alpha-b: already stopped)"
+    )
+
+
+def test_capital_d_with_marks_asks_once_for_all(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    session.handle_key("action:destroy")
+
+    overlay = session.overlay
+    assert isinstance(overlay, Picker) and overlay.purpose == "bulk-destroy-confirm"
+    assert overlay.entries[0].value == "no"
+    assert any("git status unknown" in line for line in overlay.detail)
+
+
+def test_declining_the_bulk_destroy_runs_nothing(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    session.marked = frozenset({"alpha-a"})
+    session.overlay = session.begin_bulk("destroy")
+
+    session.picker_chosen(PickerEntry("No", "no"))
+
+    child.assert_not_called()
+    assert session.notice == "Cancelled"
+
+
+def test_capital_d_with_marks_acts_on_the_marks_not_the_cursor(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    for _ in range(3):
+        session.handle_key("down")  # the cursor on alpha-c, unmarked
+    session.handle_key("action:destroy")
+
+    session.picker_chosen(PickerEntry("Yes, destroy 2", "yes"))
+
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "destroy", "alpha-a", "--force"],
+        ["jailbee", "destroy", "alpha-b", "--force"],
+    ]
+
+
+def test_capital_d_without_marks_keeps_the_single_destroy(mocker, tmp_path):
+    child = _children(mocker)
+    mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
+    session, terminal, _ = _session(mocker, tmp_path, "Running")
+    session.handle_key("down")
+
+    session.handle_key("action:destroy")
+
+    assert len(terminal.handed) == 1
+    assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a"]
+
+
+def test_bulk_loose_asks_the_ttl_once_and_passes_it(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", loose_ttl_default="5m")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+
+    session.overlay = session.begin_bulk("net loose")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-loose-ttl"
+    assert session.overlay.entries[0].value == "5m"
+    session.picker_chosen(PickerEntry("2h", "2h"))
+
+    assert [c.args[0][-2:] for c in child.call_args_list] == [["--for", "2h"], ["--for", "2h"]]
+
+
+def test_bulk_loose_without_a_revert_policy_asks_nothing(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", loose_ttl_default=None)
+    session.marked = frozenset({"alpha-a"})
+
+    assert session.begin_bulk("net loose") is None
+
+    assert child.call_args.args[0] == ["jailbee", "net", "loose", "alpha-a"]
+
+
+def test_every_marked_container_ineligible_for_the_picker_says_so(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    session.marked = frozenset({"gone"})
+    session.handle_key("down")
+
+    session.handle_key("enter")
+
+    assert session.overlay is None
+    assert session.notice == "No action applies to the 1 marked containers"
