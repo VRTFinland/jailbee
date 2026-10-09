@@ -27,6 +27,10 @@ from rich.table import Table
 
 Justify = Literal["default", "left", "center", "right", "full"]
 
+# A row's value for sorting: compared as a tuple, so a key can rank first
+# (state, dirty-ness) and then break ties (text, size).
+SortKey = tuple[int | float | str, ...]
+
 
 @dataclass(frozen=True)
 class FieldSpec[T]:
@@ -59,6 +63,12 @@ class FieldSpec[T]:
     # table. Both count terminal cells; one-shot tables ignore them.
     dashboard_min_width: int = 0
     dashboard_max_width: int | None = None
+    # How a dashboard sorts rows by this column. The callable returns None for
+    # a row with no value (it sorts last either way); a None *callable* means
+    # the column cannot be a sort key. ``sort_desc_first`` is the direction a
+    # first click uses: quantities and times largest first, text A→Z.
+    sort: Callable[[T], SortKey | None] | None = None
+    sort_desc_first: bool = False
 
 
 def shows_by_default_in_dashboard[T](field: FieldSpec[T]) -> bool:

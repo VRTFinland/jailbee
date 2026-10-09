@@ -192,6 +192,46 @@ def _parse_memory_limit(raw: str | None) -> int | None:
     return int(float(match.group(1)) * multiplier) or None
 
 
+_MIB64 = 64 * 1024 * 1024
+_DIFF_RE = re.compile(r"^\+(\d+) -(\d+)$")
+
+STATE_SORT_RANK: dict[str, int] = {"Running": 0, "Frozen": 1, "Stopped": 2}
+"""Dashboard sort order of container states; any other state ranks after these."""
+
+
+def _text_key(value: str | None) -> table_format.SortKey | None:
+    """Case-insensitive text; blank or missing sorts last."""
+    if value is None or not value.strip():
+        return None
+    return (value.casefold(),)
+
+
+def _diff_key(value: str | None) -> table_format.SortKey | None:
+    """``"clean"`` before any change, changes by total lines; unknown is None."""
+    if value == "clean":
+        return (0, 0)
+    match = _DIFF_RE.match(value or "")
+    if match is None:
+        return None
+    return (1, int(match[1]) + int(match[2]))
+
+
+def _count_key(value: str | None) -> table_format.SortKey | None:
+    """A git count string (``"3"``); ``"—"`` / ``"?"`` are None."""
+    return (int(value),) if value is not None and value.isdigit() else None
+
+
+def _ip_key(value: str | None) -> table_format.SortKey | None:
+    """Numeric address order (``10.0.0.9`` before ``10.0.0.10``)."""
+    import ipaddress
+
+    try:
+        address = ipaddress.ip_address(value or "")
+    except ValueError:
+        return None
+    return (address.version, int(address))
+
+
 def _parse_incus_timestamp(raw: object) -> datetime | None:
     """Parse an Incus ``created_at`` string into an aware datetime, or None.
 
@@ -3078,15 +3118,96 @@ def ls_field_specs(
     def _outbox_json(c: ContainerInfo) -> dict[str, int]:
         return {"pr": _pending_pr_actions(c), "issues": _pending_issue_actions(c)}
 
+    def _git_key(
+        attr: str, key: Callable[[str | None], table_format.SortKey | None]
+    ) -> Callable[[ContainerInfo], table_format.SortKey | None]:
+        def get(c: ContainerInfo) -> table_format.SortKey | None:
+            return None if c.git_status is None else key(getattr(c.git_status, attr))
+
+        return get
+
+    def _state_key(c: ContainerInfo) -> table_format.SortKey | None:
+        return (STATE_SORT_RANK.get(c.state, len(STATE_SORT_RANK)), c.state.casefold())
+
+    def _remaining(c: ContainerInfo) -> float:
+        if c.loose_until is None:
+            return float("inf")
+        return (c.loose_until - now).total_seconds()
+
+    def _network_key(c: ContainerInfo) -> table_format.SortKey | None:
+        if c.network == "loose":
+            return (0, _remaining(c))
+        if c.network == "strict":
+            return (1, 0.0)
+        return None if not c.network else (2, 0.0)
+
+    def _ttl_key(c: ContainerInfo) -> table_format.SortKey | None:
+        return (_remaining(c),) if c.network == "loose" else None
+
+    def _job_key(c: ContainerInfo) -> table_format.SortKey | None:
+        if c.job_phase is None:
+            return None
+        return (1 if _job_dead(c) else 0, (_job_json(c) or "").casefold())
+
+    def _bytes_step(value: int | None) -> table_format.SortKey | None:
+        return None if value is None else (value // _MIB64,)
+
+    def _mem_key(c: ContainerInfo) -> table_format.SortKey | None:
+        return _bytes_step(c.memory_usage if c.state == "Running" else None)
+
+    def _mem_pct_key(c: ContainerInfo) -> table_format.SortKey | None:
+        pct = _mem_pct(c)
+        return None if pct is None else (pct // 5,)
+
+    def _cpu_key(c: ContainerInfo) -> table_format.SortKey | None:
+        return None if c.cpu_percent is None else (int(c.cpu_percent // 5),)
+
+    def _limit_key(c: ContainerInfo) -> table_format.SortKey | None:
+        limit = _parse_memory_limit(c.memory_limit)
+        return None if limit is None else (limit,)
+
+    def _doing_key(c: ContainerInfo) -> table_format.SortKey | None:
+        return _text_key(", ".join(p.comm for p in c.activity))
+
+    def _agent_key(c: ContainerInfo) -> table_format.SortKey | None:
+        # Statuses arrive most urgent first (`agent_status._rank`).
+        if not c.agent_status:
+            return None
+        s = c.agent_status[0]
+        urgency = (
+            agent_status.URGENCY.index(s.state)
+            if s.state in agent_status.URGENCY
+            else len(agent_status.URGENCY)
+        )
+        # Within a state, the latest change first: "just finished" above "idle since yesterday".
+        return (urgency, -s.since.timestamp() if s.since is not None else 0.0)
+
+    def _conflict_key(c: ContainerInfo) -> table_format.SortKey | None:
+        if c.git_status is None:
+            return None
+        return {"ok": (0,), "conflict": (1,)}.get(c.git_status.conflict)
+
+    def _git_status_key(c: ContainerInfo) -> table_format.SortKey | None:
+        conflict = _conflict_key(c)
+        wt = _git_key("wt", _diff_key)(c)
+        if conflict is None and wt is None:
+            return None
+        return (*(conflict or (0,)), *(wt or (0, 0)))
+
+    def _count(n: int) -> table_format.SortKey | None:
+        return (n,) if n else None
+
     return [
         table_format.FieldSpec(
             name="name",
+            sort=lambda c: _text_key(c.display_name),
             header="NAME",
             cell=lambda c: c.display_name,
             json=lambda c: c.display_name,
         ),
         table_format.FieldSpec(
             name="full_name",
+            sort=lambda c: _text_key(c.name),
             header="FULL NAME",
             cell=lambda c: c.name,
             json=lambda c: c.name,
@@ -3095,6 +3216,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="repo",
+            sort=lambda c: _text_key(c.repo),
             header="REPO",
             cell=lambda c: c.repo or "-",
             json=lambda c: c.repo,
@@ -3103,6 +3225,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="mode",
+            sort=lambda c: _text_key(c.mode),
             header="MODE",
             cell=lambda c: c.mode,
             json=lambda c: c.mode,
@@ -3114,6 +3237,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="base",
+            sort=lambda c: _text_key(c.base_branch),
             header="BASE",
             cell=lambda c: (
                 f"{c.base_branch} (tracking)"
@@ -3124,6 +3248,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="state",
+            sort=_state_key,
             header="STATE",
             cell=lambda c: c.state,
             json=lambda c: c.state,
@@ -3133,12 +3258,15 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="created",
+            sort=lambda c: None if c.created_at is None else (c.created_at.timestamp(),),
+            sort_desc_first=True,
             header="CREATED",
             cell=_created_cell,
             json=lambda c: c.created_at.isoformat() if c.created_at else None,
         ),
         table_format.FieldSpec(
             name="job",
+            sort=_job_key,
             header="JOB",
             cell=_job_cell,
             json=_job_json,
@@ -3151,12 +3279,14 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="network",
+            sort=_network_key,
             header="NETWORK",
             cell=lambda c: c.network or "-",
             json=lambda c: c.network,
         ),
         table_format.FieldSpec(
             name="ttl",
+            sort=_ttl_key,
             header="TTL",
             cell=_ttl_cell,
             json=_ttl_json,
@@ -3168,6 +3298,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="loose_until",
+            sort=lambda c: None if c.loose_until is None else (c.loose_until.timestamp(),),
             header="LOOSE UNTIL",
             cell=lambda c: c.loose_until.isoformat() if c.loose_until else "—",
             json=lambda c: c.loose_until.isoformat() if c.loose_until else None,
@@ -3176,6 +3307,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="ip",
+            sort=lambda c: _ip_key(c.ip),
             header="IP",
             cell=lambda c: c.ip or "-",
             json=lambda c: c.ip,
@@ -3189,6 +3321,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="memory_limit",
+            sort=_limit_key,
+            sort_desc_first=True,
             header="MEMORY LIMIT",
             cell=lambda c: c.memory_limit or "-",
             json=lambda c: c.memory_limit,
@@ -3199,6 +3333,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="mem",
+            sort=_mem_key,
+            sort_desc_first=True,
             header="MEM",
             cell=_mem_cell,
             json=lambda c: {"usage": c.memory_usage, "limit": c.memory_limit},
@@ -3215,6 +3351,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="mem_used",
+            sort=_mem_key,
+            sort_desc_first=True,
             header="MEM USED",
             cell=_mem_used_cell,
             json=_mem_used,
@@ -3228,6 +3366,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="mem_pct",
+            sort=_mem_pct_key,
+            sort_desc_first=True,
             header="MEM%",
             cell=_mem_pct_cell,
             json=_mem_pct,
@@ -3239,6 +3379,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="cpu",
+            sort=_cpu_key,
+            sort_desc_first=True,
             header="CPU",
             cell=_cpu_cell,
             json=lambda c: {"percent": c.cpu_percent, "limit": _parse_cpu_limit(c.cpu_limit)},
@@ -3255,6 +3397,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="doing",
+            sort=_doing_key,
             header="DOING",
             cell=_doing_cell,
             json=lambda c: [
@@ -3272,6 +3415,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="agent",
+            sort=_agent_key,
             header="AGENT",
             cell=_agent_cell,
             json=_agent_json,
@@ -3286,6 +3430,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="agent_compact",
+            sort=_agent_key,
             header="AGENT*",
             cell=lambda c: agent_compact_cell(c.agent_status, now),
             json=_agent_json,
@@ -3296,6 +3441,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="wt",
+            sort=_git_key("wt", _diff_key),
+            sort_desc_first=True,
             header="WT",
             cell=_git_cell("wt"),
             json=_git_json("wt"),
@@ -3303,6 +3450,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="target_diff",
+            sort=_git_key("target_diff", _diff_key),
+            sort_desc_first=True,
             header="DIFF ±",
             cell=_git_cell("target_diff"),
             json=_git_json("target_diff"),
@@ -3310,6 +3459,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="ahead_count",
+            sort=_git_key("ahead_count", _count_key),
+            sort_desc_first=True,
             header="↑",
             cell=_git_cell("ahead_count", zero_dim=True),
             json=_git_json("ahead_count"),
@@ -3318,6 +3469,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="behind_count",
+            sort=_git_key("behind_count", _count_key),
+            sort_desc_first=True,
             header="↓",
             cell=_git_cell("behind_count", zero_dim=True),
             json=_git_json("behind_count"),
@@ -3326,6 +3479,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="conflict",
+            sort=_conflict_key,
+            sort_desc_first=True,
             header="MERGE",
             cell=_conflict_cell,
             json=lambda c: c.git_status.conflict if c.git_status else None,
@@ -3333,6 +3488,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="local_diff",
+            sort=_git_key("local_diff", _diff_key),
+            sort_desc_first=True,
             header="LOCAL ±",
             cell=_git_cell("local_diff"),
             json=_git_json("local_diff"),
@@ -3343,6 +3500,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="local_count",
+            sort=_git_key("local_count", _count_key),
+            sort_desc_first=True,
             header="L↑",
             cell=_git_cell("local_count", zero_dim=True),
             json=_git_json("local_count"),
@@ -3352,6 +3511,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="git_status",
+            sort=_git_status_key,
+            sort_desc_first=True,
             header="GIT STATUS",
             cell=lambda c: (
                 f"wt={c.git_status.wt} ±={c.git_status.target_diff} "
@@ -3365,6 +3526,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="pr",
+            sort=lambda c: None if c.pr_number is None else (c.pr_number,),
             header="PR",
             cell=_pr_cell,
             json=_pr_json,
@@ -3374,6 +3536,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="issues",
+            sort=lambda c: _count(_pending_issue_actions(c)),
+            sort_desc_first=True,
             header="ISSUES",
             cell=_issues_cell,
             json=_issues_json,
@@ -3383,6 +3547,8 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="outbox",
+            sort=lambda c: _count(_pending_pr_actions(c) + _pending_issue_actions(c)),
+            sort_desc_first=True,
             header="OUTBOX",
             cell=_outbox_cell,
             json=_outbox_json,
@@ -3395,6 +3561,7 @@ def ls_field_specs(
         ),
         table_format.FieldSpec(
             name="group",
+            sort=lambda c: _text_key(c.credential_group),
             header="GROUP",
             cell=lambda c: c.credential_group or "",
             json=lambda c: c.credential_group,
