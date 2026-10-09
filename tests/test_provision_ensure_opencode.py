@@ -92,7 +92,9 @@ def test_empty_store_installs_even_with_auto_update_off(tmp_path, home):
     result, installs = _run(tmp_path, home, auto_update=False)
 
     assert result.returncode == 0, result.stderr
-    assert installs == ["--no-modify-path"]
+    # Pinned even here: the installer's own unretried read of the pointer is
+    # what failed in practice.
+    assert installs == ["--no-modify-path --version 1.2.0"]
     link = home / ".local/bin/opencode"
     assert link.is_symlink()
     assert link.resolve() == home / ".opencode/bin/opencode"
@@ -152,4 +154,12 @@ def test_empty_store_fails_loudly_when_the_download_fails(tmp_path, home):
     result, _installs = _run(tmp_path, home, installer_fail=True)
 
     assert result.returncode != 0
+    assert not (home / ".local/bin/opencode").exists()
+
+
+def test_empty_store_with_an_unreachable_pointer_installs_nothing(tmp_path, home):
+    result, installs = _run(tmp_path, home, latest="")
+
+    assert result.returncode != 0
+    assert installs == []
     assert not (home / ".local/bin/opencode").exists()

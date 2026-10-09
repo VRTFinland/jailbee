@@ -46,6 +46,7 @@ install_release() {
     local version="$1" tmp
     if [ ! -d "${RELEASES}/${version}" ]; then
         tmp="$(mktemp -d "${RELEASES}/.tmp-XXXXXX")"
+        chmod 755 "${tmp}"  # mktemp's 0700 would outlive the rename
         if ! npm install -g --ignore-scripts --prefix "${tmp}" "${PKG}@${version}"; then
             rm -rf "${tmp}"
             return 1

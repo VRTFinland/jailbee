@@ -11,8 +11,11 @@
 # store. This script makes that decision itself, as ensure-claude.sh does.
 #
 # The vendor installer downloads the ~88MB tarball on every run, whatever is
-# installed, so an update first compares versions, reading the same pointer the
-# installer reads, and pins the installer to the version it found.
+# installed, so the script first reads the same version pointer the installer
+# reads, compares, and pins the installer to the version it found. The pointer
+# answers 500 on a fair share of requests; the installer's own read has no
+# retry, so this one retries and `--version` keeps the installer from reading
+# it again.
 set -euo pipefail
 
 INSTALLER_URL="https://opencode.ai/v2/install"
@@ -40,19 +43,23 @@ installed_version() {
     echo "${v#v}"
 }
 
+latest_version() {
+    # It also stalls without answering at times; bound each attempt.
+    curl -fsSL --connect-timeout 10 --max-time 20 --retry 4 --retry-delay 1 "${LATEST_URL}" \
+        | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' || true
+}
+
 STATUS=0
 
-if [ ! -x "${STORE_BIN}" ]; then
-    echo "==> ensure-opencode: empty store, installing opencode"
-    run_installer || STATUS=1
-elif [ "${JAILBEE_AUTO_UPDATE:-false}" = "true" ]; then
-    LATEST="$(curl -fsSL "${LATEST_URL}" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' || true)"
-    CURRENT="$(installed_version)"
+if [ ! -x "${STORE_BIN}" ] || [ "${JAILBEE_AUTO_UPDATE:-false}" = "true" ]; then
+    LATEST="$(latest_version)"
+    CURRENT=""
+    [ ! -x "${STORE_BIN}" ] || CURRENT="$(installed_version)"
     if [ -z "${LATEST}" ]; then
         echo "==> ensure-opencode: ERROR: could not look up the latest opencode" >&2
         STATUS=1
     elif [ "${LATEST}" != "${CURRENT}" ]; then
-        echo "==> ensure-opencode: updating opencode ${CURRENT:-?} -> ${LATEST}"
+        echo "==> ensure-opencode: installing opencode ${LATEST} (have: ${CURRENT:-none})"
         if ! run_installer --version "${LATEST}"; then
             echo "==> ensure-opencode: ERROR: installing opencode ${LATEST} failed" >&2
             STATUS=1

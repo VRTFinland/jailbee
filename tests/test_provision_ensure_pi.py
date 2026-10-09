@@ -166,6 +166,7 @@ def test_update_installs_beside_the_running_release(tmp_path, home):
     assert result.returncode == 0, result.stderr
     assert _linked_release(home) == "1.1.0"
     assert (_store(home) / "releases/1.0.3/bin/pi").exists()
+    assert ((_store(home) / "releases/1.1.0").stat().st_mode & 0o777) == 0o755
 
 
 def test_update_keeps_the_two_newest_releases(tmp_path, home):
