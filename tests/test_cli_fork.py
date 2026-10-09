@@ -47,6 +47,24 @@ def test_new_fork_of_pins_clone_and_records_source(tmp_path, mocker):
     assert opts.fork_of == "myrepo-src"
 
 
+@pytest.mark.parametrize("untrusted", [False, True])
+def test_new_fork_of_carries_the_sources_untrusted_head(tmp_path, mocker, untrusted):
+    # A fork of a `--pr` review container must not launder the PR author's
+    # autostart config into a container that runs it unasked.
+    import dataclasses
+
+    _, new_container = _setup(tmp_path, mocker)
+    mocker.patch(
+        "jailbee.forking.prepare_fork",
+        return_value=dataclasses.replace(SRC, untrusted=untrusted),
+    )
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
+    assert result.exit_code == 0, result.output
+    assert new_container.call_args.args[2].untrusted_head is untrusted
+
+
 def test_new_fork_of_pins_the_commit_under_the_forks_name(tmp_path, mocker):
     _, new_container = _setup(tmp_path, mocker)
     mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)

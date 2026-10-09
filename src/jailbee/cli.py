@@ -2704,8 +2704,10 @@ def new_cmd(
             ),
             pr=pr,
             # A fork's head, not merely "a PR": an internal PR's head is a
-            # branch in this repo's own origin.
-            untrusted_head=pr is not None and pr_info.is_cross_repository,
+            # branch in this repo's own origin. A `jailbee fork` of a PR
+            # review container inherits the doubt (see `ForkSource.untrusted`).
+            untrusted_head=(pr is not None and pr_info.is_cross_repository)
+            or (fork_source is not None and fork_source.untrusted),
             clone_commit=(fork_source.commit if fork_source is not None else pr_clone_commit),
             fork_of=fork_source.full_name if fork_source is not None else None,
             assume_yes=yes,

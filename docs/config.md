@@ -1882,7 +1882,9 @@ Two kinds of widening are reported, and they are weighed differently:
 - **a step or stage widening network access** from `strict` to `loose`. This asks only
   for an **untrusted head**: `jailbee new --pr N` where the PR's head lives in a
   **fork** (`isCrossRepository`) — code nobody with push access to your repo has
-  vouched for. Everything else warns and proceeds. Once the container runs the
+  vouched for — and a `jailbee fork` of any `jailbee new --pr` container
+  (whether its PR's head was in a fork is not recorded, so every one counts).
+  Everything else warns and proceeds. Once the container runs the
   branch's code, `strict` is an egress allowlist of package registries and
   forges that all accept uploads, so it is no boundary against that code —
   while `loose` is the ordinary way a step installs dependencies.

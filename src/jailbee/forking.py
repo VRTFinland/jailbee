@@ -33,6 +33,11 @@ class ForkSource:
     branch: str  # source's checked-out branch
     commit: str  # its HEAD, now reachable on the host -> clone_commit
     base_branch: str | None  # source's user.jailbee.base_branch -> base_branch_label
+    # The source was made by `jailbee new --pr`, so its commits may be a PR
+    # author's, whose `.jailbee/config.yaml` autostart must not run unasked
+    # -> untrusted_head. Conservative: any PR, not just a cross-repo one,
+    # because whether it was cross-repo is not recorded on the container.
+    untrusted: bool = False
 
 
 def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
@@ -61,8 +66,9 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
     except (sync.SyncError, ValueError) as e:
         # resolve_container_name raises a plain ValueError for an unknown container.
         raise ForkError(str(e)) from e
+    untrusted = bool(incus.config_get(full, "user.jailbee.pr"))
     base = incus.config_get(full, "user.jailbee.base_branch") or None
-    return ForkSource(full, fetched.branch, fetched.new_oid, base)
+    return ForkSource(full, fetched.branch, fetched.new_oid, base, untrusted)
 
 
 def fork_pin_ref(cfg: Config, fork_full: str) -> str:

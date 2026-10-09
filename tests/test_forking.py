@@ -27,12 +27,29 @@ def wired(mocker):
     return dirty, fetch
 
 
-def test_prepare_fork_returns_source_state(cfg, wired):
+def _labels(**values):
     incus = MagicMock()
-    incus.config_get.return_value = "main"
+    incus.config_get.side_effect = lambda name, key: values.get(key.removeprefix("user.jailbee."))
+    return incus
+
+
+def test_prepare_fork_returns_source_state(cfg, wired):
+    incus = _labels(base_branch="main")
     fs = forking.prepare_fork(cfg, incus, "src")
-    assert fs == forking.ForkSource("myrepo-src", "feat/a", "abc123", "main")
-    incus.config_get.assert_called_with("myrepo-src", "user.jailbee.base_branch")
+    assert fs == forking.ForkSource("myrepo-src", "feat/a", "abc123", "main", untrusted=False)
+    incus.config_get.assert_any_call("myrepo-src", "user.jailbee.base_branch")
+
+
+def test_prepare_fork_of_a_pr_container_is_untrusted(cfg, wired):
+    # Its commits may be a PR author's: forking must not launder them into a
+    # container whose repo autostart runs unasked.
+    incus = _labels(base_branch="main", pr="42")
+    assert forking.prepare_fork(cfg, incus, "src").untrusted is True
+    incus.config_get.assert_any_call("myrepo-src", "user.jailbee.pr")
+
+
+def test_prepare_fork_without_a_pr_label_is_trusted(cfg, wired):
+    assert forking.prepare_fork(cfg, _labels(pr=""), "src").untrusted is False
 
 
 def test_prepare_fork_unset_base_branch_is_none(cfg, wired):
