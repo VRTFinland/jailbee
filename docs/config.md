@@ -2312,7 +2312,9 @@ live view can own the state you are looking at:
   `name`, which is always first and cannot be turned off), and a newly enabled
   field is appended. Outside the overlay, `<`/`>` sort the rows by the
   previous/next column, `I` reverses the sort and a header click sorts by that
-  column; the sorted column's header shows `▲`/`▼`.
+  column; the sorted column's header shows `▲`/`▼`. A sort column that is not enabled
+  (or, in the terminal dashboard, not shown because every value in it is empty)
+  sorts by the default order; the sort is kept and applies again once it is shown.
 - In the GUI, use **View ▸ Columns** (enabled columns in order, then the rest
   alphabetically); drag a header to reorder the columns (`name` stays first) and
   click one to sort by it.
