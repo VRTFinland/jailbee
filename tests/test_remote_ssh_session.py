@@ -135,3 +135,49 @@ def test_waypipe_session_needs_the_gui_marker_and_a_well_formed_id() -> None:
 
 def test_attach_without_a_waypipe_session_is_false() -> None:
     assert waypipe_attach({WAYPIPE_ATTACH_ENV: "1"}) is False
+
+
+def test_terminal_identity_keeps_only_valid_allowlisted_names() -> None:
+    from jailbee.remote_ssh.session import terminal_identity
+
+    client = {
+        "LC_TERMINAL": "iTerm2",
+        "LC_TERMINAL_VERSION": "3.5.10",
+        "TERM_PROGRAM": "iTerm.app",
+        "COLORTERM": "truecolor",
+        "LANG": "en_US.UTF-8",
+        "LD_PRELOAD": "/tmp/evil.so",
+        "TERM_PROGRAM_VERSION": "3.5\n; rm -rf /",
+    }
+
+    assert terminal_identity(client) == {
+        "LC_TERMINAL": "iTerm2",
+        "LC_TERMINAL_VERSION": "3.5.10",
+        "TERM_PROGRAM": "iTerm.app",
+        "COLORTERM": "truecolor",
+    }
+
+
+def test_terminal_identity_skips_non_text_entries() -> None:
+    from jailbee.remote_ssh.session import terminal_identity
+
+    assert terminal_identity({"LC_TERMINAL": b"iTerm2", "COLORTERM": b"\xff"}) == {}
+
+
+def test_child_environment_carries_the_client_terminal_not_the_servers() -> None:
+    # Textual identifies iTerm2 by LC_TERMINAL/TERM_PROGRAM and leaves its
+    # buggy pixel-mouse mode off; over SSH only the client can say which
+    # terminal is at the other end, and the server's own value is wrong.
+    base = {"PATH": "/bin", "LC_TERMINAL": "server-term", "TERM_PROGRAM": "server-app"}
+
+    env = child_environment(base, terminal={"LC_TERMINAL": "iTerm2"})
+
+    assert env["LC_TERMINAL"] == "iTerm2"
+    assert "TERM_PROGRAM" not in env
+    assert base["LC_TERMINAL"] == "server-term"
+
+
+def test_child_environment_without_a_client_terminal_drops_the_servers() -> None:
+    env = child_environment({"PATH": "/bin", "COLORTERM": "truecolor"}, restricted=False)
+
+    assert "COLORTERM" not in env

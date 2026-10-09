@@ -1033,6 +1033,22 @@ def test_pty_child_receives_the_gui_marker(spec, boundary, monkeypatch):
     assert env["JAILBEE_SSH_GUI"] == "8022"
 
 
+def test_pty_child_receives_the_client_terminal_identity(spec, boundary, monkeypatch):
+    boundary.fork.return_value = (0, -1)
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin", "LC_TERMINAL": "server"})
+    execute = Mock(side_effect=OSError("exec failed"))
+    monkeypatch.setattr(runner.os, "chdir", Mock())
+    monkeypatch.setattr(runner.os, "execvpe", execute)
+    monkeypatch.setattr(runner.os, "_exit", Mock(side_effect=ChildExited))
+
+    with pytest.raises(ChildExited):
+        asyncio.run(
+            run_child(SSHProcess("xterm"), replace(spec, terminal=(("LC_TERMINAL", "iTerm2"),)))
+        )
+
+    assert execute.call_args.args[2]["LC_TERMINAL"] == "iTerm2"
+
+
 _WAYPIPE_SPEC = {
     "gui_port": 2222,
     "waypipe": WaypipeSession("0a1b2c3d", "lz4"),
