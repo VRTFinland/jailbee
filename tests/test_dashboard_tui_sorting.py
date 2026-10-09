@@ -18,8 +18,9 @@ T0 = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
 
 
 def _group() -> RepoGroup:
-    old = dataclasses.replace(ci("p-old", "p", state="Stopped"), created_at=T0 - timedelta(days=1))
-    new = dataclasses.replace(ci("p-new", "p"), created_at=T0)
+    # Names whose alphabetical order is the reverse of the default (newest first).
+    old = dataclasses.replace(ci("p-a", "p", state="Stopped"), created_at=T0 - timedelta(days=1))
+    new = dataclasses.replace(ci("p-b", "p"), created_at=T0)
     return RepoGroup("p", "/repos/p", None, [new, old])
 
 
@@ -47,21 +48,21 @@ def test_a_stored_sort_applies_from_the_first_frame(mocker):
     session, _ = _session_with(
         mocker, ViewState(columns=("name", "state"), sort_field="state", sort_desc=True)
     )
-    assert _names(session) == ["p-old", "p-new"]
+    assert _names(session) == ["p-a", "p-b"]
     assert session.view().sort == SortSpec("state", True)
 
 
 def test_sort_keys_move_and_invert_and_persist(mocker):
     session, save = _session_with(mocker, ViewState(columns=("name", "state")))
-    assert _names(session) == ["p-new", "p-old"]
+    assert _names(session) == ["p-b", "p-a"]
     session.handle_key("sort-next")  # name ▲
     assert session.sort == SortSpec("name", False)
-    assert _names(session) == ["p-new", "p-old"]
+    assert _names(session) == ["p-a", "p-b"]
     session.handle_key("sort-invert")  # name ▼
-    assert _names(session) == ["p-old", "p-new"]
+    assert _names(session) == ["p-b", "p-a"]
     session.handle_key("sort-prev")  # back to the default stop
     assert session.sort == DEFAULT_SORT
-    assert _names(session) == ["p-new", "p-old"]
+    assert _names(session) == ["p-b", "p-a"]
     saved = save.call_args.args[2]
     assert (saved.sort_field, saved.sort_desc) == (None, False)
     assert "newest first" in (session.notice or "")
@@ -78,12 +79,63 @@ def test_a_header_click_sorts_and_a_second_click_flips(mocker):
 
 def test_cursor_follows_its_container_across_a_resort(mocker):
     session, _ = _session_with(mocker, ViewState(columns=("name", "state")))
-    session.select(Row("container", "p-old"))
-    session.handle_key("sort-next")
-    session.handle_key("sort-invert")  # p-old moves to the top
-    assert session.selected == Row("container", "p-old")
+    target = Row("container", "p-a")
+    session.select(target)
+    before = session.sel_index
+    session.handle_key("sort-next")  # name ▲: p-a moves to the top
+    assert session.selected == target
+    assert session.sel_index == session.rows.index(target)
+    assert session.sel_index != before
     session.tick()
-    assert session.selected == Row("container", "p-old")
+    assert session.selected == target
+    assert session.sel_index == session.rows.index(target)
+
+
+def test_every_tick_sorts_the_fresh_snapshot(mocker):
+    session, _ = _session_with(mocker, ViewState(columns=("name", "state")))
+    session.handle_key("sort-next")  # name ▲
+    assert _names(session) == ["p-a", "p-b"]
+    newest = dataclasses.replace(ci("p-c", "p"), created_at=T0 + timedelta(days=1))
+    group = _group()
+    session.client.groups = [dataclasses.replace(group, containers=[newest, *group.containers])]
+    session.tick()
+    assert _names(session) == ["p-a", "p-b", "p-c"]
+
+
+def _toggle(session, key):  # type: ignore[no-untyped-def]
+    session.handle_key("settings")
+    session.setting_toggled("fields", key)
+
+
+def test_disabling_the_sort_column_falls_back_at_once_and_enabling_restores(mocker):
+    session, save = _session_with(
+        mocker, ViewState(columns=("name", "state"), sort_field="state", sort_desc=True)
+    )
+    assert _names(session) == ["p-a", "p-b"]
+    _toggle(session, "state")
+    assert _names(session) == ["p-b", "p-a"]  # default order, no tick needed
+    saved = save.call_args.args[2]
+    assert (saved.sort_field, saved.sort_desc) == ("state", True)  # the choice is kept
+    session.setting_toggled("fields", "state")
+    assert _names(session) == ["p-a", "p-b"]
+
+
+def test_a_header_click_is_ignored_while_an_overlay_is_open(mocker):
+    session, save = _session_with(mocker, ViewState(columns=("name", "state")))
+    session.overlay = "help"
+    session.click(dhit.Hit("sort", ("state",)))
+    assert session.sort == DEFAULT_SORT
+    assert _names(session) == ["p-b", "p-a"]
+    assert not save.called
+
+
+def test_a_settings_toggle_keeps_the_stored_sort(mocker):
+    session, save = _session_with(
+        mocker, ViewState(columns=("name", "state", "ip"), sort_field="state", sort_desc=True)
+    )
+    _toggle(session, "ip")
+    saved = save.call_args.args[2]
+    assert (saved.sort_field, saved.sort_desc) == ("state", True)
 
 
 def test_folding_keeps_the_stored_sort(mocker):
