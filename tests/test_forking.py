@@ -51,8 +51,26 @@ def test_prepare_fork_refuses_dirty_source_before_fetching(cfg, wired):
 
 def test_prepare_fork_dirty_check_uses_container_uid(cfg, wired):
     dirty, _ = wired
-    forking.prepare_fork(cfg, MagicMock(), "src")
+    incus = MagicMock()
+    forking.prepare_fork(cfg, incus, "src")
     assert dirty.call_args.kwargs["uid"] == cfg.container_user.uid
+    assert dirty.call_args.args == (incus, "myrepo-src", "/home/dev/myrepo")
+
+
+def test_prepare_fork_fetches_by_short_name(cfg, wired):
+    _, fetch = wired
+    incus = MagicMock()
+    forking.prepare_fork(cfg, incus, "src")
+    fetch.assert_called_once_with(cfg, incus, "src")
+
+
+def test_prepare_fork_unknown_source_is_a_fork_error(cfg, wired, mocker):
+    mocker.patch(
+        "jailbee.sync.assert_container_publishable",
+        side_effect=ValueError("No container named 'nosuch'"),
+    )
+    with pytest.raises(forking.ForkError, match="nosuch"):
+        forking.prepare_fork(cfg, MagicMock(), "nosuch")
 
 
 def test_prepare_fork_turns_sync_errors_into_fork_errors(cfg, wired, mocker):

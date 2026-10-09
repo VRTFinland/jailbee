@@ -51,7 +51,10 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
                 f"Commit or stash them in '{short}' first."
             )
         fetched = sync.fetch_from_container(cfg, incus, short)
-    except sync.SyncError as e:
+    except ForkError:
+        raise
+    except (sync.SyncError, ValueError) as e:
+        # resolve_container_name raises a plain ValueError for an unknown container.
         raise ForkError(str(e)) from e
     base = incus.config_get(full, "user.jailbee.base_branch") or None
     return ForkSource(full, fetched.branch, fetched.new_oid, base)
