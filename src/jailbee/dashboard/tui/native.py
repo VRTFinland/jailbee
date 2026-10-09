@@ -979,10 +979,18 @@ class SettingsBox(OverlayBox):
             self.tab = tab
             self.row_key = row_key
 
+    class Moved(Message):
+        def __init__(self, key: tuple[object, ...] | None, row_key: str, step: int) -> None:
+            super().__init__()
+            self.key = key
+            self.row_key = row_key
+            self.step = step
+
     def __init__(self, spec: SettingsState, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.settings = spec
         self.tab: SettingsTab = "fields"
+        self._following: str | None = None  # the row a Shift+arrow move keeps highlighted
         self.border_title = "settings"
 
     def _selections(self) -> list[Selection[str]]:
@@ -1022,9 +1030,25 @@ class SettingsBox(OverlayBox):
         if not self.is_mounted:
             return
         lst = self._list()
+        rows = setting_rows(spec, self.tab)
+        keys = [row.key for row in rows]
+        current = [lst.get_option_at_index(i).value for i in range(lst.option_count)]
+        if current != keys:  # the rows were reordered: rebuild
+            highlighted, self._following = self._following, None
+            # A move keeps the highlight on the moved row; a toggle that re-sorted the
+            # list leaves the cursor where it was.
+            index = lst.highlighted
+            with lst.prevent(SelectionList.SelectedChanged, SelectionList.SelectionToggled):
+                lst.clear_options()
+                lst.add_options(self._selections())
+            if highlighted is not None and highlighted in keys:
+                lst.highlighted = keys.index(highlighted)
+            else:
+                lst.highlighted = min(index or 0, len(keys) - 1) if keys else None
+            return
         selected = set(lst.selected)
         with lst.prevent(SelectionList.SelectedChanged, SelectionList.SelectionToggled):
-            for row in setting_rows(spec, self.tab):
+            for row in rows:
                 if row.checked and row.key not in selected:
                     lst.select(row.key)
                 elif not row.checked and row.key in selected:
@@ -1039,7 +1063,17 @@ class SettingsBox(OverlayBox):
             return True
         if key == "enter":
             return True  # SelectionList would toggle on Enter too; only Space does here
+        if key in ("shift+up", "shift+down") and self.tab == "fields":
+            lst = self._list()
+            index = lst.highlighted
+            if index is None:
+                return True
+            step = -1 if key == "shift+up" else 1
+            row_key = lst.get_option_at_index(index).value
+            self._following = row_key
+            return self.Moved(self.key, row_key, step)
         if key == "space":
+            self._following = None
             lst = self._list()
             index = lst.highlighted
             if index is None:
@@ -1057,6 +1091,7 @@ class SettingsBox(OverlayBox):
         self, event: SelectionList.SelectionToggled[str]
     ) -> None:
         event.stop()
+        self._following = None
         self.post_message(self.Toggled(self.key, self.tab, event.selection.value))
 
     def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged[str]) -> None:

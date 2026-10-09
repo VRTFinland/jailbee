@@ -36,6 +36,7 @@ from jailbee.egress_scope import EntryRow
 from tests.dashboard_fixtures import (
     ACCOUNT_ROWS,
     alpha_group,
+    wide_group,
     cfg_group,
     ci,
     fake_accounts_cli,
@@ -1935,3 +1936,44 @@ def test_help_lines_explain_loose_ai_brightness_and_outbox():
     assert "LOOSE" in text and "NET:" not in text
     assert "30 min" in text
     assert "OUTBOX" in text
+
+
+def _enabled_probe(seen):  # type: ignore[no-untyped-def]
+    return lambda app: seen.append(tuple(app.session.enabled))
+
+
+def test_shift_down_in_fields_moves_the_highlighted_column(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    seen: list[tuple[str, ...]] = []
+    drive(
+        mocker,
+        ["S", "down", "shift+down", _enabled_probe(seen)],
+        [wide_group(tmp_path)],
+        view_state=ViewState(columns=("name", "state", "network", "mode")),
+    )
+    assert seen[-1] == ("name", "network", "state", "mode")
+
+
+def test_shift_up_cannot_pass_name(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    seen: list[tuple[str, ...]] = []
+    drive(
+        mocker,
+        ["S", "down", "shift+up", _enabled_probe(seen)],
+        [wide_group(tmp_path)],
+        view_state=ViewState(columns=("name", "state", "network")),
+    )
+    assert seen[-1] == ("name", "state", "network")
+
+
+def test_the_moved_row_stays_highlighted(mocker, tmp_path):
+    mocker.patch.object(tsession, "save_view_state")
+    seen: list[tuple[str, ...]] = []
+    run = drive(
+        mocker,
+        ["S", "down", "shift+down", "shift+down", _enabled_probe(seen)],
+        [wide_group(tmp_path)],
+        view_state=ViewState(columns=("name", "state", "network", "mode")),
+    )
+    assert seen[-1] == ("name", "network", "mode", "state")
+    assert run.natives[-2] == NativeState("settings", 3, tab="fields")

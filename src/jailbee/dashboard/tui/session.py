@@ -103,6 +103,7 @@ from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
     enabled_names,
+    move_field,
     open_settings,
     toggle_setting,
 )
@@ -1851,6 +1852,22 @@ class DashboardSession:
             show_empty_repos=self.show_empty_repos,
             hidden_repos=self.hidden_repos,
         )
+        self.shown_columns = nonempty_columns(
+            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
+        )
+        self.column_widths = None
+        self.column_offset = 0
+        self.save_view()
+
+    def setting_moved(self, key: str, step: int) -> None:
+        """An enabled column was moved in the Fields tab: apply it and persist it."""
+        overlay = self.overlay
+        assert isinstance(overlay, SettingsState)
+        moved = move_field(overlay, key, step)
+        if moved == overlay:
+            return
+        self.overlay = moved
+        self.enabled = enabled_names(moved)
         self.shown_columns = nonempty_columns(
             self.groups, now=_now(), enabled=self.enabled, folded=self.folded
         )

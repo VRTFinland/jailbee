@@ -277,6 +277,11 @@ class DashboardApp(App[int], inherit_bindings=False):
             self.session.setting_toggled(message.tab, message.row_key)
         self._after_native()  # also re-syncs a refused checkbox
 
+    def on_settings_box_moved(self, message: SettingsBox.Moved) -> None:
+        if self._native_current(message.key):
+            self.session.setting_moved(message.row_key, message.step)
+        self._after_native()
+
     def on_command_box_submitted(self, message: CommandBox.Submitted) -> None:
         if self._native_current(message.key):
             self.session.command_submitted(message.text)

@@ -115,7 +115,7 @@ def _hint_line(overlay: Overlay | None) -> str:
     if isinstance(overlay, SettingsState):
         return (
             "[bold]↑/↓[/bold] move  ·  [bold]Space[/bold] toggle  ·  "
-            "[bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
+            "Fields: [bold]Shift+↑/↓[/bold] reorder  ·  [bold]Tab[/bold] switch  ·  [bold]Esc[/bold] close"
         )
     if isinstance(overlay, CommandState):
         return "[bold]Enter[/bold] run  ·  [bold]Tab[/bold] complete  ·  [bold]Esc[/bold] cancel"
