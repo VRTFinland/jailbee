@@ -8,7 +8,7 @@ from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
 from tests.dashboard_fixtures import ci
-from tests.dashboard_pilot import SyncJobs, bare_session, box_text
+from tests.dashboard_pilot import SyncJobs, bare_session, box_text, patch_pause
 
 
 def _session(mocker, tmp_path, *states, config=None, **group_kw):
@@ -378,3 +378,72 @@ def test_the_loose_ttl_submit_with_nothing_left_says_so(mocker, tmp_path):
 
     run.assert_not_called()
     assert session.notice
+
+
+def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
+    child = _children(mocker)
+    pause = patch_pause(mocker)
+    session, terminal, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    session.handle_key("action:push")
+
+    assert len(terminal.handed) == 1
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "git", "push", "alpha-a", "alpha-b"]
+    ]
+    pause.assert_called_once()
+
+
+def test_bulk_merge_passes_no_into(mocker, tmp_path):
+    child = _children(mocker)
+    patch_pause(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+
+    session.begin_bulk("merge")
+
+    assert child.call_args.args[0] == ["jailbee", "merge", "alpha-a", "alpha-b"]
+
+
+def test_two_repos_get_one_run_each(mocker, tmp_path):
+    child = _children(mocker)
+    pause = patch_pause(mocker)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    alpha = dmodel.RepoGroup("alpha", str(tmp_path / "a"), None, [ci("alpha-a", "alpha")])
+    beta = dmodel.RepoGroup(
+        "beta", str(tmp_path / "b"), tmp_path / "b.yaml", [ci("beta-a", "beta")]
+    )
+    session, terminal = bare_session(mocker, [alpha, beta])
+    session.marked = frozenset({"alpha-a", "beta-a"})
+
+    session.begin_bulk("git pull")
+
+    assert len(terminal.handed) == 1
+    calls = [(c.args[0], c.kwargs["cwd"]) for c in child.call_args_list]
+    assert calls == [
+        (["jailbee", "git", "pull", "alpha-a"], tmp_path / "a"),
+        (
+            ["jailbee", "git", "pull", "beta-a", "--config", str(tmp_path / "b.yaml")],
+            tmp_path / "b",
+        ),
+    ]
+    pause.assert_called_once()
+
+
+def test_a_successful_run_unmarks_its_names_and_a_failed_one_keeps_them(mocker, tmp_path):
+    _children(mocker, failing=("beta-a",))
+    patch_pause(mocker)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    alpha = dmodel.RepoGroup("alpha", str(tmp_path / "a"), None, [ci("alpha-a", "alpha")])
+    beta = dmodel.RepoGroup("beta", str(tmp_path / "b"), None, [ci("beta-a", "beta")])
+    session, _ = bare_session(mocker, [alpha, beta])
+    session.marked = frozenset({"alpha-a", "beta-a"})
+
+    session.begin_bulk("git push")
+
+    assert session.marked == frozenset({"beta-a"})
+    assert session.notice == "git push: 1 ok, 1 failed (beta: exited 1)"

@@ -32,6 +32,7 @@ from jailbee.dashboard.bulk import (
     bulk_argv,
     bulk_loose_default,
     destroy_risk_lines,
+    foreground_runs,
     loose_ttl_entries,
     nothing_to_do,
     plan_bulk,
@@ -56,6 +57,7 @@ from jailbee.dashboard.commands import (
 from jailbee.dashboard.dispatch import (
     DispatchStyle,
     _dispatch_action,
+    _run_bulk_foreground,
     _run_cli_foreground,
     _wait_for_return,
     command_needs_pause,
@@ -2078,7 +2080,39 @@ class DashboardSession:
         self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if batch.failed else NOTICE_SECONDS)
 
     def _run_foreground(self, action: BulkAction) -> None:
-        raise NotImplementedError("Task 10")  # replaced in Task 10
+        """One terminal hand-off running the CLI's own multi-target form per repo.
+
+        Its questions (push source and action, merge targets) and its roll-up
+        are the CLI's. A repo whose run exits 0 has its names unmarked.
+        """
+        runs = foreground_runs(self.groups, action)
+        codes: list[int] = []
+
+        def run_all() -> int:
+            codes.extend(
+                _run_bulk_foreground(
+                    [(run.target, run.argv) for run in runs],
+                    over_ssh=self.over_ssh,
+                    ssh_policy=self.ssh_policy,
+                )
+            )
+            return max(codes, default=0)
+
+        try:
+            self.terminal.hand_off(run_all)
+        except RouteError as exc:
+            self.set_notice(str(exc))
+            return
+        except OSError:
+            self.set_notice("A repository directory no longer exists")
+            self.client.refresh()
+            return
+        ok = [n for run, c in zip(runs, codes, strict=True) if c == 0 for n in run.names]
+        failed = {run.prefix: f"exited {c}" for run, c in zip(runs, codes, strict=True) if c}
+        self.marked -= frozenset(ok)
+        batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
+        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
+        self.client.refresh()
 
     def toggle_mark(self, name: str) -> None:
         """Mark ``name`` for a bulk action, or unmark it."""
