@@ -4682,6 +4682,51 @@ def start(
     _clear_superseded_boot_job(cfg, name)
 
 
+@app.command("rename")
+def rename_cmd(
+    name: ContainerArg = None,
+    alias: Annotated[
+        str | None,
+        typer.Argument(
+            help="New name to show and accept for it (its alias). Asked for when omitted."
+        ),
+    ] = None,
+    clear: Annotated[
+        bool, typer.Option("--clear", help="Remove the alias; the real name shows again.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Rename a container instantly, without stopping it.
+
+    The new name is an alias: listings and the dashboard show it, and every
+    command accepts it. The container's real name never changes.
+    """
+    from jailbee import aliases, prompting
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    if clear and alias is not None:
+        error("--clear and ALIAS are mutually exclusive.")
+        raise typer.Exit(2)
+    incus, full = _resolve_existing(cfg, name)
+    if clear:
+        aliases.clear_alias(incus, full)
+        info(f"'{short_name(cfg, full)}' has no alias now.")
+        return
+    if alias is None:
+
+        def _problem(text: str) -> str | None:
+            return None if text.strip() else "an alias cannot be empty"
+
+        alias = prompting.ask_text("alias", validate=_problem, alternative="--clear").strip()
+    try:
+        aliases.set_alias(cfg, incus, full, alias)
+    except aliases.AliasError as e:
+        error(str(e))
+        raise typer.Exit(2) from e
+    info(f"'{short_name(cfg, full)}' is now shown as '{alias}'.")
+
+
 @app.command()
 def stop(
     name: ContainerArg = None,

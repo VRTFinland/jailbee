@@ -1011,6 +1011,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   names what needs a restart). By default a repo runs only what the release's
   upgrade notes owe it; `--force` runs both everywhere; `--dry-run` lists what
   would run. Exit 1 if any repo failed.
+- **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
   autostart, and both take `--background`/`-b` to detach that run and
   `--wait`/`--no-wait` to override a `detach: true` autostart stage for this
