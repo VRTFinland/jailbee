@@ -1100,7 +1100,7 @@ def test_v15_db_gains_columns_version_defaulting_zero() -> None:
     assert row is not None
     assert row.columns_version == 0
     assert row.columns == '["name", "mem"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 16
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 17
 
 
 def test_migrate_to_v16_is_idempotent() -> None:
@@ -1111,3 +1111,37 @@ def test_migrate_to_v16_is_idempotent() -> None:
     with engine.begin() as conn:
         _migrate_to_v16(conn)
         _migrate_to_v16(conn)
+
+
+def test_v16_db_gains_the_sort_columns() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, ViewPrefs
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=16))
+        session.add(ViewPrefs(frontend="tui", columns='["name", "state"]', columns_version=1))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE view_prefs DROP COLUMN sort_field")
+        conn.exec_driver_sql("ALTER TABLE view_prefs DROP COLUMN sort_desc")
+
+    _ensure_schema(engine)
+    with Session(engine) as session:
+        row = session.get(ViewPrefs, "tui")
+        meta = session.get(SchemaMeta, 1)
+    assert row is not None
+    assert row.sort_field is None and row.sort_desc is False
+    assert row.columns == '["name", "state"]' and row.columns_version == 1
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 17
+
+
+def test_migrate_to_v17_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v17
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _migrate_to_v17(conn)
+        _migrate_to_v17(conn)

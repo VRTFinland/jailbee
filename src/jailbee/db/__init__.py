@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def state_dir() -> Path:
@@ -254,6 +254,17 @@ def _migrate_to_v16(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v17(conn: Connection) -> None:
+    """v16 -> v17 adds the dashboards' row sort."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(view_prefs)")}
+    if "sort_field" not in cols:
+        conn.exec_driver_sql("ALTER TABLE view_prefs ADD COLUMN sort_field VARCHAR")
+    if "sort_desc" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE view_prefs ADD COLUMN sort_desc BOOLEAN NOT NULL DEFAULT 0"
+        )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -271,6 +282,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     14: _migrate_to_v14,
     15: _migrate_to_v15,
     16: _migrate_to_v16,
+    17: _migrate_to_v17,
 }
 
 

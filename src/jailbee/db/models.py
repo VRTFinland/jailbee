@@ -189,10 +189,11 @@ class ViewPrefs(SQLModel, table=True):
     this replaces is deprecated (seeded once, then inert).
 
     ``columns`` is a JSON list of enabled column names; ``None`` means the
-    built-in default set. Stored order is not significant today — the
-    dashboards iterate the canonical field-spec order and filter by
-    membership — but a list rather than a set leaves room for user-defined
-    ordering later without a migration.
+    built-in default set. The list order is the column order the user chose;
+    ``name`` is always first (``dashboard.columns.normalize_columns``).
+
+    ``sort_field`` / ``sort_desc`` are the dashboard's row sort
+    (``dashboard.sorting.SortSpec``); ``NULL`` means the default order.
 
     ``folded_repos`` is a JSON list of folded repo prefixes. Prefixes that
     are not currently registered are kept, so a repo whose containers are
@@ -227,6 +228,10 @@ class ViewPrefs(SQLModel, table=True):
     )
     columns_version: int = Field(
         default=0, sa_column=Column(Integer, nullable=False, server_default="0")
+    )
+    sort_field: str | None = None
+    sort_desc: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="0")
     )
 
 

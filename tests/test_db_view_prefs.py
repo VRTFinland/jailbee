@@ -200,3 +200,25 @@ def test_a_save_without_a_version_never_lowers_the_stored_one() -> None:
     state = load_view_state(engine, FRONTEND_QT)
     assert state.columns_version == 1
     assert state.folded == frozenset({"a"})
+
+
+def test_sort_defaults_to_none_and_round_trips() -> None:
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    state = load_view_state(engine, FRONTEND_TUI)
+    assert (state.sort_field, state.sort_desc) == (None, False)
+    save_view_state(engine, FRONTEND_TUI, ViewState(sort_field="cpu", sort_desc=True))
+    state = load_view_state(engine, FRONTEND_TUI)
+    assert (state.sort_field, state.sort_desc) == ("cpu", True)
+    save_view_state(engine, FRONTEND_TUI, ViewState())
+    state = load_view_state(engine, FRONTEND_TUI)
+    assert (state.sort_field, state.sort_desc) == (None, False)
+
+
+def test_stored_column_order_round_trips() -> None:
+    from jailbee.db.view_prefs import FRONTEND_QT, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name", "cpu", "state")))
+    assert load_view_state(engine, FRONTEND_QT).columns == ("name", "cpu", "state")

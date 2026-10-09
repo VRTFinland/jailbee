@@ -38,6 +38,8 @@ class ViewState:
     ``columns_version`` is the newest dashboard column-set migration
     (``jailbee.dashboard.columns.COLUMNS_VERSION``) the stored ``columns``
     have been through. A save never lowers it.
+    ``sort_field``/``sort_desc`` are the row sort; ``None`` is the default order.
+    Unlike ``columns_version`` they are written as given — every save site must carry them.
     """
 
     columns: tuple[str, ...] | None = None
@@ -46,6 +48,8 @@ class ViewState:
     hidden_repos: frozenset[str] = field(default_factory=frozenset)
     show_details: bool = True
     columns_version: int = 0
+    sort_field: str | None = None
+    sort_desc: bool = False
 
 
 def decode_names(raw: str | None) -> tuple[str, ...] | None:
@@ -92,6 +96,8 @@ def load_view_state(engine: Engine, frontend: str) -> ViewState:
             hidden_repos=_decode_folded(row.hidden_repos),
             show_details=row.show_details,
             columns_version=row.columns_version,
+            sort_field=row.sort_field,
+            sort_desc=row.sort_desc,
         )
 
 
@@ -112,6 +118,8 @@ def save_view_state(engine: Engine, frontend: str, state: ViewState) -> None:
         row.show_empty_repos = state.show_empty_repos
         row.hidden_repos = json.dumps(sorted(state.hidden_repos))
         row.show_details = state.show_details
+        row.sort_field = state.sort_field
+        row.sort_desc = state.sort_desc
         # Never lowered: both front-ends build the `ViewState` they save from
         # their own fields, which carry no version, and a fold or a toggle
         # must not make the next launch re-run a column migration the user
