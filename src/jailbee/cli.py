@@ -2365,13 +2365,26 @@ def new_cmd(
         from jailbee import forking
         from jailbee import git as git_helpers
 
+        fork_incus = Incus()
         try:
-            fork_source = forking.prepare_fork(cfg, Incus(), fork_of)
+            fork_source = forking.prepare_fork(cfg, fork_incus, fork_of)
         except forking.ForkError as e:
             # `sync`'s detached-HEAD message suggests `--branch`, which on
             # `jailbee fork` names the *new* branch, not the source's.
             error(str(e).removesuffix(" Use --branch <name> to specify."))
             raise typer.Exit(2) from e
+        except git_helpers.GitError as e:
+            error(str(e))
+            raise typer.Exit(1) from e
+        # Pin the commit under the fork's own name before anything else can
+        # go wrong: the source's ref dies with the source, and the fork's
+        # `--shared` clone needs the objects for as long as the fork lives.
+        # Checked free first, or an existing fork's pin would be moved.
+        if fork_incus.exists(name):
+            error(f"Container '{short_name(cfg, name)}' already exists")
+            raise typer.Exit(2)
+        try:
+            forking.pin_fork_commit(cfg, name, fork_source.commit)
         except git_helpers.GitError as e:
             error(str(e))
             raise typer.Exit(1) from e

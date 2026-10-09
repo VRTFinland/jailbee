@@ -10,7 +10,13 @@ from jailbee.forking import ForkError, ForkSource
 def _setup(tmp_path, mocker):
     from tests.test_cli import _setup_new_cmd_env
 
-    return _setup_new_cmd_env(tmp_path, mocker)
+    env = _setup_new_cmd_env(tmp_path, mocker)
+    import jailbee.incus
+
+    # The fork's name is checked free before its commit is pinned under it.
+    jailbee.incus.Incus.return_value.exists.return_value = False
+    mocker.patch("jailbee.forking.pin_fork_commit", return_value="refs/jailbee/b/HEAD")
+    return env
 
 
 def _run(args):
@@ -39,6 +45,67 @@ def test_new_fork_of_pins_clone_and_records_source(tmp_path, mocker):
     assert opts.base is None
     assert opts.clone is True
     assert opts.fork_of == "myrepo-src"
+
+
+def test_new_fork_of_pins_the_commit_under_the_forks_name(tmp_path, mocker):
+    _, new_container = _setup(tmp_path, mocker)
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    calls = mocker.MagicMock()
+    pin = mocker.patch("jailbee.forking.pin_fork_commit", side_effect=lambda *a: calls.pin())
+    new_container.side_effect = lambda *a, **k: (calls.new(), "myrepo-b")[1]
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
+    assert result.exit_code == 0, result.output
+    assert pin.call_args.args[1:] == ("myrepo-b", "abc123")
+    assert [c[0] for c in calls.mock_calls] == ["pin", "new"]
+
+
+def test_new_fork_of_pins_before_the_background_dispatch(tmp_path, mocker):
+    # The background path's first act is its own existence check; making that
+    # second `exists()` answer True stops the run there, with the pin
+    # already written: proof the pin precedes the detached worker.
+    import jailbee.incus
+
+    _, new_container = _setup(tmp_path, mocker)
+    jailbee.incus.Incus.return_value.exists.side_effect = [False, True]
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    pin = mocker.patch("jailbee.forking.pin_fork_commit")
+    result = _run(["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "-b"])
+    assert "already exists" in result.output
+    assert pin.call_args.args[1:] == ("myrepo-b", "abc123")
+    new_container.assert_not_called()
+
+
+def test_new_fork_of_existing_name_exits_2_without_pinning(tmp_path, mocker):
+    # Pinning first would move an existing fork's own pin.
+    import jailbee.incus
+
+    _, new_container = _setup(tmp_path, mocker)
+    jailbee.incus.Incus.return_value.exists.return_value = True
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    pin = mocker.patch("jailbee.forking.pin_fork_commit")
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
+    assert result.exit_code == 2
+    assert "already exists" in result.output
+    pin.assert_not_called()
+    new_container.assert_not_called()
+
+
+def test_new_fork_of_pin_failure_exits_1(tmp_path, mocker):
+    from jailbee.git import GitError
+
+    _, new_container = _setup(tmp_path, mocker)
+    mocker.patch("jailbee.forking.prepare_fork", return_value=SRC)
+    mocker.patch("jailbee.forking.pin_fork_commit", side_effect=GitError("could not pin"))
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
+    assert result.exit_code == 1
+    assert "could not pin" in result.output
+    new_container.assert_not_called()
 
 
 def test_new_fork_of_skips_existing_branch_confirm(tmp_path, mocker):

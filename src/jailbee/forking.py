@@ -1,9 +1,14 @@
 """`jailbee fork`: a new container at another container's committed state.
 
 Only git state is carried over. The source's commits are fetched to the host
-(`refs/jailbee/<source>/<branch>`, kept, so the new clone's `--shared`
-alternates can always reach them) and the new container is an ordinary
-`jailbee new`, pinned to that commit. A filesystem copy was rejected: it would
+(`refs/jailbee/<source>/<branch>`) and the new container is an ordinary
+`jailbee new`, pinned to that commit. That source ref is not what keeps the
+commit alive: `jailbee destroy <source>` deletes it and the source's next fetch
+moves it, while the fork's `--shared` clone borrows its objects from the host
+for as long as the fork exists. So the commit is also pinned under the fork's
+own name (`refs/jailbee/<fork>/HEAD`, see `pin_fork_commit`), which lives
+exactly as long as the fork: `jailbee destroy <fork>` removes it with the rest
+of `refs/jailbee/<fork>/`. A filesystem copy was rejected: it would
 inherit the source's identity (labels, egress ACL, port devices, the `.local`
 share device), which is exactly what must not be shared.
 """
@@ -58,3 +63,29 @@ def prepare_fork(cfg: Config, incus: Incus, source: str) -> ForkSource:
         raise ForkError(str(e)) from e
     base = incus.config_get(full, "user.jailbee.base_branch") or None
     return ForkSource(full, fetched.branch, fetched.new_oid, base)
+
+
+def fork_pin_ref(cfg: Config, fork_full: str) -> str:
+    """The host ref that keeps a fork's starting commit reachable.
+
+    Under `refs/jailbee/<fork-short>/`, the prefix `destroy_container` clears,
+    so the pin lives exactly as long as the fork. ``HEAD`` because it can never
+    be a branch name, so no `jailbee git fetch` of the fork lands on it.
+    """
+    from jailbee.lifecycle import short_name
+
+    return f"refs/jailbee/{short_name(cfg, fork_full)}/HEAD"
+
+
+def pin_fork_commit(cfg: Config, fork_full: str, commit: str) -> str:
+    """Point the fork's pin ref at ``commit``; return the ref.
+
+    Raises ``git.GitError`` when git refuses: an unpinned fork's `--shared`
+    clone could lose its objects to a host `git gc`, so the caller must stop.
+    """
+    from jailbee import git
+
+    ref = fork_pin_ref(cfg, fork_full)
+    if not git.update_ref(cfg.repo_root, ref, commit):
+        raise git.GitError(f"could not pin the fork's commit {commit} as {ref} on the host.")
+    return ref

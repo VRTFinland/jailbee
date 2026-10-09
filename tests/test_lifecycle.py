@@ -5406,6 +5406,40 @@ def test_destroy_container_cleans_gie_refs(tmp_path, mocker):
     incus.delete.assert_called_once()
 
 
+def test_destroy_container_removes_a_forks_commit_pin(tmp_path, mocker):
+    """`jailbee fork` pins its starting commit as `refs/jailbee/<fork>/HEAD`
+    so the fork's `--shared` clone outlives the source; destroying the fork
+    must take the pin with it. Real git: the pin and the cleanup must agree
+    on the prefix, which mocking `list_refs` would assert into existence.
+    """
+    import subprocess
+
+    from jailbee import forking
+
+    cfg = _cfg_for_new(tmp_path)
+    repo = cfg.repo_root
+    repo.mkdir(parents=True, exist_ok=True)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q", "-b", "main")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c")
+    full = f"{cfg.container_prefix}-b"
+    ref = forking.pin_fork_commit(cfg, full, git("rev-parse", "HEAD"))
+    incus = MagicMock()
+    incus.exists.return_value = True
+    incus.list_containers.return_value = [{"name": full, "status": "Stopped", "profiles": []}]
+    assert git("for-each-ref", ref) != ""
+
+    destroy_container(cfg, incus, full, force=True)
+
+    assert git("for-each-ref", ref) == ""
+    incus.delete.assert_called_once()
+
+
 def test_destroy_container_succeeds_when_ref_cleanup_fails(tmp_path, mocker):
     """Ref cleanup is best-effort — a git failure must not block destroy."""
     cfg = _cfg_for_new(tmp_path)

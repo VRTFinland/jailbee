@@ -87,3 +87,45 @@ def test_prepare_fork_detached_head_is_a_fork_error(cfg, wired):
     fetch.side_effect = SyncError("Cannot determine branch for container 'src'.")
     with pytest.raises(forking.ForkError, match="Cannot determine branch"):
         forking.prepare_fork(cfg, MagicMock(), "src")
+
+
+def _git(repo, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def real_repo(cfg):
+    repo = cfg.repo_root
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_pin_fork_commit_writes_the_forks_own_ref(cfg, real_repo):
+    # The source's `refs/jailbee/<src>/<branch>` dies with the source (or is
+    # force-moved by its next fetch); the fork's `--shared` clone must not.
+    repo, sha = real_repo
+    ref = forking.pin_fork_commit(cfg, "myrepo-b", sha)
+    assert ref == "refs/jailbee/b/HEAD"
+    assert _git(repo, "rev-parse", "refs/jailbee/b/HEAD") == sha
+
+
+def test_pin_fork_commit_is_under_the_prefix_destroy_cleans(cfg, real_repo):
+    from jailbee import git as git_helpers
+
+    repo, sha = real_repo
+    ref = forking.pin_fork_commit(cfg, "myrepo-b", sha)
+    # Exactly the prefix `destroy_container` lists and deletes.
+    assert git_helpers.list_refs(repo, "refs/jailbee/b/") == [ref]
+
+
+def test_pin_fork_commit_failure_is_a_git_error(cfg, mocker):
+    from jailbee.git import GitError
+
+    mocker.patch("jailbee.git.update_ref", return_value=False)
+    with pytest.raises(GitError, match="refs/jailbee/b/HEAD"):
+        forking.pin_fork_commit(cfg, "myrepo-b", "abc123")

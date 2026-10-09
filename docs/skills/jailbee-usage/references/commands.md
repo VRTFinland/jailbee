@@ -460,8 +460,10 @@ race a stage the CLI itself is waiting on).
 ### `jailbee fork [SOURCE] [NAME] [--branch B]`
 
 Creates a container from another container's committed state. SOURCE's HEAD
-commit is fetched to the host (`refs/jailbee/<source>/<branch>`, kept) and the
-new container is an ordinary clone-mode `jailbee new` pinned to it, on
+commit is fetched to the host (`refs/jailbee/<source>/<branch>`) and pinned
+under the new container's own name (`refs/jailbee/<name>/HEAD`, removed by
+`jailbee destroy <name>`), so the fork keeps working after SOURCE is destroyed;
+the new container is an ordinary clone-mode `jailbee new` pinned to it, on
 SOURCE's branch unless `--branch` names a new one. Only commits carry over:
 SOURCE must be running, in clone mode, and have no uncommitted changes
 (tracked or untracked), else exit 2; a failed fetch is exit 1. The fork
