@@ -28,13 +28,19 @@ INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the bor
 
 
 def frame_title(
-    groups: Sequence[RepoGroup], folded: frozenset[str], *, git_enabled: bool, now: datetime
+    groups: Sequence[RepoGroup],
+    folded: frozenset[str],
+    *,
+    git_enabled: bool,
+    now: datetime,
+    marked: int = 0,
 ) -> Text:
     """The frame border's summary and clock, independent of its body."""
     n_repos = len({g.prefix for g in groups})
     n_ctr = sum(len(g.containers) for g in groups)
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
     folded_note = f" · {n_folded} folded" if n_folded else ""
+    folded_note += f" · {marked} selected" if marked else ""
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
     return Text.from_markup(
         f"[bold]🐝 jailbee dashboard[/]  ·  [dim]h/? help[/]"

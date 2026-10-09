@@ -213,6 +213,7 @@ class FleetTable(ScrollView, can_focus=False):
                     model.geometry,
                     entry.row.key in model.folded if entry.heading is not None else False,
                     entry.row == self._selected,
+                    entry.marked,
                     target,
                 )
             )
@@ -476,7 +477,11 @@ class DashboardFrame(Vertical):
             )
 
         self.border_title = frame_title(
-            view.groups, view.folded, git_enabled=view.git_enabled, now=view.now
+            view.groups,
+            view.folded,
+            git_enabled=view.git_enabled,
+            now=view.now,
+            marked=len(view.marked),
         )
         subtitle, inline = notice_parts(view.notice)
         self.border_subtitle = subtitle if subtitle is not None else ""
@@ -538,6 +543,8 @@ class DashboardFrame(Vertical):
             column_offset=view.column_offset,
             hidden_by_preferences=view.hidden_by_preferences,
             width=max(0, width - scrollbar),
+            marked=view.marked,
+            running=view.running,
         )
         table = self.table
         table.display = layout.table_rows > 0

@@ -31,6 +31,9 @@ EMPTY_TEXT = "(no containers found)"
 HIDDEN_TEXT = "All repositories are hidden — open Settings > Visibility to show them"
 _GAP = "  "
 _HEADER_STYLE = Style(bold=True)
+# A marked row's background. The `●` in the indent carries the mark for
+# NO_COLOR and 16-colour terminals; the background is the at-a-glance cue.
+MARKED_STYLE = Style(bgcolor="blue")
 
 
 @dataclass(frozen=True)
@@ -57,8 +60,10 @@ class Entry:
     row: Row
     group: RepoGroup = field(compare=False, repr=False)
     container: ContainerInfo | None = None
-    heading: tuple[int, bool] | None = None
-    """For a heading: (container count, orphan) — what its text depends on."""
+    heading: tuple[int, bool, int] | None = None
+    """For a heading: (container count, orphan, marked count) — what its text depends on."""
+    marked: bool = False
+    running: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,6 +106,8 @@ def table_model(
     column_offset: int,
     hidden_by_preferences: bool,
     width: int,
+    marked: frozenset[str] = frozenset(),
+    running: frozenset[str] = frozenset(),
 ) -> TableModel:
     """Everything the table draws at ``width`` cells, columns scrolled by ``column_offset``."""
     fields, widths = _frame_columns(
@@ -129,12 +136,22 @@ def table_model(
                 Row("repo", group.prefix),
                 group,
                 None,
-                (len(group.containers), group.repo_root is None),
+                (
+                    len(group.containers),
+                    group.repo_root is None,
+                    sum(1 for c in group.containers if c.name in marked),
+                ),
             )
         )
         if group.prefix not in folded:
             entries.extend(
-                Entry(Row("container", container.name), group, container)
+                Entry(
+                    Row("container", container.name),
+                    group,
+                    container,
+                    marked=container.name in marked,
+                    running=container.name in running,
+                )
                 for container in group.containers
             )
     empty_text = None
@@ -205,11 +222,14 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
             if spec.name == "name" and entry.group.repo_root is None
             else spec.cell(entry.container)
         )
-        cells.append(("  " + value) if index == 0 else value)
+        indent = "⟳ " if entry.running else "● " if entry.marked else "  "
+        cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
 
 
-def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str]) -> Text:
+def repo_heading(
+    group: RepoGroup, selected: Row | None, folded: frozenset[str], marked: int = 0
+) -> Text:
     """Render a repo heading independently of the table's data columns.
 
     The cursor heading is marked by :data:`CURSOR_STYLE` alone, like a
@@ -221,6 +241,8 @@ def repo_heading(group: RepoGroup, selected: Row | None, folded: frozenset[str])
     rest = f" {group.prefix}  ({len(group.containers)})"
     if group.repo_root is None:
         rest += "  (orphan)"
+    if marked:
+        rest += f"  ●{marked}"
     if selected == Row("repo", group.prefix):
         style = CURSOR_STYLE
     else:
@@ -241,7 +263,12 @@ def entry_line(
 ) -> Text:
     """One heading or container line; ``width`` cuts an over-long heading."""
     if entry.container is None:
-        heading = repo_heading(entry.group, entry.row if selected else None, folded)
+        heading = repo_heading(
+            entry.group,
+            entry.row if selected else None,
+            folded,
+            marked=entry.heading[2] if entry.heading else 0,
+        )
         heading.no_wrap = True
         heading.end = ""
         heading.truncate(width, overflow="ellipsis")
@@ -254,5 +281,6 @@ def entry_line(
         )
     ]
     hit = dhit.hit_style("row", entry.container.name)
-    style = Style.parse(CURSOR_STYLE) + hit if selected else hit
+    base = MARKED_STYLE + hit if entry.marked else hit
+    style = Style.parse(CURSOR_STYLE) + base if selected else base
     return _join(_with_marks(cells, geometry, Text(" "), Text(" ")), style)
