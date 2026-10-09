@@ -345,9 +345,7 @@ def test_the_view_shows_the_mode(mocker, tmp_path):
     session.set_notice("something else")
     session.begin_merge_pick(["r-b"])
     view = session.view()
-    assert view.notice == (
-        "Merge b into: —   space mark · enter merge · esc cancel"
-    )
+    assert view.notice == ("Merge b into: —   space mark · enter merge · esc cancel")
     assert view.sources == frozenset({"r-b"})
     assert view.ineligible == frozenset({"r-s"})
 

@@ -244,15 +244,7 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
             if spec.name == "name" and entry.group.repo_root is None
             else spec.cell(entry.container)
         )
-        indent = (
-            "◆ "
-            if entry.source
-            else "⟳ "
-            if entry.running
-            else "● "
-            if entry.marked
-            else "  "
-        )
+        indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
 
