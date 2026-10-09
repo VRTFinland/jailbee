@@ -1923,3 +1923,10 @@ def test_the_slot_holds_only_the_sessions_box(mocker, tmp_path):
     assert mounted == [box]
     assert overlay == "help" and type(box).__name__ == "HelpBox"
     assert focused
+
+
+def test_help_lines_explain_loose_ai_brightness_and_outbox():
+    text = "\n".join(tframe.help_lines())
+    assert "LOOSE" in text and "NET:" not in text
+    assert "30 min" in text
+    assert "OUTBOX" in text

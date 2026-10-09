@@ -53,6 +53,9 @@ def wide_group(tmp_path: Path) -> dmodel.RepoGroup:
             dataclasses.replace(
                 ci("alpha-one", "alpha", pr_number=4, mode="mount"),
                 created_at=datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+                # Loose with no revert deadline: LOOSE reads "● ∞" and stays a
+                # shown column (a strict row's LOOSE cell is empty).
+                network="loose",
             )
         ],
     )

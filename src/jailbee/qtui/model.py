@@ -4,7 +4,7 @@ Framework-free (no PySide6, though Rich — a shared, non-GUI dependency — is
 used to strip markup from ``FieldSpec.cell`` output). Cell text comes from
 ``FieldSpec.cell`` (the same human-readable rendering the TUI table uses),
 with any Rich markup tags stripped, rather than ``FieldSpec.json`` (whose
-value may be structured data, e.g. ``mem``'s json is a ``{"usage", "limit"}``
+value may be structured data, e.g. ``outbox``'s json is a ``{"pr", "issues"}``
 dict — not something we want to stringify straight into a cell).
 """
 
@@ -92,6 +92,12 @@ class CardContent:
     # same reason as `job_error`.
     agent_tooltip: str | None = None
     agent_waiting: bool = False
+    # Raw `limits.memory`, the memory chip's tooltip: the card shows used and
+    # MEM% only.
+    memory_limit: str | None = None
+    # The busy processes, plain text, filled whatever the column selection:
+    # the card keeps its DOING line by default, as the TUI details panel does.
+    doing: str | None = None
 
 
 def card_content(
@@ -128,16 +134,13 @@ def card_content(
         job_error=c.job_error,
         agent_tooltip=tooltip or None,
         agent_waiting=any(s.state == "waiting" for s in c.agent_status),
+        memory_limit=c.memory_limit,
+        doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
     )
 
 
 # Git field values that mean "nothing to report".
 _GIT_FIELD_NAMES = ("wt", "target_diff", "ahead_count", "behind_count", "conflict")
-
-# The "✉N" marker `lifecycle._pr_cell` embeds in the PR column's cell text —
-# with or without a leading "#1234↓" — for N manifests waiting in the
-# container's PR outbox.
-_PENDING_PR_ACTIONS_RE = re.compile(r"✉(\d+)")
 
 
 def card_field(cc: CardContent, name: str) -> str | None:
@@ -184,16 +187,12 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         # prediction words need the "merge " prefix to read as a sentence.
         label = conflict if conflict in IN_PROGRESS_CELL_LABELS else f"merge {conflict}"
         segs.append((label, "conflict"))
-    pr = card_field(cc, "pr")
-    if pr and (m := _PENDING_PR_ACTIONS_RE.search(pr)):
-        # Same "ahead" style as the ↑N commit count: like ahead commits, this
-        # is something the container has that the PR/host does not yet.
-        segs.append((f"✉{m.group(1)}", "ahead"))
-    issues = card_field(cc, "issues")
-    if issues:
-        # `lifecycle`'s ISSUES cell is always exactly "✉N" (no prefix like the
-        # PR column's "#1234↓"), so the value can be embedded directly.
-        segs.append((f"issues {issues}", "ahead"))
+    outbox = card_field(cc, "outbox")
+    if outbox:
+        # OUTBOX is exactly "✉N" (PR plus issue manifests). Same "ahead" style
+        # as ↑N: like ahead commits, it is something the container has that
+        # GitHub does not yet.
+        segs.append((outbox, "ahead"))
     return segs
 
 
@@ -228,11 +227,14 @@ _FIELD_MEANINGS = {
     "state": "Container state: ▶ Running, ■ Stopped, Ⅱ Frozen",
     "created": "Container age (s/m/h/d); tooltip shows exact creation timestamp",
     "network": (
-        "Network: ● = strict, ○ = loose; cards show remaining auto-revert TTL, ∞ = no auto-revert"
+        "Network mode: ● followed by the remaining auto-revert time = loose, "
+        "∞ = loose with no auto-revert; empty = strict"
     ),
     "ttl": "Remaining loose-network auto-revert time",
     "loose_until": "Exact loose-network auto-revert deadline",
     "mem": "Memory usage / configured limit",
+    "mem_used": "Memory in use",
+    "mem_pct": "Memory in use as a share of the configured limit",
     "memory_limit": "Configured memory limit",
     "cpu": "CPU usage; suffix is configured core limit",
     "doing": "Active processes; ×N = process count",  # noqa: RUF001 - intentional multiplication sign
@@ -244,10 +246,11 @@ _FIELD_MEANINGS = {
     "behind_count": "Commits behind host target",
     "conflict": "Merge prediction or actual in-progress Git operation",
     "git_status": "Combined Git status",
-    "pr": "Pull request and pending PR outbox actions",
+    "pr": "Pull request; ↓ = review container (the outbox count is in OUTBOX)",
     "issues": "Pending issue outbox actions",
+    "outbox": "Staged PR and issue outbox manifests waiting to be published (✉N)",
     "group": "Credential group",
-    "agent_compact": "Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown",
+    "agent_compact": ("Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
     "agent": "Full agent state and duration",
 }
 

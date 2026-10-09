@@ -128,7 +128,7 @@ Tell the user, verbatim: run `jb issue apply <container>` on the host —
 **nothing has been published yet.** Everything you wrote is a proposal
 sitting in the container's filesystem until then. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
-this container.
+this container, and the dashboards' OUTBOX column counts it together with any staged PR actions.
 
 ## What not to assume
 

@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 def state_dir() -> Path:
@@ -245,6 +245,15 @@ def _migrate_to_v15(conn: Connection) -> None:
         )
 
 
+def _migrate_to_v16(conn: Connection) -> None:
+    """v15 -> v16 adds the version of the dashboard column-set migrations a view has seen."""
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(view_prefs)")}
+    if "columns_version" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE view_prefs ADD COLUMN columns_version INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -261,6 +270,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     13: _migrate_to_v13,
     14: _migrate_to_v14,
     15: _migrate_to_v15,
+    16: _migrate_to_v16,
 }
 
 

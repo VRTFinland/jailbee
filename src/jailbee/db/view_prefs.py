@@ -35,6 +35,9 @@ class ViewState:
     default set" — distinct from an empty selection, which is not a
     representable request (see :func:`decode_names`).
     ``show_details`` is whether the terminal dashboard draws the details panel under its table.
+    ``columns_version`` is the newest dashboard column-set migration
+    (``jailbee.dashboard.columns.COLUMNS_VERSION``) the stored ``columns``
+    have been through. A save never lowers it.
     """
 
     columns: tuple[str, ...] | None = None
@@ -42,6 +45,7 @@ class ViewState:
     show_empty_repos: bool = True
     hidden_repos: frozenset[str] = field(default_factory=frozenset)
     show_details: bool = True
+    columns_version: int = 0
 
 
 def decode_names(raw: str | None) -> tuple[str, ...] | None:
@@ -87,6 +91,7 @@ def load_view_state(engine: Engine, frontend: str) -> ViewState:
             show_empty_repos=row.show_empty_repos,
             hidden_repos=_decode_folded(row.hidden_repos),
             show_details=row.show_details,
+            columns_version=row.columns_version,
         )
 
 
@@ -107,4 +112,9 @@ def save_view_state(engine: Engine, frontend: str, state: ViewState) -> None:
         row.show_empty_repos = state.show_empty_repos
         row.hidden_repos = json.dumps(sorted(state.hidden_repos))
         row.show_details = state.show_details
+        # Never lowered: both front-ends build the `ViewState` they save from
+        # their own fields, which carry no version, and a fold or a toggle
+        # must not make the next launch re-run a column migration the user
+        # has since undone.
+        row.columns_version = max(row.columns_version, state.columns_version)
         session.commit()

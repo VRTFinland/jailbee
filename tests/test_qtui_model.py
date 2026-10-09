@@ -60,7 +60,8 @@ def test_container_cells_mem_is_human_text_not_dict():
         repo="p",
     )
     c.memory_usage = 500_000_000
-    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c])
+    # `mem` is no longer a dashboard default; it stays selectable.
+    fields = dcolumns.visible_fields(datetime.now().astimezone(), [c], ["name", "mem"])
     cells = m.container_cells(c, fields)
     by_name = dict(zip([f.name for f in fields], cells, strict=True))
     mem_cell = by_name["mem"]
@@ -106,7 +107,10 @@ def test_card_content_splits_name_state_and_keeps_fields_in_order():
 
     cc = card_content(c, fields, now)
 
-    assert m.card_field(cc, "network") == "○ 12m"
+    assert m.card_field(cc, "network") == "● 12m"
+    c.network = "strict"
+    assert m.card_field(card_content(c, fields, now), "network") is None  # placeholder ""
+    c.network = "loose"
 
     c.network = "[custom]"
     custom = card_content(c, fields, now)
@@ -180,74 +184,70 @@ def test_git_segment_still_prefixes_a_predicted_conflict():
     assert ("merge conflict", "conflict") in git_segments(cc)
 
 
-def test_git_segments_show_the_pending_pr_actions_marker():
+def test_git_segments_show_the_outbox_marker():
     from jailbee.qtui.model import git_segments
 
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="✉2")
-    assert ("✉2", "ahead") in git_segments(cc)
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", outbox="✉3")
+    assert git_segments(cc) == [("✉3", "ahead")]
 
 
-def test_git_segments_omit_the_marker_without_pending_actions():
+def test_git_segments_omit_the_marker_without_staged_work():
     from jailbee.qtui.model import git_segments
 
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="#1234↓")
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="#1234↓", outbox="")
     assert git_segments(cc) == []
 
 
-def test_pending_pr_actions_make_an_otherwise_clean_container_read_as_dirty():
-    """`is_git_clean` is `not git_segments(cc)`, so a clean tree with a
-    non-empty PR outbox now reads as "not clean" — there is something to do."""
-    from jailbee.qtui.model import is_git_clean
-
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="✉1")
-    assert is_git_clean(cc) is False
-
-
-def test_git_segments_show_the_pending_issue_actions_marker():
-    from jailbee.qtui.model import git_segments
-
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="✉2")
-    assert ("issues ✉2", "ahead") in git_segments(cc)
-
-
-def test_git_segments_place_the_issues_marker_after_the_pr_one():
+def test_git_segments_ignore_the_retired_pr_and_issues_markers():
+    """The dashboards' PR cell no longer carries ✉N and ISSUES is no longer
+    a default; the card reads OUTBOX only, so the marker is never doubled."""
     from jailbee.qtui.model import git_segments
 
     cc = _cc(
+        wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", pr="#7 ✉1", issues="✉2"
+    )
+    assert git_segments(cc) == []
+
+
+def test_staged_outbox_work_makes_an_otherwise_clean_container_read_as_dirty():
+    """`is_git_clean` is `not git_segments(cc)`, so a clean tree with staged
+    outbox work reads as "not clean" — there is something to do."""
+    from jailbee.qtui.model import is_git_clean
+
+    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", outbox="✉1")
+    assert is_git_clean(cc) is False
+
+
+def test_card_content_reads_the_outbox_from_both_counts():
+    """End to end: the real OUTBOX cell, not a hand-built CardField."""
+    from datetime import UTC
+
+    from jailbee.git_status import GitStatus
+    from jailbee.qtui.model import card_content, git_segments
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    c = _ci("p-foo", "p")
+    c.pr_number = 7
+    c.git_status = GitStatus(
         wt="clean",
         ahead_diff="clean",
         ahead_count="0",
         conflict="ok",
-        pr="✉1",
-        issues="✉2",
+        pending_pr_actions=1,
+        pending_issue_actions=2,
     )
-    segs = git_segments(cc)
-    assert segs.index(("✉1", "ahead")) < segs.index(("issues ✉2", "ahead"))
-
-
-def test_git_segments_omit_the_issues_marker_without_pending_actions():
-    from jailbee.qtui.model import git_segments
-
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="")
-    assert git_segments(cc) == []
-
-
-def test_pending_issue_actions_make_an_otherwise_clean_container_read_as_dirty():
-    """Mirrors `test_pending_pr_actions_make_an_otherwise_clean_container_read_as_dirty`
-    for the issue outbox's marker."""
-    from jailbee.qtui.model import is_git_clean
-
-    cc = _cc(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", issues="✉1")
-    assert is_git_clean(cc) is False
+    cc = card_content(c, dcolumns.visible_fields(now, [c]), now)
+    assert m.card_field(cc, "pr") == "#7↓"
+    assert ("✉3", "ahead") in git_segments(cc)
 
 
 def test_compact_meta_orders_mode_base_network_and_drops_missing():
     from jailbee.qtui.model import compact_meta
 
-    cc = _cc(mode="clone", base="main", network="○ 12m")
-    assert compact_meta(cc) == ["clone", "main", "○ 12m"]
-    cc2 = _cc(mode="clone", network="●")  # no base
-    assert compact_meta(cc2) == ["clone", "●"]
+    cc = _cc(mode="clone", base="main", network="● 12m")
+    assert compact_meta(cc) == ["clone", "main", "● 12m"]
+    cc2 = _cc(mode="clone", network="")  # strict: empty LOOSE cell; no base
+    assert compact_meta(cc2) == ["clone"]
 
 
 def test_grid_rows_fold_git_into_one_row_and_drop_placeholders():
@@ -403,3 +403,37 @@ def test_no_reason_and_no_activity_is_no_tooltip():
     summary = AgentSummary("claude", "idle", None, None, 1)
 
     assert m.card_content(_agent_container(summary), []).agent_tooltip is None
+
+
+def test_card_content_carries_the_memory_limit_for_the_chip_tooltip():
+    c = _container()
+    cc = m.card_content(c, dcolumns.visible_fields(datetime.now().astimezone(), [c]))
+    assert cc.memory_limit == "2GB"
+
+
+def test_tooltips_cover_the_new_columns_and_the_loose_marker():
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=datetime.now().astimezone())}
+    assert "share" in m.field_tooltip(specs["mem_pct"])
+    assert "in use" in m.field_tooltip(specs["mem_used"])
+    assert "✉N" in m.field_tooltip(specs["outbox"])
+    network = m.field_tooltip(specs["network"])
+    assert "loose" in network and "strict" in network and "○" not in network
+
+
+def test_card_content_carries_doing_whatever_the_columns():
+    from jailbee.procstat import ProcessActivity
+
+    c = _container()
+    c.activity = (
+        ProcessActivity(comm="pytest", percent=80.0, count=1),
+        ProcessActivity(comm="node", percent=10.0, count=3),
+    )
+    now = datetime.now().astimezone()
+    default = m.card_content(c, dcolumns.visible_fields(now, [c]))  # `doing` not enabled
+    assert "doing" not in [f.name for f in default.fields]
+    assert default.doing == "pytest,node×3"  # noqa: RUF001 - intentional multiplication sign
+
+    c.activity = ()
+    assert m.card_content(c, dcolumns.visible_fields(now, [c])).doing is None

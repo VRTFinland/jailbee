@@ -176,19 +176,26 @@ class _Card(QFrame):
             lbl.setStyleSheet(f"color:{_DIM};")
             self._outer.addWidget(lbl)
         ip = card_field(self._content, "ip")
-        mem = card_field(self._content, "mem")
+        used = card_field(self._content, "mem_used")
+        pct = card_field(self._content, "mem_pct")
+        mem = " ".join(v for v in (used, pct) if v) or card_field(self._content, "mem") or ""
         cpu = card_field(self._content, "cpu")
         if ip or mem or cpu:
             res = QHBoxLayout()
             res.addWidget(QLabel(ip or "—"))
-            for text in (mem, cpu):
+            for text, tooltip in (
+                (mem, f"Memory limit: {self._content.memory_limit or 'none'}"),
+                (cpu, None),
+            ):
                 if text:
                     chip = QLabel(f"▪ {text}")
                     chip.setStyleSheet(f"color:{_DIM};")
+                    if tooltip:
+                        chip.setToolTip(tooltip)
                     res.addWidget(chip)
             res.addStretch(1)
             self._outer.addLayout(res)
-        doing = card_field(self._content, "doing")
+        doing = self._content.doing
         if doing:
             # Its own line: the program names are the widest thing on a card
             # and would push the resource row out of shape.

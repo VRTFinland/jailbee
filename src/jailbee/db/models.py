@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, Dialect, TypeDecorator
+from sqlalchemy import Boolean, Column, DateTime, Dialect, Integer, TypeDecorator
 from sqlmodel import Field, SQLModel
 
 
@@ -198,6 +198,13 @@ class ViewPrefs(SQLModel, table=True):
     are not currently registered are kept, so a repo whose containers are
     momentarily gone does not silently unfold.
 
+    ``columns_version`` is the newest dashboard column-set migration
+    (``jailbee.dashboard.columns.COLUMNS_VERSION``) the stored ``columns`` have been through.
+    An older release's dashboard that is still running can write its old
+    column set back while ``columns_version`` stays at 1, so the one-time
+    migration will not re-run (accepted; restart the dashboard after
+    upgrading).
+
     Two concurrent dashboards of the *same* front-end (two `jailbee
     dashboard` processes, or two `jailbee gui` windows) share this one row
     with no merge: each write is a full overwrite, so whichever process
@@ -217,6 +224,9 @@ class ViewPrefs(SQLModel, table=True):
     hidden_repos: str | None = None
     show_details: bool = Field(
         default=True, sa_column=Column(Boolean, nullable=False, server_default="1")
+    )
+    columns_version: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
     )
 
 

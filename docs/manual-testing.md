@@ -3312,6 +3312,21 @@ jailbee dashboard 2>/dev/null
 # expect: the same refusal — stderr must be a terminal too
 ```
 
+### Column content: LOOSE, USED / MEM%, OUTBOX, recently idle AI
+
+1. Have one loose container (`jb net loose <c>`), one with a staged outbox
+   manifest (write any valid manifest into `~/.jailbee/issue-outbox/` in it),
+   and one where a Claude session finished a turn a few minutes ago.
+2. `jb dashboard`: the loose row shows a red `●` and its remaining time under
+   LOOSE (`● ∞` after `jb net loose --no-revert`); strict rows are blank there.
+   USED and MEM% show used memory and its share of `limits.memory`; a stopped
+   container shows `—`. OUTBOX shows `✉N`; the PR cell has no `✉`.
+   The recently idle agent's `○` is bright white; after 30 minutes it dims.
+3. A dashboard database from before this change: the first launch prints one
+   "Dashboard columns updated: …" notice; re-enable MEM in settings (`S`),
+   quit, relaunch — MEM stays and no notice appears.
+4. `jb ls` and `jb ls -o json` are unchanged (no USED/MEM%/OUTBOX columns).
+
 ## Host target status after pull smoke test
 
 ```bash

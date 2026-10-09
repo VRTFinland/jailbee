@@ -177,3 +177,26 @@ def test_show_details_defaults_true_and_round_trips() -> None:
     assert load_view_state(engine, FRONTEND_TUI).show_details is False
     save_view_state(engine, FRONTEND_TUI, ViewState(show_details=True))
     assert load_view_state(engine, FRONTEND_TUI).show_details is True
+
+
+def test_columns_version_defaults_to_zero_and_round_trips() -> None:
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == 0
+    save_view_state(engine, FRONTEND_TUI, ViewState(columns=("name",), columns_version=1))
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == 1
+
+
+def test_a_save_without_a_version_never_lowers_the_stored_one() -> None:
+    """Both front-ends build the `ViewState` they save from their own fields
+    (version 0); folding a repo must not undo a column migration."""
+    from jailbee.db.view_prefs import FRONTEND_QT, ViewState, load_view_state, save_view_state
+
+    engine = _engine()
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name",), columns_version=1))
+    save_view_state(engine, FRONTEND_QT, ViewState(columns=("name",), folded=frozenset({"a"})))
+
+    state = load_view_state(engine, FRONTEND_QT)
+    assert state.columns_version == 1
+    assert state.folded == frozenset({"a"})

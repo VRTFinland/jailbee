@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
 from jailbee import background
-from jailbee.lifecycle import DOING_MAX_NAMES, format_duration_short
+from jailbee.lifecycle import DOING_MAX_NAMES, agent_compact_cell, format_duration_short
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -18,10 +18,11 @@ if TYPE_CHECKING:
 
 _HEADER_LABELS = {
     "state": "ST",
-    "network": "NET",
+    "network": "LOOSE",
     "created": "AGE",
     "full_name": "FULL",
     "memory_limit": "LIMIT",
+    "mem_used": "USED",
     "loose_until": "UNTIL",
     "agent_compact": "AI",
     "issues": "ISS",
@@ -31,6 +32,11 @@ _HEADER_LABELS = {
 }
 _STATE_GLYPHS = {"Running": "▶", "Stopped": "■", "Frozen": "Ⅱ"}
 _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
+
+RECENT_IDLE = timedelta(minutes=30)
+"""An idle agent younger than this reads as "just finished" in AI."""
+
+_LOOSE_MARK = "[red]●[/red]"
 
 
 def dashboard_header(field: FieldSpec[ContainerInfo]) -> str:
@@ -51,23 +57,35 @@ def _age(created_at: datetime | None, now: datetime) -> str:
     return f"{seconds // 86400}d"
 
 
-def _network(container: ContainerInfo) -> str:
+def _loose(container: ContainerInfo, now: datetime) -> str:
+    """LOOSE: empty when strict, a red ● and the remaining TTL when loose."""
     if container.network == "strict":
-        return "●"
-    if container.network == "loose":
-        return "○"
-    return escape(container.network or "-")
+        return ""
+    if container.network != "loose":
+        return escape(container.network or "-")
+    if container.loose_until is None:
+        return f"{_LOOSE_MARK} ∞"
+    compact = format_duration_short(container.loose_until - now).replace(" ", "")
+    return f"{_LOOSE_MARK} {compact}"
 
 
 def card_network(container: ContainerInfo, now: datetime) -> str:
-    """Network label for cards, where the loose TTL remains useful inline."""
-    mode = _network(container)
-    if container.network != "loose":
-        return mode
-    if container.loose_until is None:
-        return f"{mode} ∞"
-    compact = format_duration_short(container.loose_until - now).replace(" ", "")
-    return f"{mode} {compact}"
+    """Network label for cards: the table's LOOSE cell, so ● means one thing."""
+    return _loose(container, now)
+
+
+def doing_cell(container: ContainerInfo) -> str:
+    """The busy processes as compact markup, ``""`` when there are none."""
+    if not container.activity:
+        return ""
+    names = [
+        escape(p.comm) if p.count == 1 else f"{escape(p.comm)}×{p.count}"  # noqa: RUF001 - intentional multiplication sign
+        for p in container.activity[:DOING_MAX_NAMES]
+    ]
+    hidden = len(container.activity) - len(names)
+    if hidden:
+        names.append(f"[dim]+{hidden}[/dim]")
+    return ",".join(names)
 
 
 def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, now: datetime) -> str:
@@ -76,7 +94,14 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
     if field.name == "state":
         return _STATE_GLYPHS.get(container.state, escape(container.state))
     if field.name == "network":
-        return _network(container)
+        return _loose(container, now)
+    if field.name == "pr":
+        # The outbox count lives in OUTBOX; `jailbee ls` keeps it in PR.
+        if container.pr_number is None:
+            return ""
+        return f"#{container.pr_number}" if container.pr_author else f"#{container.pr_number}↓"
+    if field.name == "agent_compact":
+        return agent_compact_cell(container.agent_status, now, recent_idle=RECENT_IDLE)
     if field.name == "created":
         return _age(container.created_at, now)
     if field.name == "base":
@@ -119,14 +144,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         colour = "red" if dead else "yellow"
         return f"[{colour}]{escape(phase + suffix)}[/{colour}]"
     if field.name == "doing" and container.activity:
-        names = [
-            escape(p.comm) if p.count == 1 else f"{escape(p.comm)}×{p.count}"  # noqa: RUF001 - intentional multiplication sign
-            for p in container.activity[:DOING_MAX_NAMES]
-        ]
-        hidden = len(container.activity) - len(names)
-        if hidden:
-            names.append(f"[dim]+{hidden}[/dim]")
-        return ",".join(names)
+        return doing_cell(container)
     if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
         if getattr(container.git_status, field.name) == "clean":
             return "[dim]✓[/dim]"
