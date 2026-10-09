@@ -2089,26 +2089,29 @@ class DashboardSession:
         codes: list[int] = []
 
         def run_all() -> int:
-            codes.extend(
-                _run_bulk_foreground(
-                    [(run.target, run.argv) for run in runs],
-                    over_ssh=self.over_ssh,
-                    ssh_policy=self.ssh_policy,
-                )
+            _run_bulk_foreground(
+                [(run.target, run.argv) for run in runs],
+                over_ssh=self.over_ssh,
+                ssh_policy=self.ssh_policy,
+                codes=codes,
             )
             return max(codes, default=0)
 
+        failed: dict[str, str] = {}
         try:
             self.terminal.hand_off(run_all)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
-        except OSError:
-            self.set_notice("A repository directory no longer exists")
-            self.client.refresh()
-            return
-        ok = [n for run, c in zip(runs, codes, strict=True) if c == 0 for n in run.names]
-        failed = {run.prefix: f"exited {c}" for run, c in zip(runs, codes, strict=True) if c}
+        except OSError as exc:
+            # Runs before the one that could not start did finish: honour them.
+            detail = exc.strerror or str(exc)
+            if exc.filename is not None:
+                detail = f"{detail}: {exc.filename}"
+            if len(codes) < len(runs):
+                failed[runs[len(codes)].prefix] = detail
+        ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
+        failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
         self.marked -= frozenset(ok)
         batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
         self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)

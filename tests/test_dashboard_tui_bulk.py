@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.bulk import BulkAction, plan_bulk
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import RepoMenuState
+from jailbee.remote_ssh.router import RouteError
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import SyncJobs, bare_session, box_text, patch_pause
 
@@ -447,3 +449,49 @@ def test_a_successful_run_unmarks_its_names_and_a_failed_one_keeps_them(mocker, 
 
     assert session.marked == frozenset({"beta-a"})
     assert session.notice == "git push: 1 ok, 1 failed (beta: exited 1)"
+
+
+def _two_repos(mocker, tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    alpha = dmodel.RepoGroup("alpha", str(tmp_path / "a"), None, [ci("alpha-a", "alpha")])
+    beta = dmodel.RepoGroup("beta", str(tmp_path / "b"), None, [ci("beta-a", "beta")])
+    session, _ = bare_session(mocker, [alpha, beta])
+    session.marked = frozenset({"alpha-a", "beta-a"})
+    return session
+
+
+def test_a_refused_argv_runs_nothing_for_any_repo(mocker, tmp_path):
+    child = _children(mocker)
+    pause = patch_pause(mocker)
+    session = _two_repos(mocker, tmp_path)
+    mocker.patch.object(
+        ddispatch, "check_dashboard_command", side_effect=[None, RouteError("not allowed here")]
+    )
+
+    session.begin_bulk("git push")
+
+    child.assert_not_called()
+    pause.assert_not_called()
+    assert "not allowed here" in session.notice
+    assert session.marked == frozenset({"alpha-a", "beta-a"})
+
+
+def test_a_run_that_cannot_start_still_pauses_once_and_keeps_earlier_results(mocker, tmp_path):
+    pause = patch_pause(mocker)
+    session = _two_repos(mocker, tmp_path)
+
+    def run(argv, **_kw):
+        if "beta-a" in argv:
+            raise FileNotFoundError(2, "No such file or directory", "jailbee")
+        return mocker.Mock(returncode=0)
+
+    mocker.patch.object(tsession.subprocess, "run", side_effect=run)
+
+    session.begin_bulk("git push")
+
+    pause.assert_called_once()
+    assert session.marked == frozenset({"beta-a"})
+    assert "No such file or directory: jailbee" in session.notice
+    assert "directory no longer exists" not in session.notice
+    assert "1 ok" in session.notice
