@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -252,3 +253,39 @@ def _run_cli_foreground(
     if style != "plain":
         _wait_for_return()
     return rc
+
+
+def _run_bulk_foreground(
+    runs: Sequence[tuple[RepoTarget, Sequence[str]]],
+    *,
+    over_ssh: bool = False,
+    ssh_policy: RemoteSSHConfig | None = None,
+    codes: list[int] | None = None,
+) -> list[int]:
+    """Run each ``(repo, argv)`` in the terminal, in order; return the exit codes.
+
+    A bulk git verb over several repos: one run per repo, because one
+    ``--config`` addresses one repo. Every argv is checked against the SSH
+    policy before the first one runs, so a refusal leaves nothing half done.
+    One pause after the last run, not one per repo: the CLI prints a roll-up
+    per run, and they read better together. The pause also happens when a run
+    cannot start (``OSError``), so the earlier runs' output is not lost.
+
+    ``codes`` is appended to as each run ends, so a caller that sees an
+    exception still knows the runs that completed before it.
+    """
+    for _target, argv in runs:
+        check_dashboard_command(list(argv), ssh_policy, over_ssh=over_ssh)
+    done = codes if codes is not None else []
+    try:
+        for target, argv in runs:
+            done.append(
+                subprocess.run(
+                    ["jailbee", *dact.addressed(list(argv), target.flags(), over_ssh=over_ssh)],
+                    check=False,
+                    cwd=target.cwd(),
+                ).returncode
+            )
+    finally:
+        _wait_for_return()
+    return done

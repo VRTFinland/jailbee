@@ -29,13 +29,19 @@ INLINE_NOTICE_MAX = 80  # longer notices wrap below the table instead of the bor
 
 
 def frame_title(
-    groups: Sequence[RepoGroup], folded: frozenset[str], *, git_enabled: bool, now: datetime
+    groups: Sequence[RepoGroup],
+    folded: frozenset[str],
+    *,
+    git_enabled: bool,
+    now: datetime,
+    marked: int = 0,
 ) -> Text:
     """The frame border's summary and clock, independent of its body."""
     n_repos = len({g.prefix for g in groups})
     n_ctr = sum(len(g.containers) for g in groups)
     n_folded = len({g.prefix for g in groups if g.prefix in folded and g.containers})
     folded_note = f" · {n_folded} folded" if n_folded else ""
+    folded_note += f" · {marked} selected" if marked else ""
     git_note = "" if git_enabled else "  ·  [dim](no-git)[/dim]"
     return Text.from_markup(
         f"[bold]🐝 jailbee dashboard[/]  ·  [dim]h/? help[/]"
@@ -86,7 +92,7 @@ def help_lines() -> list[str]:
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
         "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
-        "Mouse: click selects; double- or right-click opens the menu;",
+        "Mouse: click selects; Ctrl-click marks; double- or right-click opens the menu;",
         "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
         "Shift-drag selects text.",
         "",
@@ -153,3 +159,5 @@ class DashboardView:
     shown_columns: Sequence[str] | None
     hover: dhit.Hit | None = None  # the hovered table target
     sort: SortSpec = DEFAULT_SORT
+    marked: frozenset[str] = frozenset()
+    running: frozenset[str] = frozenset()

@@ -104,6 +104,7 @@ class Click:
     hit: Hit
     times: int = 1
     button: int = 1
+    ctrl: bool = False
 
 
 @dataclass(frozen=True)
@@ -337,7 +338,12 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
         app.post_message(events.Paste(step.text))
         await pilot.pause()
     elif isinstance(step, Click):
-        await pilot.click(offset=hit_offset(app, step.hit), times=step.times, button=step.button)
+        await pilot.click(
+            offset=hit_offset(app, step.hit),
+            times=step.times,
+            button=step.button,
+            control=step.ctrl,
+        )
     elif isinstance(step, Wheel):
         if step.horizontal:
             event = events.MouseScrollRight if step.step > 0 else events.MouseScrollLeft

@@ -3970,6 +3970,24 @@ def _resolve_existing(
     return incus, resolved
 
 
+def _resolve_many(cfg: "Config", names: list[str]) -> tuple["IncusType", list[str]]:
+    """Resolve several typed container names up front, before anything runs.
+
+    Each goes through :func:`_resolve_existing`, which exits on a name it cannot
+    resolve, so an unknown name anywhere in the list stops the command before
+    the first container is touched. A name given twice is acted on once, at its
+    first position.
+    """
+    resolved: list[str] = []
+    incus: IncusType | None = None
+    for typed in names:
+        incus, full = _resolve_existing(cfg, typed)
+        if full not in resolved:
+            resolved.append(full)
+    assert incus is not None  # `names` is never empty here
+    return incus, resolved
+
+
 def _pick_containers(
     cfg: "Config",
     containers: "list[ContainerInfo]",
@@ -5433,16 +5451,60 @@ app.command(
 )(checkout)
 
 
+def _pull_batch(
+    cfg: "Config",
+    incus: "IncusType",
+    selected: list[str],
+    *,
+    branch: str | None,
+    ff: "FfPolicy",
+    into: str | None,
+    allow_checkout: bool,
+    destroy_policy: Literal["prompt", "always", "never"],
+    branch_policy: Literal["prompt", "always", "never"],
+    tags: "TagPolicy",
+) -> None:
+    """Pull ``selected`` in order; stop at the first failure, naming the rest."""
+    from jailbee import git as git_helpers
+    from jailbee import sync
+    from jailbee.lifecycle import short_name
+
+    for idx, full in enumerate(selected):
+        short = short_name(cfg, full)
+        try:
+            _do_single_pull(
+                cfg,
+                incus,
+                short,
+                branch=branch,
+                ff=ff,
+                into=into,
+                allow_checkout=allow_checkout,
+                destroy_policy=destroy_policy,
+                branch_policy=branch_policy,
+                tags=tags,
+            )
+        except (sync.SyncError, git_helpers.GitError) as exc:
+            error(str(exc))
+            _emit_conflict_report(exc)
+            remaining = selected[idx + 1 :]
+            if remaining:
+                not_attempted = ", ".join(short_name(cfg, n) for n in remaining)
+                error(f"Stopping batch; {len(remaining)} not attempted: {not_attempted}.")
+            raise typer.Exit(1) from exc
+
+
 @git_app.command("pull")
 def pull(
-    name: Annotated[
-        str | None,
+    names: Annotated[
+        list[str] | None,
         typer.Argument(
             help=(
-                "Container to pull from, named in full or by its short name. "
-                "Omit it and jailbee picks among the containers eligible for a "
-                "pull (everything but mount mode): the only one is used, "
-                "otherwise a multi-select picker opens and each selection is "
+                "Container(s) to pull from, named in full or by their short name. "
+                "Several are pulled in the order given, stopping at the first "
+                "failure. Omit them and jailbee picks among the containers "
+                "eligible for a pull (everything but mount mode): the only one is "
+                "used, otherwise a multi-select picker opens and each selection is "
                 "pulled in turn (TTY required)."
             ),
             autocompletion=completion.complete_container,
@@ -5558,7 +5620,8 @@ def pull(
     With no arguments and a TTY, opens a multi-select picker (space to
     toggle, Enter to confirm). Selected containers are pulled in order
     with the same flags. The batch stops at the first failed pull —
-    remaining containers are listed but not attempted.
+    remaining containers are listed but not attempted. Several names run the
+    same batch without the picker.
 
     When jailbee picks the container itself — one eligible container and no name
     given — the pull is confirmed first: a block naming the container's
@@ -5576,6 +5639,7 @@ def pull(
       jailbee git pull feat-foo --current         # merge into the host's checked-out branch
       jailbee git pull feat-foo --checkout         # check out base branch and merge, stay on it
       jailbee git pull feat-foo --cleanup          # force destroy + delete branch
+      jailbee git pull feat-a feat-b               # several, in order
       jailbee git pull feat-foo --no-cleanup       # skip destroy + branch delete
       jailbee git pull feat-foo --ff --cleanup     # ff-only + force cleanup
       jailbee git pull --no-confirm                # skip the auto-target confirmation
@@ -5622,6 +5686,24 @@ def pull(
             raise typer.Exit(2)
         into = resolved_current
 
+    if names is not None and len(names) > 1:
+        # Named explicitly, so there is no auto-selected target to confirm.
+        incus, named = _resolve_many(cfg, names)
+        _pull_batch(
+            cfg,
+            incus,
+            named,
+            branch=branch,
+            ff=ff_policy,
+            into=into,
+            allow_checkout=checkout,
+            destroy_policy=destroy_policy,
+            branch_policy=branch_policy,
+            tags=tag_policy,
+        )
+        return
+    name = names[0] if names else None
+
     if name is None:
         from jailbee import prompting
         from jailbee.incus import Incus
@@ -5662,29 +5744,18 @@ def pull(
                     )
                 )
 
-            for idx, full in enumerate(selected):
-                short = short_name(cfg, full)
-                try:
-                    _do_single_pull(
-                        cfg,
-                        incus,
-                        short,
-                        branch=branch,
-                        ff=ff_policy,
-                        into=into,
-                        allow_checkout=checkout,
-                        destroy_policy=destroy_policy,
-                        branch_policy=branch_policy,
-                        tags=tag_policy,
-                    )
-                except (sync.SyncError, git_helpers.GitError) as exc:
-                    error(str(exc))
-                    _emit_conflict_report(exc)
-                    remaining = selected[idx + 1 :]
-                    if remaining:
-                        not_attempted = ", ".join(short_name(cfg, n) for n in remaining)
-                        error(f"Stopping batch; {len(remaining)} not attempted: {not_attempted}.")
-                    raise typer.Exit(1) from exc
+            _pull_batch(
+                cfg,
+                incus,
+                selected,
+                branch=branch,
+                ff=ff_policy,
+                into=into,
+                allow_checkout=checkout,
+                destroy_policy=destroy_policy,
+                branch_policy=branch_policy,
+                tags=tag_policy,
+            )
             return
 
     incus, resolved = _resolve_existing_detailed(cfg, name)
@@ -6287,6 +6358,27 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     return pr_info.head_ref, fetch_result.ref
 
 
+def _require_tty_for_push_pick(what: str) -> None:
+    """Exit 1 when ``push.default_<what>`` is 'ask' but nothing can be asked."""
+    from jailbee import prompting
+
+    if prompting.is_interactive():
+        return
+    if what == "source":
+        error(
+            "push.default_source is 'ask' but no TTY is available. "
+            "Pass --from <branch> or --current, or set "
+            "push.default_source in global.yaml."
+        )
+    else:
+        error(
+            "push.default_action is 'ask' but no TTY is available. "
+            "Pass --merge / --rebase / --plain, or set "
+            "push.default_action in global.yaml."
+        )
+    raise typer.Exit(1)
+
+
 def _pick_push_source(
     cfg: "Config",
     *,
@@ -6633,16 +6725,19 @@ def _do_single_push(
 
 @git_app.command("push")
 def push(
-    name: Annotated[
-        str | None,
+    names: Annotated[
+        list[str] | None,
         typer.Argument(
             help=(
-                "Container to push to, named in full or by its short name. "
-                "Omit it and jailbee picks among the containers eligible for a "
+                "Container(s) to push to, named in full or by their short name. "
+                "Several are pushed to in the order given, with the source and "
+                "action resolved once; failures do not stop the batch. Omit them "
+                "and jailbee picks among the containers eligible for a "
                 "push (running, not in mount mode): the only one is used, "
                 "otherwise a multi-select picker opens and each selection is "
                 "pushed to in turn (TTY required). With --pr, only PR "
-                "containers are eligible and the picker selects one."
+                "containers are eligible and the picker selects one; with --pr, "
+                "exactly one PR container."
             ),
             autocompletion=completion.complete_container,
         ),
@@ -6815,6 +6910,7 @@ def push(
 
       jailbee git push                          # multi-select; source/action asked once
       jailbee git push feat-foo                 # honors push.default_* or prompts
+      jailbee git push feat-a feat-b --merge    # several, source/action asked once
       jailbee git push feat-foo --current       # send host's current branch
       jailbee git push feat-foo --merge --current
       jailbee git push feat-foo --pr --merge --no-ff  # merge commit, diverged PR head
@@ -6831,6 +6927,11 @@ def push(
     push.default_action, push.default_source, push.push_from and
     push.autofetch.
     """
+    name = names[0] if names is not None and len(names) == 1 else None
+    batch_names = names if names is not None and len(names) > 1 else None
+    if batch_names is not None and pr_refresh:
+        error("--pr takes exactly one container: each PR container has its own head.")
+        raise typer.Exit(2)
     if sum([merge, rebase, plain, force]) > 1:
         error("--merge, --rebase, --plain, and --force are mutually exclusive.")
         raise typer.Exit(2)
@@ -6841,8 +6942,8 @@ def push(
         raise typer.Exit(2)
     if force and name is None:
         error(
-            "--force requires an explicit container name; it is not "
-            "available in the multi-select picker."
+            "--force requires exactly one explicit container name; it is not "
+            "available with several names or in the multi-select picker."
         )
         raise typer.Exit(2)
     if source is not None and current:
@@ -6922,34 +7023,40 @@ def push(
     merge_confirm = default_confirm if prompting.is_interactive() else None
 
     if name is None and selected_pr is None:
-        from jailbee.incus import Incus
-        from jailbee.lifecycle import list_containers
-
-        incus = Incus()
-        all_containers = list_containers(cfg, incus, with_git_status=True)
-        pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
-        if not pushable:
-            raise prompting.MissingValue(
-                "container",
-                reason=(
-                    "No pushable containers (none running, or all in mount "
-                    "mode). Start one with 'jailbee start <name>'."
-                ),
-            )
         selected: list[str]
-        # Push is non-destructive: one eligible container is taken unasked, but
-        # only where a person can see the line saying so — a script is told the
-        # candidates instead, as for every other missing container.
-        if len(pushable) == 1 and prompting.is_interactive():
-            only_full = pushable[0].name
-            info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
-            selected = [only_full]
+        if batch_names is not None:
+            # Named explicitly: no picker, and no auto-selected target to confirm.
+            incus, selected = _resolve_many(cfg, batch_names)
+            auto_selected = False
         else:
-            picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
-            if not picked:
-                info("Nothing selected.")
-                return
-            selected = picked
+            from jailbee.incus import Incus
+            from jailbee.lifecycle import list_containers
+
+            incus = Incus()
+            all_containers = list_containers(cfg, incus, with_git_status=True)
+            pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
+            if not pushable:
+                raise prompting.MissingValue(
+                    "container",
+                    reason=(
+                        "No pushable containers (none running, or all in mount "
+                        "mode). Start one with 'jailbee start <name>'."
+                    ),
+                )
+            # Push is non-destructive: one eligible container is taken unasked, but
+            # only where a person can see the line saying so — a script is told the
+            # candidates instead, as for every other missing container.
+            if len(pushable) == 1 and prompting.is_interactive():
+                only_full = pushable[0].name
+                info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
+                selected = [only_full]
+            else:
+                picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
+                if not picked:
+                    info("Nothing selected.")
+                    return
+                selected = picked
+            auto_selected = len(pushable) == 1
 
         # Resolve source + action ONCE, applied to every container. A PR head
         # selected in the picker also fixes the exact host ref to push.
@@ -6970,6 +7077,7 @@ def push(
             force_flag=force,
         )
         if resolved_source is None:
+            _require_tty_for_push_pick("source")
             # Offer the PR head only when the selection is a single PR
             # container — a multi-select batch has no single coherent PR
             # source (each container has its own head ref).
@@ -6991,13 +7099,14 @@ def push(
             else:
                 resolved_source = _picked_source
         if resolved_action is None:
+            _require_tty_for_push_pick("action")
             resolved_action = _pick_push_action()
             if resolved_action is None:
                 raise typer.Abort()
 
         # Auto-selection is exactly the `len(pushable) == 1` branch above: with
-        # two or more the picker ran, and an explicit name never reaches here
-        # (the `name is None` block returns).
+        # two or more the picker ran, and a single explicit name never reaches
+        # here. An explicit list of names sets `auto_selected` False.
         #
         # `resolved_source` may still be the _BaseSource sentinel — plan_push
         # needs a concrete branch, so resolve it the same way _do_single_push
@@ -7008,7 +7117,7 @@ def push(
             plan_source = _container_base_branch(incus, selected[0])
         fetch_arg = fetch
         if isinstance(plan_source, str) and _should_show_plan(
-            cfg, auto_selected=len(pushable) == 1, flag=confirm
+            cfg, auto_selected=auto_selected, flag=confirm
         ):
             # Bound to their own annotated locals because mypy's narrowing
             # (the isinstance above, and resolved_action's `is None` check
@@ -7110,13 +7219,7 @@ def push(
     )
 
     if single_source is None:
-        if not prompting.is_interactive():
-            error(
-                "push.default_source is 'ask' but no TTY is available. "
-                "Pass --from <branch> or --current, or set "
-                "push.default_source in global.yaml."
-            )
-            raise typer.Exit(1)
+        _require_tty_for_push_pick("source")
         _pr = _pr_head_for(incus, full)
         _base = _container_base_branch(incus, full) if _pr is None else None
         _source_pick = _pick_push_source(cfg, pr_head=_pr, base=_base)
@@ -7128,13 +7231,7 @@ def push(
             single_source = _source_pick
 
     if resolved_action is None:
-        if not prompting.is_interactive():
-            error(
-                "push.default_action is 'ask' but no TTY is available. "
-                "Pass --merge / --rebase / --plain, or set "
-                "push.default_action in global.yaml."
-            )
-            raise typer.Exit(1)
+        _require_tty_for_push_pick("action")
         resolved_action = _pick_push_action()
         if resolved_action is None:
             raise typer.Abort()

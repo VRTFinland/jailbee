@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QByteArray, QEvent, Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QLabel,
     QMainWindow,
     QMenu,
@@ -90,6 +91,7 @@ class MainWindow(QMainWindow):
     newContainerRequested = Signal(str)  # noqa: N815 - Qt signal naming convention (camelCase); payload: repo prefix, "" when nothing is selected
     newPrContainerRequested = Signal(str)  # noqa: N815 - payload: repo prefix
     configEditRequested = Signal(str, bool)  # noqa: N815 - Qt signal naming convention (camelCase); payload: (repo prefix, edit the global layer)
+    bulkActionRequested = Signal(str, list)  # noqa: N815 - Qt signal naming; payload: (verb, container names)
     repoVisibilityChanged = Signal()  # noqa: N815 - repository visibility preference changed
     sortChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the row sort changed
 
@@ -123,6 +125,7 @@ class MainWindow(QMainWindow):
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(1)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
         header = self.tree.header()
@@ -508,6 +511,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._groups = groups
         prev = self._selected_name()
+        prev_selected = set(self._selected_names())
         active_columns = columns if columns is not None else self._enabled_columns
 
         all_containers = [c for g in groups for c in g.containers]
@@ -543,6 +547,7 @@ class MainWindow(QMainWindow):
 
         self.tree.clear()
         to_reselect: QTreeWidgetItem | None = None
+        reselect: list[QTreeWidgetItem] = []
         for g in groups:
             label, _is_orphan = group_header(g)
             if not g.containers:
@@ -566,8 +571,12 @@ class MainWindow(QMainWindow):
                 group_item.addChild(child)
                 if c.name == prev:
                     to_reselect = child
+                if c.name in prev_selected:
+                    reselect.append(child)
         if to_reselect is not None:
             self.tree.setCurrentItem(to_reselect)
+        for item in reselect:
+            item.setSelected(True)
 
         self.card_view.set_groups(groups, now=now, columns=active_columns)
 
@@ -583,7 +592,44 @@ class MainWindow(QMainWindow):
 
         return actions_for_container(self._groups, container_name)
 
+    def _selected_names(self) -> list[str]:
+        """Every selected container row's name, in tree order; group rows are skipped."""
+        names: list[str] = []
+        for index in range(self.tree.topLevelItemCount()):
+            group = self.tree.topLevelItem(index)
+            if group is None:
+                continue
+            for child_index in range(group.childCount()):
+                child = group.child(child_index)
+                if child is None:
+                    continue
+                name = child.data(0, _NAME_ROLE)
+                if child.isSelected() and name:
+                    names.append(str(name))
+        return names
+
+    def _bulk_context_menu(self, names: list[str], pos: object) -> None:
+        """The menu for several selected rows: what at least one of them can take."""
+        from jailbee.dashboard.bulk import bulk_actions
+
+        menu = QMenu(self)
+        menu.addAction(f"{len(names)} selected").setEnabled(False)
+        actions = bulk_actions(self._groups, names)
+        if not actions:
+            menu.addAction("No action applies to all of them").setEnabled(False)
+        for action in actions:
+            entry = menu.addAction(action.label)
+            entry.triggered.connect(
+                lambda _checked=False, v=action.verb: self.bulkActionRequested.emit(v, names)
+            )
+        # Same stub gap as `_on_context_menu`: pos is a QPoint at runtime.
+        menu.exec(self.tree.viewport().mapToGlobal(pos))  # type: ignore[call-overload]
+
     def _on_context_menu(self, pos: object) -> None:
+        names = self._selected_names()
+        if len(names) > 1:
+            self._bulk_context_menu(names, pos)
+            return
         name = self._selected_name()
         if name is None:
             # A group header: the only thing it can offer is creating a

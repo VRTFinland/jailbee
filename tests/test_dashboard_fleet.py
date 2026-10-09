@@ -11,6 +11,7 @@ from rich.console import Console
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import fleet
+from jailbee.dashboard.tui.frame import frame_title
 from tests.dashboard_fixtures import WIDE, ci, wide_group
 
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -207,3 +208,63 @@ def test_a_loose_ttl_cell_is_not_cut_in_the_default_table(tmp_path):
         for line in _new_lines([group], 80, enabled=("name", "network"))
     ]
     assert "● 1h59m" in plain[-1] and "…" not in plain[-1]
+
+
+def _marked_model(tmp_path, **kw):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-a", "alpha"), ci("alpha-b", "alpha")]
+    )
+    return fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+        **kw,
+    )
+
+
+def _first_cells(model):  # type: ignore[no-untyped-def]
+    return [fleet.entry_cells(e, model.geometry)[0] for e in model.entries if e.container]
+
+
+def test_a_marked_row_shows_a_dot_in_its_indent(tmp_path):  # type: ignore[no-untyped-def]
+    model = _marked_model(tmp_path, marked=frozenset({"alpha-a"}))
+
+    assert _first_cells(model) == ["\u25cf a", "  b"]
+
+
+def test_a_running_bulk_child_shows_the_busy_glyph_over_the_dot(tmp_path):  # type: ignore[no-untyped-def]
+    model = _marked_model(tmp_path, marked=frozenset({"alpha-a"}), running=frozenset({"alpha-a"}))
+
+    assert _first_cells(model)[0] == "\u27f3 a"
+
+
+def test_a_marked_row_has_the_marked_background(tmp_path):  # type: ignore[no-untyped-def]
+    model = _marked_model(tmp_path, marked=frozenset({"alpha-a"}))
+    marked, plain = (e for e in model.entries if e.container)
+
+    line = fleet.entry_line(marked, model.geometry, frozenset(), selected=False, width=80)
+    other = fleet.entry_line(plain, model.geometry, frozenset(), selected=False, width=80)
+    cursor = fleet.entry_line(marked, model.geometry, frozenset(), selected=True, width=80)
+
+    assert line.style.bgcolor == fleet.MARKED_STYLE.bgcolor
+    assert other.style.bgcolor is None
+    assert cursor.style.bgcolor is not None
+
+
+def test_a_folded_heading_counts_its_marks(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])
+
+    heading = fleet.repo_heading(group, None, frozenset({"alpha"}), marked=1)
+
+    assert heading.plain.endswith("\u25cf1")
+
+
+def test_the_frame_title_counts_the_marks():  # type: ignore[no-untyped-def]
+    assert "3 selected" in frame_title([], frozenset(), git_enabled=True, now=NOW, marked=3).plain
+    assert "selected" not in frame_title([], frozenset(), git_enabled=True, now=NOW).plain

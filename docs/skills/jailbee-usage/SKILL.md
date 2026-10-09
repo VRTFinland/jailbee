@@ -300,7 +300,7 @@ container to merge into instead of quietly merging into the host.
   - `-b <branch>` — read a different branch **from the container**; it never
     renames the host branch. Same meaning on `fetch`/`pull`/`push`.
   - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` for this run.
-- `jailbee git pull [<name>]` — fetch, then **merge the container's branch into its base
+- `jailbee git pull [<name>...]` — fetch, then **merge the container's branch into its base
   branch** (`user.jailbee.base_branch`, e.g. `main`). This is the usual "I'm
   done, integrate it" command. By default (`pull.ff: auto`) it fast-forwards
   when the host branch is strictly behind and writes a merge commit
@@ -324,10 +324,11 @@ container to merge into instead of quietly merging into the host.
   - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` for this run.
   - **No name + a TTY** → multi-select picker; pulls each selected container in
     order and stops at the first failure.
+  - **Several names** → `jailbee git pull a b`: the same batch as the picker, no picker.
 
 **Host → container (sending host commits in):**
 
-- `jailbee git push [<name>]` — send a host branch into the container's clone. Source and
+- `jailbee git push [<name>...]` — send a host branch into the container's clone. Source and
   action come from flags, from configured defaults (`push.default_source` /
   `push.default_action`), or are asked interactively when those are `ask`.
   - `--merge` / `--rebase` / `--plain` — after transport, merge/rebase the pushed
@@ -367,6 +368,8 @@ container to merge into instead of quietly merging into the host.
     re-pointed tag with `git push --force` first if this happens.
   - **No name + a TTY** → multi-select picker; source/action chosen once, applied to
     all, failures don't stop the batch (summary at the end).
+  - **Several names** → `jailbee git push a b`: the same batch as the picker, no picker.
+    `--pr` and `--force` take exactly one name (several exit 2).
 
 **Container → container (merging one container's branch into another):**
 

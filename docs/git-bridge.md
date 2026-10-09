@@ -58,6 +58,8 @@ force or skip the post-merge destroy + branch-delete (otherwise driven by the
 `pull:` config block). See [Tags](#tags) and [Fast-forward
 policy](#fast-forward-policy) below for the full picture. With no name on a
 TTY it opens a multi-select picker and stops at the first failure.
+Several names (`jailbee git pull a b`) run the same batch as the picker, in
+order, with no picker.
 
 **Host → container:**
 
@@ -72,6 +74,8 @@ jailbee pr feat-foo                        # create a draft PR, or push new comm
 `--merge`/`--rebase` apply the pushed ref to the container's branch (conflicts
 left for `jailbee shell`); `--plain` is transport only. With no name on a TTY it opens
 a multi-select picker (failures don't stop the batch; ✓/✗ summary at the end).
+Several names (`jailbee git push a b`) run the same batch with source and action
+resolved once and no picker; `--pr` and `--force` take exactly one name (exit 2).
 
 `--merge` picks its own mode: a fast-forward when the container is already on
 the branch being pushed — which a `--pr` push always is — and a merge commit

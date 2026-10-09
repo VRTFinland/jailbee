@@ -1979,3 +1979,32 @@ def test_the_moved_row_stays_highlighted(mocker, tmp_path):
     )
     assert seen[-1] == ("name", "network", "mode", "state")
     assert run.natives[-2] == NativeState("settings", 3, tab="fields")
+
+
+def test_a_picker_draws_its_detail_lines_above_the_entries():
+    spec = Picker(
+        "bulk-destroy-confirm",
+        "Destroy 2?",
+        (PickerEntry("No", "no"), PickerEntry("Yes", "yes")),
+        detail=("⚠ alpha-a: dirty",),
+    )
+
+    text = "\n".join(box_text(spec))
+
+    assert text.index("⚠ alpha-a: dirty") < text.index("No")
+
+
+def test_a_capped_detail_keeps_every_entry_in_a_short_box():
+    detail = (*(f"⚠ alpha-{i}: dirty" for i in range(4)), "…and 6 more")
+    spec = Picker(
+        "bulk-destroy-confirm",
+        "Destroy 10?",
+        (PickerEntry("No", "no"), PickerEntry("Yes, destroy 10", "yes")),
+        detail=detail,
+    )
+
+    text = "\n".join(box_text(spec, size=(80, 12)))
+
+    assert "…and 6 more" in text
+    assert "No" in text
+    assert "Yes, destroy 10" in text

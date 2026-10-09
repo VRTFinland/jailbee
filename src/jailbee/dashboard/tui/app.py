@@ -358,7 +358,7 @@ class DashboardApp(App[int], inherit_bindings=False):
                 self.refresh_frame()
             return
         self._last_click = hit
-        self.session.click(hit, right=event.button == 3)
+        self.session.click(hit, right=event.button == 3, toggle=event.ctrl)
         self.refresh_frame()
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
