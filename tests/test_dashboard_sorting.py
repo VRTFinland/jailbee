@@ -50,7 +50,10 @@ def test_sorts_inside_each_group_and_never_reorders_groups():
 
 def test_missing_values_go_last_in_both_directions():
     group = RepoGroup(
-        "p", "/r", None, [_c("p-none", cpu_percent=None), _c("p-low", cpu_percent=1), _c("p-hi", cpu_percent=90)]
+        "p",
+        "/r",
+        None,
+        [_c("p-none", cpu_percent=None), _c("p-low", cpu_percent=1), _c("p-hi", cpu_percent=90)],
     )
     up = ds.sort_groups([group], ds.SortSpec("cpu", False), ENABLED, now=NOW)
     down = ds.sort_groups([group], ds.SortSpec("cpu", True), ENABLED, now=NOW)
@@ -66,7 +69,9 @@ def test_ties_keep_the_default_order_in_both_directions():
 
 
 def test_a_sort_column_that_is_not_enabled_sorts_by_default():
-    group = RepoGroup("p", "/r", None, [_c("p-old", age_h=5, ip="10.0.0.1"), _c("p-new", ip="10.0.0.9")])
+    group = RepoGroup(
+        "p", "/r", None, [_c("p-old", age_h=5, ip="10.0.0.1"), _c("p-new", ip="10.0.0.9")]
+    )
     out = ds.sort_groups([group], ds.SortSpec("ip", True), ENABLED, now=NOW)
     assert _names(out) == [["p-new", "p-old"]]
     assert ds.active_sort(ds.SortSpec("ip", True), ENABLED, now=NOW) == ds.DEFAULT_SORT

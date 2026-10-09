@@ -107,7 +107,14 @@ from jailbee.dashboard.settings import (
     open_settings,
     toggle_setting,
 )
-from jailbee.dashboard.sorting import SortSpec, click_sort, cycle_sort, invert_sort, sort_groups, sort_notice
+from jailbee.dashboard.sorting import (
+    SortSpec,
+    click_sort,
+    cycle_sort,
+    invert_sort,
+    sort_groups,
+    sort_notice,
+)
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.keys import quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (

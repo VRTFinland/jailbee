@@ -49,8 +49,8 @@ from jailbee.qtui.model import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from jailbee.dashboard.model import RepoGroup
     from jailbee.dashboard.columns import FieldSpecCI
+    from jailbee.dashboard.model import RepoGroup
 
 # Custom role storing the full container name on a tree item.
 _NAME_ROLE = int(Qt.ItemDataRole.UserRole)

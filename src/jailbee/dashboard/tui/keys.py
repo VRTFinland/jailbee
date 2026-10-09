@@ -115,7 +115,9 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "columns and repo folding",
         "View",
     ),
-    KeyBinding("sort-prev", ("less_than_sign",), "< / >", "sort by the previous/next column", "View"),
+    KeyBinding(
+        "sort-prev", ("less_than_sign",), "< / >", "sort by the previous/next column", "View"
+    ),
     KeyBinding("sort-next", ("greater_than_sign",), "", "", "View"),
     KeyBinding("sort-invert", ("I",), "I", "reverse the sort", "View"),
     KeyBinding("tab", ("tab",), "", "", "View"),

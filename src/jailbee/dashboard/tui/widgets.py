@@ -195,7 +195,11 @@ class FleetTable(ScrollView, can_focus=False):
         lines: list[tuple[object, ...]] = []
         if model.has_header:
             lines.append(
-                ("header", model.geometry, hover if hover and hover.kind in ("scroll", "sort") else None)
+                (
+                    "header",
+                    model.geometry,
+                    hover if hover and hover.kind in ("scroll", "sort") else None,
+                )
             )
         for entry in model.entries:
             target = None

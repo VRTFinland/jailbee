@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Any
 
 import pytest
 from textual.app import ComposeResult
@@ -36,12 +38,12 @@ from jailbee.egress_scope import EntryRow
 from tests.dashboard_fixtures import (
     ACCOUNT_ROWS,
     alpha_group,
-    wide_group,
     cfg_group,
     ci,
     fake_accounts_cli,
     groups_listing,
     named_rows_group,
+    wide_group,
 )
 from tests.dashboard_pilot import (
     NATIVE_LIST,
@@ -1938,7 +1940,7 @@ def test_help_lines_explain_loose_ai_brightness_and_outbox():
     assert "OUTBOX" in text
 
 
-def _enabled_probe(seen):  # type: ignore[no-untyped-def]
+def _enabled_probe(seen: list[tuple[str, ...]]) -> Callable[[Any], None]:
     return lambda app: seen.append(tuple(app.session.enabled))
 
 

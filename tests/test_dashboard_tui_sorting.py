@@ -5,14 +5,14 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime, timedelta
 
-from tests.dashboard_fixtures import ci
-from tests.dashboard_pilot import BareClient, BareTerminal
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.keys import parse_key
 from jailbee.db.view_prefs import ViewState
+from tests.dashboard_fixtures import ci
+from tests.dashboard_pilot import BareClient, BareTerminal
 
 T0 = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
 

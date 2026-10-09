@@ -868,8 +868,12 @@ def _sortable_groups():
     from datetime import UTC, timedelta
 
     t0 = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
-    new = ContainerInfo(name="p-new", state="Running", network="strict", ip=None, memory_limit=None, repo="p")
-    old = ContainerInfo(name="p-old", state="Stopped", network="strict", ip=None, memory_limit=None, repo="p")
+    new = ContainerInfo(
+        name="p-new", state="Running", network="strict", ip=None, memory_limit=None, repo="p"
+    )
+    old = ContainerInfo(
+        name="p-old", state="Stopped", network="strict", ip=None, memory_limit=None, repo="p"
+    )
     return [
         RepoGroup(
             "p",

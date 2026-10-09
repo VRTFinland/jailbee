@@ -15,7 +15,9 @@ ENABLED = ("name", "state", "created")
 
 
 def _group() -> RepoGroup:
-    return RepoGroup("alpha", "/repos/alpha", None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")])
+    return RepoGroup(
+        "alpha", "/repos/alpha", None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")]
+    )
 
 
 def _model(sort=DEFAULT_SORT, column_widths=None, width=120):  # type: ignore[no-untyped-def]

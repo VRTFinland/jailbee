@@ -67,7 +67,9 @@ def test_ttl_is_none_unless_loose():
 
 def test_live_memory_and_cpu_use_coarse_steps():
     mib = 1024 * 1024
-    assert _key("mem_used", _c(memory_usage=10 * mib)) == _key("mem_used", _c(memory_usage=60 * mib))
+    assert _key("mem_used", _c(memory_usage=10 * mib)) == _key(
+        "mem_used", _c(memory_usage=60 * mib)
+    )
     assert _key("mem_used", _c(memory_usage=10 * mib)) < _key("mem_used", _c(memory_usage=70 * mib))
     assert _key("mem_used", _c(state="Stopped", memory_usage=10 * mib)) is None
     assert _key("cpu", _c(cpu_percent=1.0)) == _key("cpu", _c(cpu_percent=4.9))
@@ -125,7 +127,9 @@ def test_conflict_ranks_conflicts_above_ok():
 
 def test_outbox_zero_is_none_so_empty_cells_sort_last():
     assert _key("outbox", _c(git_status=_git())) is None
-    assert _key("outbox", _c(git_status=_git(pending_pr_actions=2, pending_issue_actions=1))) == (3,)
+    assert _key("outbox", _c(git_status=_git(pending_pr_actions=2, pending_issue_actions=1))) == (
+        3,
+    )
 
 
 def test_agent_ranks_by_urgency():
@@ -140,7 +144,14 @@ def test_agent_ranks_by_urgency():
 
 @pytest.mark.parametrize(
     ("field", "expected"),
-    [("created", True), ("cpu", True), ("outbox", True), ("name", False), ("state", False), ("network", False)],
+    [
+        ("created", True),
+        ("cpu", True),
+        ("outbox", True),
+        ("name", False),
+        ("state", False),
+        ("network", False),
+    ],
 )
 def test_first_direction(field: str, expected: bool):
     spec = next(f for f in ls_field_specs(now=NOW) if f.name == field)
