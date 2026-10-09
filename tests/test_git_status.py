@@ -1258,9 +1258,7 @@ def _real_git(cwd, *args):
 
 
 @pytest.mark.parametrize("host_has_commit", [True, False])
-def test_probe_borrows_missing_submodule_commit_from_host_source(
-    mocker, tmp_path, host_has_commit
-):
+def test_probe_borrows_missing_submodule_commit_from_host_source(mocker, tmp_path, host_has_commit):
     """The target moved a submodule to a commit the container's clone lacks.
 
     The host repo, bind-mounted read-only at HOST_SOURCE, has it. The probe
