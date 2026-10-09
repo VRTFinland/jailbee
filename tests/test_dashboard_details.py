@@ -580,7 +580,7 @@ def _rich_container(subs: int = 1) -> ContainerInfo:
         ahead_count="3",
         conflict="ok",
         target_diff="+245 -18",
-        behind_count="0",
+        behind_count="4",
         local_diff="+10 -2",
         local_count="1",
         submodules=tuple(
@@ -678,10 +678,35 @@ def test_a_narrow_panel_keeps_one_row_per_line_and_drops_host_head() -> None:
         assert len(body) == 8, width
         assert "host HEAD" not in "\n".join(body), width
         assert body[-1].startswith("base"), width
-    wide = _panel_body(
-        _panel_view(_rich_container()), 8, dd._PANEL_WIDE + dd.PANEL_INSET_COLS, fixed=True
-    )
+    wide = _panel_body(_panel_view(_rich_container()), 8, 100, fixed=True)
     assert "host HEAD" in "\n".join(wide)
+
+
+def test_the_git_table_keeps_every_column_at_every_width() -> None:
+    for subs in (2, 10):
+        for width in range(36, 121):
+            where = f"{subs} submodules, width {width}"
+            body = _panel_body(_panel_view(_rich_container(subs=subs)), 8, width, fixed=True)
+            at = next(i for i, ln in enumerate(body) if ln.startswith("git"))
+            header = body[at]
+            assert "↑" in header and "↓" in header and "vs dev" in header, where
+            assert "working" in header, where
+            root = body[at + 1]
+            # Distinct ahead/behind, so a swapped or squeezed column cannot pass.
+            assert root[header.index("↑")] == "3", where
+            assert root[header.index("↓")] == "4", where
+            assert "+245 -18" in root and "+12 -3" in root, where
+            assert "…" not in root[header.index("↑") :].split("merge")[0], where
+            rows = [ln for ln in body[at + 2 : -1] if ln and not ln.startswith("… +")]
+            assert rows, where
+            for ln in rows:
+                assert "+40 -2" in ln and "+5 -0" in ln, where
+                assert ln[header.index("↑")] == "2", where
+
+
+def test_a_hidden_submodule_block_is_hinted_in_the_header() -> None:
+    body = _panel_body(_panel_view(_rich_container(subs=3)), 4, 100, fixed=True)
+    assert "+3 submodules" in body[1]
 
 
 def test_no_git_status_renders_one_git_line() -> None:

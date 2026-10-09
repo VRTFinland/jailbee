@@ -2,11 +2,12 @@
 
 Pure — no I/O. Container values are composed from the same
 ``FieldSpec.cell`` functions the table uses (``lifecycle.ls_field_specs``),
-so the panel and the table never format the same fact differently. The
-panel shows a fixed set of rows, one per concept, so it keeps its shape as
-the cursor moves; columns that say the same thing twice in the table
-(``agent``/``agent_compact``, the git columns and ``git_status``, ``network``
-/``ttl``/``loose_until``) collapse into one row here.
+so the panel and the table never format the same fact differently. A
+container's panel reads top to bottom as a one-line summary, a git table (the
+container's own tree, then one row per changed submodule) and a dim footer;
+facts the table says twice (``agent``/``agent_compact``, the git columns and
+``git_status``, ``network``/``ttl``/``loose_until``) collapse into one place
+here. A repo heading keeps the label/value grid.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ class GitRow:
     """One line of the details panel's git table; every field is Rich markup.
 
     The container's own tree comes first, then one row per changed
-    submodule. ``extra`` is shown only when the panel is wide enough.
+    submodule. ``extra`` is shown only when the note column has room for it.
     """
 
     name: str
@@ -333,7 +334,9 @@ def _one_row(markup: str) -> Text:
     return text
 
 
-_PANEL_WIDE = 60  # columns from which the git table also shows each row's `extra`
+_NAME_MAX = 32  # widest the git table's name column grows
+_NAME_FLOOR = 6  # narrowest it is squeezed to while the note column still shows
+_NOTE_MIN = 8  # narrowest note column worth showing ("merge ok")
 _SUMMARY_GAP = "  "
 
 
@@ -369,26 +372,57 @@ def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     return PanelFit(False, git, 0, 0, cap - 1 - (head if git else 0) >= 1)
 
 
-def _git_table(panel: ContainerPanel, fit: PanelFit, *, wide: bool) -> Table:
+def _cells(*markups: str) -> int:
+    """The widest of the markup cells, in terminal columns."""
+    return max((Text.from_markup(m).cell_len for m in markups), default=0)
+
+
+def _git_table(panel: ContainerPanel, fit: PanelFit, width: int) -> Table:
+    """The git table, its columns sized so the whole table fits ``width``.
+
+    The four value columns keep their natural width; the name column gives way
+    first (to ``_NAME_FLOOR``), and the note column is dropped before anything
+    else shrinks. A row's ``extra`` joins its note only if every note still fits.
+    """
     assert panel.git is not None  # the caller draws "git —" otherwise
-    grid = Table.grid(padding=(0, 2))
-    grid.add_column(no_wrap=True, overflow="ellipsis", max_width=32)
-    for _ in range(5):  # ↑, ↓, diff vs base, working tree, note
-        grid.add_column(no_wrap=True, overflow="ellipsis")
-    grid.add_row(
-        "[dim]git[/dim]",
-        "[dim]↑[/dim]",
-        "[dim]↓[/dim]",
-        f"[dim]vs {panel.base}[/dim]",
-        "[dim]working[/dim]",
-        "",
-    )
     root, *subs = panel.git
-    for row in (root, *subs[: fit.subs]):
-        note = " · ".join(part for part in (row.note, row.extra if wide else "") if part)
-        grid.add_row(row.name, row.ahead, row.behind, row.target, row.working, note)
-    if fit.more:
-        grid.add_row(f"[dim]… +{fit.more} more submodules[/dim]", "", "", "", "", "")
+    rows = (root, *subs[: fit.subs])
+    hidden = len(subs) - fit.subs - fit.more
+    hint = f"[dim]+{hidden} submodules[/dim]" if hidden > 0 else ""
+    head = ("[dim]git[/dim]", "[dim]↑[/dim]", "[dim]↓[/dim]")
+    target_head, working_head = f"[dim]vs {panel.base}[/dim]", "[dim]working[/dim]"
+    values = (
+        _cells(head[1], *(r.ahead for r in rows)),
+        _cells(head[2], *(r.behind for r in rows)),
+        _cells(target_head, *(r.target for r in rows)),
+        _cells(working_head, *(r.working for r in rows)),
+    )
+    fixed = sum(values) + 2 * len(values)  # values and the gap before each
+    name_natural = min(_cells(head[0], *(r.name for r in rows)), _NAME_MAX)
+    notes = [r.note for r in rows]
+    note_min = min(_cells(hint, *notes), _NOTE_MIN)
+    note_width = 0
+    name_width = max(1, min(name_natural, width - fixed))
+    if width - fixed - _NAME_FLOOR - 2 >= note_min:
+        name_width = max(_NAME_FLOOR, min(name_natural, width - fixed - 2 - note_min))
+        room = width - fixed - name_width - 2
+        with_extra = [" · ".join(p for p in (r.note, r.extra) if p) for r in rows]
+        if _cells(*with_extra) <= room:
+            notes = with_extra
+        note_width = min(room, _cells(hint, *notes))
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(width=name_width, no_wrap=True, overflow="ellipsis")
+    for w in values:
+        grid.add_column(width=w, no_wrap=True, overflow="ellipsis")
+    if note_width:
+        grid.add_column(width=note_width, no_wrap=True, overflow="ellipsis")
+
+    def tail(note: str) -> list[str]:
+        return [note] if note_width else []
+
+    grid.add_row(head[0], head[1], head[2], target_head, working_head, *tail(hint))
+    for row, note in zip(rows, notes, strict=True):
+        grid.add_row(row.name, row.ahead, row.behind, row.target, row.working, *tail(note))
     return grid
 
 
@@ -414,8 +448,10 @@ def _panel_lines(
         if panel.git is None:
             one("[dim]git —[/dim]")
         else:
-            table = _git_table(panel, fit, wide=options.max_width >= _PANEL_WIDE)
+            table = _git_table(panel, fit, options.max_width)
             lines.extend(console.render_lines(table, render, pad=False))
+            if fit.more:
+                one(f"[dim]… +{fit.more} more submodules[/dim]")
     if fit.footer:
         if fit.blanks:
             lines.append([_BLANK])
