@@ -2338,7 +2338,7 @@ def new_cmd(
     # `jailbee fork` lands here. The source container's HEAD is fetched to the
     # host and the clone is pinned to it, exactly like a PR head; everything
     # else is an ordinary clone-mode `new`.
-    fork_source: "ForkSource | None" = None
+    fork_source: ForkSource | None = None
     if fork_of is not None:
         conflicting = [
             flag
@@ -2942,9 +2942,7 @@ def fork_cmd(
     ] = None,
     storage: Annotated[
         str | None,
-        typer.Option(
-            "--storage", help="Incus storage pool. Overrides `defaults.storage_pool`."
-        ),
+        typer.Option("--storage", help="Incus storage pool. Overrides `defaults.storage_pool`."),
     ] = None,
     credential_group: Annotated[
         str | None,
