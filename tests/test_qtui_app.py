@@ -1938,3 +1938,113 @@ def test_bulk_merge_opens_one_terminal(mocker, tmp_path):
     assert action.argv[:4] == ["jailbee", "merge", "p-foo", "p-bar"]
     assert "--into" not in action.argv
     assert action.launch == "terminal"
+
+
+def _second_repo(controller, tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.lifecycle import ContainerInfo
+
+    root = tmp_path / "other"
+    cfg = root / ".jailbee" / "config.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("container_prefix: q\n")
+    controller._latest.append(
+        RepoGroup(
+            prefix="q",
+            repo_root=str(root),
+            config_path=cfg,
+            containers=[
+                ContainerInfo(
+                    name="q-baz", state="Running", network="strict", ip=None, memory_limit=None
+                )
+            ],
+            loose_ttl_default="5m",
+            push_action_default="ask",
+            push_source_default="base",
+        )
+    )
+    return cfg
+
+
+def test_bulk_nothing_eligible_informs_and_launches_nothing(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    controller._latest[0].containers[0].state = "Stopped"
+    controller._latest[0].containers[1].state = "Stopped"
+    info = mocker.patch("jailbee.qtui.app.QMessageBox.information")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("stop", ["p-foo", "p-bar"])
+
+    info.assert_called_once()
+    assert "nothing to do" in info.call_args.args[2]
+    popen.assert_not_called()
+
+
+def test_bulk_partial_skip_runs_eligible_and_reports_skipped(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    controller._latest[0].containers[1].state = "Stopped"
+    warn = mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("stop", ["p-foo", "p-bar"])
+
+    assert [c.args[0][:3] for c in popen.call_args_list] == [["jailbee", "stop", "p-foo"]]
+    warn.assert_called_once()
+    assert "p-bar" in warn.call_args.args[2]
+
+
+def test_bulk_parallel_across_repos_uses_each_repos_config(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    cfg2 = _second_repo(controller, tmp_path)
+    mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("stop", ["p-foo", "q-baz"])
+
+    argvs = {c.args[0][2]: c.args[0] for c in popen.call_args_list}
+    assert argvs["p-foo"][argvs["p-foo"].index("--config") + 1] == str(
+        tmp_path / ".jailbee" / "config.yaml"
+    )
+    assert argvs["q-baz"][argvs["q-baz"].index("--config") + 1] == str(cfg2)
+
+
+def test_bulk_partial_launch_failure_one_summary_and_refresh(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    _second_repo(controller, tmp_path)
+    warn = mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    popen = mocker.patch(
+        "jailbee.qtui.app.subprocess.Popen", side_effect=[None, OSError("boom"), None]
+    )
+    refresh = mocker.patch.object(controller, "_request_refresh")
+
+    controller.on_bulk_action("stop", ["p-foo", "p-bar", "q-baz"])
+
+    assert popen.call_count == 3
+    warn.assert_called_once()
+    assert "p-bar: boom" in warn.call_args.args[2]
+    assert "p-foo" not in warn.call_args.args[2]
+    refresh.assert_called_once()
+
+
+def test_bulk_all_launches_failing_does_not_refresh(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    warn = mocker.patch("jailbee.qtui.app.QMessageBox.warning")
+    mocker.patch("jailbee.qtui.app.subprocess.Popen", side_effect=OSError("boom"))
+    refresh = mocker.patch.object(controller, "_request_refresh")
+
+    controller.on_bulk_action("stop", ["p-foo", "p-bar"])
+
+    warn.assert_called_once()
+    refresh.assert_not_called()
+
+
+def test_bulk_push_cancelled_dialog_runs_nothing(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    mocker.patch.object(controller, "_collect_answers", return_value=None)
+    output = mocker.patch.object(controller, "_open_output")
+    spawn = mocker.patch.object(controller, "_spawn")
+
+    controller.on_bulk_action("git push", ["p-foo", "p-bar"])
+
+    output.assert_not_called()
+    spawn.assert_not_called()
