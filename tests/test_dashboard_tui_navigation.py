@@ -84,14 +84,14 @@ def test_space_folds_then_unfolds_the_selected_repo(mocker, tmp_path):
     assert folded == [frozenset({"alpha"}), frozenset()]
 
 
-def test_space_on_a_container_row_folds_its_repo_and_selects_the_header(mocker, tmp_path):
+def test_space_on_a_container_row_marks_it_instead_of_folding(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     save = mocker.patch.object(tsession, "save_view_state")
 
     run = drive(mocker, ["j", "space"], [group])
 
-    assert save.call_args.args[2].folded == frozenset({"alpha"})
-    assert run.last.selected == dmodel.Row("repo", "alpha")
+    assert save.call_count == 0
+    assert run.last.marked == frozenset({"alpha-x"})
 
 
 def test_space_with_nothing_selected_does_nothing(mocker):

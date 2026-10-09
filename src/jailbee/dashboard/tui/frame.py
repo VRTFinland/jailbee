@@ -85,7 +85,7 @@ def help_lines() -> list[str]:
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
         "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
-        "Mouse: click selects; double- or right-click opens the menu;",
+        "Mouse: click selects; Ctrl-click marks; double- or right-click opens the menu;",
         "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
         "Shift-drag selects text.",
         "",
@@ -150,3 +150,5 @@ class DashboardView:
     column_widths: Mapping[str, int] | None
     shown_columns: Sequence[str] | None
     hover: dhit.Hit | None = None  # the hovered table target
+    marked: frozenset[str] = frozenset()
+    running: frozenset[str] = frozenset()

@@ -24,6 +24,7 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import outbox as dob
+from jailbee.dashboard.bulk import BulkBatch
 from jailbee.dashboard.columns import (
     all_column_names,
     clamp_column_offset,
@@ -288,6 +289,9 @@ class DashboardSession:
         self.column_offset = 0
         self.selected: Row | None = None
         self.sel_index = 0
+        # Container names marked for a bulk action; pruned to the listed ones each tick.
+        self.marked: frozenset[str] = frozenset()
+        self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
@@ -317,6 +321,8 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+        listed = {c.name for g in self.groups for c in g.containers}
+        self.marked &= listed
         self._close_vanished_overlay()
         self._pin_selection()
         if self.notice is not None and time.monotonic() >= self.notice_until:
@@ -345,6 +351,8 @@ class DashboardSession:
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
             hover=hover,
+            marked=self.marked,
+            running=self.bulk_running(),
         )
 
     def title(self) -> str:
@@ -1890,8 +1898,34 @@ class DashboardSession:
         elif key == "mouse":
             return "toggle-mouse"
         elif key == "space":
-            self.toggle_fold()
+            if self.selected is not None and self.selected.kind == "container":
+                self.toggle_mark(self.selected.key)
+                self.move(1)
+            else:
+                self.toggle_fold()
+        elif key in ("extend-up", "extend-down"):
+            self.extend_marks(-1 if key == "extend-up" else 1)
+        elif key == "cancel":
+            if self.marked:
+                self.marked = frozenset()
+                self.set_notice("Marks cleared")
         return None
+
+    def bulk_running(self) -> frozenset[str]:
+        """Containers with a bulk child still running."""
+        return frozenset(name for batch in self.bulk_batches for name in batch.pending)
+
+    def toggle_mark(self, name: str) -> None:
+        """Mark ``name`` for a bulk action, or unmark it."""
+        self.marked = self.marked ^ {name}
+
+    def extend_marks(self, step: int) -> None:
+        """Shift+up/down: mark the row left and the row reached; headers are passed over."""
+        if (name := container_of(self.selected)) is not None:
+            self.marked |= {name}
+        self.move(step)
+        if (name := container_of(self.selected)) is not None:
+            self.marked |= {name}
 
     def select(self, row: Row) -> None:
         """Put the cursor on ``row`` if it is on screen."""

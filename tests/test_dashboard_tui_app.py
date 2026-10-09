@@ -32,6 +32,8 @@ _TERMINAL_BYTES = (
     "\x1bOB",
     "\x1b[C",
     "\x1b[D",
+    "\x1b[1;2A",
+    "\x1b[1;2B",
     "\r",
     "\n",
     "\x1b",

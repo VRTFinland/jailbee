@@ -3935,7 +3935,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
             assert b.hint in out, f"{b.token}: hint {b.hint!r} missing from help"
             assert b.label in out, f"{b.token}: label {b.label!r} missing from help"
     assert "open a container or repo menu (fold there)" in out
-    assert "fold/unfold the selected repo (Settings: toggle)" in out
+    assert "mark a container, fold a repo (Settings: toggle)" in out
     # Help replaces neither the table nor the hint line, and explains gating.
     assert "NAME" in out and "one" in out
     assert "offered" in out or "available" in out
