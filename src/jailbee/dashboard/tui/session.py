@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -24,7 +25,7 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import outbox as dob
-from jailbee.dashboard.bulk import BulkBatch
+from jailbee.dashboard.bulk import BulkAction, BulkBatch, bulk_argv
 from jailbee.dashboard.columns import (
     all_column_names,
     clamp_column_offset,
@@ -1914,6 +1915,67 @@ class DashboardSession:
     def bulk_running(self) -> frozenset[str]:
         """Containers with a bulk child still running."""
         return frozenset(name for batch in self.bulk_batches for name in batch.pending)
+
+    def run_bulk(self, action: BulkAction, extra: Sequence[str] = ()) -> None:
+        """Run ``action`` over its eligible containers; ``extra`` are collected answers."""
+        if action.mode == "parallel":
+            self._run_parallel(action, extra)
+        else:
+            self._run_foreground(action)
+
+    def _run_parallel(self, action: BulkAction, extra: Sequence[str]) -> None:
+        """One detached child per container; one notice when the last one ends.
+
+        Nothing is suspended: these verbs print nothing worth reading and ask
+        nothing the dashboard has not already answered (``bulk_argv``).
+        """
+        batch = BulkBatch(action.verb, skipped=dict(action.skipped))
+        self.bulk_batches.append(batch)
+        for name in action.eligible:
+            group = _find_group(self.groups, name)
+            target = RepoTarget.of(group) if group is not None else None
+            if target is None:
+                batch.skipped[name] = "gone"
+                continue
+            canonical = bulk_argv(action.verb, name, extra)
+            try:
+                check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
+            except RouteError as exc:
+                batch.failed[name] = str(exc)
+                continue
+            argv = ["jailbee", *dact.addressed(canonical, target.flags(), over_ssh=self.over_ssh)]
+            batch.pending.add(name)
+            try:
+                self.jobs.start(
+                    f"bulk:{action.verb}:{name}",
+                    f"{action.verb} {name}…",
+                    argv,
+                    target.cwd(),
+                    partial(self._bulk_child_done, batch, name),
+                )
+            except ValueError:
+                batch.pending.discard(name)
+                batch.skipped[name] = f"a bulk {action.verb} is already running"
+            except OSError as exc:
+                batch.pending.discard(name)
+                batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+        self._settle(batch)
+
+    def _bulk_child_done(self, batch: BulkBatch, name: str, result: JobResult) -> None:
+        batch.finish(name, result)
+        self.client.refresh()
+        self._settle(batch)
+
+    def _settle(self, batch: BulkBatch) -> None:
+        """Report a batch whose children have all ended; unmark what succeeded."""
+        if not batch.done or batch not in self.bulk_batches:
+            return
+        self.bulk_batches.remove(batch)
+        self.marked -= frozenset(batch.ok)
+        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if batch.failed else NOTICE_SECONDS)
+
+    def _run_foreground(self, action: BulkAction) -> None:
+        raise NotImplementedError("Task 10")  # replaced in Task 10
 
     def toggle_mark(self, name: str) -> None:
         """Mark ``name`` for a bulk action, or unmark it."""
