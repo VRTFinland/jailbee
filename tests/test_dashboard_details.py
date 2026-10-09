@@ -149,7 +149,7 @@ def _with_activity(**kw: Any) -> ContainerInfo:
     return _c(agent_status=(summary,))
 
 
-def test_activity_block_is_escaped_and_the_message_is_dim() -> None:
+def test_activity_block_is_escaped_and_the_message_is_white() -> None:
     block = dd.activity_block(_with_activity(), NOW)
 
     assert [_plain(line) for line in block.lines] == [
@@ -158,7 +158,14 @@ def test_activity_block_is_escaped_and_the_message_is_dim() -> None:
     ]
     assert block.message is not None
     assert _plain(block.message) == "“all [red]green[/red] <b>”"  # shown, not interpreted
-    assert block.message.startswith("[dim]")
+    assert block.message.startswith("[bold white]")
+
+
+def test_tool_markup_colours_the_name_by_kind_and_dims_unknown_tools() -> None:
+    assert dd.tool_markup("Edit  /a.py", dim_args=False) == "[yellow]Edit[/yellow]  /a.py"
+    assert dd.tool_markup("Grep  x", dim_args=True) == "[cyan]Grep[/cyan]  [dim]x[/dim]"
+    assert dd.tool_markup("mcp__x__y", dim_args=True) == "[dim]mcp__x__y[/dim]"
+    assert dd.tool_markup("Bash  [red]", dim_args=False) == "[magenta]Bash[/magenta]  \\[red]"
 
 
 def test_history_is_newest_first_escaped_and_tools_dim() -> None:
@@ -178,7 +185,9 @@ def test_history_is_newest_first_escaped_and_tools_dim() -> None:
         "“[red]x[/red] \\”",
         "Read  /a.py",
     ]
-    assert history[0].startswith("[dim]") and history[2].startswith("[dim]")
+    assert history[0].startswith("[magenta]Bash[/magenta]  [dim]")
+    assert history[1].startswith("[white]")
+    assert history[2].startswith("[cyan]Read[/cyan]  [dim]")
     assert not history[1].startswith("[dim]")
 
 
@@ -257,7 +266,7 @@ def _body(view: dd.DetailsView, max_rows: int | None, *, fixed: bool = False) ->
     return [ln[2:-2].rstrip() for ln in lines[1:-1]]
 
 
-LINES = ("busy 2m", "↳ Bash  ls", "[dim]“done”[/dim]")
+LINES = ("busy 2m", "↳ Bash  ls", "[bold white]“done”[/bold white]")
 
 
 def test_activity_follows_the_grid_under_the_panel() -> None:
@@ -320,7 +329,7 @@ def test_a_panel_without_a_reservation_renders_as_before() -> None:
 
 
 HEAD = ("busy 2m", "↳ Bash  ls")
-MESSAGE = "[dim]“done”[/dim]"
+MESSAGE = "[bold white]“done”[/bold white]"
 
 
 def _full(history: int = 6, message: str | None = MESSAGE) -> dd.DetailsView:
@@ -361,7 +370,7 @@ def test_history_that_does_not_fit_ends_in_an_ellipsis_row() -> None:
 
 def test_a_long_message_is_wrapped_in_full() -> None:
     words = " ".join(f"w{i:02d}" for i in range(60))
-    view = _full(history=0, message=f"[dim]“{words}”[/dim]")
+    view = _full(history=0, message=f"[bold white]“{words}”[/bold white]")
     rows = dd.details_rows(view, Console(width=60), 60)
 
     lines = _text(dd.render_details(view, rows.want, fixed=True), width=60).splitlines()[1:-1]
@@ -375,7 +384,7 @@ def test_a_long_message_is_wrapped_in_full() -> None:
 
 def test_a_message_cut_short_ends_in_an_ellipsis() -> None:
     words = " ".join(f"w{i:02d}" for i in range(60))
-    view = _full(history=0, message=f"[dim]“{words}”[/dim]")
+    view = _full(history=0, message=f"[bold white]“{words}”[/bold white]")
     rows = dd.details_rows(view, Console(width=60), 60)
 
     lines = _text(dd.render_details(view, rows.want - 1, fixed=True), width=60).splitlines()

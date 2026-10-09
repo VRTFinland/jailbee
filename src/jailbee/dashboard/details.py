@@ -124,12 +124,32 @@ class ActivityBlock:
     history: tuple[str, ...] = ()
 
 
+_TOOL_STYLE = {
+    **dict.fromkeys(("Read", "Grep", "Glob", "LS", "NotebookRead"), "cyan"),
+    **dict.fromkeys(("Edit", "MultiEdit", "Write", "NotebookEdit"), "yellow"),
+    **dict.fromkeys(("Bash", "BashOutput", "KillShell"), "magenta"),
+    **dict.fromkeys(("WebFetch", "WebSearch", "Task", "Agent"), "blue"),
+}
+"""Tool name -> colour by what the tool does; an unknown tool (an MCP one, say) is dim."""
+
+
+def tool_markup(text: str, *, dim_args: bool) -> str:
+    """A ``Name  argument`` tool line as escaped markup, the name coloured by kind."""
+    name, _, args = text.partition("  ")
+    style = _TOOL_STYLE.get(name, "dim")
+    out = f"[{style}]{escape(name)}[/{style}]"
+    if args:
+        out += "  " + (f"[dim]{escape(args)}[/dim]" if dim_args else escape(args))
+    return out
+
+
 def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
     """The container's agent activity, or an empty block.
 
     The first agent summary that carries activity speaks (summaries are most
     urgent first). Every part is text an agent wrote, so it is escaped here.
-    History tool entries are dim, message entries plain. The newest tool
+    History tool entries have a coloured name and dim arguments, message
+    entries are white; the newest message is bold white so it stands out. The newest tool
     event is left out of the history when the tool line shows it, and the
     newest message event when ``message`` shows it: ``last_tool`` /
     ``last_message`` are by construction those same newest events, so the
@@ -141,8 +161,12 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
             continue
         lines = [escape(text.head)]
         if text.tool is not None:
-            lines.append(escape(f"↳ {text.tool}"))
-        message = None if text.message is None else f"[dim]{escape(f'“{text.message}”')}[/dim]"
+            lines.append(f"↳ {tool_markup(text.tool, dim_args=False)}")
+        message = (
+            None
+            if text.message is None
+            else f"[bold white]{escape(f'“{text.message}”')}[/bold white]"
+        )
         skip = {"tool": text.tool is not None, "message": text.message is not None}
         earlier: list[str] = []
         for event in reversed(text.recent):
@@ -150,9 +174,9 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
                 skip[event.kind] = False  # only the newest of each kind is shown above
                 continue
             earlier.append(
-                f"[dim]{escape(event.text)}[/dim]"
+                tool_markup(event.text, dim_args=True)
                 if event.kind == "tool"
-                else escape(f"“{event.text}”")
+                else f"[white]{escape(f'“{event.text}”')}[/white]"
             )
         history = tuple(earlier)
         return ActivityBlock(tuple(lines), message, history)
@@ -515,7 +539,7 @@ class _DetailsBody:
             message = message[:room]
             if message:
                 message[-1].truncate(max(0, width - 1))
-                message[-1].append("…", style="dim")
+                message[-1].append("…", style="bold white")
         room -= len(message)
         if len(history) > room:
             history = [*history[: room - 1], _one_row("[dim]…[/dim]")] if room > 0 else []
