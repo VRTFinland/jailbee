@@ -106,6 +106,7 @@ from jailbee.dashboard.settings import (
     open_settings,
     toggle_setting,
 )
+from jailbee.dashboard.sorting import SortSpec, click_sort, cycle_sort, invert_sort, sort_groups, sort_notice
 from jailbee.dashboard.tui.frame import DashboardView
 from jailbee.dashboard.tui.keys import quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (
@@ -285,6 +286,7 @@ class DashboardSession:
         self.show_empty_repos = view_state.show_empty_repos
         self.hidden_repos = view_state.hidden_repos
         self.show_details = view_state.show_details
+        self.sort = SortSpec(view_state.sort_field, view_state.sort_desc)
         self.column_widths: dict[str, int] | None = None
         self.column_offset = 0
         self.selected: Row | None = None
@@ -297,7 +299,9 @@ class DashboardSession:
         self.outbox_rows: dict[str, tuple[dob.ProposalRow, ...]] = {}
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
-        self.all_groups: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
+        # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
+        self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
+        self.all_groups: list[RepoGroup] = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
@@ -312,7 +316,8 @@ class DashboardSession:
         self.jobs.poll()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
-        self.all_groups = present(snapshot.groups, self.cwd_root, self.scope)
+        self.presented = present(snapshot.groups, self.cwd_root, self.scope)
+        self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
@@ -345,6 +350,7 @@ class DashboardSession:
             show_details=self.show_details,
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
+            sort=self.sort,
             hover=hover,
         )
 
@@ -361,8 +367,26 @@ class DashboardSession:
                 show_empty_repos=self.show_empty_repos,
                 hidden_repos=self.hidden_repos,
                 show_details=self.show_details,
+                sort_field=self.sort.field,
+                sort_desc=self.sort.desc,
             )
         )
+
+    def _sorted(self, groups: list[RepoGroup]) -> list[RepoGroup]:
+        enabled = self.enabled if self.enabled is not None else default_columns()
+        return sort_groups(groups, self.sort, enabled, now=_now())
+
+    def set_sort(self, sort: SortSpec) -> None:
+        """Sort by ``sort`` now (not on the next tick), keep the cursor's container, persist."""
+        self.sort = sort
+        self.all_groups = self._sorted(self.presented)
+        self.groups = visible_repo_groups(
+            self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
+        )
+        self.rows = selectable_rows(self.groups, self.folded)
+        self._pin_selection()
+        self.set_notice(sort_notice(sort))
+        self.save_view()
 
     def set_notice(self, text: str, seconds: float = NOTICE_SECONDS) -> None:
         """Show ``text`` in the panel subtitle for ``seconds``.
@@ -1523,6 +1547,7 @@ class DashboardSession:
             folded=self.folded,
             column_widths=self.column_widths,
             shown_columns=self.shown_columns,
+            sort=self.sort,
             available=self.terminal.table_width,
         )
 
@@ -1817,6 +1842,7 @@ class DashboardSession:
         overlay = toggle_setting(overlay, tab, key)
         self.overlay = overlay
         self.enabled = enabled_names(overlay)
+        self.all_groups = self._sorted(self.presented)
         self.folded = overlay.folded
         self.show_empty_repos = overlay.show_empty_repos
         self.hidden_repos = overlay.hidden_repos
@@ -1892,6 +1918,11 @@ class DashboardSession:
             self.save_view()
         elif key == "mouse":
             return "toggle-mouse"
+        elif key in ("sort-prev", "sort-next"):
+            step = -1 if key == "sort-prev" else 1
+            self.set_sort(cycle_sort(self.sort, self.shown_columns, step, now=_now()))
+        elif key == "sort-invert":
+            self.set_sort(invert_sort(self.sort))
         elif key == "space":
             self.toggle_fold()
         return None
@@ -1944,7 +1975,7 @@ class DashboardSession:
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus
-        if hit is not None and hit.kind != "scroll" and not self._listed(hit):
+        if hit is not None and hit.kind not in ("scroll", "sort") and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
         if overlay is not None:
             self.close_overlay()
@@ -1953,6 +1984,9 @@ class DashboardSession:
         if hit.kind == "scroll":
             if overlay is None:
                 self.scroll_columns(int(hit.args[0]))
+        elif hit.kind == "sort":
+            if overlay is None:
+                self.set_sort(click_sort(self.sort, str(hit.args[0]), now=_now()))
         elif hit.kind == "fold":
             if overlay is None:
                 self.toggle_fold(str(hit.args[0]))

@@ -42,7 +42,7 @@ _TERMINAL_BYTES = (
     "\x03",
     "?",
     "!",
-    *"tsicpPudDneEAovrmShjkq",
+    *"tsicpPudDneEAovrmShjkq<>I",
 )
 
 
