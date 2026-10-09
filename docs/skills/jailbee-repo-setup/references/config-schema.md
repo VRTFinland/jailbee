@@ -33,7 +33,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `autostart` | see below | empty triggers | repo |
 | `docker_registry_mirror.extra_registries` | list of `host[:port]` | `[]` | repo |
 | `container_prefix` | string | `repo_root.name` | repo (only if name doesn't match regex) |
-| `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env, skills_dir, install_jailbee_skills, global_instructions, headless}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
+| `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env, skills_dir, install_jailbee_skills, global_instructions, headless}` | `{}` (seven presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `grok`) | global for the master switch, repo appends |
 | `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `agent_view`, `seed_onboarding`) | `enabled: false`, rest see below | global |
 | `pr` | `{agent, ai_description, ai_branch, model, prompt, timeout}` — how `jailbee pr` writes PR text; see the `pr` section below. Replaces the old `claude.ai_pr_*` / `claude.pr_prompt` keys, which still load with a deprecation notice | `agent: auto`, rest see below | global for `agent`/`timeout`/`model`, repo for `prompt` |
 | `github` | `{enabled, token}` (+ deprecated `api_tokens`) | `enabled: false` (opt-in) | `enabled` global; `token` in the host-local `repos/<prefix>.yaml` — never the committed repo file |
@@ -797,11 +797,11 @@ Generic hook for terminal coding agents. A mapping keyed by agent name
 (`{codex: {...}, gemini: {...}}`), not a list — this is what lets the repo
 layer tweak one field of an agent the global layer already turned on
 without the deep-merge pipeline's list-append rule producing a duplicate
-entry. Six presets ship built in: `claude`, `codex`, `gemini`, `aider`,
-`opencode`, `grok`. **Only `claude` is exercised in production** — the
-other five are untested templates, correct as needed.
+entry. Seven presets ship built in: `claude`, `codex`, `gemini`, `aider`,
+`opencode`, `pi`, `grok`. **Only `claude` is exercised in production** — the
+other six are untested templates, correct as needed.
 
-An agent name matching one of the six presets is deep-merged over that
+An agent name matching one of the seven presets is deep-merged over that
 preset, with the same append/reset rules as every other list field; any
 other name is used as-is with no preset base. Two merges, not three:
 global.yaml and the repo config combine with each other first, and the
@@ -849,12 +849,12 @@ agents:
 | `install` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` fails. |
 | `install_check` | string \| null | `null` | Probe deciding install-vs-update. Defaults to `command -v <first token of command>`. |
 | `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
-| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
+| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. Exported to the install/update step as `JAILBEE_AUTO_UPDATE`. |
 | `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent. Share the agent's auth/settings surface only — never a cache, history, log, or a generically-named file like `~/.env`. `private` (dir only) names subpaths inside the mount that stay per container. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow--strict-mode-allowlist). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
-| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new` / `jailbee apply` copy the four bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`) into the shared copy of it. The four skill-capable presets set it (`claude` `~/.claude/skills`, `codex` `~/.codex/skills`, `gemini` `~/.gemini/skills`, `opencode` `~/.config/opencode/skills`); `aider` and `grok` have none. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new` / `jailbee apply` copy the four bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`) into the shared copy of it. The five skill-capable presets set it (`claude` `~/.claude/skills`, `codex` `~/.codex/skills`, `gemini` `~/.gemini/skills`, `opencode` `~/.config/opencode/skills`); `aider` and `grok` have none. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
 | `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads the host's `~/.config/jailbee/AGENTS.md`. jailbee mounts a staged directory holding only `file` read-only at `dir` in every container. `dir` is absolute or `~`-relative without `.`/`..`, must not overlap a `shared` mount or be `/`, `/etc`, `/usr`, `/home` or the home directory; `file` is a bare file name. Only the `claude` preset sets it (`/etc/claude-code`, `CLAUDE.md`). Turn the whole feature off with `agent_instructions: false` in `global.yaml`. |
 
@@ -920,7 +920,7 @@ Claude Code CLI integration. Defaults to disabled — opt-in via
 | `claude.command` | string | `"claude"` | Command line executed in the `claude` autostart step. |
 | `claude.auto_update` | bool | `true` | When `true`, `jailbee new` runs `claude update` inside the container so the CLI is current. |
 | `claude.agent_view` | bool | `false` | When `false`, containers get `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` (no `claude agents`, `--bg`, `/background` or background daemon): the daemon's lock is in the `~/.claude` all containers of the repo share, so two containers' daemons kill each other's jobs. Set `true` only if one container of the repo runs at a time. |
-| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy the four bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`) into this agent's own shared skills directory so the **in-container agent understands JailBee** and can help edit `.jailbee/config.yaml`. A generic `agents.<name>` field, not Claude-only: every enabled skill-capable agent (`claude`, `codex`, `gemini`, `opencode`) gets the same treatment, each into its own `skills_dir` (claude's target stays `<shared_dir>/claude/skills/`; see the `skills_dir` row in the `agents` table above). Set it `false` to opt one agent out. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
+| `claude.install_jailbee_skills` | bool | `true` | When `true` (requires `enabled`), `jailbee new` and `jailbee apply` copy the four bundled jailbee skills (`jailbee-usage`, `jailbee-repo-setup`, `jailbee-pr-review`, `jailbee-issue-management`) into this agent's own shared skills directory so the **in-container agent understands JailBee** and can help edit `.jailbee/config.yaml`. A generic `agents.<name>` field, not Claude-only: every enabled skill-capable agent (`claude`, `codex`, `gemini`, `opencode`, `pi`) gets the same treatment, each into its own `skills_dir` (claude's target stays `<shared_dir>/claude/skills/`; see the `skills_dir` row in the `agents` table above). Set it `false` to opt one agent out. Host-side file copy only, no network. **This is the mechanism that makes these very skills available inside a container** — the container has no `jailbee` binary, so this doc set is its only source of JailBee knowledge. The pre-1.0 name `claude.install_gie_skills` was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `claude.seed_onboarding` | bool | `true` | When `true` (requires `enabled`), `jailbee init` / `jailbee apply` mark a **fresh** `<shared_dir>/claude/.claude.json` as already onboarded and accept the trust dialog for the repo's in-container path — but only when the repo's credential group already holds a login. Claude Code's first-run wizard is gated on that flag alone and never inspects the mounted credential, so without this a new container asks for a `/login` the shared credential has already answered. With no shared login the wizard runs as before, and a config home Claude Code has already written is never touched. |
 Example global config:
 
@@ -947,7 +947,7 @@ The agent runs its `agents.<name>.headless` command: a one-shot command line run
 a `bash -lc` login shell in the repo directory, with the prompt in
 `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL`
 — read both from the environment, never interpolate them. Presets set it for
-`claude`, `codex`, `gemini` and `opencode` (only Claude's is exercised in
+`claude`, `codex`, `gemini`, `opencode` and `pi` (only Claude's is exercised in
 production); `aider` and `grok` have none.
 
 Example global config, picking the agent for every repo:

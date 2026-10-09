@@ -1329,8 +1329,8 @@ host-wide app.
 
 ### `agents`
 
-Generic hook for terminal coding agents — Claude Code plus five untested
-templates (`codex`, `gemini`, `aider`, `opencode`, `grok`), or one you define
+Generic hook for terminal coding agents — Claude Code plus six untested
+templates (`codex`, `gemini`, `aider`, `opencode`, `pi`, `grok`), or one you define
 yourself. A mapping keyed by agent name, valid at both this file and
 `~/.config/jailbee/global.yaml`, and it merges over a shipped preset
 (deep-merge — see [Merge rules](#merge-rules) above) rather than needing
@@ -1346,17 +1346,17 @@ to share" rule, and a worked example live in
 | `install` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` fails. |
 | `install_check` | string \| null | `null` | Probe deciding install-vs-update. Defaults to `command -v <first token of command>`. |
 | `update` | string \| null | `null` | Shell command run at `jailbee new` time when `install_check` succeeds and `auto_update` is true. |
-| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. |
+| `auto_update` | bool | `true` | `false` leaves an existing install untouched; a missing one is still installed. Exported to the install/update step as `JAILBEE_AUTO_UPDATE`. |
 | `install_network` | `strict` \| `loose` | `strict` | Network mode for the install/update step only. |
 | `shared` | list of `{subpath, path, type, seed, private}` | `[]` | Bind mounts from `<shared_dir>/<subpath>` to `<path>`. `type: dir` (default) or `file`; `seed` (file only) is written once if the target is absent; `private` (dir only) names subpaths inside the mount that stay per container — an IPC socket, a pid file, a lock. |
 | `egress_allow` | list[string] | `[]` | Strict-mode allowlist entries added while this agent is enabled. Same grammar as top-level [`egress_allow`](#egress_allow). |
 | `env` | map[string, string] | `{}` | Env vars passed to the install/update step and the autostart launch step. |
-| `headless` | string \| null | preset | One-shot command line `jailbee pr` runs to write PR text (see [`pr`](#pr)): run in a `bash -lc` login shell in the repo directory, with the prompt in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL`. Read both from the environment — never interpolate them. `$JAILBEE_PR_SESSION` carries a fresh UUID an agent may use as its session id, so a timed-out run's transcript can be named. Presets set it for `claude`, `codex`, `gemini` and `opencode`; `aider` and `grok` have none. |
-| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The four skill-capable presets set it; leave unset for an agent with no skills mechanism. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
+| `headless` | string \| null | preset | One-shot command line `jailbee pr` runs to write PR text (see [`pr`](#pr)): run in a `bash -lc` login shell in the repo directory, with the prompt in `$JAILBEE_PR_PROMPT` and the model (empty when none applies) in `$JAILBEE_PR_MODEL`. Read both from the environment — never interpolate them. `$JAILBEE_PR_SESSION` carries a fresh UUID an agent may use as its session id, so a timed-out run's transcript can be named. Presets set it for `claude`, `codex`, `gemini`, `opencode` and `pi`; `aider` and `grok` have none. |
+| `skills_dir` | string \| null | preset | Container-side directory the agent reads user-level skills from (`~/.codex/skills`, …). When set and covered by a `shared` mount, `jailbee new`/`apply` copy the bundled jailbee skills into the shared copy of it — see [the bundled skills](agents.md#10-the-bundled-jailbee-skills). The five skill-capable presets set it; leave unset for an agent with no skills mechanism. Rejected at load if empty or carrying a `.` / `..` segment — the value is joined onto a host-side path. |
 | `install_jailbee_skills` | bool | `true` | `false` keeps this agent's shared skills directory untouched by jailbee's bundled skills. Does nothing when `skills_dir` is unset or no `shared` mount covers it. A disabled agent gets nothing either way. The pre-1.0 `claude.install_gie_skills` name was retired in 1.1.0: a config still using it fails to load with an error naming this key. |
 | `global_instructions` | `{dir, file}` \| null | preset | Where the agent reads host-wide instructions: `~/.config/jailbee/AGENTS.md` is mounted read-only at `dir`, renamed to `file` — see [Agent-wide instructions](#agent-wide-instructions-configjailbeeagentsmd). Only Claude's preset sets it (`/etc/claude-code`, `CLAUDE.md`); constraints are in [agents.md](agents.md#4-writing-your-own-agent). |
 
-An agent name that matches one of the six shipped presets is deep-merged
+An agent name that matches one of the seven shipped presets is deep-merged
 over that preset (preset → global.yaml → repo, same append/reset rules as
 every other list field); any other name is used as-is with no preset base.
 `jailbee config validate` additionally rejects a name outside
@@ -1449,7 +1449,8 @@ simply off — not an error. A pinned agent that is unusable *is* reported.
 
 Only Claude is exercised in production. The `codex`, `gemini` and `opencode`
 `headless` commands are taken from each tool's docs and have never been run
-against a live agent; if one is wrong, override it for that agent
+against a live agent; `pi`'s was run against pi 1.0.0 with a local model, but
+not through `jailbee pr` itself. If one is wrong, override it for that agent
 (`agents.<name>.headless`) — see [agents.md](agents.md#4-writing-your-own-agent).
 
 ```yaml
@@ -3080,7 +3081,7 @@ install_host_skills: false      # false (default) | true
 
 | Key | Default | Description |
 |---|---|---|
-| `install_host_skills` | `false` | `true` makes the `skills` step of `jailbee setup` detect every skill-capable agent on the host (`claude`, `codex`, `gemini`, `opencode` — found via `shutil.which`) and copy the bundled skills into each one's own skills directory (`~/.claude/skills`, `~/.codex/skills`, …). `jailbee doctor` then verifies them. A host with none of these agents owes nothing, and `false` reports the step as opted out rather than missing. |
+| `install_host_skills` | `false` | `true` makes the `skills` step of `jailbee setup` detect every skill-capable agent on the host (`claude`, `codex`, `gemini`, `opencode`, `pi` — found via `shutil.which` on the binary's name alone, so an unrelated binary of the same name, such as Debian's `pi` digit calculator, counts too) and copy the bundled skills into each one's own skills directory (`~/.claude/skills`, `~/.codex/skills`, …). `jailbee doctor` then verifies them. A host with none of these agents owes nothing, and `false` reports the step as opted out rather than missing. |
 
 The containers' skills are independent of this key and always installed
 for every enabled skill-capable agent — see

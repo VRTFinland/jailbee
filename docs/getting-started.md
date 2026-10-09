@@ -158,7 +158,7 @@ instead of the agent's own judgement. You size the blast radius once, in
 the container's config — read-only mounts for what the build needs,
 sensitive `optional_mounts` left detached, `strict` egress — rather than
 adjudicating it one prompt at a time. JailBee has first-class support for
-[Claude Code](https://claude.com/claude-code) — one of six shipped agent
+[Claude Code](https://claude.com/claude-code) — one of seven shipped agent
 presets, and the only one exercised in production. The same `agents:`
 mechanism wires in any other terminal coding agent the same way; see
 [Generic agent support](agents.md) for the full list and how to add your
@@ -200,7 +200,7 @@ What turning it on gets you:
 - **The agents know JailBee.** JailBee's own `jailbee-usage`,
   `jailbee-repo-setup` and `jailbee-pr-review` skills are copied into the
   shared skills directory of every enabled agent that has one (claude, codex,
-  gemini, opencode), so the in-container agents can drive `jailbee` commands
+  gemini, opencode, pi), so the in-container agents can drive `jailbee` commands
   for you.
 - **AI-written PRs.** `jailbee pr <name>` asks the container's own agent —
   the one the repo autostarts, or whichever `pr.agent` names — for the title,

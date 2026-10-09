@@ -414,6 +414,24 @@ def test_timeout_warning_names_the_container_session_and_budget(mocker, make_cfg
     assert f"{cfg.pr.timeout}s" in hint
 
 
+def test_timeout_warning_names_pis_own_resume_command(mocker, make_cfg, tmp_path):
+    from jailbee.incus import IncusTimeoutError
+    from jailbee.pr_ai import generate_pr_text
+
+    cfg = make_cfg(tmp_path, agents={"pi": {"enabled": True}}, pr={"agent": "pi"})
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = IncusTimeoutError("timed out after 600s")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
+    warn = mocker.patch("jailbee.pr_ai.warn")
+
+    assert generate_pr_text(cfg, incus, "c", branch="feat/foo", base="main") is None
+
+    hint = " ".join(c.args[0] for c in warn.call_args_list)
+    session_id = incus.exec.call_args.kwargs["env"]["JAILBEE_PR_SESSION"]
+    assert f"pi --session {session_id}" in hint
+    assert "claude" not in hint
+
+
 def test_non_timeout_failure_does_not_promise_a_transcript(mocker, make_cfg, tmp_path):
     """A missing `claude` or a rejected model leaves nothing to resume.
 

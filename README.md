@@ -138,8 +138,8 @@ sped up and say so on screen; nothing else is edited.
   pipeline Claude Code uses, via a shipped preset or one you write yourself.
   An agent that declares a skills directory gets JailBee's skills, and one
   with a headless command can write `jailbee pr`'s title and body
-  (`pr.agent`). Five presets beyond Claude (`codex`, `gemini`, `aider`,
-  `opencode`, `grok`) ship as untested starting points — see
+  (`pr.agent`). Six presets beyond Claude (`codex`, `gemini`, `aider`,
+  `opencode`, `pi`, `grok`) ship as untested starting points — see
   [Generic agent support](https://jailbee.gisgro.io/docs/agents/).
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, `~/.ssh` and Claude's login live in a shared dir outside the

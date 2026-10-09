@@ -130,10 +130,9 @@ _BUNDLED_PREFIX = "__bundled__:"
 def _resolve_bundled(command: str) -> str:
     """Turn a `__bundled__:<script>` sentinel into the script's text.
 
-    Only `claude_preset()` uses this today: `ensure-claude.sh` keeps its
-    `versions/` symlink logic as a real script file rather than being
-    inlined as a one-line shell command like every other agent's
-    install/update. Any other command line passes through unchanged.
+    Used by the presets whose install logic is too long to inline as a
+    one-line shell command (`ensure-claude.sh`, `ensure-pi.sh`). Any other
+    command line passes through unchanged.
 
     The suffix is config-supplied, so it is rejected unless it is a bare
     filename: `__bundled__:../../../../etc/passwd` would otherwise build a
@@ -331,7 +330,13 @@ def _ensure_one(
             # behave the same way.
             run=f"bash -c {shlex.quote(_resolve_bundled(command))}",
             network="loose" if spec.install_network == "loose" else None,
-            env=dict(spec.env),
+            # For install scripts that cannot rely on the install/update split
+            # above: with a shared store and a per-container launcher, every
+            # fresh container takes `install` (see ensure-pi.sh).
+            env={
+                **dict(spec.env),
+                "JAILBEE_AUTO_UPDATE": "true" if _auto_update(cfg, spec.name) else "false",
+            },
         )
         # `manage_network=True`: this step belongs to no stage — it runs
         # before any autostart stage exists — so it is the one caller that

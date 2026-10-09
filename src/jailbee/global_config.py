@@ -252,7 +252,7 @@ class GlobalConfig(BaseModel):
         description=(
             "When true, `jailbee setup` installs jailbee's bundled skills for every "
             "skill-capable agent it finds on this host (claude, codex, gemini, "
-            "opencode), each in its own skills directory, and `jailbee doctor` "
+            "opencode, pi), each in its own skills directory, and `jailbee doctor` "
             "verifies them. Off by default: the containers get their skills without "
             "any host action, and which agents run on the host itself is the user's "
             "call. Host-level only (`common.py`'s `_HOST_LEVEL_KEYS`)."

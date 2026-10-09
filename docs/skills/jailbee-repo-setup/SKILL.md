@@ -247,8 +247,8 @@ Don't pin a version the repo doesn't actually require — bumping the golden ima
 
 If the user wants a terminal coding agent installed and (optionally)
 auto-started in every container of this repo, add an `agents:` block.
-Six presets ship built in — `claude`, `codex`, `gemini`, `aider`,
-`opencode`, `grok` — each a starting point covering the install command,
+Seven presets ship built in — `claude`, `codex`, `gemini`, `aider`,
+`opencode`, `pi`, `grok` — each a starting point covering the install command,
 the shared auth/settings mount, and the egress hosts it needs. Turning one
 on is usually two lines:
 
@@ -260,7 +260,7 @@ agents:
 ```
 
 `claude` (Claude Code) is the only preset exercised in production; the
-other five are untested templates the user should verify and correct
+other six are untested templates the user should verify and correct
 against the vendor's own docs before relying on them (package name,
 config paths, host list). Enabling one they don't already use, without
 double-checking those details, is worse than not enabling it.
@@ -270,8 +270,8 @@ verifies this, and a failed install step is only a warning `jailbee new`
 walks past — so the agent silently never appears, and its autostart
 window dies with `<agent>: not found`.
 
-- `gemini` needs `npm`, which the golden image has only when
-  `golden.stacks.node` is on. Add the stack in the same edit and tell the
+- `gemini` and `pi` need `npm` (pi: Node ≥ 22.19), which the golden image
+  has only when `golden.stacks.node` is on. Add the stack in the same edit and tell the
   user to run `jailbee base build`.
 - `aider` needs `uv`, which jailbee's golden image does not ship at all —
   it takes an `.jailbee/install.d/` snippet of the repo's own.

@@ -178,13 +178,14 @@ def test_an_explicit_null_model_overrides_the_claude_default(tmp_path):
     assert agent.model is None
 
 
-def test_only_the_claude_family_has_a_resumable_transcript(tmp_path):
-    cfg = _cfg(tmp_path, {"claude": ON, "codex": ON})
-    claude = resolve_pr_agent(cfg).agent
-    cfg = _cfg(tmp_path, {"claude": ON, "codex": ON}, pr={"agent": "codex"})
-    codex = resolve_pr_agent(cfg).agent
-    assert claude is not None and claude.resumable is True
-    assert codex is not None and codex.resumable is False
+def test_only_agents_with_a_caller_chosen_session_are_resumable(tmp_path):
+    agents = {"claude": ON, "codex": ON, "pi": ON}
+    claude = resolve_pr_agent(_cfg(tmp_path, agents)).agent
+    codex = resolve_pr_agent(_cfg(tmp_path, agents, pr={"agent": "codex"})).agent
+    pi = resolve_pr_agent(_cfg(tmp_path, agents, pr={"agent": "pi"})).agent
+    assert claude is not None and claude.resume == "claude --resume {id}"
+    assert codex is not None and codex.resume is None
+    assert pi is not None and pi.resume == "pi --session {id}"
 
 
 # --- the switches the CLI reads ---------------------------------------------------------

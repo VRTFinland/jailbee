@@ -183,7 +183,7 @@ agents:
     autostart: true
 ```
 
-Six presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`);
+Seven presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `grok`);
 only `claude` is exercised in production, the rest are untested starting
 points. See [Generic agent support](agents.md) for the full mechanism, the
 preset table, and how to write your own agent entry.
