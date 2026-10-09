@@ -3280,8 +3280,8 @@ jailbee dashboard
 #  Click a container row -> it is selected. Double-click or right-click ->
 #     its menu opens. Click ▾/▸ on a repo header -> the repo folds/unfolds.
 #  Narrow the terminal until › appears; click it -> the columns step right.
-#  With a menu open, hover an entry -> only that row is shaded, the bold
-#     highlight stays put; click it -> it runs.
+#  Hover a table row or a menu entry -> only that row is underlined; the
+#     cursor's grey band stays put; click a menu entry -> it runs.
 #  Wheel over the table -> the view scrolls, the selection does not move;
 #     the next j/k moves from the selection and brings it back into view.
 #  Shift-drag -> the terminal selects text. m -> notice "mouse off — terminal

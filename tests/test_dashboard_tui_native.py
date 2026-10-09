@@ -14,7 +14,7 @@ from textual.widgets.option_list import Option
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import settings as ds
-from jailbee.dashboard.hit import HOVER_STYLE, Hit
+from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.overlays import Picker, PickerEntry
 from jailbee.dashboard.tui import frame as tframe
 from jailbee.dashboard.tui import menu_state as tmenu
@@ -46,6 +46,7 @@ from tests.dashboard_fixtures import (
     wide_group,
 )
 from tests.dashboard_pilot import (
+    CURSOR_BACKGROUND,
     NATIVE_LIST,
     Click,
     HoverOption,
@@ -61,6 +62,7 @@ from tests.dashboard_pilot import (
     make_app,
     open_container_group_picker,
     option_offset,
+    option_style,
     repo_menu_keys,
 )
 
@@ -190,11 +192,11 @@ def test_a_table_click_closes_help_and_selects(mocker, tmp_path):
     assert run.trace[-1].selected == tsession.Row("container", "alpha-x")
 
 
-def test_help_paints_no_background(mocker, tmp_path, monkeypatch):
+def test_help_paints_no_background_but_the_cursor_band(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")  # else Textual strips every colour and the scan proves nothing
     seen = []
     drive(mocker, ["h", lambda app: seen.append(backgrounds(app))], [alpha_group(tmp_path)])
-    assert seen[0] and seen[0] <= {"default"}  # the screen was scanned, and nothing is painted
+    assert seen[0] and seen[0] <= {"default", CURSOR_BACKGROUND}  # scanned; only the band
 
 
 @pytest.mark.parametrize("height", [6, 8, 10])
@@ -439,7 +441,7 @@ def _bg(app, index: int):  # type: ignore[no-untyped-def]
     raise AssertionError("cell is off screen")
 
 
-def test_hovering_an_option_paints_it_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+def test_hovering_an_option_underlines_it_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")  # the suite sets it, and Textual then strips every colour
     picker = Picker("x", "Pick", _entries("Alpha", "Beta", "Gamma"))
     seen = {}
@@ -448,26 +450,33 @@ def test_hovering_an_option_paints_it_without_moving_the_cursor(mocker, tmp_path
         [
             _open(picker),
             HoverOption(2),
-            lambda app: seen.update(hovered=[_bg(app, i) for i in range(3)]),
+            lambda app: seen.update(
+                underlined=[bool(option_style(app, i).underline) for i in range(3)],
+                bg=[_bg(app, i) for i in range(3)],
+            ),
         ],
         [alpha_group(tmp_path)],
     )
-    grey = HOVER_STYLE.bgcolor.name
-    assert seen["hovered"][2] == grey
-    assert seen["hovered"][0] != grey and seen["hovered"][1] != grey  # only that option
+    assert seen["underlined"] == [False, False, True]  # only the hovered option
+    assert seen["bg"][1:] == [None, None] or seen["bg"][1:] == ["default", "default"]  # no band
+    assert seen["bg"][0] == CURSOR_BACKGROUND  # the cursor band stays on the highlight
     assert run.natives[3] == NativeState("picker", 0)  # the highlight stays put
 
 
-def test_the_highlighted_option_keeps_its_own_style_when_hovered(mocker, tmp_path, monkeypatch):
+def test_the_highlighted_option_keeps_its_cursor_band_and_is_underlined_when_hovered(
+    mocker, tmp_path, monkeypatch
+):
     monkeypatch.delenv("NO_COLOR")
     picker = Picker("x", "Pick", _entries("Alpha", "Beta"))
     seen = []
     drive(
         mocker,
-        [_open(picker), HoverOption(0), lambda app: seen.append(_bg(app, 0))],
+        [_open(picker), HoverOption(0), lambda app: seen.append(option_style(app, 0))],
         [alpha_group(tmp_path)],
     )
-    assert seen[0] != HOVER_STYLE.bgcolor.name
+    style = seen[0]
+    assert style.bgcolor is not None and style.bgcolor.name == CURSOR_BACKGROUND
+    assert style.bold and style.underline
 
 
 def _scroll_y(app) -> int:  # type: ignore[no-untyped-def]
@@ -881,7 +890,7 @@ def test_a_click_while_the_mouse_is_off_opens_nothing(mocker, tmp_path):
     assert run.natives[3] == NativeState("menu", 0, level=None)
 
 
-def test_menu_hover_paints_grey_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+def test_menu_hover_underlines_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")  # the suite sets it, and Textual then strips every colour
     seen = []
     run = drive(
@@ -890,13 +899,15 @@ def test_menu_hover_paints_grey_without_moving_the_cursor(mocker, tmp_path, monk
             "j",
             "enter",
             HoverOption(2),
-            lambda app: seen.append((backgrounds(app), app.frame.native_state())),
+            lambda app: seen.append(
+                (backgrounds(app), app.frame.native_state(), option_style(app, 2))
+            ),
         ],
         [alpha_group(tmp_path)],
     )
-    colours, state = seen[0]
-    grey = HOVER_STYLE.bgcolor.name
-    assert grey in colours and colours <= {"default", grey}
+    colours, state, hovered = seen[0]
+    assert hovered.underline  # the hover is only an underline ...
+    assert colours <= {"default", CURSOR_BACKGROUND}  # ... and the band is the one background
     assert state == NativeState("menu", 0, level=None)
     assert run.natives[3] == NativeState("menu", 0, level=None)
 
@@ -1201,72 +1212,85 @@ def test_a_tick_resyncs_a_checkbox_changed_behind_the_box(mocker, tmp_path):
     assert selected[0] == ["name"]
 
 
-def test_settings_paint_no_background_but_the_hover(mocker, tmp_path, monkeypatch):
+def test_settings_paint_no_background_but_the_cursor_band(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")
     seen = []
     drive(mocker, ["S", lambda app: seen.append(backgrounds(app))], [alpha_group(tmp_path)])
-    assert seen[0] and seen[0] <= {"default"}
+    assert seen[0] and seen[0] <= {"default", CURSOR_BACKGROUND}
 
 
-def _fg(app, text: str):  # type: ignore[no-untyped-def]
-    """The foreground ANSI colour number and weight of the first segment holding ``text``."""
+def _row_style(app, text: str):  # type: ignore[no-untyped-def]
+    """The style of the first segment of the open box holding ``text``."""
     region = app.frame.native_box.region
     for strip in app.screen._compositor.render_strips()[region.y : region.bottom]:
         for segment in strip:
             if text in segment.text and segment.style is not None:
-                color = segment.style.color
-                return (color.number if color else None), bool(segment.style.bold)
+                return segment.style
     raise AssertionError(f"{text!r} is not on screen")
 
 
-def test_the_settings_cursor_row_is_bold_magenta(mocker, tmp_path, monkeypatch):
+def _on_the_band(style) -> bool:  # type: ignore[no-untyped-def]
+    """Whether ``style`` is the cursor's band: bold on CURSOR_BACKGROUND."""
+    return (
+        bool(style.bold) and style.bgcolor is not None and style.bgcolor.name == CURSOR_BACKGROUND
+    )
+
+
+def test_the_settings_cursor_row_is_bold_on_the_cursor_band(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")
     seen = []
     drive(
         mocker,
         [
             "S",
-            lambda app: seen.append(_fg(app, "name")),
+            lambda app: seen.append(_row_style(app, "name")),
             "j",
             lambda app: seen.append(
                 (
-                    _fg(app, "name"),
-                    _fg(app, ds.setting_rows(app.session.overlay, "fields")[1].key),
+                    _row_style(app, "name"),
+                    _row_style(app, ds.setting_rows(app.session.overlay, "fields")[1].key),
                 )
             ),
         ],
         [alpha_group(tmp_path)],
     )
-    assert seen[0] == (5, True)  # row 0 is under the cursor
-    assert seen[1][0] != (5, True)  # it left row 0 ...
-    assert seen[1][1] == (5, True)  # ... and the cursor row is the new one
+    assert _on_the_band(seen[0])  # row 0 is under the cursor
+    assert not _on_the_band(seen[1][0])  # it left row 0 ...
+    assert _on_the_band(seen[1][1])  # ... and the cursor row is the new one
 
 
-def test_settings_hover_paints_grey_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+def test_settings_hover_underlines_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")
     seen = []
     run = drive(
         mocker,
-        ["S", HoverOption(2), lambda app: seen.append([_bg(app, i) for i in range(4)])],
+        [
+            "S",
+            HoverOption(2),
+            lambda app: seen.append([option_style(app, i) for i in range(4)]),
+        ],
         [alpha_group(tmp_path)],
     )
-    grey = HOVER_STYLE.bgcolor.name
-    assert seen[0][2] == grey
-    assert seen[0][0] != grey and seen[0][1] != grey and seen[0][3] != grey
+    styles = seen[0]
+    assert [bool(st.underline) for st in styles] == [False, False, True, False]
+    assert [st.bgcolor.name if st.bgcolor else None for st in styles[1:]] in (
+        [None, None, None],
+        ["default", "default", "default"],
+    )  # hover adds no background
     assert run.natives[2] == NativeState("settings", 0, tab="fields")
 
 
-def test_the_highlighted_settings_row_keeps_its_own_style_when_hovered(
+def test_the_highlighted_settings_row_keeps_its_cursor_band_and_is_underlined_when_hovered(
     mocker, tmp_path, monkeypatch
 ):
     monkeypatch.delenv("NO_COLOR")
     seen = []
     drive(
         mocker,
-        ["S", HoverOption(0), lambda app: seen.append(_bg(app, 0))],
+        ["S", HoverOption(0), lambda app: seen.append(option_style(app, 0))],
         [alpha_group(tmp_path)],
     )
-    assert seen[0] != HOVER_STYLE.bgcolor.name
+    assert _on_the_band(seen[0]) and seen[0].underline
 
 
 def _many_fields(count: int = 40) -> tuple[str, ...]:
@@ -1715,7 +1739,7 @@ def test_a_resize_relays_the_rows_out_and_keeps_the_cursor(mocker, tmp_path):
     assert "alpha, alpha-x" in run.screens[4]  # ...and whole again at 120
 
 
-def test_the_accounts_header_and_list_paint_no_background_of_their_own(
+def test_the_accounts_header_and_list_paint_no_background_but_the_cursor_band(
     mocker, tmp_path, monkeypatch
 ):
     monkeypatch.delenv("NO_COLOR")
@@ -1726,10 +1750,12 @@ def test_the_accounts_header_and_list_paint_no_background_of_their_own(
         ["A", lambda app: seen.append(backgrounds(app))],
         [alpha_group(tmp_path)],
     )
-    assert seen == [{"default"}]
+    assert seen and seen[0] <= {"default", CURSOR_BACKGROUND}
 
 
-def test_hovering_an_account_row_paints_it_without_moving_the_cursor(mocker, tmp_path, monkeypatch):
+def test_hovering_an_account_row_underlines_it_without_moving_the_cursor(
+    mocker, tmp_path, monkeypatch
+):
     monkeypatch.delenv("NO_COLOR")
     fake_accounts_cli(mocker)
     seen = {}
@@ -1738,13 +1764,12 @@ def test_hovering_an_account_row_paints_it_without_moving_the_cursor(mocker, tmp
         [
             "A",
             HoverOption(2),
-            lambda app: seen.update(hovered=[_bg(app, i) for i in range(3)]),
+            lambda app: seen.update(hovered=[option_style(app, i) for i in range(3)]),
         ],
         [alpha_group(tmp_path)],
     )
-    grey = HOVER_STYLE.bgcolor.name
-    assert seen["hovered"][2] == grey
-    assert grey not in (seen["hovered"][0], seen["hovered"][1])
+    assert [bool(st.underline) for st in seen["hovered"]] == [False, False, True]
+    assert all(st.bgcolor is None or st.bgcolor.name == "default" for st in seen["hovered"][1:])
     assert run.natives[3] == NativeState("accounts", 0)
 
 
@@ -1792,7 +1817,9 @@ def _open_each_box(group):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize("kind", ["help", "menu", "picker", "settings", "egress", "accounts"])
-def test_every_native_box_paints_no_background(mocker, tmp_path, monkeypatch, kind):
+def test_every_native_box_paints_no_background_but_the_cursor_band(
+    mocker, tmp_path, monkeypatch, kind
+):
     monkeypatch.delenv("NO_COLOR")  # else Textual strips every colour and the scan proves nothing
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     fake_accounts_cli(mocker)
@@ -1822,7 +1849,7 @@ def test_every_native_box_paints_no_background(mocker, tmp_path, monkeypatch, ki
     assert run.natives  # the app ran
     scanned, box_kind = seen[0]
     assert box_kind == expected_box  # the right native box was open when the screen was scanned
-    assert scanned and scanned <= {"default"}
+    assert scanned and scanned <= {"default", CURSOR_BACKGROUND}
 
 
 def test_the_active_settings_tab_is_reversed_and_the_others_are_not(mocker, tmp_path, monkeypatch):

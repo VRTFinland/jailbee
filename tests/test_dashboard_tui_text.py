@@ -14,6 +14,7 @@ from jailbee.dashboard.tui.native import PromptBox
 from jailbee.dashboard.tui.overlay import CommandState, NativeState, overlay_key
 from tests.dashboard_fixtures import ci, fake_branches, retarget_group
 from tests.dashboard_pilot import (
+    CURSOR_BACKGROUND,
     Paste,
     Pick,
     backgrounds,
@@ -111,11 +112,11 @@ def test_a_multi_line_paste_is_joined_and_a_control_chunk_dropped(mocker, tmp_pa
     assert _texts(run)[-1] == "ls-l"
 
 
-def test_the_command_box_paints_no_background(mocker, tmp_path, monkeypatch):
+def test_the_command_box_paints_no_background_but_the_cursor_band(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")  # else Textual strips every colour and the scan proves nothing
     seen: list[set[str]] = []
     drive(mocker, ["!", "l", lambda app: seen.append(backgrounds(app))], [_group(tmp_path)])
-    assert seen[0] and seen[0] <= {"default"}
+    assert seen[0] and seen[0] <= {"default", CURSOR_BACKGROUND}
 
 
 def test_command_submitted_closes_the_line_and_runs_the_text(mocker, tmp_path):
@@ -240,11 +241,11 @@ def test_ctrl_h_and_backspace_delete(mocker, tmp_path):
     assert _prompt_states(run)[-1].text == "a"
 
 
-def test_the_choice_prompt_paints_no_background_but_the_hover(mocker, tmp_path, monkeypatch):
+def test_the_choice_prompt_paints_no_background_but_the_cursor_band(mocker, tmp_path, monkeypatch):
     monkeypatch.delenv("NO_COLOR")
     seen: list[set[str]] = []
     _retarget(mocker, tmp_path, ["down", lambda app: seen.append(backgrounds(app))])
-    assert seen[0] and seen[0] <= {"default"}
+    assert seen[0] and seen[0] <= {"default", CURSOR_BACKGROUND}
 
 
 def test_validate_answer_reads_the_given_text():

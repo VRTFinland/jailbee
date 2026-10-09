@@ -29,8 +29,8 @@ HitKind = Literal[
 ]
 _KINDS: frozenset[str] = frozenset(get_args(HitKind))
 
-# A dim background, distinct from the cursor's bold magenta foreground.
-HOVER_STYLE = Style(bgcolor="grey23")
+# Deliberately quiet: an underline, so it never looks like the cursor's background band.
+HOVER_STYLE = Style(underline=True)
 
 
 @dataclass(frozen=True)

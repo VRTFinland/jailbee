@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rich.style import Style
 from textual import _wait as textual_wait
 from textual import events
 from textual.app import App, ComposeResult
@@ -26,6 +27,7 @@ from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
+from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
@@ -212,6 +214,21 @@ def _option_target(app: tapp.DashboardApp, index: int) -> tuple[Widget, tuple[in
     target = box.query_one(NATIVE_LIST)
     x, y = option_offset(app, index)
     return target, (x - target.region.x, y - target.region.y)
+
+
+CURSOR_BACKGROUND = str(Style.parse(CURSOR_STYLE).bgcolor.name)  # type: ignore[union-attr]
+"""The one background the cursor band paints; the only one any native box may show."""
+
+
+def option_style(app: tapp.DashboardApp, index: int) -> Style:
+    """The style, as composited, of the first cell of option ``index`` of the open box."""
+    x, y = option_offset(app, index)
+    at = 0
+    for segment in app.screen._compositor.render_strips()[y]:
+        at += segment.cell_length
+        if at > x:
+            return segment.style or Style()
+    raise AssertionError("cell is off screen")
 
 
 def backgrounds(app: App) -> set[str]:

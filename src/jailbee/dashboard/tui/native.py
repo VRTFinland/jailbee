@@ -22,6 +22,7 @@ from typing import ClassVar
 from rich.cells import cell_len
 from rich.console import Console
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -69,8 +70,8 @@ NATIVE_LIST_ID = "native-list"
 KeyOutcome = Message | bool
 """What a box made of a routed key: an outcome to apply, or whether the key was its own."""
 
-# Every overlay list: no background but the hover, the cursor in CURSOR_STYLE
-# (bold magenta), and the V2 scrollbar colours (else Textual's theme paints RGB).
+# Every overlay list: no background but the cursor's band (CURSOR_STYLE, painted by
+# `_hovered`), and the V2 scrollbar colours (else Textual's theme paints RGB).
 _SCROLLBAR_CSS = """
     scrollbar-size-vertical: 1;
     scrollbar-size-horizontal: 0;
@@ -103,11 +104,14 @@ def list_css(name: str) -> str:
     {name} > .option-list--option-highlighted,
     {name}:focus > .option-list--option-highlighted {{
         background: ansi_default;
-        color: ansi_magenta;
+        color: ansi_default;
         text-style: bold;
     }}
     {name} > .option-list--option-disabled {{ background: ansi_default; text-style: dim; }}
     """
+
+
+_CURSOR = Style.parse(CURSOR_STYLE)
 
 
 def _wheel(widget: Widget, event: events.MouseEvent, step: int, enabled: bool) -> None:
@@ -119,23 +123,29 @@ def _wheel(widget: Widget, event: events.MouseEvent, step: int, enabled: bool) -
 
 
 def _hovered(lst: OptionList, y: int, strip: Strip) -> Strip:
-    """``strip`` painted with HOVER_STYLE when it is a line of the hovered option.
+    """``strip`` painted with CURSOR_STYLE / HOVER_STYLE on the highlighted / hovered option.
 
-    Textual CSS cannot name the 256-colour grey the table hovers with, so the
-    hover is painted here. Reads two private attributes of Textual 8.2.8's
-    OptionList: ``_mouse_hovering_over`` (option index) and ``_lines``
-    ((option index, line offset) per virtual line). The highlighted option
-    keeps its own style, as Textual's precedence does. Read with ``getattr``: a
-    renamed attribute (this pins Textual 8.2.8) degrades to no hover paint.
+    Textual CSS cannot name the 256-colour grey of the table's cursor band, so
+    both are painted here, as the table paints them. Reads two private
+    attributes of Textual 8.2.8's OptionList: ``_mouse_hovering_over`` (option
+    index) and ``_lines`` ((option index, line offset) per virtual line). Read
+    with ``getattr``: a renamed attribute (this pins Textual 8.2.8) degrades to
+    no paint.
     """
     hovered = getattr(lst, "_mouse_hovering_over", None)
-    if hovered is None or hovered == lst.highlighted:
+    highlighted = lst.highlighted
+    if hovered is None and highlighted is None:
         return strip
     line = lst.scroll_offset.y + y
     lines = getattr(lst, "_lines", None) or []
-    if 0 <= line < len(lines) and lines[line][0] == hovered:
-        # post_style: the option's own (default) background would win over a plain apply_style
-        return Strip(Segment.apply_style(strip, post_style=HOVER_STYLE), strip.cell_length)
+    if not 0 <= line < len(lines):
+        return strip
+    option = lines[line][0]
+    # post_style: the option's own (default) background would win over a plain apply_style
+    if option == highlighted:
+        strip = Strip(Segment.apply_style(strip, post_style=_CURSOR), strip.cell_length)
+    if option == hovered:
+        strip = Strip(Segment.apply_style(strip, post_style=HOVER_STYLE), strip.cell_length)
     return strip
 
 

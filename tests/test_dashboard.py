@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console, RenderableType
+from rich.style import Style
 
 from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary
@@ -21,6 +22,7 @@ from jailbee.dashboard import details as dd
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.hit import HOVER_STYLE
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import fleet
 from jailbee.dashboard.tui import frame as tframe
@@ -2953,7 +2955,7 @@ def _render_text(renderable: RenderableType, width: int = 200) -> str:
 
 def _cursor_lines(lines: list[str]) -> list[str]:
     """Lines carrying the cursor highlight — the only cursor indicator."""
-    console = Console(force_terminal=True, color_system="standard", no_color=False)
+    console = Console(force_terminal=True, color_system="256", no_color=False)
     with console.capture() as cap:
         console.print(f"[{CURSOR_STYLE}]x[/]", end="")
     sgr = cap.get().split("x", 1)[0]
@@ -4441,7 +4443,12 @@ def test_cursor_style_is_distinct_from_every_heading_colour(tmp_path):
     orphan = dmodel.RepoGroup("gamma", None, None, [])
     resting = {str(fleet.repo_heading(g, None, frozenset()).style) for g in (repo, orphan)}
     assert resting == {"bold cyan", "bold yellow"}
-    assert CURSOR_STYLE == "bold magenta"
+    # A background band, never a foreground colour; the hover has no background,
+    # so a hovered row and the cursor row never look alike.
+    assert CURSOR_STYLE == "bold on grey30"
+    cursor = Style.parse(CURSOR_STYLE)
+    assert cursor.bgcolor is not None and cursor.color is None
+    assert HOVER_STYLE.bgcolor is None
     for g in (repo, orphan):
         on_it = fleet.repo_heading(g, dmodel.Row("repo", g.prefix), frozenset())
         assert str(on_it.style) == CURSOR_STYLE

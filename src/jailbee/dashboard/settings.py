@@ -30,12 +30,13 @@ SHOW_EMPTY = "\x00show-empty"
 # The row's identity and the frozen column: always on, always first.
 LOCKED_FIELD = "name"
 
-# The cursor row's text style for every TUI dashboard surface: container
-# rows, repo headings, action menus and this overlay. It lives here, the
-# lowest module that draws a cursor, so every dashboard module can import it. It must
-# stay distinct from the headings' resting colours (cyan, yellow). Container
-# rows and headings carry no other cursor marker.
-CURSOR_STYLE = "bold magenta"
+# The cursor row's style for every TUI dashboard surface: container rows, repo
+# headings, action menus and this overlay. It lives here, the lowest module that
+# draws a cursor, so every dashboard module can import it. A background band, so
+# it reads as "the selected row" and never as a heading's resting colour (cyan,
+# yellow); the mouse hover is only an underline (``dashboard.hit.HOVER_STYLE``),
+# so the two never look alike. Container rows and headings carry no other cursor marker.
+CURSOR_STYLE = "bold on grey30"
 
 
 @dataclass(frozen=True)

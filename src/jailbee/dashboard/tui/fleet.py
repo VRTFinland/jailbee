@@ -292,5 +292,6 @@ def entry_line(
     ]
     hit = dhit.hit_style("row", entry.container.name)
     base = MARKED_STYLE + hit if entry.marked else hit
-    style = Style.parse(CURSOR_STYLE) + base if selected else base
+    # The cursor's band wins over a mark's blue; the row's `●` still shows the mark.
+    style = base + Style.parse(CURSOR_STYLE) if selected else base
     return _join(_with_marks(cells, geometry, Text(" "), Text(" ")), style)
