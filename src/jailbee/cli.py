@@ -6704,16 +6704,19 @@ def _do_single_push(
 
 @git_app.command("push")
 def push(
-    name: Annotated[
-        str | None,
+    names: Annotated[
+        list[str] | None,
         typer.Argument(
             help=(
-                "Container to push to, named in full or by its short name. "
-                "Omit it and jailbee picks among the containers eligible for a "
+                "Container(s) to push to, named in full or by their short name. "
+                "Several are pushed to in the order given, with the source and "
+                "action resolved once; failures do not stop the batch. Omit them "
+                "and jailbee picks among the containers eligible for a "
                 "push (running, not in mount mode): the only one is used, "
                 "otherwise a multi-select picker opens and each selection is "
                 "pushed to in turn (TTY required). With --pr, only PR "
-                "containers are eligible and the picker selects one."
+                "containers are eligible and the picker selects one; with --pr, "
+                "exactly one PR container."
             ),
             autocompletion=completion.complete_container,
         ),
@@ -6886,6 +6889,7 @@ def push(
 
       jailbee git push                          # multi-select; source/action asked once
       jailbee git push feat-foo                 # honors push.default_* or prompts
+      jailbee git push feat-a feat-b --merge    # several, source/action asked once
       jailbee git push feat-foo --current       # send host's current branch
       jailbee git push feat-foo --merge --current
       jailbee git push feat-foo --pr --merge --no-ff  # merge commit, diverged PR head
@@ -6902,6 +6906,11 @@ def push(
     push.default_action, push.default_source, push.push_from and
     push.autofetch.
     """
+    name = names[0] if names is not None and len(names) == 1 else None
+    batch_names = names if names is not None and len(names) > 1 else None
+    if batch_names is not None and pr_refresh:
+        error("--pr takes exactly one container: each PR container has its own head.")
+        raise typer.Exit(2)
     if sum([merge, rebase, plain, force]) > 1:
         error("--merge, --rebase, --plain, and --force are mutually exclusive.")
         raise typer.Exit(2)
@@ -6912,8 +6921,8 @@ def push(
         raise typer.Exit(2)
     if force and name is None:
         error(
-            "--force requires an explicit container name; it is not "
-            "available in the multi-select picker."
+            "--force requires exactly one explicit container name; it is not "
+            "available with several names or in the multi-select picker."
         )
         raise typer.Exit(2)
     if source is not None and current:
@@ -6993,34 +7002,40 @@ def push(
     merge_confirm = default_confirm if prompting.is_interactive() else None
 
     if name is None and selected_pr is None:
-        from jailbee.incus import Incus
-        from jailbee.lifecycle import list_containers
-
-        incus = Incus()
-        all_containers = list_containers(cfg, incus, with_git_status=True)
-        pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
-        if not pushable:
-            raise prompting.MissingValue(
-                "container",
-                reason=(
-                    "No pushable containers (none running, or all in mount "
-                    "mode). Start one with 'jailbee start <name>'."
-                ),
-            )
         selected: list[str]
-        # Push is non-destructive: one eligible container is taken unasked, but
-        # only where a person can see the line saying so — a script is told the
-        # candidates instead, as for every other missing container.
-        if len(pushable) == 1 and prompting.is_interactive():
-            only_full = pushable[0].name
-            info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
-            selected = [only_full]
+        if batch_names is not None:
+            # Named explicitly: no picker, and no auto-selected target to confirm.
+            incus, selected = _resolve_many(cfg, batch_names)
+            auto_selected = False
         else:
-            picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
-            if not picked:
-                info("Nothing selected.")
-                return
-            selected = picked
+            from jailbee.incus import Incus
+            from jailbee.lifecycle import list_containers
+
+            incus = Incus()
+            all_containers = list_containers(cfg, incus, with_git_status=True)
+            pushable = [c for c in all_containers if c.state == "Running" and c.mode != "mount"]
+            if not pushable:
+                raise prompting.MissingValue(
+                    "container",
+                    reason=(
+                        "No pushable containers (none running, or all in mount "
+                        "mode). Start one with 'jailbee start <name>'."
+                    ),
+                )
+            # Push is non-destructive: one eligible container is taken unasked, but
+            # only where a person can see the line saying so — a script is told the
+            # candidates instead, as for every other missing container.
+            if len(pushable) == 1 and prompting.is_interactive():
+                only_full = pushable[0].name
+                info(f"Only one eligible container; pushing to '{short_name(cfg, only_full)}'.")
+                selected = [only_full]
+            else:
+                picked = _pick_containers(cfg, pushable, message="Select containers to push to:")
+                if not picked:
+                    info("Nothing selected.")
+                    return
+                selected = picked
+            auto_selected = len(pushable) == 1
 
         # Resolve source + action ONCE, applied to every container. A PR head
         # selected in the picker also fixes the exact host ref to push.
@@ -7067,8 +7082,8 @@ def push(
                 raise typer.Abort()
 
         # Auto-selection is exactly the `len(pushable) == 1` branch above: with
-        # two or more the picker ran, and an explicit name never reaches here
-        # (the `name is None` block returns).
+        # two or more the picker ran, and a single explicit name never reaches
+        # here. An explicit list of names sets `auto_selected` False.
         #
         # `resolved_source` may still be the _BaseSource sentinel — plan_push
         # needs a concrete branch, so resolve it the same way _do_single_push
@@ -7079,7 +7094,7 @@ def push(
             plan_source = _container_base_branch(incus, selected[0])
         fetch_arg = fetch
         if isinstance(plan_source, str) and _should_show_plan(
-            cfg, auto_selected=len(pushable) == 1, flag=confirm
+            cfg, auto_selected=auto_selected, flag=confirm
         ):
             # Bound to their own annotated locals because mypy's narrowing
             # (the isinstance above, and resolved_action's `is None` check

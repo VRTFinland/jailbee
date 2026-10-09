@@ -732,3 +732,71 @@ def test_push_resolves_ff_config_into_the_no_ff_tristate(
 
     assert result.exit_code == 0, result.output
     assert do_push.call_args.kwargs["no_ff"] is expected_no_ff
+
+
+def _wire_named(mocker, tmp_path, **kw):
+    cfg = _wire(mocker, tmp_path, containers=[], picked=None, **kw)
+    mocker.patch(
+        "jailbee.cli._resolve_existing",
+        side_effect=lambda _cfg, typed, **_kw: (mocker.Mock(), f"myrepo-{typed}"),
+    )
+    return cfg
+
+
+def test_push_several_names_pushes_each_without_a_picker(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    picker = mocker.patch("jailbee.tui.pick_containers_multi")
+    do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    assert [c.args[2] for c in do_push.call_args_list] == ["feat-a", "feat-b"]
+    picker.assert_not_called()
+    assert "Summary:" in result.stdout + (result.stderr or "")
+
+
+def test_push_several_names_ask_source_and_action_once(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="ask", source="ask")
+    pick_source = mocker.patch("jailbee.cli._pick_push_source", return_value="main")
+    pick_action = mocker.patch("jailbee.cli._pick_push_action", return_value="plain")
+    mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    pick_source.assert_called_once()
+    pick_action.assert_called_once()
+
+
+def test_push_several_names_never_show_the_auto_target_plan(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    plan = mocker.patch("jailbee.cli._confirm_plan_if_buildable")
+    mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    plan.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", ["--pr", "--force"])
+def test_push_pr_or_force_with_several_names_is_a_usage_error(mocker, tmp_path, flag):
+    _wire_named(mocker, tmp_path, action="plain")
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b", flag])
+
+    assert result.exit_code == 2
+    do_push.assert_not_called()
+
+
+def test_push_one_name_still_takes_the_single_path(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    summary = mocker.patch("jailbee.cli._print_push_batch_summary")
+    mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    summary.assert_not_called()
