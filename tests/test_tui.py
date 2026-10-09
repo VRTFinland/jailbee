@@ -1025,3 +1025,31 @@ def test_choice_base_shows_the_fork_marker():
     assert _choice_base(c) == "⑂ a"
     c.fork_of = None
     assert _choice_base(c) == "main"
+
+
+def test_pick_containers_multi_forwards_initial_as_the_cursor_row(mocker):
+    cb = mocker.patch("jailbee.tui.checkbox", return_value=[])
+
+    pick_containers_multi([_info("r-a"), _info("r-b")], initial="r-b")
+
+    assert cb.call_args.kwargs["initial_choice"] == "r-b"
+
+
+def test_pick_containers_multi_has_no_cursor_row_by_default(mocker):
+    cb = mocker.patch("jailbee.tui.checkbox", return_value=[])
+
+    pick_containers_multi([_info("r-a")])
+
+    assert cb.call_args.kwargs["initial_choice"] is None
+
+
+def test_questionary_initial_choice_accepts_a_value_and_points_the_cursor_there():
+    # The semantics the picker relies on: a *value* (not the Choice) moves the
+    # pointer, and nothing becomes ticked.
+    from questionary import Choice
+    from questionary.prompts.common import InquirerControl
+
+    ic = InquirerControl([Choice("a", value="r-a"), Choice("b", value="r-b")], initial_choice="r-b")
+
+    assert ic.pointed_at == 1
+    assert ic.selected_options == []

@@ -743,8 +743,12 @@ def pick_containers_multi(
     containers: list[ContainerInfo],
     *,
     message: str = "Select containers to destroy:",
+    initial: str | None = None,
 ) -> list[str] | None:
     """Interactive checkbox picker for managed containers.
+
+    ``initial`` is the full name of the row the cursor starts on; it must be
+    one of ``containers`` (questionary raises otherwise). Nothing is ticked.
 
     Returns the chosen containers' full names (possibly empty), or None
     if the user cancels (Ctrl+C / ESC). Caller is responsible for the
@@ -759,7 +763,7 @@ def pick_containers_multi(
     choices = [
         questionary.Choice(title=_format_choice_title(c, widths), value=c.name) for c in containers
     ]
-    result = checkbox(message, choices=choices)
+    result = checkbox(message, choices=choices, initial_choice=initial)
     if result is None:
         return None
     return [str(v) for v in result]

@@ -805,6 +805,17 @@ def container_repo_dir(cfg: Config, incus: Incus, name: str) -> str:
 _VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
+def merge_default_target(sources: Sequence[ContainerInfo]) -> str | None:
+    """The target a merge of ``sources`` most likely means: their common fork source.
+
+    Used only to place a picker's cursor — a merge target is never inferred.
+    """
+    forks = {c.fork_of for c in sources}
+    if len(forks) != 1:
+        return None
+    return next(iter(forks))
+
+
 def short_name(cfg: Config, name: str) -> str:
     """User-facing form: strip the ``<container_prefix>-`` prefix if present.
 

@@ -801,6 +801,8 @@ class _Pickers:
         self.order: list[str] = []
         self.offered: dict[str, list[str]] = {}
         self.messages: dict[str, str] = {}
+        # The `initial` cursor value each prompt was asked with (None: not given).
+        self.initial: dict[str, str | None] = {}
         # What each prompt answers, set per test: a list is a tick, `None` a
         # cancel, `[]` an empty selection.
         self.source_answer: list[str] | None = []
@@ -809,9 +811,10 @@ class _Pickers:
         mocker.patch("jailbee.tui.pick_containers_multi", side_effect=self._multi_asked)
         mocker.patch("jailbee.tui.pick_container", side_effect=self._single_asked)
 
-    def _multi_asked(self, containers, *, message: str):
+    def _multi_asked(self, containers, *, message: str, initial: str | None = None):
         end = "sources" if "FROM" in message else "targets"
         self._record(end, containers, message)
+        self.initial[end] = initial
         return self.source_answer if end == "sources" else self.target_answer
 
     def _single_asked(self, containers, *, message: str):
@@ -1109,3 +1112,71 @@ def test_git_merge_cancelled_single_source_prompt_merges_nothing(merge_pickers, 
     assert result.exit_code == 1
     assert "cancelled" in panel_text((result.output or "") + (result.stderr or ""))
     called.assert_not_called()
+
+
+def test_merge_default_target_common_fork_of():
+    from dataclasses import replace
+
+    from jailbee.lifecycle import merge_default_target
+
+    a = _info("a")
+    assert merge_default_target([replace(a, fork_of="sampleapp-src")]) == "sampleapp-src"
+    two = [
+        replace(a, fork_of="sampleapp-src"),
+        replace(a, name="sampleapp-b", fork_of="sampleapp-src"),
+    ]
+    assert merge_default_target(two) == "sampleapp-src"
+    mixed = [
+        replace(a, fork_of="sampleapp-src"),
+        replace(a, name="sampleapp-b", fork_of="sampleapp-x"),
+    ]
+    assert merge_default_target(mixed) is None
+    assert merge_default_target([a]) is None
+    assert merge_default_target([]) is None
+
+
+def test_git_merge_target_picker_starts_on_the_sources_fork_source(merge_pickers, mocker):
+    from dataclasses import replace
+
+    p = merge_pickers
+    p.offer(_info("src"), replace(_info("b"), fork_of="sampleapp-src"), _info("other"))
+    p.source_answer = ["sampleapp-b"]
+    p.target_answer = ["sampleapp-src"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge"])
+
+    assert result.exit_code == 0, result.output
+    assert p.initial["targets"] == "sampleapp-src"
+    assert p.initial["sources"] is None
+
+
+def test_git_merge_target_picker_has_no_cursor_hint_for_a_non_fork(merge_pickers, mocker):
+    p = merge_pickers
+    p.offer(_info("src"), _info("b"))
+    p.source_answer = ["sampleapp-b"]
+    p.target_answer = ["sampleapp-src"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    runner.invoke(app, ["git", "merge"])
+
+    assert p.initial["targets"] is None
+
+
+def test_git_merge_target_picker_ignores_a_fork_source_that_is_not_offered(merge_pickers, mocker):
+    from dataclasses import replace
+
+    p = merge_pickers
+    # The fork source is stopped, so it is not a candidate and cannot be pointed at.
+    p.offer(
+        _info("src", state="Stopped"),
+        replace(_info("b"), fork_of="sampleapp-src"),
+        _info("other"),
+    )
+    p.source_answer = ["sampleapp-b"]
+    p.target_answer = ["sampleapp-other"]
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    runner.invoke(app, ["git", "merge"])
+
+    assert p.initial["targets"] is None

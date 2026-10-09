@@ -4217,8 +4217,11 @@ def _pick_containers(
     message: str,
     alternative: str | None = None,
     noun: str = "container",
+    initial: str | None = None,
 ) -> list[str]:
     """Several containers, chosen per the missing-value policy (multi-select).
+
+    `initial` (a full name among `containers`) only places the picker's cursor.
 
     `noun` names what is missing in the off-TTY error, for callers where
     "container" alone would not say which argument to pass.
@@ -4237,7 +4240,10 @@ def _pick_containers(
         raise prompting.MissingValue(
             noun, candidates=[c.display_name for c in containers], alternative=alternative
         )
-    picked = tui.pick_containers_multi(containers, message=message)
+    if initial is None:
+        picked = tui.pick_containers_multi(containers, message=message)
+    else:
+        picked = tui.pick_containers_multi(containers, message=message, initial=initial)
     if picked is None:
         raise prompting.Cancelled()
     return picked
@@ -7908,7 +7914,7 @@ def _prompt_merge_endpoints(
     """
     from jailbee import prompting, tui
     from jailbee.incus import Incus
-    from jailbee.lifecycle import short_name
+    from jailbee.lifecycle import merge_default_target, short_name
 
     incus = Incus()
     candidates = _eligible_merge_containers(cfg, incus)
@@ -7975,11 +7981,20 @@ def _prompt_merge_endpoints(
                     "container was chosen as a source."
                 ),
             )
+        # Cursor only: a fork's merge usually goes back to its source, but the
+        # target is never inferred — and a source that is not offered (stopped,
+        # or itself a source) cannot be pointed at.
+        initial = merge_default_target(
+            [c for c in candidates if short_name(cfg, c.name) in sources]
+        )
+        if initial not in {c.name for c in offer}:
+            initial = None
         targets = _pick_containers(
             cfg,
             offer,
             message="Select containers to merge INTO (each takes every source):",
             noun=target_noun,
+            initial=initial,
         )
         if not targets:
             info("Nothing selected.")
