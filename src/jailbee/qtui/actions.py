@@ -12,6 +12,7 @@ rest are fire and forget — see :data:`LaunchMode`.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -145,6 +146,29 @@ def build_action(
         argv += extra_flags
     return ActionCommand(
         argv=argv, launch=launch_mode(verb), confirm=confirm, cwd=target.cwd(), verb=verb
+    )
+
+
+def build_bulk_action(
+    verb: str,
+    names: Sequence[str],
+    target: RepoTarget,
+    *,
+    extra_flags: list[str] | None = None,
+) -> ActionCommand:
+    """One run of a foreground bulk verb over ``names`` in ``target``.
+
+    The CLI's own multi-target form (`git push a b`, `git pull a b`,
+    `merge a b`): no ``--force`` (none of these takes one), no ``--into`` for
+    merge (its target question is the point of the terminal).
+    """
+    argv = ["jailbee", *verb.split(), *names, *target.flags(), *(extra_flags or [])]
+    return ActionCommand(
+        argv=argv,
+        launch=launch_mode(verb),
+        confirm=verb in _CONFIRM_VERBS,
+        cwd=target.cwd(),
+        verb=verb,
     )
 
 

@@ -1840,3 +1840,101 @@ def test_run_closes_the_client_even_when_persisting_fails(mocker):
         qapp.run(None)
 
     client.close.assert_called_once()
+
+
+def _bulk_controller(mocker, tmp_path, **kw):
+    from jailbee.lifecycle import ContainerInfo
+
+    controller = _controller_with_group(mocker, tmp_path, **kw)
+    controller._latest[0].containers.append(
+        ContainerInfo(name="p-bar", state="Running", network="strict", ip=None, memory_limit=None)
+    )
+    return controller
+
+
+def test_bulk_stop_launches_one_detached_child_per_container(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("stop", ["p-foo", "p-bar"])
+
+    assert [c.args[0][:3] for c in popen.call_args_list] == [
+        ["jailbee", "stop", "p-foo"],
+        ["jailbee", "stop", "p-bar"],
+    ]
+
+
+def test_bulk_destroy_asks_once_and_forces(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    mocker.patch("jailbee.dashboard.bulk.destroy_risk_lines", return_value=("⚠ p-foo: dirty",))
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+    )
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("destroy", ["p-foo", "p-bar"])
+
+    question.assert_called_once()
+    assert "⚠ p-foo: dirty" in question.call_args.args[2]
+    assert all("--force" in c.args[0] for c in popen.call_args_list)
+    assert len(popen.call_args_list) == 2
+
+
+def test_bulk_destroy_declined_launches_nothing(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    mocker.patch("jailbee.dashboard.bulk.destroy_risk_lines", return_value=())
+    mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question", return_value=QMessageBox.StandardButton.No
+    )
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("destroy", ["p-foo", "p-bar"])
+
+    popen.assert_not_called()
+
+
+def test_bulk_loose_asks_the_ttl_once(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    ask = mocker.patch("jailbee.qtui.app.QInputDialog.getItem", return_value=("2h", True))
+    popen = mocker.patch("jailbee.qtui.app.subprocess.Popen")
+
+    controller.on_bulk_action("net loose", ["p-foo", "p-bar"])
+
+    ask.assert_called_once()
+    assert [c.args[0][-2:] for c in popen.call_args_list] == [["--for", "2h"], ["--for", "2h"]]
+
+
+def test_bulk_push_opens_one_output_window_for_the_repo(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    mocker.patch("jailbee.qtui.app.push_questions", return_value=(False, False))
+    output = mocker.patch.object(controller, "_open_output")
+
+    controller.on_bulk_action("git push", ["p-foo", "p-bar"])
+
+    output.assert_called_once()
+    assert output.call_args.args[0][:5] == ["jailbee", "git", "push", "p-foo", "p-bar"]
+
+
+def test_bulk_pull_confirms_once_and_runs_once(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+    )
+    output = mocker.patch.object(controller, "_open_output")
+
+    controller.on_bulk_action("git pull", ["p-foo", "p-bar"])
+
+    question.assert_called_once()
+    assert output.call_args.args[0][:5] == ["jailbee", "git", "pull", "p-foo", "p-bar"]
+
+
+def test_bulk_merge_opens_one_terminal(mocker, tmp_path):
+    controller = _bulk_controller(mocker, tmp_path)
+    spawn = mocker.patch.object(controller, "_spawn", return_value=True)
+
+    controller.on_bulk_action("merge", ["p-foo", "p-bar"])
+
+    action = spawn.call_args.args[0]
+    assert action.argv[:4] == ["jailbee", "merge", "p-foo", "p-bar"]
+    assert "--into" not in action.argv
+    assert action.launch == "terminal"
