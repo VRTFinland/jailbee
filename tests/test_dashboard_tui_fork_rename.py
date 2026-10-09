@@ -171,7 +171,7 @@ _FORK_KEYS = ["j", "enter", "f", *keys("b"), "enter"]
 
 
 def test_a_failed_background_fork_is_noticed_as_a_fork(mocker, tmp_path):
-    group, _target_ = _target(tmp_path)
+    group, _ = _target(tmp_path)
     mocker.patch.object(
         tsession.subprocess,
         "run",
@@ -187,7 +187,7 @@ def test_a_failed_background_fork_is_noticed_as_a_fork(mocker, tmp_path):
 
 
 def test_a_failed_attended_fork_is_noticed_as_a_fork(mocker, tmp_path):
-    group, _target_ = _target(tmp_path)
+    group, _ = _target(tmp_path)
     detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
     attended = mocker.Mock(returncode=3, stderr=None)
     mocker.patch.object(tsession.subprocess, "run", side_effect=[detached, attended])

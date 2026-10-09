@@ -118,7 +118,18 @@ def _git(repo, *args):
 def real_repo(cfg):
     repo = cfg.repo_root
     _git(repo, "init", "-q", "-b", "main")
-    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c")
+    _git(
+        repo,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "c",
+    )
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
