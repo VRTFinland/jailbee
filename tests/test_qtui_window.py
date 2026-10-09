@@ -834,3 +834,57 @@ def test_compact_table_headers_and_cells_explain_values(qtbot):
     assert "permission" in row.toolTip(columns["AI"])
     assert "target" in headers.toolTip(columns["DIFF"])
     assert "host" in headers.toolTip(columns["L DIFF"])
+
+
+def _select_both(win):
+    group = win.tree.topLevelItem(0)
+    win.tree.setCurrentItem(group.child(0))
+    group.child(1).setSelected(True)
+
+
+def test_the_table_allows_extended_selection(qtbot):
+    from PySide6.QtWidgets import QAbstractItemView
+
+    win = MainWindow(layout="table")
+    qtbot.addWidget(win)
+
+    assert win.tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
+
+
+def test_a_refresh_keeps_every_selected_row(qtbot):
+    win = MainWindow(layout="table")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    _select_both(win)
+
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+
+    assert win._selected_names() == ["p-foo", "p-bar"]
+
+
+def test_context_menu_with_two_rows_offers_bulk_actions(qtbot):
+    from PySide6.QtCore import QPoint, QTimer
+    from PySide6.QtWidgets import QApplication, QMenu
+
+    win = MainWindow(layout="table")
+    qtbot.addWidget(win)
+    win.set_groups(_groups(), now=datetime.now().astimezone())
+    _select_both(win)
+    seen = []
+    win.bulkActionRequested.connect(lambda verb, names: seen.append((verb, list(names))))
+    labels = []
+
+    def interact():
+        popup = QApplication.activePopupWidget()
+        if not isinstance(popup, QMenu):
+            return
+        labels.extend(action.text() for action in popup.actions())
+        next(a for a in popup.actions() if a.text() == "Destroy… (2)").trigger()
+        popup.close()
+
+    QTimer.singleShot(0, interact)
+    win._on_context_menu(QPoint(0, 0))
+
+    assert labels[0] == "2 selected"
+    assert "Start (1)" in labels and "Stop (1)" in labels
+    assert seen == [("destroy", ["p-foo", "p-bar"])]
