@@ -7,6 +7,9 @@ from pathlib import Path
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import bulk
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.jobs import JobResult
+from jailbee.dashboard.overlays import PickerEntry
+from jailbee.destroy_guard import RiskSummary
 from jailbee.git_status import GitStatus
 from jailbee.remote_ssh.router import RouteError
 from tests.dashboard_fixtures import ci
@@ -149,3 +152,80 @@ def test_nothing_to_do_names_every_reason(tmp_path):
         bulk.nothing_to_do(action)
         == "Stop: nothing to do (alpha-a: already stopped; alpha-b: gone)"
     )
+
+
+def test_a_batch_summarises_ok_failed_and_skipped():
+    batch = bulk.BulkBatch("stop", pending={"a", "b"}, skipped={"c": "already stopped"})
+    batch.finish("a", JobResult(0, ""))
+    assert not batch.done
+    batch.finish("b", JobResult(1, "warn\nboom\n"))
+
+    assert batch.done
+    assert batch.ok == ["a"]
+    assert batch.summary() == "stop: 1 ok, 1 failed (b: boom), 1 skipped (c: already stopped)"
+
+
+def test_a_silent_failure_reports_its_exit_code():
+    batch = bulk.BulkBatch("start", pending={"a"})
+    batch.finish("a", JobResult(3, ""))
+
+    assert batch.summary() == "start: 0 ok, 1 failed (a: exited 3)"
+
+
+def test_a_child_that_wanted_a_terminal_says_so():
+    batch = bulk.BulkBatch("stop", pending={"a"})
+    batch.finish("a", JobResult(1, "no terminal to ask on"))
+
+    assert batch.failed == {"a": "needs a terminal; run it from its own menu"}
+
+
+def test_destroy_risk_lines_assess_each_probed_container_with_its_repo_config(tmp_path, mocker):
+    dirty = ci(
+        "alpha-a",
+        "alpha",
+        git_status=GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="0", conflict="ok"),
+    )
+    unprobed = ci("alpha-b", "alpha")
+    groups = [_group(tmp_path, dirty, unprobed)]
+    load = mocker.patch("jailbee.config.load_repo_config", return_value=mocker.Mock())
+    mocker.patch(
+        "jailbee.destroy_guard.assess",
+        side_effect=lambda _cfg, c: RiskSummary(c.name, ("uncommitted changes",)),
+    )
+
+    lines = bulk.destroy_risk_lines(groups, ["alpha-a", "alpha-b"])
+
+    load.assert_called_once_with(tmp_path)
+    assert lines[0] == "⚠ alpha-a: uncommitted changes"
+    assert "git status unknown for: " in lines[1] and "alpha-b" in lines[1]
+
+
+def test_destroy_risk_lines_survive_an_unreadable_config(tmp_path, mocker):
+    dirty = ci(
+        "alpha-a",
+        "alpha",
+        git_status=GitStatus(wt="+1 -0", ahead_diff="clean", ahead_count="0", conflict="ok"),
+    )
+    mocker.patch("jailbee.config.load_repo_config", side_effect=ValueError("broken"))
+
+    assert bulk.destroy_risk_lines([_group(tmp_path, dirty)], ["alpha-a"]) == ()
+
+
+def test_the_loose_default_is_the_first_repo_with_a_revert_policy(tmp_path):
+    off = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-a", "alpha")], loose_ttl_default=None
+    )
+    on = dmodel.RepoGroup(
+        "beta", str(tmp_path), None, [ci("beta-a", "beta")], loose_ttl_default="30m"
+    )
+
+    assert bulk.bulk_loose_default([off, on], ["alpha-a", "beta-a"]) == "30m"
+    assert bulk.bulk_loose_default([off], ["alpha-a"]) is None
+
+
+def test_loose_ttl_entries_lead_with_the_default_and_end_with_never():
+    entries = bulk.loose_ttl_entries("45m")
+
+    assert entries[0] == PickerEntry("45m", "45m")
+    assert entries[-1] == PickerEntry("never (no auto-revert)", "never")
+    assert [e.value for e in bulk.loose_ttl_entries("1h")].count("1h") == 1

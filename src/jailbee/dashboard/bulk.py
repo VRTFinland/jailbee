@@ -8,14 +8,21 @@ container takes a bulk verb exactly when its own menu offers that verb
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.dashboard.jobs import JobResult, needs_terminal
 from jailbee.dashboard.menus import actions_for_container
 from jailbee.dashboard.model import RepoGroup, RepoTarget, _find_group
+from jailbee.dashboard.overlays import PickerEntry
 from jailbee.lifecycle import ContainerInfo
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
 
 BulkMode = Literal["parallel", "foreground"]
 
@@ -197,3 +204,106 @@ def foreground_runs(groups: Sequence[RepoGroup], action: BulkAction) -> list[For
             continue
         runs.append(ForegroundRun(group.prefix, target, (*action.verb.split(), *names), names))
     return runs
+
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class BulkBatch:
+    """One parallel bulk run while its children finish; ``summary`` once ``done``."""
+
+    verb: str
+    pending: set[str] = field(default_factory=set)
+    ok: list[str] = field(default_factory=list)
+    failed: dict[str, str] = field(default_factory=dict)
+    skipped: dict[str, str] = field(default_factory=dict)
+
+    def finish(self, name: str, result: JobResult) -> None:
+        self.pending.discard(name)
+        if result.returncode == 0:
+            self.ok.append(name)
+        elif needs_terminal(result):
+            self.failed[name] = "needs a terminal; run it from its own menu"
+        else:
+            self.failed[name] = result.failure_line() or f"exited {result.returncode}"
+
+    @property
+    def done(self) -> bool:
+        return not self.pending
+
+    def summary(self) -> str:
+        def listed(items: dict[str, str]) -> str:
+            return "; ".join(f"{name}: {reason}" for name, reason in items.items())
+
+        parts = [f"{len(self.ok)} ok"]
+        if self.failed:
+            parts.append(f"{len(self.failed)} failed ({listed(self.failed)})")
+        if self.skipped:
+            parts.append(f"{len(self.skipped)} skipped ({listed(self.skipped)})")
+        return f"{self.verb}: " + ", ".join(parts)
+
+
+def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tuple[str, ...]:
+    """What destroying ``names`` would discard: one line per risky container.
+
+    The same assessment `destroy --all` prints (`cli._warn_before_destroy`) and
+    the Qt confirm shows. Each repo's config is loaded once, from its root (a
+    repo with no config file still has the synthesized one). An unreadable
+    config degrades to "no risk shown", as in the Qt dialog.
+    """
+    from jailbee.config import load_repo_config
+    from jailbee.destroy_guard import assess, status_is_unknown, unknown_status_warning
+
+    lines: list[str] = []
+    unknown: list[str] = []
+    configs: dict[str, Config | None] = {}
+    for name in names:
+        group = _find_group(list(groups), name)
+        container = _container(groups, name)
+        if group is None or container is None or group.repo_root is None:
+            continue
+        if status_is_unknown(container):
+            unknown.append(container.name)
+            continue
+        if container.git_status is None:
+            continue
+        if group.prefix not in configs:
+            try:
+                configs[group.prefix] = load_repo_config(Path(group.repo_root))
+            except Exception:
+                log.debug("destroy guard: could not assess %s", group.repo_root, exc_info=True)
+                configs[group.prefix] = None
+        cfg = configs[group.prefix]
+        if cfg is None:
+            continue
+        summary = assess(cfg, container)
+        if summary is not None:
+            lines.append(f"⚠ {summary.line}")
+    if unknown:
+        lines.append(f"⚠ {unknown_status_warning(unknown)}")
+    return tuple(lines)
+
+
+def bulk_loose_default(groups: Sequence[RepoGroup], names: Sequence[str]) -> str | None:
+    """The TTL to offer first: the first named container's repo with a revert policy.
+
+    None when no repo of ``names`` reverts loose at all: then nothing is asked
+    and no ``--for`` is passed, as the single-container dashboards do.
+    """
+    for name in names:
+        group = _find_group(list(groups), name)
+        if group is not None and group.loose_ttl_default is not None:
+            return group.loose_ttl_default
+    return None
+
+
+def loose_ttl_entries(default: str) -> tuple[PickerEntry, ...]:
+    """The TTL picker: ``default`` first, the presets, then ``never``."""
+    from jailbee.config import LOOSE_TTL_PRESETS
+
+    values = [default, *(p for p in LOOSE_TTL_PRESETS if p != default)]
+    return (
+        *(PickerEntry(value, value) for value in values),
+        PickerEntry("never (no auto-revert)", "never"),
+    )
