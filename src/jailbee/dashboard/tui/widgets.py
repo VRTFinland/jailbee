@@ -40,7 +40,7 @@ from jailbee.dashboard.tui.frame import (
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
-from jailbee.dashboard.tui.native import OverlayBox, build_box
+from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
 _CACHE_MAX = 4096
@@ -494,6 +494,9 @@ class DashboardFrame(Vertical):
             else None
         )
         hint = _hint_line(overlay) if overlay is not None else None
+        if isinstance(box, PickerBox):
+            # What is left of the screen after the entries, the borders and the hint.
+            box.fit_detail(height - lines(hint, width) - 2 - len(box.picker.entries))
         menu_width = (box.natural_width() or 0) if box is not None and menu else 0
         details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
         measured = (

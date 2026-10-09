@@ -511,5 +511,36 @@ def test_the_destroy_confirm_keeps_both_entries_whatever_the_size(mocker, tmp_pa
     run = drive(mocker, ["down", "space", "space", "D"], [group], size=size, screens=True)
 
     screen = run.screens[4]  # after the four steps, before the padding Ctrl-C
-    assert "No" in screen
+    assert any(line.strip("│ ").strip() == "No" for line in screen.splitlines())
     assert "Yes, destroy 2" in screen
+
+
+@pytest.mark.parametrize("height", [12, 10, 8, 6])
+def test_a_destroy_entry_is_never_selectable_while_hidden(mocker, tmp_path, height):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("bulk-b", "alpha", "Running"), ci("bulk-c", "alpha", "Running")],
+    )
+    mocker.patch.object(
+        tsession, "destroy_risk_lines", return_value=tuple(f"⚠ c{i}: dirty" for i in range(6))
+    )
+    child = mocker.patch.object(tsession.subprocess, "run")
+
+    run = drive(
+        mocker,
+        ["down", "space", "space", "D", "down", "enter"],
+        [group],
+        size=(80, height),
+        screens=True,
+    )
+
+    shown = run.screens[4]  # the confirm as drawn, before any key reached it
+    after_down = run.screens[5]  # the cursor has moved: that entry must now be on screen
+    destroyed = any("destroy" in c.args[0] for c in child.call_args_list)
+    if destroyed:
+        assert "Yes, destroy 2" in after_down  # never chosen while hidden
+    if height >= 8:
+        assert "Yes, destroy 2" in shown
+        assert " No " in shown
