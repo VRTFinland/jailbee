@@ -1968,8 +1968,18 @@ class DashboardSession:
                 note = view_only_note(self.groups, container)
                 self.set_notice(note or f"No actions available for '{container}'")
 
-    def click(self, hit: Hit | None, *, double: bool = False, right: bool = False) -> None:
-        """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules."""
+    def click(
+        self,
+        hit: Hit | None,
+        *,
+        double: bool = False,
+        right: bool = False,
+        toggle: bool = False,
+    ) -> None:
+        """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules.
+
+        Ctrl+click (``toggle``) marks or unmarks a container row while nothing is open.
+        """
         overlay = self.overlay
         if overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
@@ -1977,6 +1987,11 @@ class DashboardSession:
             return  # a prompt, the command line, settings, egress or accounts keep the focus
         if hit is not None and hit.kind != "scroll" and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
+        if toggle and overlay is None and hit is not None and hit.kind == "row":
+            name = str(hit.args[0])
+            self.toggle_mark(name)
+            self.select(Row("container", name))
+            return
         if overlay is not None:
             self.close_overlay()
         if hit is None:

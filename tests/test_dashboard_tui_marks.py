@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui import keys as tkeys
+from jailbee.dashboard.tui.menu_state import MenuState
 from tests.dashboard_fixtures import ci
-from tests.dashboard_pilot import bare_session, drive
+from tests.dashboard_pilot import Click, bare_session, drive
 
 
 def _group(tmp_path, *names, state="Running"):
@@ -120,3 +122,37 @@ def test_the_view_carries_the_marks(mocker, tmp_path):
     run = drive(mocker, ["j", "space"], [_group(tmp_path, "alpha-a", "alpha-b")])
 
     assert run.last.marked == frozenset({"alpha-a"})
+
+
+def test_ctrl_click_toggles_a_mark_without_opening_anything(mocker, tmp_path):
+    run = drive(
+        mocker,
+        [Click(Hit("row", ("alpha-b",)), ctrl=True)],
+        [_group(tmp_path, "alpha-a", "alpha-b")],
+    )
+
+    assert run.last.marked == frozenset({"alpha-b"})
+    assert run.last.overlay is None
+    assert run.last.selected == dmodel.Row("container", "alpha-b")
+
+
+def test_a_second_ctrl_click_unmarks(mocker, tmp_path):
+    session, _ = bare_session(mocker, [_group(tmp_path, "alpha-a")])
+    hit = Hit("row", ("alpha-a",))
+
+    session.click(hit, toggle=True)
+    session.click(hit, toggle=True)
+
+    assert session.marked == frozenset()
+
+
+def test_ctrl_click_with_a_menu_open_only_closes_it(mocker, tmp_path):
+    session, _ = bare_session(mocker, [_group(tmp_path, "alpha-a")])
+    session.handle_key("down")
+    session.handle_key("enter")
+    assert isinstance(session.overlay, MenuState)
+
+    session.click(Hit("row", ("alpha-a",)), toggle=True)
+
+    assert session.overlay is None
+    assert session.marked == frozenset()
