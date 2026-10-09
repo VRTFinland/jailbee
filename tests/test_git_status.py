@@ -166,6 +166,7 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
         "TARGET_SHA": "",
+        "HOST_SOURCE": "/mnt/host-source",
         "OUTBOX_DIR": "/home/dev/.jailbee/pr-outbox",
         "ISSUE_OUTBOX_DIR": "/home/dev/.jailbee/issue-outbox",
         "GIT_OPTIONAL_LOCKS": "0",
@@ -1234,3 +1235,91 @@ def test_probe_counts_only_root_manifests_and_preserves_unknown_stores(
     assert getattr(status, f"pending_{'issue' if store == 'pr' else 'pr'}_actions") == 3
     if state in ("missing", "missing-parents", "missing-inaccessible-parent"):
         assert not outbox.exists()
+
+
+def _real_git(cwd, *args):
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    return subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "-c", "init.defaultBranch=main", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("host_has_commit", [True, False])
+def test_probe_borrows_missing_submodule_commit_from_host_source(
+    mocker, tmp_path, host_has_commit
+):
+    """The target moved a submodule to a commit the container's clone lacks.
+
+    The host repo, bind-mounted read-only at HOST_SOURCE, has it. The probe
+    reads the host submodule's objects as an alternate instead of reporting
+    the whole DIFF as unknown. Without the host copy the field stays "?".
+    """
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _real_git(upstream, "init", "-q")
+    (upstream / "f").write_text("one\n")
+    _real_git(upstream, "add", "f")
+    _real_git(upstream, "commit", "-qm", "c1")
+
+    host = tmp_path / "host"
+    host.mkdir()
+    _real_git(host, "init", "-q")
+    _real_git(host, "submodule", "add", "-q", str(upstream), "lib")
+    _real_git(host, "commit", "-qm", "add lib")
+
+    ctr = tmp_path / "ctr"
+    _real_git(tmp_path, "clone", "-q", str(host), str(ctr))
+    _real_git(ctr, "submodule", "update", "-q", "--init")
+
+    # The target branch moves `lib` to a commit only the host has fetched.
+    (upstream / "f").write_text("one\ntwo\nthree\n")
+    _real_git(upstream, "commit", "-qam", "c2")
+    _real_git(host / "lib", "pull", "-q", "origin", "main")
+    _real_git(host, "commit", "-qam", "bump lib")
+    target_sha = _real_git(host, "rev-parse", "HEAD")
+    # The container cannot reach the submodule upstream, only the superproject.
+    _real_git(ctr, "fetch", "-q", "--no-recurse-submodules", str(host), "main")
+
+    # The container's own work: one new line in the superproject.
+    (ctr / "g").write_text("mine\n")
+    _real_git(ctr, "add", "g")
+    _real_git(ctr, "commit", "-qm", "work")
+
+    source = host if host_has_commit else tmp_path / "absent"
+
+    def exec_snippet(_name, _args, *, env, **_kwargs):
+        return subprocess.run(
+            ["bash", "-c", _PROBE_SNIPPET],
+            env={**os.environ, **env, "HOST_SOURCE": str(source)},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    target = TargetSnapshot("main", target_sha, "local", "refs/remotes/origin/main", "equal")
+    incus = mocker.Mock()
+    incus.exec.side_effect = exec_snippet
+    status = probe_container_git(incus, "c", str(ctr), "main", "main", target=target)
+
+    if host_has_commit:
+        # +1 from `g`; the target→HEAD submodule diff drops "two" and "three".
+        assert status.target_diff == "+1 -2"
+        assert status.submodules[0].target_del == 2
+        assert status.submodules[0].behind_commits == 1
+    else:
+        assert status.target_diff == "?"

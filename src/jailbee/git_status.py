@@ -19,6 +19,7 @@ from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
 from jailbee.pr_outbox import OUTBOX_SUBPATH
+from jailbee.submodules import HOST_SOURCE
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
 
@@ -342,6 +343,28 @@ set +e
 cd "$REPO_DIR" 2>/dev/null || { printf '?\0?\0?\0?\0'; exit 0; }
 test -d .git || { printf '?\0?\0?\0?\0'; exit 0; }
 
+# The target may move a submodule to a commit the container's clone lacks:
+# the container cannot fetch it, but the host repo is bind-mounted read-only
+# at HOST_SOURCE. Borrow that submodule's object store as a git alternate
+# (read only, nothing is written) so the gitlink diff resolves instead of
+# turning the whole DIFF field into "?".
+sub_git() {
+  sp=$1; shift
+  hs="$HOST_SOURCE/$sp"
+  gd=""
+  if [ -d "$hs/.git" ]; then
+    gd="$hs/.git"
+  elif [ -f "$hs/.git" ]; then
+    gd=$(sed -n 's/^gitdir: //p' "$hs/.git" 2>/dev/null)
+    case "$gd" in /*) ;; ?*) gd="$hs/$gd" ;; esac
+  fi
+  if [ -n "$HOST_SOURCE" ] && [ -n "$gd" ] && [ -d "$gd/objects" ]; then
+    GIT_ALTERNATE_OBJECT_DIRECTORIES="$gd/objects" git -C "$sp" "$@"
+  else
+    git -C "$sp" "$@"
+  fi
+}
+
 BASE=""
 if [ -n "$TARGET_SHA" ] \
    && git cat-file -e "${TARGET_SHA}^{commit}" >/dev/null 2>&1; then
@@ -379,7 +402,7 @@ if [ -n "$BASE" ]; then
       # is not hidden behind "?".
       case "$os" in *[!0]*) ;; *) printf ' 1 file changed, 1 insertion(+)\n'; continue ;; esac
       case "$ns" in *[!0]*) ;; *) printf ' 1 file changed, 1 deletion(-)\n'; continue ;; esac
-      git -C "$sub_path" diff --shortstat "$os" "$ns" 2>/dev/null || printf '?\n'
+      sub_git "$sub_path" diff --shortstat "$os" "$ns" 2>/dev/null || printf '?\n'
     done
     )
   fi
@@ -433,11 +456,11 @@ if [ -n "$BASE" ]; then
         status=removed; ahead="?"; behind="?"; ss="?"
       else
         status=modified
-        counts=$(git -C "$sub_path" rev-list --left-right --count "$os...$ns" 2>/dev/null) \
+        counts=$(sub_git "$sub_path" rev-list --left-right --count "$os...$ns" 2>/dev/null) \
           || counts="?"
         if [ "$counts" = "?" ]; then ahead="?"; behind="?"
         else set -- $counts; behind=$1; ahead=$2; fi
-        ss=$(git -C "$sub_path" diff --shortstat "$os" "$ns" 2>/dev/null) || ss="?"
+        ss=$(sub_git "$sub_path" diff --shortstat "$os" "$ns" 2>/dev/null) || ss="?"
       fi
       printf '%s\t%s\t%s\t%s\t%s\n' "$sub_path" "$status" "$ahead" "$behind" "$ss"
     done
@@ -585,6 +608,7 @@ def probe_container_git(
                 "DEFAULT_BRANCH": default_branch,
                 "HOST_HEAD": host_head or "",
                 "TARGET_SHA": (target.sha or "") if target is not None else "",
+                "HOST_SOURCE": HOST_SOURCE,
                 "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 "ISSUE_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}",
                 # The probe only reads, but `git diff`/`git diff --cached`/
