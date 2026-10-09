@@ -20,6 +20,7 @@ from jailbee.dashboard.overlays import (
     TextPrompt,
 )
 from jailbee.dashboard.settings import SettingsState
+from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
@@ -150,3 +151,4 @@ class DashboardView:
     column_widths: Mapping[str, int] | None
     shown_columns: Sequence[str] | None
     hover: dhit.Hit | None = None  # the hovered table target
+    sort: SortSpec = DEFAULT_SORT

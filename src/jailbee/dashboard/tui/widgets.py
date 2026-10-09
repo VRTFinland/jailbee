@@ -195,7 +195,7 @@ class FleetTable(ScrollView, can_focus=False):
         lines: list[tuple[object, ...]] = []
         if model.has_header:
             lines.append(
-                ("header", model.geometry, hover if hover and hover.kind == "scroll" else None)
+                ("header", model.geometry, hover if hover and hover.kind in ("scroll", "sort") else None)
             )
         for entry in model.entries:
             target = None
@@ -538,6 +538,7 @@ class DashboardFrame(Vertical):
             column_offset=view.column_offset,
             hidden_by_preferences=view.hidden_by_preferences,
             width=max(0, width - scrollbar),
+            sort=view.sort,
         )
         table = self.table
         table.display = layout.table_rows > 0

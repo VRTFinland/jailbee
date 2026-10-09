@@ -20,6 +20,7 @@ from jailbee.config import (
 )
 from jailbee.dashboard import format as dfmt
 from jailbee.dashboard.model import RepoGroup, global_config_or_defaults
+from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec, active_sort, sort_mark
 from jailbee.dashboard.viewport import column_viewport
 from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
 from jailbee.lifecycle import (
@@ -520,7 +521,7 @@ def _dashboard_column_widths(
         if field_spec.dashboard_max_width is not None:
             cells = min(cells, field_spec.dashboard_max_width)
         if overrides is not None and field_spec.name in overrides:
-            cells = overrides[field_spec.name]
+            cells = max(overrides[field_spec.name], Text.from_markup(field_spec.header).cell_len)
         widths.append(cells + (2 if index == 0 else 0))
     if widest is not None and available is not None:
         _spend_slack(fields, widths, widest, available)
@@ -570,6 +571,7 @@ def _frame_columns(
     column_widths: Mapping[str, int] | None,
     shown_columns: Sequence[str] | None,
     available: int | None = None,
+    sort: SortSpec = DEFAULT_SORT,
 ) -> tuple[list[FieldSpecCI], tuple[int, ...]]:
     """The frame's columns and their budgets: what :func:`render` lays out.
 
@@ -586,6 +588,12 @@ def _frame_columns(
         else shown_columns,
         apply_conditions=False,
     )
+    shown = active_sort(sort, [f.name for f in fields], now=now)
+    if shown.field is not None:
+        fields = [
+            replace(f, header=f"{f.header} {sort_mark(shown)}") if f.name == shown.field else f
+            for f in fields
+        ]
     widest = (
         None
         if available is None
@@ -610,6 +618,7 @@ def clamp_column_offset(
     column_widths: Mapping[str, int] | None,
     shown_columns: Sequence[str] | None,
     available: int,
+    sort: SortSpec = DEFAULT_SORT,
 ) -> int:
     """Clamp the session offset to the frame's scrollable column geometry."""
     _, widths = _frame_columns(
@@ -619,5 +628,6 @@ def clamp_column_offset(
         folded=folded,
         column_widths=column_widths,
         shown_columns=shown_columns,
+        sort=sort,
     )
     return column_viewport(widths, available, offset).offset

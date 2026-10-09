@@ -24,6 +24,7 @@ from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
 from jailbee.dashboard.model import RepoGroup, Row, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
+from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
 from jailbee.dashboard.viewport import column_viewport
 from jailbee.lifecycle import ContainerInfo
 
@@ -101,6 +102,7 @@ def table_model(
     column_offset: int,
     hidden_by_preferences: bool,
     width: int,
+    sort: SortSpec = DEFAULT_SORT,
 ) -> TableModel:
     """Everything the table draws at ``width`` cells, columns scrolled by ``column_offset``."""
     fields, widths = _frame_columns(
@@ -111,6 +113,7 @@ def table_model(
         column_widths=column_widths,
         shown_columns=shown_columns,
         available=width,
+        sort=sort,
     )
     view = column_viewport(widths, width, column_offset)
     shown = tuple(fields[index] for index in view.indices)
@@ -180,11 +183,18 @@ def _with_marks(cells: list[Text], geometry: Geometry, left: Text, right: Text) 
 
 
 def header_line(geometry: Geometry) -> Text:
-    """The column titles; the first carries the rows' two-cell indent."""
+    """The column titles, each a ``sort`` target; the first carries the rows' two-cell indent."""
     cells = [
-        _cell(Text(("  " if index == 0 else "") + header, style=_HEADER_STYLE), width, justify)
-        for index, (header, width, justify) in enumerate(
-            zip(geometry.headers, geometry.widths, geometry.justify, strict=True)
+        _cell(
+            Text(
+                ("  " if index == 0 else "") + header,
+                style=_HEADER_STYLE + dhit.hit_style("sort", name),
+            ),
+            width,
+            justify,
+        )
+        for index, (name, header, width, justify) in enumerate(
+            zip(geometry.names, geometry.headers, geometry.widths, geometry.justify, strict=True)
         )
     ]
 
