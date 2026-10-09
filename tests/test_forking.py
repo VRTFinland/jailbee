@@ -92,9 +92,7 @@ def test_prepare_fork_brings_the_source_submodule_commits_to_the_host(cfg, wired
     order.attach_mock(transport, "transport")
     incus = MagicMock()
     forking.prepare_fork(cfg, incus, "src")
-    transport.assert_called_once_with(
-        cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo"
-    )
+    transport.assert_called_once_with(cfg, incus, "myrepo-src", "src", repo_dir="/home/dev/myrepo")
     assert [c[0] for c in order.mock_calls] == ["fetch", "transport"]
 
 
