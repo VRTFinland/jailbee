@@ -445,8 +445,11 @@ def apply(
             pid,
             # A PR the container does not own is warned about in the plan;
             # the prompt below it is consent only when someone reads it.
+            # Issues have no foreign notion: apply_selected rejects the flag.
             options=PublishOptions(
-                dry_run, force, foreign or (prompting.is_interactive() and not yes)
+                dry_run,
+                force,
+                foreign or (pid.kind == "pr" and prompting.is_interactive() and not yes),
             ),
             journal_store=store,
             confirm=lambda total: (

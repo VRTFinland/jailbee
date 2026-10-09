@@ -439,6 +439,17 @@ def test_dashboard_description_publish_warns_before_consent(publication_env, moc
         assert "001.json" in env[2]["pr"].as_dict()
 
 
+def test_apply_at_a_terminal_publishes_an_issue_without_foreign(publication_env, mocker):
+    _env, create, _comment, _review = publication_env
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert "only valid for PR" not in result.output
+    create.assert_called_once()
+
+
 def test_apply_rejects_foreign_for_an_issue(publication_env):
     result = CliRunner().invoke(
         app, ["outbox", "apply", "feature", "issue/001.json", "-y", "--foreign"]
