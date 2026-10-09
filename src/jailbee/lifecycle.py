@@ -3255,6 +3255,7 @@ def ls_field_specs(
             cell=lambda c: c.alias or "—",
             json=lambda c: c.alias,
             default_table=False,
+            default_json=False,
         ),
         table_format.FieldSpec(
             name="repo",

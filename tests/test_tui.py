@@ -1007,3 +1007,21 @@ def test_choice_title_shows_live_diff_and_both_counts():
     title = _format_choice_title(c, _choice_widths([c]))
     assert "+3 -2" in title and "+99 -1" not in title
     assert "  2  " in title and "  1  " in title
+
+
+def test_choice_base_shows_the_fork_marker():
+    from jailbee.tui import _choice_base
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+        fork_of="myrepo-a",
+    )
+    assert _choice_base(c) == "⑂ a"
+    c.fork_of = None
+    assert _choice_base(c) == "main"

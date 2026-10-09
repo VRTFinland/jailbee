@@ -6662,3 +6662,24 @@ def test_columns_version_is_the_newest_migration_rule():
         for _, _, n in dcolumns._COLUMN_SET_MIGRATIONS
         for new in n
     )
+
+
+def test_dashboard_base_cell_shows_the_fork_marker():
+    from jailbee.dashboard.format import dashboard_cell
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    base = next(f for f in ls_field_specs(now=now) if f.name == "base")
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        base_branch="main",
+        fork_of="myrepo-a",
+    )
+    assert dashboard_cell(base, c, now) == "⑂ a"
+    c.fork_of = None
+    assert dashboard_cell(base, c, now) == "main"
