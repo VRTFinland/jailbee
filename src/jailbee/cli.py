@@ -6358,6 +6358,27 @@ def _refresh_pr_source(cfg: "Config", incus: "IncusType", full: str) -> tuple[st
     return pr_info.head_ref, fetch_result.ref
 
 
+def _require_tty_for_push_pick(what: str) -> None:
+    """Exit 1 when ``push.default_<what>`` is 'ask' but nothing can be asked."""
+    from jailbee import prompting
+
+    if prompting.is_interactive():
+        return
+    if what == "source":
+        error(
+            "push.default_source is 'ask' but no TTY is available. "
+            "Pass --from <branch> or --current, or set "
+            "push.default_source in global.yaml."
+        )
+    else:
+        error(
+            "push.default_action is 'ask' but no TTY is available. "
+            "Pass --merge / --rebase / --plain, or set "
+            "push.default_action in global.yaml."
+        )
+    raise typer.Exit(1)
+
+
 def _pick_push_source(
     cfg: "Config",
     *,
@@ -7056,6 +7077,7 @@ def push(
             force_flag=force,
         )
         if resolved_source is None:
+            _require_tty_for_push_pick("source")
             # Offer the PR head only when the selection is a single PR
             # container — a multi-select batch has no single coherent PR
             # source (each container has its own head ref).
@@ -7077,6 +7099,7 @@ def push(
             else:
                 resolved_source = _picked_source
         if resolved_action is None:
+            _require_tty_for_push_pick("action")
             resolved_action = _pick_push_action()
             if resolved_action is None:
                 raise typer.Abort()
@@ -7196,13 +7219,7 @@ def push(
     )
 
     if single_source is None:
-        if not prompting.is_interactive():
-            error(
-                "push.default_source is 'ask' but no TTY is available. "
-                "Pass --from <branch> or --current, or set "
-                "push.default_source in global.yaml."
-            )
-            raise typer.Exit(1)
+        _require_tty_for_push_pick("source")
         _pr = _pr_head_for(incus, full)
         _base = _container_base_branch(incus, full) if _pr is None else None
         _source_pick = _pick_push_source(cfg, pr_head=_pr, base=_base)
@@ -7214,13 +7231,7 @@ def push(
             single_source = _source_pick
 
     if resolved_action is None:
-        if not prompting.is_interactive():
-            error(
-                "push.default_action is 'ask' but no TTY is available. "
-                "Pass --merge / --rebase / --plain, or set "
-                "push.default_action in global.yaml."
-            )
-            raise typer.Exit(1)
+        _require_tty_for_push_pick("action")
         resolved_action = _pick_push_action()
         if resolved_action is None:
             raise typer.Abort()

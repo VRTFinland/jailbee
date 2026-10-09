@@ -769,6 +769,26 @@ def test_push_several_names_ask_source_and_action_once(mocker, tmp_path):
     pick_action.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("action", "source", "setting"),
+    [("plain", "ask", "push.default_source"), ("ask", "default-branch", "push.default_action")],
+)
+def test_push_several_names_off_a_tty_cannot_ask(mocker, tmp_path, action, source, setting):
+    _wire_named(mocker, tmp_path, action=action, source=source)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    pick_source = mocker.patch("jailbee.cli._pick_push_source")
+    pick_action = mocker.patch("jailbee.cli._pick_push_action")
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 1
+    assert f"{setting} is 'ask' but no TTY is available" in result.stdout + (result.stderr or "")
+    pick_source.assert_not_called()
+    pick_action.assert_not_called()
+    do_push.assert_not_called()
+
+
 def test_push_several_names_never_show_the_auto_target_plan(mocker, tmp_path):
     _wire_named(mocker, tmp_path, action="plain")
     plan = mocker.patch("jailbee.cli._confirm_plan_if_buildable")
