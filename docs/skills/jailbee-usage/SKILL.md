@@ -300,7 +300,7 @@ container to merge into instead of quietly merging into the host.
   - `-b <branch>` — read a different branch **from the container**; it never
     renames the host branch. Same meaning on `fetch`/`pull`/`push`.
   - `--tags` / `--follow-tags` / `--no-tags` — override `pull.tags` for this run.
-- `jailbee git pull [<name>]` — fetch, then **merge the container's branch into its base
+- `jailbee git pull [<name>...]` — fetch, then **merge the container's branch into its base
   branch** (`user.jailbee.base_branch`, e.g. `main`). This is the usual "I'm
   done, integrate it" command. By default (`pull.ff: auto`) it fast-forwards
   when the host branch is strictly behind and writes a merge commit
@@ -328,7 +328,7 @@ container to merge into instead of quietly merging into the host.
 
 **Host → container (sending host commits in):**
 
-- `jailbee git push [<name>]` — send a host branch into the container's clone. Source and
+- `jailbee git push [<name>...]` — send a host branch into the container's clone. Source and
   action come from flags, from configured defaults (`push.default_source` /
   `push.default_action`), or are asked interactively when those are `ask`.
   - `--merge` / `--rebase` / `--plain` — after transport, merge/rebase the pushed
