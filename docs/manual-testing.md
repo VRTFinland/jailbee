@@ -3270,8 +3270,8 @@ jailbee dashboard
 #  Press > -> rows sort by the next shown column and its header gains ▲/▼;
 #     < steps back, through a "default order" stop (newest first) with no
 #     indicator. I -> the direction flips.
-#  Click a header -> sorts by it, largest first for quantities and times, A→Z
-#     for text; click it again -> flips. Rows with no value stay last either way.
+#  Click a header -> sorts by it, largest first for most numeric columns (age, cpu,
+#     memory, git counts), ascending for text, `pr`, `ttl` and `loose_until`; click it again -> flips. Rows with no value stay last either way.
 #  Rows move inside their repo group only -- the groups keep their place.
 #  Quit and reopen `jailbee dashboard` -> the column order and the sort are
 #     both still there.
