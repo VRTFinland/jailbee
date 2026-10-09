@@ -1130,8 +1130,10 @@ class DashboardSession:
                     dob.outbox_show_argv(container, row.id), self.ssh_policy, over_ssh=self.over_ssh
                 ),
                 can_publish=(
-                    ((create_argv := dob.create_pr_argv(container, row.create_scope)) is not None
-                    and permitted(create_argv, self.ssh_policy, over_ssh=self.over_ssh))
+                    (
+                        (create_argv := dob.create_pr_argv(container, row.create_scope)) is not None
+                        and permitted(create_argv, self.ssh_policy, over_ssh=self.over_ssh)
+                    )
                     if row.state == "awaiting-pr"
                     else permitted(
                         dob.outbox_apply_argv(container, row.id, row.revision),
@@ -1168,7 +1170,9 @@ class DashboardSession:
                 if repo is None:
                     self.set_notice(f"'{container}' is gone")
                     return None
-                fresh_argv = dact.addressed(dob.outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh)
+                fresh_argv = dact.addressed(
+                    dob.outbox_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
+                )
                 try:
                     check_dashboard_command(fresh_argv, self.ssh_policy, over_ssh=self.over_ssh)
                     listing_result = da.run_cli_quiet(fresh_argv, cwd=repo.cwd())
@@ -1176,11 +1180,15 @@ class DashboardSession:
                     if not listing_result.ok or fresh.error is not None:
                         raise dob.OutboxLoadError(fresh.error or listing_result.message)
                 except (RouteError, dob.OutboxLoadError) as exc:
-                    self.set_notice(f"could not verify the outbox: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+                    self.set_notice(
+                        f"could not verify the outbox: {exc}", seconds=FAILURE_NOTICE_SECONDS
+                    )
                     return None
                 current = next((r for r in fresh.rows if r.id == pid), None)
                 if current is None or (current.revision, current.state, current.create_scope) != (
-                    row.revision, row.state, row.create_scope
+                    row.revision,
+                    row.state,
+                    row.create_scope,
                 ):
                     self.set_notice("Proposal changed; refresh the outbox before creating a PR")
                     return None

@@ -290,7 +290,10 @@ def _attach_create_scopes(
             if recorded is not None:
                 proposal_row["state"] = "pending"
                 continue
-            if not any(action.kind == "description" and action.state == "pending" for action in view.actions):
+            if not any(
+                action.kind == "description" and action.state == "pending"
+                for action in view.actions
+            ):
                 continue
             proposal_row["create_scope"] = (
                 {"kind": "submodule", "path": scope.subpath}

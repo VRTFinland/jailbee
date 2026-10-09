@@ -210,7 +210,12 @@ def proposal_picker(
     entries: list[PickerEntry] = []
     if can_show:
         entries.append(PickerEntry("Show", SHOW))
-    if can_publish and row.publishable and row.state == "awaiting-pr" and row.create_scope is not None:
+    if (
+        can_publish
+        and row.publishable
+        and row.state == "awaiting-pr"
+        and row.create_scope is not None
+    ):
         entries.append(PickerEntry("Create PR…", CREATE_PR))
     elif can_publish and row.publishable and row.state != "awaiting-pr":
         entries.append(PickerEntry("Publish…", PUBLISH))

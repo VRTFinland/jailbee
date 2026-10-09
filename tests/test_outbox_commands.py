@@ -355,11 +355,22 @@ def test_pr_creation_scope_requires_unique_matching_repo_with_body_file(
 
     cfg, incus, _, reader, _, journals = env
     files = {
-        "002.json": json.dumps({
-            "version": 1, "repo": "AndBible/jsword", "pr": None, "head_sha": None,
-            "actions": [{"type": "description", "title": "Probe", "body_file": "body.md",
-                         "branch": "ios-log-crash-probe"}],
-        }),
+        "002.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "AndBible/jsword",
+                "pr": None,
+                "head_sha": None,
+                "actions": [
+                    {
+                        "type": "description",
+                        "title": "Probe",
+                        "body_file": "body.md",
+                        "branch": "ios-log-crash-probe",
+                    }
+                ],
+            }
+        ),
         "body.md": "Simulator output.",
     }
     if mode == "comment":
@@ -372,12 +383,18 @@ def test_pr_creation_scope_requires_unique_matching_repo_with_body_file(
     ]
     mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=scopes)
     mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=[])
-    mocker.patch("jailbee.pr_outbox.scope_slug", side_effect=lambda s: (
-        "AndBible/jsword" if s.subpath else "acme/main"
-    ))
-    mocker.patch("jailbee.submodule_pr.SubmodulePrState.read", return_value=mocker.Mock(number=42 if mode == "bound" else None))
+    mocker.patch(
+        "jailbee.pr_outbox.scope_slug",
+        side_effect=lambda s: "AndBible/jsword" if s.subpath else "acme/main",
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.SubmodulePrState.read",
+        return_value=mocker.Mock(number=42 if mode == "bound" else None),
+    )
     incus.config_get.return_value = None
-    assert show_overview(cfg, incus, None, all_repos=False, output="json", journal_store=journals) == 0
+    assert (
+        show_overview(cfg, incus, None, all_repos=False, output="json", journal_store=journals) == 0
+    )
     proposal = json.loads(capsys.readouterr().out)["containers"][0]["proposals"][0]
     if len(scope_paths) == 1 and mode == "description":
         assert proposal.get("create_scope") == {"kind": "submodule", "path": "libs/core"}
