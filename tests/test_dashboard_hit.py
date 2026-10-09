@@ -132,6 +132,22 @@ def test_hover_paints_only_the_hovered_target(tmp_path):
     )
 
 
+def test_container_hover_underlines_only_the_name(tmp_path):
+    """The whole row is a click target, but hover underlines just the container name."""
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-one", "alpha"), ci("alpha-two", "alpha")]
+    )
+    console = Console(width=120, file=io.StringIO(), color_system="truecolor")
+    hit = dhit.Hit("row", ("alpha-two",))
+    lines = [dhit.hover_segments(line, hit) for line in console.render_lines(_table([group]))]
+    underlined = "".join(s.text for line in lines for s in line if s.style and s.style.underline)
+    tagged = "".join(
+        s.text for line in lines for s in line if s.style and dhit.Hit.of(s.style.meta) == hit
+    )
+    assert underlined.strip() == "two"
+    assert len(tagged.strip()) > len("two")
+
+
 def test_hit_tags_do_not_change_the_rendered_text(mocker, tmp_path):
     """Meta is invisible: no escape sequence, no width change."""
     from rich.style import Style
