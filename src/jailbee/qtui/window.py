@@ -28,10 +28,12 @@ from jailbee.dashboard.columns import (
     default_columns,
     dynamic_column_names,
     normalize_columns,
+    reorder_visible,
     visible_fields,
 )
 from jailbee.dashboard.menus import MenuGroup, group_menu_actions, view_only_note
 from jailbee.dashboard.model import RepoTarget
+from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec, click_sort, sort_groups
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.qtui.action_menu import populate_action_menu
 from jailbee.qtui.cards import CardView
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from jailbee.dashboard.model import RepoGroup
+    from jailbee.dashboard.columns import FieldSpecCI
 
 # Custom role storing the full container name on a tree item.
 _NAME_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -88,6 +91,7 @@ class MainWindow(QMainWindow):
     newPrContainerRequested = Signal(str)  # noqa: N815 - payload: repo prefix
     configEditRequested = Signal(str, bool)  # noqa: N815 - Qt signal naming convention (camelCase); payload: (repo prefix, edit the global layer)
     repoVisibilityChanged = Signal()  # noqa: N815 - repository visibility preference changed
+    sortChanged = Signal()  # noqa: N815 - Qt signal naming convention (camelCase); the row sort changed
 
     def __init__(
         self,
@@ -98,8 +102,11 @@ class MainWindow(QMainWindow):
         enabled_columns: Sequence[str] | None = None,
         show_empty_repos: bool = True,
         hidden_repos: frozenset[str] = frozenset(),
+        sort: SortSpec = DEFAULT_SORT,
     ) -> None:
         super().__init__()
+        self._sort = sort
+        self._fields: list[FieldSpecCI] = []
         self._groups: list[RepoGroup] = []
         self._all_groups: list[RepoGroup] = []
         self._show_empty_repos = show_empty_repos
@@ -118,6 +125,16 @@ class MainWindow(QMainWindow):
         self.tree.setColumnCount(1)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
+        header = self.tree.header()
+        # Sorting stays in the core (`sort_groups`): the tree is rebuilt on every
+        # refresh and `setSortingEnabled` would sort the group rows too. The header
+        # is made clickable by hand and shows the core's sort as its indicator.
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSectionsMovable(True)
+        header.setFirstSectionMovable(False)  # NAME is the row's identity
+        header.sectionClicked.connect(self._on_header_clicked)
+        header.sectionMoved.connect(self._on_section_moved)
 
         self.card_view = CardView()
         self.card_view.actionRequested.connect(self.actionRequested)  # re-emit
@@ -191,6 +208,16 @@ class MainWindow(QMainWindow):
             act.setChecked(name in self._enabled_columns)
             act.triggered.connect(lambda checked=False, n=name: self._toggle_column(n, checked))
             self._column_actions[name] = act
+        self._order_columns_menu()
+
+    def _order_columns_menu(self) -> None:
+        """Enabled columns in their order, then the rest alphabetically — the TUI's Fields order."""
+        enabled = [n for n in self._enabled_columns if n in self._column_actions]
+        rest = sorted(n for n in self._column_actions if n not in self._enabled_columns)
+        for action in self._column_actions.values():
+            self.columns_menu.removeAction(action)
+        for name in (*enabled, *rest):
+            self.columns_menu.addAction(self._column_actions[name])
 
     def _build_repositories_menu(self) -> None:
         self.repositories_menu = self.view_menu.addMenu("&Repositories")
@@ -221,6 +248,8 @@ class MainWindow(QMainWindow):
             show_empty_repos=self._show_empty_repos,
             hidden_repos=self._hidden_repos,
         )
+        enabled = columns if columns is not None else self._enabled_columns
+        self._groups = sort_groups(self._groups, self._sort, enabled, now=now)
         if not self._groups:
             self.empty_state_label.setText(
                 "No repositories are visible. Change visibility in View > Repositories."
@@ -271,7 +300,31 @@ class MainWindow(QMainWindow):
             self._enabled_columns = normalize_columns((*self._enabled_columns, name))
         else:
             self._enabled_columns = tuple(n for n in self._enabled_columns if n != name)
+        self._order_columns_menu()
         self.columnsChanged.emit()
+
+    def _on_header_clicked(self, index: int) -> None:
+        if not 0 <= index < len(self._fields):
+            return
+        now = getattr(self, "_last_now", None) or datetime.now().astimezone()
+        self._sort = click_sort(self._sort, self._fields[index].name, now=now)
+        self.sortChanged.emit()
+        if hasattr(self, "_last_now"):
+            self._render_visible_groups(now=self._last_now, columns=self._last_columns)
+
+    def _on_section_moved(self, _logical: int, _old_visual: int, _new_visual: int) -> None:
+        header = self.tree.header()
+        visible = [
+            self._fields[header.logicalIndex(v)].name
+            for v in range(header.count())
+            if 0 <= header.logicalIndex(v) < len(self._fields)
+        ]
+        self._enabled_columns = normalize_columns(reorder_visible(self._enabled_columns, visible))
+        self._order_columns_menu()
+        self.columnsChanged.emit()
+
+    def sort_spec(self) -> SortSpec:
+        return self._sort
 
     def enabled_columns(self) -> tuple[str, ...]:
         return self._enabled_columns
@@ -459,6 +512,7 @@ class MainWindow(QMainWindow):
 
         all_containers = [c for g in groups for c in g.containers]
         fields = visible_fields(now, all_containers, enabled=active_columns)
+        self._fields = fields
         headers = column_headers(fields)
         self.tree.setColumnCount(len(headers))
         self.tree.setHeaderLabels(headers)
@@ -469,6 +523,22 @@ class MainWindow(QMainWindow):
                 QByteArray.fromBase64(self._pending_header_state.encode("ascii"))
             )
             self._pending_header_state = None
+        header = self.tree.header()
+        # One column order only: the logical one built from `enabled_columns`.
+        # A drag (or an old saved state) leaves a visual permutation behind.
+        blocked = header.blockSignals(True)
+        try:
+            for logical in range(header.count()):
+                visual = header.visualIndex(logical)
+                if visual != logical:
+                    header.moveSection(visual, logical)
+        finally:
+            header.blockSignals(blocked)
+        sort_col = next((i for i, f in enumerate(fields) if f.name == self._sort.field), -1)
+        header.setSortIndicator(
+            sort_col,
+            Qt.SortOrder.DescendingOrder if self._sort.desc else Qt.SortOrder.AscendingOrder,
+        )
         state_col = next((i for i, f in enumerate(fields) if f.name == "state"), None)
 
         self.tree.clear()

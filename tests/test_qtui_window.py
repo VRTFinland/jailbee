@@ -843,7 +843,13 @@ def test_compact_table_headers_and_cells_explain_values(qtbot):
         columns=["state", "created", "network", "agent_compact", "target_diff", "local_diff"],
     )
     headers = win.tree.headerItem()
-    row = win.tree.topLevelItem(0).child(0)
+    group_item = win.tree.topLevelItem(0)
+    # The rows are in the default sort order now, not the input order: find ours.
+    row = next(
+        group_item.child(i)
+        for i in range(group_item.childCount())
+        if group_item.child(i).data(0, int(Qt.ItemDataRole.UserRole)) == c.name
+    )
     columns = {headers.text(i): i for i in range(win.tree.columnCount())}
     assert "Running" in row.toolTip(columns["ST"])
     assert c.created_at.isoformat() in row.toolTip(columns["AGE"])
@@ -855,3 +861,86 @@ def test_compact_table_headers_and_cells_explain_values(qtbot):
     assert "permission" in row.toolTip(columns["AI"])
     assert "target" in headers.toolTip(columns["DIFF"])
     assert "host" in headers.toolTip(columns["L DIFF"])
+
+
+def _sortable_groups():
+    from dataclasses import replace
+    from datetime import UTC, timedelta
+
+    t0 = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
+    new = ContainerInfo(name="p-new", state="Running", network="strict", ip=None, memory_limit=None, repo="p")
+    old = ContainerInfo(name="p-old", state="Stopped", network="strict", ip=None, memory_limit=None, repo="p")
+    return [
+        RepoGroup(
+            "p",
+            "/repo",
+            Path("/repo/.jailbee/config.yaml"),
+            [replace(new, created_at=t0), replace(old, created_at=t0 - timedelta(days=1))],
+        )
+    ]
+
+
+def _child_names(win):  # type: ignore[no-untyped-def]
+    group = win.tree.invisibleRootItem().child(0)
+    return [group.child(i).text(0) for i in range(group.childCount())]
+
+
+def test_a_header_click_sorts_and_flips(qtbot):
+    from jailbee.dashboard.sorting import SortSpec
+
+    win = MainWindow(enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    seen: list[int] = []
+    win.sortChanged.connect(lambda: seen.append(1))
+    win.set_groups(_sortable_groups(), now=datetime.now().astimezone())
+    assert _child_names(win)[0].endswith("new")  # default order: newest first
+
+    win.tree.header().sectionClicked.emit(1)  # ST
+    assert win.sort_spec() == SortSpec("state", False)
+    win.tree.header().sectionClicked.emit(1)
+    assert win.sort_spec() == SortSpec("state", True)
+    assert _child_names(win)[0].endswith("old")
+    assert seen == [1, 1]
+    assert win.tree.header().sortIndicatorSection() == 1
+
+
+def test_a_stored_sort_sorts_the_first_render(qtbot):
+    from jailbee.dashboard.sorting import SortSpec
+
+    win = MainWindow(enabled_columns=("name", "state"), sort=SortSpec("state", True))
+    qtbot.addWidget(win)
+    win.set_groups(_sortable_groups(), now=datetime.now().astimezone())
+    assert _child_names(win)[0].endswith("old")
+
+
+def test_dragging_a_header_section_reorders_the_columns(qtbot):
+    win = MainWindow(enabled_columns=("name", "state", "created"))
+    qtbot.addWidget(win)
+    seen: list[int] = []
+    win.columnsChanged.connect(lambda: seen.append(1))
+    win.set_groups(_sortable_groups(), now=datetime.now().astimezone())
+    header = win.tree.header()
+
+    header.moveSection(2, 1)  # drag "created" before "state"
+
+    assert win.enabled_columns() == ("name", "created", "state")
+    assert seen == [1]
+    win.set_groups(_sortable_groups(), now=datetime.now().astimezone())
+    # Rebuilt in logical order: no second, visual-only order left in the header.
+    assert [header.logicalIndex(v) for v in range(header.count())] == list(range(header.count()))
+    labels = [win.tree.headerItem().text(i) for i in range(win.tree.columnCount())]
+    assert labels[:3] == ["NAME", "AGE", "ST"]
+
+
+def test_name_section_cannot_move(qtbot):
+    win = MainWindow(enabled_columns=("name", "state"))
+    qtbot.addWidget(win)
+    assert win.tree.header().sectionsMovable()
+    assert not win.tree.header().isFirstSectionMovable()
+
+
+def test_columns_menu_lists_the_stored_order_first(qtbot):
+    win = MainWindow(enabled_columns=("name", "state", "created"))
+    qtbot.addWidget(win)
+    labels = [a.text().split(" ")[0] for a in win.columns_menu.actions()]
+    assert labels[:3] == ["name", "state", "created"]

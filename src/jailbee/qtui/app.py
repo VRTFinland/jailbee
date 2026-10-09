@@ -37,6 +37,7 @@ from jailbee.dashboard.model import (
     dashboard_group_notices,
     present,
 )
+from jailbee.dashboard.sorting import SortSpec
 from jailbee.db.view_prefs import FRONTEND_QT
 from jailbee.lifecycle import tracking_notices
 from jailbee.qtui.actions import (
@@ -218,8 +219,15 @@ class AppController(QObject):
                 folded=frozenset(self._window.collapsed_repos()),
                 show_empty_repos=self._show_empty_repos(),
                 hidden_repos=self._hidden_repos(),
+                sort_field=self._window.sort_spec().field,
+                sort_desc=self._window.sort_spec().desc,
             ),
         )
+
+    @Slot()
+    def on_sort_changed(self) -> None:
+        """A header click changed the row sort — the window re-sorted itself; persist it."""
+        self._persist_view_state()
 
     @Slot()
     def on_repo_visibility_changed(self) -> None:
@@ -717,6 +725,7 @@ def _wire(window: MainWindow, bridge: StateBridge, controller: AppController) ->
     window.cardStyleChanged.connect(controller.on_card_style_changed)
     window.card_view.collapsedChanged.connect(controller.on_collapsed_changed)
     window.columnsChanged.connect(controller.on_columns_changed)
+    window.sortChanged.connect(controller.on_sort_changed)
     window.repoVisibilityChanged.connect(controller.on_repo_visibility_changed)
 
 
@@ -748,6 +757,7 @@ def run(cwd_root: Path | None) -> int:
         enabled_columns=view_state.columns,
         show_empty_repos=view_state.show_empty_repos,
         hidden_repos=view_state.hidden_repos,
+        sort=SortSpec(view_state.sort_field, view_state.sort_desc),
     )
     window.card_view.set_collapsed(set(view_state.folded))
 

@@ -281,6 +281,49 @@ def test_on_collapsed_changed_persists_view_state(mocker):
     save_gui.assert_not_called()
 
 
+def test_persist_view_state_carries_the_sort(mocker):
+    from jailbee.dashboard.sorting import SortSpec
+
+    save_view = mocker.patch("jailbee.db.view_prefs.save_view_state")
+    window = mocker.Mock()
+    window.enabled_columns.return_value = ("name",)
+    window.collapsed_repos.return_value = set()
+    window.sort_spec.return_value = SortSpec("cpu", True)
+    controller = qapp.AppController(window, mocker.Mock(), engine=mocker.sentinel.engine)
+
+    controller.on_collapsed_changed()  # an unrelated save
+    state = save_view.call_args.args[2]
+    assert (state.sort_field, state.sort_desc) == ("cpu", True)
+
+    save_view.reset_mock()
+    controller.on_sort_changed()
+    state = save_view.call_args.args[2]
+    assert (state.sort_field, state.sort_desc) == ("cpu", True)
+
+
+def test_run_restores_the_sort(mocker):
+    mocker.patch("jailbee.qtui.app.QApplication")
+    mocker.patch("jailbee.qtui.app.collect_repo_roots", return_value=[Path("/x")])
+    mock_window_cls = mocker.patch("jailbee.qtui.app.MainWindow")
+    _mock_state_client(mocker)
+    mocker.patch("jailbee.db.get_engine", return_value=mocker.sentinel.engine)
+    from jailbee.dashboard.sorting import SortSpec
+    from jailbee.db.models import GuiState
+    from jailbee.db.view_prefs import ViewState
+
+    mocker.patch(
+        "jailbee.qtui.app.seed_view_state",
+        return_value=ViewState(sort_field="cpu", sort_desc=True),
+    )
+    mocker.patch("jailbee.db.gui_state.load_gui_state", return_value=GuiState())
+    mocker.patch("jailbee.db.gui_state.save_gui_state")
+
+    qapp.run(None)
+
+    _args, kwargs = mock_window_cls.call_args
+    assert kwargs["sort"] == SortSpec("cpu", True)
+
+
 def test_on_columns_changed_persists_view_state(mocker):
     """The Columns menu's toggle must also land in `view_prefs`, carrying
     whatever the window's own folded set currently is."""
