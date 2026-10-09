@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -24,6 +25,18 @@ from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import outbox as dob
+from jailbee.dashboard.bulk import (
+    BulkAction,
+    BulkBatch,
+    bulk_actions,
+    bulk_argv,
+    bulk_loose_default,
+    destroy_risk_lines,
+    foreground_runs,
+    loose_ttl_entries,
+    nothing_to_do,
+    plan_bulk,
+)
 from jailbee.dashboard.columns import (
     all_column_names,
     clamp_column_offset,
@@ -45,6 +58,7 @@ from jailbee.dashboard.commands import (
 from jailbee.dashboard.dispatch import (
     DispatchStyle,
     _dispatch_action,
+    _run_bulk_foreground,
     _run_cli_foreground,
     _wait_for_return,
     command_needs_pause,
@@ -256,6 +270,17 @@ def open_dashboard(cwd_root: Path | None, *, scope: RemoteRepoScope | None = Non
     )
 
 
+# A picker's risk lines never outgrow the room left for its entries.
+MAX_DETAIL_LINES = 4
+
+
+def _cap_detail(lines: tuple[str, ...]) -> tuple[str, ...]:
+    """The first lines, then one "…and k more" line when there are too many."""
+    if len(lines) <= MAX_DETAIL_LINES:
+        return lines
+    return (*lines[:MAX_DETAIL_LINES], f"…and {len(lines) - MAX_DETAIL_LINES} more")
+
+
 class DashboardSession:
     """One open terminal dashboard (see the module docstring).
 
@@ -299,6 +324,9 @@ class DashboardSession:
         self.column_offset = 0
         self.selected: Row | None = None
         self.sel_index = 0
+        # Container names marked for a bulk action; pruned to the listed ones each tick.
+        self.marked: frozenset[str] = frozenset()
+        self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
         self.egress_parent: MenuState | RepoMenuState | None = None
         self.notice: str | None = startup.notice
@@ -338,6 +366,8 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+        listed = {c.name for g in self.groups for c in g.containers}
+        self.marked &= listed
         self._close_vanished_overlay()
         self._pin_selection()
         if self.notice is not None and time.monotonic() >= self.notice_until:
@@ -367,6 +397,8 @@ class DashboardSession:
             shown_columns=self.shown_columns,
             sort=self.sort,
             hover=hover,
+            marked=self.marked,
+            running=self.bulk_running(),
         )
 
     def title(self) -> str:
@@ -1480,6 +1512,17 @@ class DashboardSession:
             # every account picker is opened from the Accounts panel
             assert isinstance(picker.back, da.AccountsState)
             return self.submit_account_picker(picker, entry, picker.back)
+        if picker.purpose == "bulk-action":
+            return self.begin_bulk(entry.value)
+        if picker.purpose == "bulk-destroy-confirm":
+            if entry.value == "yes":
+                self._run_planned("destroy")
+            else:
+                self.set_notice("Cancelled")
+            return None
+        if picker.purpose == "bulk-loose-ttl":
+            self._run_planned("net loose", ("--for", entry.value))
+            return None
         return picker.back
 
     def edit_config(self, *, global_layer: bool) -> None:
@@ -1909,6 +1952,10 @@ class DashboardSession:
         elif key == "settings":
             self.overlay = self.open_settings_overlay()
         elif key.startswith("action:"):
+            binding_verb = {"action:destroy": "destroy", "action:push": "git push"}.get(key)
+            if self.marked and binding_verb is not None:
+                self.overlay = self.begin_bulk(binding_verb)
+                return None
             container = container_of(self.selected)
             verb = quick_verb(
                 self.groups,
@@ -1958,8 +2005,207 @@ class DashboardSession:
         elif key == "sort-invert":
             self.set_sort(invert_sort(self.sort))
         elif key == "space":
-            self.toggle_fold()
+            if self.selected is not None and self.selected.kind == "container":
+                self.toggle_mark(self.selected.key)
+                self.move(1)
+            else:
+                self.toggle_fold()
+        elif key in ("extend-up", "extend-down"):
+            self.extend_marks(-1 if key == "extend-up" else 1)
+        elif key == "cancel":
+            if self.marked:
+                self.marked = frozenset()
+                self.set_notice("Marks cleared")
         return None
+
+    def _marked_in_order(self) -> list[str]:
+        """The marked containers in listing order (repo by repo, as the table shows them).
+
+        A mark no longer listed (pruned at the next tick) follows, sorted.
+        """
+        listed = [c.name for g in self.groups for c in g.containers if c.name in self.marked]
+        return [*listed, *sorted(self.marked.difference(listed))]
+
+    def _plan(self, verb: str) -> BulkAction:
+        return plan_bulk(
+            self.groups,
+            self._marked_in_order(),
+            verb,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
+        )
+
+    def _run_planned(self, verb: str, extra: Sequence[str] = ()) -> None:
+        """Plan ``verb`` over the marks as they are now and run it, or say there is nothing."""
+        action = self._plan(verb)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return
+        self.run_bulk(action, extra)
+
+    def bulk_menu(self) -> Picker | None:
+        """The "N selected" list, or None after saying why it is empty."""
+        names = self._marked_in_order()
+        actions = bulk_actions(
+            self.groups,
+            names,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+            busy=self.bulk_running(),
+        )
+        if not actions:
+            noun = "container" if len(names) == 1 else "containers"
+            self.set_notice(f"No action applies to the {len(names)} marked {noun}")
+            return None
+        return Picker(
+            "bulk-action",
+            f"{len(names)} selected",
+            tuple(PickerEntry(a.label, a.verb) for a in actions),
+        )
+
+    def begin_bulk(self, verb: str) -> Overlay | None:
+        """Start ``verb`` on the marked containers: its question, or the run itself.
+
+        Planned again from the marks as they are now: a container may have
+        changed state since the menu was drawn.
+        """
+        action = self._plan(verb)
+        if not action.eligible:
+            self.set_notice(nothing_to_do(action))
+            return None
+        if verb == "destroy":
+            n = len(action.eligible)
+            return Picker(
+                "bulk-destroy-confirm",
+                f"Destroy {n} container{'s' if n != 1 else ''}: {', '.join(action.eligible)}?",
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, destroy {n}", "yes")),
+                detail=_cap_detail(destroy_risk_lines(self.groups, action.eligible)),
+            )
+        if verb == "net loose":
+            default = bulk_loose_default(self.groups, action.eligible)
+            if default is not None:
+                return Picker(
+                    "bulk-loose-ttl",
+                    f"Keep {len(action.eligible)} in loose for how long?",
+                    loose_ttl_entries(default),
+                )
+        self.run_bulk(action)
+        return None
+
+    def bulk_running(self) -> frozenset[str]:
+        """Containers with a bulk child still running."""
+        return frozenset(name for batch in self.bulk_batches for name in batch.pending)
+
+    def run_bulk(self, action: BulkAction, extra: Sequence[str] = ()) -> None:
+        """Run ``action`` over its eligible containers; ``extra`` are collected answers."""
+        if action.mode == "parallel":
+            self._run_parallel(action, extra)
+        else:
+            self._run_foreground(action)
+
+    def _run_parallel(self, action: BulkAction, extra: Sequence[str]) -> None:
+        """One detached child per container; one notice when the last one ends.
+
+        Nothing is suspended: these verbs print nothing worth reading and ask
+        nothing the dashboard has not already answered (``bulk_argv``).
+        """
+        batch = BulkBatch(action.verb, skipped=dict(action.skipped))
+        self.bulk_batches.append(batch)
+        for name in action.eligible:
+            group = _find_group(self.groups, name)
+            target = RepoTarget.of(group) if group is not None else None
+            if target is None:
+                batch.skipped[name] = "gone"
+                continue
+            canonical = bulk_argv(action.verb, name, extra)
+            try:
+                check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
+            except RouteError as exc:
+                batch.failed[name] = str(exc)
+                continue
+            argv = ["jailbee", *dact.addressed(canonical, target.flags(), over_ssh=self.over_ssh)]
+            batch.pending.add(name)
+            try:
+                self.jobs.start(
+                    f"bulk:{action.verb}:{name}",
+                    f"{action.verb} {name}…",
+                    argv,
+                    target.cwd(),
+                    partial(self._bulk_child_done, batch, name),
+                )
+            except ValueError:
+                batch.pending.discard(name)
+                batch.skipped[name] = f"a bulk {action.verb} is already running"
+            except OSError as exc:
+                batch.pending.discard(name)
+                batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+        self._settle(batch)
+
+    def _bulk_child_done(self, batch: BulkBatch, name: str, result: JobResult) -> None:
+        batch.finish(name, result)
+        self.client.refresh()
+        self._settle(batch)
+
+    def _settle(self, batch: BulkBatch) -> None:
+        """Report a batch whose children have all ended; unmark what succeeded."""
+        if not batch.done or batch not in self.bulk_batches:
+            return
+        self.bulk_batches.remove(batch)
+        self.marked -= frozenset(batch.ok)
+        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if batch.failed else NOTICE_SECONDS)
+
+    def _run_foreground(self, action: BulkAction) -> None:
+        """One terminal hand-off running the CLI's own multi-target form per repo.
+
+        Its questions (push source and action, merge targets) and its roll-up
+        are the CLI's. A repo whose run exits 0 has its names unmarked.
+        """
+        runs = foreground_runs(self.groups, action)
+        codes: list[int] = []
+
+        def run_all() -> int:
+            _run_bulk_foreground(
+                [(run.target, run.argv) for run in runs],
+                over_ssh=self.over_ssh,
+                ssh_policy=self.ssh_policy,
+                codes=codes,
+            )
+            return max(codes, default=0)
+
+        failed: dict[str, str] = {}
+        try:
+            self.terminal.hand_off(run_all)
+        except RouteError as exc:
+            self.set_notice(str(exc))
+            return
+        except OSError as exc:
+            # Runs before the one that could not start did finish: honour them.
+            detail = exc.strerror or str(exc)
+            if exc.filename is not None:
+                detail = f"{detail}: {exc.filename}"
+            if len(codes) < len(runs):
+                failed[runs[len(codes)].prefix] = detail
+        ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
+        failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
+        self.marked -= frozenset(ok)
+        batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
+        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
+        self.client.refresh()
+
+    def toggle_mark(self, name: str) -> None:
+        """Mark ``name`` for a bulk action, or unmark it."""
+        self.marked = self.marked ^ {name}
+
+    def extend_marks(self, step: int) -> None:
+        """Shift+up/down: mark the row left and the row reached; headers are passed over."""
+        if (name := container_of(self.selected)) is not None:
+            self.marked |= {name}
+        self.move(step)
+        if (name := container_of(self.selected)) is not None:
+            self.marked |= {name}
 
     def select(self, row: Row) -> None:
         """Put the cursor on ``row`` if it is on screen."""
@@ -1990,6 +2236,9 @@ class DashboardSession:
                 over_ssh=self.over_ssh,
             )
         else:
+            if self.marked:
+                self.overlay = self.bulk_menu()
+                return
             container = container_of(self.selected)
             self.overlay = open_menu(
                 self.groups,
@@ -2002,8 +2251,18 @@ class DashboardSession:
                 note = view_only_note(self.groups, container)
                 self.set_notice(note or f"No actions available for '{container}'")
 
-    def click(self, hit: Hit | None, *, double: bool = False, right: bool = False) -> None:
-        """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules."""
+    def click(
+        self,
+        hit: Hit | None,
+        *,
+        double: bool = False,
+        right: bool = False,
+        toggle: bool = False,
+    ) -> None:
+        """A click on ``hit`` (None: on nothing clickable). See the module's mouse rules.
+
+        Ctrl+click (``toggle``) marks or unmarks a container row while nothing is open.
+        """
         overlay = self.overlay
         if overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
@@ -2011,6 +2270,11 @@ class DashboardSession:
             return  # a prompt, the command line, settings, egress or accounts keep the focus
         if hit is not None and hit.kind not in ("scroll", "sort") and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
+        if toggle and overlay is None and hit is not None and hit.kind == "row":
+            name = str(hit.args[0])
+            self.toggle_mark(name)
+            self.select(Row("container", name))
+            return
         if overlay is not None:
             self.close_overlay()
         if hit is None:

@@ -44,6 +44,7 @@ from jailbee.qtui.actions import (
     ActionCommand,
     TerminalNotFoundError,
     build_action,
+    build_bulk_action,
     build_outbox_publish,
     resolve_launch,
 )
@@ -470,18 +471,125 @@ class AppController(QObject):
         if action.launch == "output":
             self._open_output(action.argv, f"jailbee {verb} {name}", action.cwd)
             return
+        if self._spawn(action):
+            self._request_refresh()  # an action likely changed state — refresh ASAP
+
+    def _spawn(self, action: ActionCommand) -> bool:
+        """Start a "terminal" or "detached" action; False after explaining a failure."""
+        failure = self._launch(action)
+        if failure is not None:
+            QMessageBox.warning(self._window, *failure)
+            return False
+        return True
+
+    def _launch(self, action: ActionCommand) -> tuple[str, str] | None:
+        """Start ``action``; ``(dialog title, cause)`` on failure, None on success."""
         terminal = detect_terminal(env=_env(), which=shutil.which)
         try:
             argv = resolve_launch(action, terminal)
         except TerminalNotFoundError as exc:
-            QMessageBox.warning(self._window, "No terminal", str(exc))
-            return
+            return "No terminal", str(exc)
         try:
             subprocess.Popen(argv, start_new_session=True, cwd=action.cwd)
         except OSError as exc:
-            QMessageBox.warning(self._window, "Launch failed", str(exc))
+            return "Launch failed", str(exc)
+        return None
+
+    @Slot(str, list)
+    def on_bulk_action(self, verb: str, names: list[str]) -> None:
+        """Run ``verb`` over the selected rows (see `jailbee.dashboard.bulk`)."""
+        from jailbee.dashboard.bulk import (
+            bulk_loose_default,
+            foreground_runs,
+            nothing_to_do,
+            plan_bulk,
+        )
+
+        groups = [g for g in self._latest if self._is_group_visible(g)]
+        action = plan_bulk(groups, names, verb)
+        if not action.eligible:
+            QMessageBox.information(self._window, "Nothing to do", nothing_to_do(action))
             return
-        self._request_refresh()  # an action likely changed state — refresh ASAP
+        skipped = "\n".join(f"{name}: {reason}" for name, reason in action.skipped)
+        if action.mode == "parallel":
+            extra: list[str] = []
+            if verb == "net loose":
+                default = bulk_loose_default(groups, action.eligible)
+                if default is not None:
+                    duration = self._ask_loose_ttl(f"{len(action.eligible)} containers", default)
+                    if duration is None:
+                        return
+                    extra = ["--for", duration]
+            if verb == "destroy" and not self._confirm_bulk_destroy(groups, action.eligible):
+                return
+            launched = 0
+            problems: list[str] = []
+            for name in action.eligible:
+                group = _group_for(groups, name)
+                target = RepoTarget.of(group) if group is not None else None
+                if target is None:
+                    problems.append(f"{name}: no repo to address")
+                    continue
+                failure = self._launch(build_action(verb, name, target, extra_flags=extra))
+                if failure is None:
+                    launched += 1
+                else:
+                    problems.append(f"{name}: {failure[1]}")
+            if launched:
+                self._request_refresh()
+            if problems or skipped:
+                lines = [f"Could not start: {len(problems)} of {len(action.eligible)}"] * bool(
+                    problems
+                )
+                lines += problems
+                if skipped:
+                    lines += ["Skipped:", skipped]
+                QMessageBox.warning(self._window, "Bulk action", "\n".join(lines))
+            return
+        if verb == "git pull" and not self._confirm_bulk_pull(action.eligible):
+            return
+        for run in foreground_runs(groups, action):
+            flags: list[str] = []
+            if verb == "git push":
+                group = next(g for g in groups if g.prefix == run.prefix)
+                answers = self._collect_answers(verb, ", ".join(run.names), group, None)
+                if answers is None:
+                    return  # a dialog was cancelled: nothing after it runs either
+                flags = answers
+            command = build_bulk_action(verb, run.names, run.target, extra_flags=flags)
+            if command.launch == "output":
+                self._open_output(
+                    command.argv, f"jailbee {verb} {' '.join(run.names)}", command.cwd
+                )
+            else:
+                self._spawn(command)
+        if skipped:
+            QMessageBox.information(self._window, "Skipped", skipped)
+
+    def _confirm_bulk_destroy(self, groups: list[RepoGroup], names: tuple[str, ...]) -> bool:
+        """One question for every container; the risk summary is the only guard (``--force``)."""
+        from jailbee.dashboard import bulk
+
+        lines = bulk.destroy_risk_lines(groups, names)
+        detail = ("\n\n" + "\n".join(lines) + "\nDestroying loses this.") if lines else ""
+        reply = QMessageBox.question(
+            self._window,
+            "Confirm",
+            f"Destroy {len(names)} containers: {', '.join(names)}?{detail}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _confirm_bulk_pull(self, names: tuple[str, ...]) -> bool:
+        reply = QMessageBox.question(
+            self._window,
+            "Confirm",
+            confirm_text("git pull", ", ".join(names), None),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     @Slot(str)
     def on_new_container(self, prefix: str) -> None:
@@ -720,6 +828,7 @@ def _wire(window: MainWindow, bridge: StateBridge, controller: AppController) ->
     bridge.snapshotReady.connect(controller.on_snapshot)
     bridge.failed.connect(controller.on_failed)
     window.actionRequested.connect(controller.on_action)
+    window.bulkActionRequested.connect(controller.on_bulk_action)
     window.newContainerRequested.connect(controller.on_new_container)
     window.newPrContainerRequested.connect(controller.on_new_pr_container)
     window.configEditRequested.connect(controller.on_config_edit)

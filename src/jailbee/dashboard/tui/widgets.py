@@ -40,7 +40,7 @@ from jailbee.dashboard.tui.frame import (
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
-from jailbee.dashboard.tui.native import OverlayBox, build_box
+from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
 
 _CACHE_MAX = 4096
@@ -217,6 +217,7 @@ class FleetTable(ScrollView, can_focus=False):
                     model.geometry,
                     entry.row.key in model.folded if entry.heading is not None else False,
                     entry.row == self._selected,
+                    entry.marked,
                     target,
                 )
             )
@@ -480,7 +481,11 @@ class DashboardFrame(Vertical):
             )
 
         self.border_title = frame_title(
-            view.groups, view.folded, git_enabled=view.git_enabled, now=view.now
+            view.groups,
+            view.folded,
+            git_enabled=view.git_enabled,
+            now=view.now,
+            marked=len(view.marked),
         )
         subtitle, inline = notice_parts(view.notice)
         self.border_subtitle = subtitle if subtitle is not None else ""
@@ -493,6 +498,9 @@ class DashboardFrame(Vertical):
             else None
         )
         hint = _hint_line(overlay) if overlay is not None else None
+        if isinstance(box, PickerBox):
+            # What is left of the screen after the entries, the borders and the hint.
+            box.fit_detail(height - lines(hint, width) - 2 - len(box.picker.entries))
         menu_width = (box.natural_width() or 0) if box is not None and menu else 0
         details_fit = not menu or width - menu_width >= DETAILS_PAIR_WIDTH
         measured = (
@@ -543,6 +551,8 @@ class DashboardFrame(Vertical):
             hidden_by_preferences=view.hidden_by_preferences,
             width=max(0, width - scrollbar),
             sort=view.sort,
+            marked=view.marked,
+            running=view.running,
         )
         table = self.table
         table.display = layout.table_rows > 0

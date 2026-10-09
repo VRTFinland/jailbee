@@ -100,6 +100,7 @@ class Picker:
     """A short list to choose from.
 
     ``purpose``/``target``/``carry``/``back`` are as in :class:`TextPrompt`.
+    ``detail`` is shown above the entries, one line each (a destroy's risk summary).
     """
 
     purpose: str
@@ -108,6 +109,7 @@ class Picker:
     target: str = ""
     carry: tuple[str, ...] = ()
     back: EgressState | AccountsState | None = None
+    detail: tuple[str, ...] = ()
 
 
 # A list never shrinks below this many rows.

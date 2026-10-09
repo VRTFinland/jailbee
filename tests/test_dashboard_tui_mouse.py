@@ -198,10 +198,14 @@ def test_dashboard_mouse_false_starts_with_reporting_off(mocker, tmp_path):
     assert run.app.mouse_on is False
 
 
-def _click_event(mocker, hit, *, chain=1, button=1):
+def _click_event(mocker, hit, *, chain=1, button=1, ctrl=False):
     """What `DashboardApp.on_click` reads of a Textual click: the tagged style, chain, button."""
     return mocker.Mock(
-        chain=chain, button=button, widget=None, style=Style(meta={HIT_KEY: hit.meta_value()})
+        chain=chain,
+        button=button,
+        ctrl=ctrl,
+        widget=None,
+        style=Style(meta={HIT_KEY: hit.meta_value()}),
     )
 
 

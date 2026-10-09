@@ -318,3 +318,21 @@ def test_retarget_runs_as_output_with_the_base_last():
     assert cmd.launch == "output"
     assert cmd.argv[:4] == ["jailbee", "git", "retarget", "alpha-x"]
     assert cmd.argv[-1] == "develop"
+
+
+def test_build_bulk_action_puts_every_name_before_the_config(tmp_path):
+    target = RepoTarget(tmp_path, tmp_path / "c.yaml")
+    action = a.build_bulk_action("git push", ["p-a", "p-b"], target, extra_flags=["--merge"])
+
+    assert action.argv == [
+        "jailbee",
+        "git",
+        "push",
+        "p-a",
+        "p-b",
+        "--config",
+        str(tmp_path / "c.yaml"),
+        "--merge",
+    ]
+    assert action.launch == "output"
+    assert a.build_bulk_action("merge", ["p-a"], target).launch == "terminal"

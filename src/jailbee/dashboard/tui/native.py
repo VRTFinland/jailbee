@@ -734,12 +734,61 @@ class PickerBox(OverlayBox):
             self.key = key
             self.entry = entry
 
+    DEFAULT_CSS = """
+    PickerBox > .picker-detail {
+        height: 1;
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    """
+
     def __init__(self, spec: Picker, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.picker = spec
         self.border_title = _one_line(spec.title, "bold")
+        self._budget: int | None = None
+
+    def shown_detail(self) -> tuple[str, ...]:
+        """The detail lines that fit ``fit_detail``'s budget; the entries always come first.
+
+        Too many lines are cut to a remainder line, down to a bare count: a
+        short terminal loses detail, never a selectable entry.
+        """
+        lines = self.picker.detail
+        budget = self._budget
+        if budget is None or budget >= len(lines):
+            return lines
+        if budget <= 0:
+            return ()
+        if budget == 1:
+            return (f"⚠ {len(lines)} at risk",)
+        return (*lines[: budget - 1], f"…and {len(lines) - budget + 1} more")
+
+    def fit_detail(self, rows: int) -> None:
+        """Allow at most ``rows`` detail lines (what the screen leaves beside the entries)."""
+        if rows == self._budget:
+            return
+        self._budget = rows
+        shown = self.shown_detail()
+        for i, widget in enumerate(self.query(".picker-detail").results(Static)):
+            widget.display = i < len(shown)
+            if i < len(shown):
+                widget.update(Text(shown[i], style="yellow", no_wrap=True, overflow="ellipsis"))
 
     def compose(self) -> ComposeResult:
+        # One widget per line, each exactly one row: a long line is cut with an
+        # ellipsis instead of wrapping, so the height `chrome_rows` counts holds
+        # and the entries below can never be pushed out of the box.
+        shown = self.shown_detail()
+        for i in range(len(self.picker.detail)):
+            line = shown[i] if i < len(shown) else ""
+            widget = Static(
+                Text(line, style="yellow", no_wrap=True, overflow="ellipsis"),
+                classes="picker-detail",
+            )
+            widget.display = i < len(shown)
+            yield widget
         options = [Option(_one_line(entry.label)) for entry in self.picker.entries] or [
             Option(_one_line("(nothing to choose)", "dim"), disabled=True)
         ]
@@ -748,10 +797,14 @@ class PickerBox(OverlayBox):
     def content_rows(self) -> int:
         return max(1, len(self.picker.entries))
 
+    def chrome_rows(self) -> int:
+        return super().chrome_rows() + len(self.shown_detail())
+
     def natural_width(self) -> int | None:
         widest = max((cell_len(e.label) for e in self.picker.entries), default=20)
+        detail = max((cell_len(line) for line in self.picker.detail), default=0)
         # border 2 + padding 2 + scrollbar 1; the title needs its own room in the border
-        return max(widest + 5, cell_len(self.picker.title) + 6)
+        return max(widest + 5, detail + 4, cell_len(self.picker.title) + 6)
 
     def state(self) -> NativeState:
         return NativeState("picker", self.query_one(OverlayList).highlighted)
@@ -771,6 +824,8 @@ class PickerBox(OverlayBox):
         if event.key in ("escape", "q", "ctrl+c"):
             return self.Cancelled(self.key)
         if event.key == "enter":
+            if not self.display:
+                return True  # an overlay the screen has no room to draw chooses nothing
             return self._chosen(self.query_one(OverlayList).highlighted) or True
         return await super().handle_key(event)
 
