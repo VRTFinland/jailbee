@@ -129,7 +129,8 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
 
     The first agent summary that carries activity speaks (summaries are most
     urgent first). Every part is text an agent wrote, so it is escaped here.
-    History tool entries are dim, message entries plain. The newest tool
+    History tool entries are dim, message entries plain; the newest message
+    is bold white so it stands out. The newest tool
     event is left out of the history when the tool line shows it, and the
     newest message event when ``message`` shows it: ``last_tool`` /
     ``last_message`` are by construction those same newest events, so the
@@ -142,7 +143,11 @@ def activity_block(c: ContainerInfo, now: datetime) -> ActivityBlock:
         lines = [escape(text.head)]
         if text.tool is not None:
             lines.append(escape(f"↳ {text.tool}"))
-        message = None if text.message is None else f"[dim]{escape(f'“{text.message}”')}[/dim]"
+        message = (
+            None
+            if text.message is None
+            else f"[bold white]{escape(f'“{text.message}”')}[/bold white]"
+        )
         skip = {"tool": text.tool is not None, "message": text.message is not None}
         earlier: list[str] = []
         for event in reversed(text.recent):
@@ -515,7 +520,7 @@ class _DetailsBody:
             message = message[:room]
             if message:
                 message[-1].truncate(max(0, width - 1))
-                message[-1].append("…", style="dim")
+                message[-1].append("…", style="bold white")
         room -= len(message)
         if len(history) > room:
             history = [*history[: room - 1], _one_row("[dim]…[/dim]")] if room > 0 else []
