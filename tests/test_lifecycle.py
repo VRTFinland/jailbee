@@ -10568,3 +10568,59 @@ def test_agent_compact_cell_brightens_a_recent_idle_only_when_asked():
     bright = agent_compact_cell(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
     assert bright == "[bold bright_white]○ 29m[/bold bright_white]"
     assert Text.from_markup(bright).plain == "○ 29m"  # valid markup, closes cleanly
+
+
+def _aliased(name, alias, profiles=None):
+    return _container(name=name, user_config={"user.jailbee.alias": alias}, profiles=profiles)
+
+
+def test_resolve_container_name_falls_back_to_alias(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = [_aliased("myrepo-feat-x", "login")]
+    assert resolve_container_name(cfg, incus, "login") == "myrepo-feat-x"
+
+
+def test_resolve_container_name_real_name_beats_alias(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.exists.side_effect = lambda n: n == "myrepo-login"
+    incus.list_containers.return_value = [_aliased("myrepo-feat-x", "login")]
+    assert resolve_container_name(cfg, incus, "login") == "myrepo-login"
+
+
+def test_resolve_container_name_ignores_other_repos_alias(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = [
+        _aliased("other-feat-x", "login", profiles=["default", "other-base"])
+    ]
+    with pytest.raises(ValueError, match="no such container"):
+        resolve_container_name(cfg, incus, "login")
+
+
+def test_new_container_refuses_name_taken_by_alias(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_aliased("myrepo-feat-x", "login")]
+    opts = NewContainerOptions(
+        container_branch="login",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=2,
+        from_base="img",
+        clone=True,
+    )
+    with pytest.raises(ValueError, match="alias of 'feat-x'"):
+        new_container(cfg, incus, opts)

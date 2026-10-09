@@ -51,6 +51,13 @@ def test_offers_short_names_when_nothing_typed(completion_repo):
     assert completion.complete_container(_ctx(), "") == ["bugfix", "feat-foo"]
 
 
+def test_offers_aliases(completion_repo):
+    _cfg, incus = completion_repo
+    incus.list_containers.return_value[0]["config"] = {"user.jailbee.alias": "login"}
+    assert completion.complete_container(_ctx(), "") == ["bugfix", "feat-foo", "login"]
+    assert completion.complete_container(_ctx(), "lo") == ["login"]
+
+
 def test_filters_by_what_was_typed(completion_repo):
     assert completion.complete_container(_ctx(), "fe") == ["feat-foo"]
 

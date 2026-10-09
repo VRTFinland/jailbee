@@ -817,12 +817,28 @@ def short_name(cfg: Config, name: str) -> str:
     return name
 
 
+def find_by_alias(cfg: Config, instances: list[dict[str, Any]], alias: str) -> str | None:
+    """Full name of this repo's container whose alias is ``alias``, else None.
+
+    Only containers carrying ``<container_prefix>-base`` count: an alias is a
+    per-repo name, and a foreign repo's alias must never resolve here.
+    """
+    own_base = f"{cfg.container_prefix}-base"
+    for raw in instances:
+        if own_base not in (raw.get("profiles") or []):
+            continue
+        if (raw.get("config") or {}).get("user.jailbee.alias") == alias:
+            return str(raw["name"])
+    return None
+
+
 def resolve_container_name(cfg: Config, incus: Incus, name: str) -> str:
     """Resolve a user-supplied container name to its full Incus name.
 
     1. If a container exists with the exact ``name``, return it.
     2. Else try ``f"{cfg.container_prefix}-{name}"``; return if it exists.
-    3. Else raise ValueError listing both attempts.
+    3. Else the container of this repo whose alias is ``name``.
+    4. Else raise ValueError listing both attempts.
     """
     from jailbee.remote_ssh.repo_scope import scope_for_session
 
@@ -847,6 +863,10 @@ def resolve_container_name(cfg: Config, incus: Incus, name: str) -> str:
     prefixed = f"{cfg.container_prefix}-{name}"
     if prefixed != name and incus.exists(prefixed):
         return prefixed
+    if not scope.excluded or scope.allows(cfg.container_prefix):
+        aliased = find_by_alias(cfg, incus.list_containers(fast=True), name)
+        if aliased is not None:
+            return aliased
     raise ValueError(f"no such container: '{name}' (also tried '{prefixed}')")
 
 
@@ -1397,7 +1417,8 @@ def new_container(
     # of a create that failed after `incus init`. `jailbee ls` selects on
     # profile membership, so it cannot show that instance — a bare "already
     # exists" would leave the user holding a name the tool denies having.
-    existing = next((c for c in incus.list_containers() if c["name"] == name), None)
+    instances = incus.list_containers()
+    existing = next((c for c in instances if c["name"] == name), None)
     if existing is not None:
         repo_names = profile_names(cfg)
         repo_profiles = {
@@ -1414,6 +1435,14 @@ def new_container(
                 f"Remove it with `jailbee destroy {short_name(cfg, name)} --force`."
             )
         raise ValueError(f"Container '{name}' already exists")
+
+    owner = find_by_alias(cfg, instances, short_name(cfg, name))
+    if owner is not None:
+        raise ValueError(
+            f"'{short_name(cfg, name)}' is the alias of '{short_name(cfg, owner)}'. "
+            f"Pick another name, or clear the alias with "
+            f"`jailbee rename {short_name(cfg, owner)} --clear`."
+        )
 
     if opts.mount:
         if opts.base is not None:

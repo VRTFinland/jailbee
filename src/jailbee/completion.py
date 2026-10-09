@@ -96,6 +96,7 @@ if TYPE_CHECKING:
     from jailbee.accounts.adapters.base import AccountAdapter
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.lifecycle import ContainerInfo
 
 # Bound on a single completion query. The measured cost of
 # `incus list --format json --fast` is 17-29 ms (Incus 6.0.5, 11 instances), so
@@ -183,7 +184,12 @@ def _load() -> tuple[Config, Incus] | None:
 
 
 def _container_names(cfg: Config, incus: Incus) -> list[str]:
-    """Full Incus names of this repo's jailbee-managed containers, [] on failure.
+    """Full Incus names of this repo's jailbee-managed containers, [] on failure."""
+    return [c.name for c in _container_infos(cfg, incus)]
+
+
+def _container_infos(cfg: Config, incus: Incus) -> list[ContainerInfo]:
+    """This repo's jailbee-managed containers, [] on failure.
 
     ``fast=True`` skips the per-instance state fetch; only names are needed.
     ``ValueError`` covers a malformed JSON payload from the wrapper.
@@ -195,7 +201,7 @@ def _container_names(cfg: Config, incus: Incus) -> list[str]:
         infos = list_containers(cfg, incus, fast=True, timeout=QUERY_TIMEOUT)
     except (IncusError, ValueError, OSError):
         return []
-    return [c.name for c in infos]
+    return infos
 
 
 @_completion_guard
@@ -215,8 +221,10 @@ def complete_container(ctx: typer.Context, incomplete: str) -> list[str]:
         return []
     cfg, incus = loaded
 
-    full = _container_names(cfg, incus)
+    infos = _container_infos(cfg, incus)
+    full = [c.name for c in infos]
     short = [short_name(cfg, name) for name in full]
+    short.extend(c.alias for c in infos if c.alias)
     if not incomplete:
         return sorted(short)
     return sorted({n for n in (*short, *full) if n.startswith(incomplete)})
