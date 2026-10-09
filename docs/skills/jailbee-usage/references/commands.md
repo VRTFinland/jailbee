@@ -686,8 +686,9 @@ repo, grouped by repo. Keys: `↑/↓` or `j/k` move (spans repos; repo headers
 are cursor stops, not skipped), `Enter` action menu (on a repo header, a repo
 menu with New container, New from PR, Credential group, `Network → Egress…`, Apply config, `Diagnostics →` (doctor, disk usage), Prune stale containers and Fold/Unfold (orphan repos
 only offer Fold/Unfold; on a container, its action menu),
-`Space` fold/unfold the selected repo (in the settings overlay: toggle the
-selected setting), `v` show/hide the details panel (the highlighted row's full
+`Space` on a container marks it (and moves down), on a repo header it folds/unfolds
+(in the settings overlay: toggle the selected setting); Shift+↑/↓ marks while moving,
+Esc clears the marks, `v` show/hide the details panel (the highlighted row's full
 details at the bottom of the full-screen frame, growing into spare rows with a busy agent's full last message and recent steps; the action menu opens to its right; persisted),
 `F2`/`S` settings overlay (Fields, Repos and Visibility tabs: columns, folding, which repos show), `o` recompute nonempty selected columns and optimize widths once
 from unfolded visible data (also snapshotted on opening and recomputed on settings
@@ -822,9 +823,15 @@ and ignored. A minimised window, or a dashboard running `tmux`/`shell`, does not
 make the service gather. Requires a TTY on stdin, stdout and stderr (`jailbee dashboard 2>file` is refused). Orphan containers (jailbee-managed but
 repo not registered) show view-only.
 
+Marked rows show `●`; while anything is marked, Enter on a container opens an *N selected*
+menu and `D`/`u` act on the marks. Start, stop, restart, network and destroy run in
+parallel (one notice at the end; succeeded rows are unmarked, failed or skipped stay
+marked; destroy asks once, "No" first). Git push, pull and merge run once per repo in the
+terminal through the CLI's multi-name form.
+
 Mouse (on by default; `m` toggles it for the session, `dashboard.mouse: false` in
 the global config turns it off): click selects a row, double- or right-click opens
-its menu, `▾`/`▸` folds a repo, `‹`/`›` scroll the columns, menu and picker entries,
+its menu, Ctrl+click marks a row (a Ctrl double-click is two toggles), `▾`/`▸` folds a repo, `‹`/`›` scroll the columns, menu and picker entries,
 suggestions and settings tabs are clickable; the wheel scrolls the view, never the
 selection; Shift-drag still selects text. The `!` line and every question edit like a
 text field, and keys typed ahead act in order on what the key before them opened.
@@ -941,9 +948,9 @@ On every container → host command `-b BRANCH` names a branch **inside the
 container**. A branch the container doesn't have is rejected before the fetch,
 listing the container's actual branch names — it does not create anything.
 
-### `jailbee git pull [NAME]`
+### `jailbee git pull [NAME...]`
 
-Fetch + **merge the container's branch into its base branch**
+Several names are pulled in order, stopping at the first failure. Fetch + **merge the container's branch into its base branch**
 (`user.jailbee.base_branch`), default a `--no-ff` merge commit.
 
 | Flag | Effect |
@@ -966,9 +973,10 @@ made for you. Whatever is left prints in the `── Submodules` block grouped a
 in one pass, so one run reports them all. `jailbee git push --merge` prints the
 same block for the container side.
 
-### `jailbee git push [NAME]`
+### `jailbee git push [NAME...]`
 
-Send a host branch into the container's clone. Source/action from flags, config
+Several names are pushed to in order with source and action resolved once; `--pr` and
+`--force` take exactly one (exit 2 otherwise). Send a host branch into the container's clone. Source/action from flags, config
 defaults (`push.default_source`, `push.default_action`), or interactive when those
 are `ask`. CLI flags always win.
 
