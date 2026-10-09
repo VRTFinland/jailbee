@@ -161,6 +161,13 @@ def test_activity_block_is_escaped_and_the_message_is_white() -> None:
     assert block.message.startswith("[bold white]")
 
 
+def test_tool_markup_colours_the_name_by_kind_and_dims_unknown_tools() -> None:
+    assert dd.tool_markup("Edit  /a.py", dim_args=False) == "[yellow]Edit[/yellow]  /a.py"
+    assert dd.tool_markup("Grep  x", dim_args=True) == "[cyan]Grep[/cyan]  [dim]x[/dim]"
+    assert dd.tool_markup("mcp__x__y", dim_args=True) == "[dim]mcp__x__y[/dim]"
+    assert dd.tool_markup("Bash  [red]", dim_args=False) == "[magenta]Bash[/magenta]  \\[red]"
+
+
 def test_history_is_newest_first_escaped_and_tools_dim() -> None:
     recent = (
         ActivityEvent("tool", "Read  /a.py"),
@@ -178,7 +185,9 @@ def test_history_is_newest_first_escaped_and_tools_dim() -> None:
         "“[red]x[/red] \\”",
         "Read  /a.py",
     ]
-    assert history[0].startswith("[dim]") and history[2].startswith("[dim]")
+    assert history[0].startswith("[magenta]Bash[/magenta]  [dim]")
+    assert history[1].startswith("[white]")
+    assert history[2].startswith("[cyan]Read[/cyan]  [dim]")
     assert not history[1].startswith("[dim]")
 
 
