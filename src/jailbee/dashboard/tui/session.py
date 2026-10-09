@@ -832,6 +832,9 @@ class DashboardSession:
             self.set_notice(f"'{prefix}' is no longer listed")
             return
         argv = build_argv(repo)
+        # `jailbee new` or `jailbee fork`: a failure is reported as the
+        # command the user asked for.
+        command = " ".join(argv[:2])
         try:
             check_dashboard_command(argv[1:], self.ssh_policy, over_ssh=self.over_ssh)
         except RouteError as exc:
@@ -850,7 +853,7 @@ class DashboardSession:
                 self._report_vanished_repo(repo)
                 return
             if rc != 0:
-                self.set_notice(f"'jailbee new' exited {rc}")
+                self.set_notice(f"'{command}' exited {rc}")
             self.client.refresh()  # the new container should appear on the next frame
 
         def finish(result: JobResult) -> None:
@@ -861,7 +864,7 @@ class DashboardSession:
                 return
             if result.returncode != 0:
                 reason = result.failure_line() or f"exited {result.returncode}"
-                self.set_notice(f"jailbee new failed: {reason}", seconds=FAILURE_NOTICE_SECONDS)
+                self.set_notice(f"{command} failed: {reason}", seconds=FAILURE_NOTICE_SECONDS)
             self.client.refresh()
 
         try:

@@ -165,3 +165,35 @@ def test_open_rename_for_a_vanished_container_notices(mocker, tmp_path):
 
     assert session.open_rename("alpha-x") is None
     assert "'alpha-x' is gone" in str(session.notice)
+
+
+_FORK_KEYS = ["j", "enter", "f", *keys("b"), "enter"]
+
+
+def test_a_failed_background_fork_is_noticed_as_a_fork(mocker, tmp_path):
+    group, _target_ = _target(tmp_path)
+    mocker.patch.object(
+        tsession.subprocess,
+        "run",
+        return_value=mocker.Mock(returncode=1, stderr="error: uncommitted changes in 'x'\n"),
+    )
+    patch_pause(mocker)
+
+    run = drive(mocker, _FORK_KEYS, [group])
+
+    notices = [str(n) for n in run.notices()]
+    assert any("jailbee fork failed: error: uncommitted changes" in n for n in notices), notices
+    assert not any("jailbee new" in n for n in notices)
+
+
+def test_a_failed_attended_fork_is_noticed_as_a_fork(mocker, tmp_path):
+    group, _target_ = _target(tmp_path)
+    detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
+    attended = mocker.Mock(returncode=3, stderr=None)
+    mocker.patch.object(tsession.subprocess, "run", side_effect=[detached, attended])
+    patch_pause(mocker)
+
+    run = drive(mocker, _FORK_KEYS, [group])
+
+    notices = [str(n) for n in run.notices()]
+    assert any("'jailbee fork' exited 3" in n for n in notices), notices
