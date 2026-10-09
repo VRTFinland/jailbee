@@ -510,6 +510,7 @@ def test_op_to_job_round_trip_preserves_every_field():
         pr=42,
         untrusted_head=True,
         clone_commit="a" * 40,
+        fork_of="p-source",
         assume_yes=True,
         # Non-default values on purpose: a dropped field whose default happens
         # to equal the value would sail through the loop below.

@@ -10675,6 +10675,33 @@ def test_resolve_container_name_ignores_other_repos_alias(make_cfg, tmp_path):
         resolve_container_name(cfg, incus, "login")
 
 
+@pytest.mark.parametrize(("excluded", "resolves"), [({"myrepo"}, False), ({"other"}, True)])
+def test_resolve_container_name_alias_honours_the_remote_repo_scope(
+    make_cfg, tmp_path, mocker, excluded, resolves
+):
+    # A remote SSH session scoped away from this repo must not reach its
+    # containers through an alias any more than through their names.
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    mocker.patch(
+        "jailbee.remote_ssh.repo_scope.scope_for_session",
+        return_value=RemoteRepoScope(frozenset(excluded)),
+    )
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = [
+        _aliased("myrepo-feat-x", "login", profiles=["default", "myrepo-base"])
+    ]
+    if resolves:
+        assert resolve_container_name(cfg, incus, "login") == "myrepo-feat-x"
+    else:
+        with pytest.raises(ValueError, match="no such container"):
+            resolve_container_name(cfg, incus, "login")
+
+
 def test_new_container_refuses_name_taken_by_alias(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

@@ -248,6 +248,7 @@ def test_enter_on_an_ineligible_cursor_row_with_no_marks_runs_nothing(mocker, tm
 
     run.assert_not_called()
     assert session.merge_pick is not None
+    assert session.notice == "No merge target is highlighted"
 
 
 def test_a_successful_bulk_merge_unmarks_the_sources_only(mocker, tmp_path):
@@ -267,6 +268,52 @@ def test_a_failed_merge_keeps_the_bulk_marks(mocker, tmp_path):
     mocker.patch.object(session, "run_dashboard_command", return_value=1)
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
+    session.handle_key("enter")
+
+    assert session.merge_pick is None
+    assert session.marked == frozenset({"r-b", "r-c"})
+
+
+def test_a_successful_bulk_merge_keeps_a_mark_that_was_not_a_source(mocker, tmp_path):
+    # r-s is marked but stopped, so the bulk plan skips it as a source: the
+    # merge succeeding says nothing about it, and its mark must survive.
+    session, _ = _session(
+        mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-s", "r", "Stopped")
+    )
+    mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    session.marked = frozenset({"r-b", "r-s"})
+    session.begin_bulk("merge")
+    assert session.merge_pick is not None
+    assert session.merge_pick.sources == ("r-b",)
+
+    session.handle_key("enter")
+
+    assert session.marked == frozenset({"r-s"})
+
+
+def test_merge_targets_marked_out_of_listing_order_run_in_listing_order(mocker, tmp_path):
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
+    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    session.begin_merge_pick(["r-b"])
+
+    session.click(Hit("row", ("r-c",)), toggle=True)  # c first ...
+    session.click(Hit("row", ("r-a",)), toggle=True)  # ... then a
+    session.handle_key("enter")
+
+    run.assert_called_once_with(
+        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--into", "r-c"]
+    )
+
+
+def test_a_merge_that_never_ran_restores_the_marks_untouched(mocker, tmp_path):
+    # `run_dashboard_command` answers None when it did not run the command
+    # (e.g. the remote policy refused it): nothing succeeded, so nothing is
+    # unmarked, the sources included.
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
+    mocker.patch.object(session, "run_dashboard_command", return_value=None)
+    session.marked = frozenset({"r-b", "r-c"})
+    session.begin_bulk("merge")
+
     session.handle_key("enter")
 
     assert session.merge_pick is None
