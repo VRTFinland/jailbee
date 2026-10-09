@@ -769,7 +769,9 @@ Publish… and Delete…, plus `Browse actions & comments…` for the full
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` (`pr --open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,
-`Credential group…`. A Stopped container leads with start, and its lone
+`Credential group…`, plus `[f] Fork…` (running clone-mode containers: asks
+for the new container's name, then runs `jailbee fork --background`) and
+`[R] Rename…` (running or stopped: edits the alias inline; empty clears it). A Stopped container leads with start, and its lone
 destroy stays a plain entry after `PR →`. Open shell is not listed — `s` or
 `!shell` opens it. Each entry appears only
 when it would do something:
