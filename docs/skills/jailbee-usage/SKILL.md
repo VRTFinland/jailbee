@@ -1303,6 +1303,23 @@ host, then fast-forward pushes it under the **host's** `gh` credentials. So,
 unlike `jailbee git push --pr`, you do **not** need `jailbee net loose` on the container
 for `jailbee pr`; you need `gh` authenticated on the host.
 
+Before the superproject push, `jailbee pr` offers submodules with commits ahead
+of their own base, a recorded submodule PR, or a pending outbox description for
+their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
+takes all. Off a TTY without `--yes`, they are skipped with a warning.
+`--no-submodules` opts out. `--no-ai`, `--no-outbox` and `--ready`/`--draft`
+apply to the submodule PRs too; other flags apply only to the superproject.
+A failed submodule does not stop the superproject PR, but the run exits 1.
+Submodule outbox partial failures also exit 1, keeping the published PR's
+recorded identity so a retry updates it rather than opening another PR.
+
+Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+`<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
+`Part of …` block in authored submodule PRs. Only the managed blocks change;
+an unchanged block causes no body edit. Foreign PR bodies are left untouched.
+Merge the submodule PRs first, so the superproject's gitlink points at merged
+commits; the merge order is advice, not a gate.
+
 On a container created with `jailbee new --pr N`, `jailbee pr` does not open a second PR:
 it asks once whether to push the container's commits to PR #N's head branch,
 records the answer (`user.jailbee.pr_adopted`), and updates that PR from then on.
@@ -1492,9 +1509,9 @@ GitHub, and is read-only over remote SSH. Flags:
 ## Publishing a submodule PR — `jailbee submodule pr`
 
 The counterpart of `jailbee pr` for work done **inside a submodule**. A
-submodule is its own GitHub repository, so it needs its own PR — `jailbee pr`
-only ever publishes the superproject branch. One PR per run; the two commands
-don't depend on each other.
+submodule is its own GitHub repository, so it needs its own PR. `jailbee pr`
+offers to publish these before the superproject; `jailbee submodule pr`
+publishes one per run and can also run separately.
 
 ```bash
 jailbee submodule pr feat-foo              # auto-target, draft PR
@@ -1536,9 +1553,13 @@ that `--branch/-b` means something different here than in `jailbee pr`: it
 selects which branch to read **from the submodule**, and is the escape hatch
 for a detached submodule.
 
-When the container also has a superproject PR, a successful run notes the
-merge order as information only: merge the submodule PR first, so the
-superproject PR's gitlink bump then points at a merged commit.
+Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+`<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
+`Part of …` block in authored submodule PRs. Only the managed blocks change;
+an unchanged block causes no body edit. Foreign PR bodies are left untouched.
+Merge the submodule PRs first, so the superproject's gitlink points at merged
+commits; the merge order is advice, not a gate.
+Outbox partial failures exit 1 while keeping the published PR identity.
 
 ## Using `gh` from inside a container
 

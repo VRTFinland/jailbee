@@ -10,6 +10,13 @@ before editing `## Unreleased`.
 
 ### Added
 
+- **`jb pr` offers submodule PRs before publishing the superproject.** A
+  checklist selects candidates on a terminal, `--yes` takes all and
+  `--no-submodules` opts out. Both PR commands maintain reciprocal links in
+  authored PR bodies, leaving foreign bodies untouched. Submodule failures
+  do not stop the superproject PR but make the run exit 1.
+- **Create/update submodule PR… in the dashboard's PR menu** when the
+  container has submodule changes.
 - **Agent activity in the dashboard's details panel.** For a container with a
   live Claude session, the panel picks the session with the most recently written
   readable transcript and shows up to three lines: the session's state

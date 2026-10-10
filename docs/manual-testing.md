@@ -2815,9 +2815,68 @@ jailbee submodule pr feat-sub --open
 jailbee destroy feat-sub --force
 ```
 
-Two submodules with commits ahead is worth checking too: `jailbee submodule
-pr feat-sub` with no `<path>` should list both candidates and exit 2 asking
-you to name one.
+Off a TTY, two submodules with commits ahead are worth checking too:
+`jailbee submodule pr feat-sub` with no `<path>` should list both candidates
+and exit 2 asking you to name one; on a TTY it offers the submodule picker.
+
+### Orchestration and reciprocal PR links
+
+Host-only: use disposable GitHub repositories you own for both the
+superproject and its submodule, with host `gh` credentials that can push and
+edit PRs in both. These commands publish real commits and PRs; the host
+operator runs them, not an agent inside the container. Substitute the repo
+paths, container prefix, PR numbers and head/base branches below.
+
+```bash
+jb new feat-sub-family
+jb shell feat-sub-family
+# Inside the container: one submodule commit and its superproject gitlink bump.
+cd ~/SampleApp/libs/foo
+printf 'PR family smoke\n' > family.txt
+git add family.txt
+git commit -m "feat: PR family smoke"
+cd ../..
+git add libs/foo
+git commit -m "feat: bump foo for PR family smoke"
+exit
+
+# Host, on a real terminal: keep libs/foo ticked in the all-ticked checklist.
+jb pr feat-sub-family
+# Expect: the submodule PR is published before the superproject push;
+# both draft PRs exist. Record their numbers and the submodule head SHA.
+gh pr view <super-N> --repo <super-org>/<super-repo> --json body
+gh pr view <sub-N> --repo <sub-org>/<sub-repo> --json body
+# Superproject body: <!-- jailbee:submodule-prs --> block links to the sub PR.
+# Submodule body: Part of ... links to the superproject PR.
+
+# Decline description regeneration if offered; no source or outbox changes.
+jb pr feat-sub-family
+# Expect: same PR numbers, no body edits. Check both GitHub timelines show
+# no new description edit and compare the bodies to the first run.
+
+jb pr feat-sub-family < /dev/null | cat
+# Expect: warning naming libs/foo, no submodule push (head SHA unchanged).
+# The recorded submodule PR remains a candidate even without new commits.
+```
+
+Also check `--yes` selects all candidates without the checklist and
+`--no-submodules` skips their publishing without the warning. `--no-ai`,
+`--no-outbox` and `--ready`/`--draft` carry through to selected submodule PRs;
+other `jb pr` flags apply only to the superproject. In either dashboard,
+a container with submodule changes offers **Create/update submodule PR…**
+in its PR menu, entering the single-submodule flow.
+
+For a failure check, temporarily deny host push permission to the disposable
+submodule repo, add a new submodule commit and gitlink bump, and run `jb pr`
+with that candidate selected. Expect its failure summary, a continuing
+superproject PR update and exit 1. Restore permission before retrying. A
+partially failed submodule outbox publication also exits 1 but retains the
+published PR identity; retry updates that PR, not a duplicate. Bind a foreign
+PR with `jb submodule pr feat-sub-family libs/foo --pr <N>` and verify its
+body remains unchanged by link refresh (do not pass explicit description
+editing flags). Merge order remains advice: submodule first, superproject
+second. Close the disposable PRs and remove their remote branches manually
+when finished, then destroy the test container.
 
 ## Submodule created in a container: interactive pr + transport smoke test
 

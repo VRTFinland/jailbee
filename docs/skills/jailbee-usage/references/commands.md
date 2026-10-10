@@ -773,7 +773,7 @@ Publish… and Delete…; a description awaiting a PR offers Create PR… instea
 of Publish…, using `pr` for the main repo or `submodule pr` for its resolved
 submodule. Unresolved targets are not offered for creation. The menu also has
 `Browse actions & comments…` for the full `outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
-`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` (`pr --open`,
+`git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr --open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
 switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,
 `Credential group…`, plus `[f] Fork…` (running clone-mode containers: asks
@@ -1210,6 +1210,23 @@ a fork PR (its head is not a branch in your origin, so it cannot be a base), on
 a container already publishing to a PR's head, and on one never created from a
 PR. Later runs update it silently; `--open` prefers it over the parent.
 
+Before the superproject push, `jailbee pr` offers submodules with commits ahead
+of their own base, a recorded submodule PR, or a pending outbox description for
+their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
+takes all. Off a TTY without `--yes`, they are skipped with a warning.
+`--no-submodules` opts out. `--no-ai`, `--no-outbox` and `--ready`/`--draft`
+apply to the submodule PRs too; other flags apply only to the superproject.
+A failed submodule does not stop the superproject PR, but the run exits 1.
+Submodule outbox partial failures also exit 1, keeping the published PR's
+recorded identity so a retry updates it rather than opening another PR.
+
+Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+`<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
+`Part of …` block in authored submodule PRs. Only the managed blocks change;
+an unchanged block causes no body edit. Foreign PR bodies are left untouched.
+Merge the submodule PRs first, so the superproject's gitlink points at merged
+commits; the merge order is advice, not a gate.
+
 Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 
 | Flag | Effect |
@@ -1224,6 +1241,7 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
 | `--no-ai` | Skip AI generation of the title/body (even when `pr.ai_description` is on); keep the container branch name as-is. Does **not** ignore a description already written in the container's outbox — that is `--no-outbox`. |
+| `--no-submodules` | Skip the submodule PR checklist and publishing; publish only the superproject. |
 | `--no-outbox` | Ignore a PR description written in the container's outbox. See [PR review outbox](#pr-review-outbox). |
 | `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
 | `--web` | Open the PR in the browser afterwards. |
@@ -1510,7 +1528,7 @@ branch` and then behaves identically, including the same `--submodules-only`
 
 Create or update a GitHub PR in a **submodule's own** repository, from commits
 made inside it in a container — a separate repo from the superproject, so a
-separate PR from `jailbee pr`. One PR per run; independent of `jailbee pr`
+separate PR from `jailbee pr`. One PR per run; it can also run separately
 (neither command is a precondition for the other).
 
 ```bash
@@ -1557,6 +1575,7 @@ yet in the superproject's gitlink"), never as an error.
 | `--pr N` | Push to the submodule's existing PR N instead of opening a new one, when its branch is not named like N's head branch. Resolved against the **submodule's own** repo and remote. Mutually exclusive with `--as` (exit 2); refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Skip confirmations, including the plan-block confirmation above. Required when there is no TTY. Does **not** skip the container/submodule pickers, nor the AI-proposed branch-name prompt on a TTY (Enter accepts the proposal) — that prompt only skips when stdin is not a TTY, or the proposal equals the branch the commits came from. |
 | `--no-ai` | Skip AI generation of the title/body/branch. |
+| `--no-outbox` | Skip staged PR descriptions and the outbox publication offer. |
 | `--force` | Force-push with `--force-with-lease`; a foreign (adopted) head asks first (`--yes` skips). |
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | **Different meaning than in `jailbee pr`:** which branch to read **from the submodule** in the container — the escape hatch for a detached submodule or for publishing a branch other than the one checked out there. |
@@ -1581,15 +1600,18 @@ exit 2 explains why. The chosen head is remembered in one container config
 key, `user.jailbee.sub_pr` (a JSON map keyed by submodule path), so a re-run
 updates that PR instead of opening a second one for the same work.
 
-On success, when the container also has a superproject PR
-(`user.jailbee.pr`), JailBee notes the merge order as information, never a
-gate: merge the submodule PR first, so the superproject PR's gitlink bump
-then points at a merged commit.
+Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+`<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
+`Part of …` block in authored submodule PRs. Only the managed blocks change;
+an unchanged block causes no body edit. Foreign PR bodies are left untouched.
+Merge the submodule PRs first, so the superproject's gitlink points at merged
+commits; the merge order is advice, not a gate.
+Outbox partial failures exit 1 while keeping the published PR identity.
 
 Exit codes: 2 for usage errors (ambiguous target with no PATH, unknown PATH,
 `--as` once a PR is recorded, a detached submodule with no resolvable head
 name, `--open` with PRs recorded for more than one path); 1 for operational
-failures (preflight, a non-GitHub submodule upstream, publish failure, `gh`
+failures (including outbox partial failures, preflight, a non-GitHub submodule upstream, publish failure, `gh`
 failure, `--open` with no PR recorded, `--force` onto a foreign/adopted PR
 head with no TTY to confirm on, first-run adoption of an existing PR with no
 TTY to confirm on); 0 for success and for "no submodule has commits ahead of

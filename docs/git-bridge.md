@@ -557,8 +557,23 @@ base is `--base` > `submodule.<name>.branch` declared in `.gitmodules` (found by
 descending from repo root, unless `.`) > the sub-repo's `<remote>/HEAD` > `main`; head
 is `--as` > Claude's proposal > the branch the commits were read from. The remote is resolved per submodule,
 since a submodule may name its upstream something the superproject doesn't.
-Merge order is stated, never enforced: merge the submodule PR first, so the
-superproject PR's gitlink bump then points at a merged commit.
+
+Before the superproject push, `jailbee pr` offers submodules with commits ahead
+of their own base, a recorded submodule PR, or a pending outbox description for
+their repo. On a TTY, a checklist starts with all candidates ticked; `--yes`
+takes all. Off a TTY without `--yes`, they are skipped with a warning.
+`--no-submodules` opts out. `--no-ai`, `--no-outbox` and `--ready`/`--draft`
+apply to the submodule PRs too; other flags apply only to the superproject.
+A failed submodule does not stop the superproject PR, but the run exits 1.
+Submodule outbox partial failures also exit 1, keeping the published PR's
+recorded identity so a retry updates it rather than opening another PR.
+
+Both `jailbee pr` and `jailbee submodule pr` refresh cross-links: a
+`<!-- jailbee:submodule-prs -->` block in an authored superproject PR and a
+`Part of …` block in authored submodule PRs. Only the managed blocks change;
+an unchanged block causes no body edit. Foreign PR bodies are left untouched.
+Merge the submodule PRs first, so the superproject's gitlink points at merged
+commits; the merge order is advice, not a gate.
 
 ## Stacked PRs
 
