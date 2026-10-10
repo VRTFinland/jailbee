@@ -9128,7 +9128,7 @@ def submodule_pr_cmd(
       jailbee submodule pr feat-foo --open       # just open it in the browser
     """
     from jailbee import pr as pr_mod
-    from jailbee import pr_flow, prompting, submodule_pr, submodules, sync
+    from jailbee import prompting, submodule_pr, sync
     from jailbee.lifecycle import container_repo_dir, short_name
 
     if pr_number is not None and as_name is not None:
@@ -9234,299 +9234,27 @@ def submodule_pr_cmd(
             2 if isinstance(exc, submodule_pr.UnknownSubmodulePathError) else 1
         ) from exc
 
-    subpath = target.path
-    source_branch = branch or target.branch
+    from jailbee import pr_submodule_flow
 
-    # Read the recorded PR state here rather than after the transport: it is
-    # one `incus config get`, it never touches the host sub-repo, and it
-    # decides whether the plan says "create" or "update". Only these two lines
-    # move up — `remote`, `resolved_base`, `scope`, the `--pr N` binding and
-    # `pr_label` all stay below the transport, where they belong.
-    state = submodule_pr.SubmodulePrState(incus, full, subpath)
-    record = state.read()
-
-    # base/remote only when the host sub-repo already exists: resolving them
-    # for a submodule the host has never seen would both misreport (the
-    # resolvers fall back to `origin`/`main`) and break the FIX 2 invariant
-    # that the transport is the first thing to touch that directory. The
-    # authoritative resolution stays after the transport, untouched.
-    on_host = submodules.host_subrepo_exists(cfg.repo_root, subpath)
-    plan_remote = submodule_pr.resolve_remote(cfg.repo_root, subpath) if on_host else None
-    plan_base = base or (
-        submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=None) if on_host else None
+    outcome = pr_submodule_flow.publish_submodule_pr(
+        cfg,
+        incus,
+        full,
+        short,
+        target,
+        pr_submodule_flow.SubPrOptions(
+            title=title, body=body, base=base, ready=ready, description=description,
+            no_ai=no_ai, no_outbox=no_outbox, branch=branch, as_name=as_name,
+            pr_number=pr_number, force=force, yes=yes, web=web,
+        ),
+        repo_dir=repo_dir,
+        confirm_plan=_confirm_submodule_pr_plan,
+        offer_comments=lambda number, management: _offer_outbox_comments(
+            cfg, incus, full, short, number=number, management=management
+        ),
     )
-
-    notes: list[str] = []
-    if target.dirty:
-        notes.append("the submodule has uncommitted changes — they are NOT in the PR")
-    if target.gitlink_stale:
-        notes.append("the superproject's gitlink does not yet point at these commits")
-    if target.commits is None:
-        notes.append("the commit count could not be resolved (no base anchor)")
-    if target.commits == 0:
-        notes.append("this submodule has no commits ahead of its base")
-
-    if not yes:
-        # `--pr N` binds to an existing PR *below*, after this confirmation,
-        # so without it here the line the user approves would promise a new
-        # PR and then update one.
-        plan_action: Literal["create", "update"] = (
-            "update" if (record.author or record.head or pr_number is not None) else "create"
-        )
-        _confirm_submodule_pr_plan(
-            submodule_pr.SubmodulePrPlan(
-                container_short=short,
-                container_full=full,
-                subpath=subpath,
-                source_branch=source_branch,
-                commits=target.commits,
-                action=plan_action,
-                base=plan_base,
-                remote=plan_remote,
-                # Create path: a new PR is a draft unless --ready. Update
-                # path: apply_pr_updates only touches draft state when
-                # --ready/--draft was given, so `ready` itself (None included)
-                # is the true outcome — anything else would misreport.
-                draft=(ready is not True) if plan_action == "create" else ready,
-                notes=tuple(notes),
-            )
-        )
-
-    # Step 2 of the spec's pipeline: transport this submodule's objects to
-    # the host BEFORE anything below reads the host sub-repo. For a
-    # submodule the host has never seen (added inside the container, or a
-    # host clone where `git submodule update --init` never ran for this
-    # path), the sub-repo does not exist until this call clones it — see
-    # `submodule_pr.transport_submodule_to_host`'s docstring.
-    submodule_pr.transport_submodule_to_host(
-        cfg, incus, full, short, subpath=subpath, repo_dir=repo_dir
-    )
-
-    scope = pr_flow.PrScope.for_submodule(cfg, subpath)
-    remote = scope.remote
-    resolved_base = submodule_pr.resolve_base_branch(cfg.repo_root, subpath, override=base)
-    if pr_number is not None:
-        # After the transport, not before: for a submodule the host has never
-        # seen, `scope.repo_root` does not exist as a git repo until the
-        # transport clones it — and `resolve_pr` runs `git remote get-url`
-        # there.
-        record = pr_flow.bind_pr_by_number(
-            scope,
-            state,
-            number=pr_number,
-            record=record,
-            yes=yes,
-            record_context=f"for submodule '{subpath}' on '{short}'",
-        )
-    pr_label = str(record.number) if record.number is not None else None
-
-    if as_name is not None and (record.author or record.head or pr_label):
-        pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
-
-    if target.commits is None:
-        warn(
-            f"Could not count submodule '{subpath}''s commits (no base anchor and "
-            f"no {remote}/HEAD); publishing what it has."
-        )
-    if target.gitlink_stale:
-        info(
-            f"Submodule '{subpath}''s commits are not yet in the superproject's "
-            f"gitlink — commit the bump there when this PR is ready."
-        )
-    if target.dirty:
-        warn(f"Submodule '{subpath}' has uncommitted changes — they are NOT in the PR.")
-
-    is_update = bool(record.author or record.head)
-    if not is_update and as_name is None:
-        found = pr_flow.adopt_existing_pr_for_branch(
-            scope,
-            state,
-            branch=source_branch,
-            yes=yes,
-            record_context=f"for submodule '{subpath}' on '{short}'",
-        )
-        if found is not None:
-            pr_label = str(found[0])
-            is_update = True
-            # Build the record in-process rather than re-reading it: `state.record`
-            # (called by `adopt_existing_pr_for_branch`) is best-effort, and a
-            # failed write would otherwise make `state.read()` hand back a blank
-            # `PrRecord` here — `record.head is None` then makes
-            # `resolve_pr_text_and_head` treat this as a headless detached
-            # submodule and fail with a nonsense usage error, even though the
-            # user just confirmed adopting a real PR. Same anti-pattern
-            # `jailbee pr`'s adoption path avoids above (see the "Use the value
-            # in-process" comment near `_adopt_pr_head`).
-            record = pr_flow.PrRecord(number=found[0], head=found[1], author=False, adopted=True)
-
-    is_foreign = bool(pr_label) and not record.author
-    if force and pr_label and not record.author:
-        pr_flow.confirm_foreign_force_push(scope, short, pr_label, record.head, yes=yes)
-
-    from jailbee.outbox.io import PrManagement
-    from jailbee.outbox.models import OutboxError
-
-    management = PrManagement()
-    try:
-        with pr_flow.outbox_publication_guard(
-            cfg, incus, full, enabled=not no_outbox, management=management
-        ):
-            plan = pr_flow.resolve_pr_text_and_head(
-                cfg,
-                incus,
-                full,
-                scope,
-                is_update=is_update,
-                stored_head=record.head,
-                source_branch=source_branch,
-                base=resolved_base,
-                title=title,
-                body=body,
-                as_name=as_name,
-                no_ai=no_ai,
-                status_label=f"Generating PR title/description with Claude in '{short}:{subpath}'…",
-                use_outbox=not no_outbox,
-            )
-            pr_flow.bind_outbox_source(management, plan.outbox_source)
-            publish_name = plan.publish_name
-            if publish_name is None:
-                error(
-                    f"Submodule '{subpath}' is detached in '{short}' and no head branch name "
-                    f"was chosen. Name one with --as, or pass --branch to publish an "
-                    f"existing submodule branch."
-                )
-                raise typer.Exit(2)
-
-            # Publish step 4 of the spec: the submodule's own upstream must be a GitHub
-            # one, checked BEFORE anything is pushed. `create_pr` validates too, but
-            # only after the branch is already on the remote.
-            try:
-                pr_mod.assert_github_remote(scope.repo_root, remote, label="jailbee submodule pr")
-            except pr_mod.PrError as exc:
-                error(str(exc))
-                raise typer.Exit(1) from exc
-
-            try:
-                published = submodule_pr.publish_submodule_branch(
-                    cfg,
-                    short,
-                    subpath=subpath,
-                    branch=source_branch,
-                    publish_name=publish_name,
-                    remote=remote,
-                    force=force,
-                )
-            except submodule_pr.SubmodulePrError as exc:
-                error(str(exc))
-                raise typer.Exit(1) from exc
-
-            from jailbee import pr_ai
-
-            ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
-            text_on = ai_on or plan.outbox_source is not None
-            resolved_title, resolved_body = ("", "")
-            if not is_update:
-                resolved_title, resolved_body = pr_flow.resolve_create_text(
-                    scope,
-                    ai_on=text_on,
-                    ai_text=plan.ai_text,
-                    title=title,
-                    body=body,
-                    fallback_ref=published.src_ref,
-                    publish_name=published.publish_name,
-                    origin_label=f"container '{short}' submodule '{subpath}'",
-                )
-            if not is_update:
-                pr_flow.bind_outbox_source(management, plan.outbox_source)
-                pr_flow.validate_outbox_source(cfg, incus, full, plan.outbox_source)
-            try:
-                created = pr_flow.create_or_view_pr(
-                    scope,
-                    state,
-                    use_outbox=not no_outbox,
-                    is_update=is_update,
-                    head=published.publish_name,
-                    base=resolved_base,
-                    title=resolved_title,
-                    body=resolved_body,
-                    draft=ready is not True,
-                    label="jailbee submodule pr",
-                    record_context=(
-                        f"failed to record the PR label for submodule '{subpath}' on '{short}'"
-                    ),
-                )
-            except pr_mod.PrError as exc:
-                error(str(exc))
-                raise typer.Exit(1) from exc
-
-            did_update = is_update or created.already_existed
-            update = None
-            if did_update and source_branch:
-                update = pr_flow.apply_pr_updates(
-                    cfg,
-                    incus,
-                    full,
-                    scope,
-                    number=created.number,
-                    branch=source_branch,
-                    base=resolved_base,
-                    title=title,
-                    body=body,
-                    description=description,
-                    ready=ready,
-                    ai_on=ai_on,
-                    foreign_head=is_foreign,
-                    url=created.url,
-                    use_outbox=not no_outbox,
-                    outbox_hint=plan.outbox_source,
-                    management=management,
-                )
-            elif did_update:
-                # The submodule is detached and no --branch resolved a source: there
-                # is no branch to regenerate a description from or a state to toggle
-                # against. `render_pr_outcome` defaults a missing `update` to a no-op
-                # on the update path, so nothing further is needed here beyond the
-                # user-facing warning — and only when the user actually asked for
-                # something that needed the missing branch; a bare re-run with no
-                # such flag has nothing to silently ignore.
-                if description or title is not None or body is not None or ready is not None:
-                    warn(
-                        f"{scope.prefix}--description/--title/--body/--ready/--draft "
-                        f"could not be applied to PR #{created.number}: the submodule "
-                        f"is detached and no source branch was resolved. Pass --branch "
-                        f"to select one."
-                    )
-            pr_flow.render_pr_outcome(
-                scope,
-                url=created.url,
-                number=created.number,
-                is_update=did_update,
-                publish_name=published.publish_name,
-                forced=published.forced,
-                ready=ready,
-                update=update,
-            )
-            if not did_update:
-                pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
-            if incus.config_get(full, "user.jailbee.pr"):
-                info(
-                    "Merge this submodule PR first; the superproject PR's gitlink bump "
-                    "then points at a merged commit."
-                )
-            outbox_failures = (
-                0
-                if no_outbox
-                else _offer_outbox_comments(
-                    cfg, incus, full, short, number=created.number, management=management
-                )
-            )
-            if web:
-                pr_mod.open_pr_in_browser(scope.repo_root, created.number)
-            if outbox_failures:
-                raise typer.Exit(1)
-    except OutboxError as exc:
-        error(str(exc))
-        raise typer.Exit(1) from exc
+    if outcome.outbox_failures:
+        raise typer.Exit(1)
 
 
 net_app = typer.Typer(
