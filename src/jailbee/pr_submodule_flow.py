@@ -153,6 +153,7 @@ def publish_submodule_prs_first(
     no_outbox: bool,
     ready: bool | None,
     offer_comments: OfferComments,
+    management: PrManagement | None = None,
 ) -> list[SubPrOutcome]:
     if not enabled:
         return []
@@ -182,6 +183,7 @@ def publish_submodule_prs_first(
                 repo_dir=repo_dir,
                 confirm_plan=None,
                 offer_comments=offer_comments,
+                management=management,
             )
         except click.exceptions.Abort:
             outcome = SubPrOutcome(candidate.path, "declined")
@@ -204,6 +206,7 @@ def publish_submodule_pr(
     repo_dir: str,
     confirm_plan: ConfirmPlan | None,
     offer_comments: OfferComments,
+    management: PrManagement | None = None,
 ) -> SubPrOutcome:
     subpath = target.path
     source_branch = opts.branch or target.branch
@@ -337,7 +340,7 @@ def publish_submodule_pr(
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox.models import OutboxError
 
-    management = PrManagement()
+    management = management if management is not None else PrManagement()
     try:
         with pr_flow.outbox_publication_guard(
             cfg, incus, full, enabled=not opts.no_outbox, management=management

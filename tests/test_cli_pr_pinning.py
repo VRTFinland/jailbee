@@ -19,6 +19,12 @@ from tests.conftest import make_cfg
 IDENTITY = ContainerIdentity("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
 
 
+@pytest.fixture(autouse=True)
+def _no_submodule_step(mocker):
+    """The submodule step has its own suite (test_cli_pr_submodules.py)."""
+    mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
+
+
 def _mock_store(mocker, files, *, rejected=()):
     snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), tuple(rejected), ())
     mocker.patch("jailbee.pr_outbox.read_text_outbox", return_value=files)

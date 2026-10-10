@@ -9,6 +9,12 @@ from jailbee.cli import app
 from tests.conftest import mock_pr_agent
 
 
+@pytest.fixture(autouse=True)
+def _no_submodule_step(mocker):
+    """The submodule step has its own suite (test_cli_pr_submodules.py)."""
+    mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
+
+
 def _publish_result(
     dirty: bool = False,
     publish_name: str = "feat/foo",

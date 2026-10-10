@@ -8382,6 +8382,17 @@ def pr_cmd(
             ),
         ),
     ] = None,
+    no_submodules: Annotated[
+        bool,
+        typer.Option(
+            "--no-submodules",
+            help=(
+                "Publish only the superproject PR. By default, submodules with "
+                "commits to publish get their own PRs first (asked on a TTY; "
+                "--yes publishes them all; off a TTY without --yes they are skipped)."
+            ),
+        ),
+    ] = False,
     open_only: Annotated[
         bool,
         typer.Option(
@@ -8424,8 +8435,15 @@ def pr_cmd(
     container's base branch to the PR head as well, so AHEAD counts only this
     container's own commits (`--retarget`/`--no-retarget`).
 
+    Submodules with commits ahead of their base, a recorded submodule PR, or a
+    pending outbox description get their own PRs first. A TTY offers a selection;
+    `--yes` publishes all candidates, while off a TTY without `--yes` they are
+    skipped. `--no-submodules` publishes only the superproject. Cross-link blocks
+    connect the superproject and submodule PRs after publication.
+
     Examples:
 
+      jailbee pr feat-foo --no-submodules   # superproject only
       jailbee pr feat-foo                  # create a draft PR, or push new commits to it
       jailbee pr feat-foo --ready          # create/mark ready for review
       jailbee pr feat-foo --description    # update: regenerate the description with Claude
@@ -8609,6 +8627,8 @@ def pr_cmd(
         )
         raise typer.Exit(1)
 
+    from jailbee import pr_links, pr_submodule_flow
+
     from jailbee import pr_ai
 
     ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
@@ -8659,6 +8679,25 @@ def pr_cmd(
                     f"update that PR instead. Name one with --as <branch>."
                 )
                 raise typer.Exit(2)
+
+            # Share the instance-reentrant identity lock with each submodule so
+            # description selection remains guarded through its receipt.
+            sub_outcomes = pr_submodule_flow.publish_submodule_prs_first(
+                cfg,
+                incus,
+                full,
+                short,
+                enabled=not no_submodules,
+                yes=yes,
+                no_ai=no_ai,
+                no_outbox=no_outbox,
+                ready=ready,
+                management=management,
+                offer_comments=lambda number, management: _offer_outbox_comments(
+                    cfg, incus, full, short, number=number, management=management
+                ),
+            )
+            sub_failed = any(o.action == "failed" or o.outbox_failures > 0 for o in sub_outcomes)
 
             # --- Publish (fetch + push under the chosen name) ---
             # On a foreign PR head the generic push-failure hint's "--as" advice does
@@ -8816,6 +8855,7 @@ def pr_cmd(
                     "--retarget/--no-retarget is only acted on when a stacked PR is opened; "
                     f"ignored. To move the base later: jailbee git retarget {short} <branch>"
                 )
+            pr_links.link_pr_family(cfg, incus, full, short)
             # The offer to publish what else the container wrote, deliberately *not*
             # adjacent to `render_pr_outcome`: the description this run consumed is
             # recorded just above (here on the create path, inside `apply_pr_updates`
@@ -8830,9 +8870,9 @@ def pr_cmd(
             )
             if web:
                 pr_mod.open_pr_in_browser(cfg.repo_root, created.number)
-            if outbox_failures:
+            if outbox_failures or sub_failed:
                 # The PR itself landed and its URL is already on screen; this says only
-                # that the comments did not follow it.
+                # that the comments did not follow it or a submodule PR failed.
                 raise typer.Exit(1)
     except OutboxError as exc:
         error(str(exc))
