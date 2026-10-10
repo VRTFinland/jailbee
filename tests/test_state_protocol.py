@@ -145,6 +145,7 @@ def _full_snapshot() -> Snapshot:
             agent_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             agent_config_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             optional_mounts=("ssh", "gpg"),
+            checkout="feat-1",
         )
     )
     return Snapshot(seq=3, gathered_at=T0, git_enabled=True, groups=[group])

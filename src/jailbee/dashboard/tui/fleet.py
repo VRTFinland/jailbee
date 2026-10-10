@@ -270,7 +270,10 @@ def repo_heading(
     (``fold`` and ``repo``).
     """
     marker = "▸" if group.prefix in folded else "▾"
-    rest = f" {group.prefix}  ({len(group.containers)})"
+    rest = f" {group.prefix}"
+    if group.checkout:
+        rest += f" [{group.checkout}]"
+    rest += f"  ({len(group.containers)})"
     if group.repo_root is None:
         rest += "  (orphan)"
     if marked:

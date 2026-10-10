@@ -454,3 +454,8 @@ def test_card_content_carries_doing_whatever_the_columns():
 
     c.activity = ()
     assert m.card_content(c, dcolumns.visible_fields(now, [c])).doing is None
+
+
+def test_group_header_shows_the_checked_out_branch():
+    group = RepoGroup("p", "/r", None, [], checkout="main")
+    assert m.group_header(group) == ("p [main]", False)

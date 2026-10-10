@@ -350,6 +350,31 @@ def get_current_branch(repo_root: Path) -> str | None:
     return branch or None
 
 
+def get_checkout_label(repo_root: Path) -> str | None:
+    """What ``repo_root`` has checked out, as a short display label.
+
+    The branch name, or ``@<short sha>`` on a detached HEAD; None when git
+    cannot say (not a repo, no commits, git missing). Purely informational —
+    the dashboards show it beside the repo name.
+    """
+    branch = get_current_branch(repo_root)
+    if branch is not None:
+        return branch
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_LOCAL_DISCOVERY_TIMEOUT,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    sha = result.stdout.strip() if result.returncode == 0 else ""
+    return f"@{sha}" if sha else None
+
+
 def get_head_sha(repo_root: Path) -> str | None:
     """Return the full sha of ``repo_root``'s current HEAD, or None.
 

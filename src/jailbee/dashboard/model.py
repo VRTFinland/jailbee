@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
-from jailbee import agent_status
+from jailbee import agent_status, git
 from jailbee.config import (
     format_loose_after,
     load_repo_config,
@@ -145,7 +145,10 @@ class RepoGroup:
     orphan groups keep ``()``.
     ``optional_mounts`` lists the repo config's `optional_mounts:` kinds, which
     the terminal menu's Mount…/Unmount… pickers choose from. Orphan groups keep
-    it empty."""
+    it empty.
+    ``checkout`` is what the repo's own working tree has checked out — a
+    branch name, or ``@<sha>`` on a detached HEAD — shown beside the heading;
+    None for orphan groups and when git cannot say."""
 
     prefix: str
     repo_root: str | None
@@ -159,6 +162,7 @@ class RepoGroup:
     agent_homes: tuple[tuple[str, str, Path], ...] = ()
     agent_config_homes: tuple[tuple[str, str, Path], ...] = ()
     optional_mounts: tuple[str, ...] = ()
+    checkout: str | None = None
 
 
 @dataclass(frozen=True)
@@ -358,6 +362,7 @@ def gather_rows(
                 agent_homes=agent_homes(cfg, [c.name for c in containers]),
                 agent_config_homes=agent_config_homes(cfg, [c.name for c in containers]),
                 optional_mounts=tuple(cfg.optional_mounts),
+                checkout=git.get_checkout_label(root),
             )
         )
 

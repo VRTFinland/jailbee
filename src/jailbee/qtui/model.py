@@ -47,7 +47,12 @@ def container_cells(c: ContainerInfo, fields: list[FieldSpec[ContainerInfo]]) ->
 def group_header(group: RepoGroup) -> tuple[str, bool]:
     """Return ``(label, is_orphan)`` for a repo group header row."""
     is_orphan = group.repo_root is None
-    label = f"{group.prefix}  (orphan)" if is_orphan else group.prefix
+    if is_orphan:
+        label = f"{group.prefix}  (orphan)"
+    elif group.checkout:
+        label = f"{group.prefix} [{group.checkout}]"
+    else:
+        label = group.prefix
     return label, is_orphan
 
 

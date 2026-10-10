@@ -306,3 +306,17 @@ def test_merge_roles_mark_the_source_and_dim_the_ineligible(tmp_path):  # type: 
     assert not line(a).style.dim
     assert not line(b).style.dim
     assert line(a).style.bgcolor == fleet.MARKED_STYLE.bgcolor
+
+
+def test_a_heading_shows_the_checked_out_branch(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup(
+        "alpha", str(tmp_path), None, [ci("alpha-a", "alpha")], checkout="main"
+    )
+
+    assert fleet.repo_heading(group, None, frozenset()).plain == "\u25be alpha [main]  (1)"
+
+
+def test_a_heading_without_a_checkout_is_unchanged(tmp_path):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-a", "alpha")])
+
+    assert fleet.repo_heading(group, None, frozenset()).plain == "\u25be alpha  (1)"

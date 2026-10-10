@@ -489,6 +489,38 @@ def test_get_current_branch_returns_none_when_detached_head(mocker, tmp_path):
     assert get_current_branch(tmp_path) is None
 
 
+def test_get_checkout_label_is_the_branch_name(mocker, tmp_path):
+    from jailbee.git import get_checkout_label
+
+    mock_run = mocker.patch("jailbee.git.subprocess.run")
+    mock_run.return_value = CompletedProcess(args=[], returncode=0, stdout="main\n", stderr="")
+
+    assert get_checkout_label(tmp_path) == "main"
+    assert mock_run.call_count == 1
+
+
+def test_get_checkout_label_is_the_short_sha_on_a_detached_head(mocker, tmp_path):
+    from jailbee.git import get_checkout_label
+
+    mock_run = mocker.patch("jailbee.git.subprocess.run")
+    mock_run.side_effect = [
+        CompletedProcess(args=[], returncode=128, stdout="", stderr="not a symbolic ref"),
+        CompletedProcess(args=[], returncode=0, stdout="a1b2c3d\n", stderr=""),
+    ]
+
+    assert get_checkout_label(tmp_path) == "@a1b2c3d"
+    assert mock_run.call_args.args[0] == ["git", "rev-parse", "--short", "HEAD"]
+
+
+def test_get_checkout_label_is_none_when_git_cannot_say(mocker, tmp_path):
+    from jailbee.git import get_checkout_label
+
+    mock_run = mocker.patch("jailbee.git.subprocess.run")
+    mock_run.return_value = CompletedProcess(args=[], returncode=128, stdout="", stderr="")
+
+    assert get_checkout_label(tmp_path) is None
+
+
 def test_get_current_branch_returns_none_when_no_git_binary(mocker, tmp_path):
     from jailbee.git import get_current_branch
 

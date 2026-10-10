@@ -305,6 +305,22 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
     assert groups[0].loose_ttl_default == "45m"
 
 
+def test_gather_rows_carries_the_repos_checked_out_branch(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha")
+    root = tmp_path / "alpha"
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel.git, "get_checkout_label", return_value="feat-1")
+
+    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
+
+    assert groups[0].checkout == "feat-1"
+
+
 def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, make_cfg):
     cfg = make_cfg(
         tmp_path / "alpha",
