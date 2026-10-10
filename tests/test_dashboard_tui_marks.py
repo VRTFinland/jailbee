@@ -14,22 +14,23 @@ def _group(tmp_path, *names, state="Running"):
     return dmodel.RepoGroup("alpha", str(tmp_path), None, [ci(n, "alpha", state) for n in names])
 
 
-def test_space_on_a_container_marks_it_and_moves_down(mocker, tmp_path):
+def test_space_on_a_container_marks_it_without_moving(mocker, tmp_path):
     session, _ = bare_session(mocker, [_group(tmp_path, "alpha-a", "alpha-b")])
     session.handle_key("down")
 
     session.handle_key("space")
 
     assert session.marked == frozenset({"alpha-a"})
-    assert session.selected == dmodel.Row("container", "alpha-b")
+    assert session.selected == dmodel.Row("container", "alpha-a")
 
 
 def test_space_on_a_marked_container_unmarks_it(mocker, tmp_path):
     session, _ = bare_session(mocker, [_group(tmp_path, "alpha-a", "alpha-b")])
-    for key in ("down", "space", "up", "space"):
+    for key in ("down", "space", "space"):
         session.handle_key(key)
 
     assert session.marked == frozenset()
+    assert session.selected == dmodel.Row("container", "alpha-a")
 
 
 def test_space_on_a_repo_header_still_folds(mocker, tmp_path):

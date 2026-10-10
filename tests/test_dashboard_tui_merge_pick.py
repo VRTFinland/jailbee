@@ -36,26 +36,37 @@ def _two_repo_session(mocker, tmp_path):  # type: ignore[no-untyped-def]
 # -- entry -------------------------------------------------------------------
 
 
-def test_merge_menu_enters_target_mode_with_fork_source_under_cursor(mocker, tmp_path):
+def test_merge_entry_keeps_an_eligible_cursor_instead_of_jumping_to_fork_source(mocker, tmp_path):
     src = ci("r-src", "r")
     fork = replace(ci("r-b", "r"), fork_of="r-src")
     other = ci("r-c", "r")
     session, _ = _session(mocker, tmp_path, other, fork, src)
+    session.select(Row("container", "r-c"))
 
     session.begin_merge_pick(["r-b"])
 
     assert session.merge_pick is not None
     assert session.merge_pick.sources == ("r-b",)
     assert session.merge_pick.prefix == "r"
-    assert container_of(session.selected) == "r-src"
+    assert container_of(session.selected) == "r-c"
 
 
-def test_without_a_common_fork_source_the_cursor_takes_the_first_eligible_row(mocker, tmp_path):
-    session, _ = _session(mocker, tmp_path, ci("r-b", "r"), ci("r-a", "r"))
+def test_merge_entry_moves_forward_from_the_source_instead_of_to_the_top(mocker, tmp_path):
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
+    session.select(Row("container", "r-b"))
 
     session.begin_merge_pick(["r-b"])
 
-    assert container_of(session.selected) == "r-a"
+    assert container_of(session.selected) == "r-c"
+
+
+def test_merge_entry_moves_back_when_no_eligible_row_follows_the_source(mocker, tmp_path):
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-c", "r"), ci("r-b", "r"))
+    session.select(Row("container", "r-b"))
+
+    session.begin_merge_pick(["r-b"])
+
+    assert container_of(session.selected) == "r-c"
 
 
 def test_a_fork_source_that_is_stopped_is_not_where_the_cursor_lands(mocker, tmp_path):
@@ -162,6 +173,20 @@ def test_the_menu_keys_g_m_reach_the_mode_in_the_app(mocker, tmp_path):
     assert view.notice is not None and view.notice.startswith("Merge b into: —")
 
 
+def test_app_merge_entry_stays_near_source_and_space_only_toggles(mocker, tmp_path):
+    run = drive(
+        mocker,
+        ["j", "j", "enter", "g", "m", "space", "space"],
+        [_group(tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))],
+    )
+
+    assert run.trace[5].selected == Row("container", "r-c")
+    assert run.trace[6].selected == Row("container", "r-c")
+    assert run.trace[6].marked == frozenset({"r-c"})
+    assert run.last.selected == Row("container", "r-c")
+    assert run.last.marked == frozenset()
+
+
 # -- keys --------------------------------------------------------------------
 
 
@@ -185,7 +210,7 @@ def test_merge_mode_skips_source_and_stopped_rows(mocker, tmp_path):
     assert container_of(session.selected) == "r-a"  # the repo header is not a target
 
 
-def test_space_marks_a_target_and_moves_to_the_next_eligible_row(mocker, tmp_path):
+def test_space_marks_a_target_without_moving(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
     session.begin_merge_pick(["r-b"])
 
@@ -193,20 +218,21 @@ def test_space_marks_a_target_and_moves_to_the_next_eligible_row(mocker, tmp_pat
 
     assert session.merge_pick is not None
     assert session.merge_pick.targets == frozenset({"r-a"})
-    assert container_of(session.selected) == "r-c"
+    assert container_of(session.selected) == "r-a"
     assert session.marked == frozenset()  # target marks are not bulk marks
     assert session.view().marked == frozenset({"r-a"})
 
 
 def test_space_twice_on_one_row_unmarks_it(mocker, tmp_path):
-    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
+    session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
     session.begin_merge_pick(["r-b"])
 
-    session.handle_key("space")  # marks r-a; no eligible row below, cursor stays
+    session.handle_key("space")
     session.handle_key("space")
 
     assert session.merge_pick is not None
     assert session.merge_pick.targets == frozenset()
+    assert container_of(session.selected) == "r-a"
 
 
 def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
@@ -214,8 +240,8 @@ def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
     run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
     session.begin_merge_pick(["r-b"])
 
-    session.handle_key("space")  # r-a, then the cursor moves on to r-c
-    session.handle_key("down")  # nothing further: stays on r-c
+    session.handle_key("space")  # r-a
+    session.handle_key("down")  # move to r-c, skipping the source
     session.handle_key("space")  # r-c
     session.handle_key("enter")
 
@@ -446,6 +472,7 @@ def test_a_target_that_vanishes_or_stops_is_dropped(mocker, tmp_path):
     session.begin_merge_pick(["r-b"])
     for _ in range(3):
         session.handle_key("space")  # r-a, r-c, r-d
+        session.handle_key("down")
     assert session.merge_pick is not None
     assert session.merge_pick.targets == frozenset({"r-a", "r-c", "r-d"})
 

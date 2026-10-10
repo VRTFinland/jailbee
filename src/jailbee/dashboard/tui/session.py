@@ -148,11 +148,7 @@ from jailbee.dashboard.tui.overlay import (
 from jailbee.dashboard.tui.terminal import terminal_title
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
-from jailbee.lifecycle import (
-    ContainerInfo,
-    merge_default_target,
-    tracking_notices,
-)
+from jailbee.lifecycle import ContainerInfo, tracking_notices
 from jailbee.remote_ssh import router as ssh_router
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.router import RouteError
@@ -2185,7 +2181,6 @@ class DashboardSession:
         elif key == "space":
             if self.selected is not None and self.selected.kind == "container":
                 self.toggle_mark(self.selected.key)
-                self.move(1)
             else:
                 self.toggle_fold()
         elif key in ("extend-up", "extend-down"):
@@ -2540,8 +2535,8 @@ class DashboardSession:
     def begin_merge_pick(self, sources: Sequence[str]) -> None:
         """Enter the merge-target mode for ``sources``, or notice why it cannot start.
 
-        The bulk marks are parked until the mode ends; the cursor starts on
-        the sources' common fork source when that can be a target.
+        The bulk marks are parked until the mode ends; keep the cursor's
+        position, moving to a nearby eligible row only when necessary.
         """
         found = [self._listed_container(name) for name in sources]
         infos = [item for item in found if item is not None]
@@ -2566,11 +2561,10 @@ class DashboardSession:
         if not on_screen:
             self.set_notice(f"Unfold '{pick.prefix}' to pick a merge target")
             return
-        default = merge_default_target([info for _group, info in infos])
         self.merge_pick = pick
         self.marked = frozenset()
         self.notice = None  # the mode's own line takes the notice slot
-        self.select(Row("container", default if default in on_screen else on_screen[0]))
+        self._snap_merge_cursor()
 
     def _merge_pick_line(self, pick: MergePick) -> str:
         def short(name: str) -> str:
@@ -2593,7 +2587,6 @@ class DashboardSession:
             name = container_of(self.selected)
             if name is not None and self._merge_eligible(pick, name):
                 self.merge_pick = replace(pick, targets=pick.targets ^ {name})
-                self._merge_move(1)
         elif key == "enter":
             self._finish_merge_pick()
         elif key == "cancel":
@@ -2617,7 +2610,7 @@ class DashboardSession:
             index += step
 
     def _snap_merge_cursor(self) -> None:
-        """After a refresh: off a row that can no longer be a target, onto the nearest one."""
+        """Keep an eligible cursor, otherwise try the next target row, then the previous."""
         if self.merge_pick is None:
             return
         name = container_of(self.selected)
