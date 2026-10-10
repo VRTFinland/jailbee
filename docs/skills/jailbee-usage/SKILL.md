@@ -565,7 +565,7 @@ Full version with the cleanup rules: [Git bridge](../../git-bridge.md#merging-se
 ```bash
 jailbee net loose feat-foo             # full NAT — e.g. for a fetch from an off-allowlist host
 #   ... push or fetch over the network ...
-# auto-reverts to the previous mode after ~5 min (loose_auto_revert)
+# auto-reverts to the previous mode after ~15 min (loose_auto_revert)
 jailbee net loose feat-foo --for 2h    # pick the TTL for this switch only
 jailbee net loose feat-foo --no-revert # stay loose until switched manually
 jailbee net strict feat-foo            # back to the egress allowlist now

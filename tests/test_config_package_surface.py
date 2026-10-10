@@ -93,6 +93,11 @@ def test_every_expected_name_is_importable():
     assert missing == [], f"jailbee.config no longer exports: {missing}"
 
 
+def test_every_name_in_all_resolves():
+    unresolved = sorted(n for n in config.__all__ if not hasattr(config, n))
+    assert unresolved == [], f"jailbee.config.__all__ contains unresolved names: {unresolved}"
+
+
 def test_all_lists_the_public_surface():
     """Public names (no leading underscore) must be declared in __all__.
 

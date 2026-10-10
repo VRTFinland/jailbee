@@ -91,6 +91,7 @@ from jailbee.config.models_net import (
     LocalCredentials,
     LooseAutoRevert,
     format_ttl,
+    parse_duration_value,
     parse_ttl,
 )
 from jailbee.config.models_tools import (
