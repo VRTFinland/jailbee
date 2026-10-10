@@ -79,7 +79,7 @@ class MenuGroup:
 
 MenuItem = tuple[str, str] | MenuGroup
 
-_PR_MENU_VERBS = frozenset({"pr --open", "pr", "review apply"})
+_PR_MENU_VERBS = frozenset({"pr --open", "pr", "submodule pr", "review apply"})
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
 )
@@ -242,7 +242,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     dispatching the two-token ``jailbee net <mode>`` subcommand.
 
     Running rows lead with session actions, Outbox and app actions, followed by
-    job diagnostics, PR leaves, Git leaves, network modes and lifecycle actions.
+    job diagnostics, PR leaves (including submodule PR when changes are probed),
+    Git leaves, network modes and lifecycle actions.
     Git pull and diff are hidden when status proves they would do nothing;
     unknown status still offers them. Stopped rows lead with Start, followed
     by eligible diagnostics and Open PR, then Destroy.
@@ -293,6 +294,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         actions.append(("Open PR", "pr --open"))
     if _bridge_possible(ctx):
         actions.append(("Create/update PR", "pr"))
+        if ctx.git_status is not None and ctx.git_status.submodules:
+            # The submodule command opens its own picker. A submodule whose
+            # gitlink is not yet bumped is missing from this probe.
+            actions.append(("Create/update submodule PR…", "submodule pr"))
     if _bridge_possible(ctx):
         actions.append(("Merge into…", "merge"))
         if _has_commits_for_host(ctx.git_status):
@@ -681,6 +686,7 @@ def _is_gui_verb(verb: str) -> bool:
 PRINTING_VERBS: frozenset[str] = frozenset(
     {
         "pr",
+        "submodule pr",
         "git push",
         "git push --pr",
         "git pull",

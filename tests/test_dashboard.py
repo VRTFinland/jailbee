@@ -1199,6 +1199,42 @@ def test_menu_actions_orphan_stays_empty_even_with_pr():
     assert dmenus.menu_actions(_ctx(has_repo=False, pr_number=123)) == []
 
 
+def _git_with_submodule():
+    from jailbee.git_status import GitStatus, SubmoduleChange
+
+    return GitStatus(
+        wt="clean",
+        ahead_diff="+1 -0",
+        ahead_count="1",
+        conflict="ok",
+        submodules=(SubmoduleChange(path="lib/a", ahead_commits=2),),
+    )
+
+
+def test_submodule_pr_offered_after_create_pr_when_submodules_changed():
+    actions = dmenus.menu_actions(_ctx(git_status=_git_with_submodule()))
+    verbs = [verb for _, verb in actions]
+    assert verbs[verbs.index("pr") + 1] == "submodule pr"
+    labels = {verb: label for label, verb in actions}
+    assert labels["submodule pr"] == "Create/update submodule PR…"
+
+
+def test_submodule_pr_absent_without_submodule_changes():
+    verbs = [verb for _, verb in dmenus.menu_actions(_ctx())]
+    assert "submodule pr" not in verbs
+
+
+def test_submodule_pr_absent_when_bridge_impossible():
+    ctx = _ctx(state="Stopped", git_status=_git_with_submodule())
+    assert "submodule pr" not in [verb for _, verb in dmenus.menu_actions(ctx)]
+
+
+def test_submodule_pr_groups_under_pr_and_keeps_its_output():
+    leaves = [("Create/update PR", "pr"), ("Create/update submodule PR…", "submodule pr")]
+    assert dmenus.group_menu_actions(leaves) == [dmenus.MenuGroup("PR →", tuple(leaves))]
+    assert "submodule pr" in dmenus.PRINTING_VERBS
+
+
 def test_menu_actions_running_offers_the_workflow_verbs():
     """Sessions lead, then PR and Git; unknown Git status retains its leaves."""
     verbs = [v for _, v in dmenus.menu_actions(_ctx())]
@@ -2059,6 +2095,7 @@ def test_every_printing_verb_is_a_real_menu_verb():
                     pr_number=7,
                     job_clearable=True,
                     has_job=True,
+                    git_status=_git_with_submodule(),
                 )
             )
         }
