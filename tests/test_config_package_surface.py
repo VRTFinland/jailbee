@@ -40,8 +40,9 @@ EXPECTED_SURFACE = frozenset(
         "JETBRAINS_AI_HOSTS",
         "JETBRAINS_LICENSE_HOSTS",
         "JetbrainsConfig",
-        "LOOSE_TTL_PRESETS",
+        "TTL_PRESETS",
         "LooseAutoRevert",
+        "MountAutoRevert",
         "LocalCredentials",
         "NET_DESCRIPTIONS",
         "NewConfig",
@@ -67,7 +68,7 @@ EXPECTED_SURFACE = frozenset(
         "_split_host_keys",
         "deep_merge",
         "device_name",
-        "format_loose_after",
+        "format_ttl",
         "load_config",
         "load_config_from_layers",
         "load_config_from_text",
@@ -76,7 +77,7 @@ EXPECTED_SURFACE = frozenset(
         "load_repo_config_unsanitized",
         "merge_apps_raw",
         "normalize_credentials_key",
-        "parse_loose_ttl",
+        "parse_ttl",
         "resolve_agents_raw",
         "resolve_kitty_terminfo_path",
         "sanitize_column_blocks",
@@ -91,6 +92,11 @@ EXPECTED_SURFACE = frozenset(
 def test_every_expected_name_is_importable():
     missing = sorted(n for n in EXPECTED_SURFACE if not hasattr(config, n))
     assert missing == [], f"jailbee.config no longer exports: {missing}"
+
+
+def test_every_name_in_all_resolves():
+    unresolved = sorted(n for n in config.__all__ if not hasattr(config, n))
+    assert unresolved == [], f"jailbee.config.__all__ contains unresolved names: {unresolved}"
 
 
 def test_all_lists_the_public_surface():

@@ -174,9 +174,9 @@ def snapshot_delete_argv(name: str, tag: str) -> list[str]:
     return ["snapshot", "delete", "--", name, tag]
 
 
-def mount_argv(kind: str, name: str) -> list[str]:
-    """`jailbee mount KIND NAME`: kind first, as the CLI declares it."""
-    return ["mount", "--", kind, name]
+def mount_argv(kind: str, name: str, ttl: str | None = None) -> list[str]:
+    """`jailbee mount [--for TTL] -- KIND NAME`: options before the separator."""
+    return ["mount", *(("--for", ttl) if ttl is not None else ()), "--", kind, name]
 
 
 def unmount_argv(kind: str, name: str) -> list[str]:

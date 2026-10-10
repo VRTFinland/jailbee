@@ -52,6 +52,7 @@ from jailbee.config.models_host import (
     HostDevice,
     HostMount,
     HostPort,
+    MountAutoRevert,
     OptionalMount,
     SharedCache,
     _default_shared_caches,
@@ -63,6 +64,8 @@ from jailbee.config.models_net import (
     JETBRAINS_AI_HOSTS,
     JETBRAINS_LICENSE_HOSTS,
     LooseAutoRevert,
+    format_ttl,
+    parse_ttl,
 )
 from jailbee.config.models_tools import (
     BrowserConfig,
@@ -341,6 +344,13 @@ class Config(BaseModel):
             "network mode after a TTL. Applies to every repo unless a repo overrides "
             "it field-by-field — e.g. a repo can change just `after` and inherit "
             "`enabled` from `~/.config/jailbee/global.yaml`."
+        ),
+    )
+    mount_auto_revert: MountAutoRevert = Field(
+        default=MountAutoRevert(),
+        description=(
+            "Policy for auto-detaching an optional mount after a TTL. Applies to "
+            "every repo unless a repo overrides it field-by-field."
         ),
     )
     ls: ColumnConfig = Field(
@@ -753,6 +763,41 @@ class Config(BaseModel):
         merged = base.model_copy(update=overrides)
         return merged if merged.enabled else None
 
+    def effective_mount_auto_revert(self, gcfg: GlobalConfig) -> MountAutoRevert | None:
+        """The mount TTL policy: this repo's set fields over the global block.
+
+        None when the effective ``enabled`` is False.
+        """
+        base = gcfg.mount_auto_revert
+        repo = self.mount_auto_revert
+        overrides = {field: getattr(repo, field) for field in repo.model_fields_set}
+        merged = base.model_copy(update=overrides)
+        return merged if merged.enabled else None
+
+    def effective_mount_ttl(self, gcfg: GlobalConfig, kind: str) -> str | None:
+        """Prompt-ready default TTL for optional mount ``kind``; None = no TTL.
+
+        A disabled policy wins over the mount's own ``auto_unmount_after``.
+        Raises ``ValueError`` naming the config key when the value in use is
+        malformed, ``KeyError`` for an unknown kind.
+        """
+        mount = self.optional_mounts[kind]
+        policy = self.effective_mount_auto_revert(gcfg)
+        if policy is None:
+            return None
+        if mount.auto_unmount_after is not None:
+            raw = mount.auto_unmount_after
+            key = f"optional_mounts.{kind}.auto_unmount_after"
+            text = format_ttl(raw)
+            try:
+                if parse_ttl(text) is None:
+                    return None
+            except ValueError as e:
+                raise ValueError(f"{key}: {e}") from e
+            return text
+        policy.duration()
+        return format_ttl(policy.after)
+
     def _effective_columns(self, base: ColumnConfig, repo: ColumnConfig) -> ColumnConfig:
         """Merge fields explicitly set in this repo's YAML over the global block."""
         overrides = {f: getattr(repo, f) for f in repo.model_fields_set}
@@ -895,6 +940,21 @@ class Config(BaseModel):
                 self.loose_auto_revert.duration()
             except ValueError as e:
                 issues.append(f"loose_auto_revert.after is unusable: {e}")
+        if self.mount_auto_revert.enabled:
+            try:
+                self.mount_auto_revert.duration()
+            except ValueError as e:
+                issues.append(f"mount_auto_revert.after is unusable: {e}")
+        for kind, optional_mount in self.optional_mounts.items():
+            if optional_mount.auto_unmount_after is None:
+                continue
+            try:
+                parse_ttl(format_ttl(optional_mount.auto_unmount_after))
+            except ValueError as e:
+                issues.append(
+                    f"optional_mounts.{kind}.auto_unmount_after is unusable "
+                    f"({optional_mount.auto_unmount_after!r}): {e}"
+                )
         if self.container.path and "PATH" in self.container.env:
             # Not a breakage: `container.env` is documented to win over every
             # jailbee-derived `environment.*` value, and it does here too. But

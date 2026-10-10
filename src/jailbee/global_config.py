@@ -2,8 +2,8 @@
 
 Stored at $XDG_CONFIG_HOME/jailbee/global.yaml (default
 ~/.config/jailbee/global.yaml). Optional file — if absent, defaults are used.
-Carries `docker_registry_mirror`, `loose_auto_revert`, `credentials`,
-`litellm`, and the `ls` / `dashboard` column preferences.
+Carries `docker_registry_mirror`, `loose_auto_revert`, `mount_auto_revert`,
+`credentials`, `litellm`, and the `ls` / `dashboard` column preferences.
 
 Per-repo configuration lives in <repo>/.jailbee/config.yaml — see config.py.
 """
@@ -31,6 +31,7 @@ from jailbee.config import (
     ConfigError,
     Credentials,
     LooseAutoRevert,
+    MountAutoRevert,
     _columns_already_sanitized,
     _split_host_keys,
     normalize_credentials_key,
@@ -253,6 +254,14 @@ class GlobalConfig(BaseModel):
             "(`common.py`'s `_HOST_LEVEL_KEYS`), so a loaded `global.yaml` never "
             "populates this instance; the effective value comes from "
             "`Config.effective_loose_auto_revert()` instead."
+        ),
+    )
+    mount_auto_revert: MountAutoRevert = Field(
+        default_factory=MountAutoRevert,
+        description=(
+            "Host-wide default for auto-detaching optional mounts after a TTL. A "
+            "repo's own `mount_auto_revert` block overrides this field-by-field; "
+            "resolve with `Config.effective_mount_auto_revert()`."
         ),
     )
     ls: ColumnConfig = Field(

@@ -224,11 +224,11 @@ def test_the_loose_default_is_the_first_repo_with_a_revert_policy(tmp_path):
 
 
 def test_loose_ttl_entries_lead_with_the_default_and_end_with_never():
-    entries = bulk.loose_ttl_entries("45m")
+    entries = bulk.ttl_entries("45m")
 
     assert entries[0] == PickerEntry("45m", "45m")
     assert entries[-1] == PickerEntry("never (no auto-revert)", "never")
-    assert [e.value for e in bulk.loose_ttl_entries("1h")].count("1h") == 1
+    assert [e.value for e in bulk.ttl_entries("1h")].count("1h") == 1
 
 
 def test_a_busy_container_is_skipped_by_every_verb(tmp_path):

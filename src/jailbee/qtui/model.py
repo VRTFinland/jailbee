@@ -115,6 +115,8 @@ def card_content(
         for index, field in enumerate(fields):
             if field.name == "network":
                 cells[index] = _strip_markup(dashboard_format.card_network(c, now))
+            elif field.name == "mounts":
+                cells[index] = _strip_markup(dashboard_format.card_mounts(c, now))
     name = ""
     state = ""
     card_fields: list[CardField] = []
@@ -235,6 +237,10 @@ _FIELD_MEANINGS = {
         "Network mode: ● followed by the remaining auto-revert time = loose, "
         "∞ = loose with no auto-revert; empty = strict"
     ),
+    "mounts": (
+        "Optional mounts: ◆ followed by when the last one is detached, "
+        "∞ = at least one never expires; empty = none"
+    ),
     "ttl": "Remaining loose-network auto-revert time",
     "loose_until": "Exact loose-network auto-revert deadline",
     "mem": "Memory usage / configured limit",
@@ -275,6 +281,14 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
     elif field.name in ("network", "ttl", "loose_until"):
         deadline = c.loose_until.isoformat() if c.loose_until else "no auto-revert deadline"
         detail = f"{c.network or 'unknown'}; {deadline}"
+    elif field.name == "mounts":
+        detail = (
+            "\n".join(
+                f"{k}: {c.mount_until[k].isoformat() if k in c.mount_until else 'no auto-unmount'}"
+                for k in c.optional_mounts
+            )
+            or "No optional mounts"
+        )
     elif field.name in ("agent", "agent_compact"):
         details = [
             f"{s.agent}: {s.state}; {s.count} session(s)"

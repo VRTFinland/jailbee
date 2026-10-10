@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -99,6 +99,8 @@ class ContainerInfo:
     # own `optional-<kind>` disk devices (`mounts.DEVICE_NAME_PREFIX`). The
     # dashboard's Mount…/Unmount… pickers offer from this.
     optional_mounts: tuple[str, ...] = ()
+    # Deadlines from mounts.mount_until; attached kinds without one never expire.
+    mount_until: dict[str, datetime] = field(default_factory=dict)
     # `user.jailbee.alias`: the user's rename (`jailbee rename`). The real
     # name never changes; `shown_name` displays this, resolution accepts it.
     alias: str | None = None
@@ -416,7 +418,7 @@ def list_containers(
     the full instance state once instead of once per repo.
     """
     from jailbee.accounts import groups
-    from jailbee.mounts import attached_kinds
+    from jailbee.mounts import attached_kinds, mount_until
     from jailbee.network_generation import generation_of
     from jailbee.work_mode import work_mode_state
 
@@ -542,6 +544,7 @@ def list_containers(
                 loose_until = None
 
         attached = attached_kinds(raw.get("devices") or {})
+        deadlines = mount_until(config)
 
         out.append(
             ContainerInfo(
@@ -564,6 +567,7 @@ def list_containers(
                 cpu_usage_ns=cpu_usage_ns,
                 cpu_limit=cpu_limit,
                 optional_mounts=attached,
+                mount_until=deadlines,
                 alias=alias,
                 fork_of=fork_of,
             )
@@ -2987,6 +2991,21 @@ def ls_field_specs(
             return "—"
         return format_duration_short(c.loose_until - now)
 
+    def _mount_rest(c: ContainerInfo, kind: str) -> str:
+        until = c.mount_until.get(kind)
+        return "∞" if until is None else format_duration_short(until - now).replace(" ", "")
+
+    def _mounts_cell(c: ContainerInfo) -> str:
+        return ", ".join(f"{k} {_mount_rest(c, k)}" for k in c.optional_mounts)
+
+    def _mounts_key(c: ContainerInfo) -> table_format.SortKey | None:
+        if not c.optional_mounts:
+            return None
+        ends = [c.mount_until.get(k) for k in c.optional_mounts]
+        if any(e is None for e in ends):
+            return (float("inf"),)
+        return (max((e - now).total_seconds() for e in ends if e is not None),)
+
     def _ttl_json(c: ContainerInfo) -> int | None:
         if c.network != "loose" or c.loose_until is None:
             return None
@@ -3408,6 +3427,21 @@ def ls_field_specs(
             json=lambda c: c.loose_until.isoformat() if c.loose_until else None,
             default_table=False,
             default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="mounts",
+            sort=_mounts_key,
+            header="MOUNTS",
+            cell=_mounts_cell,
+            json=lambda c: {
+                k: (c.mount_until[k].isoformat() if k in c.mount_until else None)
+                for k in c.optional_mounts
+            },
+            default_table=False,
+            default_dashboard=True,
+            default_json=False,
+            show_if=lambda rows: any(c.optional_mounts for c in rows),
+            dashboard_min_width=5,
         ),
         table_format.FieldSpec(
             name="ip",

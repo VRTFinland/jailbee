@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from jailbee import agent_status, git
 from jailbee.config import (
-    format_loose_after,
+    format_ttl,
     load_repo_config,
 )
 from jailbee.global_config import (
@@ -146,6 +146,9 @@ class RepoGroup:
     ``optional_mounts`` lists the repo config's `optional_mounts:` kinds, which
     the terminal menu's Mount…/Unmount… pickers choose from. Orphan groups keep
     it empty.
+    ``mount_ttl_defaults`` maps each optional-mount kind to the TTL the Mount…
+    flow pre-selects, None = attach without asking (policy off, `never`, or a
+    malformed value the CLI will report).
     ``checkout`` is what the repo's own working tree has checked out — a
     branch name, or ``@<sha>`` on a detached HEAD — shown beside the heading;
     None for orphan groups and when git cannot say."""
@@ -162,6 +165,7 @@ class RepoGroup:
     agent_homes: tuple[tuple[str, str, Path], ...] = ()
     agent_config_homes: tuple[tuple[str, str, Path], ...] = ()
     optional_mounts: tuple[str, ...] = ()
+    mount_ttl_defaults: dict[str, str | None] = field(default_factory=dict)
     checkout: str | None = None
 
 
@@ -252,7 +256,18 @@ def collect_repo_roots(
 def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
     """The repo's effective loose TTL as prompt text, None when disabled."""
     policy = cfg.effective_loose_auto_revert(gcfg)
-    return format_loose_after(policy.after) if policy is not None else None
+    return format_ttl(policy.after) if policy is not None else None
+
+
+def _mount_ttl_defaults(cfg: Config, gcfg: GlobalConfig) -> dict[str, str | None]:
+    """Per-kind prompt default; a malformed value maps to None (the CLI reports it)."""
+    out: dict[str, str | None] = {}
+    for kind in cfg.optional_mounts:
+        try:
+            out[kind] = cfg.effective_mount_ttl(gcfg, kind)
+        except ValueError:
+            out[kind] = None
+    return out
 
 
 def global_config_or_defaults() -> GlobalConfig:
@@ -362,6 +377,7 @@ def gather_rows(
                 agent_homes=agent_homes(cfg, [c.name for c in containers]),
                 agent_config_homes=agent_config_homes(cfg, [c.name for c in containers]),
                 optional_mounts=tuple(cfg.optional_mounts),
+                mount_ttl_defaults=_mount_ttl_defaults(cfg, gcfg),
                 checkout=git.get_checkout_label(root),
             )
         )

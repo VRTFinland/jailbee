@@ -894,7 +894,7 @@ def test_on_action_net_loose_cancelled_dialog_launches_nothing(mocker, tmp_path)
 def test_on_action_net_loose_dialog_preselects_the_repo_default(mocker, tmp_path):
     """A repo configured with `after: 45m` must get 45m offered *and*
     pre-selected — not the hard-coded first preset (5m)."""
-    from jailbee.config import LOOSE_TTL_PRESETS
+    from jailbee.config import TTL_PRESETS
 
     controller = _controller_with_group(mocker, tmp_path, loose_ttl_default="45m")
     get_item = mocker.patch(
@@ -911,7 +911,7 @@ def test_on_action_net_loose_dialog_preselects_the_repo_default(mocker, tmp_path
     assert "45m" in items
     assert items[current] == "45m"
     assert "never" in items
-    assert set(LOOSE_TTL_PRESETS) <= set(items)
+    assert set(TTL_PRESETS) <= set(items)
 
 
 def test_on_action_net_loose_dialog_preselects_a_preset_default(mocker, tmp_path):

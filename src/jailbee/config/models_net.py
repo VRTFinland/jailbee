@@ -114,6 +114,29 @@ def _parse_duration(value: str) -> timedelta:
     return timedelta(hours=n)
 
 
+def parse_duration_value(raw: str | int, key: str) -> timedelta:
+    """Parse a TTL policy value; ``key`` names the config field in errors.
+
+    A bare int means minutes. Must be > 0 and <= 24h. Shared by
+    `LooseAutoRevert.duration` and `MountAutoRevert.duration`, so both
+    policies accept exactly the same syntax.
+    """
+    if isinstance(raw, int):
+        if raw <= 0:
+            raise ValueError(f"{key} must be > 0, got {raw}")
+        td = timedelta(minutes=raw)
+    else:
+        try:
+            td = _parse_duration(raw)
+        except ValueError as exc:
+            raise ValueError(f"{key} {exc}") from exc
+    if td <= timedelta(0):
+        raise ValueError(f"{key} must be > 0, got {raw!r}")
+    if td > timedelta(hours=24):
+        raise ValueError(f"{key} must be <= 24h, got {raw!r}")
+    return td
+
+
 class LooseAutoRevert(BaseModel):
     """Policy for auto-reverting `jailbee net loose` after a TTL.
 
@@ -128,7 +151,7 @@ class LooseAutoRevert(BaseModel):
         description="Whether `jailbee net loose` auto-reverts at all.",
     )
     after: str | int = Field(
-        default="5m",
+        default="15m",
         description=(
             "How long to stay in loose mode before auto-reverting. Accepts `30s`, "
             "`5m`, `2h`, or a bare int meaning minutes; capped at 24h. Each "
@@ -140,25 +163,13 @@ class LooseAutoRevert(BaseModel):
         """Parse ``after`` into a ``timedelta``. Raises ``ValueError`` on
         bad input (negative, zero, unparseable, or >24h).
         """
-        raw = self.after
-        if isinstance(raw, int):
-            if raw <= 0:
-                raise ValueError(f"loose_auto_revert.after must be > 0, got {raw}")
-            td = timedelta(minutes=raw)
-        else:
-            td = _parse_duration(raw)
-        if td <= timedelta(0):
-            raise ValueError(f"loose_auto_revert.after must be > 0, got {raw!r}")
-        if td > timedelta(hours=24):
-            raise ValueError(f"loose_auto_revert.after must be <= 24h, got {raw!r}")
-        return td
+        return parse_duration_value(self.after, "loose_auto_revert.after")
 
 
-# Durations offered when jailbee asks how long to stay in loose — the CLI
-# prompt's preset list and the Qt dashboard's dialog items. Not a policy:
-# the effective default still comes from `LooseAutoRevert.after`, and any
-# value `LooseAutoRevert.duration()` accepts can be typed instead.
-LOOSE_TTL_PRESETS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "2h", "4h", "8h")
+# Durations offered when jailbee asks for a TTL (loose network, optional mounts).
+# Not a policy: the effective default still comes from `LooseAutoRevert.after`,
+# and any value `LooseAutoRevert.duration()` accepts can be typed instead.
+TTL_PRESETS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "2h", "4h", "8h")
 
 
 # A credential-group name becomes one directory name under the agent's own
@@ -261,24 +272,28 @@ class LocalCredentials(BaseModel):
         return _validated_group(value)
 
 
-def parse_loose_ttl(raw: str) -> timedelta | None:
-    """Parse a user-supplied loose TTL. ``never`` → None (no auto-revert).
+def parse_ttl(raw: str) -> timedelta | None:
+    """Parse a user-supplied TTL. ``never`` → None (no auto-revert).
 
-    The single definition of the duration syntax accepted by `jailbee net loose
-    --for`, the CLI's interactive prompt and the Qt dashboard's dialog — all
-    three share it so a value one accepts can never be rejected by another.
-    Delegates to `LooseAutoRevert.duration()` so the units and the 24h cap stay
-    in one place; raises `ValueError` with its message.
+    The single definition of the duration syntax accepted by `jailbee net
+    loose --for`, `jailbee mount --for`, the CLI's interactive prompt and the
+    Qt dashboard's dialog. Raises `ValueError`.
     """
     value = raw.strip()
     if value.lower() == "never":
         return None
-    return LooseAutoRevert(after=value).duration()
+    if value.isascii() and value.isdigit():
+        return parse_duration_value(int(value), "TTL")
+    try:
+        return parse_duration_value(value, "TTL")
+    except ValueError as error:
+        if not _DURATION_RE.match(value):
+            raise ValueError(
+                f"TTL invalid duration {value!r}; expected <int>s|m|h or integer minutes"
+            ) from error
+        raise
 
 
-def format_loose_after(after: str | int) -> str:
-    """Render a `LooseAutoRevert.after` value as prompt-ready text.
-
-    The field is `str | int`; a bare int means minutes.
-    """
+def format_ttl(after: str | int) -> str:
+    """Render a TTL policy value (`str | int`, bare int = minutes) as prompt-ready text."""
     return f"{after}m" if isinstance(after, int) else after

@@ -565,6 +565,22 @@ Named mounts, attached per-container with `jailbee new --mount NAME`.
 | `container` | string | — | In-container mount target. |
 | `readonly` | bool | `true` | Read-only by default. |
 | `description` | string | `""` | Shown in the `jailbee new --mount` picker. |
+| `auto_unmount_after` | duration | policy default | Overrides `mount_auto_revert.after` for this mount; `never` disables its deadline. A disabled policy also disables automatic detach. |
+
+```yaml
+optional_mounts:
+  aws:
+    host: ~/.aws
+    container: /home/dev/.aws
+    auto_unmount_after: 1h
+  docs:
+    host: ~/reference
+    container: /home/dev/reference
+    auto_unmount_after: never
+```
+
+`auto_unmount_after` accepts `30s`, `15m`, `2h`, an integer number of
+minutes, or `never`.
 
 ### `host_devices`
 
@@ -1019,7 +1035,7 @@ can change just `after` and inherit `enabled` from the global file.
 ```yaml
 loose_auto_revert:
   enabled: true   # default true
-  after: 5m       # default 5m — accepts `30s`, `5m`, `2h`, or raw int (minutes)
+  after: 15m      # default 15m — accepts `30s`, `5m`, `2h`, or raw int (minutes)
 ```
 
 When `jailbee net loose <c>` schedules a TTL, two container labels are
@@ -1074,6 +1090,23 @@ matches what will happen.
 `jailbee ls` shows the remaining TTL in a dedicated column (visible only
 when at least one container is in loose mode), and `jailbee net status`
 lists each loose container with its expiry time.
+
+#### `mount_auto_revert`
+
+Controls automatic detaching of optional mounts. Lives in both
+`~/.config/jailbee/global.yaml` and per-repo `.jailbee/config.yaml`; the
+repo overrides the global policy field by field.
+
+```yaml
+mount_auto_revert:
+  enabled: true   # default true — `jailbee mount` schedules a detach
+  after: 15m      # default 15m — accepts `30s`, `15m`, `2h`, or raw int (minutes); max 24h
+```
+
+The `jailbee-net-refresh.timer` (the same timer used for loose-mode
+reverts) detaches expired mounts. A mount attached before this release has no
+deadline. Running `jailbee mount` again for an already attached kind only
+changes its TTL; `jailbee unmount` clears the deadline.
 
 ### `defaults`
 
@@ -2219,7 +2252,7 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
 **AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
-limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
+limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a **◆** and the time remaining until the last attached mount detaches, e.g. `◆ 12m`, or `◆ ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
@@ -2229,9 +2262,9 @@ working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 Qt table tooltips expand the labels, exact timestamps and agent details;
 the TUI's `h` help contains the legend. MERGE keeps its meaning; **PR** shows only `#123` / `#123↓` (the `✉N` that `jailbee ls` appends moves to OUTBOX). A column set stored by an older release is migrated once — `mem` → `mem_used` + `mem_pct`, `issues` → `outbox`, `doing` removed — with one notice; turning any of them back on afterwards sticks.
 
-Seven columns are dynamic and appear only when they have
+Eight columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
-in loose mode), `pr` (a container tracks a PR), `mode` (a mount-mode
+in loose mode), `mounts` (optional mounts are attached), `pr` (a container tracks a PR), `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant),
 `issues` (a container has pending issue-outbox actions), `outbox` (a
 container has staged PR or issue manifests) and `group` (a
@@ -2245,7 +2278,7 @@ the command line still wins in **every** format, table or JSON.
 
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
-`loose_until`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
+`loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
 are accepted aliases for `group`.
@@ -2285,7 +2318,7 @@ command whose job is telling you what's wrong.
 
 `ls:` exists in `~/.config/jailbee/global.yaml` **and** in a repo's
 `.jailbee/config.yaml`, merged the same field-by-field way as
-`loose_auto_revert`: the repo's block overrides the global one per field
+`loose_auto_revert` and `mount_auto_revert`: the repo's block overrides the global one per field
 (setting only `hide` in the repo still inherits the global `fields`, and
 vice versa). Note the key is **not** part of the general deep-merge
 pipeline used by the rest of the file — that pipeline *appends* list

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 _HEADER_LABELS = {
     "state": "ST",
     "network": "LOOSE",
+    "mounts": "MOUNT",
     "created": "AGE",
     "full_name": "FULL",
     "memory_limit": "LIMIT",
@@ -50,6 +51,7 @@ RECENT_IDLE = timedelta(minutes=30)
 """An idle agent with a real event younger than this is highlighted in AI."""
 
 _LOOSE_MARK = "[red]●[/red]"
+_MOUNT_MARK = "[yellow]◆[/yellow]"
 
 
 def dashboard_header(field: FieldSpec[ContainerInfo]) -> str:
@@ -87,6 +89,22 @@ def card_network(container: ContainerInfo, now: datetime) -> str:
     return _loose(container, now)
 
 
+def _mounts(container: ContainerInfo, now: datetime) -> str:
+    """One marker and the last exposure end; any permanent kind means infinity."""
+    if not container.optional_mounts:
+        return ""
+    ends = [container.mount_until.get(k) for k in container.optional_mounts]
+    if any(e is None for e in ends):
+        return f"{_MOUNT_MARK} ∞"
+    latest = max(e for e in ends if e is not None)
+    return f"{_MOUNT_MARK} {format_duration_short(latest - now).replace(' ', '')}"
+
+
+def card_mounts(container: ContainerInfo, now: datetime) -> str:
+    """Mount label for cards: the table's MOUNT cell."""
+    return _mounts(container, now)
+
+
 def doing_cell(container: ContainerInfo) -> str:
     """The busy processes as compact markup, ``""`` when there are none."""
     if not container.activity:
@@ -108,6 +126,8 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return _STATE_GLYPHS.get(container.state, escape(container.state))
     if field.name == "network":
         return _loose(container, now)
+    if field.name == "mounts":
+        return _mounts(container, now)
     if field.name == "pr":
         # The outbox count lives in OUTBOX; `jailbee ls` keeps it in PR.
         if container.pr_number is None:

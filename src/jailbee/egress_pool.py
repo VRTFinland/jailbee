@@ -20,6 +20,7 @@ from jailbee.config import ConfigError, load_repo_config
 from jailbee.db.models import PoolIP, RefreshState, RegisteredRepo
 from jailbee.egress import resolve_with_status
 from jailbee.loose_revert import check_and_revert_loose
+from jailbee.mount_revert import check_and_revert_mounts
 from jailbee.paths import repo_config_path
 
 if TYPE_CHECKING:
@@ -804,6 +805,16 @@ def refresh_all(
         except Exception as e:
             log.warning(
                 "refresh_all: loose_revert failed for %s: %s",
+                repo.container_prefix,
+                e,
+            )
+
+        # Optional mount deadlines run independently of pool and loose refreshes.
+        try:
+            check_and_revert_mounts(cfg, incus, now=now)
+        except Exception as e:
+            log.warning(
+                "refresh_all: mount_revert failed for %s: %s",
                 repo.container_prefix,
                 e,
             )

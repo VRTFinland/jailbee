@@ -565,13 +565,13 @@ Full version with the cleanup rules: [Git bridge](../../git-bridge.md#merging-se
 ```bash
 jailbee net loose feat-foo             # full NAT — e.g. for a fetch from an off-allowlist host
 #   ... push or fetch over the network ...
-# auto-reverts to the previous mode after ~5 min (loose_auto_revert)
+# auto-reverts to the previous mode after ~15 min (loose_auto_revert)
 jailbee net loose feat-foo --for 2h    # pick the TTL for this switch only
 jailbee net loose feat-foo --no-revert # stay loose until switched manually
 jailbee net strict feat-foo            # back to the egress allowlist now
 ```
 
-`loose` auto-reverts to the previous mode after a TTL (default 5 min, see
+`loose` auto-reverts to the previous mode after a TTL (default 15 min, see
 `loose_auto_revert` config). Per switch, `--for <dur>` overrides that default
 (`30s`, `45m`, `4h` — max 24h; `--for never` = `--no-revert`, and the two flags
 are mutually exclusive). With neither flag JailBee **asks interactively** — only on
@@ -1083,8 +1083,15 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
 - **Snapshots:** `jailbee snapshot create <name> <tag>` / `restore [<name>] [<tag>]` /
   `ls` / `delete [<name>] [<tag>]` — cheap save/rollback of a container's state. A `restore`/`delete`
   tag left out is asked for on a terminal, even with only one snapshot; without one it exits 2 — pass it.
-- **Optional mounts:** `jailbee mount [<kind>] [<name>]` / `jailbee unmount [<kind>] [<name>]` to
-  attach/detach an `optional_mounts` entry (e.g. `aws`) on a live container.
+- **Optional mounts:** `jailbee mount [<kind>] [<name>] [--for <dur>|--no-revert]` /
+  `jailbee unmount [<kind>] [<name>]` to attach/detach an `optional_mounts` entry
+  (e.g. `aws`) on a live container. A mount normally detaches after its
+  effective TTL. Explicit `--for`/`--no-revert` overrides the default.
+  Otherwise, an active TTL default prompts on a terminal and applies directly
+  without one; a disabled policy or per-mount `never` mounts without a deadline
+  or prompt. Tell the user that `jailbee mount aws --for 1h` exposes credentials
+  for one hour; `--no-revert` keeps them mounted until manually detached. Re-running `mount` on an attached
+  kind only changes its TTL.
 - **Housekeeping:** `jailbee disk-usage`, `jailbee prune` (stopped containers >30 days),
   `jailbee doctor` (host + repo diagnostics), `jailbee apply` (re-push config — profiles,
   ACL, /etc/hosts, dockerd proxy — after editing `.jailbee/config.yaml`; idempotent).

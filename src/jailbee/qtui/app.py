@@ -283,19 +283,18 @@ class AppController(QObject):
         when the window is closing."""
         self._persist()
 
-    def _ask_loose_ttl(self, name: str, default_after: str) -> str | None:
-        """Ask how long ``name`` stays in loose. None means cancelled.
+    def _ask_ttl(self, title: str, question: str, default_after: str) -> str | None:
+        """Ask for a TTL. None means cancelled.
 
-        Mirrors the CLI's questionary prompt: the repo's configured
-        ``loose_auto_revert.after`` is pre-selected (and inserted into the
-        list when it is not one of the presets), and a typed value is checked
-        with the same parser the CLI uses — the action is launched as a
-        detached ``Popen`` with no terminal, so an unparseable duration would
-        make `jailbee net loose` exit 2 where nobody can see it.
+        Mirrors the CLI's questionary prompt: the configured default is
+        pre-selected (and inserted into the list when it is not one of the
+        presets), and a typed value is checked with the same parser the CLI
+        uses — the action is launched as a detached ``Popen`` with no terminal,
+        so an unparseable duration would be invisible.
         """
-        from jailbee.config import LOOSE_TTL_PRESETS, parse_loose_ttl
+        from jailbee.config import TTL_PRESETS, parse_ttl
 
-        items = list(LOOSE_TTL_PRESETS)
+        items = list(TTL_PRESETS)
         if default_after not in items:
             items.insert(0, default_after)
         items.append("never")
@@ -304,8 +303,8 @@ class AppController(QObject):
         while True:
             choice, ok = QInputDialog.getItem(
                 self._window,
-                "Loose network",
-                f"Keep {name} in loose for how long?",
+                title,
+                question,
                 items,
                 current,
                 True,  # editable — the user can type e.g. `90m`
@@ -316,7 +315,7 @@ class AppController(QObject):
             if not value:
                 return None
             try:
-                parse_loose_ttl(value)
+                parse_ttl(value)
             except ValueError as exc:
                 QMessageBox.warning(self._window, "Invalid duration", str(exc))
                 continue
@@ -442,7 +441,9 @@ class AppController(QObject):
             # makes.
             if group.loose_ttl_default is None:
                 return []
-            duration = self._ask_loose_ttl(name, group.loose_ttl_default)
+            duration = self._ask_ttl(
+                "Loose network", f"Keep {name} in loose for how long?", group.loose_ttl_default
+            )
             if duration is None:
                 return None
             return ["--for", duration]
@@ -516,7 +517,11 @@ class AppController(QObject):
             if verb == "net loose":
                 default = bulk_loose_default(groups, action.eligible)
                 if default is not None:
-                    duration = self._ask_loose_ttl(f"{len(action.eligible)} containers", default)
+                    duration = self._ask_ttl(
+                        "Loose network",
+                        f"Keep {len(action.eligible)} containers in loose for how long?",
+                        default,
+                    )
                     if duration is None:
                         return
                     extra = ["--for", duration]

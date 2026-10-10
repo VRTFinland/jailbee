@@ -2139,7 +2139,7 @@ def test_validate_runtime_silent_when_github_disabled(tmp_path):
 # --- LooseAutoRevert ---------------------------------------------------------
 
 
-def test_loose_auto_revert_default_5m():
+def test_loose_auto_revert_default_15m():
     """Default values without YAML keys."""
     from datetime import timedelta
 
@@ -2147,8 +2147,23 @@ def test_loose_auto_revert_default_5m():
 
     m = LooseAutoRevert()
     assert m.enabled is True
-    assert m.after == "5m"
-    assert m.duration() == timedelta(minutes=5)
+    assert m.after == "15m"
+    assert m.duration() == timedelta(minutes=15)
+
+
+def test_parse_duration_value_names_the_key_in_errors():
+    from datetime import timedelta
+
+    from jailbee.config.models_net import parse_duration_value
+
+    assert parse_duration_value(5, "x.after") == timedelta(minutes=5)
+    assert parse_duration_value("2h", "x.after") == timedelta(hours=2)
+    with pytest.raises(ValueError, match=r"^x\.after must be <= 24h"):
+        parse_duration_value("25h", "x.after")
+    with pytest.raises(ValueError, match=r"^x\.after must be > 0"):
+        parse_duration_value(0, "x.after")
+    with pytest.raises(ValueError, match=r"^x\.after invalid duration"):
+        parse_duration_value("invalid", "x.after")
 
 
 @pytest.mark.parametrize(
@@ -2201,34 +2216,34 @@ def test_parse_loose_ttl_accepts_the_documented_syntax():
     """The one definition of `--for` / prompt / Qt-dialog duration syntax."""
     from datetime import timedelta
 
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
-    assert parse_loose_ttl("30s") == timedelta(seconds=30)
-    assert parse_loose_ttl("90m") == timedelta(minutes=90)
-    assert parse_loose_ttl("4h") == timedelta(hours=4)
-    assert parse_loose_ttl(" 2h ") == timedelta(hours=2)
+    assert parse_ttl("30s") == timedelta(seconds=30)
+    assert parse_ttl("90m") == timedelta(minutes=90)
+    assert parse_ttl("4h") == timedelta(hours=4)
+    assert parse_ttl(" 2h ") == timedelta(hours=2)
 
 
 def test_parse_loose_ttl_never_means_no_auto_revert():
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
-    assert parse_loose_ttl("never") is None
-    assert parse_loose_ttl("NEVER") is None
+    assert parse_ttl("never") is None
+    assert parse_ttl("NEVER") is None
 
 
 @pytest.mark.parametrize("bad", ["banana", "2 hours", "2hr", "25h", "0m", "-5m", ""])
 def test_parse_loose_ttl_rejects_bad_input(bad):
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
     with pytest.raises((ValueError, ValidationError)):
-        parse_loose_ttl(bad)
+        parse_ttl(bad)
 
 
 def test_format_loose_after_renders_int_minutes_as_a_duration():
-    from jailbee.config import format_loose_after
+    from jailbee.config import format_ttl
 
-    assert format_loose_after(5) == "5m"
-    assert format_loose_after("45m") == "45m"
+    assert format_ttl(5) == "5m"
+    assert format_ttl("45m") == "45m"
 
 
 def test_effective_loose_auto_revert_inherits_global(tmp_path):
@@ -4213,6 +4228,120 @@ def test_slugify_prefix(name, expected) -> None:
     assert slugify_prefix(name) == expected
 
 
+def _mount_cfg(tmp_path, **overrides):
+    mounts = {
+        "aws": {"host": "~/.aws", "container": "/home/dev/.aws"},
+        "docs": {
+            "host": "~/docs",
+            "container": "/home/dev/docs",
+            "auto_unmount_after": "never",
+        },
+        "gcp": {
+            "host": "~/.gcp",
+            "container": "/home/dev/.gcp",
+            "auto_unmount_after": "2h",
+        },
+    }
+    return make_cfg(tmp_path, optional_mounts=mounts, **overrides)
+
+
+def test_mount_auto_revert_defaults():
+    from datetime import timedelta
+
+    from jailbee.config import MountAutoRevert
+
+    policy = MountAutoRevert()
+    assert policy.enabled is True
+    assert policy.after == "15m"
+    assert policy.duration() == timedelta(minutes=15)
+
+
+def test_mount_auto_revert_error_names_its_own_key():
+    with pytest.raises(ValueError, match=r"^mount_auto_revert\.after"):
+        from jailbee.config import MountAutoRevert
+
+        MountAutoRevert(after="30h").duration()
+
+
+def test_effective_mount_ttl_resolution_order(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(after="45m"))
+    assert cfg.effective_mount_ttl(gcfg, "aws") == "45m"
+    assert cfg.effective_mount_ttl(gcfg, "gcp") == "2h"
+    assert cfg.effective_mount_ttl(gcfg, "docs") is None
+
+
+def test_effective_mount_ttl_repo_field_overrides_global(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "5m"})
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(after="45m"))
+    assert cfg.effective_mount_ttl(gcfg, "aws") == "5m"
+
+
+def test_disabled_policy_beats_per_mount_ttl(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(enabled=False))
+    assert cfg.effective_mount_auto_revert(gcfg) is None
+    assert cfg.effective_mount_ttl(gcfg, "gcp") is None
+    assert cfg.effective_mount_ttl(gcfg, "aws") is None
+
+
+def test_effective_mount_ttl_int_after_is_minutes(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": 20})
+    assert cfg.effective_mount_ttl(GlobalConfig(), "aws") == "20m"
+
+
+def test_effective_mount_ttl_malformed_raises_naming_the_key(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(
+        tmp_path,
+        optional_mounts={
+            "aws": {"host": "~/.aws", "container": "/x", "auto_unmount_after": "30min"}
+        },
+    )
+    with pytest.raises(ValueError, match=r"optional_mounts\.aws\.auto_unmount_after"):
+        cfg.effective_mount_ttl(GlobalConfig(), "aws")
+
+
+def test_validate_runtime_reports_bad_mount_ttls(tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        mount_auto_revert={"after": "30h"},
+        optional_mounts={
+            "aws": {"host": "~/.aws", "container": "/x", "auto_unmount_after": "banana"}
+        },
+    )
+    issues = cfg.validate_runtime()
+    assert any("mount_auto_revert.after" in issue for issue in issues)
+    assert any(
+        "optional_mounts.aws.auto_unmount_after" in issue and "banana" in issue for issue in issues
+    )
+
+
+def test_validate_runtime_accepts_never_auto_unmount(tmp_path):
+    cfg = _mount_cfg(tmp_path)
+    assert not any("auto_unmount_after" in issue for issue in cfg.validate_runtime())
+
+
+def test_effective_mount_ttl_rejects_unknown_mount(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    with pytest.raises(KeyError):
+        cfg.effective_mount_ttl(GlobalConfig(), "unknown")
+
+
 def test_slugify_prefix_result_matches_prefix_re() -> None:
     """Every non-empty slugify_prefix result must match _PREFIX_RE."""
     from jailbee.config import slugify_prefix
@@ -5045,3 +5174,42 @@ def test_service_storage_pool_is_none_when_global_yaml_sets_none(tmp_path, mocke
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo", config_yaml="defaults:\n  storage_pool: ssd\n")
     assert load_config(repo / ".jailbee" / "config.yaml").service_storage_pool() is None
+
+
+def test_parse_ttl_bare_text_minutes_and_limits():
+    from datetime import timedelta
+
+    from jailbee.config import parse_ttl
+
+    assert parse_ttl("20") == timedelta(minutes=20)
+    assert parse_ttl("1440") == timedelta(hours=24)
+    for value in ("0", "1441"):
+        with pytest.raises(ValueError, match="TTL"):
+            parse_ttl(value)
+
+
+def test_mount_disabled_global_after_override_and_explicit_reenable(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    global_cfg = GlobalConfig(mount_auto_revert=MountAutoRevert(enabled=False, after="45m"))
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "5m"})
+    assert cfg.effective_mount_ttl(global_cfg, "aws") is None
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"enabled": True})
+    assert cfg.effective_mount_ttl(global_cfg, "aws") == "45m"
+
+
+def test_mount_fallback_validation_and_valid_per_kind_override(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "banana"})
+    with pytest.raises(ValueError, match=r"mount_auto_revert\.after"):
+        cfg.effective_mount_ttl(GlobalConfig(), "aws")
+    assert cfg.effective_mount_ttl(GlobalConfig(), "gcp") == "2h"
+
+
+def test_ttl_syntax_error_advertises_bare_minutes():
+    from jailbee.config import parse_ttl
+
+    with pytest.raises(ValueError, match="integer minutes"):
+        parse_ttl("banana")

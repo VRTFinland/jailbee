@@ -136,6 +136,14 @@ autostart:
           run: "aws ecr get-login-password | docker login --password-stdin ..."
 ```
 
+For a mount needed interactively, `jailbee mount aws` uses the effective TTL.
+Explicit `--for`/`--no-revert` overrides the default. Otherwise, an active TTL
+default prompts on a terminal and applies directly without one; a disabled policy
+or per-mount `never` mounts without a deadline or prompt. The command
+`jailbee mount aws --for 1h` exposes AWS credentials for one hour. Tell the user that
+`--no-revert` keeps them mounted until they detach them with `jailbee unmount aws`. Re-running `jailbee mount aws` on
+an attached kind only changes its TTL.
+
 ### `host_ports` — forwarding a host TCP/UDP service into every container
 
 For a host service the container needs to reach over TCP/UDP — the adb
