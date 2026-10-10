@@ -40,7 +40,9 @@ class SubPrOptions:
     web: bool = False
     note_merge_order: bool = True
 
+
 SubPrAction = Literal["created", "updated", "declined", "failed"]
+
 
 @dataclass(frozen=True)
 class SubPrOutcome:
@@ -50,14 +52,22 @@ class SubPrOutcome:
     url: str | None = None
     outbox_failures: int = 0
 
-OfferComments = Callable[[int, "PrManagement"], int]   # (pr number, management) -> failures
-ConfirmPlan = Callable[["SubmodulePrPlan"], None]       # may raise typer.Abort
+
+OfferComments = Callable[[int, "PrManagement"], int]  # (pr number, management) -> failures
+ConfirmPlan = Callable[["SubmodulePrPlan"], None]  # may raise typer.Abort
 
 
 def publish_submodule_pr(
-    cfg: Config, incus: Incus, full: str, short: str, target: SubCandidate,
-    opts: SubPrOptions, *, repo_dir: str,
-    confirm_plan: ConfirmPlan | None, offer_comments: OfferComments,
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    short: str,
+    target: SubCandidate,
+    opts: SubPrOptions,
+    *,
+    repo_dir: str,
+    confirm_plan: ConfirmPlan | None,
+    offer_comments: OfferComments,
 ) -> SubPrOutcome:
     subpath = target.path
     source_branch = opts.branch or target.branch
@@ -312,7 +322,12 @@ def publish_submodule_pr(
                 # user-facing warning — and only when the user actually asked for
                 # something that needed the missing branch; a bare re-run with no
                 # such flag has nothing to silently ignore.
-                if opts.description or opts.title is not None or opts.body is not None or opts.ready is not None:
+                if (
+                    opts.description
+                    or opts.title is not None
+                    or opts.body is not None
+                    or opts.ready is not None
+                ):
                     warn(
                         f"{scope.prefix}--description/--title/--body/--ready/--draft "
                         f"could not be applied to PR #{created.number}: the submodule "
@@ -336,11 +351,7 @@ def publish_submodule_pr(
                     "Merge this submodule PR first; the superproject PR's gitlink bump "
                     "then points at a merged commit."
                 )
-            outbox_failures = (
-                0
-                if opts.no_outbox
-                else offer_comments(created.number, management)
-            )
+            outbox_failures = 0 if opts.no_outbox else offer_comments(created.number, management)
             if opts.web:
                 pr_mod.open_pr_in_browser(scope.repo_root, created.number)
             return SubPrOutcome(

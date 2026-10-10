@@ -12,8 +12,13 @@ def _candidate(path="lib/a", commits=2, branch="feat/foo"):
     from jailbee.submodule_pr import SubCandidate
 
     return SubCandidate(
-        path=path, commits=commits, branch=branch, dirty=False,
-        head_sha="aaa", recorded_sha="aaa", subject="feat: work",
+        path=path,
+        commits=commits,
+        branch=branch,
+        dirty=False,
+        head_sha="aaa",
+        recorded_sha="aaa",
+        subject="feat: work",
     )
 
 
@@ -31,8 +36,7 @@ def _env(mocker, tmp_path, *, record=None):
     cfg.pr.ai_description = False
     incus = mocker.MagicMock()
     incus.list_containers.return_value = [
-        {"name": name, "created_at": "2026-09-30T12:00:00Z"}
-        for name in ("sampleapp-feat-foo", "c")
+        {"name": name, "created_at": "2026-09-30T12:00:00Z"} for name in ("sampleapp-feat-foo", "c")
     ]
     incus.config_get.return_value = None
     mocker.patch("jailbee.pr_flow.validate_outbox_source")
@@ -56,8 +60,9 @@ def _env(mocker, tmp_path, *, record=None):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
     create = mocker.patch(
         "jailbee.pr.create_pr",
-        return_value=PrCreated(number=7, url="https://github.com/acme/lib-a/pull/7",
-                               already_existed=False),
+        return_value=PrCreated(
+            number=7, url="https://github.com/acme/lib-a/pull/7", already_existed=False
+        ),
     )
     return cfg, incus, create
 
@@ -68,8 +73,15 @@ def test_create_returns_created_outcome_and_offers_comments(mocker, tmp_path):
     cfg, incus, create = _env(mocker, tmp_path)
     offer = mocker.Mock(return_value=0)
     outcome = publish_submodule_pr(
-        cfg, incus, "sampleapp-feat-foo", "feat-foo", _candidate(), SubPrOptions(),
-        repo_dir="/home/dev/repo", confirm_plan=None, offer_comments=offer,
+        cfg,
+        incus,
+        "sampleapp-feat-foo",
+        "feat-foo",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/home/dev/repo",
+        confirm_plan=None,
+        offer_comments=offer,
     )
     assert (outcome.subpath, outcome.action, outcome.number) == ("lib/a", "created", 7)
     assert outcome.url == "https://github.com/acme/lib-a/pull/7"
@@ -83,12 +95,26 @@ def test_confirm_plan_none_skips_the_plan_block(mocker, tmp_path):
     cfg, incus, _ = _env(mocker, tmp_path)
     confirm = mocker.Mock()
     publish_submodule_pr(
-        cfg, incus, "c", "s", _candidate(), SubPrOptions(), repo_dir="/r",
-        confirm_plan=None, offer_comments=lambda n, m: 0,
+        cfg,
+        incus,
+        "c",
+        "s",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/r",
+        confirm_plan=None,
+        offer_comments=lambda n, m: 0,
     )
     publish_submodule_pr(
-        cfg, incus, "c", "s", _candidate(), SubPrOptions(), repo_dir="/r",
-        confirm_plan=confirm, offer_comments=lambda n, m: 0,
+        cfg,
+        incus,
+        "c",
+        "s",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/r",
+        confirm_plan=confirm,
+        offer_comments=lambda n, m: 0,
     )
     confirm.assert_called_once()
 
@@ -99,8 +125,15 @@ def test_detached_without_name_raises_exit_2(mocker, tmp_path):
     cfg, incus, _ = _env(mocker, tmp_path)
     with pytest.raises(typer.Exit) as exc:
         publish_submodule_pr(
-            cfg, incus, "c", "s", _candidate(branch=None), SubPrOptions(no_ai=True),
-            repo_dir="/r", confirm_plan=None, offer_comments=lambda n, m: 0,
+            cfg,
+            incus,
+            "c",
+            "s",
+            _candidate(branch=None),
+            SubPrOptions(no_ai=True),
+            repo_dir="/r",
+            confirm_plan=None,
+            offer_comments=lambda n, m: 0,
         )
     assert exc.value.exit_code == 2
 
@@ -110,7 +143,14 @@ def test_outbox_failures_are_returned_not_raised(mocker, tmp_path):
 
     cfg, incus, _ = _env(mocker, tmp_path)
     outcome = publish_submodule_pr(
-        cfg, incus, "c", "s", _candidate(), SubPrOptions(), repo_dir="/r",
-        confirm_plan=None, offer_comments=lambda n, m: 2,
+        cfg,
+        incus,
+        "c",
+        "s",
+        _candidate(),
+        SubPrOptions(),
+        repo_dir="/r",
+        confirm_plan=None,
+        offer_comments=lambda n, m: 2,
     )
     assert outcome.outbox_failures == 2
