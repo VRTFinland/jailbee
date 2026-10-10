@@ -94,7 +94,7 @@ def link_pr_family(cfg: Config, incus: Incus, full: str, short: str) -> None:
             new = upsert_marker_block(body, marker, content)
             if new is not None:
                 pr_mod.edit_pr(root, number, body=new, repo=slug)
-        except pr_mod.PrError as exc:
+        except (pr_mod.PrError, OSError) as exc:
             warn(f"Could not update the links in {slug}#{number}: {exc}")
 
     if not super_record.author:

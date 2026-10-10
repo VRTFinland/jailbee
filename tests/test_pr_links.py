@@ -173,6 +173,27 @@ def test_gh_failure_is_a_warning_and_other_prs_are_attempted(mocker, tmp_path, f
     ]
 
 
+@pytest.mark.parametrize("failure_at", ["body", "edit"])
+def test_gh_permission_error_warns_and_remaining_link_is_updated(mocker, tmp_path, failure_at):
+    from jailbee.pr_links import link_pr_family
+
+    cfg, incus, body, edit = _labels(
+        mocker, tmp_path, {"user.jailbee.pr": "34", "user.jailbee.pr_author": "1"}, SUB
+    )
+    failing = body if failure_at == "body" else edit
+    failing.side_effect = [PermissionError("denied"), "Body."]
+    warn = mocker.patch("jailbee.pr_links.warn")
+    link_pr_family(cfg, incus, "c", "s")
+    warn.assert_called_once_with("Could not update the links in acme/app#34: denied")
+    assert body.call_args_list[-1].args == (tmp_path / "lib/a", 7)
+    assert edit.call_args_list[-1].args == (tmp_path / "lib/a", 7)
+    assert edit.call_args_list[-1].kwargs == {
+        "repo": "acme/lib-a",
+        "body": "Body.\n\n<!-- jailbee:superproject-pr -->\nPart of acme/app#34\n"
+        "<!-- /jailbee:superproject-pr -->",
+    }
+
+
 def test_stacked_record_takes_precedence_over_main(mocker, tmp_path):
     from jailbee.pr_links import link_pr_family
 
@@ -197,10 +218,11 @@ def test_missing_superproject_number_or_slug_prevents_backlinks(mocker, tmp_path
     from jailbee.pr_links import link_pr_family
 
     cfg, incus, body, edit = _labels(mocker, tmp_path, super_labels, SUB)
-    mocker.patch(
-        "jailbee.pr_outbox.scope_slug",
-        side_effect=lambda scope: "acme/lib-a" if scope.subpath else None,
-    )
+    if super_labels:
+        mocker.patch(
+            "jailbee.pr_outbox.scope_slug",
+            side_effect=lambda scope: "acme/lib-a" if scope.subpath else None,
+        )
     link_pr_family(cfg, incus, "c", "s")
     body.assert_not_called()
     edit.assert_not_called()
