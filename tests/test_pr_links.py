@@ -37,3 +37,11 @@ def test_stray_unclosed_start_is_kept_and_a_block_appended():
 def test_other_markers_are_ignored():
     body = "<!-- jailbee:other -->\nz\n<!-- /jailbee:other -->"
     assert upsert_marker_block(body, "m", "x") == f"{body}\n\n{S}\nx\n{E}"
+
+
+def test_replacement_preserves_prose_and_unmatched_closing_marker():
+    body = f"{S}\nold\n{E}\n\nKeep this prose\n{E}"
+    updated = f"{S}\nnew\n{E}\n\nKeep this prose\n{E}"
+
+    assert upsert_marker_block(body, "m", "new") == updated
+    assert upsert_marker_block(updated, "m", "new") is None
