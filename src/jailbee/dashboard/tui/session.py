@@ -1665,14 +1665,32 @@ class DashboardSession:
         if picker.purpose.startswith("container-outbox"):
             return self.submit_outbox_picker(picker, entry)
         if picker.purpose in ("container-mount-add", "container-mount-remove"):
-            build = (
-                dact.unmount_argv if picker.purpose == "container-mount-remove" else dact.mount_argv
+            repo = self.repo_for(picker.target, "container")
+            if repo is None:
+                self.set_notice(f"'{picker.target}' is gone")
+                return None
+            if picker.purpose == "container-mount-remove":
+                self.run_quiet_cli(repo, dact.unmount_argv(entry.value, picker.target))
+                return None
+            group = _find_group(self.groups, picker.target)
+            default = group.mount_ttl_defaults.get(entry.value) if group is not None else None
+            if default is None:
+                self.run_quiet_cli(repo, dact.mount_argv(entry.value, picker.target))
+                return None
+            return Picker(
+                "container-mount-ttl",
+                f"Keep '{entry.value}' mounted in {picker.target} for how long?",
+                ttl_entries(default),
+                target=picker.target,
+                carry=(entry.value,),
             )
+        if picker.purpose == "container-mount-ttl":
             repo = self.repo_for(picker.target, "container")
             if repo is None:
                 self.set_notice(f"'{picker.target}' is gone")
             else:
-                self.run_quiet_cli(repo, build(entry.value, picker.target))
+                kind = picker.carry[0]
+                self.run_quiet_cli(repo, dact.mount_argv(kind, picker.target, entry.value))
             return None
         if picker.purpose.startswith("acct-"):
             # every account picker is opened from the Accounts panel

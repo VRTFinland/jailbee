@@ -995,8 +995,57 @@ def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
     assert "✓ Mounted 'aws' in container 'x'" in run.notices()
 
 
+@pytest.mark.parametrize("ttl_key, expected", [("enter", "15m"), ("end", "never")])
+def test_mount_with_a_ttl_default_asks_and_passes_for(mocker, tmp_path, ttl_key, expected):
+    group = mount_group(tmp_path)
+    group.mount_ttl_defaults = {"aws": "15m", "gcloud": "15m"}
+    quiet = mocker.patch.object(
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "ok")
+    )
+    keys = [*container_menu_keys(group, "mount-add"), "enter"]
+    keys += ["enter"] if ttl_key == "enter" else ["end", "enter"]
+    run = drive(mocker, keys, [group])
+    assert run.rc == 0
+    ttl = next(p for p in run.of_type(tsession.Picker) if p.purpose == "container-mount-ttl")
+    assert ttl.carry == ("aws",)
+    assert ttl.entries[0].value == "15m"
+    assert ttl.entries[-1].value == "never"
+    quiet.assert_called_once_with(
+        [
+            "mount", "--for", expected, "--config", str(group.config_path),
+            "--", "aws", "alpha-x",
+        ],
+        cwd=tmp_path,
+    )
+
+
+def test_mount_without_a_ttl_default_runs_immediately(mocker, tmp_path):
+    group = mount_group(tmp_path)
+    group.mount_ttl_defaults = {"aws": None}
+    quiet = mocker.patch.object(
+        tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "ok")
+    )
+    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter"], [group])
+    assert run.rc == 0
+    assert not any(p.purpose == "container-mount-ttl" for p in run.of_type(tsession.Picker))
+    quiet.assert_called_once_with(
+        ["mount", "--config", str(group.config_path), "--", "aws", "alpha-x"], cwd=tmp_path
+    )
+
+
+def test_mount_ttl_escape_runs_nothing(mocker, tmp_path):
+    group = mount_group(tmp_path)
+    group.mount_ttl_defaults = {"aws": "15m"}
+    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
+    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter", "escape"], [group])
+    assert run.rc == 0
+    assert any(p.purpose == "container-mount-ttl" for p in run.of_type(tsession.Picker))
+    quiet.assert_not_called()
+
+
 def test_unmount_offers_the_attached_kinds(mocker, tmp_path):
     group = mount_group(tmp_path)
+    group.mount_ttl_defaults = {"aws": "15m", "gcloud": "15m"}
     quiet = mocker.patch.object(
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )

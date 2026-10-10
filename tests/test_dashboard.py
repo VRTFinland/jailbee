@@ -342,6 +342,32 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
     assert groups[0].optional_mounts == ("aws", "gcloud")
 
 
+@pytest.mark.parametrize("after, expected", [(None, "15m"), ("malformed", None)])
+def test_gather_rows_carries_mount_ttl_defaults(tmp_path, mocker, make_cfg, after, expected):
+    from jailbee.global_config import GlobalConfig
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(
+        root,
+        mount_auto_revert={} if after is None else {"after": after},
+        optional_mounts={
+            "aws": {"host": str(tmp_path), "container": "/home/dev/.aws"},
+            "docs": {
+                "host": str(tmp_path),
+                "container": "/home/dev/docs",
+                "auto_unmount_after": "never",
+            },
+        },
+    )
+    mocker.patch.object(dmodel, "global_config_or_defaults", return_value=GlobalConfig())
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
+
+    assert groups[0].mount_ttl_defaults == {"aws": expected, "docs": None}
+
+
 def test_orphan_groups_have_no_optional_mounts():
     assert dmodel.RepoGroup("orphan", None, None, []).optional_mounts == ()
 

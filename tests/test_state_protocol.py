@@ -146,6 +146,7 @@ def _full_snapshot() -> Snapshot:
             agent_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             agent_config_homes=(("alpha-x", "claude", Path("/home/u/.claude")),),
             optional_mounts=("ssh", "gpg"),
+            mount_ttl_defaults={"ssh": "15m", "gpg": None},
             checkout="feat-1",
         )
     )
@@ -169,6 +170,13 @@ def test_every_message_round_trips(message):
     line = encode(message)
     assert line.endswith(b"\n") and line.count(b"\n") == 1
     assert decode(line) == message
+
+
+def test_snapshot_preserves_mount_ttl_defaults():
+    snapshot = _full_snapshot()
+    snapshot.groups[0].mount_ttl_defaults = {"aws": "15m", "docs": None}
+    restored = decode(encode(snapshot))
+    assert restored.groups[0].mount_ttl_defaults == {"aws": "15m", "docs": None}
 
 
 def test_a_snapshot_decodes_to_the_real_types():
