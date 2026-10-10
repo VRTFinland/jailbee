@@ -98,9 +98,10 @@ def link_pr_family(cfg: Config, incus: Incus, full: str, short: str) -> None:
             warn(f"Could not update the links in {slug}#{number}: {exc}")
 
     if not super_record.author:
-        info(f"Submodule PRs for PR #{super_number}: " + ", ".join(
-            f"{slug}#{record.number}" for _, slug, record in entries
-        ))
+        info(
+            f"Submodule PRs for PR #{super_number}: "
+            + ", ".join(f"{slug}#{record.number}" for _, slug, record in entries)
+        )
     elif super_slug:
         content = "**Submodule PRs** (merge these first):\n" + "\n".join(
             f"- {slug}#{record.number} — `{path}`" for path, slug, record in entries
@@ -109,5 +110,10 @@ def link_pr_family(cfg: Config, incus: Incus, full: str, short: str) -> None:
     if super_slug:
         for path, slug, record in entries:
             if record.author and record.number is not None:
-                update(cfg.repo_root / path, record.number, slug, SUPERPROJECT_PR_MARKER,
-                       f"Part of {super_slug}#{super_number}")
+                update(
+                    cfg.repo_root / path,
+                    record.number,
+                    slug,
+                    SUPERPROJECT_PR_MARKER,
+                    f"Part of {super_slug}#{super_number}",
+                )
