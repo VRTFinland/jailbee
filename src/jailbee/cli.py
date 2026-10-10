@@ -8627,7 +8627,7 @@ def pr_cmd(
         )
         raise typer.Exit(1)
 
-    from jailbee import pr_ai, pr_links, pr_submodule_flow
+    from jailbee import pr_ai, pr_links, pr_submodule_flow, prompting
 
     ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
     from jailbee.outbox.io import PrManagement
@@ -8696,6 +8696,17 @@ def pr_cmd(
                 ),
             )
             sub_failed = any(o.action == "failed" or o.outbox_failures > 0 for o in sub_outcomes)
+            failed_subs = [o.subpath for o in sub_outcomes if o.action == "failed"]
+            # A failed submodule's commits are not on its remote, so the gitlink
+            # bump points nowhere, and a host with push.recurseSubmodules=check
+            # refuses the push outright. Ask before anything is pushed.
+            if failed_subs and not yes and prompting.is_interactive():
+                if not typer.confirm(
+                    f"Submodule PR failed for {', '.join(failed_subs)}. "
+                    "Publish the superproject PR anyway?",
+                    default=False,
+                ):
+                    raise typer.Exit(1)
 
             # --- Publish (fetch + push under the chosen name) ---
             # On a foreign PR head the generic push-failure hint's "--as" advice does

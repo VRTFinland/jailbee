@@ -91,6 +91,36 @@ def test_submodule_failure_finishes_superproject_and_links_before_exit_1(mocker,
     assert "https://github.com/acme/widgets/pull/123" in result.output
 
 
+def test_submodule_failure_asks_before_pushing_the_superproject(mocker, tmp_path):
+    """A failed submodule PR leaves its commits off that submodule's remote, and
+    a host with `push.recurseSubmodules=check` then refuses the superproject
+    push outright. On a terminal the user decides before anything is pushed."""
+    _, create, _ = _wire(mocker, tmp_path, [SubPrOutcome("docs", "failed")])
+    push = mocker.patch(
+        "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    confirm = mocker.patch("typer.confirm", return_value=False)
+
+    result = runner.invoke(app, ["pr", "feat-foo", "--no-ai"])
+
+    assert result.exit_code == 1, result.output
+    assert "docs" in confirm.call_args.args[0]
+    push.assert_not_called()
+    create.assert_not_called()
+
+
+def test_submodule_failure_superproject_continues_when_confirmed(mocker, tmp_path):
+    _, create, _ = _wire(mocker, tmp_path, [SubPrOutcome("docs", "failed")])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("typer.confirm", return_value=True)
+
+    result = runner.invoke(app, ["pr", "feat-foo", "--no-ai"])
+
+    assert result.exit_code == 1, result.output
+    create.assert_called_once()
+
+
 def test_declined_submodule_is_not_a_failure(mocker, tmp_path):
     step, _, link = _wire(mocker, tmp_path, [SubPrOutcome("lib/a", "declined")])
     result = runner.invoke(app, ["pr", "feat-foo", "--no-ai"])
