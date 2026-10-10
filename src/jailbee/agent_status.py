@@ -47,7 +47,7 @@ class AgentSummary:
 
     `state`, `since` and `waiting_for` belong to the most urgent session;
     `count` is how many live sessions this agent has in the container.
-    `activity` comes from the live session with the most recently written readable transcript.
+    `activity` comes from the live session with the latest valid event in a readable transcript.
     """
 
     agent: str
@@ -131,10 +131,10 @@ def _lookup_for(
             found = activity(container, session, host_pids[(session.pid, session.proc_start)])
             if found is None:
                 continue
-            # Strict comparison preserves rank order for equal or unknown mtimes.
+            # Strict comparison preserves rank order for equal or unknown event dates.
             if chosen is None or (
-                found.modified is not None
-                and (chosen.modified is None or found.modified > chosen.modified)
+                found.last_event_at is not None
+                and (chosen.last_event_at is None or found.last_event_at > chosen.last_event_at)
             ):
                 chosen = replace(found, state=session.state, since=session.since)
         return chosen

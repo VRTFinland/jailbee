@@ -47,7 +47,7 @@ def state_label(state: str) -> str:
 _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
 
 RECENT_IDLE = timedelta(minutes=30)
-"""An idle agent younger than this reads as "just finished" in AI."""
+"""An idle agent with a real event younger than this is highlighted in AI."""
 
 _LOOSE_MARK = "[red]●[/red]"
 
@@ -114,7 +114,9 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
             return ""
         return f"#{container.pr_number}" if container.pr_author else f"#{container.pr_number}↓"
     if field.name == "agent_compact":
-        return agent_compact_cell(container.agent_status, now, recent_idle=RECENT_IDLE)
+        return agent_compact_cell(
+            container.agent_status, now, recent_idle=RECENT_IDLE, activity_age=True
+        )
     if field.name == "created":
         return _age(container.created_at, now)
     if field.name == "base":

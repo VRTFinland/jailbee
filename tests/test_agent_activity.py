@@ -216,7 +216,7 @@ def test_describe_words_the_three_lines() -> None:
 
     assert text is not None
     assert text.lines() == (
-        "busy 2m · ~2 subagents · 1 shell",
+        "activity age unknown (busy for 2m) · ~2 subagents · 1 shell",
         "↳ Bash  uv run pytest -x",
         "“done”",
     )
@@ -227,8 +227,10 @@ def test_describe_singular_and_omitted_counts() -> None:
     unknown = aa.describe(_summary(activity=AgentActivity(None, None, None, None)), NOW)
 
     assert one is not None and unknown is not None
-    assert one.lines() == ("busy 2m · ~1 subagent",)  # 0 shells is not worth a word
-    assert unknown.lines() == ("busy 2m",)
+    assert one.lines() == (
+        "activity age unknown (busy for 2m) · ~1 subagent",
+    )  # 0 shells is not worth a word
+    assert unknown.lines() == ("activity age unknown (busy for 2m)",)
 
 
 def test_describe_hides_the_tool_when_the_selected_session_is_idle() -> None:
@@ -237,7 +239,7 @@ def test_describe_hides_the_tool_when_the_selected_session_is_idle() -> None:
     text = aa.describe(_summary(state="busy", activity=activity), NOW)
 
     assert text is not None
-    assert text.lines() == ("idle · ~2 subagents · 1 shell", "“done”")
+    assert text.lines() == ("activity age unknown (idle) · ~2 subagents · 1 shell", "“done”")
 
 
 def test_describe_keeps_the_tool_when_the_selected_session_is_busy() -> None:
@@ -246,7 +248,11 @@ def test_describe_keeps_the_tool_when_the_selected_session_is_busy() -> None:
     text = aa.describe(_summary(state="idle", activity=activity), NOW)
 
     assert text is not None
-    assert text.lines() == ("busy · ~2 subagents · 1 shell", "↳ Bash  ls", "“working”")
+    assert text.lines() == (
+        "activity age unknown (busy) · ~2 subagents · 1 shell",
+        "↳ Bash  ls",
+        "“working”",
+    )
 
 
 def test_describe_passes_the_recent_events_through() -> None:
@@ -278,8 +284,8 @@ def test_describe_a_state_without_a_date_or_from_the_future_has_no_duration() ->
     future = aa.describe(_summary(since=NOW + timedelta(hours=1)), NOW)
 
     assert undated is not None and future is not None
-    assert undated.head == "busy · ~2 subagents · 1 shell"
-    assert future.head == "busy · ~2 subagents · 1 shell"
+    assert undated.head == "activity age unknown (busy) · ~2 subagents · 1 shell"
+    assert future.head == "activity age unknown (busy) · ~2 subagents · 1 shell"
 
 
 def test_describe_head_uses_the_activitys_own_session_state_and_since() -> None:
@@ -289,14 +295,14 @@ def test_describe_head_uses_the_activitys_own_session_state_and_since() -> None:
     text = aa.describe(_summary(state="waiting", activity=mine), NOW)
 
     assert text is not None
-    assert text.head == "idle 1h"
+    assert text.head == "activity age unknown (idle for 1h)"
 
 
 def test_describe_does_not_borrow_the_summary_date_for_an_undated_activity() -> None:
     text = aa.describe(_summary(activity=AgentActivity("t", None, state="idle")), NOW)
 
     assert text is not None
-    assert text.head == "idle"
+    assert text.head == "activity age unknown (idle)"
 
 
 def test_all_live_sessions_stay_cached_and_missing_transcripts_are_retried(
@@ -333,3 +339,16 @@ def test_all_live_sessions_stay_cached_and_missing_transcripts_are_retried(
     )
     tick(live[1:])
     assert reader.cached == 2  # the missing transcript is retried without a new session
+
+
+def test_details_show_event_age_separately_from_selected_status_duration():
+    activity = AgentActivity(
+        "Bash",
+        None,
+        state="busy",
+        since=NOW - timedelta(minutes=23),
+        last_event_at=NOW - timedelta(seconds=14),
+    )
+    text = aa.describe(_summary(state="waiting", activity=activity), NOW)
+    assert text is not None
+    assert text.head == "active 14s ago (busy for 23m)"

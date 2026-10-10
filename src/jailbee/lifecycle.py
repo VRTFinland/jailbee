@@ -2854,13 +2854,17 @@ def agent_compact_cell(
     *,
     recent_idle: timedelta | None = None,
     recent_idle_style: str = "bold bright_white",
+    activity_age: bool = False,
 ) -> str:
     """The `agent_compact` cell: one glyph (and coarse age) per distinct state.
 
-    ``recent_idle`` is the dashboards' "just finished" window: an ``idle``
-    agent whose ``since`` is younger than it is drawn in ``recent_idle_style``
-    instead of dim. ``None`` — what `jailbee ls` passes — keeps every idle
-    agent dim.
+    ``activity_age`` selects the latest real event for dashboard freshness;
+    the default preserves `jailbee ls`'s state duration. Unknown event ages
+    never fall back to state duration.
+
+    ``recent_idle`` highlights an ``idle`` agent whose displayed age is younger
+    than that window in ``recent_idle_style`` instead of dim. ``None`` — what
+    `jailbee ls` passes — keeps every idle agent dim.
     """
     if not statuses:
         return "[dim]—[/dim]"
@@ -2871,8 +2875,13 @@ def agent_compact_cell(
         if s.state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
             text += f" {escape(s.state)}"
-        if s.since is not None and s.since <= now:
-            age = now - s.since
+        stamp = (
+            (s.activity.last_event_at if s.activity is not None else None)
+            if activity_age
+            else s.since
+        )
+        if stamp is not None and stamp <= now:
+            age = now - stamp
             text += f" {format_duration_coarse(age)}"
             if recent_idle is not None and s.state == "idle" and age < recent_idle:
                 colour = recent_idle_style

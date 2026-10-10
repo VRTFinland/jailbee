@@ -83,7 +83,7 @@ def help_lines() -> list[str]:
         "",
         "ST: ▶ running, ■ stopped, Ⅱ frozen; LOOSE: ● loose + time left, ∞ no revert.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle;",
-        "  a bright ○ went idle under 30 min ago). OUTBOX ✉N: staged PR/issue actions.",
+        "  age: latest event; bright ○: activity <30 min ago). OUTBOX ✉N: staged PR/issue actions.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign

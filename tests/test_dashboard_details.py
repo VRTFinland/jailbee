@@ -142,7 +142,13 @@ def test_render_flows_pairs_by_width_and_caps_rows() -> None:
 
 
 def _with_activity(**kw: Any) -> ContainerInfo:
-    activity = AgentActivity("Bash  uv run pytest -x", "all [red]green[/red] <b>", 2, 1)
+    activity = AgentActivity(
+        "Bash  uv run pytest -x",
+        "all [red]green[/red] <b>",
+        2,
+        1,
+        last_event_at=NOW - timedelta(minutes=1),
+    )
     summary = AgentSummary(
         "claude", "busy", NOW - timedelta(minutes=2), None, 1, activity=activity, **kw
     )
@@ -153,7 +159,7 @@ def test_activity_block_is_escaped_and_the_message_is_white() -> None:
     block = dd.activity_block(_with_activity(), NOW)
 
     assert [_plain(line) for line in block.lines] == [
-        "busy 2m · ~2 subagents · 1 shell",
+        "active 1m ago (busy for 2m) · ~2 subagents · 1 shell",
         "↳ Bash  uv run pytest -x",
     ]
     assert block.message is not None
@@ -224,7 +230,7 @@ def test_the_first_agent_that_has_activity_speaks() -> None:
     loud = AgentSummary("codex", "busy", None, None, 1, activity=AgentActivity("Edit  x", None))
     block = dd.activity_block(_c(agent_status=(quiet, loud)), NOW)
 
-    assert [_plain(line) for line in block.lines] == ["busy", "↳ Edit  x"]
+    assert [_plain(line) for line in block.lines] == ["activity age unknown (busy)", "↳ Edit  x"]
     assert block.message is None and block.history == ()
 
 

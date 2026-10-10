@@ -292,6 +292,8 @@ class AgentActivity:
     modified: float | None = None
     state: str | None = None
     since: datetime | None = None
+    last_event_at: datetime | None = None
+    """Latest validated real-event time (UTC), independent of state age and file mtime."""
     recent: tuple[ActivityEvent, ...] = ()
     """Up to `RECENT_EVENTS` steps, oldest first; `()` for an agent whose adapter reads none."""
 

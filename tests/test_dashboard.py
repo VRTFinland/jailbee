@@ -6404,7 +6404,16 @@ def test_dashboard_ai_cell_brightens_an_agent_idle_under_thirty_minutes(minutes,
     now = datetime(2026, 10, 7, 12, tzinfo=UTC)
     c = dataclasses.replace(
         _ci("p-one", "p"),
-        agent_status=(AgentSummary("claude", "idle", now - timedelta(minutes=minutes), None, 1),),
+        agent_status=(
+            AgentSummary(
+                "claude",
+                "idle",
+                now - timedelta(minutes=minutes),
+                None,
+                1,
+                activity=AgentActivity(None, None, last_event_at=now - timedelta(minutes=minutes)),
+            ),
+        ),
     )
     (field,) = dcolumns.visible_fields(now, [c], ["agent_compact"])
 
@@ -6419,8 +6428,14 @@ def test_dashboard_ai_cell_leaves_other_states_and_undated_idle_alone():
     (field,) = dcolumns.visible_fields(now, [_ci("p-one", "p")], ["agent_compact"])
 
     def cell(state, since):
+        activity = (
+            AgentActivity(None, None, last_event_at=since)
+            if since is not None and since <= now
+            else None
+        )
         c = dataclasses.replace(
-            _ci("p-one", "p"), agent_status=(AgentSummary("claude", state, since, None, 1),)
+            _ci("p-one", "p"),
+            agent_status=(AgentSummary("claude", state, since, None, 1, activity=activity),),
         )
         return field.cell(c)
 

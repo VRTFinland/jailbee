@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from jailbee.dashboard import columns as dcolumns
 from jailbee.dashboard.model import RepoGroup
@@ -376,13 +376,19 @@ def test_the_agent_tooltip_carries_the_activity_lines():
     from jailbee.accounts.models import AgentActivity
     from jailbee.agent_status import AgentSummary
 
-    activity = AgentActivity("Bash  ls", "done <b>", subagents=1, shells=0)
+    activity = AgentActivity(
+        "Bash  ls",
+        "done <b>",
+        subagents=1,
+        shells=0,
+        last_event_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
     summary = AgentSummary("claude", "waiting", None, "permission", 1, activity=activity)
 
     content = m.card_content(_agent_container(summary), [])
 
     assert content.agent_tooltip == (
-        "claude: permission\n\nwaiting · ~1 subagent\n↳ Bash  ls\n“done <b>”"
+        "claude: permission\n\nactive 5m ago (waiting) · ~1 subagent\n↳ Bash  ls\n“done <b>”"
     )
 
 
@@ -391,10 +397,21 @@ def test_activity_alone_is_the_whole_tooltip():
     from jailbee.agent_status import AgentSummary
 
     summary = AgentSummary(
-        "claude", "busy", None, None, 1, activity=AgentActivity("Bash  ls", None)
+        "claude",
+        "busy",
+        None,
+        None,
+        1,
+        activity=AgentActivity(
+            "Bash  ls",
+            None,
+            last_event_at=datetime.now(UTC) - timedelta(minutes=5),
+        ),
     )
 
-    assert m.card_content(_agent_container(summary), []).agent_tooltip == "busy\n↳ Bash  ls"
+    assert m.card_content(_agent_container(summary), []).agent_tooltip == (
+        "active 5m ago (busy)\n↳ Bash  ls"
+    )
 
 
 def test_no_reason_and_no_activity_is_no_tooltip():

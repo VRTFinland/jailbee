@@ -15,6 +15,7 @@ import os
 import re
 import stat
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jailbee.accounts.models import RECENT_EVENTS, ActivityEvent, ActivityPaths, AgentActivity
@@ -122,37 +123,50 @@ class TailActivity:
 
     last_tool: str | None = None
     last_message: str | None = None
+    last_event_at: datetime | None = None
     recent: tuple[ActivityEvent, ...] = ()
     """Up to `RECENT_EVENTS` tool calls and messages, oldest first."""
 
 
-def parse_tail(raw: bytes) -> TailActivity:
+def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
     """The latest tool call, the latest assistant text and the recent events.
 
     The latest tool and text may come from different records. Only
-    `assistant` records are read; everything else in the file is ignored. One
+    `assistant` records supply display text; assistant text/thinking/tool calls
+    and user tool results supply event timestamps. Prompts and metadata are ignored. One
     pass over the same buffer: events are collected newest first and returned
     in chronological order.
     """
     last_tool: str | None = None
     last_message: str | None = None
     newest_first: list[ActivityEvent] = []
+    last_event_at: datetime | None = None
     for line in reversed(raw.splitlines()):
-        if (
-            last_tool is not None
-            and last_message is not None
-            and len(newest_first) >= RECENT_EVENTS
-        ):
-            break
         try:
             record = json.loads(line)
         except (ValueError, RecursionError):
             continue
-        if not isinstance(record, dict) or record.get("type") != "assistant":
+        if not isinstance(record, dict) or record.get("type") not in ("assistant", "user"):
             continue
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
+            continue
+        kinds = (
+            ("text", "thinking", "tool_use") if record["type"] == "assistant" else ("tool_result",)
+        )
+        if any(isinstance(block, dict) and block.get("type") in kinds for block in content):
+            stamp = record.get("timestamp")
+            if isinstance(stamp, str):
+                try:
+                    date = datetime.fromisoformat(stamp)
+                    if date.tzinfo is not None and (now is None or date.timestamp() <= now):
+                        date = date.astimezone(UTC)
+                        if last_event_at is None or date > last_event_at:
+                            last_event_at = date
+                except (ValueError, OverflowError, OSError):
+                    pass
+        if record["type"] != "assistant":
             continue
         for block in reversed(content):
             if not isinstance(block, dict):
@@ -180,7 +194,7 @@ def parse_tail(raw: bytes) -> TailActivity:
                 continue
             if len(newest_first) < RECENT_EVENTS:
                 newest_first.append(event)
-    return TailActivity(last_tool, last_message, tuple(reversed(newest_first)))
+    return TailActivity(last_tool, last_message, last_event_at, tuple(reversed(newest_first)))
 
 
 def locate(config_home: Path, session_id: str | None) -> ActivityPaths | None:
@@ -247,11 +261,12 @@ def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
         modified = info.st_mtime if stat.S_ISREG(info.st_mode) else None
     except OSError:
         modified = None
-    parsed = parse_tail(tail)
+    parsed = parse_tail(tail, now=now)
     return AgentActivity(
         last_tool=parsed.last_tool,
         last_message=parsed.last_message,
         subagents=count_fresh_subagents(paths.subagents, now),
         modified=modified,
         recent=parsed.recent,
+        last_event_at=parsed.last_event_at,
     )

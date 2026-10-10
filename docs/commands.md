@@ -402,6 +402,19 @@ the host's own branch. Cancelling a dialog dispatches nothing.
 `--interval`/`-i`, `--git-interval` and `--no-git` are accepted by all three
 commands but deprecated and ignored (see [Refresh](#refresh)).
 
+#### AI activity age
+
+The dashboard AI age measures time since the latest real agent event across
+that agent's live sessions, not time in its current status. Assistant text,
+thinking and tool calls, and user tool results count; prompts, metadata and
+file modification times do not. Missing, malformed or future event dates are
+ignored; without a valid event date the age is unknown (no status-age fallback).
+Status symbols and urgency still describe the most urgent live session.
+The details panel shows the selected activity session's status duration
+separately, for example `active 14s ago (busy for 23m)`. Recent-idle highlighting
+uses event age too. Both `ls` agent columns retain status duration; the JSON
+`since` field still records status changes.
+
 #### Refresh
 
 Every dashboard — `jailbee dashboard`, `jailbee tui`, `jailbee gui` — shows what

@@ -111,6 +111,7 @@ def _full_snapshot() -> Snapshot:
                             modified=123.5,
                             state="idle",
                             since=T0 - timedelta(hours=1),
+                            last_event_at=T0 - timedelta(seconds=14),
                             recent=(
                                 ActivityEvent("tool", "Read  /a.py"),
                                 ActivityEvent("message", "[b]plan[/b]"),
@@ -202,8 +203,8 @@ def test_garbage_is_a_protocol_error(line):
 
 
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
-    # Bumped for AgentActivity.recent: an older client must restart the server.
-    assert PROTOCOL == 4
+    # Event ages require a server which supplies last_event_at.
+    assert PROTOCOL == 5
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
     assert protocol._NAMESPACE["ActivityEvent"] is ActivityEvent

@@ -9699,7 +9699,13 @@ def test_doing_json_is_a_list_of_objects():
 def _agent(state="waiting", *, agent="claude", since=None, waiting_for=None, count=1):
     from jailbee.agent_status import AgentSummary
 
-    return AgentSummary(agent=agent, state=state, since=since, waiting_for=waiting_for, count=count)
+    return AgentSummary(
+        agent=agent,
+        state=state,
+        since=since,
+        waiting_for=waiting_for,
+        count=count,
+    )
 
 
 _AGENT_NOW = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
@@ -10750,3 +10756,24 @@ def test_new_container_refuses_name_taken_by_alias(make_cfg, tmp_path):
     )
     with pytest.raises(ValueError, match="alias of 'feat-x'"):
         new_container(cfg, incus, opts)
+
+
+def test_agent_compact_age_uses_event_time_not_status_duration():
+    from dataclasses import replace
+
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.lifecycle import agent_compact_cell
+
+    summary = replace(
+        _agent("busy", since=_AGENT_NOW - timedelta(hours=2)),
+        activity=AgentActivity(None, None, last_event_at=_AGENT_NOW - timedelta(seconds=14)),
+    )
+    assert _plain(agent_compact_cell((summary,), _AGENT_NOW)) == "● 2h"
+    assert _plain(agent_compact_cell((summary,), _AGENT_NOW, activity_age=True)) == "● 14s"
+    summary = replace(summary, state="idle", activity=None)
+    assert (
+        agent_compact_cell(
+            (summary,), _AGENT_NOW, activity_age=True, recent_idle=timedelta(hours=3)
+        )
+        == "[dim]○[/dim]"
+    )

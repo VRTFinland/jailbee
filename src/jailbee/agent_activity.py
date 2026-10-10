@@ -149,9 +149,16 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
         if activity.state is None
         else (activity.state, activity.since)
     )
-    head = state
+    stamp = activity.last_event_at
+    head = (
+        f"active {format_duration_short(now - stamp)} ago"
+        if stamp is not None and stamp <= now
+        else "activity age unknown"
+    )
     if since is not None and since <= now:
-        head += f" {format_duration_short(now - since)}"
+        head += f" ({state} for {format_duration_short(now - since)})"
+    else:
+        head += f" ({state})"
     if activity.subagents:
         head += f" · {_counted(activity.subagents, 'subagent', estimate=True)}"
     if activity.shells:

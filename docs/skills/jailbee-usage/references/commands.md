@@ -701,7 +701,12 @@ ignores `fields` entirely.
 Both dashboards use compact presentation, without changing `ls` or JSON:
 ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), LOOSE = empty for strict, red ● plus the remaining auto-revert time (`● 45m`, `● ∞` = no deadline) for loose,
 AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
-◐ shell, ○ idle; a bright ○ went idle under 30 minutes ago). USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
+◐ shell, ○ idle) plus the age of the latest real event across live sessions,
+not the time spent in that state. Assistant text, thinking, tool calls and tool
+results count; prompts and metadata do not. Unknown event ages have no duration.
+A bright ○ has activity under 30 minutes old. Container details show activity age
+and the selected session's state duration separately, e.g. `active 14s ago (busy for 23m)`.
+USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
 use ✓ for clean. DIFF compares against the host target, L DIFF against
 checked-out host HEAD. TUI details and Qt tooltips retain network expiry times;
 Qt cards show the same LOOSE text without the colour. DOING uses ×N process counts. JOB

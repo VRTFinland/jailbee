@@ -336,10 +336,13 @@ def test_a_session_without_a_transcript_does_not_hide_the_one_with():
     assert (summary.activity.last_tool, summary.activity.last_message) == ("Bash  ls", "hi")
 
 
-def test_the_most_recently_written_transcript_wins_regardless_of_state_or_rank():
+def test_the_latest_event_wins_regardless_of_mtime_state_or_rank():
     def lookup(container, session, host_pid):
         return AgentActivity(
-            f"pid{session.pid}", None, modified={10: 100.0, 11: 200.0}[session.pid]
+            f"pid{session.pid}",
+            None,
+            modified={10: 200.0, 11: 100.0}[session.pid],
+            last_event_at={10: T0 - timedelta(seconds=20), 11: T0}[session.pid],
         )
 
     out = agent_status.match_sessions(
@@ -376,10 +379,10 @@ def test_the_activity_carries_its_own_sessions_state_and_since():
     assert (summary.state, summary.since) == ("waiting", T0)
 
 
-@pytest.mark.parametrize("modified", [None, 100.0])
-def test_equal_or_unknown_mtimes_fall_back_to_rank_order(modified):
+@pytest.mark.parametrize("last_event_at", [None, T0])
+def test_equal_or_unknown_event_dates_fall_back_to_rank_order(last_event_at):
     def lookup(container, session, host_pid):
-        return AgentActivity(f"pid{session.pid}", None, modified=modified)
+        return AgentActivity(f"pid{session.pid}", None, last_event_at=last_event_at)
 
     (summary,) = _two_sessions(lookup)["a"]
 

@@ -432,3 +432,58 @@ def test_read_activity_does_not_follow_a_replacement_symlink_for_mtime(tmp_path,
 
     assert activity is not None
     assert activity.modified is None
+
+
+@pytest.mark.parametrize(
+    "role, block",
+    [
+        ("assistant", {"type": "text", "text": "hello"}),
+        ("assistant", {"type": "thinking", "thinking": "considering"}),
+        ("assistant", {"type": "tool_use", "name": "Bash", "input": {}}),
+        ("user", {"type": "tool_result", "tool_use_id": "one", "content": "done"}),
+    ],
+)
+def test_real_events_supply_age_but_prompts_metadata_and_bad_dates_do_not(tmp_path, role, block):
+    from datetime import UTC, datetime
+
+    records = [
+        {"type": role, "timestamp": "2026-01-01T00:00:14Z", "message": {"content": [block]}},
+        {
+            "type": "user",
+            "timestamp": "2026-01-01T00:00:29Z",
+            "message": {"content": [{"type": "text", "text": "prompt"}]},
+        },
+        {"type": "progress", "timestamp": "2026-01-01T00:00:29Z"},
+        {
+            "type": role,
+            "timestamp": "2026-01-01T00:00:29Z",
+            "message": {"content": [{"type": []}, {"type": {}}]},
+        },
+        {"type": [], "timestamp": "2026-01-01T00:00:29Z"},
+        {"type": role, "timestamp": "broken", "message": {"content": [block]}},
+        {"type": role, "timestamp": "2026-01-01T00:00:29", "message": {"content": [block]}},
+        {"type": role, "message": {"content": [block]}},
+        {"type": role, "timestamp": "2099-01-01T00:00:00Z", "message": {"content": [block]}},
+    ]
+    path = tmp_path / "session.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    os.utime(path, (1, 1))
+    activity = ca.read_activity(ActivityPaths(path, tmp_path / "subagents"), now=1767225630)
+    assert activity is not None
+    assert activity.last_event_at == datetime(2026, 1, 1, 0, 0, 14, tzinfo=UTC)
+
+
+def test_event_timestamp_is_found_even_after_recent_display_history_is_full():
+    from datetime import UTC, datetime
+
+    dated = json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:14Z",
+            "message": {"content": [{"type": "thinking", "thinking": "work"}]},
+        }
+    )
+    undated = _assistant(_tool("Read", file_path="/a.py"), _text("still working"))
+    parsed = ca.parse_tail(_tail(dated, *([undated] * (RECENT_EVENTS + 1))), now=1767225630)
+    assert parsed.last_event_at == datetime(2026, 1, 1, 0, 0, 14, tzinfo=UTC)
+    assert len(parsed.recent) == RECENT_EVENTS
