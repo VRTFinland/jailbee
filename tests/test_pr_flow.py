@@ -1989,3 +1989,24 @@ def test_publication_guard_rejects_identity_replaced_while_waiting(mocker, tmp_p
         ):
             events.append("select")
     assert events == ["enter", "exit"]
+
+
+def test_detached_source_still_takes_the_outbox_branch(tmp_path, mocker):
+    """A detached submodule has no source branch; the manifest's proposed head
+    is then the only name there is, and dropping it made `jailbee pr` fail
+    with "no head branch name was chosen"."""
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
+    confirm = mocker.patch("jailbee.pr_flow.confirm_pr_branch_name", return_value="feat/x")
+
+    plan = _plan(tmp_path, mocker, use_outbox=True, source_branch=None)
+
+    confirm.assert_called_once_with("feat/x", None)
+    assert plan.publish_name == "feat/x"
+
+
+def test_confirm_branch_name_prompts_when_there_is_no_source_branch(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    prompt = mocker.patch("typer.prompt", return_value="feat/typed")
+
+    assert pr_flow.confirm_pr_branch_name("feat/x", None) == "feat/typed"
+    prompt.assert_called_once()

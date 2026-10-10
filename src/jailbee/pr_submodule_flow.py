@@ -227,6 +227,19 @@ def publish_submodule_prs_first(
     return outcomes
 
 
+def _ask_head_name(subpath: str) -> str:
+    """Ask for the head branch of a detached submodule's PR; Esc aborts it."""
+    try:
+        return prompting.ask_text(
+            f"PR head branch name for submodule '{subpath}' (it is detached)",
+            validate=lambda name: (
+                None if git.check_ref_format(name) else f"'{name}' is not a valid branch name."
+            ),
+        )
+    except prompting.Cancelled as exc:
+        raise typer.Abort() from exc
+
+
 def publish_submodule_pr(
     cfg: Config,
     incus: Incus,
@@ -395,6 +408,8 @@ def publish_submodule_pr(
             )
             pr_flow.bind_outbox_source(management, plan.outbox_source)
             publish_name = plan.publish_name
+            if publish_name is None and prompting.is_interactive():
+                publish_name = _ask_head_name(subpath)
             if publish_name is None:
                 error(
                     f"Submodule '{subpath}' is detached in '{short}' and no head branch name "

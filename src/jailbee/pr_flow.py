@@ -163,12 +163,14 @@ def confirm_foreign_force_push(
         raise typer.Abort()
 
 
-def confirm_pr_branch_name(proposed: str, source_branch: str) -> str:
+def confirm_pr_branch_name(proposed: str, source_branch: str | None) -> str:
     """Confirm/edit the proposed PR head name on a TTY; return it unchanged off-TTY.
 
     Enter accepts `proposed`; a typed value replaces it (re-prompts until it is a
     valid git ref). Never prompts when the proposal equals the branch the
-    commits came from (nothing to review) or when stdin is not a TTY.
+    commits came from (nothing to review) or when stdin is not a TTY. A
+    detached submodule has no source branch (`None`), so its proposal is
+    always shown.
     """
     from jailbee import git as git_mod
     from jailbee import prompting
@@ -371,8 +373,10 @@ def resolve_pr_text_and_head(
     # One confirmation, whoever proposed the name. `ai_text.branch` is checked
     # for emptiness because a manifest may propose no branch at all in a
     # container with no recorded branch either; the AI path always fills it.
+    # A detached submodule has no source branch, which makes a proposed name
+    # the only one there is rather than a reason to skip it.
     propose_branch = need_branch_ai or outbox_source is not None
-    if propose_branch and ai_text is not None and ai_text.branch and source_branch:
+    if propose_branch and ai_text is not None and ai_text.branch:
         return HeadPlan(
             publish_name=confirm_pr_branch_name(ai_text.branch, source_branch),
             ai_text=ai_text,

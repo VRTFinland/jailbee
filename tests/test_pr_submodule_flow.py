@@ -152,6 +152,32 @@ def test_detached_without_name_raises_exit_2(mocker, tmp_path):
     assert exc.value.exit_code == 2
 
 
+def test_detached_without_name_asks_for_one_on_a_terminal(mocker, tmp_path):
+    from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
+
+    cfg, incus, _ = _env(mocker, tmp_path)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", return_value="docs/typed")
+    publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
+    publish.return_value.publish_name = "docs/typed"
+    publish.return_value.forced = False
+
+    outcome = publish_submodule_pr(
+        cfg,
+        incus,
+        "c",
+        "s",
+        _candidate(branch=None),
+        SubPrOptions(no_ai=True),
+        repo_dir="/r",
+        confirm_plan=None,
+        offer_comments=lambda n, m: 0,
+    )
+
+    assert outcome.action == "created"
+    assert publish.call_args.kwargs["publish_name"] == "docs/typed"
+
+
 def test_outbox_failures_are_returned_not_raised(mocker, tmp_path):
     from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
 
