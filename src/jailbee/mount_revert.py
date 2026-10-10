@@ -7,12 +7,15 @@ Called once per repo per ``jailbee-net-refresh.timer`` tick from
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.loose_revert import _autostart_holds
-from jailbee.mounts import DEVICE_NAME_PREFIX, MOUNT_UNTIL_PREFIX
+import yaml
+
+from jailbee.mounts import DEVICE_NAME_PREFIX, MOUNT_UNTIL_PREFIX, mount_lock
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -36,7 +39,7 @@ def check_and_revert_mounts(cfg: Config, incus: Incus, *, now: datetime) -> list
 
     Written deadlines are honoured independently of the current auto-revert
     policy. Containers still owned by an autostart run are skipped. Labels and
-    devices come from the listing, avoiding per-container reads without labels.
+    devices are reread under the host lock; listing is candidate discovery only.
     """
     prefix = cfg.container_prefix
     out: list[MountRevertResult] = []
@@ -50,12 +53,18 @@ def check_and_revert_mounts(cfg: Config, incus: Incus, *, now: datetime) -> list
         if not labels:
             continue
         try:
-            if _autostart_holds(incus, name):
-                continue
-            devices = raw.get("devices") or {}
-            for key, value in sorted(labels.items()):
-                kind = key.removeprefix(MOUNT_UNTIL_PREFIX)
-                out.extend(_check_one(incus, name, kind, key, value, devices, now))
+            with mount_lock():
+                if _autostart_holds(incus, name):
+                    continue
+                # The listing only discovers candidates. Writers share this lock;
+                # reread both labels and devices before any destructive action.
+                current = yaml.safe_load(incus.config_show(name))
+                config = current.get("config") or {}
+                labels = {k: v for k, v in config.items() if k.startswith(MOUNT_UNTIL_PREFIX)}
+                devices = current.get("devices") or {}
+                for key, value in sorted(labels.items()):
+                    kind = key.removeprefix(MOUNT_UNTIL_PREFIX)
+                    out.extend(_check_one(incus, name, kind, key, value, devices, now))
         except Exception as e:  # never let one container break the loop
             log.warning("mount_revert: %s raised: %s", name, e)
             out.append(MountRevertResult(container=name, kind="", removed=False, error=str(e)))
@@ -78,11 +87,11 @@ def _check_one(
     # Naive labels cannot be compared with the timer's aware UTC clock.
     if until is None or until.utcoffset() is None:
         log.warning("mount_revert: %s - malformed %s %r, clearing", name, key, value)
-        incus.config_unset(name, key)
+        incus.config_unset_checked(name, key)
         return []
     device = f"{DEVICE_NAME_PREFIX}{kind}"
     if device not in devices:
-        incus.config_unset(name, key)
+        incus.config_unset_checked(name, key)
         return [MountRevertResult(container=name, kind=kind, removed=False)]
     if until > now:
         return []
@@ -91,6 +100,6 @@ def _check_one(
     except Exception as e:  # log + retry next cycle
         log.warning("mount_revert: failed to detach %s from %s: %s", kind, name, e)
         return [MountRevertResult(container=name, kind=kind, removed=False, error=str(e))]
-    incus.config_unset(name, key)
-    log.info("mount_revert: %s - detached %s (TTL expired)", name, kind)
+    incus.config_unset_checked(name, key)
+    print(f"mount_revert: {name} - detached {kind} (TTL expired)", file=sys.stderr)
     return [MountRevertResult(container=name, kind=kind, removed=True)]

@@ -792,3 +792,40 @@ def test_validate_rejects_a_local_default_profile_that_does_not_exist(opened):
     got = opened()
     error = layers.validate(got, "local", [YamlChange(("litellm", "default_profile"), "nope")])
     assert error is not None and "default_profile 'nope'" in error
+
+
+def test_mount_ttl_editor_schema_and_layer_round_trip(tmp_path):
+    from jailbee.config.loader import load_config_from_layers
+    from jailbee.config_edit.schema import build_specs, rebase, is_drilldown
+    from jailbee.config_writer import patch_yaml
+    from jailbee.global_config import GlobalConfig
+    import yaml
+
+    for specs in (global_specs(), repo_specs(), local_specs()):
+        paths = {s.path for s in specs}
+        assert ("mount_auto_revert", "enabled") in paths
+        assert ("mount_auto_revert", "after") in paths
+    collection = next(s for s in repo_specs() if s.path == ("optional_mounts",))
+    assert is_drilldown(collection)
+    leaves = rebase(build_specs(collection.item_model), ("optional_mounts", "aws"))
+    assert ("optional_mounts", "aws", "auto_unmount_after") in {s.path for s in leaves}
+
+    global_text = patch_yaml("", [YamlChange(("mount_auto_revert", "enabled"), False),
+                                   YamlChange(("mount_auto_revert", "after"), "45m")])
+    repo_text = patch_yaml("", [YamlChange(("mount_auto_revert", "after"), "5m"),
+        YamlChange(("optional_mounts", "aws"), {"host": "/aws", "container": "/aws"})])
+    local_text = patch_yaml("", [YamlChange(("mount_auto_revert", "enabled"), True),
+        YamlChange(("optional_mounts", "aws", "auto_unmount_after"), "2h")])
+    global_path = _write(tmp_path / "global.yaml", global_text)
+    repo_path = _write(tmp_path / "repo.yaml", repo_text)
+    local_path = _write(tmp_path / "local.yaml", local_text)
+    got = layers.read_layers(repo_path, global_path, local_path)
+    origins = layers.resolve(repo_specs(), got)
+    assert origins[("mount_auto_revert", "enabled")] == layers.Origin("local", True)
+    assert origins[("mount_auto_revert", "after")] == layers.Origin("repo", "5m")
+    cfg = load_config_from_layers(yaml.safe_load(global_text), yaml.safe_load(repo_text),
+                                 repo_path, origin=str(repo_path))
+    assert cfg.effective_mount_ttl(GlobalConfig(), "aws") is None
+    cfg = load_config_from_layers(got.global_raw, got.repo_raw, repo_path,
+                                 origin=str(repo_path), local_raw=got.local_raw)
+    assert cfg.effective_mount_ttl(GlobalConfig(), "aws") == "2h"

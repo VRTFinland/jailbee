@@ -93,6 +93,7 @@ def test_attach_new_mount_adds_device_and_sets_label():
     until = datetime(2026, 10, 10, 12, 15, tzinfo=UTC)
     assert attach(cfg, incus, "c", "aws", until) is True
     incus.config_device_add.assert_called_once()
+    assert [c[0] for c in incus.mock_calls] == ["config_device_get", "config_device_add", "config_set"]
     incus.config_set.assert_called_once_with("c", "user.jailbee.mount_until.aws", until.isoformat())
 
 
@@ -111,7 +112,7 @@ def test_attach_without_ttl_clears_label():
     incus = MagicMock()
     incus.config_device_get.return_value = "/home/u/.aws"
     attach(cfg, incus, "c", "aws", None)
-    incus.config_unset.assert_called_once_with("c", "user.jailbee.mount_until.aws")
+    incus.config_unset_checked.assert_called_once_with("c", "user.jailbee.mount_until.aws")
     incus.config_set.assert_not_called()
 
 
@@ -120,8 +121,7 @@ def test_attach_unknown_kind_raises_before_touching_incus():
     incus = MagicMock()
     with pytest.raises(ValueError, match="Unknown optional mount"):
         attach(cfg, incus, "c", "nope", None)
-    incus.config_device_get.assert_not_called()
-    incus.config_set.assert_not_called()
+    assert incus.mock_calls == []
 
 
 def test_remove_optional_mount_clears_the_label_after_the_device():
@@ -129,5 +129,15 @@ def test_remove_optional_mount_clears_the_label_after_the_device():
     incus = MagicMock()
     remove_optional_mount(cfg, incus, "c", "aws")
     names = [call[0] for call in incus.mock_calls]
-    assert names == ["config_device_remove", "config_unset"]
-    incus.config_unset.assert_called_once_with("c", "user.jailbee.mount_until.aws")
+    assert names == ["config_device_remove", "config_unset_checked"]
+    incus.config_unset_checked.assert_called_once_with("c", "user.jailbee.mount_until.aws")
+
+
+def test_add_failure_does_not_write_or_clear_deadline():
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.config_device_get.return_value = None
+    incus.config_device_add.side_effect = RuntimeError("add failed")
+    with pytest.raises(RuntimeError, match="add failed"):
+        attach(cfg, incus, "c", "aws", None)
+    assert [c[0] for c in incus.mock_calls] == ["config_device_get", "config_device_add"]

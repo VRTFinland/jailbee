@@ -1521,3 +1521,20 @@ def test_running_instance_execs_the_script_as_the_user(incus, mocker):
         "/proc",
         "chrome",
     ]
+
+
+@pytest.mark.parametrize("stderr", ["Error: daemon unavailable", _ETAG_ERROR])
+def test_config_unset_checked_propagates_real_failures(incus, mocker, stderr):
+    mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch("jailbee.incus.subprocess.run", return_value=_cp(1, stderr))
+    with pytest.raises(IncusError):
+        incus.config_unset_checked("c", "user.jailbee.mount_until.aws")
+    assert run.call_count == (incus._ETAG_RETRIES if "ETag" in stderr else 1)
+
+
+def test_config_unset_checked_retries_then_tolerates_absence(incus, mocker):
+    mocker.patch("jailbee.incus.time.sleep")
+    run = mocker.patch("jailbee.incus.subprocess.run", side_effect=[
+        _cp(1, _ETAG_ERROR), _cp(1, "Error: Config option not found")])
+    incus.config_unset_checked("c", "user.jailbee.mount_until.aws")
+    assert run.call_count == 2

@@ -282,7 +282,16 @@ def parse_ttl(raw: str) -> timedelta | None:
     value = raw.strip()
     if value.lower() == "never":
         return None
-    return parse_duration_value(value, "TTL")
+    if value.isascii() and value.isdigit():
+        return parse_duration_value(int(value), "TTL")
+    try:
+        return parse_duration_value(value, "TTL")
+    except ValueError as error:
+        if not _DURATION_RE.match(value):
+            raise ValueError(
+                f"TTL invalid duration {value!r}; expected <int>s|m|h or integer minutes"
+            ) from error
+        raise
 
 
 def format_ttl(after: str | int) -> str:

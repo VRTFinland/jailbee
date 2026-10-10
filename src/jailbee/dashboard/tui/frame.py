@@ -82,6 +82,7 @@ def help_lines() -> list[str]:
         *lines,
         "",
         "ST: ▶ running, ■ stopped, Ⅱ frozen; LOOSE: ● loose + time left, ∞ no revert.",
+        "MOUNT: ◆ attached + latest deadline, ∞ no auto-unmount.",
         "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle;",
         "  age: latest event; bright ○: activity <30 min ago). OUTBOX ✉N: staged PR/issue actions.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",

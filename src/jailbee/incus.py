@@ -795,6 +795,15 @@ class Incus:
         """
         self._run(["config", "unset", name, key], check=False)
 
+    def config_unset_checked(self, name: str, key: str) -> None:
+        """Clear a label idempotently, retrying conflicts and surfacing failures."""
+        try:
+            self._run_retrying_on_etag(["config", "unset", name, key])
+        except IncusError as error:
+            if str(error).endswith(": Error: Config option not found"):
+                return
+            raise
+
     def config_device_add(
         self,
         name: str,
