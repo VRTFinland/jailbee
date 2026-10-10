@@ -9263,6 +9263,9 @@ def submodule_pr_cmd(
             cfg, incus, full, short, number=number, management=management
         ),
     )
+    from jailbee import pr_links
+
+    pr_links.link_pr_family(cfg, incus, full, short)
     if outcome.outbox_failures:
         raise typer.Exit(1)
 

@@ -11,6 +11,15 @@ from tests.conftest import mock_pr_agent
 runner = CliRunner()
 
 
+def test_submodule_pr_links_the_pr_family(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    _happy(mocker)
+    link = mocker.patch("jailbee.pr_links.link_pr_family")
+    result = runner.invoke(app, ["submodule", "pr", "feat-foo", "lib/a", "--yes", "--no-ai"])
+    assert result.exit_code == 0, result.output
+    link.assert_called_once()
+
+
 def _candidate(path="lib/a", commits=2, branch="feat/foo", dirty=False, stale=False):
     from jailbee.submodule_pr import SubCandidate
 
