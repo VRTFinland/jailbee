@@ -743,6 +743,7 @@ def test_refresh_all_invokes_loose_revert_per_repo(
         ),
     )
     revert = mocker.patch.object(egress_pool, "check_and_revert_loose")
+    mocker.patch.object(egress_pool, "check_and_revert_mounts")
 
     egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
 
@@ -799,9 +800,87 @@ def test_refresh_all_continues_when_loose_revert_raises(
         side_effect=RuntimeError("boom"),
     )
 
+    mounts = mocker.patch.object(egress_pool, "check_and_revert_mounts")
     # Should not raise — the loop swallows the error and logs it.
     results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
+    mounts.assert_called_once()
     assert "A" in results
+
+
+def _mount_revert_repos(db_session, tmp_path, frozen_now, mocker, prefixes=("A",)):
+    for prefix in prefixes:
+        repo_root = tmp_path / prefix
+        (repo_root / ".jailbee").mkdir(parents=True)
+        (repo_root / ".jailbee" / "config.yaml").write_text("# placeholder")
+        db_session.add(
+            RegisteredRepo(
+                container_prefix=prefix, repo_root=str(repo_root), registered_at=frozen_now
+            )
+        )
+    db_session.commit()
+
+    def fake_load(repo_root: Path) -> Any:
+        cfg = mocker.Mock()
+        cfg.container_prefix = repo_root.name
+        cfg.repo_root = repo_root
+        return cfg
+
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
+
+
+def test_refresh_all_invokes_mount_revert_even_when_pool_refresh_fails(
+    db_session: Session,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool
+
+    _mount_revert_repos(db_session, tmp_path, frozen_now, mocker)
+    mocker.patch.object(egress_pool, "refresh_pool", side_effect=RuntimeError("pool"))
+    mocker.patch.object(egress_pool, "check_and_revert_loose")
+    mounts = mocker.patch.object(egress_pool, "check_and_revert_mounts")
+
+    results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
+
+    mounts.assert_called_once()
+    args, kwargs = mounts.call_args
+    assert args[0].container_prefix == "A"
+    assert args[1] is incus
+    assert kwargs == {"now": frozen_now}
+    assert results["A"].status == "error"
+
+
+def test_refresh_all_continues_when_mount_revert_raises(
+    db_session: Session,
+    gcfg: Any,
+    incus: Any,
+    frozen_now: datetime,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    from jailbee import egress_pool
+
+    _mount_revert_repos(db_session, tmp_path, frozen_now, mocker, prefixes=("A", "B"))
+    refresh = mocker.patch.object(
+        egress_pool, "refresh_pool",
+        side_effect=[
+            egress_pool.RefreshResult(container_prefix="A", status="ok"),
+            egress_pool.RefreshResult(container_prefix="B", status="ok"),
+        ],
+    )
+    loose = mocker.patch.object(egress_pool, "check_and_revert_loose")
+    mounts = mocker.patch.object(
+        egress_pool, "check_and_revert_mounts", side_effect=[RuntimeError("x"), []]
+    )
+
+    results = egress_pool.refresh_all(db_session, gcfg, incus, now=frozen_now)
+
+    assert set(results) == {"A", "B"}
+    assert refresh.call_count == loose.call_count == mounts.call_count == 2
+    assert [call.args[0].container_prefix for call in mounts.call_args_list] == ["A", "B"]
 
 
 def test_compute_mirror_endpoint_returns_none_when_the_mirror_is_down(
