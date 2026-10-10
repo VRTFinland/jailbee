@@ -13,10 +13,20 @@ from typing import TYPE_CHECKING, Literal
 import click
 import typer
 
-from jailbee import git, lifecycle, pr_ai, pr_flow, pr_outbox, prompting, submodule_pr, submodules, tui
+from jailbee import (
+    git,
+    lifecycle,
+    pr_ai,
+    pr_flow,
+    pr_outbox,
+    prompting,
+    submodule_pr,
+    submodules,
+    tui,
+)
+from jailbee import pr as pr_mod
 from jailbee.incus import IncusError
 from jailbee.outbox.models import OutboxError
-from jailbee import pr as pr_mod
 from jailbee.tui import error, info, success, warn
 
 if TYPE_CHECKING:
@@ -204,7 +214,12 @@ def publish_submodule_prs_first(
             outcome = SubPrOutcome(candidate.path, "declined")
         except click.exceptions.Exit:
             outcome = SubPrOutcome(candidate.path, "failed")
-        except (git.GitError, IncusError, submodule_pr.SubmodulePrError, submodules.SubmoduleError) as exc:
+        except (
+            git.GitError,
+            IncusError,
+            submodule_pr.SubmodulePrError,
+            submodules.SubmoduleError,
+        ) as exc:
             warn(f"Submodule '{candidate.path}': {exc}")
             outcome = SubPrOutcome(candidate.path, "failed")
         outcomes.append(outcome)

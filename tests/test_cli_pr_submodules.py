@@ -224,28 +224,43 @@ def test_shared_manager_reenters_real_guard_for_submodule_publication(mocker, tm
 
 
 def test_real_transport_git_error_isolated_before_next_and_superproject(mocker, tmp_path):
-    from jailbee.git import GitError
     from jailbee import pr_submodule_flow, submodule_pr
+    from jailbee.git import GitError
     from jailbee.pr_flow import PrRecord
     from tests.test_pr_submodule_flow import _candidate
 
-    cfg, incus = _setup(mocker, tmp_path)
+    _setup(mocker, tmp_path)
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
-    mocker.patch.object(pr_submodule_flow, "submodule_pr_candidates", return_value=[_candidate("lib/a"), _candidate("lib/b")])
-    mocker.patch("jailbee.submodule_pr.SubmodulePrState.read", return_value=PrRecord(None, None, False, False))
+    mocker.patch.object(
+        pr_submodule_flow,
+        "submodule_pr_candidates",
+        return_value=[_candidate("lib/a"), _candidate("lib/b")],
+    )
+    mocker.patch(
+        "jailbee.submodule_pr.SubmodulePrState.read",
+        return_value=PrRecord(None, None, False, False),
+    )
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
     mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
     mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="main")
     order = []
+
     def transport(*args, **kwargs):
         order.append(kwargs["subpath"])
         if kwargs["subpath"] == "lib/a":
             raise GitError("fetch failed")
+
     mocker.patch.object(submodule_pr, "transport_submodule_to_host", side_effect=transport)
     mocker.patch("jailbee.pr.assert_github_remote")
-    mocker.patch("jailbee.submodule_pr.publish_submodule_branch", return_value=submodule_pr.SubPublishResult("ref", "feat/foo", False))
+    mocker.patch(
+        "jailbee.submodule_pr.publish_submodule_branch",
+        return_value=submodule_pr.SubPublishResult("ref", "feat/foo", False),
+    )
     mocker.patch("jailbee.submodule_pr.SubmodulePrState.record")
-    mocker.patch("jailbee.sync.publish_branch_from_container", side_effect=lambda *a, **k: order.append("super") or _publish_result())
+    mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        side_effect=lambda *a, **k: order.append("super") or _publish_result(),
+    )
     mocker.patch("jailbee.git.commit_subject", return_value="feat: x")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.pr_links.link_pr_family")
