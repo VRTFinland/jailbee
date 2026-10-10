@@ -40,14 +40,17 @@ def _env(mocker, tmp_path, make_cfg, *, attached=()):
 def _ttl_env(mocker, tmp_path, make_cfg, *, attached=(), gcfg=None, **cfg_overrides):
     from jailbee.global_config import GlobalConfig
 
-    mounts = cfg_overrides.pop("optional_mounts", {
+    mounts = cfg_overrides.pop(
+        "optional_mounts",
+        {
             "aws": {"host": "~/.aws", "container": "/home/dev/.aws"},
             "docs": {
                 "host": "~/docs",
                 "container": "/home/dev/docs",
                 "auto_unmount_after": "never",
             },
-        })
+        },
+    )
     cfg = make_cfg(tmp_path, optional_mounts=mounts, **cfg_overrides)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._load_global", return_value=gcfg or GlobalConfig())
@@ -238,8 +241,14 @@ def test_mount_bare_minutes_limits_have_no_side_effects(mocker, tmp_path, make_c
 
 def test_malformed_per_kind_default_can_be_explicitly_overridden(mocker, tmp_path, make_cfg):
     for flags in (["--for", "1h"], ["--no-revert"]):
-        incus = _ttl_env(mocker, tmp_path, make_cfg, optional_mounts={
-            "aws": {"host": "/aws", "container": "/aws", "auto_unmount_after": "banana"}})
+        incus = _ttl_env(
+            mocker,
+            tmp_path,
+            make_cfg,
+            optional_mounts={
+                "aws": {"host": "/aws", "container": "/aws", "auto_unmount_after": "banana"}
+            },
+        )
         mocker.patch("jailbee.prompting.is_interactive", return_value=False)
         refused = runner.invoke(app, ["mount", "aws", "x"])
         assert refused.exit_code == 2
@@ -257,6 +266,7 @@ def test_malformed_per_kind_default_can_be_explicitly_overridden(mocker, tmp_pat
 
 def test_failed_no_revert_never_reports_success(mocker, tmp_path, make_cfg):
     from jailbee.incus import IncusError
+
     incus = _ttl_env(mocker, tmp_path, make_cfg, attached=("aws",))
     incus.config_unset_checked.side_effect = IncusError("daemon unavailable")
     result = runner.invoke(app, ["mount", "aws", "x", "--no-revert"])

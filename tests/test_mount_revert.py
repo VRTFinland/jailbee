@@ -34,7 +34,9 @@ def _raw(cfg, name="feat-x", *, labels=None, devices=(), base=True):
 def _incus(mocker, rows, *, held=False):
     incus = mocker.Mock(spec=Incus)
     incus.list_containers.return_value = rows
-    incus.config_show.side_effect = lambda name: yaml.safe_dump(next(r for r in rows if r["name"] == name))
+    incus.config_show.side_effect = lambda name: yaml.safe_dump(
+        next(r for r in rows if r["name"] == name)
+    )
     mocker.patch("jailbee.mount_revert._autostart_holds", return_value=held)
     return incus
 

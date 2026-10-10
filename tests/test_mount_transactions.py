@@ -16,9 +16,12 @@ NOW = datetime(2026, 10, 10, 12, tzinfo=UTC)
 
 class LiveIncus:
     def __init__(self, cfg, *, present=True):
-        self.row = {"name": "app-x", "profiles": [f"{cfg.container_prefix}-base"],
-                    "config": {until_key("aws"): (NOW - timedelta(minutes=1)).isoformat()},
-                    "devices": {"optional-aws": {"source": "/aws"}} if present else {}}
+        self.row = {
+            "name": "app-x",
+            "profiles": [f"{cfg.container_prefix}-base"],
+            "config": {until_key("aws"): (NOW - timedelta(minutes=1)).isoformat()},
+            "devices": {"optional-aws": {"source": "/aws"}} if present else {},
+        }
         self.write_error = False
         self.remove_error = False
         self.after_listing = lambda: None
@@ -74,9 +77,7 @@ def test_listing_is_discovery_not_authority(live, present, deadline):
     incus.after_listing = lambda: attach(cfg, incus, "app-x", "aws", deadline)
     assert check_and_revert_mounts(cfg, incus, now=NOW) == []
     assert "optional-aws" in incus.row["devices"]
-    assert incus.row["config"].get(until_key("aws")) == (
-        deadline.isoformat() if deadline else None
-    )
+    assert incus.row["config"].get(until_key("aws")) == (deadline.isoformat() if deadline else None)
 
 
 @pytest.mark.parametrize("present", [True, False])
@@ -96,7 +97,7 @@ def test_failed_rollback_reports_both_failures(live):
     cfg, incus = live
     incus.row["devices"].clear()
     incus.write_error = incus.remove_error = True
-    with pytest.raises(Exception, match="write failed.*rollback.*busy"):
+    with pytest.raises(Exception, match=r"write failed.*rollback.*busy"):
         attach(cfg, incus, "app-x", "aws", NOW)
     assert "optional-aws" in incus.row["devices"]
 
@@ -168,6 +169,7 @@ def test_malformed_discovery_does_not_clear_replacement(live):
 
 def test_terminal_help_explains_mount_deadline():
     from jailbee.dashboard.tui.frame import help_lines
+
     text = "\n".join(help_lines())
     assert "MOUNT: ◆ attached" in text
     assert "latest deadline" in text

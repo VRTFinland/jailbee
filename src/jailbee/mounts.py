@@ -8,8 +8,8 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from jailbee.config import Config
-from jailbee.incus import Incus, IncusError
 from jailbee.db import state_dir
+from jailbee.incus import Incus, IncusError
 
 DEVICE_NAME_PREFIX = "optional-"
 MOUNT_UNTIL_PREFIX = "user.jailbee.mount_until."

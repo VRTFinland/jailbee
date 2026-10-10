@@ -93,7 +93,11 @@ def test_attach_new_mount_adds_device_and_sets_label():
     until = datetime(2026, 10, 10, 12, 15, tzinfo=UTC)
     assert attach(cfg, incus, "c", "aws", until) is True
     incus.config_device_add.assert_called_once()
-    assert [c[0] for c in incus.mock_calls] == ["config_device_get", "config_device_add", "config_set"]
+    assert [c[0] for c in incus.mock_calls] == [
+        "config_device_get",
+        "config_device_add",
+        "config_set",
+    ]
     incus.config_set.assert_called_once_with("c", "user.jailbee.mount_until.aws", until.isoformat())
 
 

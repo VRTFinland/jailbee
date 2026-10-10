@@ -5178,7 +5178,9 @@ def test_service_storage_pool_is_none_when_global_yaml_sets_none(tmp_path, mocke
 
 def test_parse_ttl_bare_text_minutes_and_limits():
     from datetime import timedelta
+
     from jailbee.config import parse_ttl
+
     assert parse_ttl("20") == timedelta(minutes=20)
     assert parse_ttl("1440") == timedelta(hours=24)
     for value in ("0", "1441"):
@@ -5189,6 +5191,7 @@ def test_parse_ttl_bare_text_minutes_and_limits():
 def test_mount_disabled_global_after_override_and_explicit_reenable(tmp_path):
     from jailbee.config import MountAutoRevert
     from jailbee.global_config import GlobalConfig
+
     global_cfg = GlobalConfig(mount_auto_revert=MountAutoRevert(enabled=False, after="45m"))
     cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "5m"})
     assert cfg.effective_mount_ttl(global_cfg, "aws") is None
@@ -5198,6 +5201,7 @@ def test_mount_disabled_global_after_override_and_explicit_reenable(tmp_path):
 
 def test_mount_fallback_validation_and_valid_per_kind_override(tmp_path):
     from jailbee.global_config import GlobalConfig
+
     cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "banana"})
     with pytest.raises(ValueError, match=r"mount_auto_revert\.after"):
         cfg.effective_mount_ttl(GlobalConfig(), "aws")
@@ -5206,5 +5210,6 @@ def test_mount_fallback_validation_and_valid_per_kind_override(tmp_path):
 
 def test_ttl_syntax_error_advertises_bare_minutes():
     from jailbee.config import parse_ttl
+
     with pytest.raises(ValueError, match="integer minutes"):
         parse_ttl("banana")

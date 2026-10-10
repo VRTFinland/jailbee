@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from jailbee.loose_revert import _autostart_holds
 import yaml
 
+from jailbee.loose_revert import _autostart_holds
 from jailbee.mounts import DEVICE_NAME_PREFIX, MOUNT_UNTIL_PREFIX, mount_lock
 
 if TYPE_CHECKING:

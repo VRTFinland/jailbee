@@ -1534,7 +1534,9 @@ def test_config_unset_checked_propagates_real_failures(incus, mocker, stderr):
 
 def test_config_unset_checked_retries_then_tolerates_absence(incus, mocker):
     mocker.patch("jailbee.incus.time.sleep")
-    run = mocker.patch("jailbee.incus.subprocess.run", side_effect=[
-        _cp(1, _ETAG_ERROR), _cp(1, "Error: Config option not found")])
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(1, _ETAG_ERROR), _cp(1, "Error: Config option not found")],
+    )
     incus.config_unset_checked("c", "user.jailbee.mount_until.aws")
     assert run.call_count == 2
