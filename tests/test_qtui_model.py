@@ -93,6 +93,26 @@ def test_state_colors_are_hex_strings():
     assert set(STATE_COLORS) >= {"Running", "Stopped", "Frozen"}
 
 
+def test_mount_card_and_tooltip_show_deadlines_without_markup():
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    until = now + timedelta(minutes=12)
+    c = _container()
+    c.optional_mounts = ("aws", "docs")
+    c.mount_until = {"aws": until}
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
+    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "◆ ∞"
+    c.optional_mounts = ("aws",)
+    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "◆ 12m"
+    c.optional_mounts = ("aws", "docs")
+    tooltip = m.cell_tooltip(c, spec)
+    assert f"aws: {until.isoformat()}" in tooltip
+    assert "docs: no auto-unmount" in tooltip
+    c.optional_mounts = ()
+    assert "No optional mounts" in m.cell_tooltip(c, spec)
+
+
 def test_card_content_splits_name_state_and_keeps_fields_in_order():
     from datetime import UTC, timedelta
 

@@ -4613,7 +4613,7 @@ def test_all_column_names_is_the_full_ls_vocabulary():
 
 def test_dynamic_column_names_are_exactly_the_show_if_ones():
     assert dcolumns.dynamic_column_names() == frozenset(
-        {"job", "ttl", "pr", "issues", "outbox", "mode", "group"}
+        {"job", "ttl", "pr", "issues", "outbox", "mode", "group", "mounts"}
     )
 
 
@@ -6599,7 +6599,7 @@ def test_seed_view_state_migrates_a_pre_version_set_once_with_one_notice(fronten
     assert "doing removed" in first[0]
     row = load_view_state(engine, frontend)
     assert row.columns == ("name", "mem_used", "mem_pct", "outbox", "pr")
-    assert row.columns_version == dcolumns.COLUMNS_VERSION == 1
+    assert row.columns_version == dcolumns.COLUMNS_VERSION == 2
     assert row.folded == frozenset({"p"})
 
     second: list[str] = []
@@ -6646,7 +6646,7 @@ def test_seed_view_state_bumps_a_set_without_retired_names_silently():
 
     assert state.columns == ("name", "state")
     assert shown == []
-    assert load_view_state(engine, FRONTEND_TUI).columns_version == 1
+    assert load_view_state(engine, FRONTEND_TUI).columns_version == 2
 
 
 def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
@@ -6665,7 +6665,7 @@ def test_seed_view_state_migration_survives_a_fold_save_and_a_readded_column():
 
     assert shown == []
     assert state.columns == ("name", "mem_used", "mem_pct", "mem")
-    assert load_view_state(engine, FRONTEND_QT).columns_version == 1
+    assert load_view_state(engine, FRONTEND_QT).columns_version == 2
 
 
 def test_seed_view_state_first_launch_seed_starts_at_the_current_version(mocker):
@@ -6758,3 +6758,47 @@ def test_dashboard_base_cell_shows_the_fork_marker():
     assert dashboard_cell(base, c, now) == "⑂ a"
     c.fork_of = None
     assert dashboard_cell(base, c, now) == "main"
+
+
+def test_mounts_column_cells_defaults_and_sorting():
+    from jailbee import table_format
+    from jailbee.dashboard import format as dfmt
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
+    empty = _ci("p-x", "p")
+    one = dataclasses.replace(empty, optional_mounts=("aws",), mount_until={"aws": now + timedelta(minutes=5)})
+    two = dataclasses.replace(one, optional_mounts=("aws", "gcp"), mount_until={"aws": now + timedelta(minutes=5), "gcp": now + timedelta(hours=1)})
+    forever = dataclasses.replace(one, optional_mounts=("aws", "docs"))
+    assert spec.cell(empty) == ""
+    assert spec.cell(forever) == "aws 5m, docs ∞"
+    assert spec.json(forever) == {"aws": one.mount_until["aws"].isoformat(), "docs": None}
+    assert spec.default_table is False and spec.default_json is False
+    assert table_format.shows_by_default_in_dashboard(spec) is True
+    assert spec.show_if([empty]) is False
+    assert spec.show_if([one]) is True
+    assert spec.sort(empty) is None
+    assert spec.sort(one) == (300.0,)
+    assert spec.sort(two) == (3600.0,)
+    assert spec.sort(forever) == (float("inf"),)
+    assert dfmt.dashboard_cell(spec, empty, now) == ""
+    assert dfmt.dashboard_cell(spec, one, now) == "[yellow]◆[/yellow] 5m"
+    assert dfmt.dashboard_cell(spec, two, now) == "[yellow]◆[/yellow] 1h"
+    assert dfmt.dashboard_cell(spec, forever, now) == "[yellow]◆[/yellow] ∞"
+    assert dfmt.dashboard_header(spec) == "MOUNT"
+    expired = dataclasses.replace(one, mount_until={"aws": now - timedelta(seconds=1)})
+    assert spec.cell(expired) == "aws 0s"
+    assert dfmt.card_mounts(expired, now) == "[yellow]◆[/yellow] 0s"
+
+
+def test_stored_view_gains_mounts_after_network_once():
+    cols, applied = dcolumns.migrate_column_set(("name", "network", "cpu"), from_version=1)
+    assert cols == ("name", "network", "mounts", "cpu")
+    assert applied == ["network → network + mounts"]
+    assert "network → network + mounts" in dcolumns.column_set_migration_notice(applied)
+    again, applied2 = dcolumns.migrate_column_set(("name", "network", "cpu"), from_version=dcolumns.COLUMNS_VERSION)
+    assert again == ("name", "network", "cpu") and applied2 == []
+    cols, _ = dcolumns.migrate_column_set(("mounts", "name", "network"), from_version=1)
+    assert cols.count("mounts") == 1
+    assert "mounts" in dcolumns.default_columns()

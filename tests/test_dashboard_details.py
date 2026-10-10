@@ -571,10 +571,15 @@ def test_footer_carries_base_mode_group_created_mounts_and_resources() -> None:
         "clone",
         "group [work]",
         f"created 48h ago ({_plain(cells['created'](c))})",
-        "mounts ssh, gpg",
+        "mounts ssh ∞, gpg ∞",
         f"mem {_plain(cells['mem'](c))}",
         f"cpu {_plain(cells['cpu'](c))}",
     ]
+
+
+def test_footer_mounts_have_per_kind_deadlines() -> None:
+    c = _c(optional_mounts=("aws", "docs"), mount_until={"aws": NOW + timedelta(minutes=12)})
+    assert "mounts aws 12m, docs ∞" in _panel_plain(dd.container_panel(c, NOW).footer)
 
 
 def test_a_bare_container_panel() -> None:

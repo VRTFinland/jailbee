@@ -2245,7 +2245,7 @@ the command line still wins in **every** format, table or JSON.
 
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
-`loose_until`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
+`loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
 are accepted aliases for `group`.

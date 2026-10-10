@@ -284,7 +284,12 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     group = escape(c.credential_group) if c.credential_group else "inherits repo"
     footer = [f"base {cell('base')}", escape(c.mode), f"group {group}", f"created {created}"]
     if c.optional_mounts:
-        footer.append(f"mounts {', '.join(escape(m) for m in c.optional_mounts)}")
+        parts = []
+        for m in c.optional_mounts:
+            until = c.mount_until.get(m)
+            rest = "∞" if until is None else format_duration_short(until - now).replace(" ", "")
+            parts.append(f"{escape(m)} {rest}")
+        footer.append(f"mounts {', '.join(parts)}")
     footer += [f"mem {cell('mem')}", f"cpu {cell('cpu')}"]
     return ContainerPanel(tuple(summary), escape(c.base_branch or "base"), git, tuple(footer))
 

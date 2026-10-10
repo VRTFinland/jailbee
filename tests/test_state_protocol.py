@@ -126,6 +126,7 @@ def _full_snapshot() -> Snapshot:
             job_kind="create",
             job_error="boom",
             optional_mounts=("ssh",),
+            mount_until={"ssh": T0 + timedelta(minutes=15)},
             alias="login",
             fork_of="alpha-y",
         )
@@ -178,6 +179,8 @@ def test_a_snapshot_decodes_to_the_real_types():
     assert isinstance(container.activity, tuple)
     assert isinstance(container.git_status.submodules[0], SubmoduleChange)
     assert container.created_at == T0
+    assert container.mount_until == {"ssh": T0 + timedelta(minutes=15)}
+    assert isinstance(container.mount_until["ssh"], datetime)
     activity = container.agent_status[0].activity
     assert isinstance(activity.recent, tuple)
     assert [type(e) for e in activity.recent] == [ActivityEvent, ActivityEvent]
@@ -205,7 +208,7 @@ def test_garbage_is_a_protocol_error(line):
 
 def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at.
-    assert PROTOCOL == 5
+    assert PROTOCOL == 6
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
     assert protocol._NAMESPACE["ActivityEvent"] is ActivityEvent

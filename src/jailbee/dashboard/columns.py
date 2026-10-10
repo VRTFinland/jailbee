@@ -44,8 +44,9 @@ _COLUMN_SET_MIGRATIONS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
     (1, "mem", ("mem_used", "mem_pct")),
     (1, "issues", ("outbox",)),
     (1, "doing", ()),
+    (2, "network", ("network", "mounts")),
 )
-COLUMNS_VERSION = 1
+COLUMNS_VERSION = 2
 """The newest version in `_COLUMN_SET_MIGRATIONS`; a seeded view starts here."""
 
 
@@ -434,6 +435,7 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "repo": 16,
     "base": 20,
     "loose_until": 20,
+    "mounts": 12,
     "ip": 15,
     "memory_limit": 14,
     "group": 16,

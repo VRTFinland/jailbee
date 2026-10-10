@@ -588,6 +588,27 @@ def test_ls_created_cell_renders_local_time_or_dash():
     assert created.json(undated) is None
 
 
+def test_list_containers_reads_mount_deadlines(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    raw = _container(
+        name="myrepo-feat-x",
+        user_config={
+            "user.jailbee.mode": "clone",
+            "user.jailbee.mount_until.aws": "2026-10-10T12:15:00+00:00",
+            "user.jailbee.mount_until.docs": "2026-10-10T12:15:00",
+        },
+    )
+    raw["devices"] = {"optional-aws": {"type": "disk"}, "optional-docs": {"type": "disk"}}
+    incus = MagicMock()
+    incus.list_containers.return_value = [raw]
+
+    info = list_containers(cfg, incus)[0]
+    assert info.optional_mounts == ("aws", "docs")
+    assert info.mount_until == {"aws": datetime(2026, 10, 10, 12, 15, tzinfo=UTC)}
+
+
 def test_list_containers_populates_loose_until(make_cfg, tmp_path):
     from datetime import UTC, datetime
 
