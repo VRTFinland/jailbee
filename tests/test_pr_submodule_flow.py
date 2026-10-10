@@ -265,17 +265,24 @@ def test_tty_cancel_is_distinct_from_empty_selection(mocker, picked):
     pub.assert_not_called()
 
 
-def test_abort_and_exit_continue_with_next_submodule(mocker):
-    import click
+def test_module_import_does_not_require_click(mocker):
+    import importlib
 
+    from jailbee import pr_submodule_flow
+
+    mocker.patch.dict("sys.modules", {"click": None})
+    importlib.reload(pr_submodule_flow)
+
+
+def test_abort_and_exit_continue_with_next_submodule(mocker):
     from jailbee.pr_submodule_flow import SubPrOutcome
 
     cfg, incus, _, _, pub = _orch(
         mocker, candidates=[_candidate("lib/c"), _candidate("lib/b"), _candidate("lib/a")]
     )
     pub.side_effect = [
-        click.Abort(),
-        click.exceptions.Exit(1),
+        typer.Abort(),
+        typer.Exit(1),
         SubPrOutcome("lib/c", "created", 8, "u", 2),
     ]
     warn = mocker.patch("jailbee.pr_submodule_flow.warn")

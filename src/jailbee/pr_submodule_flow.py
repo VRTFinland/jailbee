@@ -10,7 +10,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import click
 import typer
 
 from jailbee import (
@@ -210,9 +209,9 @@ def publish_submodule_prs_first(
                 offer_comments=offer_comments,
                 management=management,
             )
-        except click.exceptions.Abort:
+        except typer.Abort:
             outcome = SubPrOutcome(candidate.path, "declined")
-        except click.exceptions.Exit:
+        except typer.Exit:
             outcome = SubPrOutcome(candidate.path, "failed")
         except (
             git.GitError,
