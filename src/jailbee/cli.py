@@ -12083,21 +12083,85 @@ def mount_cmd(
     ] = None,
     name: ContainerArg = None,
     config: ConfigOption = None,
+    for_: Annotated[
+        str | None,
+        typer.Option(
+            "--for",
+            help=(
+                "How long the mount stays before it is detached automatically "
+                "(e.g. `30s`, `45m`, `4h`; max 24h). `never` keeps it, same as "
+                "--no-revert. Omit it and jailbee asks, or uses the configured "
+                "default (`auto_unmount_after`, else `mount_auto_revert.after`) "
+                "when there is no TTY. On a mount already attached, only the TTL "
+                "changes."
+            ),
+        ),
+    ] = None,
+    no_revert: Annotated[
+        bool,
+        typer.Option("--no-revert", help="Keep the mount until `jailbee unmount`."),
+    ] = False,
 ) -> None:
-    """Add an optional bind mount (e.g. 'aws') to a container."""
-    from jailbee.lifecycle import short_name
-    from jailbee.mounts import add_optional_mount
+    """Add an optional bind mount (e.g. 'aws') to a container, for a limited time."""
+    from jailbee import prompting
+    from jailbee.config import parse_ttl
+    from jailbee.lifecycle import format_duration_short, short_name
+    from jailbee.mounts import attach
+
+    if for_ is not None and no_revert:
+        error(
+            "--for and --no-revert are mutually exclusive "
+            "(`--for never` is the same as --no-revert)."
+        )
+        raise typer.Exit(2)
+    ttl: _Ttl | None = None
+    if for_ is not None:
+        try:
+            ttl = _Ttl(duration=parse_ttl(for_))
+        except ValueError as e:
+            error(str(e))
+            raise typer.Exit(2) from e
+    elif no_revert:
+        ttl = _Ttl(duration=None)
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
     if kind is None:
         kind = _pick_mount_kind(cfg, incus, name, attached=False)
-    try:
-        add_optional_mount(cfg, incus, name, kind)
-    except ValueError as e:
-        error(str(e))
-        raise typer.Exit(2) from e
-    success(f"Mounted '{kind}' in container '{short_name(cfg, name)}'")
+    if kind not in cfg.optional_mounts:
+        error(f"Unknown optional mount '{kind}'. Available: {list(cfg.optional_mounts)}")
+        raise typer.Exit(2)
+
+    if ttl is None:
+        try:
+            default = cfg.effective_mount_ttl(_load_global(), kind)
+        except ValueError as e:
+            error_plain(
+                f"Cannot use the configured mount TTL: {e}. Fix it in "
+                ".jailbee/config.yaml or ~/.config/jailbee/global.yaml "
+                "(`jailbee config validate` checks it), or decide the TTL here "
+                "with `--for <duration>` / `--no-revert`."
+            )
+            raise typer.Exit(2) from e
+        if default is None:
+            ttl = _Ttl(duration=None)
+        elif prompting.is_interactive():
+            ttl = _prompt_ttl(f"Keep '{kind}' mounted for how long?", default)
+            if ttl is None:
+                raise typer.Abort()
+        else:
+            ttl = _Ttl(duration=parse_ttl(default))
+
+    until = None if ttl.duration is None else _now() + ttl.duration
+    added = attach(cfg, incus, name, kind, until)
+    short = short_name(cfg, name)
+    tail = (
+        "" if ttl.duration is None else f" (auto-unmount in {format_duration_short(ttl.duration)})"
+    )
+    if added:
+        success(f"Mounted '{kind}' in container '{short}'{tail}")
+    else:
+        success(f"'{kind}' already mounted in '{short}' — TTL updated{tail or ' (no auto-unmount)'}")
 
 
 @app.command("unmount")
