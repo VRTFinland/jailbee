@@ -306,11 +306,11 @@ def bulk_loose_default(groups: Sequence[RepoGroup], names: Sequence[str]) -> str
     return None
 
 
-def loose_ttl_entries(default: str) -> tuple[PickerEntry, ...]:
+def ttl_entries(default: str) -> tuple[PickerEntry, ...]:
     """The TTL picker: ``default`` first, the presets, then ``never``."""
-    from jailbee.config import LOOSE_TTL_PRESETS
+    from jailbee.config import TTL_PRESETS
 
-    values = [default, *(p for p in LOOSE_TTL_PRESETS if p != default)]
+    values = [default, *(p for p in TTL_PRESETS if p != default)]
     return (
         *(PickerEntry(value, value) for value in values),
         PickerEntry("never (no auto-revert)", "never"),

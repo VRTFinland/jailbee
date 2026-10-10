@@ -2139,7 +2139,7 @@ def test_validate_runtime_silent_when_github_disabled(tmp_path):
 # --- LooseAutoRevert ---------------------------------------------------------
 
 
-def test_loose_auto_revert_default_5m():
+def test_loose_auto_revert_default_15m():
     """Default values without YAML keys."""
     from datetime import timedelta
 
@@ -2147,8 +2147,23 @@ def test_loose_auto_revert_default_5m():
 
     m = LooseAutoRevert()
     assert m.enabled is True
-    assert m.after == "5m"
-    assert m.duration() == timedelta(minutes=5)
+    assert m.after == "15m"
+    assert m.duration() == timedelta(minutes=15)
+
+
+def test_parse_duration_value_names_the_key_in_errors():
+    from datetime import timedelta
+
+    from jailbee.config.models_net import parse_duration_value
+
+    assert parse_duration_value(5, "x.after") == timedelta(minutes=5)
+    assert parse_duration_value("2h", "x.after") == timedelta(hours=2)
+    with pytest.raises(ValueError, match=r"^x\.after must be <= 24h"):
+        parse_duration_value("25h", "x.after")
+    with pytest.raises(ValueError, match=r"^x\.after must be > 0"):
+        parse_duration_value(0, "x.after")
+    with pytest.raises(ValueError, match=r"^x\.after invalid duration"):
+        parse_duration_value("invalid", "x.after")
 
 
 @pytest.mark.parametrize(
@@ -2201,34 +2216,34 @@ def test_parse_loose_ttl_accepts_the_documented_syntax():
     """The one definition of `--for` / prompt / Qt-dialog duration syntax."""
     from datetime import timedelta
 
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
-    assert parse_loose_ttl("30s") == timedelta(seconds=30)
-    assert parse_loose_ttl("90m") == timedelta(minutes=90)
-    assert parse_loose_ttl("4h") == timedelta(hours=4)
-    assert parse_loose_ttl(" 2h ") == timedelta(hours=2)
+    assert parse_ttl("30s") == timedelta(seconds=30)
+    assert parse_ttl("90m") == timedelta(minutes=90)
+    assert parse_ttl("4h") == timedelta(hours=4)
+    assert parse_ttl(" 2h ") == timedelta(hours=2)
 
 
 def test_parse_loose_ttl_never_means_no_auto_revert():
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
-    assert parse_loose_ttl("never") is None
-    assert parse_loose_ttl("NEVER") is None
+    assert parse_ttl("never") is None
+    assert parse_ttl("NEVER") is None
 
 
 @pytest.mark.parametrize("bad", ["banana", "2 hours", "2hr", "25h", "0m", "-5m", ""])
 def test_parse_loose_ttl_rejects_bad_input(bad):
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
     with pytest.raises((ValueError, ValidationError)):
-        parse_loose_ttl(bad)
+        parse_ttl(bad)
 
 
 def test_format_loose_after_renders_int_minutes_as_a_duration():
-    from jailbee.config import format_loose_after
+    from jailbee.config import format_ttl
 
-    assert format_loose_after(5) == "5m"
-    assert format_loose_after("45m") == "45m"
+    assert format_ttl(5) == "5m"
+    assert format_ttl("45m") == "45m"
 
 
 def test_effective_loose_auto_revert_inherits_global(tmp_path):

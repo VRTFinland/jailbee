@@ -571,7 +571,7 @@ jailbee net loose feat-foo --no-revert # stay loose until switched manually
 jailbee net strict feat-foo            # back to the egress allowlist now
 ```
 
-`loose` auto-reverts to the previous mode after a TTL (default 5 min, see
+`loose` auto-reverts to the previous mode after a TTL (default 15 min, see
 `loose_auto_revert` config). Per switch, `--for <dur>` overrides that default
 (`30s`, `45m`, `4h` — max 24h; `--for never` = `--no-revert`, and the two flags
 are mutually exclusive). With neither flag JailBee **asks interactively** — only on

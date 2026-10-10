@@ -33,7 +33,7 @@ from jailbee.dashboard.bulk import (
     bulk_loose_default,
     destroy_risk_lines,
     foreground_runs,
-    loose_ttl_entries,
+    ttl_entries,
     nothing_to_do,
     plan_bulk,
 )
@@ -2271,7 +2271,7 @@ class DashboardSession:
                 return Picker(
                     "bulk-loose-ttl",
                     f"Keep {len(action.eligible)} in loose for how long?",
-                    loose_ttl_entries(default),
+                    ttl_entries(default),
                 )
         self.run_bulk(action)
         return None

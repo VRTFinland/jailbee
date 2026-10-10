@@ -39,7 +39,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `pr` | `{agent, ai_description, ai_branch, model, prompt, timeout}` — how `jailbee pr` writes PR text; see the `pr` section below. Replaces the old `claude.ai_pr_*` / `claude.pr_prompt` keys, which still load with a deprecation notice | `agent: auto`, rest see below | global for `agent`/`timeout`/`model`, repo for `prompt` |
 | `github` | `{enabled, token}` (+ deprecated `api_tokens`) | `enabled: false` (opt-in) | `enabled` global; `token` in the host-local `repos/<prefix>.yaml` — never the committed repo file |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
-| `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "5m"` | global/repo |
+| `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "15m"` | global/repo |
 | `ls` / `dashboard` | `{fields, hide}` | `fields: null`, `hide: []` (`dashboard.hide` defaults to `[repo, full_name, git_status, created, ttl]`) | global (personal display preference) |
 | `pull` | `{destroy_container, delete_branch}` | both `prompt` | mixed |
 | `confirm` | `{auto_target}` | `auto_target: true` | global (personal preference) |
@@ -723,7 +723,7 @@ Controls how `jailbee net loose` reverts to the previous mode.
 ```yaml
 loose_auto_revert:
   enabled: true    # auto-revert loose → previous mode after the TTL
-  after: "5m"      # duration string ("5m", "30s", "1h") or bare integer minutes
+  after: "15m"     # duration string ("5m", "30s", "1h") or bare integer minutes
 ```
 
 `after` is only the **default** TTL: `jailbee net loose <name> --for <dur>` sets it per invocation (`30s`/`45m`/`4h`, max 24h, or `never`), and `--no-revert` stays loose indefinitely. Given neither flag, JailBee asks on a TTY (with `JAILBEE_NONINTERACTIVE` unset and `enabled: true`) and otherwise applies `after` silently. `enabled: false` means JailBee schedules no TTL and never asks — an explicit `--for` is still honoured. `jailbee ls` shows the remaining TTL while any container is loose.

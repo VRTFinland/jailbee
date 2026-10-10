@@ -6155,13 +6155,13 @@ def test_net_loose_prompts_when_interactive(tmp_path, mocker):
     """No --for and a TTY → ask, and use the answer as the TTL."""
     from datetime import timedelta
 
-    from jailbee.cli import _LooseTtl
+    from jailbee.cli import _Ttl
 
     incus, _ = _setup_net_test(tmp_path, mocker, pre_mode="strict")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     prompt = mocker.patch(
         "jailbee.cli._prompt_loose_ttl",
-        return_value=_LooseTtl(duration=timedelta(hours=3)),
+        return_value=_Ttl(duration=timedelta(hours=3)),
     )
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6268,13 +6268,13 @@ def test_net_loose_reads_the_global_config_once_when_prompting(tmp_path, mocker)
     from datetime import timedelta
 
     from jailbee import cli
-    from jailbee.cli import _LooseTtl
+    from jailbee.cli import _Ttl
 
     _setup_net_test(tmp_path, mocker, pre_mode="strict")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.cli._prompt_loose_ttl",
-        return_value=_LooseTtl(duration=timedelta(hours=3)),
+        return_value=_Ttl(duration=timedelta(hours=3)),
     )
 
     result = CliRunner().invoke(app, ["net", "loose", "feat-x"])
@@ -6308,20 +6308,20 @@ def test_prompt_loose_ttl_preset_answer_returns_parsed_duration(mocker) -> None:
     """Selecting a preset like "2h" must parse through to a real timedelta."""
     from datetime import timedelta
 
-    from jailbee.cli import _LooseTtl, _prompt_loose_ttl
+    from jailbee.cli import _Ttl, _prompt_loose_ttl
 
     select_mock = mocker.patch("questionary.select")
     select_mock.return_value.ask.return_value = "2h"
 
     result = _prompt_loose_ttl("5m")
 
-    assert result == _LooseTtl(duration=timedelta(hours=2))
+    assert result == _Ttl(duration=timedelta(hours=2))
 
 
 def test_prompt_loose_ttl_never_answer_is_ttl_with_no_duration_not_none(mocker) -> None:
-    """ "never" means "no auto-revert", a *chosen* `_LooseTtl(duration=None)` —
+    """ "never" means "no auto-revert", a *chosen* `_Ttl(duration=None)` —
     it must not be confused with the `None` sentinel used for cancellation."""
-    from jailbee.cli import _LooseTtl, _prompt_loose_ttl
+    from jailbee.cli import _Ttl, _prompt_loose_ttl
 
     select_mock = mocker.patch("questionary.select")
     select_mock.return_value.ask.return_value = "never"
@@ -6329,7 +6329,7 @@ def test_prompt_loose_ttl_never_answer_is_ttl_with_no_duration_not_none(mocker) 
     result = _prompt_loose_ttl("5m")
 
     assert result is not None
-    assert result == _LooseTtl(duration=None)
+    assert result == _Ttl(duration=None)
 
 
 def test_prompt_loose_ttl_cancel_at_select_returns_none(mocker) -> None:
@@ -6370,10 +6370,10 @@ def test_prompt_loose_ttl_cancel_entry_aborts_instead_of_parsing_its_title(mocke
 def test_prompt_loose_ttl_custom_opens_text_prompt_and_parses_answer(mocker) -> None:
     """Picking "custom…" must hand off to questionary.text, validated by
     `_validate_duration_answer`, and the typed answer must be parsed through
-    `config.parse_loose_ttl` (not swallowed or re-parsed some other way)."""
+    `config.parse_ttl` (not swallowed or re-parsed some other way)."""
     from datetime import timedelta
 
-    from jailbee.cli import _LooseTtl, _prompt_loose_ttl, _validate_duration_answer
+    from jailbee.cli import _Ttl, _prompt_loose_ttl, _validate_duration_answer
 
     select_mock = mocker.patch("questionary.select")
     text_mock = mocker.patch("questionary.text")
@@ -6391,7 +6391,7 @@ def test_prompt_loose_ttl_custom_opens_text_prompt_and_parses_answer(mocker) -> 
 
     result = _prompt_loose_ttl("5m")
 
-    assert result == _LooseTtl(duration=timedelta(minutes=90))
+    assert result == _Ttl(duration=timedelta(minutes=90))
     text_mock.assert_called_once()
     assert text_mock.call_args.kwargs["validate"] is _validate_duration_answer
 
@@ -6416,7 +6416,7 @@ def test_prompt_loose_ttl_custom_cancel_returns_none(mocker) -> None:
 
 
 def test_prompt_loose_ttl_inserts_missing_default_as_first_choice(mocker) -> None:
-    """A `default_after` outside LOOSE_TTL_PRESETS (e.g. a custom config
+    """A `default_after` outside TTL_PRESETS (e.g. a custom config
     value like "7m") must still appear in the offered choices — and as the
     `default=` kwarg passed to questionary.select, so it can never trigger
     questionary's own ValueError for a default absent from `choices`."""

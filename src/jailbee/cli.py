@@ -9924,12 +9924,12 @@ def egress_export_cmd(
 
 
 @dataclass(frozen=True)
-class _LooseTtl:
-    """An explicitly chosen loose TTL.
+class _Ttl:
+    """An explicitly chosen TTL (loose network or an optional mount).
 
     Distinguishes "the caller decided" from "fall back to the config
     policy": `_switch(ttl=None)` uses the policy, while
-    `_switch(ttl=_LooseTtl(duration=None))` means the user asked for no
+    `_switch(ttl=_Ttl(duration=None))` means the user asked for no
     auto-revert at all.
     """
 
@@ -9938,26 +9938,22 @@ class _LooseTtl:
 
 def _validate_duration_answer(raw: str) -> bool | str:
     """questionary validator: True when parseable, else the error message."""
-    from jailbee.config import parse_loose_ttl
+    from jailbee.config import parse_ttl
 
     try:
-        parse_loose_ttl(raw)
+        parse_ttl(raw)
     except ValueError as e:
         return str(e)
     return True
 
 
-def _prompt_loose_ttl(default_after: str) -> _LooseTtl | None:
-    """Ask how long the container should stay in loose.
-
-    Returns None when the user cancelled. A returned `_LooseTtl` with
-    `duration=None` means "no auto-revert".
-    """
+def _prompt_ttl(question: str, default_after: str) -> _Ttl | None:
+    """Ask for a TTL. None means cancelled; `_Ttl(duration=None)` means no auto-revert."""
     import questionary
 
-    from jailbee.config import LOOSE_TTL_PRESETS, parse_loose_ttl
+    from jailbee.config import TTL_PRESETS, parse_ttl
 
-    presets = list(LOOSE_TTL_PRESETS)
+    presets = list(TTL_PRESETS)
     if default_after not in presets:
         presets.insert(0, default_after)
 
@@ -9978,7 +9974,7 @@ def _prompt_loose_ttl(default_after: str) -> _LooseTtl | None:
     choices.append(questionary.Choice(title="cancel", value=cancel))
 
     answer = questionary.select(
-        "Keep loose for how long?",
+        question,
         choices=choices,
         default=default_after,
     ).ask()
@@ -9994,7 +9990,12 @@ def _prompt_loose_ttl(default_after: str) -> _LooseTtl | None:
         if raw is None:
             return None
         answer = raw
-    return _LooseTtl(duration=parse_loose_ttl(answer))
+    return _Ttl(duration=parse_ttl(answer))
+
+
+def _prompt_loose_ttl(default_after: str) -> _Ttl | None:
+    """Ask how long the container should stay in loose."""
+    return _prompt_ttl("Keep loose for how long?", default_after)
 
 
 def _switch(
@@ -10003,7 +10004,7 @@ def _switch(
     cfg: "Config",
     *,
     no_revert: bool = False,
-    ttl: _LooseTtl | None = None,
+    ttl: _Ttl | None = None,
     policy: "LooseAutoRevert | None" = None,
 ) -> None:
     """Switch ``name`` to ``mode`` and maintain the loose TTL labels.
@@ -10123,7 +10124,7 @@ def net_loose(
 ) -> None:
     """Switch to loose (full NAT)."""
     from jailbee import prompting
-    from jailbee.config import format_loose_after, parse_loose_ttl
+    from jailbee.config import format_ttl, parse_ttl
 
     if for_ is not None and no_revert:
         error(
@@ -10134,13 +10135,13 @@ def net_loose(
 
     cfg = _load_or_exit(config)
 
-    ttl: _LooseTtl | None = None
+    ttl: _Ttl | None = None
     # Local annotations aren't evaluated at runtime, so the TYPE_CHECKING-only
     # import suffices here — unlike the quoted parameter annotations above.
     policy: LooseAutoRevert | None = None
     if for_ is not None:
         try:
-            ttl = _LooseTtl(duration=parse_loose_ttl(for_))
+            ttl = _Ttl(duration=parse_ttl(for_))
         except ValueError as e:
             error(str(e))
             raise typer.Exit(2) from e
@@ -10172,7 +10173,7 @@ def net_loose(
         # A configured-off policy means there is no auto-revert to schedule,
         # so asking would be misleading.
         if policy is not None and prompting.is_interactive():
-            ttl = _prompt_loose_ttl(format_loose_after(policy.after))
+            ttl = _prompt_loose_ttl(format_ttl(policy.after))
             if ttl is None:
                 raise typer.Abort()
 

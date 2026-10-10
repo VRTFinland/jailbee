@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from jailbee import agent_status, git
 from jailbee.config import (
-    format_loose_after,
+    format_ttl,
     load_repo_config,
 )
 from jailbee.global_config import (
@@ -252,7 +252,7 @@ def collect_repo_roots(
 def _loose_ttl_default(cfg: Config, gcfg: GlobalConfig) -> str | None:
     """The repo's effective loose TTL as prompt text, None when disabled."""
     policy = cfg.effective_loose_auto_revert(gcfg)
-    return format_loose_after(policy.after) if policy is not None else None
+    return format_ttl(policy.after) if policy is not None else None
 
 
 def global_config_or_defaults() -> GlobalConfig:

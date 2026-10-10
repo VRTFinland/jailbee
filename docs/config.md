@@ -1019,7 +1019,7 @@ can change just `after` and inherit `enabled` from the global file.
 ```yaml
 loose_auto_revert:
   enabled: true   # default true
-  after: 5m       # default 5m — accepts `30s`, `5m`, `2h`, or raw int (minutes)
+  after: 15m      # default 15m — accepts `30s`, `5m`, `2h`, or raw int (minutes)
 ```
 
 When `jailbee net loose <c>` schedules a TTL, two container labels are
