@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Literal
 import click
 import typer
 
-from jailbee import pr as pr_mod
 from jailbee import lifecycle, pr_ai, pr_flow, pr_outbox, prompting, submodule_pr, submodules, tui
+from jailbee import pr as pr_mod
 from jailbee.tui import error, info, success, warn
 
 if TYPE_CHECKING:
@@ -94,7 +94,9 @@ def submodule_pr_candidates(
         return []
     recorded = set(submodule_pr.recorded_paths(incus, full))
     pending = _manifest_subpaths(cfg, incus, full)
-    return [c for c in candidates if (c.commits or 0) > 0 or c.path in recorded or c.path in pending]
+    return [
+        c for c in candidates if (c.commits or 0) > 0 or c.path in recorded or c.path in pending
+    ]
 
 
 def choose_submodule_prs(candidates: list[SubCandidate], *, yes: bool) -> list[SubCandidate]:
@@ -122,7 +124,10 @@ def _render_summary(outcomes: list[SubPrOutcome]) -> None:
         else:
             warn(label)
         if outcome.outbox_failures:
-            warn(f"Submodule '{outcome.subpath}': {outcome.outbox_failures} outbox publication failures.")
+            warn(
+                f"Submodule '{outcome.subpath}': "
+                f"{outcome.outbox_failures} outbox publication failures."
+            )
     failed = [o.subpath for o in outcomes if o.action == "failed"]
     if failed:
         warn(
@@ -166,9 +171,17 @@ def publish_submodule_prs_first(
         info(f"Submodule '{candidate.path}':")
         try:
             outcome = publish_submodule_pr(
-                cfg, incus, full, short, candidate,
-                SubPrOptions(ready=ready, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False),
-                repo_dir=repo_dir, confirm_plan=None, offer_comments=offer_comments,
+                cfg,
+                incus,
+                full,
+                short,
+                candidate,
+                SubPrOptions(
+                    ready=ready, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False
+                ),
+                repo_dir=repo_dir,
+                confirm_plan=None,
+                offer_comments=offer_comments,
             )
         except click.exceptions.Abort:
             outcome = SubPrOutcome(candidate.path, "declined")

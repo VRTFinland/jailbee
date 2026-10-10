@@ -174,8 +174,14 @@ def _orch(mocker, *, candidates, recorded=(), interactive=False, picked=None):
 def _run(cfg, incus, **kw):
     from jailbee.pr_submodule_flow import publish_submodule_prs_first
 
-    args = dict(enabled=True, yes=False, no_ai=False, no_outbox=False, ready=None,
-                offer_comments=lambda n, m: 0)
+    args = dict(
+        enabled=True,
+        yes=False,
+        no_ai=False,
+        no_outbox=False,
+        ready=None,
+        offer_comments=lambda n, m: 0,
+    )
     args.update(kw)
     return publish_submodule_prs_first(cfg, incus, "c", "s", **args)
 
@@ -217,8 +223,12 @@ def test_off_tty_without_yes_warns_without_publishing(mocker):
 def test_tty_selection_keeps_candidate_order(mocker):
     from jailbee.pr_submodule_flow import SubPrOutcome
 
-    cfg, incus, _, _, pub = _orch(mocker, candidates=[_candidate("lib/b"), _candidate("lib/a"),
-        _candidate("lib/c")], interactive=True, picked=["lib/a", "lib/b"])
+    cfg, incus, _, _, pub = _orch(
+        mocker,
+        candidates=[_candidate("lib/b"), _candidate("lib/a"), _candidate("lib/c")],
+        interactive=True,
+        picked=["lib/a", "lib/b"],
+    )
     pub.side_effect = lambda *args, **kwargs: SubPrOutcome(args[4].path, "created", 8, "u")
     from jailbee.pr_submodule_flow import choose_submodule_prs
 
@@ -230,7 +240,9 @@ def test_tty_selection_keeps_candidate_order(mocker):
 
 @pytest.mark.parametrize("picked", [None, []])
 def test_tty_cancel_is_distinct_from_empty_selection(mocker, picked):
-    cfg, incus, _, _, pub = _orch(mocker, candidates=[_candidate()], interactive=True, picked=picked)
+    cfg, incus, _, _, pub = _orch(
+        mocker, candidates=[_candidate()], interactive=True, picked=picked
+    )
     if picked is None:
         with pytest.raises(typer.Abort):
             _run(cfg, incus)
@@ -241,17 +253,26 @@ def test_tty_cancel_is_distinct_from_empty_selection(mocker, picked):
 
 def test_abort_and_exit_continue_with_next_submodule(mocker):
     import click
+
     from jailbee.pr_submodule_flow import SubPrOutcome
 
-    cfg, incus, _, _, pub = _orch(mocker, candidates=[_candidate("lib/c"), _candidate("lib/b"),
-        _candidate("lib/a")])
-    pub.side_effect = [click.Abort(), click.exceptions.Exit(1), SubPrOutcome("lib/c", "created", 8, "u", 2)]
+    cfg, incus, _, _, pub = _orch(
+        mocker, candidates=[_candidate("lib/c"), _candidate("lib/b"), _candidate("lib/a")]
+    )
+    pub.side_effect = [
+        click.Abort(),
+        click.exceptions.Exit(1),
+        SubPrOutcome("lib/c", "created", 8, "u", 2),
+    ]
     warn = mocker.patch("jailbee.pr_submodule_flow.warn")
     info = mocker.patch("jailbee.pr_submodule_flow.info")
     success = mocker.patch("jailbee.pr_submodule_flow.success")
     out = _run(cfg, incus, yes=True)
     assert [(o.subpath, o.action, o.outbox_failures) for o in out] == [
-        ("lib/a", "declined", 0), ("lib/b", "failed", 0), ("lib/c", "created", 2)]
+        ("lib/a", "declined", 0),
+        ("lib/b", "failed", 0),
+        ("lib/c", "created", 2),
+    ]
     assert [c.args[4].path for c in pub.call_args_list] == ["lib/a", "lib/b", "lib/c"]
     assert any("gitlink" in c.args[0] and "lib/b" in c.args[0] for c in warn.call_args_list)
     assert any("outbox" in c.args[0] and "2" in c.args[0] for c in warn.call_args_list)
@@ -267,7 +288,13 @@ def test_options_propagate_without_reconfirmation(mocker):
     pub.return_value = SubPrOutcome("lib/a", "updated", 7, "u")
     _run(cfg, incus, yes=True, no_ai=True, no_outbox=True, ready=True)
     opts = pub.call_args.args[5]
-    assert (opts.no_ai, opts.no_outbox, opts.ready, opts.yes, opts.note_merge_order) == (True, True, True, True, False)
+    assert (opts.no_ai, opts.no_outbox, opts.ready, opts.yes, opts.note_merge_order) == (
+        True,
+        True,
+        True,
+        True,
+        False,
+    )
     assert opts.title is None and opts.as_name is None and opts.force is False
     assert pub.call_args.kwargs["confirm_plan"] is None
     assert pub.call_args.kwargs["repo_dir"] == "/r"
@@ -298,31 +325,63 @@ def test_no_submodules_is_silent(mocker):
 
 def test_pending_description_selects_zero_commit_submodule(mocker, tmp_path):
     import json
+
     from jailbee import pr_submodule_flow as flow
     from jailbee.pr_flow import PrScope
     from jailbee.pr_outbox import Outbox
 
     cfg = mocker.MagicMock()
     incus = mocker.MagicMock()
-    cands = [_candidate("lib/a", commits=0), _candidate("lib/b", commits=None), _candidate("lib/c", commits=0)]
+    cands = [
+        _candidate("lib/a", commits=0),
+        _candidate("lib/b", commits=None),
+        _candidate("lib/c", commits=0),
+    ]
     mocker.patch("jailbee.submodule_pr.detect_candidates", return_value=cands)
     recorded = mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=["lib/extra"])
-    scopes = [PrScope(tmp_path, "origin", "", None), PrScope(tmp_path / "a", "origin", "", "lib/a"),
-              PrScope(tmp_path / "b", "origin", "", "lib/b"), PrScope(tmp_path / "c", "origin", "", "lib/c")]
+    scopes = [
+        PrScope(tmp_path, "origin", "", None),
+        PrScope(tmp_path / "a", "origin", "", "lib/a"),
+        PrScope(tmp_path / "b", "origin", "", "lib/b"),
+        PrScope(tmp_path / "c", "origin", "", "lib/c"),
+    ]
     scope_fn = mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=scopes)
-    mocker.patch("jailbee.pr_outbox.scope_slug", side_effect=lambda s: {None: "acme/main", "lib/a": "acme/a", "lib/b": "acme/b", "lib/c": None}[s.subpath])
+    mocker.patch(
+        "jailbee.pr_outbox.scope_slug",
+        side_effect=lambda s: {
+            None: "acme/main",
+            "lib/a": "acme/a",
+            "lib/b": "acme/b",
+            "lib/c": None,
+        }[s.subpath],
+    )
+
     def manifest(repo, actions):
         return json.dumps(dict(version=1, repo=repo, pr=None, actions=actions))
+
     files = {
-        "bad.json": "not json", "missing-body.json": manifest("acme/c", [{"type": "description", "body_file": "missing.md"}]),
+        "bad.json": "not json",
+        "missing-body.json": manifest(
+            "acme/c", [{"type": "description", "body_file": "missing.md"}]
+        ),
         "a.json": manifest("acme/a", [{"type": "description", "body_file": "body.md"}]),
-        "body.md": "Pending description", "b.json": json.dumps(dict(version=1, repo="acme/b", pr=7, actions=[{"type": "comment", "body": "Only comment"}])),
+        "body.md": "Pending description",
+        "b.json": json.dumps(
+            dict(
+                version=1,
+                repo="acme/b",
+                pr=7,
+                actions=[{"type": "comment", "body": "Only comment"}],
+            )
+        ),
         "foreign.json": manifest("other/a", [{"type": "description", "body": "Foreign"}]),
         "main.json": manifest("acme/main", [{"type": "description", "body": "Main"}]),
         "x.progress.json": "not a manifest",
     }
     mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files))
-    assert flow.submodule_pr_candidates(cfg, incus, "c", "s", repo_dir="/r", base_branch="main") == [cands[0]]
+    assert flow.submodule_pr_candidates(
+        cfg, incus, "c", "s", repo_dir="/r", base_branch="main"
+    ) == [cands[0]]
     assert scope_fn.call_args.kwargs["extra_paths"] == ["lib/extra"]
     assert recorded.called
 
