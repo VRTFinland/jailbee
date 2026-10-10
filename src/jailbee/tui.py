@@ -739,6 +739,22 @@ def pick_submodule(candidates: list[SubCandidate]) -> str | None:
     return str(result)
 
 
+def pick_submodules_multi(candidates: list[SubCandidate]) -> list[str] | None:
+    """Select submodule PRs to publish before the superproject PR."""
+    import questionary
+
+    from jailbee.submodule_pr import describe_candidate
+
+    width = max((len(c.path) for c in candidates), default=0)
+    return checkbox(
+        "Publish these submodule PRs first?",
+        choices=[
+            questionary.Choice(title=describe_candidate(c, width=width), value=c.path, checked=True)
+            for c in candidates
+        ],
+    )
+
+
 def pick_containers_multi(
     containers: list[ContainerInfo],
     *,

@@ -10,11 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import click
 import typer
 
 from jailbee import pr as pr_mod
-from jailbee import pr_ai, pr_flow, submodule_pr, submodules
-from jailbee.tui import error, info, warn
+from jailbee import lifecycle, pr_ai, pr_flow, pr_outbox, prompting, submodule_pr, submodules, tui
+from jailbee.tui import error, info, success, warn
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -55,6 +56,128 @@ class SubPrOutcome:
 
 OfferComments = Callable[[int, "PrManagement"], int]  # (pr number, management) -> failures
 ConfirmPlan = Callable[["SubmodulePrPlan"], None]  # may raise typer.Abort
+
+
+def _manifest_subpaths(cfg: Config, incus: Incus, full: str) -> set[str]:
+    """Find pending descriptions without making a failed preview block publishing."""
+    try:
+        outbox = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid)
+    except pr_outbox.OutboxReadError:
+        return set()
+    if not outbox.manifest_names:
+        return set()
+    scopes = [
+        (scope.subpath, pr_outbox.scope_slug(scope))
+        for scope in pr_flow.candidate_scopes(
+            cfg, extra_paths=submodule_pr.recorded_paths(incus, full)
+        )
+        if scope.subpath is not None
+    ]
+    paths: set[str] = set()
+    for name in outbox.manifest_names:
+        try:
+            manifest = pr_outbox.parse_manifest(name, outbox.files[name], outbox.files)
+        except pr_outbox.ManifestError:
+            continue
+        if any(isinstance(action, pr_outbox.DescriptionAction) for action in manifest.actions):
+            paths.update(path for path, slug in scopes if slug == manifest.repo)
+    return paths
+
+
+def submodule_pr_candidates(
+    cfg: Config, incus: Incus, full: str, short: str, *, repo_dir: str, base_branch: str
+) -> list[SubCandidate]:
+    candidates = submodule_pr.detect_candidates(
+        cfg, incus, full, repo_dir=repo_dir, base_branch=base_branch, short=short
+    )
+    if not candidates:
+        return []
+    recorded = set(submodule_pr.recorded_paths(incus, full))
+    pending = _manifest_subpaths(cfg, incus, full)
+    return [c for c in candidates if (c.commits or 0) > 0 or c.path in recorded or c.path in pending]
+
+
+def choose_submodule_prs(candidates: list[SubCandidate], *, yes: bool) -> list[SubCandidate]:
+    if not candidates or yes:
+        return candidates
+    if not prompting.is_interactive():
+        warn(
+            f"Submodule PR candidates: {', '.join(c.path for c in candidates)}. "
+            "Use --yes to publish them first, or --no-submodules to silence this notice."
+        )
+        return []
+    picked = tui.pick_submodules_multi(candidates)
+    if picked is None:
+        raise typer.Abort()
+    return [c for c in candidates if c.path in picked]
+
+
+def _render_summary(outcomes: list[SubPrOutcome]) -> None:
+    for outcome in outcomes:
+        label = f"Submodule '{outcome.subpath}': {outcome.action}"
+        if outcome.action in ("created", "updated"):
+            success(f"{label} #{outcome.number} {outcome.url}")
+        elif outcome.action == "declined":
+            info(label)
+        else:
+            warn(label)
+        if outcome.outbox_failures:
+            warn(f"Submodule '{outcome.subpath}': {outcome.outbox_failures} outbox publication failures.")
+    failed = [o.subpath for o in outcomes if o.action == "failed"]
+    if failed:
+        warn(
+            f"The superproject PR's gitlink for {', '.join(failed)} may point at a commit "
+            "that is not on that submodule's remote."
+        )
+    if any(o.number is not None for o in outcomes):
+        info(
+            "Merge the submodule PRs first; the superproject PR's gitlink bump "
+            "then points at merged commits."
+        )
+
+
+def publish_submodule_prs_first(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    short: str,
+    *,
+    enabled: bool,
+    yes: bool,
+    no_ai: bool,
+    no_outbox: bool,
+    ready: bool | None,
+    offer_comments: OfferComments,
+) -> list[SubPrOutcome]:
+    if not enabled:
+        return []
+    repo_dir = lifecycle.container_repo_dir(cfg, incus, full)
+    base = incus.config_get(full, "user.jailbee.base_branch") or cfg.default_branch
+    try:
+        candidates = submodule_pr_candidates(
+            cfg, incus, full, short, repo_dir=repo_dir, base_branch=base
+        )
+    except submodule_pr.SubmodulePrError as exc:
+        warn(f"Could not inspect submodules: {exc}; publishing the superproject PR only.")
+        return []
+    chosen = choose_submodule_prs(candidates, yes=yes)
+    outcomes: list[SubPrOutcome] = []
+    for candidate in sorted(chosen, key=lambda c: c.path):
+        info(f"Submodule '{candidate.path}':")
+        try:
+            outcome = publish_submodule_pr(
+                cfg, incus, full, short, candidate,
+                SubPrOptions(ready=ready, no_ai=no_ai, no_outbox=no_outbox, yes=yes, note_merge_order=False),
+                repo_dir=repo_dir, confirm_plan=None, offer_comments=offer_comments,
+            )
+        except click.exceptions.Abort:
+            outcome = SubPrOutcome(candidate.path, "declined")
+        except click.exceptions.Exit:
+            outcome = SubPrOutcome(candidate.path, "failed")
+        outcomes.append(outcome)
+    if outcomes:
+        _render_summary(outcomes)
+    return outcomes
 
 
 def publish_submodule_pr(
