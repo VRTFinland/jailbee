@@ -1086,8 +1086,10 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
 - **Optional mounts:** `jailbee mount [<kind>] [<name>] [--for <dur>|--no-revert]` /
   `jailbee unmount [<kind>] [<name>]` to attach/detach an `optional_mounts` entry
   (e.g. `aws`) on a live container. A mount normally detaches after its
-  configured TTL, asked when mounting on a terminal. Tell the user that
-  `jailbee mount aws --for 1h` exposes credentials for one hour; `--no-revert`
+  configured TTL. The TTL is prompted only when auto-revert is enabled, no TTL
+  flag is given, and the command has a terminal; otherwise the configured
+  default applies. Tell the user that `jailbee mount aws --for 1h` exposes
+  credentials for one hour; `--no-revert`
   keeps them mounted until manually detached. Re-running `mount` on an attached
   kind only changes its TTL.
 - **Housekeeping:** `jailbee disk-usage`, `jailbee prune` (stopped containers >30 days),

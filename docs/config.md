@@ -1051,23 +1051,6 @@ supervisor can no longer pin a container loose.
 
 `jailbee net strict <c>` always clears the labels.
 
-#### `mount_auto_revert`
-
-Controls automatic detaching of optional mounts. Lives in both
-`~/.config/jailbee/global.yaml` and per-repo `.jailbee/config.yaml`; the
-repo overrides the global policy field by field.
-
-```yaml
-mount_auto_revert:
-  enabled: true   # default true — `jailbee mount` schedules a detach
-  after: 15m      # default 15m — accepts `30s`, `15m`, `2h`, or raw int (minutes); max 24h
-```
-
-The `jailbee-net-refresh.timer` (the same timer used for loose-mode
-reverts) detaches expired mounts. A mount attached before this release has no
-deadline. Running `jailbee mount` again for an already attached kind only
-changes its TTL; `jailbee unmount` clears the deadline.
-
 ##### Choosing the TTL per switch
 
 The `after` value above is the *default*. Each `jailbee net loose` decides its
@@ -1107,6 +1090,23 @@ matches what will happen.
 `jailbee ls` shows the remaining TTL in a dedicated column (visible only
 when at least one container is in loose mode), and `jailbee net status`
 lists each loose container with its expiry time.
+
+#### `mount_auto_revert`
+
+Controls automatic detaching of optional mounts. Lives in both
+`~/.config/jailbee/global.yaml` and per-repo `.jailbee/config.yaml`; the
+repo overrides the global policy field by field.
+
+```yaml
+mount_auto_revert:
+  enabled: true   # default true — `jailbee mount` schedules a detach
+  after: 15m      # default 15m — accepts `30s`, `15m`, `2h`, or raw int (minutes); max 24h
+```
+
+The `jailbee-net-refresh.timer` (the same timer used for loose-mode
+reverts) detaches expired mounts. A mount attached before this release has no
+deadline. Running `jailbee mount` again for an already attached kind only
+changes its TTL; `jailbee unmount` clears the deadline.
 
 ### `defaults`
 
@@ -2252,7 +2252,7 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 **Dashboard presentation only.** Field names and `ls`/JSON output stay unchanged.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
 **AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
-limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty without optional mounts; a **◆** and, when the last one is detached, `◆ 12m`, or `◆ ∞` when one never expires), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
+limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a **◆** and the time remaining until the last attached mount detaches, e.g. `◆ 12m`, or `◆ ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`). **AI** uses
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
