@@ -8627,9 +8627,7 @@ def pr_cmd(
         )
         raise typer.Exit(1)
 
-    from jailbee import pr_links, pr_submodule_flow
-
-    from jailbee import pr_ai
+    from jailbee import pr_ai, pr_links, pr_submodule_flow
 
     ai_on = pr_ai.ai_description_on(cfg, no_ai=no_ai)
     from jailbee.outbox.io import PrManagement

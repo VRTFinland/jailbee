@@ -36,36 +36,48 @@ def test_submodules_run_before_superproject_and_links_after(mocker, tmp_path):
     order = []
     step, create, link = _wire(mocker, tmp_path, [])
     step.side_effect = lambda *a, **k: order.append("subs") or []
-    mocker.patch("jailbee.sync.publish_branch_from_container",
-                 side_effect=lambda *a, **k: order.append("super") or _publish_result())
+    mocker.patch(
+        "jailbee.sync.publish_branch_from_container",
+        side_effect=lambda *a, **k: order.append("super") or _publish_result(),
+    )
     create.side_effect = lambda *a, **k: order.append("create") or _pr_created()
     link.side_effect = lambda *a, **k: order.append("links")
     result = runner.invoke(app, ["pr", "feat-foo", "--no-ai"])
     assert result.exit_code == 0, result.output
     assert order == ["subs", "super", "create", "links"]
-    link.assert_called_once_with(step.call_args.args[0], step.call_args.args[1],
-                                 "sampleapp-feat-foo", "feat-foo")
+    link.assert_called_once_with(
+        step.call_args.args[0], step.call_args.args[1], "sampleapp-feat-foo", "feat-foo"
+    )
 
 
 def test_flags_and_comments_callback_reach_step(mocker, tmp_path):
     step, _, _ = _wire(mocker, tmp_path, [])
-    result = runner.invoke(app, ["pr", "feat-foo", "--no-ai", "--no-outbox", "--ready", "--yes",
-                                "--no-submodules"])
+    result = runner.invoke(
+        app, ["pr", "feat-foo", "--no-ai", "--no-outbox", "--ready", "--yes", "--no-submodules"]
+    )
     assert result.exit_code == 0, result.output
     kw = step.call_args.kwargs
     assert (kw["enabled"], kw["yes"], kw["no_ai"], kw["no_outbox"], kw["ready"]) == (
-        False, True, True, True, True)
+        False,
+        True,
+        True,
+        True,
+        True,
+    )
     offer = mocker.patch("jailbee.cli._offer_outbox_comments", return_value=2)
     management = object()
     assert kw["offer_comments"](456, management) == 2
     offer.assert_called_once_with(*step.call_args.args, number=456, management=management)
 
 
-@pytest.mark.parametrize("outcome", [
-    SubPrOutcome("lib/a", "failed"),
-    SubPrOutcome("lib/a", "created", 45, "https://github.com/acme/lib/pull/45", 1),
-    SubPrOutcome("lib/a", "updated", 45, "https://github.com/acme/lib/pull/45", 2),
-])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        SubPrOutcome("lib/a", "failed"),
+        SubPrOutcome("lib/a", "created", 45, "https://github.com/acme/lib/pull/45", 1),
+        SubPrOutcome("lib/a", "updated", 45, "https://github.com/acme/lib/pull/45", 2),
+    ],
+)
 def test_submodule_failure_finishes_superproject_and_links_before_exit_1(mocker, tmp_path, outcome):
     _, create, link = _wire(mocker, tmp_path, [outcome])
     result = runner.invoke(app, ["pr", "feat-foo", "--no-ai"])
@@ -136,18 +148,31 @@ def test_invalid_stacked_head_never_publishes_submodules(mocker, tmp_path):
 
 @pytest.mark.parametrize("has_candidates", [False, True])
 def test_real_step_off_tty_does_not_publish_without_yes(mocker, tmp_path, has_candidates):
-    from jailbee.submodule_pr import SubCandidate
-
     # Exercise the real selection gate, not a mock of the orchestration.
     from jailbee import pr_submodule_flow
+    from jailbee.submodule_pr import SubCandidate
+
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.git.commit_subject", return_value="feat: x")
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
     mocker.patch("jailbee.pr_links.link_pr_family")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
-    candidates = [SubCandidate(path="lib/a", branch="feat/x", commits=1, dirty=False,
-                               head_sha="abc", recorded_sha="def", subject="feat: x")] if has_candidates else []
+    candidates = (
+        [
+            SubCandidate(
+                path="lib/a",
+                branch="feat/x",
+                commits=1,
+                dirty=False,
+                head_sha="abc",
+                recorded_sha="def",
+                subject="feat: x",
+            )
+        ]
+        if has_candidates
+        else []
+    )
     mocker.patch.object(pr_submodule_flow, "submodule_pr_candidates", return_value=candidates)
     publish = mocker.patch.object(pr_submodule_flow, "publish_submodule_pr")
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
@@ -170,12 +195,22 @@ def test_shared_manager_reenters_real_guard_for_submodule_publication(mocker, tm
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch.object(pr_submodule_flow, "submodule_pr_candidates", return_value=[_candidate()])
     manager = PrManagement(tmp_path / "locks")
-    fallback = mocker.patch("jailbee.outbox.io.PrManagement", side_effect=AssertionError("second manager"))
+    fallback = mocker.patch(
+        "jailbee.outbox.io.PrManagement", side_effect=AssertionError("second manager")
+    )
     seen = []
     with pr_flow.outbox_publication_guard(cfg, incus, "c", enabled=True, management=manager):
         outcomes = pr_submodule_flow.publish_submodule_prs_first(
-            cfg, incus, "c", "s", enabled=True, yes=True, no_ai=True,
-            no_outbox=False, ready=None, management=manager,
+            cfg,
+            incus,
+            "c",
+            "s",
+            enabled=True,
+            yes=True,
+            no_ai=True,
+            no_outbox=False,
+            ready=None,
+            management=manager,
             offer_comments=lambda n, m: seen.append(m) or 0,
         )
         assert manager.identity == ContainerIdentity("c", "2026-09-30T12:00:00Z")
