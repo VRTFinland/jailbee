@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Literal
 import click
 import typer
 
-from jailbee import lifecycle, pr_ai, pr_flow, pr_outbox, prompting, submodule_pr, submodules, tui
+from jailbee import git, lifecycle, pr_ai, pr_flow, pr_outbox, prompting, submodule_pr, submodules, tui
+from jailbee.incus import IncusError
+from jailbee.outbox.models import OutboxError
 from jailbee import pr as pr_mod
 from jailbee.tui import error, info, success, warn
 
@@ -79,7 +81,15 @@ def _manifest_subpaths(cfg: Config, incus: Incus, full: str) -> set[str]:
             manifest = pr_outbox.parse_manifest(name, outbox.files[name], outbox.files)
         except pr_outbox.ManifestError:
             continue
-        if any(isinstance(action, pr_outbox.DescriptionAction) for action in manifest.actions):
+        try:
+            progress = pr_outbox._publication_progress(outbox, name, len(manifest.actions))
+        except OutboxError as exc:
+            warn(f"Ignoring outbox manifest {name}: {exc}")
+            continue
+        if any(
+            isinstance(manifest.actions[index], pr_outbox.DescriptionAction)
+            for index in pr_outbox.pending_indices(manifest, progress)
+        ):
             paths.update(path for path, slug in scopes if slug == manifest.repo)
     return paths
 
@@ -166,6 +176,11 @@ def publish_submodule_prs_first(
     except submodule_pr.SubmodulePrError as exc:
         warn(f"Could not inspect submodules: {exc}; publishing the superproject PR only.")
         return []
+    if candidates and not yes and prompting.is_interactive():
+        for candidate in candidates:
+            record = submodule_pr.SubmodulePrState(incus, full, candidate.path).read()
+            action = f"update PR #{record.number}" if record.number is not None else "create PR"
+            info(f"Submodule '{candidate.path}': {action}")
     chosen = choose_submodule_prs(candidates, yes=yes)
     outcomes: list[SubPrOutcome] = []
     for candidate in sorted(chosen, key=lambda c: c.path):
@@ -188,6 +203,9 @@ def publish_submodule_prs_first(
         except click.exceptions.Abort:
             outcome = SubPrOutcome(candidate.path, "declined")
         except click.exceptions.Exit:
+            outcome = SubPrOutcome(candidate.path, "failed")
+        except (git.GitError, IncusError, submodule_pr.SubmodulePrError, submodules.SubmoduleError) as exc:
+            warn(f"Submodule '{candidate.path}': {exc}")
             outcome = SubPrOutcome(candidate.path, "failed")
         outcomes.append(outcome)
     if outcomes:

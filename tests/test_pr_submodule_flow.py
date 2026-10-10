@@ -71,7 +71,17 @@ def test_create_returns_created_outcome_and_offers_comments(mocker, tmp_path):
     from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
 
     cfg, incus, create = _env(mocker, tmp_path)
-    offer = mocker.Mock(return_value=0)
+    from jailbee.outbox.io import PrManagement
+    from jailbee.outbox_io import ContainerIdentity
+
+    management = PrManagement(tmp_path / "locks")
+    seen = []
+    def offer(number, manager):
+        seen.append(manager)
+        assert number == 7
+        assert manager is management
+        assert manager.identity == ContainerIdentity("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
+        return 0
     outcome = publish_submodule_pr(
         cfg,
         incus,
@@ -82,11 +92,13 @@ def test_create_returns_created_outcome_and_offers_comments(mocker, tmp_path):
         repo_dir="/home/dev/repo",
         confirm_plan=None,
         offer_comments=offer,
+        management=management,
     )
     assert (outcome.subpath, outcome.action, outcome.number) == ("lib/a", "created", 7)
     assert outcome.url == "https://github.com/acme/lib-a/pull/7"
     create.assert_called_once()
-    assert offer.call_args.args[0] == 7
+    assert seen == [management]
+    assert management.identity is None
 
 
 def test_confirm_plan_none_skips_the_plan_block(mocker, tmp_path):
@@ -352,7 +364,7 @@ def test_pending_description_selects_zero_commit_submodule(mocker, tmp_path):
             None: "acme/main",
             "lib/a": "acme/a",
             "lib/b": "acme/b",
-            "lib/c": None,
+            "lib/c": "acme/c",
         }[s.subpath],
     )
 
@@ -412,3 +424,76 @@ def test_multi_picker_checked_labels_and_answer(mocker, answer):
     assert [c.value for c in choices] == ["lib/a", "lib/b"]
     assert all(c.checked for c in choices)
     assert [c.title for c in choices] == [describe_candidate(c, width=5) for c in candidates]
+
+
+@pytest.mark.parametrize("consumed", [False, True])
+def test_candidate_description_must_be_pending_in_real_evidence(mocker, tmp_path, consumed):
+    import json
+    from jailbee import pr_submodule_flow as flow
+    from jailbee.outbox_io import ContainerIdentity
+    from jailbee.pr_flow import PrScope
+    from jailbee.pr_outbox import Outbox
+
+    cfg = mocker.MagicMock()
+    incus = mocker.MagicMock()
+    candidate = _candidate(commits=0)
+    mocker.patch("jailbee.submodule_pr.detect_candidates", return_value=[candidate])
+    mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=[])
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[PrScope(tmp_path, "origin", "", "lib/a")])
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/a")
+    files = {"a.json": json.dumps(dict(version=1, repo="acme/a", pr=7, actions=[
+        {"type": "description", "body": "Description"},
+        {"type": "comment", "body": "Pending comment"},
+    ]))}
+    if consumed:
+        files["a.json.progress.json"] = json.dumps({"applied": [0], "urls": {"0": "https://github.com/acme/a/pull/7"}})
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files, identity=ContainerIdentity("c", "born")))
+    assert flow.submodule_pr_candidates(cfg, incus, "c", "s", repo_dir="/r", base_branch="main") == ([] if consumed else [candidate])
+
+
+def test_acceptance_preview_uses_recorded_number_not_path_presence(mocker):
+    import json
+    cfg, incus, _, pick, pub = _orch(mocker, candidates=[_candidate("lib/a"), _candidate("lib/b")], interactive=True, picked=[])
+    incus.config_get.side_effect = lambda full, key: json.dumps({
+        "lib/a": {"pr": 7, "branch": "feat/a", "author": True},
+        "lib/b": {"branch": "feat/b", "author": True},
+    }) if key == "user.jailbee.sub_pr" else "main"
+    info = mocker.patch("jailbee.pr_submodule_flow.info")
+    assert _run(cfg, incus) == []
+    assert any("lib/a" in c.args[0] and "update" in c.args[0] and "#7" in c.args[0] for c in info.call_args_list)
+    assert any("lib/b" in c.args[0] and "create" in c.args[0] for c in info.call_args_list)
+    pick.assert_called_once()
+    pub.assert_not_called()
+
+
+def test_confirmation_payload_and_abort_precede_transport(mocker, tmp_path):
+    from jailbee.pr_submodule_flow import SubPrOptions, publish_submodule_pr
+    cfg, incus, create = _env(mocker, tmp_path)
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host")
+    confirm = mocker.Mock(side_effect=typer.Abort())
+    with pytest.raises(typer.Abort):
+        publish_submodule_pr(cfg, incus, "c", "s", _candidate(), SubPrOptions(pr_number=9), repo_dir="/r", confirm_plan=confirm, offer_comments=lambda n, m: 0)
+    plan = confirm.call_args.args[0]
+    assert (plan.container_full, plan.container_short, plan.subpath, plan.source_branch, plan.commits) == ("c", "s", "lib/a", "feat/foo", 2)
+    assert (plan.action, plan.remote, plan.base, plan.draft, plan.notes) == ("update", "origin", "develop", None, ())
+    transport.assert_not_called()
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["git", "incus", "submodule", "submodule_pr", "bug"])
+def test_orchestration_isolates_known_errors_but_not_programming_errors(mocker, kind):
+    from jailbee.git import GitError
+    from jailbee.incus import IncusError
+    from jailbee.submodules import SubmoduleError
+    from jailbee.submodule_pr import SubmodulePrError
+    from jailbee.pr_submodule_flow import SubPrOutcome
+
+    errors = {"git": GitError, "incus": IncusError, "submodule": SubmoduleError, "submodule_pr": SubmodulePrError, "bug": ValueError}
+    cfg, incus, _, _, pub = _orch(mocker, candidates=[_candidate("lib/a"), _candidate("lib/b")])
+    pub.side_effect = [errors[kind]("operational failure"), SubPrOutcome("lib/b", "created", 8, "u")]
+    if kind == "bug":
+        with pytest.raises(ValueError, match="operational failure"):
+            _run(cfg, incus, yes=True)
+    else:
+        assert [(o.subpath, o.action) for o in _run(cfg, incus, yes=True)] == [("lib/a", "failed"), ("lib/b", "created")]

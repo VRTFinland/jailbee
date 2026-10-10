@@ -51,12 +51,16 @@ def test_submodules_run_before_superproject_and_links_after(mocker, tmp_path):
 
 
 def test_flags_and_comments_callback_reach_step(mocker, tmp_path):
+    from jailbee import pr_flow
+
+    guard = mocker.spy(pr_flow, "outbox_publication_guard")
     step, _, _ = _wire(mocker, tmp_path, [])
     result = runner.invoke(
         app, ["pr", "feat-foo", "--no-ai", "--no-outbox", "--ready", "--yes", "--no-submodules"]
     )
     assert result.exit_code == 0, result.output
     kw = step.call_args.kwargs
+    assert kw["management"] is guard.call_args.kwargs["management"]
     assert (kw["enabled"], kw["yes"], kw["no_ai"], kw["no_outbox"], kw["ready"]) == (
         False,
         True,
@@ -217,3 +221,38 @@ def test_shared_manager_reenters_real_guard_for_submodule_publication(mocker, tm
     assert [(o.action, o.number) for o in outcomes] == [("created", 7)]
     assert seen == [manager]
     fallback.assert_not_called()
+
+
+def test_real_transport_git_error_isolated_before_next_and_superproject(mocker, tmp_path):
+    from jailbee.git import GitError
+    from jailbee import pr_submodule_flow, submodule_pr
+    from jailbee.pr_flow import PrRecord
+    from tests.test_pr_submodule_flow import _candidate
+
+    cfg, incus = _setup(mocker, tmp_path)
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch.object(pr_submodule_flow, "submodule_pr_candidates", return_value=[_candidate("lib/a"), _candidate("lib/b")])
+    mocker.patch("jailbee.submodule_pr.SubmodulePrState.read", return_value=PrRecord(None, None, False, False))
+    mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
+    mocker.patch("jailbee.submodule_pr.resolve_remote", return_value="origin")
+    mocker.patch("jailbee.submodule_pr.resolve_base_branch", return_value="main")
+    order = []
+    def transport(*args, **kwargs):
+        order.append(kwargs["subpath"])
+        if kwargs["subpath"] == "lib/a":
+            raise GitError("fetch failed")
+    mocker.patch.object(submodule_pr, "transport_submodule_to_host", side_effect=transport)
+    mocker.patch("jailbee.pr.assert_github_remote")
+    mocker.patch("jailbee.submodule_pr.publish_submodule_branch", return_value=submodule_pr.SubPublishResult("ref", "feat/foo", False))
+    mocker.patch("jailbee.submodule_pr.SubmodulePrState.record")
+    mocker.patch("jailbee.sync.publish_branch_from_container", side_effect=lambda *a, **k: order.append("super") or _publish_result())
+    mocker.patch("jailbee.git.commit_subject", return_value="feat: x")
+    create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.pr_links.link_pr_family")
+    result = runner.invoke(app, ["pr", "feat-foo", "--no-ai", "--no-outbox", "--yes"])
+    assert order == ["lib/a", "lib/b", "super"], result.output
+    assert create.call_count == 2
+    assert result.exit_code == 1, result.output
+    assert "fetch failed" in result.output
+    assert "lib/a" in result.output and "failed" in result.output
+    assert "https://github.com/acme/widgets/pull/123" in result.output
