@@ -136,6 +136,12 @@ autostart:
           run: "aws ecr get-login-password | docker login --password-stdin ..."
 ```
 
+For a mount needed interactively, `jailbee mount aws` asks for its auto-detach
+TTL on a terminal; `jailbee mount aws --for 1h` exposes the AWS credentials for
+one hour. Tell the user that `--no-revert` keeps the credentials mounted until
+they detach them with `jailbee unmount aws`. Re-running `jailbee mount aws` on
+an attached kind only changes its TTL.
+
 ### `host_ports` — forwarding a host TCP/UDP service into every container
 
 For a host service the container needs to reach over TCP/UDP — the adb
