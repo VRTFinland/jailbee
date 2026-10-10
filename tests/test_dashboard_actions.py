@@ -241,12 +241,8 @@ def test_snapshots_and_mounts_need_an_existing_container(state, offered):
 
 def test_mount_argv_puts_for_before_the_separator():
     assert dact.mount_argv("aws", "p-x") == ["mount", "--", "aws", "p-x"]
-    assert dact.mount_argv("aws", "p-x", "2h") == [
-        "mount", "--for", "2h", "--", "aws", "p-x"
-    ]
-    assert dact.mount_argv("aws", "p-x", "never") == [
-        "mount", "--for", "never", "--", "aws", "p-x"
-    ]
+    assert dact.mount_argv("aws", "p-x", "2h") == ["mount", "--for", "2h", "--", "aws", "p-x"]
+    assert dact.mount_argv("aws", "p-x", "never") == ["mount", "--for", "never", "--", "aws", "p-x"]
 
 
 def test_mount_choices_offer_only_configured_kinds_in_the_right_direction():

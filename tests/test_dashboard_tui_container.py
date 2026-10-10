@@ -1012,8 +1012,14 @@ def test_mount_with_a_ttl_default_asks_and_passes_for(mocker, tmp_path, ttl_key,
     assert ttl.entries[-1].value == "never"
     quiet.assert_called_once_with(
         [
-            "mount", "--for", expected, "--config", str(group.config_path),
-            "--", "aws", "alpha-x",
+            "mount",
+            "--for",
+            expected,
+            "--config",
+            str(group.config_path),
+            "--",
+            "aws",
+            "alpha-x",
         ],
         cwd=tmp_path,
     )

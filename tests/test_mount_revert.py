@@ -59,7 +59,8 @@ def test_expired_removes_device_then_label(cfg, mocker, deadline):
         MountRevertResult(container=row["name"], kind="aws", removed=True)
     ]
     assert [c[0] for c in incus.mock_calls if c[0] != "list_containers"] == [
-        "config_device_remove", "config_unset"
+        "config_device_remove",
+        "config_unset",
     ]
     incus.config_device_remove.assert_called_once_with(row["name"], "optional-aws")
     incus.config_unset.assert_called_once_with(row["name"], "user.jailbee.mount_until.aws")

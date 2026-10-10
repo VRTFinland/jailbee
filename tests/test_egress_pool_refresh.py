@@ -865,7 +865,8 @@ def test_refresh_all_continues_when_mount_revert_raises(
 
     _mount_revert_repos(db_session, tmp_path, frozen_now, mocker, prefixes=("A", "B"))
     refresh = mocker.patch.object(
-        egress_pool, "refresh_pool",
+        egress_pool,
+        "refresh_pool",
         side_effect=[
             egress_pool.RefreshResult(container_prefix="A", status="ok"),
             egress_pool.RefreshResult(container_prefix="B", status="ok"),

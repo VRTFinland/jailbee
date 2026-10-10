@@ -6308,7 +6308,7 @@ def test_prompt_loose_ttl_preset_answer_returns_parsed_duration(mocker) -> None:
     """Selecting a preset like "2h" must parse through to a real timedelta."""
     from datetime import timedelta
 
-    from jailbee.cli import _Ttl, _prompt_loose_ttl
+    from jailbee.cli import _prompt_loose_ttl, _Ttl
 
     select_mock = mocker.patch("questionary.select")
     select_mock.return_value.ask.return_value = "2h"
@@ -6321,7 +6321,7 @@ def test_prompt_loose_ttl_preset_answer_returns_parsed_duration(mocker) -> None:
 def test_prompt_loose_ttl_never_answer_is_ttl_with_no_duration_not_none(mocker) -> None:
     """ "never" means "no auto-revert", a *chosen* `_Ttl(duration=None)` —
     it must not be confused with the `None` sentinel used for cancellation."""
-    from jailbee.cli import _Ttl, _prompt_loose_ttl
+    from jailbee.cli import _prompt_loose_ttl, _Ttl
 
     select_mock = mocker.patch("questionary.select")
     select_mock.return_value.ask.return_value = "never"
@@ -6373,7 +6373,7 @@ def test_prompt_loose_ttl_custom_opens_text_prompt_and_parses_answer(mocker) -> 
     `config.parse_ttl` (not swallowed or re-parsed some other way)."""
     from datetime import timedelta
 
-    from jailbee.cli import _Ttl, _prompt_loose_ttl, _validate_duration_answer
+    from jailbee.cli import _prompt_loose_ttl, _Ttl, _validate_duration_answer
 
     select_mock = mocker.patch("questionary.select")
     text_mock = mocker.patch("questionary.text")

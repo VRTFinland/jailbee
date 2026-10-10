@@ -6794,8 +6794,14 @@ def test_mounts_column_cells_defaults_and_sorting():
     now = datetime(2026, 10, 10, 12, tzinfo=UTC)
     spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
     empty = _ci("p-x", "p")
-    one = dataclasses.replace(empty, optional_mounts=("aws",), mount_until={"aws": now + timedelta(minutes=5)})
-    two = dataclasses.replace(one, optional_mounts=("aws", "gcp"), mount_until={"aws": now + timedelta(minutes=5), "gcp": now + timedelta(hours=1)})
+    one = dataclasses.replace(
+        empty, optional_mounts=("aws",), mount_until={"aws": now + timedelta(minutes=5)}
+    )
+    two = dataclasses.replace(
+        one,
+        optional_mounts=("aws", "gcp"),
+        mount_until={"aws": now + timedelta(minutes=5), "gcp": now + timedelta(hours=1)},
+    )
     forever = dataclasses.replace(one, optional_mounts=("aws", "docs"))
     assert spec.cell(empty) == ""
     assert spec.cell(forever) == "aws 5m, docs ∞"
@@ -6823,7 +6829,9 @@ def test_stored_view_gains_mounts_after_network_once():
     assert cols == ("name", "network", "mounts", "cpu")
     assert applied == ["network → network + mounts"]
     assert "network → network + mounts" in dcolumns.column_set_migration_notice(applied)
-    again, applied2 = dcolumns.migrate_column_set(("name", "network", "cpu"), from_version=dcolumns.COLUMNS_VERSION)
+    again, applied2 = dcolumns.migrate_column_set(
+        ("name", "network", "cpu"), from_version=dcolumns.COLUMNS_VERSION
+    )
     assert again == ("name", "network", "cpu") and applied2 == []
     cols, _ = dcolumns.migrate_column_set(("mounts", "name", "network"), from_version=1)
     assert cols.count("mounts") == 1

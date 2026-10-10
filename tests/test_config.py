@@ -4227,6 +4227,7 @@ def test_slugify_prefix(name, expected) -> None:
 
     assert slugify_prefix(name) == expected
 
+
 def _mount_cfg(tmp_path, **overrides):
     mounts = {
         "aws": {"host": "~/.aws", "container": "/home/dev/.aws"},
@@ -4324,8 +4325,7 @@ def test_validate_runtime_reports_bad_mount_ttls(tmp_path):
     issues = cfg.validate_runtime()
     assert any("mount_auto_revert.after" in issue for issue in issues)
     assert any(
-        "optional_mounts.aws.auto_unmount_after" in issue and "banana" in issue
-        for issue in issues
+        "optional_mounts.aws.auto_unmount_after" in issue and "banana" in issue for issue in issues
     )
 
 

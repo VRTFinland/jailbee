@@ -282,10 +282,13 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
         deadline = c.loose_until.isoformat() if c.loose_until else "no auto-revert deadline"
         detail = f"{c.network or 'unknown'}; {deadline}"
     elif field.name == "mounts":
-        detail = "\n".join(
-            f"{k}: {c.mount_until[k].isoformat() if k in c.mount_until else 'no auto-unmount'}"
-            for k in c.optional_mounts
-        ) or "No optional mounts"
+        detail = (
+            "\n".join(
+                f"{k}: {c.mount_until[k].isoformat() if k in c.mount_until else 'no auto-unmount'}"
+                for k in c.optional_mounts
+            )
+            or "No optional mounts"
+        )
     elif field.name in ("agent", "agent_compact"):
         details = [
             f"{s.agent}: {s.state}; {s.count} session(s)"
