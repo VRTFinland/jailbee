@@ -42,14 +42,13 @@ CONTAINER_USERNAME = "dev"
 # is still validated on both layers, and a repo-level block would hit the
 # same list-append bug if it were ever let through to `deep_merge`.
 #
-# Note `loose_auto_revert` is *not* in this set even though it has exactly
-# the same "merged field-by-field, not through deep_merge" shape — see
-# `Config.effective_loose_auto_revert`. That routing is deliberate and
-# belongs to an earlier spec; don't "fix" the apparent 3-vs-4-fields
-# asymmetry by adding it here. It works today only because every
-# `LooseAutoRevert` field is a scalar (`enabled: bool`, `after: str | int`),
-# so `deep_merge`'s append-a-list behaviour never triggers. The day a list
-# field is added to `LooseAutoRevert`, it reintroduces the exact append bug
+# Note `loose_auto_revert` / `mount_auto_revert` are *not* in this set even
+# though they have the same "merged field-by-field, not through deep_merge"
+# shape — see `Config.effective_loose_auto_revert` and
+# `Config.effective_mount_auto_revert`. That routing is deliberate. It works
+# because every policy field is a scalar, so `deep_merge`'s append-a-list
+# behaviour never triggers. Adding a list field to either policy would
+# reintroduce the exact append bug.
 # `ls`/`dashboard` were split out to avoid, and would need the same
 # treatment (its own merge method, kept out of `deep_merge`).
 #

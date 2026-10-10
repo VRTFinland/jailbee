@@ -4227,6 +4227,120 @@ def test_slugify_prefix(name, expected) -> None:
 
     assert slugify_prefix(name) == expected
 
+def _mount_cfg(tmp_path, **overrides):
+    mounts = {
+        "aws": {"host": "~/.aws", "container": "/home/dev/.aws"},
+        "docs": {
+            "host": "~/docs",
+            "container": "/home/dev/docs",
+            "auto_unmount_after": "never",
+        },
+        "gcp": {
+            "host": "~/.gcp",
+            "container": "/home/dev/.gcp",
+            "auto_unmount_after": "2h",
+        },
+    }
+    return make_cfg(tmp_path, optional_mounts=mounts, **overrides)
+
+
+def test_mount_auto_revert_defaults():
+    from datetime import timedelta
+
+    from jailbee.config import MountAutoRevert
+
+    policy = MountAutoRevert()
+    assert policy.enabled is True
+    assert policy.after == "15m"
+    assert policy.duration() == timedelta(minutes=15)
+
+
+def test_mount_auto_revert_error_names_its_own_key():
+    with pytest.raises(ValueError, match=r"^mount_auto_revert\.after"):
+        from jailbee.config import MountAutoRevert
+
+        MountAutoRevert(after="30h").duration()
+
+
+def test_effective_mount_ttl_resolution_order(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(after="45m"))
+    assert cfg.effective_mount_ttl(gcfg, "aws") == "45m"
+    assert cfg.effective_mount_ttl(gcfg, "gcp") == "2h"
+    assert cfg.effective_mount_ttl(gcfg, "docs") is None
+
+
+def test_effective_mount_ttl_repo_field_overrides_global(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": "5m"})
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(after="45m"))
+    assert cfg.effective_mount_ttl(gcfg, "aws") == "5m"
+
+
+def test_disabled_policy_beats_per_mount_ttl(tmp_path):
+    from jailbee.config import MountAutoRevert
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    gcfg = GlobalConfig(mount_auto_revert=MountAutoRevert(enabled=False))
+    assert cfg.effective_mount_auto_revert(gcfg) is None
+    assert cfg.effective_mount_ttl(gcfg, "gcp") is None
+    assert cfg.effective_mount_ttl(gcfg, "aws") is None
+
+
+def test_effective_mount_ttl_int_after_is_minutes(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path, mount_auto_revert={"after": 20})
+    assert cfg.effective_mount_ttl(GlobalConfig(), "aws") == "20m"
+
+
+def test_effective_mount_ttl_malformed_raises_naming_the_key(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(
+        tmp_path,
+        optional_mounts={
+            "aws": {"host": "~/.aws", "container": "/x", "auto_unmount_after": "30min"}
+        },
+    )
+    with pytest.raises(ValueError, match=r"optional_mounts\.aws\.auto_unmount_after"):
+        cfg.effective_mount_ttl(GlobalConfig(), "aws")
+
+
+def test_validate_runtime_reports_bad_mount_ttls(tmp_path):
+    cfg = make_cfg(
+        tmp_path,
+        mount_auto_revert={"after": "30h"},
+        optional_mounts={
+            "aws": {"host": "~/.aws", "container": "/x", "auto_unmount_after": "banana"}
+        },
+    )
+    issues = cfg.validate_runtime()
+    assert any("mount_auto_revert.after" in issue for issue in issues)
+    assert any(
+        "optional_mounts.aws.auto_unmount_after" in issue and "banana" in issue
+        for issue in issues
+    )
+
+
+def test_validate_runtime_accepts_never_auto_unmount(tmp_path):
+    cfg = _mount_cfg(tmp_path)
+    assert not any("auto_unmount_after" in issue for issue in cfg.validate_runtime())
+
+
+def test_effective_mount_ttl_rejects_unknown_mount(tmp_path):
+    from jailbee.global_config import GlobalConfig
+
+    cfg = _mount_cfg(tmp_path)
+    with pytest.raises(KeyError):
+        cfg.effective_mount_ttl(GlobalConfig(), "unknown")
+
 
 def test_slugify_prefix_result_matches_prefix_re() -> None:
     """Every non-empty slugify_prefix result must match _PREFIX_RE."""

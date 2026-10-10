@@ -42,6 +42,7 @@ EXPECTED_SURFACE = frozenset(
         "JetbrainsConfig",
         "TTL_PRESETS",
         "LooseAutoRevert",
+        "MountAutoRevert",
         "LocalCredentials",
         "NET_DESCRIPTIONS",
         "NewConfig",

@@ -7,11 +7,13 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from datetime import timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jailbee.config.common import PathExpanded
+from jailbee.config.models_net import parse_duration_value
 
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CACHE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -349,6 +351,34 @@ class HostPort(BaseModel):
         return v
 
 
+class MountAutoRevert(BaseModel):
+    """Policy for auto-detaching an optional mount (`jailbee mount`) after a TTL.
+
+    Lives in both ``~/.config/jailbee/global.yaml`` and per-repo
+    ``.jailbee/config.yaml``; per-repo overrides global field by field — see
+    ``Config.effective_mount_auto_revert``. An ``optional_mounts`` entry's own
+    ``auto_unmount_after`` replaces ``after`` for that mount.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(
+        default=True,
+        description="Whether `jailbee mount` schedules an auto-unmount at all.",
+    )
+    after: str | int = Field(
+        default="15m",
+        description=(
+            "How long an optional mount stays attached before it is detached. "
+            "Accepts `30s`, `15m`, `2h`, or a bare int meaning minutes; capped at "
+            "24h. Each `jailbee mount` call can override this for that one mount."
+        ),
+    )
+
+    def duration(self) -> timedelta:
+        """Parse ``after``; raises ``ValueError`` on bad input."""
+        return parse_duration_value(self.after, "mount_auto_revert.after")
+
+
 class OptionalMount(BaseModel):
     model_config = ConfigDict(extra="forbid")
     host: PathExpanded = Field(
@@ -366,6 +396,14 @@ class OptionalMount(BaseModel):
     description: str = Field(
         default="",
         description="Shown in the `jailbee new --mount` picker.",
+    )
+    auto_unmount_after: str | int | None = Field(
+        default=None,
+        description=(
+            "This mount's own auto-unmount TTL, replacing `mount_auto_revert.after` "
+            "for it: `30s`, `15m`, `2h`, a bare int (minutes), or `never`. Unset "
+            "uses the policy. A disabled `mount_auto_revert` turns it off too."
+        ),
     )
 
 
