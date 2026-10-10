@@ -3534,3 +3534,66 @@ def test_description_validation_binds_existing_progress(mocker, make_cfg, tmp_pa
     reader.return_value = replace(store, files=tuple(sorted(files.items())))
     with pytest.raises(OutboxChanged, match="refresh"):
         validate_outbox_source(cfg, incus, "c", source)
+
+
+def _description_only_outbox(name="003-docs.json"):
+    from jailbee.pr_outbox import Outbox
+
+    text = _manifest_text(
+        pr=None, head_sha=None, actions=[{"type": "description", "body": "Body."}]
+    )
+    return Outbox(files={name: text})
+
+
+def test_offer_stays_quiet_about_a_description_for_a_pr_not_yet_opened(mocker, tmp_path):
+    """`jailbee pr` offers comments after each submodule PR, before the next
+    submodule's and the superproject's own PRs exist. A `pr: null`
+    description for one of those is about to be used by this same run, and
+    `jailbee review apply` would only defer it — so naming it as "did not use"
+    with that command as the remedy is wrong on both counts."""
+    from jailbee.pr_outbox import Target, _gate_manifests
+
+    outbox = _description_only_outbox()
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=lambda cfg, incus, c, manifest, **kw: Target(
+            manifest=manifest, pr=None, stale=False, scope=mocker.MagicMock()
+        ),
+    )
+
+    targets, refusals, notes = _gate_manifests(
+        mocker.MagicMock(),
+        mocker.MagicMock(),
+        "c",
+        outbox,
+        "feat",
+        force=False,
+        comments_only=True,
+    )
+
+    assert (targets, refusals, notes) == ([], [], [])
+
+
+def test_offer_still_names_a_description_for_an_existing_pr(mocker, tmp_path):
+    from jailbee.pr_outbox import Target, _gate_manifests
+
+    outbox = _description_only_outbox()
+    mocker.patch(
+        "jailbee.pr_outbox.resolve_target",
+        side_effect=lambda cfg, incus, c, manifest, **kw: Target(
+            manifest=manifest, pr=mocker.MagicMock(), stale=False, scope=mocker.MagicMock()
+        ),
+    )
+
+    _, _, notes = _gate_manifests(
+        mocker.MagicMock(),
+        mocker.MagicMock(),
+        "c",
+        outbox,
+        "feat",
+        force=False,
+        comments_only=True,
+    )
+
+    assert len(notes) == 1
+    assert "003-docs.json still holds a description" in notes[0]

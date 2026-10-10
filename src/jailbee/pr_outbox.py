@@ -2020,7 +2020,9 @@ def _gate_manifests(
         if comments_only:
             progress = _publication_progress(outbox, name, len(manifest.actions))
             if not _offerable_indices(manifest, progress):
-                if pending_indices(manifest, progress):
+                if pending_indices(manifest, progress) and not _awaits_its_pr(
+                    cfg, incus, container, manifest
+                ):
                     # Two lines, as with the `pr: null` deferral below: the
                     # command must not be split across a wrap, which is what
                     # one long line does at 80 columns.
@@ -2079,6 +2081,23 @@ def _gate_manifests(
             continue
         targets.append(target)
     return targets, refusals, notes
+
+
+def _awaits_its_pr(cfg: Config, incus: Incus, container: str, manifest: Manifest) -> bool:
+    """Whether `manifest` is a `pr: null` description whose PR is not open yet.
+
+    `jailbee pr` offers comments after each submodule PR, before the next
+    submodule's and the superproject's own PRs exist, and such a description
+    is about to be consumed by that same run. `jailbee review apply` would only
+    defer it, so it is not something "this run did not use".
+    """
+    if manifest.pr is not None:
+        return False
+    try:
+        target = resolve_target(cfg, incus, container, manifest, force=False)
+    except (GateError, pr.PrError, IncusError):
+        return False
+    return target.pr is None
 
 
 def _same_identity(incus: Incus, container: str, identity: ContainerIdentity) -> None:
