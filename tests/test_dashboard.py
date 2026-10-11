@@ -1252,9 +1252,7 @@ def test_clear_name_follows_the_remote_rename_policy(tmp_path, allowed):
     info = dataclasses.replace(_ci("alpha-x", "alpha"), alias="login")
     group = _cfg_group(tmp_path, (info,))
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
-    actions = dmenus.actions_for_container(
-        [group], "alpha-x", over_ssh=True, ssh_policy=policy
-    )
+    actions = dmenus.actions_for_container([group], "alpha-x", over_ssh=True, ssh_policy=policy)
     assert (("Clear name", "rename --clear") in actions) == (allowed == "rename")
 
 
