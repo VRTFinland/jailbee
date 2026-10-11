@@ -377,7 +377,11 @@ above. **Fork…** and **Rename…** ask for the new container's name and the
 alias: inline in the terminal dashboard (`[f]` and `[R]` in the container
 menu), where Fork runs `jailbee fork --background` and Rename `jailbee rename`
 (an empty alias clears it); the Qt dashboard opens `jailbee fork <container>`
-or `jailbee rename <container>` in a terminal, where the CLI asks. **Change base branch** asks for
+or `jailbee rename <container>` in a terminal, where the CLI asks. Rename starts
+with the current alias, or the container's short name when no alias is set,
+so a suffix can be appended directly. **Clear name** appears beside Rename
+when an alias is set and removes it without another prompt (`[E]` in the
+terminal menu). **Change base branch** asks for
 the base itself: inline in the terminal dashboard, in a dialog in the Qt
 dashboard, with the host's other local branches as suggestions. A branch the
 host does not have is refused. The dashboard then runs

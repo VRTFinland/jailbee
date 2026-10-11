@@ -1012,7 +1012,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   upgrade notes owe it; `--force` runs both everywhere; `--dry-run` lists what
   would run. Exit 1 if any repo failed.
 - **Fork:** `jailbee fork <source> <name> [--branch <b>]` creates a container at `<source>`'s HEAD commit (same branch unless `--branch`); `<source>` must be running with no uncommitted changes. The fork remembers its source: `jailbee ls` shows `⑂ <source>` as its base and `jailbee merge` offers `<source>` first.
-- **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it.
+- **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it. When `<alias>` is omitted, the prompt starts with the current alias or the container's short name. The dashboard's **Rename…** uses the same default; **Clear name** appears when an alias is set and resets it without another prompt.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
   autostart, and both take `--background`/`-b` to detach that run and
   `--wait`/`--no-wait` to override a `detach: true` autostart stage for this

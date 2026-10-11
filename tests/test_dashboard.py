@@ -1230,6 +1230,34 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     ]
 
 
+def test_menu_actions_offer_clear_name_only_with_an_alias():
+    for state in ("Running", "Stopped"):
+        plain = dmenus.menu_actions(_ctx(state=state))
+        aliased = dmenus.menu_actions(_ctx(state=state, alias="login"))
+        assert ("Clear name", "rename --clear") not in plain
+        i = aliased.index(("Rename…", "rename"))
+        assert aliased[i + 1] == ("Clear name", "rename --clear")
+
+
+def test_actions_for_container_passes_the_alias(tmp_path):
+    info = dataclasses.replace(_ci("alpha-x", "alpha"), alias="login")
+    group = _cfg_group(tmp_path, (info,))
+    assert ("Clear name", "rename --clear") in dmenus.actions_for_container([group], "alpha-x")
+
+
+@pytest.mark.parametrize("allowed", ["rename", "shell"])
+def test_clear_name_follows_the_remote_rename_policy(tmp_path, allowed):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    info = dataclasses.replace(_ci("alpha-x", "alpha"), alias="login")
+    group = _cfg_group(tmp_path, (info,))
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
+    actions = dmenus.actions_for_container(
+        [group], "alpha-x", over_ssh=True, ssh_policy=policy
+    )
+    assert (("Clear name", "rename --clear") in actions) == (allowed == "rename")
+
+
 def test_menu_actions_omits_open_pr_when_no_pr():
     running = dmenus.menu_actions(_ctx())
     stopped = dmenus.menu_actions(_ctx(state="Stopped"))

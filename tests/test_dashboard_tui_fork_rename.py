@@ -210,3 +210,31 @@ def test_prompt_titles_name_the_short_container_name(mocker, tmp_path, key, purp
     prompt = next(p for p in _prompts(run) if p.purpose == purpose)
     assert "'x'" in prompt.title
     assert "alpha-x" not in prompt.title
+
+
+def test_rename_prompt_without_an_alias_starts_on_the_short_name(mocker, tmp_path):
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+
+    run = drive(mocker, ["j", "enter", "R", *keys("-login"), "enter"], [group])
+    assert run.rc == 0
+
+    prompts = _prompts(run)
+    assert prompts[0].initial == "x"
+    assert child.call_args.args[0][-2:] == ["--", "x-login"]
+
+
+def test_clear_name_runs_rename_clear(mocker, tmp_path):
+    info = dataclasses.replace(ci("alpha-x", "alpha"), alias="old")
+    group = cfg_group(tmp_path, (info,))
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+
+    run = drive(mocker, ["j", "enter", "E"], [group])
+    assert run.rc == 0
+
+    cfg = str(tmp_path / ".jailbee" / "config.yaml")
+    assert child.call_args.args[0] == ["jailbee", "rename", "--clear", "alpha-x", "--config", cfg]

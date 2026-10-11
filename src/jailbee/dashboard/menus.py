@@ -67,6 +67,7 @@ class MenuContext:
     git_status: GitStatus | None = None
     remote: bool = False
     gui_remote: bool = False
+    alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -313,6 +314,8 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     if ctx.state in ("Running", "Stopped"):
         # An alias is metadata, so a stopped container takes one too.
         actions.append(("Rename…", "rename"))
+        if ctx.alias:
+            actions.append(("Clear name", "rename --clear"))
     if ctx.state == "Running":
         for mode in _NETWORK_MODES:
             if mode != ctx.current_network:
@@ -421,6 +424,7 @@ def actions_for_container(
             git_status=container.git_status,
             remote=remote,
             gui_remote=bool(remote and ssh_policy is not None and ssh_policy.gui),
+            alias=container.alias,
         )
     )
     if over_ssh:

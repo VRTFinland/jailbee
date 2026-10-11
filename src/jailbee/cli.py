@@ -4961,7 +4961,11 @@ def rename_cmd(
         def _problem(text: str) -> str | None:
             return None if text.strip() else "an alias cannot be empty"
 
-        alias = prompting.ask_text("alias", validate=_problem, alternative="--clear").strip()
+        # Start on the current name: a new one is usually built on it.
+        current = incus.config_get(full, aliases.ALIAS_LABEL) or short_name(cfg, full)
+        alias = prompting.ask_text(
+            "alias", validate=_problem, default=current, alternative="--clear"
+        ).strip()
     try:
         aliases.set_alias(cfg, incus, full, alias)
     except aliases.AliasError as e:

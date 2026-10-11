@@ -65,3 +65,21 @@ def test_rename_accepts_the_alias_after_the_separator(rig, alias):
     assert result.exit_code == 0, result.output
     assert set_alias.call_args.args[1:] == (incus, "myrepo-a", alias)
     clear_alias.assert_not_called()
+
+
+@pytest.mark.parametrize(("alias", "default"), [(None, "a"), ("login", "login")])
+def test_rename_prompt_starts_on_the_alias_or_the_short_name(
+    rig, mocker, alias, default, make_cfg, tmp_path
+):
+    cfg = make_cfg(tmp_path).model_copy(update={"container_prefix": "myrepo"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus, set_alias, _ = rig
+    incus.config_get.side_effect = lambda name, key: (
+        alias if (name, key) == ("myrepo-a", "user.jailbee.alias") else None
+    )
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="a-login")
+    result = runner.invoke(app, ["rename", "a", "--config", CFG])
+    assert result.exit_code == 0, result.output
+    assert ask.call_args.args[1] == default
+    assert set_alias.call_args.args[1:] == (incus, "myrepo-a", "a-login")
