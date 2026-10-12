@@ -1913,6 +1913,10 @@ shared by all of them, seeded from the warmest existing slot.
 (For always-on mounts, list them under `host_mounts` in config instead — that's
 the jailbee-repo-setup skill's domain.)
 
+An optional mount is also how a container borrows a credential for a while:
+the secret's directory, read-only, with a short `auto_unmount_after`, attached
+from the host for the task that needs it. See SKILL.md, "Lending a credential".
+
 ## Snapshots
 
 | Command | Notes |

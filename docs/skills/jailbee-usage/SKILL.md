@@ -1092,6 +1092,20 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   or prompt. Tell the user that `jailbee mount aws --for 1h` exposes credentials
   for one hour; `--no-revert` keeps them mounted until manually detached. Re-running `mount` on an attached
   kind only changes its TTL.
+- **Lending a credential (API key, `~/.aws`, a token file).** When a task needs a
+  secret, do not ask the user to paste it into the chat or to write it into the
+  container or the repo. The pattern is an `optional_mounts` entry that keeps
+  it on the host: the secret's **directory** (not the file — a file bind mount
+  misses a host tool's atomic replace), `readonly: true`, a short
+  `auto_unmount_after`. Propose the entry (in `~/.config/jailbee/global.yaml`
+  for a personal credential, or the repo's config when a tool in the repo reads
+  it from a fixed path), then ask the user to run, **on the host**,
+  `jailbee mount <kind> <container>` — an agent inside the container cannot
+  attach a mount. The MOUNT column in `jailbee ls` and the dashboards shows it
+  attached and its time left (`◆ 12m`). While attached, anything in the
+  container can read the secret; detaching removes the mount, not a copy made
+  meanwhile, so do not copy it elsewhere. Guide:
+  https://jailbee.gisgro.io/docs/security/#lending-a-container-a-credential
 - **Housekeeping:** `jailbee disk-usage`, `jailbee prune` (stopped containers >30 days),
   `jailbee doctor` (host + repo diagnostics), `jailbee apply` (re-push config — profiles,
   ACL, /etc/hosts, dockerd proxy — after editing `.jailbee/config.yaml`; idempotent).
