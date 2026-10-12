@@ -528,7 +528,7 @@
           <p>
             The question was never whether a container reaches the network — it is how wide you
             leave the opening. <code>jailbee net strict</code> allows the hosts your build
-            actually needs, by name, and follows them as their addresses rotate underneath. The
+            actually needs, by name or as a <code>*.example.com</code> wildcard, and follows them as their addresses rotate underneath. The
             filtering sits below the application, so an <code>ssh</code> or a database connection
             is covered by the same list as a web request. <code>jailbee net loose</code> widens it
             for a set time and reverts on its own, so nobody leaves it open by forgetting. It

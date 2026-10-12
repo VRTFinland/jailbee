@@ -84,7 +84,11 @@ sped up and say so on screen; nothing else is edited.
   resolves them into the kernel ACL, keeps a cumulative pool as CDN
   addresses rotate, and pins the container's `/etc/hosts` to match. Any
   protocol, not just HTTP — `ssh`, `git+ssh` and a database client work
-  under the same list. `jailbee net egress add` widens one container's copy
+  under the same list. A `*.example.com` wildcard allows a domain and every
+  subdomain over HTTP(S), through an egress proxy that tools honouring
+  `HTTPS_PROXY` use; see
+  [Wildcards](https://jailbee.gisgro.io/docs/config/#wildcards-go-through-the-egress-proxy).
+  `jailbee net egress add` widens one container's copy
   of that list — or this machine's copy of the repo's — without editing the
   committed config, so a host only you need never lands in git; see
   [Egress overrides](https://jailbee.gisgro.io/docs/security/#egress-overrides).
@@ -130,7 +134,8 @@ sped up and say so on screen; nothing else is edited.
 - **Remote access over SSH** — an optional, key-only SSH service
   (`jailbee remote ssh enable`) opens the dashboard, a restricted console or
   policy-limited one-shot commands from another computer; host-management
-  commands stay refused. With `remote.ssh.gui` on, GUI apps launched over SSH
+  commands stay refused, and widening a container's network over SSH needs
+  `remote.ssh.network: true`. With `remote.ssh.gui` on, GUI apps launched over SSH
   appear on a shared RDP display (`jailbee display`) you open in any RDP
   client; see
   [Remote GUI over SSH](https://jailbee.gisgro.io/docs/remote-gui/).
@@ -152,8 +157,8 @@ sped up and say so on screen; nothing else is edited.
   way the state outlives `jailbee destroy` / `jailbee new` — while nothing a
   container does reaches your host's own dotfiles.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
-  TUI dashboard (`jailbee dashboard`, alias `jailbee tui`) or Qt GUI dashboard
-  (`jailbee gui`) spans
+  TUI dashboard (`jailbee dashboard`, alias `jailbee tui`, and what bare
+  `jailbee` opens) or Qt GUI dashboard (`jailbee gui`) spans
   every repo, shows what each container's agent is doing, and acts on what it
   shows: attach a shell or tmux, open the IDE, create or update the PR,
   update a container from its base, read its diff — without leaving the view

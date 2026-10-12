@@ -29,7 +29,9 @@ scope.
 - **Per-container egress allowlist** enforced by a kernel-level ACL, written
   as hostnames and ports (`api.example.com:443`) rather than IP ranges, and
   covering any protocol — `ssh`, `git+ssh` and database clients included, not
-  just HTTP. `github.com` is deliberately absent from the strict default so an
+  just HTTP. `*.example.com` wildcards are accepted too; they pass through an
+  egress proxy, so they cover HTTP(S) clients that honour `HTTPS_PROXY`.
+  `github.com` is deliberately absent from the strict default so an
   unattended agent cannot surprise-push.
 - **The container is a git remote.** `jailbee git push/pull/fetch/checkout/diff`
   move commits between host and container without a round trip through GitHub.
@@ -43,8 +45,9 @@ scope.
   database — and `jailbee port` adds or removes one ad hoc, in either
   direction. Forwards are Incus proxy devices, so they bypass the egress ACL by
   construction; `jailbee net status` lists the open ones next to the allowlist.
-- **One dashboard across every repo.** A live TUI (`jailbee dashboard`) or Qt
-  GUI (`jailbee gui`) lists every container on the host and acts on it — shell,
+- **One dashboard across every repo.** A live, mouse-enabled TUI
+  (`jailbee dashboard`, also what bare `jailbee` opens) or Qt GUI
+  (`jailbee gui`) lists every container on the host and acts on it — shell,
   tmux, IDE, create or update the PR, update from base, read the diff, follow a
   background job's log — each offered only when it would do something.
 - **GUI passthrough.** A JetBrains IDE and Chrome run *inside* the container

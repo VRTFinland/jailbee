@@ -84,7 +84,10 @@ one anonymous GET of `https://pypi.org/pypi/jailbee/json`, and the commands
 themselves only read the answer it left behind. An install running from a
 checkout is never advised to upgrade.
 
-→ [`update_check`](config.md#update_check)
+After upgrading, `jailbee upgrade` runs the `base build` and `apply` the
+release owes in every registered repo, restarting nothing.
+
+→ [`update_check`](config.md#update_check) · [`jailbee upgrade`](commands.md)
 
 ### What is the minimum host setup?
 
