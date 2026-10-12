@@ -166,11 +166,22 @@ def test_update_installs_beside_the_running_release(tmp_path, home):
     assert result.returncode == 0, result.stderr
     assert _linked_release(home) == "1.1.0"
     assert (_store(home) / "releases/1.0.3/bin/pi").exists()
-    assert ((_store(home) / "releases/1.1.0").stat().st_mode & 0o777) == 0o755
+
+
+def test_an_installed_release_is_read_only(tmp_path, home):
+    """`pi update` reinstalls over the release that launched it — one a
+    sibling container may be running — unless it cannot write there."""
+    result, _calls = _run(tmp_path, home)
+
+    assert result.returncode == 0, result.stderr
+    package = _store(home) / "releases/1.1.0/lib/node_modules" / PKG
+    for path in (_store(home) / "releases/1.1.0", package, package.parent):
+        assert (path.stat().st_mode & 0o777) == 0o555, path
 
 
 def test_update_keeps_the_two_newest_releases(tmp_path, home):
     _seed(home, "1.0.2", "1.0.10", current="1.0.10")
+    subprocess.run(["chmod", "-R", "a-w", str(_store(home) / "releases/1.0.2")], check=True)
 
     result, _calls = _run(tmp_path, home, latest="1.1.0")
 

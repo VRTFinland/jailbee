@@ -52,6 +52,9 @@ install_release() {
             return 1
         fi
         mv -T "${tmp}" "${RELEASES}/${version}"
+        # `pi update` reinstalls over whichever release launched it, which a
+        # sibling container may be running; it refuses an unwritable one.
+        chmod -R a-w "${RELEASES}/${version}"
     fi
     ln -sfn "releases/${version}" "${STORE}/current.new"
     mv -T "${STORE}/current.new" "${STORE}/current"
@@ -61,7 +64,10 @@ prune_releases() {
     local current v
     current="$(current_release)"
     for v in $(ls -1 "${RELEASES}" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V -r | tail -n +3 || true); do
-        [ "${v}" = "${current}" ] || rm -rf "${RELEASES:?}/${v}"
+        if [ "${v}" != "${current}" ]; then
+            chmod -R u+w "${RELEASES:?}/${v}"
+            rm -rf "${RELEASES:?}/${v}"
+        fi
     done
 }
 
