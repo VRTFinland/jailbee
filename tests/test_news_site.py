@@ -318,7 +318,8 @@ def test_a_youtube_url_on_its_own_line_becomes_a_click_to_load_player(
     build(website, output)
 
     html = _article(output)
-    player = re.search(r'<figure class="yt yt--video" data-yt-id="([^"]+)">.*?</figure>', html, re.S)
+    figure = r'<figure class="yt yt--video" data-yt-id="([^"]+)">.*?</figure>'
+    player = re.search(figure, html, re.S)
     assert player is not None and player.group(1) == VIDEO
     block = player.group(0)
     # Nothing from YouTube until the click: a local thumbnail, a button, and a
