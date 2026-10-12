@@ -139,6 +139,8 @@ from jailbee.dashboard.tui.keys import quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
+    menu_entries,
+    menu_hotkeys,
     open_menu,
     open_repo_menu,
 )
@@ -2448,28 +2450,49 @@ class DashboardSession:
     def activate(self) -> None:
         """Enter on the selected row: its repo menu or its container menu."""
         if self.selected is not None and self.selected.kind == "repo":
-            self.overlay = open_repo_menu(
+            self.overlay = self._selection_menu()
+        else:
+            if self.marked:
+                self.overlay = self.bulk_menu()
+                return
+            self.overlay = self._selection_menu()
+            container = container_of(self.selected)
+            if self.overlay is None and container is not None:
+                note = view_only_note(self.groups, container)
+                self.set_notice(note or f"No actions available for '{container}'")
+
+    def _selection_menu(self) -> MenuState | RepoMenuState | None:
+        """The menu Enter would open on the selected row (None: nothing to show)."""
+        if self.selected is not None and self.selected.kind == "repo":
+            return open_repo_menu(
                 self.groups,
                 self.selected.key,
                 self.folded,
                 ssh_policy=self.ssh_policy,
                 over_ssh=self.over_ssh,
             )
-        else:
-            if self.marked:
-                self.overlay = self.bulk_menu()
-                return
-            container = container_of(self.selected)
-            self.overlay = open_menu(
-                self.groups,
-                container,
-                remote=self.remote,
-                ssh_policy=self.ssh_policy,
-                over_ssh=self.over_ssh,
-            )
-            if self.overlay is None and container is not None:
-                note = view_only_note(self.groups, container)
-                self.set_notice(note or f"No actions available for '{container}'")
+        return open_menu(
+            self.groups,
+            container_of(self.selected),
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            over_ssh=self.over_ssh,
+        )
+
+    def open_menu_for_letter(self, char: str) -> bool:
+        """Open the selected row's menu when ``char`` is one of its entries' own letters.
+
+        A menu letter typed in the table is Enter plus that letter, so the menu
+        is the one place that knows what a row offers. Silent when nothing
+        owns the letter (and for marked rows, whose menu is the bulk list).
+        """
+        if self.overlay is not None or self.merge_pick is not None or self.marked:
+            return False
+        menu = self._selection_menu()
+        if menu is None or char not in menu_hotkeys(menu_entries(menu)):
+            return False
+        self.overlay = menu
+        return True
 
     def click(
         self,

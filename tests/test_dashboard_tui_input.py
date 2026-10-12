@@ -116,6 +116,18 @@ def test_a_hotkey_typed_ahead_opens_its_level(mocker, tmp_path):
     assert run.natives[-1] is not None and run.natives[-1].level == "Git →"
 
 
+def test_a_menu_letter_in_the_table_opens_its_level_without_enter(mocker, tmp_path):
+    """`g` on a container row is `⏎g`: the menu opens straight into Git →."""
+    run = drive(mocker, ["j", "g"], [_group(tmp_path)])
+    assert run.natives[-1] is not None and run.natives[-1].level == "Git →"
+
+
+def test_a_letter_no_menu_entry_owns_does_nothing_in_the_table(mocker, tmp_path):
+    run = drive(mocker, ["j", "z"], [_group(tmp_path)])
+    assert run.last.overlay is None
+    assert run.last.selected == dmodel.Row("container", "alpha-one")
+
+
 def test_keys_after_closing_the_menu_reach_the_table(mocker, tmp_path):
     run = drive(
         mocker,

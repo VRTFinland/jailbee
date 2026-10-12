@@ -208,6 +208,14 @@ class DashboardApp(App[int], inherit_bindings=False):
             token = parse_key(event.key)
             if token:
                 self._after(self.session.handle_key(token))
+            elif event.character and self.session.open_menu_for_letter(event.character):
+                # A menu letter in the table is Enter plus that letter.
+                self._after(None)
+                await self.frame.settle_native()
+                if self.frame.native_box is not None:
+                    outcome = await self.frame.native_box.handle_key(event)
+                    if isinstance(outcome, Message):
+                        self._apply(outcome)
         else:
             outcome = await box.handle_key(event)
             if isinstance(outcome, Message):
