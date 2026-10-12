@@ -418,12 +418,11 @@ class DashboardSession:
         """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
         tracking = tracking_notices([c for g in self.all_groups for c in g.containers])
         tracking.extend(dashboard_group_notices(self.all_groups))
-        notice = (
-            self.notice
-            or self.client.status()
-            or "; ".join(self.jobs.active())
-            or ("; ".join(tracking) if tracking else None)
-        )
+        # A refusal or a service failure may carry a remedy and wraps when long;
+        # running jobs and stale targets are status lines that stay on the border.
+        notice = self.notice or self.client.status()
+        notice_wraps = notice is not None
+        notice = notice or "; ".join(self.jobs.active()) or ("; ".join(tracking) or None)
         marked = self.marked
         sources: frozenset[str] = frozenset()
         ineligible: frozenset[str] = frozenset()
@@ -433,6 +432,7 @@ class DashboardSession:
             # is on (a refused Enter) is put in front of it, not in its place.
             line = self._merge_pick_line(pick)
             notice = line if self.notice is None else f"{self.notice} · {line}"
+            notice_wraps = True
             marked = pick.targets
             sources = frozenset(pick.sources)
             ineligible = frozenset(
@@ -449,6 +449,7 @@ class DashboardSession:
             enabled=self.enabled,
             overlay=self.overlay,
             notice=notice,
+            notice_wraps=notice_wraps,
             folded=self.folded,
             column_offset=self.column_offset,
             hidden_by_preferences=bool(self.all_groups) and not self.groups,
@@ -2474,6 +2475,7 @@ class DashboardSession:
         menu = self._selection_menu()
         if menu is None or char not in menu_hotkeys(menu_entries(menu)):
             return False
+        menu.direct = True
         self.overlay = menu
         return True
 

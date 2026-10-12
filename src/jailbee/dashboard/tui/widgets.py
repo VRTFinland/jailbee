@@ -488,7 +488,7 @@ class DashboardFrame(Vertical):
             now=view.now,
             marked=len(view.marked),
         )
-        subtitle, inline = notice_parts(view.notice)
+        subtitle, inline = notice_parts(view.notice, wraps=view.notice_wraps)
         self.border_subtitle = subtitle if subtitle is not None else ""
         overlay = view.overlay
         box = self._sync_native(overlay)

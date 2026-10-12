@@ -62,3 +62,10 @@ def test_long_notice_is_plain_yellow_inline_text():
     assert subtitle is None and inline is not None
     assert inline.plain == notice and inline.style == "yellow"
     assert not inline.spans
+
+
+def test_long_status_notice_stays_on_the_border_ellipsized():
+    notice = "alpha/main: local target behind fetched " + "x" * INLINE_NOTICE_MAX
+    subtitle, inline = notice_parts(notice, wraps=False)
+    assert inline is None and subtitle is not None
+    assert subtitle.plain == notice and subtitle.overflow == "ellipsis"
