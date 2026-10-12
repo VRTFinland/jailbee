@@ -2,8 +2,8 @@
 
 > JailBee runs isolated, per-branch development environments in Incus system
 > containers. Every git branch gets a full container of its own — its own
-> services, its own Docker daemon, its own IP, and optionally its own IDE and
-> browser on your desktop — so several stacks run in parallel on one Linux
+> services, its own IP, and optionally its own Docker daemon and its own IDE
+> and browser on your desktop — so several stacks run in parallel on one Linux
 > host without port conflicts, Docker name clashes or shared-database
 > collisions. It is also a sandbox for coding agents: the container is the
 > boundary, so an agent can run unattended with permission prompts turned off.
@@ -24,8 +24,9 @@ scope.
   reaches for is a policy change. JailBee moves the boundary instead: the
   container is the fence, and what happens inside it is unconstrained.
 - **A system container, not an application container.** It runs its own init,
-  its own Docker daemon (nested, `security.nesting`), its own systemd
-  services. The repo's existing `docker-compose.yml` runs unmodified.
+  its own systemd services, and — when the repo enables the Docker stack — its
+  own Docker daemon (nested, `security.nesting`), so the repo's existing
+  `docker-compose.yml` runs unmodified.
 - **Per-container egress allowlist** enforced by a kernel-level ACL, written
   as hostnames and ports (`api.example.com:443`) rather than IP ranges, and
   covering any protocol — `ssh`, `git+ssh` and database clients included, not

@@ -36,8 +36,8 @@ scenes:
     formats: [main]
     narration: >-
       JailBee gives every git branch its own Linux machine: a system container
-      on your own Linux host. Each one runs its own Docker daemon, so your
-      compose file works unchanged. It has its own browser and IDE, drawn on
+      on your own Linux host. Each one can run its own Docker daemon, so a
+      repository's compose file works unchanged. It has its own browser and IDE, drawn on
       your desktop. And it holds its own clone of the repository, so an agent
       can wreck its environment without touching your checkout. Point a coding
       agent at it and leave the room: the container is the fence. When you

@@ -1,8 +1,8 @@
 # Who JailBee is for
 
 JailBee gives each git branch a **system container**: an unprivileged Incus
-container with its own init, its own Docker daemon, its own IP, and — if you
-want it — its own browser and IDE on your desktop. From userspace up it
+container with its own init and its own IP, and — if the repo wants them —
+its own Docker daemon and its own browser and IDE on your desktop. From userspace up it
 behaves like a separate Linux machine, and several of them run in parallel on
 one Linux host.
 
