@@ -21,7 +21,7 @@ from jailbee.dashboard.overlays import (
 )
 from jailbee.dashboard.settings import SettingsState
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
-from jailbee.dashboard.tui.keys import _GATE_NOTE, KEY_BINDINGS
+from jailbee.dashboard.tui.keys import KEY_BINDINGS
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.overlay import CommandState, Overlay
 
@@ -60,12 +60,20 @@ def notice_parts(notice: str | None) -> tuple[Text | None, Text | None]:
     return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
 
 
+_MENU_LETTERS_NOTE = (
+    "A container's or repo's actions are its menu's letters, and they work here "
+    "without Enter (g Git, l Lifecycle, …); Enter shows the whole list. A letter "
+    "does nothing when its entry is not offered for the highlighted row: a stopped "
+    "container has no tmux or shell, and orphan rows are view-only."
+)
+
+
 def help_lines() -> list[str]:
     """The keybinding help as markup lines, grouped as the key table declares.
 
     Rows come from :data:`KEY_BINDINGS`, so a new key documents itself. The
-    closing note explains why an action key can decline to fire — without it
-    a correctly-gated key looks broken.
+    closing note says where the rest of the keys are: a row's actions are its
+    menu's letters, which the menu itself lists.
     """
     width = max((len(b.hint) for b in KEY_BINDINGS if b.hint), default=0)
     lines: list[str] = []
@@ -97,7 +105,7 @@ def help_lines() -> list[str]:
         "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
         "Shift-drag selects text.",
         "",
-        f"[dim]{_GATE_NOTE}[/dim]",
+        f"[dim]{_MENU_LETTERS_NOTE}[/dim]",
     ]
 
 

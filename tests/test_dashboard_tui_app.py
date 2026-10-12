@@ -42,9 +42,11 @@ _TERMINAL_BYTES = (
     "\x1bOQ",
     "\x1b[12~",
     "\x03",
+    "\x12",
+    "\x1b[15~",
     "?",
     "!",
-    *"tsicpPudDneEAovrmShjkq<>I",
+    *"neEAOvMShjkq<>I",
 )
 
 

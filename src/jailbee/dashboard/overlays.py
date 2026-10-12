@@ -93,6 +93,7 @@ def validate_answer(prompt: TextPrompt, text: str) -> str | None:
 class PickerEntry:
     label: str
     value: str
+    key: str = ""  # a letter that chooses the entry (empty: Enter or the mouse only)
 
 
 @dataclass(frozen=True)

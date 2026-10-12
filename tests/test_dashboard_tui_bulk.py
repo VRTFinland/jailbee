@@ -40,6 +40,13 @@ def _children(mocker, *, failing=(), stderr="boom"):
     return mocker.patch.object(tsession.subprocess, "run", side_effect=run)
 
 
+def _bulk_key(session, letter):
+    """The letter typed in the table, then its entry chosen in the picker it opened."""
+    assert session.open_menu_for_letter(letter)
+    picker = session.overlay
+    session.picker_chosen(next(e for e in picker.entries if e.key == letter))
+
+
 def _stop(session, *names):
     session.run_bulk(plan_bulk(session.groups, list(names), "stop"))
 
@@ -164,6 +171,47 @@ def test_enter_with_marks_opens_the_bulk_picker(mocker, tmp_path):
     ]
 
 
+def test_the_bulk_picker_gives_every_entry_its_own_letter(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    session.handle_key("enter")
+
+    assert isinstance(session.overlay, Picker)
+    keys = {e.value: e.key for e in session.overlay.entries}
+    assert keys["git push"] == "u" and keys["destroy"] == "D" and keys["merge"] == "m"
+    assert all(keys.values()) and len(set(keys.values())) == len(keys)
+
+
+def test_bulk_letters_match_the_container_menu_where_the_verbs_do():
+    from jailbee.dashboard.bulk import BULK_KEYS
+    from jailbee.dashboard.tui.menu_state import _MENU_KEYS
+
+    shared = {v: k for v, k in BULK_KEYS.items() if v in _MENU_KEYS}
+    assert shared == {v: _MENU_KEYS[v] for v in shared}
+    assert {"merge", "git push", "git pull", "restart", "stop", "destroy", "start"} <= set(shared)
+    assert len(set(BULK_KEYS.values())) == len(BULK_KEYS)  # a bulk can offer any of them at once
+
+
+def test_a_bulk_letter_in_the_table_opens_the_bulk_picker(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    assert session.open_menu_for_letter("D")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-action"
+
+
+def test_a_letter_no_bulk_entry_owns_opens_nothing(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.handle_key("down")
+
+    assert not session.open_menu_for_letter("z")
+    assert session.overlay is None and session.notice is None
+
+
 def test_enter_on_a_repo_header_with_marks_still_opens_the_repo_menu(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running")
     session.marked = frozenset({"alpha-a"})
@@ -207,7 +255,7 @@ def test_capital_d_with_marks_asks_once_for_all(mocker, tmp_path):
     session.marked = frozenset({"alpha-a", "alpha-b"})
     session.handle_key("down")
 
-    session.handle_key("action:destroy")
+    _bulk_key(session, "D")
 
     overlay = session.overlay
     assert isinstance(overlay, Picker) and overlay.purpose == "bulk-destroy-confirm"
@@ -233,7 +281,7 @@ def test_capital_d_with_marks_acts_on_the_marks_not_the_cursor(mocker, tmp_path)
     session.marked = frozenset({"alpha-a", "alpha-b"})
     for _ in range(3):
         session.handle_key("down")  # the cursor on alpha-c, unmarked
-    session.handle_key("action:destroy")
+    _bulk_key(session, "D")
 
     session.picker_chosen(PickerEntry("Yes, destroy 2", "yes"))
 
@@ -249,7 +297,8 @@ def test_capital_d_without_marks_keeps_the_single_destroy(mocker, tmp_path):
     session, terminal, _ = _session(mocker, tmp_path, "Running")
     session.handle_key("down")
 
-    session.handle_key("action:destroy")
+    assert session.open_menu_for_letter("l")  # Lifecycle →, then Destroy inside it
+    session.menu_chosen("destroy", "Lifecycle →", 2)
 
     assert len(terminal.handed) == 1
     assert child.call_args.args[0] == ["jailbee", "destroy", "alpha-a"]
@@ -296,7 +345,7 @@ def test_u_with_marks_plans_git_push_over_the_marks_not_the_cursor(mocker, tmp_p
         session.handle_key("down")  # the cursor on alpha-c, unmarked
     run = mocker.patch.object(session, "run_bulk")
 
-    session.handle_key("action:push")
+    _bulk_key(session, "u")
     session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
     run.assert_called_once()
@@ -314,9 +363,10 @@ def test_u_with_mixed_marks_plans_only_the_eligible(mocker, tmp_path):
     )
     session, _ = bare_session(mocker, [group])
     session.marked = frozenset({"alpha-a", "alpha-m"})
+    session.handle_key("down")  # off the header, which would open the repo menu
     run = mocker.patch.object(session, "run_bulk")
 
-    session.handle_key("action:push")
+    _bulk_key(session, "u")
 
     action = run.call_args.args[0]
     assert action.eligible == ("alpha-a",)
@@ -395,7 +445,7 @@ def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
     session.marked = frozenset({"alpha-a", "alpha-b"})
     session.handle_key("down")
 
-    session.handle_key("action:push")
+    _bulk_key(session, "u")
     session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
     assert len(terminal.handed) == 1
@@ -689,3 +739,41 @@ def test_destroy_and_merge_keep_their_own_question(mocker, tmp_path):
     assert isinstance(destroy, Picker) and destroy.purpose == "bulk-destroy-confirm"
     assert session.begin_bulk("merge") is None  # straight to picking the targets
     assert session.merge_pick is not None
+
+
+def test_the_bulk_picker_shows_each_entrys_letter(tmp_path):
+    picker = Picker(
+        "bulk-action",
+        "2 selected",
+        (PickerEntry("Stop (2)", "stop", "t"), PickerEntry("Destroy… (2)", "destroy", "D")),
+    )
+
+    text = "\n".join(box_text(picker))
+
+    assert "[t] Stop (2)" in text and "[D] Destroy… (2)" in text
+
+
+def test_a_letter_chooses_the_bulk_picker_entry_that_owns_it(mocker, tmp_path):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("bulk-b", "alpha", "Running"), ci("bulk-c", "alpha", "Running")],
+    )
+
+    run = drive(mocker, ["down", "space", "down", "space", "enter", "D"], [group])
+
+    assert run.of_type(Picker)[-1].purpose == "bulk-destroy-confirm"
+
+
+def test_a_bulk_letter_typed_in_the_table_reaches_the_bulk_picker(mocker, tmp_path):
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [ci("bulk-b", "alpha", "Running"), ci("bulk-c", "alpha", "Running")],
+    )
+
+    run = drive(mocker, ["down", "space", "down", "space", "w"], [group])
+
+    assert run.of_type(Picker)[-1].purpose == "bulk-confirm"

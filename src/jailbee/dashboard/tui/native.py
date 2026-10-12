@@ -741,6 +741,10 @@ class HelpBox(OverlayBox):
         return await super().handle_key(event)
 
 
+def _keyed_label(entry: PickerEntry) -> str:
+    return f"[{entry.key}] {entry.label}" if entry.key else entry.label
+
+
 class PickerBox(OverlayBox):
     """A short list to choose from; Esc, `q` and Ctrl-C cancel just this step."""
 
@@ -805,7 +809,7 @@ class PickerBox(OverlayBox):
             )
             widget.display = i < len(shown)
             yield widget
-        options = [Option(_one_line(entry.label)) for entry in self.picker.entries] or [
+        options = [Option(_one_line(_keyed_label(entry))) for entry in self.picker.entries] or [
             Option(_one_line("(nothing to choose)", "dim"), disabled=True)
         ]
         yield OverlayList(*options, mouse_enabled=self.mouse_enabled)
@@ -817,7 +821,7 @@ class PickerBox(OverlayBox):
         return super().chrome_rows() + len(self.shown_detail())
 
     def natural_width(self) -> int | None:
-        widest = max((cell_len(e.label) for e in self.picker.entries), default=20)
+        widest = max((cell_len(_keyed_label(e)) for e in self.picker.entries), default=20)
         detail = max((cell_len(line) for line in self.picker.detail), default=0)
         # border 2 + padding 2 + scrollbar 1; the title needs its own room in the border
         return max(widest + 5, detail + 4, cell_len(self.picker.title) + 6)
@@ -843,6 +847,13 @@ class PickerBox(OverlayBox):
             if not self.display:
                 return True  # an overlay the screen has no room to draw chooses nothing
             return self._chosen(self.query_one(OverlayList).highlighted) or True
+        if event.character and self.display:
+            keys = [e.key for e in self.picker.entries]
+            if event.character in keys:
+                # An entry's own key is Enter on that entry.
+                index = keys.index(event.character)
+                self.query_one(OverlayList).highlighted = index
+                return self._chosen(index) or True
         return await super().handle_key(event)
 
 

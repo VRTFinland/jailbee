@@ -11,7 +11,6 @@ import pytest
 from jailbee.config.models_remote import RemoteSSHConfig
 from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
-from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import (
     autostart_ci,
@@ -171,7 +170,6 @@ def test_stale_menu_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_p
         "check_dashboard_command",
         ddispatch,
         dmenus,
-        tkeys,
         tsession,
         side_effect=refuse,
     )
@@ -418,7 +416,6 @@ def test_snapshot_create_refused_by_the_policy_at_submit_spawns_nothing(mocker, 
         "check_dashboard_command",
         ddispatch,
         dmenus,
-        tkeys,
         tsession,
         side_effect=refuse,
     )
@@ -630,7 +627,6 @@ def test_snapshot_change_refused_by_the_policy_at_submit_spawns_nothing(mocker, 
         "check_dashboard_command",
         ddispatch,
         dmenus,
-        tkeys,
         tsession,
         side_effect=refuse,
     )
@@ -1228,7 +1224,6 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
         "check_dashboard_command",
         ddispatch,
         dmenus,
-        tkeys,
         tsession,
         side_effect=refuse,
     )

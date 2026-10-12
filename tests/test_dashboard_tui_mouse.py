@@ -166,9 +166,9 @@ def test_shift_wheel_and_horizontal_wheel_scroll_columns(mocker, tmp_path):
     assert run.trace[1].column_offset == 1 and run.trace[2].column_offset == 0
 
 
-def test_m_toggles_mouse_reporting_and_says_so(mocker, tmp_path):
+def test_capital_m_toggles_mouse_reporting_and_says_so(mocker, tmp_path):
     reporting = mocker.patch.object(tapp, "_set_mouse_reporting")
-    run = drive(mocker, ["m", "m"], [_two(tmp_path)])
+    run = drive(mocker, ["M", "M"], [_two(tmp_path)])
     assert [c.args[1] for c in reporting.call_args_list] == [False, True]
     assert run.trace[1].notice == "mouse off — terminal text selection active"
     assert run.trace[2].notice == "mouse on"
@@ -319,9 +319,9 @@ def test_a_fold_marker_click_with_a_menu_open_only_selects_the_heading(mocker, t
     assert session.folded == frozenset()
 
 
-def test_m_with_a_mouse_off_start_turns_it_on(mocker, tmp_path):
+def test_capital_m_with_a_mouse_off_start_turns_it_on(mocker, tmp_path):
     reporting = mocker.patch.object(tapp, "_set_mouse_reporting")
-    run = drive(mocker, ["m"], [_two(tmp_path)], mouse=False)
+    run = drive(mocker, ["M"], [_two(tmp_path)], mouse=False)
     assert reporting.call_args.args[1] is True
     assert run.trace[1].notice == "mouse on"
 

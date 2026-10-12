@@ -43,7 +43,8 @@ def test_a_dispatch_goes_through_the_terminal_hand_off(mocker, tmp_path):
     session, terminal = bare_session(mocker, [group])
     session.handle_key("down")
     session.tick()
-    session.handle_key("action:tmux")  # tmux: a foreground dispatch
+    assert session.open_menu_for_letter("t")  # tmux: a foreground dispatch
+    session.menu_chosen("tmux", None, 0)
     assert len(terminal.handed) == 1
     child.assert_called_once()
 

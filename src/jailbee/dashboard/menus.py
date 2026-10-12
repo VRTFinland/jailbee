@@ -88,8 +88,7 @@ _GIT_MENU_VERBS = frozenset(
 # them. "Outbox" is offered unless both outboxes are known to be empty, and
 # `menu_actions` places it by its count.
 _PENDING_APPLY_VERBS = frozenset({"review apply", "issue apply"})
-_SHELL_VERB = frozenset({"shell"})
-_TMUX_VERB = frozenset({"tmux"})
+_SESSION_VERBS = frozenset({"tmux", "shell"})
 
 
 def group_menu_actions(
@@ -146,9 +145,7 @@ def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
     Pending apply leaves lead and ``Launch →`` follows the session entry.
     ``Git →``, ``PR →``, ``Lifecycle →`` (restart/stop/destroy; a lone Destroy
     stays a leaf) and ``Network →`` form one block, in that order, where the
-    first of them used to be. "Open shell" is not listed: the ``s`` key and
-    the ``!`` prompt still reach it, and it stays among the offered leaves
-    those gate on. Everything else keeps its relative order.
+    first of them used to be. Everything else keeps its relative order.
     """
 
     def is_leaf(item: MenuItem, verbs: frozenset[str]) -> bool:
@@ -158,14 +155,12 @@ def _terminal_order(items: list[MenuItem]) -> list[MenuItem]:
         return next((i for i in items if isinstance(i, MenuGroup) and i.label == label), None)
 
     pending = [i for i in items if is_leaf(i, _PENDING_APPLY_VERBS)]
-    rest = [
-        i for i in items if not is_leaf(i, _PENDING_APPLY_VERBS) and not is_leaf(i, _SHELL_VERB)
-    ]
+    rest = [i for i in items if not is_leaf(i, _PENDING_APPLY_VERBS)]
 
     launch = group("Launch →")
     if launch is not None:
         rest.remove(launch)
-        session = next((n for n, i in enumerate(rest) if is_leaf(i, _TMUX_VERB)), -1)
+        session = max((n for n, i in enumerate(rest) if is_leaf(i, _SESSION_VERBS)), default=-1)
         rest.insert(session + 1, launch)
 
     lifecycle = [i for i in rest if isinstance(i, tuple) and i[1] in _CONTAINER_LIFECYCLE_VERBS]

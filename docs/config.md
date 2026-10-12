@@ -2375,7 +2375,7 @@ time. A dim `‹` after the first column and `›` at the right edge mark
 columns out of view, and a column cut by the edge ends in `…`.
 On opening, the widths are fitted to the visible data, and fitted once more
 when the first refresh after that arrives. These session-only budgets survive
-later refreshes and resizes; press `o` to measure new values. Changing settings recomputes column
+later refreshes and resizes; press `O` to measure new values. Changing settings recomputes column
 membership, resets widths to their fixed default budgets and scrolls back to
 the first column.
 Only unfolded, visible repositories contribute to the snapshot.

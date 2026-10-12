@@ -973,19 +973,6 @@ def test_remote_action_menu_offers_no_app_launches():
     assert ("Egress…", "net egress ls") in remote
 
 
-def test_remote_quick_keys_refuse_gui_apps_and_say_why():
-    group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
-    group.apps = _apps("ide", "chrome")
-
-    assert tkeys.quick_verb([group], "alpha-x", "action:ide") == "ide"
-    assert tkeys.quick_verb([group], "alpha-x", "action:ide", remote=True) is None
-    assert tkeys.quick_verb([group], "alpha-x", "action:chrome", remote=True) is None
-    assert tkeys.quick_verb([group], "alpha-x", "action:shell", remote=True) == "shell"
-    note = tkeys.quick_reject_note([group], "alpha-x", "action:ide", remote=True)
-    assert note == "GUI apps are not available over remote SSH"
-    assert tmenu.open_menu([group], "alpha-x", remote=True) is not None
-
-
 def test_action_menu_renders_a_builtins_description_as_its_label():
     """A builtin's `AppSpec.description` (e.g. "JetBrains idea") is real,
     user-facing English — the bare verb the earlier lowercase labels used is
@@ -1680,6 +1667,7 @@ def test_menu_hotkeys_give_running_root_entries_their_mnemonics():
 
     assert _hotkeys(menu) == {
         "Attach tmux": "t",
+        "Open shell": "s",
         "Outbox": "o",
         "Clear failed job": "x",
         "Job log": "b",
@@ -1705,7 +1693,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
         "Show diff (git diff)": "d",
     }
     assert _hotkeys(root, "PR →") == {"Open PR": "p", "Create/update PR": "P"}
-    assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "s", "Destroy": "D"}
+    assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "H", "Destroy": "D"}
     assert _hotkeys(root, "Network →") == {"Network: loose": "l", "Egress…": "e"}
 
 
@@ -1739,7 +1727,7 @@ def test_menu_hotkeys_cover_the_repo_menu():
         "Network →": "w",
         "Apply config…": "y",
         "Diagnostics →": "d",
-        "Prune stale containers…": "r",
+        "Prune stale containers…": "X",
         "Fold": "f",
     }
 
@@ -1753,6 +1741,13 @@ def _levels(menu: tmenu.MenuState | tmenu.RepoMenuState):
             yield item.label, item.actions
 
 
+def _table_keys() -> frozenset[str]:
+    """The single-character keys the table itself answers (what a menu root must not reuse)."""
+    return frozenset(
+        k for b in tkeys.KEY_BINDINGS for k in b.keys if len(k) == 1 and k.isascii() and k.isalpha()
+    )
+
+
 def _assert_every_key_is_fixed(menu: tmenu.MenuState | tmenu.RepoMenuState) -> None:
     for group, entries in _levels(menu):
         if group == "Launch →":
@@ -1761,6 +1756,11 @@ def _assert_every_key_is_fixed(menu: tmenu.MenuState | tmenu.RepoMenuState) -> N
             preferred = tmenu._preferred_menu_key(item)
             assert preferred is not None, f"{item} has no fixed key"
             assert key == preferred, f"{item} lost {preferred!r} to a neighbour in {group}"
+            # A menu letter typed in the table opens that entry, so a root letter the
+            # table answers itself would be dead. The repo menu's `n` *is* the table's
+            # `n` (new container), the same action by either route.
+            if group is None and not (isinstance(menu, tmenu.RepoMenuState) and key == "n"):
+                assert key not in _table_keys(), f"{item}: {key!r} is a table key"
 
 
 _LIFECYCLE_SUBSETS = (
@@ -3858,70 +3858,29 @@ def test_parse_key_maps_arrows_and_letters():
     assert tkeys.parse_key("j") == "down"
     assert tkeys.parse_key("enter") == "enter"
     assert tkeys.parse_key("ctrl+j") == "enter"
-    assert tkeys.parse_key("r") == "refresh"
+    assert tkeys.parse_key("f5") == "refresh"
     assert tkeys.parse_key("q") == "quit"
     assert tkeys.parse_key("Z") == ""  # unmapped
 
 
-def test_parse_key_maps_the_quick_action_keys():
-    assert tkeys.parse_key("t") == "action:tmux"
-    assert tkeys.parse_key("s") == "action:shell"
-    assert tkeys.parse_key("i") == "action:ide"
-    assert tkeys.parse_key("c") == "action:chrome"
-    assert tkeys.parse_key("p") == "action:pr"
+def test_parse_key_leaves_a_containers_action_letters_to_its_menu():
+    """Every letter a menu's root owns is unmapped here, so it reaches the menu."""
+    for letter in "tsicpPudDgGlwfbxRaomN":
+        assert tkeys.parse_key(letter) == "", letter
     assert tkeys.parse_key("h") == "help"
     assert tkeys.parse_key("question_mark") == "help"
 
 
-def test_parse_key_maps_the_workflow_action_keys():
-    assert tkeys.parse_key("P") == "action:pr-update"
-    assert tkeys.parse_key("u") == "action:push"
-    assert tkeys.parse_key("d") == "action:diff"
-    assert tkeys.parse_key("D") == "action:destroy"
+def test_view_keys_moved_off_the_menu_letters():
+    assert tkeys.parse_key("O") == "optimize"
+    assert tkeys.parse_key("M") == "mouse"
+    assert tkeys.parse_key("f5") == "refresh"
+    assert tkeys.parse_key("ctrl+r") == "refresh"
+    assert tkeys.parse_key("r") == ""
 
 
-def test_quick_verb_destroy_key_follows_the_menu_gate(tmp_path):
-    running = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
-    )
-    orphan = dmodel.RepoGroup("gone", None, None, [_ci("gone-x", "gone")])
-
-    assert tkeys.quick_verb([running], "alpha-x", "action:destroy") == "destroy"
-    assert tkeys.quick_verb([orphan], "gone-x", "action:destroy") is None
-
-
-def test_quick_verb_separates_open_pr_from_update_pr(tmp_path):
-    """`p` opens the PR in a browser, `P` pushes to it — the gate matches the
-    verb exactly, so the two never collapse into one another."""
-    with_pr = dmodel.RepoGroup(
-        "alpha",
-        str(tmp_path),
-        tmp_path / "c.yaml",
-        [_ci("alpha-x", "alpha", pr_number=7)],
-    )
-
-    assert tkeys.quick_verb([with_pr], "alpha-x", "action:pr") == "pr --open"
-    assert tkeys.quick_verb([with_pr], "alpha-x", "action:pr-update") == "pr"
-
-
-def test_quick_verb_workflow_keys_follow_the_menu_gate(tmp_path):
-    running = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
-    )
-    mounted = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-m", "alpha", mode="mount")]
-    )
-    clean = dmodel.RepoGroup(
-        "alpha",
-        str(tmp_path),
-        tmp_path / "c.yaml",
-        [_ci("alpha-c", "alpha", git_status=_dirty(wt="clean", ahead_count="0"))],
-    )
-
-    assert tkeys.quick_verb([running], "alpha-x", "action:push") == "git push"
-    assert tkeys.quick_verb([running], "alpha-x", "action:diff") == "git diff"
-    assert tkeys.quick_verb([mounted], "alpha-m", "action:push") is None
-    assert tkeys.quick_verb([clean], "alpha-c", "action:diff") is None
+def _binding(token):
+    return next((b for b in tkeys.KEY_BINDINGS if b.token == token), None)
 
 
 def test_key_bindings_are_the_only_source_of_parse_key():
@@ -3936,116 +3895,6 @@ def test_key_bindings_are_the_only_source_of_parse_key():
             assert tkeys.parse_key(key) == b.token
     tokens = [b.token for b in tkeys.KEY_BINDINGS]
     assert len(tokens) == len(set(tokens))
-
-
-def test_every_quick_action_verb_is_a_real_menu_verb():
-    """Guards against a typo'd verb in the key table.
-
-    A quick key that dispatches a verb `menu_actions` never offers could never
-    fire (the gate below filters it out), so the bug would be silent.
-    """
-    offered = set()
-    for state in ("Running", "Stopped", "Frozen"):
-        offered |= {
-            verb
-            for _label, verb in dmenus.menu_actions(
-                _ctx(
-                    state=state,
-                    apps=_apps("ide", "chrome"),
-                    pr_number=7,
-                    job_clearable=True,
-                    has_job=True,
-                )
-            )
-        }
-    quick = {b.verb for b in tkeys.KEY_BINDINGS if b.verb is not None}
-    assert quick, "no quick-action keys declared"
-    assert quick <= offered, f"unknown verbs: {quick - offered}"
-
-
-def test_quick_verb_returns_the_verb_when_the_action_is_offered(tmp_path):
-    group = dmodel.RepoGroup("alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")])
-
-    assert tkeys.quick_verb([group], "alpha-x", "action:tmux") == "tmux"
-    assert tkeys.quick_verb([group], "alpha-x", "action:shell") == "shell"
-
-
-def test_quick_verb_is_none_when_the_action_is_not_offered(tmp_path):
-    """The gate is `actions_for_container`, so every rule lives in
-    `menu_actions` alone — no second copy of "when is tmux allowed"."""
-    running = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha")]
-    )
-    stopped = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha", state="Stopped")]
-    )
-    orphan = dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
-
-    assert tkeys.quick_verb([stopped], "alpha-x", "action:tmux") is None  # not running
-    assert tkeys.quick_verb([running], "alpha-x", "action:ide") is None  # jetbrains off
-    assert tkeys.quick_verb([running], "alpha-x", "action:chrome") is None  # chrome off
-    assert tkeys.quick_verb([running], "alpha-x", "action:pr") is None  # no PR known
-    assert tkeys.quick_verb([orphan], "gamma-x", "action:tmux") is None  # view-only
-    assert tkeys.quick_verb([running], "alpha-nope", "action:tmux") is None  # unknown
-    assert tkeys.quick_verb([running], None, "action:tmux") is None
-    assert tkeys.quick_verb([running], "alpha-x", "refresh") is None  # not an action key
-
-
-def test_quick_verb_follows_the_repos_apps(tmp_path):
-    group = dmodel.RepoGroup(
-        "alpha",
-        str(tmp_path),
-        tmp_path / "c.yaml",
-        [_ci("alpha-x", "alpha")],
-        apps=_apps("ide", "chrome"),
-    )
-
-    assert tkeys.quick_verb([group], "alpha-x", "action:ide") == "ide"
-    assert tkeys.quick_verb([group], "alpha-x", "action:chrome") == "chrome"
-
-
-def test_quick_reject_note_names_the_key_and_the_container(tmp_path):
-    stopped = dmodel.RepoGroup(
-        "alpha", str(tmp_path), tmp_path / "c.yaml", [_ci("alpha-x", "alpha", state="Stopped")]
-    )
-
-    note = tkeys.quick_reject_note([stopped], "alpha-x", "action:tmux")
-
-    assert "'t'" in note and "tmux" in note and "alpha-x" in note
-
-
-def test_quick_reject_note_reports_remote_policy_denial(tmp_path):
-    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
-
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_ci("alpha-x", "alpha")])
-    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
-
-    note = tkeys.quick_reject_note(
-        [group], "alpha-x", "action:push", ssh_policy=policy, over_ssh=True
-    )
-
-    assert note == "Jailbee command is not allowed: git push"
-
-
-def test_quick_reject_note_prefers_the_view_only_explanation():
-    orphan = dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
-
-    assert tkeys.quick_reject_note([orphan], "gamma-x", "action:tmux") == dmenus.view_only_note(
-        [orphan], "gamma-x"
-    )
-
-
-def test_quick_reject_note_handles_an_empty_selection():
-    assert "selected" in tkeys.quick_reject_note([], None, "action:tmux")
-
-
-def test_binding_for_token_finds_the_key_and_its_label():
-    binding = tkeys.binding_for_token("action:tmux")
-
-    assert binding is not None
-    assert binding.hint == "t"
-    assert binding.label
-    assert tkeys.binding_for_token("nope") is None
 
 
 def test_render_help_overlay_documents_every_key(tmp_path):
@@ -4066,7 +3915,7 @@ def test_render_help_overlay_documents_every_key(tmp_path):
         if b.hint:
             assert b.hint in out, f"{b.token}: hint {b.hint!r} missing from help"
             assert b.label in out, f"{b.token}: label {b.label!r} missing from help"
-    assert "open a container or repo menu (fold there)" in out
+    assert "open the row's menu (its letters work without Enter)" in out
     assert "mark a container, fold a repo (Settings: toggle)" in out
     # Help replaces neither the table nor the hint line, and explains gating.
     assert "NAME" in out and "one" in out
@@ -4629,7 +4478,7 @@ def test_folded_groups_retain_enabled_conditional_columns(tmp_path):
 
 def test_space_key_is_fold_key_and_enter_remains_bound():
     assert tkeys.parse_key("space") == "space"
-    binding = tkeys.binding_for_token("space")
+    binding = _binding("space")
     assert binding is not None
     assert binding.hint and binding.label
     assert tkeys.parse_key("enter") == "enter"
@@ -4637,7 +4486,7 @@ def test_space_key_is_fold_key_and_enter_remains_bound():
 
 def test_space_is_the_fold_key_and_still_toggles_settings_binding():
     assert tkeys.parse_key("space") == "space"
-    binding = tkeys.binding_for_token("space")
+    binding = _binding("space")
     assert binding is not None
     assert "fold" in binding.label and "Settings" in binding.label
 
@@ -4646,7 +4495,7 @@ def test_settings_key_is_bound_to_f2_and_shift_s():
     """F2, plus a letter that works everywhere. `s` is already shell, so the alias is `S`."""
     assert tkeys.parse_key("f2") == "settings"
     assert tkeys.parse_key("S") == "settings"
-    binding = tkeys.binding_for_token("settings")
+    binding = _binding("settings")
     assert binding is not None and binding.hint
 
 
@@ -4912,14 +4761,6 @@ def test_container_menu_credential_group_follows_the_ssh_policy(
 
 def test_parse_key_maps_n_to_the_new_container_token():
     assert tkeys.parse_key("n") == "new"
-
-
-def test_new_binding_is_not_a_container_verb():
-    """`n` is repo-scoped. A `verb` would put it through `quick_verb`, which
-    gates on a *container's* state and would reject it everywhere."""
-    binding = tkeys.binding_for_token("new")
-    assert binding is not None
-    assert binding.verb is None
 
 
 def test_new_binding_appears_in_the_help_overlay(tmp_path):
@@ -5193,6 +5034,7 @@ def test_group_menu_actions_terminal_order_hoists_pending_and_puts_git_first():
         leaves[4],
         leaves[7],
         leaves[0],
+        leaves[1],
         dmenus.MenuGroup("Git →", (leaves[5], leaves[6])),
         dmenus.MenuGroup("PR →", (leaves[2], leaves[3])),
         dmenus.MenuGroup("Network →", (leaves[8],)),
@@ -5210,8 +5052,9 @@ def test_terminal_order_running_menu_layout(tmp_path):
         item.label if isinstance(item, dmenus.MenuGroup) else item[0]
         for item in tmenu.menu_entries(menu)
     ]
-    assert labels[:7] == [
+    assert labels[:8] == [
         "Attach tmux",
+        "Open shell",
         "Launch →",
         "Outbox",
         "Git →",
@@ -5219,14 +5062,12 @@ def test_terminal_order_running_menu_layout(tmp_path):
         "Lifecycle →",
         "Network →",
     ]
-    assert "Open shell" not in labels
     lifecycle = next(
         i
         for i in tmenu.menu_entries(menu)
         if isinstance(i, dmenus.MenuGroup) and i.label == "Lifecycle →"
     )
     assert [v for _, v in lifecycle.actions] == ["restart", "stop", "destroy"]
-    # Leaves stay offered: the `s` and `D` keys gate on them.
     assert {"shell", "destroy"} <= {v for _, v in menu.actions}
 
 
@@ -5716,25 +5557,6 @@ def test_gui_remote_action_menu_offers_app_launches():
     enabled = dmenus.menu_actions(dataclasses.replace(ctx, gui_remote=True))
 
     assert ("Launch Chrome", "chrome") in enabled
-
-
-def test_gui_remote_quick_key_reason_follows_the_gui_switch():
-    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
-
-    group = dmodel.RepoGroup("alpha", "/repos/alpha", None, [_ci("alpha-x", "alpha")])
-    group.apps = _apps("chrome")
-    off = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"))
-    on = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), gui=True)
-    kwargs = {"remote": True, "over_ssh": True}
-
-    assert tkeys.quick_verb([group], "alpha-x", "action:chrome", ssh_policy=off, **kwargs) is None
-    note = tkeys.quick_reject_note([group], "alpha-x", "action:chrome", ssh_policy=off, **kwargs)
-    assert note == "GUI apps are not available over remote SSH"
-    assert (
-        tkeys.quick_verb([group], "alpha-x", "action:chrome", ssh_policy=on, **kwargs) == "chrome"
-    )
-    note = tkeys.quick_reject_note([group], "alpha-x", "action:chrome", ssh_policy=on, **kwargs)
-    assert "GUI apps are not available" not in note
 
 
 def test_gui_remote_allowlist_without_chrome_does_not_offer_chrome():
@@ -6246,7 +6068,7 @@ def test_nonoverflow_details_height_is_stable_between_repo_and_container(tmp_pat
 
 
 def test_optimize_key_is_documented_and_parsed():
-    assert tkeys.parse_key("o") == "optimize"
+    assert tkeys.parse_key("O") == "optimize"
     out = "\n".join(
         paint(
             view_of(

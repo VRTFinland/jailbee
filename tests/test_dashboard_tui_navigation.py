@@ -189,7 +189,7 @@ def test_repo_menu_fold_reclamps_without_resetting_optimized_widths(mocker, tmp_
     other = dataclasses.replace(group, prefix="beta")
     run = drive(
         mocker,
-        ["o"] + ["right"] * 6 + repo_menu_keys(group, "fold"),
+        ["O"] + ["right"] * 6 + repo_menu_keys(group, "fold"),
         [group, other],
         view_state=ViewState(columns=WIDE),
         size=(32, 25),
@@ -255,7 +255,7 @@ def test_resize_step_lays_out_before_the_next_key_without_textuals_debounce(mock
     assert _offsets(run)[-3:] == [1, 1, 0]
 
 
-@pytest.mark.parametrize("reset_keys", [["o"], ["S", "space", "escape"]])
+@pytest.mark.parametrize("reset_keys", [["O"], ["S", "space", "escape"]])
 def test_run_reset_the_offset(mocker, tmp_path, reset_keys):
     mocker.patch.object(tsession, "save_view_state")
     run = drive(
@@ -316,7 +316,7 @@ def test_run_enters_pr_submenu_and_dispatches_leaf(mocker, tmp_path):
 
     run = drive(
         mocker,
-        ["j", "enter", "down", "down", "down", "enter", "down", "enter"],
+        ["j", "enter", "down", "down", "down", "down", "enter", "down", "enter"],
         groups=[group],
     )
 
@@ -369,12 +369,13 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
 
     run = drive(
         mocker,
-        ["j", "enter", "down", "down", "down", "enter", "escape", "enter", "q"],
+        ["j", "enter", "down", "down", "down", "down", "enter", "escape", "enter", "q"],
         groups=[group],
     )
 
     # natives[n] is the state after step n-1; the menu opens at natives[2].
-    assert [state.level for state in run.natives[2:9] if state is not None] == [
+    assert [state.level for state in run.natives[2:10] if state is not None] == [
+        None,
         None,
         None,
         None,
@@ -383,11 +384,11 @@ def test_run_escape_backs_out_but_q_closes_submenu(mocker, tmp_path):
         None,
         "PR →",
     ]
-    assert run.natives[7] == toverlay.NativeState(
-        "menu", 3, level=None
+    assert run.natives[8] == toverlay.NativeState(
+        "menu", 4, level=None
     )  # Esc lands on the PR → row
-    assert run.trace[9].overlay is None
-    assert run.steps_taken > 9
+    assert run.trace[10].overlay is None
+    assert run.steps_taken > 10
     child.assert_not_called()
 
 
@@ -399,6 +400,7 @@ def test_run_vanished_container_closes_submenu(mocker, tmp_path):
         [
             "j",
             "enter",
+            "down",
             "down",
             "down",
             "down",

@@ -8,7 +8,6 @@ from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.jobs import JobRunner
-from jailbee.dashboard.tui import keys as tkeys
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from tests.dashboard_fixtures import ci, fake_branches, retarget_group
@@ -160,7 +159,6 @@ def test_run_retarget_prompt_is_gated_by_the_dispatch_prechecks(mocker, tmp_path
         "check_dashboard_command",
         ddispatch,
         dmenus,
-        tkeys,
         tsession,
         side_effect=tsession.RouteError("refused by policy"),
     )

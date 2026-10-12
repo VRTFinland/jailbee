@@ -1018,7 +1018,7 @@ jailbee tmux feat-waitfail
 # A non-interactive stdin (a script, a cron job) is treated the same way.
 jailbee tmux feat-waitfail --force        # same warning, no prompt
 
-# From the dashboard, `t`/`s`/`i`/`c` (and the Enter menu) dispatch with
+# From the dashboard, `t`/`s`/`a i`/`a c` (and the Enter menu) dispatch with
 # --force: the JOB column already showed `failed`.
 jailbee dashboard                         # highlight feat-waitfail, press t
 
@@ -3266,10 +3266,10 @@ jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git 
 #     readable until you press Enter.
 #  "Send commits to host (git pull)" -> same pause behaviour. On a container
 #     with nothing ahead of its base, expect the entry to be ABSENT from the
-#     menu (and `git pull` to have no quick key at all — by design).
+#     menu.
 #  "Job log" -> present only while a job row exists; on a live background job
 #     it follows the worker log (Ctrl-C ends it), on a finished one it prints
-#     once. Not bound to a quick key.
+#     once.
 #  A --mount container offers none of pr/git push/git pull/git diff (no clone
 #     of its own): jailbee new feat/mnt --mount, then Enter on that row.
 #  h (or ?) -> keybinding help below the table; h again or Esc closes it.
@@ -3335,7 +3335,7 @@ jailbee dashboard
 #  Quit and reopen `jailbee dashboard` -> the column order and the sort are
 #     both still there.
 
-# Mouse (on by default; `m` toggles it for the session):
+# Mouse (on by default; `M` toggles it for the session):
 #  Click a container row -> it is selected. Double-click or right-click ->
 #     its menu opens. Click ▾/▸ on a repo header -> the repo folds/unfolds.
 #  Narrow the terminal until › appears; click it -> the columns step right.

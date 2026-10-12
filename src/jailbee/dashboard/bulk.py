@@ -56,6 +56,21 @@ BULK_LABELS: dict[str, str] = {
     "rename --clear": "Clear name",
     "destroy": "Destroy…",
 }
+# Each bulk verb's own key in the "N selected" list: the container menu's letter
+# for the same verb where there is one. The two network modes were never at the
+# menu's root, so they take their own.
+BULK_KEYS: dict[str, str] = {
+    "merge": "m",
+    "git push": "u",
+    "git pull": "l",
+    "start": "s",
+    "restart": "r",
+    "stop": "H",
+    "net strict": "n",
+    "net loose": "w",
+    "rename --clear": "R",
+    "destroy": "D",
+}
 _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
 # Verbs that put their own question to the user. `destroy` shows its risk
 # summary; `merge` is asked by the CLI once the targets are picked, so the

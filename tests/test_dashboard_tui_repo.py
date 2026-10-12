@@ -148,8 +148,9 @@ def test_a_service_problem_shows_as_a_notice_without_exiting(mocker, tmp_path):
     assert any(notice == "refresh failed: incus is down" for notice in run.notices())
 
 
-def test_the_r_key_asks_the_service_for_a_refresh(mocker):
-    run = drive(mocker, ["r"], [])
+@pytest.mark.parametrize("key", ["f5", "ctrl+r"])
+def test_the_refresh_keys_ask_the_service_for_a_refresh(mocker, key):
+    run = drive(mocker, [key], [])
 
     assert run.rc == 0
     assert ("refresh",) in run.client.events

@@ -199,27 +199,30 @@ def menu_width(menu: MenuState | RepoMenuState) -> int:
 
 # Each menu entry's own key, by leaf verb (labels carry counts) or group label.
 # Scoped to the level that is open, so `l` is Lifecycle at the root and `git
-# pull` inside Git. Where a dashboard quick key exists the letter matches it,
-# and Destroy stays a capital as there. Every entry a menu can show has one,
+# pull` inside Git. The same letters work in the table without Enter, so a
+# root letter is never one the table itself answers (`n`, `A`, `O`, `M`, `r`, …):
+# that is why Snapshots is `N`, autostart status `T` and prune `X`. Destroy is a
+# capital. Every entry a menu can show has one,
 # unique among the entries that can share its level, so no key moves when
 # another entry comes or goes; the tests enumerate those combinations. Only
 # app launches (`Launch →`, labels from the repo's config) take a free letter
 # of their label (see `menu_hotkeys`).
 _MENU_KEYS: dict[str, str] = {
-    # container root (start and a lone stop never share it)
+    # container root (start and shell never share it)
     "tmux": "t",
+    "shell": "s",
     "outbox browse": "o",
     "Launch →": "a",
     "start": "s",
     "job log": "b",
     "job log --follow": "b",
     "job clear": "x",
-    dact.AUTOSTART_STATUS: "A",
+    dact.AUTOSTART_STATUS: "T",
     dact.AUTOSTART_CANCEL: "C",
     "Git →": "g",
     "PR →": "p",
     "Lifecycle →": "l",
-    dact.SNAPSHOTS: "n",
+    dact.SNAPSHOTS: "N",
     dact.MOUNT_ADD: "m",
     dact.MOUNT_REMOVE: "u",
     "credential-group": "c",
@@ -238,7 +241,7 @@ _MENU_KEYS: dict[str, str] = {
     "pr": "P",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
-    "stop": "s",
+    "stop": "H",  # not `s`: shell and start own it, and a lone stop can sit beside them
     "destroy": "D",
     # Network → (modes take their own initial, see `_preferred_menu_key`)
     "net egress ls": "e",
@@ -248,7 +251,7 @@ _MENU_KEYS: dict[str, str] = {
     "accounts": "a",
     dact.REPO_APPLY: "y",
     dact.DIAGNOSTICS_LABEL: "d",
-    dact.REPO_PRUNE: "r",
+    dact.REPO_PRUNE: "X",
     "fold": "f",
     # Diagnostics →
     dact.REPO_DOCTOR: "d",

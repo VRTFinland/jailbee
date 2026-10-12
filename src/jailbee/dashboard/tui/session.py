@@ -26,6 +26,7 @@ from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.bulk import (
+    BULK_KEYS,
     BulkAction,
     BulkBatch,
     bulk_actions,
@@ -135,7 +136,6 @@ from jailbee.dashboard.sorting import (
     sort_notice,
 )
 from jailbee.dashboard.tui.frame import DashboardView
-from jailbee.dashboard.tui.keys import quick_reject_note, quick_verb
 from jailbee.dashboard.tui.menu_state import (
     MenuState,
     RepoMenuState,
@@ -2158,33 +2158,6 @@ class DashboardSession:
             self.overlay = CommandState()
         elif key == "settings":
             self.overlay = self.open_settings_overlay()
-        elif key.startswith("action:"):
-            binding_verb = {"action:destroy": "destroy", "action:push": "git push"}.get(key)
-            if self.marked and binding_verb is not None:
-                self.overlay = self.begin_bulk(binding_verb)
-                return None
-            container = container_of(self.selected)
-            verb = quick_verb(
-                self.groups,
-                container,
-                key,
-                remote=self.remote,
-                ssh_policy=self.ssh_policy,
-                over_ssh=self.over_ssh,
-            )
-            if verb is not None and container is not None:
-                self.dispatch(container, verb)
-            else:
-                self.set_notice(
-                    quick_reject_note(
-                        self.groups,
-                        container,
-                        key,
-                        remote=self.remote,
-                        ssh_policy=self.ssh_policy,
-                        over_ssh=self.over_ssh,
-                    )
-                )
         elif key == "new":
             self.overlay = self.start_new_container()
         elif key == "accounts":
@@ -2268,7 +2241,7 @@ class DashboardSession:
         return Picker(
             "bulk-action",
             f"{len(names)} selected",
-            tuple(PickerEntry(a.label, a.verb) for a in actions),
+            tuple(PickerEntry(a.label, a.verb, BULK_KEYS[a.verb]) for a in actions),
         )
 
     def begin_bulk(self, verb: str, *, confirmed: bool = False) -> Overlay | None:
@@ -2483,10 +2456,20 @@ class DashboardSession:
         """Open the selected row's menu when ``char`` is one of its entries' own letters.
 
         A menu letter typed in the table is Enter plus that letter, so the menu
-        is the one place that knows what a row offers. Silent when nothing
-        owns the letter (and for marked rows, whose menu is the bulk list).
+        is the one place that knows what a row offers. Marked container rows
+        offer the bulk list. Silent when nothing owns the letter.
         """
-        if self.overlay is not None or self.merge_pick is not None or self.marked:
+        if self.overlay is not None or self.merge_pick is not None:
+            return False
+        if self.marked and self.selected is not None and self.selected.kind != "repo":
+            if char not in BULK_KEYS.values():
+                return False
+            picker = self.bulk_menu()
+            if picker is None or char not in (e.key for e in picker.entries):
+                return False
+            self.overlay = picker
+            return True
+        if self.marked:
             return False
         menu = self._selection_menu()
         if menu is None or char not in menu_hotkeys(menu_entries(menu)):

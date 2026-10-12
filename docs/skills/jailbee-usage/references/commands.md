@@ -728,7 +728,7 @@ from unfolded visible data (widths are also fitted on opening and once more on t
 first refresh; settings changes restore the default widths; session-only; retained on refresh and resize; press again to recompute — which selected columns show is recomputed on every refresh: a column with content appears, an all-empty one goes),
 `←`/`→` scroll the columns sideways when they do not fit the terminal: the first
 column stays put, a dim `‹`/`›` marks columns out of view, and a column cut by
-the edge ends in `…` (session-only; reset by `o` and settings changes), `r` force refresh, `h`/`?` keybinding
+the edge ends in `…` (session-only; reset by `O` and settings changes), `F5`/`Ctrl-R` force refresh, `h`/`?` keybinding
 help, `q`/`Ctrl-C` quit. The action menu opens *inline below the table* — the
 dashboard stays visible and keeps refreshing behind it; a table taller than the screen scrolls to keep the cursor visible (with a scrollbar; the wheel scrolls without moving the selection); `↑/↓` then move the
 menu cursor, `Enter` runs the entry — or press the key shown in brackets beside it (`[g] Git →`, then `[u]` inside; keys are per menu level) — `Esc`/`q` closes it (`Ctrl-C` quits from
@@ -806,18 +806,24 @@ same command `apps run` documents above, with the container passed as its
 `--container` option rather than a positional — regardless of whether the
 entry set `top_level: true`, so it launches correctly either way.
 
-Quick-action keys skip the menu for the highlighted row: `t` attach tmux, `s`
-open a shell, `i` launch the IDE, `c` launch Chrome, `p` open the PR, `P`
-create/update the PR, `u` update from base, `d` show the diff, `D` destroy (asks to confirm). Each one
-fires only when that action is offered for that container — the gate is the
-same one the menu uses, so a Stopped container has no `t`/`s`, `i`/`c` need
-`jetbrains.enabled`/`browsers.chrome.enabled` (Firefox and `apps:` entries
-have no quick key, only the full menu), `p` needs a known PR, `P`/`u`/`d`
-need a running clone-mode container, and orphan
-rows have none of them. A declined key prints the reason in the panel footer
-for a couple of seconds. `git pull` and `job log` are deliberately menu-only:
-the first writes to the host's own working tree, and the second's command
-varies with `--follow`.
+A row's actions are its menu's letters, and they work in the table without
+Enter: with a container highlighted, `g` opens `Git →`, `l` `Lifecycle →`, `t`
+attaches tmux, `s` opens a shell (or starts a stopped container), `p` opens
+`PR →`, `a` `Launch →`, `w` `Network →`, `f` forks, `R` renames, and so on; the
+menu's own letters then carry on inside the level (`g` `u` updates from base,
+`l` `D` destroys, `a` `i` launches the IDE). Enter opens the same menu to show
+the letters. A letter fires only when its entry is offered for that container
+— the gate is the menu itself, so a Stopped container has no `t`, `a i`/`a c`
+need `jetbrains.enabled`/`browsers.chrome.enabled`, `p` needs a known PR,
+`g u`/`g d` need a running clone-mode container, and orphan rows have none of
+them; a letter nothing owns does nothing. With marks, the letters are those of
+the *N selected* list (`m` merge, `u` push, `l` pull, `s` start, `r` restart,
+`H` stop, `n`/`w` network strict/loose, `R` clear name, `D` destroy). The
+dashboard keeps only the keys no menu has: movement, `Space`, `n` new container,
+`e`/`E` config, `A` accounts, `O` optimize, `F5`/`Ctrl-R` refresh, `v`, `M`,
+`S`/`F2`, `<`/`>`/`I`, `h`/`?`, `!`, `q`. Letters that would clash move in the
+menu (`N` snapshots, `T` autostart status, `X` prune stale containers, `H`
+stop).
 
 `n` creates a container in the repo the selected row belongs to. It asks for
 a branch name and a base branch — the base is a separate field because
@@ -885,7 +891,7 @@ merge unmarks its sources. A line under the table names the sources and targets
 throughout, and a source that disappears in a refresh ends the mode. The Qt
 dashboard still leaves the target to the CLI's picker.
 
-Mouse (on by default; `m` toggles it for the session, `dashboard.mouse: false` in
+Mouse (on by default; `M` toggles it for the session, `dashboard.mouse: false` in
 the global config turns it off): click selects a row, double- or right-click opens
 its menu, Ctrl+click marks a row (a Ctrl double-click is two toggles), `▾`/`▸` folds a repo, `‹`/`›` scroll the columns, menu and picker entries,
 suggestions and settings tabs are clickable; the wheel scrolls the view, never the

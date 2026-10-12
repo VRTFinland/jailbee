@@ -337,7 +337,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def toggle_mouse(self) -> None:
-        """`m`: mouse reporting on or off for this session."""
+        """`M`: mouse reporting on or off for this session."""
         self.mouse_on = not self.mouse_on
         _set_mouse_reporting(self._driver, self.mouse_on)
         self.hover = None

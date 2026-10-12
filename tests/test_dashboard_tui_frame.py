@@ -144,7 +144,7 @@ def test_width42_help_cue_and_unicode_cell_widths(tmp_path):
 def test_delivered_mouse_off_and_outside_wheels_do_nothing(mocker, tmp_path):
     run = drive(
         mocker,
-        [Wheel(1, at="#frame"), "m", Wheel(1), Wheel(1, shift=True)],
+        [Wheel(1, at="#frame"), "M", Wheel(1), Wheel(1, shift=True)],
         [_long(tmp_path)],
         size=(44, 12),
     )

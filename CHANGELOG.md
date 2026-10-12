@@ -123,6 +123,17 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **A menu's letters work in the terminal dashboard's table, without Enter.**
+  With a container highlighted `g` opens `Git →`, `l` `Lifecycle →`, `t` attaches
+  tmux, and so on; a repo header answers the repo menu's letters the same way.
+  The separate quick keys `u`, `d`, `D`, `i`, `c`, `p` and `P` are gone — they
+  are `g` `u`, `g` `d`, `l` `D`, `a` `i`, `a` `c`, `p` `p` and `p` `P` — and
+  "Open shell" is now a menu entry (`s`). A few keys moved to make room:
+  refresh is `F5`/`Ctrl-R` (was `r`), optimize is `O`, mouse is `M`, and in the
+  menus Snapshots is `N`, autostart status `T`, prune `X` and Stop `H`. The
+  *N selected* list has letters too, so `D` or `u` over marked rows still acts
+  on all of them.
+
 - **The terminal dashboard runs on Textual and takes the mouse.** Click a row to
   select it, double- or right-click it to open its menu, click `▾`/`▸` to fold a
   repo and `‹`/`›` to scroll the columns; menu, picker and suggestion entries and
