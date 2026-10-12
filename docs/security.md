@@ -424,9 +424,10 @@ jailbee mount aws feat-login --for 30m    # or say how long this time
 jailbee unmount aws feat-login            # done early
 ```
 
-`jailbee ls`, the dashboards and the details panel show what is attached to a
-container and for how long, and the dashboard's container menu has Mount… and
-Unmount…. An [autostart](project-config.md#5-define-autostart-steps) stage can attach one for its own
+The **MOUNT** column in `jailbee ls` and the dashboards shows that a container
+has one attached and how long until it detaches (`◆ 12m`, or `◆ ∞` for one
+with no deadline); the details panel names which, and the dashboard's
+container menu has Mount… and Unmount…. An [autostart](project-config.md#5-define-autostart-steps) stage can attach one for its own
 duration only (`mounts: [aws]`).
 
 - **Mount the directory, not the file.** A bind mount of a single file pins
