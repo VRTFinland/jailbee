@@ -1,0 +1,160 @@
+# JailBee 1.7 — the channel's first video, plus a Short.
+#
+# Every scene is one narration clip and one HTML page. A scene's length is its
+# clip's length plus `pad` either side; the next starts `fade` early so the two
+# cross-fade. Narration is spoken text: write what the voice should say
+# ("star dot example dot com"), and let the page show the literal form.
+# The honesty rules in ../../README.md bind every page.
+title: JailBee 1.7
+fps: 30
+pad: 0.6
+fade: 0.4
+tts:
+  model: gpt-4o-mini-tts-2025-12-15
+  voice: marin
+  instructions: >-
+    You are a calm, confident developer advocate narrating a product video for
+    software engineers. Speak clearly and warmly at an unhurried pace, with
+    natural emphasis. Friendly and assured, never salesy or over-excited.
+
+scenes:
+  # ---- main ---------------------------------------------------------------
+  - id: cold-open
+    page: scenes/cold-open.html
+    formats: [main]
+    params:
+      lines: [A dozen AI agents., A dozen branches., One screen.]
+      title: JailBee <span class="amber">1.7</span>
+      shot_at: 0.3
+      title_at: 0.42
+    narration: >-
+      A dozen AI agents. A dozen branches. One screen. This is JailBee one
+      point seven. And if you have never seen JailBee before, here is the idea.
+
+  - id: what
+    page: scenes/what.html
+    formats: [main]
+    narration: >-
+      JailBee gives every git branch its own Linux machine: a system container
+      on your own Linux host. Each one runs its own Docker daemon, so your
+      compose file works unchanged. It has its own browser and IDE, drawn on
+      your desktop. And it holds its own clone of the repository, so an agent
+      can wreck its environment without touching your checkout. Point a coding
+      agent at it and leave the room: the container is the fence. When you
+      want the work, JailBee moves the commits to your host over git, without
+      a round trip through GitHub.
+
+  - id: ai-column
+    page: scenes/ai-column.html
+    formats: [main]
+    narration: >-
+      Running many agents at once changes the question. It is no longer what
+      one agent is doing, but which one needs you. The dashboard's AI column
+      answers that at a glance. A green dot is an agent at work. A yellow
+      diamond is one waiting for you. A hollow dot is idle. And new in one
+      point seven, a half-filled dot is an agent that is idle while a shell
+      job it started keeps running.
+
+  - id: details
+    page: scenes/details.html
+    formats: [main]
+    narration: >-
+      Press V, and the details panel opens under the table. It shows the
+      container's state and network; the branch and every submodule, with what
+      is ahead of the base and what is still uncommitted; and then the agent
+      itself: how long it has been busy, the last tool it called, and the last
+      thing it said. Most of the time, that is enough to know whether to step
+      in.
+
+  - id: menu
+    page: scenes/menu.html
+    formats: [main]
+    narration: >-
+      Enter opens the container's menu. Every entry keeps its own key, so the
+      same keystrokes always do the same thing, whichever container you are on.
+
+  - id: marks
+    page: scenes/marks.html
+    formats: [main]
+    narration: >-
+      A dozen containers also means a dozen to restart, update and clean up.
+      Space marks a container, and the menu then acts on every mark at once.
+      Each entry says how many of the marked containers it applies to, and the
+      work runs in parallel, without leaving the dashboard.
+
+  - id: fork-merge
+    page: scenes/fork-merge.html
+    formats: [main]
+    narration: >-
+      Fork starts a second container from another one's committed state, so
+      two agents can attempt the same change side by side. Then Merge into
+      takes the containers you marked, and merges them into the one you pick.
+
+  - id: network
+    page: scenes/network.html
+    formats: [main]
+    narration: >-
+      Every container also has an egress allowlist. You write host names, and
+      JailBee enforces them in two layers. The first is a kernel-level ACL. It
+      sees every packet, for every protocol, ssh and database connections
+      included, and it is the only way out of the container. The second, new
+      in one point seven, is a proxy that sees names. On the work network,
+      HTTP and HTTPS requests are matched by host name, so a host that merely
+      shares an address with an allowed one is refused. The proxy is also what
+      makes wildcards possible, like star dot example dot com. And a tool that
+      ignores the proxy does not slip through. It meets the ACL instead.
+
+  - id: upgrade
+    page: scenes/upgrade.html
+    formats: [main]
+    narration: >-
+      Upgrades got simpler too. After you update JailBee, jailbee upgrade runs
+      what the release needs, an image rebuild or a config apply, in every
+      repository you use, without restarting a single container. And jailbee
+      console gives you an interactive prompt with completion and history.
+
+  - id: outro
+    page: scenes/outro.html
+    formats: [main]
+    narration: >-
+      JailBee is free and open source, for Linux hosts. Install it with uv or
+      pipx, and find the documentation at jailbee dot gisgro dot io. Thanks for
+      watching.
+
+  # ---- short --------------------------------------------------------------
+  - id: short-hook
+    page: scenes/cold-open.html
+    formats: [short]
+    params:
+      lines: [Twelve AI agents., Twelve branches.]
+      title: Which one needs you <span class="amber">right now?</span>
+      shot_at: 0.45
+      title_at: 0.62
+    narration: >-
+      Twelve AI agents. Twelve branches. Which one needs you right now?
+
+  - id: short-ai
+    page: scenes/ai-column.html
+    formats: [short]
+    narration: >-
+      JailBee's dashboard tells you at a glance. Green is working, yellow is
+      waiting for you, hollow is idle.
+
+  - id: short-details
+    page: scenes/details.html
+    formats: [short]
+    narration: >-
+      One key opens the details: the branch, its submodules, the agent's last
+      tool call and its last message.
+
+  - id: short-marks
+    page: scenes/marks.html
+    formats: [short]
+    narration: >-
+      Mark a few containers, and act on all of them at once.
+
+  - id: short-outro
+    page: scenes/outro.html
+    formats: [short]
+    narration: >-
+      JailBee one point seven. The full video is on the channel.

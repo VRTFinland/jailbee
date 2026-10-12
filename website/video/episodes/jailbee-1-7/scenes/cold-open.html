@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Cold open: the honeycomb, three short lines, then the real dashboard and
+     the title. params: lines (list), title, shot_at, title_at (narration
+     fractions). -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 20% center;
+  }
+  html[data-format="short"] .bg { object-position: 22% center; }
+  /* Keeps the text legible over the bright cells in portrait. */
+  .scrim { display: none; }
+  html[data-format="short"] .scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgb(11 12 14 / 88%) 0%, rgb(11 12 14 / 35%) 26%,
+      rgb(11 12 14 / 35%) 58%, rgb(11 12 14 / 92%) 74%);
+  }
+
+  .lines, .title {
+    position: absolute;
+    right: var(--edge);
+    width: 700px;
+  }
+  .lines { top: 330px; }
+  .lines h1 { font-size: 80px; margin-bottom: 18px; }
+  .title { top: 96px; }
+  .title .kicker { margin-bottom: 18px; }
+  .title h1 { font-size: 88px; }
+
+  .shot {
+    position: absolute;
+    right: var(--edge);
+    top: 330px;
+  }
+
+  html[data-format="short"] .lines,
+  html[data-format="short"] .title {
+    left: var(--edge);
+    right: var(--edge);
+    width: auto;
+  }
+  html[data-format="short"] .lines { top: 260px; }
+  html[data-format="short"] .lines h1 { font-size: 104px; }
+  html[data-format="short"] .title { top: 1480px; text-align: center; }
+  html[data-format="short"] .shot { right: auto; left: 131px; top: 640px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <img class="bg" src="../assets/cold-open.jpg" alt="" />
+  <div class="scrim"></div>
+  <div class="lines"></div>
+  <img class="shot" src="../../../../assets/news/jailbee-1-7-details-panel.png" alt="" />
+  <div class="title">
+    <div class="kicker">jailbee.gisgro.io</div>
+    <h1></h1>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ params, duration, at, anim, format }) => {
+    const lines = params.lines || [];
+    const holder = document.querySelector(".lines");
+    for (const text of lines) {
+      const h1 = document.createElement("h1");
+      h1.textContent = text;
+      holder.append(h1);
+    }
+    document.querySelector(".title h1").innerHTML = params.title || "";
+
+    // Main: drift the honeycomb left, clear of the text, scaled enough that no
+    // edge shows. Short: a slow push in.
+    const [from, to] = format === "short"
+      ? ["scale(1.0)", "scale(1.08)"]
+      : ["translateX(-6%) scale(1.14)", "translateX(-6%) scale(1.22)"];
+    anim(".bg", [{ transform: from }, { transform: to }], 0, duration, "linear");
+    const step = (params.shot_at ?? 0.45) / Math.max(1, lines.length);
+    holder.querySelectorAll("h1").forEach((h1, i) => {
+      anim(h1, [{ opacity: 0, transform: "translateY(24px)" }, { opacity: 1, transform: "none" }],
+           at(i * step), at(i * step) + 0.5);
+    });
+
+    const shotAt = at(params.shot_at ?? 0.45);
+    const lift = format === "short" ? "translateY(-120px) scale(.8)" : "translateY(-200px) scale(.62)";
+    anim(holder, [{ transform: "none", opacity: 1 }, { transform: lift, opacity: 0.0 }],
+         shotAt, shotAt + 0.6);
+    anim(".shot", [{ opacity: 0, transform: "translateY(60px)" }, { opacity: 1, transform: "none" }],
+         shotAt, shotAt + 0.8);
+
+    const titleAt = at(params.title_at ?? 0.62);
+    anim(".title", [{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1, transform: "none" }],
+         titleAt, titleAt + 0.6);
+  });
+</script>
+</body>
+</html>

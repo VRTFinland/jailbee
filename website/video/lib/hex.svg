@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="84" height="145.5" viewBox="0 0 84 145.5">
+  <!-- One tile of a flat-topped hexagon field; repeats seamlessly. -->
+  <g fill="none" stroke="#1d2027" stroke-width="1.5">
+    <path d="M42 0 L84 24.25 L84 72.75 L42 97 L0 72.75 L0 24.25 Z"/>
+    <path d="M0 97 L0 121.25 M84 97 L84 121.25 M42 97 L42 145.5"/>
+  </g>
+</svg>
