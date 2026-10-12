@@ -17,10 +17,11 @@ before editing `## Unreleased`.
   do not stop the superproject PR but make the run exit 1.
 - **Create/update submodule PR… in the dashboard's PR menu** when the
   container has submodule changes.
-- **A details panel in the terminal dashboard.** `v` toggles a panel under the
-  table describing the selected container: a summary, its git state (including
-  submodule changes) and its mounts; the choice is remembered. The panel is
-  dropped when the terminal is too short for it.
+- **A details panel in the terminal dashboard.** A panel under the table
+  describes the selected container: a summary, its git state (including
+  submodule changes) and its mounts. It is on by default; `v` hides or shows
+  it, and the choice is remembered. The panel is dropped when the terminal is
+  too short for it.
 - **Agent activity in the dashboard's details panel.** For a container with a
   live Claude session (the one with the most recently written readable
   transcript) the panel shows its state with duration, how many subagents and
