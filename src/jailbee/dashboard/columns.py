@@ -323,8 +323,7 @@ def _select_visible_fields(
     be turned on here — and ``enabled`` order is rendering order.
 
     Qt's :func:`visible_fields` applies ``show_if`` on each render. The
-    terminal applies it when taking a nonempty-column snapshot; a refresh only
-    adds the columns that have gained content to that snapshot, never drops one.
+    terminal applies it in :func:`nonempty_columns`, recomputed on every refresh.
 
     Unknown names are skipped rather than rejected — a stored set can outlive
     a renamed column, and view state must not break the view.

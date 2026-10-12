@@ -2364,11 +2364,9 @@ per front-end — the enabled columns, their order and the row sort are each rem
 
 In the Qt dashboard, enabling a conditional column means "show it when it has
 something to say"; empty dynamic columns are omitted. The terminal dashboard
-takes a snapshot of nonempty selected columns after its first state arrives. A
-refresh adds a column to it as soon as that column has something to show (a mount
-attached, a container turned loose), but never removes one, so the table does not
-shift under the cursor; changing a setting or pressing `o` recomputes it and drops
-the columns that have emptied. Empty columns remain selected in your preferences. `ls --fields` also forces named columns on.
+does the same on every refresh: a selected column appears as soon as it has
+something to show (a mount attached, a container turned loose) and goes again once
+every cell in it is empty. Empty columns remain selected in your preferences. `ls --fields` also forces named columns on.
 
 The terminal dashboard never hides a column because the terminal is narrow.
 Every column keeps its width; when they do not all fit, the first column
@@ -2377,8 +2375,7 @@ time. A dim `‹` after the first column and `›` at the right edge mark
 columns out of view, and a column cut by the edge ends in `…`.
 On opening, the widths are fitted to the visible data, and fitted once more
 when the first refresh after that arrives. These session-only budgets survive
-later refreshes and resizes; press `o` to measure new values and hide empty
-columns. Changing settings recomputes column
+later refreshes and resizes; press `o` to measure new values. Changing settings recomputes column
 membership, resets widths to their fixed default budgets and scrolls back to
 the first column.
 Only unfolded, visible repositories contribute to the snapshot.

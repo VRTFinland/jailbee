@@ -694,7 +694,7 @@ def test_run_a_column_that_gains_content_appears_on_refresh(mocker, tmp_path):
     assert shown[-1] == ("name", "pr")
 
 
-def test_run_a_column_that_empties_stays_until_optimize(mocker, tmp_path):
+def test_run_a_column_that_empties_goes_on_refresh(mocker, tmp_path):
     with_pr = dataclasses.replace(ci("alpha-one", "alpha"), pr_number=42)
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [with_pr])
 
@@ -703,14 +703,31 @@ def test_run_a_column_that_empties_stays_until_optimize(mocker, tmp_path):
 
     run = drive(
         mocker,
-        [lose_the_pr, "r", "o"],
+        [lose_the_pr, "r"],
         [group],
         view_state=ViewState(columns=("name", "pr")),
     )
     shown = [view.shown_columns for view in run.trace]
-    # columns never vanish under the cursor on a refresh; `o` drops the empty one
-    assert shown[0] == shown[-2] == ("name", "pr")
+    assert shown[0] == ("name", "pr")
+    # no `o` needed: the refresh that empties the column takes it away
     assert shown[-1] == ("name",)
+
+
+def test_run_only_the_column_with_content_appears(mocker, tmp_path):
+    """A mount shows MOUNT alone; LOOSE stays away while every container is strict."""
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+
+    def attach_a_mount(_app) -> None:
+        group.containers[0].optional_mounts = ("ssh",)
+
+    run = drive(
+        mocker,
+        [attach_a_mount, "r"],
+        [group],
+        view_state=ViewState(columns=("name", "network", "mounts")),
+    )
+    assert run.trace[0].shown_columns == ("name",)
+    assert run.last.shown_columns == ("name", "mounts")
 
 
 def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker, tmp_path):

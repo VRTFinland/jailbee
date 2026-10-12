@@ -393,7 +393,9 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
-        self._grow_shown()
+        # Every refresh: a column appears once it has content (a mount attached,
+        # a container turned loose) and goes once it has none.
+        self._recompute_shown()
         listed = {c.name for g in self.groups for c in g.containers}
         self.marked &= listed
         self._prune_merge_pick(listed)
@@ -483,28 +485,6 @@ class DashboardSession:
         self.shown_columns = nonempty_columns(
             self.groups, now=_now(), enabled=self.enabled, folded=self.folded
         )
-        self.all_groups = self._sorted(self.presented)
-        self.groups = visible_repo_groups(
-            self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
-        )
-        self.rows = selectable_rows(self.groups, self.folded)
-
-    def _grow_shown(self) -> None:
-        """Add the columns that have gained content since the snapshot; drop none.
-
-        A refresh reveals a column (a mount added, a container turned loose, a
-        first gather still settling) but never hides one under the cursor; an
-        emptied column stays until `o` takes a fresh snapshot.
-        """
-        current = set(self.shown_columns)
-        nonempty = nonempty_columns(
-            self.groups, now=_now(), enabled=self.enabled, folded=self.folded
-        )
-        if current.issuperset(nonempty):
-            return
-        keep = current | set(nonempty)
-        order = default_columns() if self.enabled is None else self.enabled
-        self.shown_columns = tuple(n for n in dict.fromkeys(order) if n in keep)
         self.all_groups = self._sorted(self.presented)
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
