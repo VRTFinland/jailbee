@@ -1,1 +1,65 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>ai-column</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- The AI column: the real crop at 2x, a ring that moves to the rows each
+     mark is about, and a legend. params.at: narration fractions for
+     column/green/waiting/idle/shell; params.shell: false drops the ◐ row. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .frame { position: absolute; left: var(--edge); top: 150px; }
+  .copy { position: absolute; left: 1190px; top: 190px; width: 640px; }
+  .copy h2 { font-size: 60px; margin: 16px 0 56px; }
+  .green { color: #5fd35f; }
+  .yellow { color: #f2c94c; }
+  .cyan { color: #4fc3d9; }
+  .dimtext { color: var(--muted); }
+  html[data-format="short"] .frame { left: 44px; top: 330px; }
+  html[data-format="short"] .copy { left: var(--edge); top: 1140px; width: auto; right: var(--edge); }
+  html[data-format="short"] .copy h2 { font-size: 64px; margin-bottom: 44px; }
+  html[data-format="short"] .legend { font-size: 46px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="frame"><img class="shot" src="../../../../assets/news/jailbee-1-7-ai-column.png" alt="" /></div>
+  <div class="copy">
+    <div class="kicker">The AI column</div>
+    <h2>Which agent <span class="amber">needs you?</span></h2>
+    <div class="legend" data-k="green"><span class="glyph green">●</span>working</div>
+    <div class="legend" data-k="waiting"><span class="glyph yellow">◆</span>waiting for you</div>
+    <div class="legend" data-k="idle"><span class="glyph dimtext">○</span>idle</div>
+    <div class="legend" data-k="shell"><span class="glyph cyan">◐</span>idle, a shell job running</div>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ params, at, anim, show, zoom, ring }) => {
+    const t = { column: 0.36, green: 0.47, waiting: 0.57, idle: 0.66, shell: 0.76, ...(params.at || {}) };
+    const img = zoom(document.querySelector(".shot"), 2);
+    if (params.shell === false) document.querySelector('[data-k="shell"]').remove();
+
+    show(".frame", 0.1, null, 30);
+    show(".copy .kicker", 0.3);
+    show(".copy h2", at(0.0));
+    for (const row of document.querySelectorAll(".legend")) {
+      if (t[row.dataset.k] == null) row.remove();
+      else show(row, at(t[row.dataset.k]));
+    }
+
+    // Rings in the crop's own pixels: the whole column, then the rows each
+    // legend line is about. Each fades out as the next one arrives.
+    const rings = [
+      ["column", [446, 0, 50, 378]],
+      ["green", [446, 155, 50, 52]],
+      ["idle", [446, 53, 50, 35]],
+      ["shell", [446, 274, 50, 18]],
+    ].filter(([k]) => t[k] != null && (k !== "shell" || params.shell !== false));
+    rings.forEach(([k, box], i) => {
+      const next = rings[i + 1] ? at(t[rings[i + 1][0]]) : null;
+      show(ring(img, box), at(t[k]), next, 0);
+    });
+  });
+</script>
+</body>
+</html>

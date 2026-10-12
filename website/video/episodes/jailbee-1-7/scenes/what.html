@@ -1,1 +1,74 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>what</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- What JailBee is: the agent cells illustration, and the claims of the
+     narration appearing one by one as the voice reaches them. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  /* The whole illustration, desk included: the desk is your own checkout.
+     Its edges fade into the page instead of ending in a hard frame. */
+  .bg {
+    position: absolute;
+    right: -30px;
+    top: 50%;
+    width: 1180px;
+    margin-top: -332px;
+    -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 55%, transparent 100%);
+            mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 55%, transparent 100%);
+  }
+  .copy {
+    position: absolute;
+    left: var(--edge);
+    top: 110px;
+    width: 660px;
+  }
+  .copy h2 { font-size: 64px; margin: 16px 0 44px; }
+  .points { list-style: none; margin: 0; padding: 0; }
+  .points li {
+    position: relative;
+    padding-left: 40px;
+    font-size: 38px;
+    line-height: 1.25;
+    margin-bottom: 26px;
+  }
+  .points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%) rotate(45deg);
+    background: var(--amber);
+  }
+  .points .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <img class="bg" src="../assets/agent-cells.jpg" alt="" />
+  <div class="copy">
+    <div class="kicker">What JailBee is</div>
+    <h2>A Linux machine <span class="amber">per branch</span></h2>
+    <ul class="points">
+      <li data-at="0.13">Its own Docker daemon</li>
+      <li data-at="0.27">Its own browser and IDE, on your desktop</li>
+      <li data-at="0.4">Its own clone: <span class="muted">your checkout is untouched</span></li>
+      <li data-at="0.62">The container is the fence</li>
+      <li data-at="0.82">Commits come home over git</li>
+    </ul>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ duration, at, anim, show }) => {
+    anim(".bg", [{ transform: "scale(1.0)" }, { transform: "scale(1.06)" }],
+         0, duration, "linear");
+    show(".copy .kicker", 0.2);
+    show(".copy h2", at(0.0));
+    for (const li of document.querySelectorAll(".points li")) show(li, at(Number(li.dataset.at)));
+  });
+</script>
+</body>
+</html>

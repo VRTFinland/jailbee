@@ -1,1 +1,154 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>network</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Egress in two layers, as docs/comparison.md describes it: every packet
+     leaves through the kernel ACL (the proxy is one destination it allows);
+     on the work network HTTP(S) then passes a proxy that matches host names.
+     Host names are examples. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .head { position: absolute; left: var(--edge); top: 80px; }
+  .head h2 { font-size: 60px; margin-top: 16px; }
+  .allow {
+    position: absolute; right: var(--edge); top: 70px; width: 560px;
+    font-family: var(--mono); font-size: 28px; line-height: 1.55;
+  }
+  .allow .k { color: var(--muted); }
+  .box {
+    position: absolute; border: 2px solid var(--border); border-radius: 18px;
+    background: rgb(20 22 26 / 92%);
+  }
+  .box .label { position: absolute; top: -48px; left: 0; font-family: var(--mono); font-size: 28px; color: var(--muted); }
+  .container { left: 96px; top: 380px; width: 470px; height: 600px; }
+  .tool { position: absolute; left: 28px; font-family: var(--mono); font-size: 28px; color: var(--text); }
+  .wall {
+    position: absolute; left: 700px; top: 380px; width: 16px; height: 600px;
+    border-radius: 8px; background: linear-gradient(var(--amber), var(--amber-dim));
+    box-shadow: 0 0 30px rgb(240 169 43 / 45%);
+  }
+  .wall-label { position: absolute; left: 640px; top: 296px; font-size: 30px; font-weight: 600; }
+  .wall-label span { display: block; font-weight: 400; font-size: 24px; color: var(--muted); }
+  .proxy { left: 1000px; top: 400px; width: 360px; height: 150px; border-color: var(--amber-dim); }
+  .proxy .title { position: absolute; left: 26px; top: 22px; font-size: 32px; font-weight: 600; }
+  .proxy .sub { position: absolute; left: 26px; top: 72px; font-size: 24px; color: var(--muted); }
+  .proxy .new { position: absolute; right: 18px; top: 22px; font-family: var(--mono); font-size: 20px;
+    color: var(--ground); background: var(--amber); padding: 2px 10px; border-radius: 6px; }
+  .host { position: absolute; left: 1580px; font-family: var(--mono); font-size: 28px; color: var(--muted); }
+  .net-label { position: absolute; left: 1580px; top: 396px; font-family: var(--mono); font-size: 24px; color: var(--muted); }
+  .pkt {
+    position: absolute; left: 0; top: 0; padding: 6px 14px; border-radius: 999px;
+    font-family: var(--mono); font-size: 20px; background: var(--surface-2);
+    border: 2px solid var(--amber); color: var(--text); white-space: nowrap;
+    transform-origin: left center;
+  }
+  .verdict {
+    position: absolute; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 600;
+  }
+  .ok { background: rgb(116 196 124 / 18%); border: 3px solid var(--green); color: var(--green); }
+  .no { background: rgb(224 108 108 / 18%); border: 3px solid var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="head">
+    <div class="kicker">Egress allowlist</div>
+    <h2>Two layers</h2>
+  </div>
+  <div class="allow card">
+    <div class="k">egress_allow:</div>
+    <div class="e1">- git.example.com:22</div>
+    <div class="e2">- db.example.com:5432</div>
+    <div class="e3">- api.example.com:443</div>
+    <div class="e4 amber">- "*.example.com"</div>
+  </div>
+
+  <div class="box container"><div class="label">container</div>
+    <div class="tool" style="top: 40px">curl · pip · git</div>
+    <div class="tool" style="top: 225px">a tool that ignores<br />the proxy</div>
+    <div class="tool" style="top: 400px">ssh</div>
+    <div class="tool" style="top: 500px">psql</div>
+  </div>
+  <div class="wall"></div>
+  <div class="wall-label">Kernel ACL<span>every packet, every protocol</span></div>
+  <div class="box proxy"><div class="title">Proxy</div><div class="sub">matches host names</div><div class="new">1.7</div></div>
+  <div class="net-label">internet</div>
+  <div class="host h-api" style="top: 456px">api.example.com</div>
+  <div class="host h-docs" style="top: 536px">docs.example.com</div>
+  <div class="host h-git" style="top: 776px">git.example.com</div>
+  <div class="host h-db" style="top: 876px">db.example.com</div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ at, anim, show }) => {
+    const stage = document.querySelector(".stage");
+    // A packet travelling a polyline between `from` and `to`, at a constant
+    // speed along it; it fades in at the start and stays where it stopped.
+    const travel = (text, points, from, to) => {
+      const el = Object.assign(document.createElement("div"), { className: "pkt", textContent: text });
+      stage.append(el);
+      // The points are where the packet's right edge goes, so it stops short
+      // of whatever it reaches instead of covering it.
+      const w = el.offsetWidth;
+      const [x0, y0] = points[0];
+      const lengths = points.slice(1).map(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]));
+      const total = lengths.reduce((a, b) => a + b, 0);
+      let run = 0;
+      const frames = points.map(([x, y], i) => {
+        if (i > 0) run += lengths[i - 1];
+        return { transform: `translate(${x - w}px, ${y - 20}px)`, offset: total ? run / total : 0 };
+      });
+      el.style.transform = `translate(${x0 - w}px, ${y0 - 20}px)`;
+      anim(el, [{ opacity: 0 }, { opacity: 1 }], from, from + 0.3);
+      anim(el, frames, from, to, "linear", "both");
+      return el;
+    };
+    const verdict = (ok, [x, y], when) => {
+      const el = Object.assign(document.createElement("div"), {
+        className: `verdict ${ok ? "ok" : "no"}`, textContent: ok ? "✓" : "✕" });
+      Object.assign(el.style, { left: `${x}px`, top: `${y}px` });
+      stage.append(el);
+      show(el, when, null, 0);
+    };
+    const fadeOut = (el, when) => anim(el, [{ opacity: 1 }, { opacity: 0 }], when, when + 0.4, "ease-in", "forwards");
+
+    show(".head", 0.15);
+    show(".allow", at(0.06));
+    for (const e of [".e1", ".e2", ".e3"]) show(e, at(0.08));
+    show(".e4", at(0.72));
+    show(".container", at(0.0), null, 0);
+    show(".wall", at(0.2), null, 0);
+    show(".wall-label", at(0.2));
+    for (const h of [".h-git", ".h-db", ".net-label"]) show(h, at(0.24), null, 0);
+
+    // 1. ssh and psql leave through the ACL.
+    const ssh = travel("ssh", [[560, 800], [1510, 800]], at(0.26), at(0.33));
+    verdict(true, [1545, 800], at(0.33));
+    const psql = travel("psql :5432", [[560, 900], [1510, 900]], at(0.29), at(0.36));
+    verdict(true, [1545, 900], at(0.36));
+    fadeOut(ssh, at(0.42)); fadeOut(psql, at(0.42));
+
+    // 2. The proxy: HTTPS matched by name.
+    show(".proxy", at(0.44));
+    show(".h-api", at(0.5), null, 0);
+    const api = travel("api.example.com", [[560, 475], [1360, 475], [1510, 480]], at(0.5), at(0.58));
+    verdict(true, [1545, 480], at(0.58));
+    // An unlisted host that shares an allowed address: the ACL lets it
+    // through, the proxy does not.
+    const look = travel("other.example.net", [[560, 475], [990, 475]], at(0.58), at(0.63));
+    verdict(false, [1000, 475], at(0.63));
+    fadeOut(api, at(0.68)); fadeOut(look, at(0.68));
+
+    // 3. A wildcard, possible only in the proxy.
+    show(".h-docs", at(0.73), null, 0);
+    const docs = travel("docs.example.com", [[560, 475], [1360, 475], [1510, 560]], at(0.74), at(0.82));
+    verdict(true, [1545, 560], at(0.82));
+
+    // 4. A tool that ignores the proxy meets the ACL.
+    travel("docs.example.com", [[560, 660], [694, 660]], at(0.86), at(0.92));
+    verdict(false, [708, 660], at(0.93));
+  });
+</script>
+</body>
+</html>

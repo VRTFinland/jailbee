@@ -136,6 +136,9 @@ scenes:
   - id: short-ai
     page: scenes/ai-column.html
     formats: [short]
+    params:
+      shell: false
+      at: {column: 0.2, green: 0.45, waiting: 0.62, idle: 0.82, shell: null}
     narration: >-
       JailBee's dashboard tells you at a glance. Green is working, yellow is
       waiting for you, hollow is idle.
@@ -143,6 +146,8 @@ scenes:
   - id: short-details
     page: scenes/details.html
     formats: [short]
+    params:
+      at: {state: null, git: 0.38, agent: 0.62}
     narration: >-
       Select one, and the details are right there: the branch, its
       submodules, the agent's last tool call and its last message.
@@ -150,6 +155,8 @@ scenes:
   - id: short-marks
     page: scenes/marks.html
     formats: [short]
+    params:
+      at: {rows: 0.05, counts: null, menu: 0.45, menuring: null}
     narration: >-
       Mark a few containers, and act on all of them at once.
 

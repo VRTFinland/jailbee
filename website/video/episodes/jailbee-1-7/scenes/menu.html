@@ -1,1 +1,38 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>menu</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- The container menu: the real crop at 3x, its key column ringed, and two
+     key sequences from docs/commands.md that never change meaning. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .frame { position: absolute; left: var(--edge); top: 190px; }
+  .copy { position: absolute; left: 1120px; top: 230px; width: 720px; }
+  .copy h2 { font-size: 60px; margin: 16px 0 60px; }
+  .combo { display: flex; align-items: center; gap: 16px; margin-bottom: 40px; font-size: 40px; }
+  .combo .then { color: var(--muted); margin-left: 18px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="frame"><img class="shot" src="../../../../assets/news/jailbee-1-7-container-menu.png" alt="" /></div>
+  <div class="copy">
+    <div class="kicker">The container menu</div>
+    <h2>Every entry keeps <span class="amber">its own key</span></h2>
+    <div class="combo" data-at="0.45"><span class="key">g</span><span class="key">u</span><span class="then">update from base</span></div>
+    <div class="combo" data-at="0.62"><span class="key">l</span><span class="key">D</span><span class="then">destroy</span></div>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ at, show, zoom, ring }) => {
+    const img = zoom(document.querySelector(".shot"), 3);
+    show(".frame", 0.1, null, 30);
+    show(".copy .kicker", 0.3);
+    show(".copy h2", at(0.0));
+    show(ring(img, [12, 18, 34, 200]), at(0.3), null, 0);
+    for (const combo of document.querySelectorAll(".combo")) show(combo, at(Number(combo.dataset.at)));
+  });
+</script>
+</body>
+</html>

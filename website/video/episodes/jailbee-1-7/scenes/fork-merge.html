@@ -1,1 +1,101 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>fork-merge</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Fork, then Merge into: a diagram. Container names are examples; the
+     command is jailbee's real syntax (`jailbee fork SOURCE [NAME]`). -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .head { position: absolute; left: var(--edge); top: 96px; }
+  .head h2 { font-size: 60px; margin-top: 16px; }
+  svg.lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  svg.lines path { fill: none; stroke: var(--amber); stroke-width: 5; stroke-linecap: round; }
+  .cell {
+    position: absolute;
+    width: 300px;
+    height: 260px;
+    margin: -130px 0 0 -150px;
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+    background: var(--amber-dim);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  /* The outline is the outer hexagon showing round a slightly smaller one. */
+  .cell::before {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+    background: linear-gradient(160deg, #2a2216, #15130f);
+  }
+  .cell .name, .cell .agent { position: relative; }
+  .cell .name { font-family: var(--mono); font-size: 30px; }
+  .cell .agent { font-family: var(--mono); font-size: 26px; color: #5fd35f; }
+  .mark {
+    position: absolute;
+    width: 30px;
+    height: 30px;
+    margin: -15px 0 0 -15px;
+    border-radius: 50%;
+    background: #d9dde4;
+    box-shadow: 0 0 20px rgb(255 255 255 / 40%);
+  }
+  .chip {
+    position: absolute;
+    font-family: var(--mono);
+    font-size: 32px;
+    padding: 12px 22px;
+    border-radius: 10px;
+    background: #000;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .chip .prompt { color: var(--green); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="head">
+    <div class="kicker">Fork and merge</div>
+    <h2>Two attempts, <span class="amber">one result</span></h2>
+  </div>
+  <svg class="lines" viewBox="0 0 1920 1080">
+    <path class="fork" d="M 560 470 C 700 470, 700 790, 820 790" />
+    <path class="merge-a" d="M 560 470 C 900 400, 1150 560, 1350 630" />
+    <path class="merge-b" d="M 1010 790 C 1180 790, 1220 630, 1350 630" />
+  </svg>
+  <div class="cell a" style="left: 410px; top: 470px"><span class="name">feat-login</span><span class="agent">● agent</span></div>
+  <div class="cell b" style="left: 910px; top: 790px"><span class="name">feat-login-2</span><span class="agent">● agent</span></div>
+  <div class="cell c" style="left: 1500px; top: 630px"><span class="name">release</span></div>
+  <div class="mark ma" style="left: 410px; top: 330px"></div>
+  <div class="mark mb" style="left: 910px; top: 650px"></div>
+  <div class="chip cf" style="left: 150px; top: 700px"><span class="prompt">$</span> jailbee fork feat-login</div>
+  <div class="chip cm" style="left: 1150px; top: 400px">Merge into…</div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ at, anim, show }) => {
+    const draw = (el, from, to) => {
+      const length = el.getTotalLength();
+      el.style.strokeDasharray = `${length}`;
+      anim(el, [{ strokeDashoffset: length }, { strokeDashoffset: 0 }], from, to, "ease-in-out");
+    };
+    show(".head", 0.15);
+    show(".cell.a", 0.3, null, 20);
+    show(".cf", at(0.05));
+    draw(document.querySelector(".fork"), at(0.12), at(0.3));
+    show(".cell.b", at(0.24), null, 20);
+    for (const agent of document.querySelectorAll(".cell .agent")) show(agent, at(0.42), null, 0);
+    show(".ma", at(0.62), null, 0);
+    show(".mb", at(0.64), null, 0);
+    show(".cm", at(0.66));
+    show(".cell.c", at(0.72), null, 20);
+    draw(document.querySelector(".merge-a"), at(0.78), at(0.95));
+    draw(document.querySelector(".merge-b"), at(0.78), at(0.95));
+  });
+</script>
+</body>
+</html>

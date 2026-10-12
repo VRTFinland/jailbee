@@ -1,1 +1,62 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>details</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- The details panel: the real crop at 2x, a ring moving over its three
+     parts with a caption for each. In portrait the crop is wider than the
+     frame, so it pans. params.at: narration fractions for state/git/agent. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .head { position: absolute; left: var(--edge); top: 96px; }
+  .head h2 { font-size: 60px; margin-top: 16px; }
+  .frame { position: absolute; left: 168px; top: 330px; }
+  .captions { position: absolute; left: 168px; right: 168px; top: 820px; height: 120px; }
+  .captions p { position: absolute; inset: 0; margin: 0; font-size: 42px; color: var(--muted); }
+  .captions strong { color: var(--text); font-weight: 600; }
+  html[data-format="short"] .head { top: 200px; right: var(--edge); }
+  html[data-format="short"] .head h2 { font-size: 72px; }
+  html[data-format="short"] .frame { left: 44px; top: 700px; }
+  html[data-format="short"] .captions { left: var(--edge); right: var(--edge); top: 1240px; }
+  html[data-format="short"] .captions p { font-size: 50px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="head">
+    <div class="kicker">The details panel</div>
+    <h2>Follows your selection</h2>
+  </div>
+  <div class="frame"><img class="shot" src="../../../../assets/news/jailbee-1-7-details-card.png" alt="" /></div>
+  <div class="captions">
+    <p data-k="state"><strong>The container:</strong> state, network mode, address, the agent's state</p>
+    <p data-k="git"><strong>The branch and every submodule:</strong> ahead of the base, uncommitted</p>
+    <p data-k="agent"><strong>The agent:</strong> busy for how long, its last tool call, its last message</p>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ params, format, duration, at, anim, show, zoom, ring }) => {
+    const t = { state: 0.2, git: 0.33, agent: 0.62, ...(params.at || {}) };
+    const img = zoom(document.querySelector(".shot"), 2);
+    show(".head", 0.15);
+    show(".frame", 0.25, null, 30);
+    if (format === "short") {
+      // 1584px of crop in a 1080px frame: travel to its right edge and back
+      // a little, so the last message is read last.
+      anim(".frame", [{ transform: "translateX(0)" }, { transform: "translateX(-560px)" }],
+           at(0.3), at(1.0), "ease-in-out", "forwards");
+    }
+    const boxes = { state: [8, 8, 540, 28], git: [8, 47, 600, 72], agent: [8, 150, 776, 58] };
+    const keys = Object.keys(boxes).filter((k) => t[k] != null).sort((a, b) => t[a] - t[b]);
+    keys.forEach((k, i) => {
+      const next = keys[i + 1] ? at(t[keys[i + 1]]) : null;
+      show(ring(img, boxes[k]), at(t[k]), next, 0);
+      show(document.querySelector(`.captions [data-k="${k}"]`), at(t[k]), next);
+    });
+    for (const p of document.querySelectorAll(".captions p")) {
+      if (t[p.dataset.k] == null) p.remove();
+    }
+  });
+</script>
+</body>
+</html>

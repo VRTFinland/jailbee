@@ -1,1 +1,51 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>outro</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Outro: the bee illustration (wide or tall), then where to get JailBee.
+     params.title / params.lines override the main video's text. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .copy { position: absolute; left: 0; right: 0; top: 600px; text-align: center; }
+  .copy h1 { font-size: 92px; }
+  .copy .install {
+    display: inline-block; margin-top: 40px; font-family: var(--mono); font-size: 44px;
+    padding: 18px 34px; border-radius: 12px; background: #000; border: 1px solid var(--border);
+  }
+  .copy .install .prompt { color: var(--green); }
+  .copy .links { margin-top: 36px; font-family: var(--mono); font-size: 34px; color: var(--muted); }
+  .copy .links span { color: var(--text); }
+  html[data-format="short"] .copy { top: 1080px; padding: 0 var(--edge); }
+  html[data-format="short"] .copy h1 { font-size: 100px; }
+  html[data-format="short"] .copy .sub { margin-top: 36px; font-size: 52px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <img class="bg" alt="" />
+  <div class="copy">
+    <div class="kicker">Free and open source · for Linux hosts</div>
+    <h1>JailBee <span class="amber">1.7</span></h1>
+    <div class="main-only">
+      <div class="install"><span class="prompt">$ </span>uv tool install jailbee</div>
+      <div class="links"><span>jailbee.gisgro.io</span> · github.com/VRTFinland/jailbee</div>
+    </div>
+    <div class="short-only sub">Full video on the channel</div>
+  </div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  // The image is chosen before load, so the runtime waits for the right one.
+  document.querySelector(".bg").src =
+    JB.format === "short" ? "../assets/outro-tall.jpg" : "../assets/outro.jpg";
+  document.querySelector(JB.format === "short" ? ".main-only" : ".short-only").remove();
+  JB.scene(({ duration, anim, show, at }) => {
+    anim(".bg", [{ transform: "scale(1.06)" }, { transform: "scale(1.0)" }], 0, duration, "ease-out");
+    show(".copy .kicker", at(0.0));
+    show(".copy h1", 0.3);
+    for (const el of document.querySelectorAll(".install, .links, .sub")) show(el, at(0.3));
+  });
+</script>
+</body>
+</html>

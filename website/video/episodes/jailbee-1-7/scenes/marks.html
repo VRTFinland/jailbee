@@ -1,1 +1,47 @@
-<!doctype html><html><head><link rel="stylesheet" href="../../../lib/base.css" /></head><body><div class="stage"><h2>marks</h2></div><script src="../../../lib/runtime.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Marks and the bulk menu: the two real crops, rings on the marked rows,
+     on the counts in the top bar and repo header, then on the menu.
+     params.at: narration fractions for rows/counts/menu/menuring. -->
+<link rel="stylesheet" href="../../../lib/base.css" />
+<style>
+  .head { position: absolute; left: var(--edge); top: 72px; }
+  .head h2 { font-size: 60px; margin-top: 16px; }
+  .marks { position: absolute; left: var(--edge); top: 232px; }
+  .bulk { position: absolute; left: 1250px; top: 712px; }
+  html[data-format="short"] .head { top: 200px; right: var(--edge); }
+  html[data-format="short"] .head h2 { font-size: 72px; }
+  html[data-format="short"] .marks { left: 20px; top: 560px; }
+  html[data-format="short"] .bulk { left: 260px; top: 1060px; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="head">
+    <div class="kicker">Many containers at once</div>
+    <h2>Mark them, then <span class="amber">act on all</span></h2>
+  </div>
+  <div class="frame marks"><img class="shot" src="../../../../assets/news/jailbee-1-7-marks.png" alt="" /></div>
+  <div class="frame bulk"><img class="shot" src="../../../../assets/news/jailbee-1-7-bulk-menu.png" alt="" /></div>
+</div>
+<script src="../../../lib/runtime.js"></script>
+<script>
+  JB.scene(({ params, format, at, show, zoom, ring }) => {
+    const t = { rows: 0.33, counts: 0.4, menu: 0.45, menuring: 0.62, ...(params.at || {}) };
+    const marks = zoom(document.querySelector(".marks img"), format === "short" ? 1.5 : 2);
+    const bulk = zoom(document.querySelector(".bulk img"), 2);
+    show(".head", 0.15);
+    show(".marks", 0.25, null, 30);
+    show(ring(marks, [0, 139, 694, 66]), at(t.rows), at(t.menu), 0);
+    if (t.counts != null) {
+      show(ring(marks, [390, 2, 66, 16]), at(t.counts), at(t.menu), 0);
+      show(ring(marks, [168, 36, 22, 16]), at(t.counts), at(t.menu), 0);
+    }
+    show(".bulk", at(t.menu), null, 40);
+    if (t.menuring != null) show(ring(bulk, [6, 16, 266, 138]), at(t.menuring), null, 0);
+  });
+</script>
+</body>
+</html>
