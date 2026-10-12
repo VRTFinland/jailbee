@@ -28,7 +28,10 @@ lands in `out/`; clips and per-scene renders in `.cache/`. Both are gitignored.
   untouched.
 - **An OpenAI API key** for narration: `OPENAI_API_KEY`, or the file
   `~/.config/openai/api-key`. It is never written to the repo, a log or the
-  cache. `api.openai.com:443` is in `.jailbee/config.yaml`'s `egress_allow`.
+  cache. Keep it on the host, in that same file, and attach it to the
+  container for a render with `jailbee mount openai <container>` (an optional
+  mount in `.jailbee/config.yaml`: read-only, detached again after an hour).
+  `api.openai.com:443` is in the same file's `egress_allow`.
 
 ## How an episode works
 

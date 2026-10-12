@@ -47,13 +47,18 @@ shared_caches:
     container_path: ~/.cache/uv
 
 # Named optional mounts — selectable per-container with `jailbee new --mount NAME`.
-optional_mounts: {}
-# Example:
-# optional_mounts:
-#   maven_cache:
-#     host: ~/.m2
-#     container: /home/dev/.m2
-#     description: "Maven local cache"
+optional_mounts:
+  # The OpenAI API key for the narrated videos' TTS (website/video/render.py
+  # reads ~/.config/openai/api-key). It stays on the host: attach it for a
+  # render with `jailbee mount openai <container>`, read-only, and it detaches
+  # itself after an hour. The whole directory, not the file: a bind-mounted
+  # file loses an editor's atomic replace on the host.
+  openai:
+    host: ~/.config/openai
+    container: /home/dev/.config/openai
+    readonly: true
+    description: "OpenAI API key for website/video TTS"
+    auto_unmount_after: 1h
 
 # Egress allowlist applied in strict mode. Each entry is either a literal
 # IP/CIDR (e.g. 10.0.0.0/8) or a hostname optionally followed by :PORT
