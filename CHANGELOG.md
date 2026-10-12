@@ -18,8 +18,11 @@ before editing `## Unreleased`.
 - **Create/update submodule PR… in the dashboard's PR menu** when the
   container has submodule changes.
 - **A details panel in the terminal dashboard.** A panel under the table
-  describes the selected container: a summary, its git state (including
-  submodule changes) and its mounts. It is on by default; `v` hides or shows
+  describes the selected container: a summary, a line marking with a red `●`
+  what the container is allowed beyond its repo's defaults (loose network,
+  attached mounts with their remaining time, its own `jailbee net egress add`
+  entries), its git state (including submodule changes) and the rest of its
+  details. It is on by default; `v` hides or shows
   it, and the choice is remembered. The panel is dropped when the terminal is
   too short for it.
 - **Agent activity in the dashboard's details panel.** For a container with a

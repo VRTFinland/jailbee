@@ -127,6 +127,7 @@ def _full_snapshot() -> Snapshot:
             job_error="boom",
             optional_mounts=("ssh",),
             mount_until={"ssh": T0 + timedelta(minutes=15)},
+            egress_extra=("api.example.com",),
             alias="login",
             fork_of="alpha-y",
         )
@@ -188,6 +189,7 @@ def test_a_snapshot_decodes_to_the_real_types():
     assert isinstance(container.git_status.submodules[0], SubmoduleChange)
     assert container.created_at == T0
     assert container.mount_until == {"ssh": T0 + timedelta(minutes=15)}
+    assert container.egress_extra == ("api.example.com",)
     assert isinstance(container.mount_until["ssh"], datetime)
     activity = container.agent_status[0].activity
     assert isinstance(activity.recent, tuple)

@@ -141,6 +141,31 @@ def test_list_containers_parses_alias_and_fork_of(make_cfg, tmp_path):
     assert info.shown_name == "login (feat-x)"
 
 
+def test_list_containers_parses_container_egress_extras(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-a",
+            user_config={
+                "user.jailbee.egress_extra": '["pypi.org", "api.example.com", "pypi.org"]'
+            },
+        ),
+        _container(name="myrepo-b", user_config={"user.jailbee.egress_extra": "not json"}),
+        _container(name="myrepo-c", user_config={"user.jailbee.egress_extra": '{"a": 1}'}),
+        _container(name="myrepo-d"),
+    ]
+    extras = {c.name: c.egress_extra for c in list_containers(cfg, incus)}
+    assert extras == {
+        "myrepo-a": ("api.example.com", "pypi.org"),
+        "myrepo-b": (),
+        "myrepo-c": (),
+        "myrepo-d": (),
+    }
+
+
 def test_shown_name_without_alias_is_display_name(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

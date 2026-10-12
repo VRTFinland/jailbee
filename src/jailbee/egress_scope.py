@@ -154,18 +154,27 @@ def container_extras(incus: Incus, name: str) -> list[str]:
     empty list. Garbage warns rather than raising: a container's egress must
     not fail closed silently, and must not fail open on garbage either.
     """
-    raw = incus.config_get(name, EGRESS_EXTRA_KEY)
-    if not raw:
-        return []
+    entries, problem = parse_extras(incus.config_get(name, EGRESS_EXTRA_KEY))
+    if problem is not None:
+        _warn_bad_label(name, problem)
+    return entries
+
+
+def parse_extras(raw: object) -> tuple[list[str], str | None]:
+    """The label's entries, sorted, and what is wrong with it (None: nothing).
+
+    Absent or empty is no entries and no problem. Quiet, so a reader that
+    must not warn (the dashboard, every refresh) can call it directly.
+    """
+    if not raw or not isinstance(raw, str):
+        return [], None
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        _warn_bad_label(name, "not valid JSON")
-        return []
+        return [], "not valid JSON"
     if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
-        _warn_bad_label(name, "not a JSON array of strings")
-        return []
-    return sorted(set(parsed))
+        return [], "not a JSON array of strings"
+    return sorted(set(parsed)), None
 
 
 def set_container_extras(incus: Incus, name: str, entries: list[str]) -> None:

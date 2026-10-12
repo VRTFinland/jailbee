@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -452,7 +453,6 @@ def test_summary_runs_state_network_ip_github_agent_doing_in_order() -> None:
 
     assert summary == [
         "▶ Running",
-        f"● loose {_plain(cells['ttl'](c))} →{until.astimezone():%H:%M}",
         "10.0.3.7",
         f"PR {_plain(cells['pr'](c))}",
         _plain(cells["agent"](c)),
@@ -464,11 +464,44 @@ def test_summary_leaves_out_what_is_absent_and_dims_strict() -> None:
     panel = dd.container_panel(_c(), NOW)
     assert _panel_plain(panel.summary) == ["▶ Running", "strict"]
     assert panel.summary[1] == "[dim]strict[/dim]"
+    assert panel.exceptions == ()
+
+
+def test_loose_is_an_exception_with_its_deadline() -> None:
+    until = NOW + timedelta(minutes=42)
+    c = _c(network="loose", loose_until=until)
+    cells = {f.name: f.cell for f in ls_field_specs(now=NOW, all_repos=False)}
+    panel = dd.container_panel(c, NOW)
+
+    assert _panel_plain(panel.exceptions) == [
+        f"● loose {_plain(cells['ttl'](c))} →{until.astimezone():%H:%M}"
+    ]
+    assert panel.exceptions[0].startswith("[red]●[/red]")
+    assert not any("loose" in part for part in _panel_plain(panel.summary))
 
 
 def test_loose_without_a_deadline_reads_infinity() -> None:
-    summary = _panel_plain(dd.container_panel(_c(network="loose"), NOW).summary)
-    assert summary[1] == "● loose ∞"
+    exceptions = _panel_plain(dd.container_panel(_c(network="loose"), NOW).exceptions)
+    assert exceptions == ["● loose ∞"]
+
+
+def test_exceptions_run_loose_mounts_egress_in_order() -> None:
+    c = _c(
+        network="loose",
+        optional_mounts=("aws", "docs"),
+        mount_until={"aws": NOW + timedelta(minutes=12)},
+        egress_extra=("api.example.com", "*.[x].com"),
+    )
+    panel = dd.container_panel(c, NOW)
+
+    assert _panel_plain(panel.exceptions) == [
+        "● loose ∞",
+        "● mounts aws 12m, docs ∞",
+        "● egress +2: api.example.com, *.[x].com",
+    ]
+    assert all(part.startswith("[red]●[/red]") for part in panel.exceptions)
+    assert r"\[x]" in panel.exceptions[2]
+    assert not any(part.startswith("mounts") for part in _panel_plain(panel.footer))
 
 
 def test_job_and_its_first_error_line_follow_the_state() -> None:
@@ -552,7 +585,7 @@ def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:
     assert all(r.extra == "" for r in subs)
 
 
-def test_footer_carries_base_mode_group_created_mounts_and_resources() -> None:
+def test_footer_carries_base_mode_group_created_and_resources() -> None:
     created = NOW - timedelta(days=2)
     c = _c(
         base_branch="dev",
@@ -571,26 +604,19 @@ def test_footer_carries_base_mode_group_created_mounts_and_resources() -> None:
         "clone",
         "group [work]",
         f"created 48h ago ({_plain(cells['created'](c))})",
-        "mounts ssh ∞, gpg ∞",
         f"mem {_plain(cells['mem'](c))}",
         f"cpu {_plain(cells['cpu'](c))}",
     ]
-
-
-def test_footer_mounts_have_per_kind_deadlines() -> None:
-    c = _c(optional_mounts=("aws", "docs"), mount_until={"aws": NOW + timedelta(minutes=12)})
-    assert "mounts aws 12m, docs ∞" in _panel_plain(dd.container_panel(c, NOW).footer)
 
 
 def test_a_bare_container_panel() -> None:
     panel = dd.container_panel(_c(state="Stopped", network=None), NOW)
 
     assert _panel_plain(panel.summary) == ["■ Stopped"]
+    assert panel.exceptions == ()
     assert panel.git is None
     assert panel.base == "base"
-    footer = _panel_plain(panel.footer)
-    assert "group inherits repo" in footer
-    assert not any(part.startswith("mounts") for part in footer)
+    assert "group inherits repo" in _panel_plain(panel.footer)
 
 
 def _rich_container(subs: int = 1) -> ContainerInfo:
@@ -620,12 +646,15 @@ def _rich_container(subs: int = 1) -> ContainerInfo:
     return _c(
         git_status=status,
         base_branch="dev",
-        network="loose",
-        loose_until=NOW + timedelta(minutes=42),
+        network="strict",
         ip="10.0.3.7",
         pr_number=123,
         pr_author=True,
     )
+
+
+def _loose(c: ContainerInfo) -> ContainerInfo:
+    return replace(c, network="loose", loose_until=NOW + timedelta(minutes=42))
 
 
 def _panel_view(c: ContainerInfo, **kw: Any) -> dd.DetailsView:
@@ -657,6 +686,36 @@ def test_panel_fit_drops_blanks_then_submodules_then_the_footer() -> None:
     assert dd.panel_fit(_fit(None), 2) == fit(False, True, 0, 0, False)
     assert dd.panel_fit(_fit(2), 2) == fit(False, False, 0, 0, True)
     assert dd.panel_fit(_fit(2), 1) == fit(False, False, 0, 0, False)
+
+
+def test_panel_fit_keeps_the_exceptions_line_with_the_summary() -> None:
+    fit = dd.PanelFit
+    panel = dd.ContainerPanel(("s",), "dev", _fit(2).git, ("f",), exceptions=("e",))
+    assert dd.panel_fit(panel, None) == fit(True, True, 2, 0, True)
+    assert dd.panel_fit(panel, 9) == fit(True, True, 2, 0, True)  # 2+2+2+1 rows + 2 blanks
+    assert dd.panel_fit(panel, 8) == fit(False, True, 2, 0, True)
+    assert dd.panel_fit(panel, 7) == fit(False, True, 2, 0, True)
+    assert dd.panel_fit(panel, 6) == fit(False, True, 0, 2, True)  # "+2 more" row only
+    assert dd.panel_fit(panel, 3) == fit(False, False, 0, 0, True)
+    assert dd.panel_fit(panel, 2) == fit(False, False, 0, 0, False)
+
+
+def test_the_exceptions_line_sits_under_the_summary_undimmed() -> None:
+    c = replace(_loose(_rich_container()), optional_mounts=("aws",), egress_extra=("pypi.org",))
+    body = _panel_body(_panel_view(c), None, 120)
+
+    assert body[0].startswith("▶ Running") and "loose" not in body[0]
+    assert body[1].startswith("● loose 42m")
+    assert "● mounts aws ∞" in body[1] and "● egress +1: pypi.org" in body[1]
+    assert body[2] == ""
+    assert body[3].startswith("git")
+    assert "mounts" not in body[-1]
+
+
+def test_a_two_row_panel_keeps_summary_and_exceptions() -> None:
+    body = _panel_body(_panel_view(_loose(_rich_container(subs=3))), 2, 100, fixed=True)
+    assert body[0].startswith("▶ Running")
+    assert body[1].startswith("● loose")
 
 
 def test_the_panel_reads_summary_git_table_footer() -> None:

@@ -101,6 +101,10 @@ class ContainerInfo:
     optional_mounts: tuple[str, ...] = ()
     # Deadlines from mounts.mount_until; attached kinds without one never expire.
     mount_until: dict[str, datetime] = field(default_factory=dict)
+    # Container-scope egress overrides from `user.jailbee.egress_extra`
+    # (`jailbee net egress add` on this container), sorted; empty when the
+    # label is absent or unreadable.
+    egress_extra: tuple[str, ...] = ()
     # `user.jailbee.alias`: the user's rename (`jailbee rename`). The real
     # name never changes; `shown_name` displays this, resolution accepts it.
     alias: str | None = None
@@ -417,6 +421,7 @@ def list_containers(
     — the dashboards, every refresh tick — passes it so the daemon builds
     the full instance state once instead of once per repo.
     """
+    from jailbee import egress_scope
     from jailbee.accounts import groups
     from jailbee.mounts import attached_kinds, mount_until
     from jailbee.network_generation import generation_of
@@ -545,6 +550,8 @@ def list_containers(
 
         attached = attached_kinds(raw.get("devices") or {})
         deadlines = mount_until(config)
+        extras_raw = config.get(egress_scope.EGRESS_EXTRA_KEY)
+        egress_extra, _problem = egress_scope.parse_extras(extras_raw)
 
         out.append(
             ContainerInfo(
@@ -568,6 +575,7 @@ def list_containers(
                 cpu_limit=cpu_limit,
                 optional_mounts=attached,
                 mount_until=deadlines,
+                egress_extra=tuple(egress_extra),
                 alias=alias,
                 fork_of=fork_of,
             )

@@ -77,15 +77,19 @@ class GitRow:
 class ContainerPanel:
     """A container's details, read top to bottom; every part is Rich markup.
 
-    ``summary`` is one line of what the container is doing, ``git`` its
-    trees (None without a git status), ``footer`` one dim line of the rest.
-    ``base`` names the branch the git table's diff column compares with.
+    ``summary`` is one line of what the container is doing, ``exceptions``
+    one undimmed line under it of what this container is allowed beyond its
+    repo's defaults (loose network, attached mounts, its own egress entries;
+    empty: the line is not drawn), ``git`` its trees (None without a git
+    status), ``footer`` one dim line of the rest. ``base`` names the branch
+    the git table's diff column compares with.
     """
 
     summary: tuple[str, ...]
     base: str
     git: tuple[GitRow, ...] | None
     footer: tuple[str, ...]
+    exceptions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -221,15 +225,9 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     if error:
         state += f" · [red]{escape(error)}[/red]"
     summary = [state]
-    if c.network == "loose":
-        ttl = cell("ttl") if c.loose_until is not None else "∞"
-        network = f"[red]●[/red] loose {ttl}"
-        if c.loose_until is not None:
-            network += f" →{c.loose_until.astimezone():%H:%M}"
-        summary.append(network)
-    elif c.network == "strict":
+    if c.network == "strict":
         summary.append("[dim]strict[/dim]")
-    elif c.network:
+    elif c.network and c.network != "loose":
         summary.append(escape(c.network))
     if c.ip:
         summary.append(escape(c.ip))
@@ -283,15 +281,40 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         created = f"{format_duration_short(now - c.created_at)} ago ({created})"
     group = escape(c.credential_group) if c.credential_group else "inherits repo"
     footer = [f"base {cell('base')}", escape(c.mode), f"group {group}", f"created {created}"]
+    footer += [f"mem {cell('mem')}", f"cpu {cell('cpu')}"]
+    return ContainerPanel(
+        tuple(summary),
+        escape(c.base_branch or "base"),
+        git,
+        tuple(footer),
+        _exceptions(c, now, cell("ttl")),
+    )
+
+
+def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
+    """What ``c`` may do beyond its repo's defaults, each marked with the red ●.
+
+    Loose network, then attached optional mounts with the time each has left,
+    then the container's own egress entries, counted first so the count
+    survives an ellipsis at the panel's edge.
+    """
+    parts: list[str] = []
+    if c.network == "loose":
+        loose = f"[red]●[/red] loose {ttl if c.loose_until is not None else '∞'}"
+        if c.loose_until is not None:
+            loose += f" →{c.loose_until.astimezone():%H:%M}"
+        parts.append(loose)
     if c.optional_mounts:
-        parts = []
+        mounts = []
         for m in c.optional_mounts:
             until = c.mount_until.get(m)
             rest = "∞" if until is None else format_duration_short(until - now).replace(" ", "")
-            parts.append(f"{escape(m)} {rest}")
-        footer.append(f"mounts {', '.join(parts)}")
-    footer += [f"mem {cell('mem')}", f"cpu {cell('cpu')}"]
-    return ContainerPanel(tuple(summary), escape(c.base_branch or "base"), git, tuple(footer))
+            mounts.append(f"{escape(m)} {rest}")
+        parts.append(f"[red]●[/red] mounts {', '.join(mounts)}")
+    if c.egress_extra:
+        entries = ", ".join(escape(e) for e in c.egress_extra)
+        parts.append(f"[red]●[/red] egress +{len(c.egress_extra)}: {entries}")
+    return tuple(parts)
 
 
 def repo_details(group: RepoGroup) -> list[DetailItem]:
@@ -384,21 +407,23 @@ def panel_fit(panel: ContainerPanel, cap: int | None) -> PanelFit:
     """What of ``panel`` fits ``cap`` rows (None: everything).
 
     Blank lines go first, then submodule rows, which one row then counts;
-    the summary and the footer stay. Only a panel too short for the table's
-    head loses the table, and then the footer.
+    the summary, the exceptions line and the footer stay. Only a panel too
+    short for the table's head loses the table, and then the footer; the
+    summary and the exceptions line are never dropped.
     """
+    top = 2 if panel.exceptions else 1  # the summary, and the exceptions line under it
     subs = 0 if panel.git is None else len(panel.git) - 1
     head = 1 if panel.git is None else 2
-    full = 1 + head + subs + 1
+    full = top + head + subs + 1
     if cap is None or full + 2 <= cap:
         return PanelFit(True, True, subs, 0, True)
     if full <= cap:
         return PanelFit(False, True, subs, 0, True)
-    room = cap - 1 - head - 1  # rows left for submodules once summary, head and footer sit
+    room = cap - top - head - 1  # rows left for submodules once the top, head and footer sit
     if room >= 1:
         return PanelFit(False, True, room - 1, subs - (room - 1), True)
-    git = cap - 1 >= head
-    return PanelFit(False, git, 0, 0, cap - 1 - (head if git else 0) >= 1)
+    git = cap - top >= head
+    return PanelFit(False, git, 0, 0, cap - top - (head if git else 0) >= 1)
 
 
 def _cells(*markups: str) -> int:
@@ -471,6 +496,8 @@ def _panel_lines(
         lines.extend(console.render_lines(_one_row(markup), render, pad=False)[:1])
 
     one(_SUMMARY_GAP.join(panel.summary))
+    if panel.exceptions:
+        one(_SUMMARY_GAP.join(panel.exceptions))
     if fit.blanks:
         lines.append([_BLANK])
     if fit.git:
