@@ -62,6 +62,8 @@ sped up and say so on screen; nothing else is edited.
 - **Submodules that travel** — sub-repos are initialised offline on
   `jailbee new` and their objects move with the superproject on every
   push/pull, so a repo with submodules needs no manual setup on either side.
+  `jailbee pr` offers a PR for each changed submodule before the
+  superproject's and links them to each other.
 - **Nested Docker** — `security.nesting=true` out of the box on Ubuntu 26.04.
 - **GUI passthrough** — launch a JetBrains IDE (`jailbee ide`), Chrome or
   Firefox (`jailbee chrome`, `jailbee firefox`), or any other app registered
@@ -162,10 +164,14 @@ sped up and say so on screen; nothing else is edited.
 - **Fast, cheap containers** — copy-on-write clones of one golden image; a live
   TUI dashboard (`jailbee dashboard`, alias `jailbee tui`, and what bare
   `jailbee` opens) or Qt GUI dashboard (`jailbee gui`) spans
-  every repo, shows what each container's agent is doing, and acts on what it
+  every repo, shows what each container's agent is doing — its state, last
+  tool call and last message in the details panel — and acts on what it
   shows: attach a shell or tmux, open the IDE, create or update the PR,
   update a container from its base, read its diff — without leaving the view
-  that told you it was needed.
+  that told you it was needed. Mark several containers to start, stop or
+  destroy them in one go; the terminal dashboard takes the mouse too.
+  `jailbee console` is a `jb>` prompt with completion and history for those
+  who prefer typing; `default_command` picks which one bare `jailbee` opens.
 
 ## Getting started
 
@@ -232,6 +238,11 @@ It asks about three steps, each idempotent — re-run it after upgrading:
   `install_host_skills` in `~/.config/jailbee/global.yaml`), so they know
   how to drive `jailbee`.
 
+After upgrading JailBee itself, `jailbee upgrade` re-runs `jailbee base build`
+and `jailbee apply` in every registered repo that the release's upgrade notes
+say needs them, without restarting any container (`--dry-run` shows what
+would run).
+
 `jailbee doctor` reports any step that is missing. Host prerequisites — Incus,
 the firewall, UID delegation — are separate; see
 [Installation](https://jailbee.gisgro.io/docs/installation/).
@@ -242,9 +253,12 @@ Restart the shell after `jailbee setup`, and TAB completes commands, options,
 and:
 
 - **container names** on every command that takes one (`jailbee shell`, `jailbee destroy`,
-  `jailbee git push`, `jailbee ide`, …) — short names, from the containers that exist in
-  the current repo
-- **branch names** on `jailbee new` and `jailbee retarget`, from the host repo's local branches
+  `jailbee git push`, `jailbee ide`, …) — short names and `jailbee rename`
+  aliases, from the containers that exist in the current repo
+- **branch names** on `jailbee new`, `jailbee fork --branch` and
+  `jailbee retarget`, from the host repo's local branches
+- **app names, credential groups, stored accounts, submodule paths and port
+  forwards** wherever a command takes one
 - **snapshot tags** on `jailbee snapshot restore` and `jailbee snapshot delete`, from the
   container already named on the command line
 - **fixed values** for `--format`, `--layer`, `--attach` and `--user`
