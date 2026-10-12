@@ -75,19 +75,23 @@ JailBee doesn't have the problem.
 
 Genericity inside the container doesn't mean the container is open:
 
-- **Per-container egress allowlist** (`jailbee net strict|loose`), enforced by a
-  kernel-level ACL. You write hostnames and ports — `api.example.com:443`,
-  not an IP range — and JailBee resolves them, accumulates the addresses a
-  rotating CDN hands out, and pins each container's `/etc/hosts` to the
-  same set so its resolver can't drift onto an address the ACL drops. The
-  ACL filters at the network layer, so `ssh`, `git+ssh` and a database
-  connection are covered by the same list. On the work network, HTTP(S) from
-  tools that honour `HTTP_PROXY`/`HTTPS_PROXY` also passes a Squid proxy
-  JailBee runs in its own container, which matches the hostname in the
-  request: a host that merely shares a CDN address with an allowed one is
-  refused there. The proxy is also what makes wildcards such as
-  `*.example.com` possible, which no IP ACL can express. TLS is not
-  intercepted, and a tool that ignores the proxy still meets the ACL.
+- **Per-container egress allowlist** (`jailbee net strict|loose`), enforced in
+  two layers that cover each other's blind spots. You write hostnames and
+  ports — `api.example.com:443`, not an IP range — once, and both follow the
+  same list. **A kernel-level ACL sees every packet:** JailBee resolves the
+  names, accumulates the addresses a rotating CDN hands out, and pins each
+  container's `/etc/hosts` to the same set so its resolver can't drift onto
+  an address the ACL drops. It filters at the network layer, so `ssh`,
+  `git+ssh` and a database connection are covered too, and nothing leaves the
+  container any other way — even the proxy is just one destination the ACL
+  allows. **A proxy sees names:** on the work network, HTTP(S) from tools that
+  honour `HTTP_PROXY`/`HTTPS_PROXY` goes through a Squid proxy JailBee runs in
+  its own container, which matches the hostname in the request, so a host
+  that merely shares a CDN address with an allowed one is refused. It is also
+  what makes wildcards such as `*.example.com` possible, which no IP ACL can
+  express; for a wildcard the proxy is the only layer. TLS is not
+  intercepted. A proxy alone relies on every tool agreeing to use it; here a
+  tool that ignores the variables meets the ACL instead and fails closed.
   `github.com` is deliberately **not** in the default strict list, so an
   unattended agent can't surprise-push. Flip to `loose` for the minute you
   need it, with an auto-revert TTL.
@@ -253,7 +257,7 @@ apply to that model. Note the two rows where JailBee is the one with the ❌.
 | Two branches both listening on `:3000` | 🟡 each forwarded to a different host port | 🟡 a port range per feature | ❌ | ✅ | ✅ |
 | Run an emulator or a VM (`/dev/kvm`) | 🟡 if you pass the device in yourself | ❌ | ❌ | ❌ only an NVIDIA GPU, experimental | ✅ `host_devices` |
 | A browser and an IDE **inside** the boundary, on your own screen | ❌ community noVNC feature only | ❌ | n/a — they run on the host | ❌ | ✅ |
-| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ `host:port` rules, any protocol; HTTP(S) also matched by hostname, wildcards included, through a proxy |
+| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ two layers: `host:port` ACL rules for any protocol, plus hostname matching (and wildcards) for HTTP(S) in a proxy |
 | Agent's GitHub writes held for a human to publish | ❌ | ❌ | 🟡 a token proxy can block writes; nothing stages them | 🟡 method/path rules can block writes; nothing stages them | ✅ outbox, published with the host's own `gh` |
 | Keep an agent out of your real checkout | 🟡 opt-in clone into a volume | ❌ | 🟡 per-path grants | 🟡 `--clone` | ✅ always its own clone |
 | Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✅ `jailbee git push/pull/diff` |
