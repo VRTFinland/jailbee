@@ -47,6 +47,9 @@ class MenuState:
     actions: list[tuple[str, str]]
     start_group: str | None = None
     start_index: int = 0
+    # Opened by a letter typed in the table: Esc in a level goes back to the
+    # table the user came from, not to a root they never saw.
+    direct: bool = False
 
 
 @dataclass
@@ -57,6 +60,7 @@ class RepoMenuState:
     actions: list[MenuItem]
     start_group: str | None = None
     start_index: int = 0
+    direct: bool = False  # as in MenuState
 
 
 def open_menu(

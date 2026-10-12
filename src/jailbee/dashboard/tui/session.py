@@ -2474,6 +2474,7 @@ class DashboardSession:
         menu = self._selection_menu()
         if menu is None or char not in menu_hotkeys(menu_entries(menu)):
             return False
+        menu.direct = True
         self.overlay = menu
         return True
 

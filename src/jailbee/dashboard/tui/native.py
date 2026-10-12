@@ -939,7 +939,7 @@ class MenuBox(OverlayBox):
     async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]
         lst = self.query_one(OverlayList)
         if event.key == "escape":
-            if self.group is None:
+            if self.group is None or self.menu.direct:
                 return self.Cancelled(self.key)
             self._load(None, self._parent_index)
             return True

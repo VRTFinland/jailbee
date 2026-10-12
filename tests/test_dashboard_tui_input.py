@@ -122,6 +122,18 @@ def test_a_menu_letter_in_the_table_opens_its_level_without_enter(mocker, tmp_pa
     assert run.natives[-1] is not None and run.natives[-1].level == "Git →"
 
 
+def test_escape_after_a_menu_letter_goes_back_to_the_table(mocker, tmp_path):
+    """`g` from the table, Esc: the table again, not the menu's root the user never saw."""
+    run = drive(mocker, ["j", "g", "escape"], [_group(tmp_path)])
+    assert run.trace[3].overlay is None
+    assert run.natives[3] is None
+
+
+def test_escape_after_enter_and_a_letter_still_goes_back_to_the_menu_root(mocker, tmp_path):
+    run = drive(mocker, ["j", "enter", "g", "escape"], [_group(tmp_path)])
+    assert run.natives[4] is not None and run.natives[4].level is None
+
+
 def test_a_letter_no_menu_entry_owns_does_nothing_in_the_table(mocker, tmp_path):
     run = drive(mocker, ["j", "z"], [_group(tmp_path)])
     assert run.last.overlay is None
