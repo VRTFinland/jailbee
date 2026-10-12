@@ -1172,9 +1172,7 @@ def test_mounts_with_nothing_configured_any_more_notices_instead_of_opening(mock
     quiet.assert_not_called()
 
 
-def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothing(
-    mocker, tmp_path
-):
+def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothing(mocker, tmp_path):
     """The tick closes a menu whose row left the listing, so the container is
     "gone" only to the Enter's own lookup: that lookup is made to miss.
     """
@@ -1227,9 +1225,7 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
 
 
 @_VANISH_WHEN
-def test_container_vanishing_while_the_mount_picker_is_open_runs_nothing(
-    mocker, tmp_path, when
-):
+def test_container_vanishing_while_the_mount_picker_is_open_runs_nothing(mocker, tmp_path, when):
     group = mount_group(tmp_path)
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     child = mocker.patch.object(tsession.subprocess, "run")
