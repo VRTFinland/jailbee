@@ -1,13 +1,13 @@
 # JailBee 1.7 — episode notes
 
-Rendered 2026-10-12. Main video 3:23 (1920×1080), Short 0:34 (1080×1920),
+Rendered 2026-10-12. Main video 3:22 (1920×1080), Short 0:34 (1080×1920),
 narration `gpt-4o-mini-tts-2025-12-15`, voice `marin`.
 
 ## YouTube
 
 | | ID | URL |
 |---|---|---|
-| Main | `Gdmtfe6hlFU` | https://youtu.be/Gdmtfe6hlFU |
+| Main | `4FWhKtnBpXo` | https://youtu.be/4FWhKtnBpXo |
 | Short | `4HqNJCPtfws` | https://youtube.com/shorts/4HqNJCPtfws |
 
 Uploaded unlisted, to go public with the 1.7.0 release. The main video is
@@ -20,7 +20,7 @@ hashtags: `#AIagents #ClaudeCode #DevTools`.
 
 ## Frames used elsewhere
 
-- Player thumbnail (`website/assets/videos/Gdmtfe6hlFU.jpg`): `out/main.mp4`
+- Player thumbnail (`website/assets/videos/4FWhKtnBpXo.jpg`): `out/main.mp4`
   at 8.5 s, the cold open's title over the dashboard.
 - Landing stills: `ai-column --at 22` → `tour-agents.jpg`,
   `details --at 18.5` → `tour-details.jpg`, `marks --at 18` → `tour-bulk.jpg`.

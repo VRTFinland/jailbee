@@ -43,7 +43,9 @@ from pipeline import (
 )
 
 HERE = Path(__file__).resolve().parent
-CACHE = HERE / ".cache"
+# Under the repo's .local/ so paid narration can outlive the container: there
+# .local/ is commonly a host mount, while the rest of the clone dies with it.
+CACHE = HERE.parents[1] / ".local" / "video-cache"
 OUT = HERE / "out"
 DEFAULT_EPISODE = HERE / "episodes" / "jailbee-1-7"
 VIEWPORTS = {"main": (1920, 1080), "short": (1080, 1920)}

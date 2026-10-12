@@ -77,7 +77,8 @@ scenes:
     page: scenes/marks.html
     formats: [main]
     narration: >-
-      A dozen containers also means a dozen to restart, update and clean up.
+      Then there is the upkeep. Restarting, updating and cleaning up a dozen
+      containers one at a time gets old fast.
       Space marks a container, and the menu then acts on every mark at once.
       Each entry says how many of the marked containers it applies to, and the
       work runs in parallel, without leaving the dashboard.
