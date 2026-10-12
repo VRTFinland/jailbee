@@ -17,12 +17,67 @@ before editing `## Unreleased`.
   do not stop the superproject PR but make the run exit 1.
 - **Create/update submodule PR… in the dashboard's PR menu** when the
   container has submodule changes.
+- **A details panel in the terminal dashboard.** `v` toggles a panel under the
+  table describing the selected container: a summary, its git state (including
+  submodule changes) and its mounts; the choice is remembered. The panel is
+  dropped when the terminal is too short for it.
 - **Agent activity in the dashboard's details panel.** For a container with a
-  live Claude session, the panel picks the session with the most recently written
-  readable transcript and shows up to three lines: the session's state
-  with how many subagents and shell commands are running, its last tool call
-  and its last message. The Qt dashboard shows the same in the agent tooltip.
+  live Claude session (the one with the most recently written readable
+  transcript) the panel shows its state with duration, how many subagents and
+  shell commands run, the last tool call and the last message (wrapped, up to
+  1000 characters), then, when there is room, the last events newest first.
+  The Qt dashboard shows state, tool and a short message in the agent tooltip.
   `dashboard.refresh.agent_activity: false` turns it off (no transcript is read).
+- **Bulk actions in the dashboards.** In the terminal dashboard Space,
+  Shift+↑/↓ or Ctrl+click marks containers (`●`), and the menu then acts on all
+  marks: start, stop, restart, network, clear name and destroy run in parallel
+  with one notice per batch; destroy asks once and lists the risks; git push,
+  pull and merge run once per repo. Esc clears the marks. The Qt dashboard
+  selects several rows and offers the same menu on right-click. `jailbee git
+  push` and `jailbee git pull` likewise take several container names.
+- **Sorting and column order in both dashboards.** `<`/`>` pick the sort
+  column, `I` reverses it and a header click sorts (▲/▼); rows sort inside each
+  repo group. Shift+↑/↓ in Settings > Fields moves a column, and dragging a Qt
+  header reorders them. Order and sort are remembered per front-end.
+- **`jailbee rename`.** Gives a container an alias without stopping it: `ls`,
+  the dashboards and every command show and accept the alias, while the real
+  name never changes. `--clear` (or an empty answer) removes it. The dashboards
+  have Rename… and a bulk "clear name".
+- **`jailbee fork SOURCE [NAME]`.** Creates a container from another
+  container's committed HEAD (the source must be running and clean), on
+  `--branch` (default: the source's branch), with the usual `--net`, `--memory`,
+  `--cpu`, `--storage` and `--credential-group` options. `jailbee ls` shows the
+  source as the fork's base, and `jailbee git merge` starts its target picker
+  on it. A fork of a PR review container keeps its untrusted head. The
+  dashboard has Fork….
+- **Optional mounts detach themselves.** `jailbee mount` takes `--for DURATION`
+  (at most 24h; `never` or `--no-revert` keeps it), asks on a terminal, and
+  retimes a mount that is already attached. The default comes from the new
+  `mount_auto_revert` block (`enabled`, `after`, default `15m`; global and per
+  repo) or an `optional_mounts.<kind>.auto_unmount_after`. `jailbee ls`, the
+  details panel and the Qt cards show what is mounted and for how long.
+- **`dashboard.refresh`** (`interval`, `git_interval`, `git`, `agent_activity`)
+  in `global.yaml` sets the cadence of every dashboard, TUI and Qt, which now
+  share one background state service that exits shortly after the last
+  dashboard closes.
+- **Native windows over `waypipe ssh`.** With `remote.ssh.gui: true`, a Linux
+  laptop running Wayland can run `waypipe ssh -t -p <port> jailbee@<host>
+  dashboard` and get a container's GUI apps as native windows on its own
+  desktop; they close with the session. `jailbee display up` provisions
+  waypipe in `jailbee-display`. See
+  [Remote GUI over SSH](docs/remote-gui.md#native-windows-with-waypipe).
+- **`jailbee new --storage POOL`** overrides `defaults.storage_pool` for one
+  container (`jailbee fork` takes it too). The helper containers (egress proxy,
+  LiteLLM and its state volume, registry mirror, shared display) are created on
+  the pool `global.yaml`'s `defaults.storage_pool` names; `jailbee litellm up
+  --recreate` and `jailbee net egress proxy up --recreate` move one. See
+  [Storage pools](docs/storage.md).
+- **`claude-jb -C 272k|1m|N|max|default` picks the session's context window**,
+  up to a route's new `max_context_window`; `claude-jb --help` lists each
+  profile's window and ceiling. Run `jailbee base build` to get it.
+- **`jailbee litellm login --provider xai` accepts a pasted authorization
+  code** (or the loopback callback URL) when the browser shows a code instead
+  of redirecting.
 - `--repo PREFIX` works anywhere on the command line (`jb chrome feat --repo x`),
   and the remote SSH top level accepts every command the remote console does,
   with `repos` and a `help` that lists the allowed commands.
@@ -33,7 +88,8 @@ before editing `## Unreleased`.
 - **Wildcard `egress_allow` entries and an always-on egress proxy.** `*.example.com`
   allows the domain and every subdomain, on ports 80 and 443
   (`*.example.com:8443` for one port), in strict mode, in `egress_allow` and with
-  `jailbee net egress add`. They go through a Squid proxy container, so they reach
+  `jailbee net egress add`. They go through a Squid proxy container
+  (`jailbee net egress proxy up|down|status`), so they reach
   tools that honour `HTTP_PROXY` and `HTTPS_PROXY`; other tools stay blocked. On
   the work network every container gets those variables from its first boot,
   in strict and loose mode, so adding or removing an entry works in shells and
@@ -51,7 +107,8 @@ before editing `## Unreleased`.
   `help`. A broken `global.yaml` falls back to the dashboard with a warning.
 - **`remote.ssh.network`.** Lets a remote SSH session widen a container's
   network — `jailbee net loose`, `jailbee new --net loose` and
-  container-scope `jailbee net egress add` — which can open the host's LAN to it, so it is off by default.
+  container-scope `jailbee net egress add` — which can open the host's LAN to
+  it, so it is off by default.
   `jailbee net egress rm` on a container now works over SSH without it;
   `--repo` egress changes stay host-only.
 - `jb chrome`, `jb firefox`, `jb browser` and `jb apps run` move a browser
@@ -73,15 +130,28 @@ before editing `## Unreleased`.
   Keys typed faster than the screen redraws — over a slow SSH link, or pasted —
   act in order, each on what the key before it opened. Menu and picker lists wrap
   from the last entry to the first; suggestion lists and the container table
-  stop at their ends. `m` turns the mouse off for the session and
-  `dashboard.mouse: false` in `global.yaml` by default; with it on, most
-  terminals still select text with Shift-drag.
+  stop at their ends. `m` turns the mouse off for the session, and
+  `dashboard.mouse: false` in `global.yaml` turns it off by default; with it
+  on, most terminals still select text with Shift-drag.
 - **The terminal dashboard scrolls sideways instead of hiding columns.** Every
   column keeps its width at any terminal size. When they do not fit, the first
   column stays put and `←`/`→` scroll the rest one column at a time; a dim
   `‹`/`›` marks columns out of view and the column at the edge is truncated
   with `…`. Columns no longer disappear or shrink as the terminal is resized.
-
+- **The dashboards' default columns changed.** `mem` became `USED` and `MEM%`,
+  `issues` became `OUTBOX`, `doing` is gone, and a new `LOOSE` column shows the
+  remaining loose time. State, network and age cells are compact, with
+  tooltips that explain them. A stored column set is migrated once, with one
+  notice. `o` fits the column widths.
+- **Dashboard menus regrouped.** The container menu gains a Lifecycle submenu
+  and every entry a fixed key. Outbox leads the menu, as "Outbox (N pending)",
+  while a manifest is pending. Egress changes and new containers run detached,
+  so the dashboard stays usable and reports the outcome. Retarget and the
+  new-container base take a typed branch with suggestions and Tab completion.
+- **The default `loose_auto_revert.after` is 15 minutes**, up from 5.
+- **The LiteLLM proxy is pinned to 1.106.0rc1** (was 1.103.1). An instance
+  without `litellm.version` is reinstalled on the next `jailbee litellm up`;
+  `jailbee apply` says when one is due.
 - **A new or rotated LiteLLM API key no longer restarts the proxy.** `jailbee
   apply` and `jailbee litellm up` load a key that a route (or `litellm.extra`'s
   `model_list`) uses into the running instance, like any other route change, so
@@ -132,9 +202,21 @@ before editing `## Unreleased`.
   `default_entrypoint: console`, `ssh … console` and `serve --console`. The old
   spelling still works and is removed in 2.0.0; `jailbee config migrate --apply`
   renames the keys in `global.yaml`.
+- The dashboards' `--interval`/`-i`, `--git-interval` and `--no-git` flags are
+  ignored; set `dashboard.refresh` in `global.yaml`.
 
 ### Fixed
 
+- **`GH_TOKEN` reaches the first tmux window of a new container.** The token
+  was written after the autostart session existed, so `gh` in window 0 was
+  unauthenticated.
+- **`jailbee restart` no longer hangs for up to 10 minutes** on a container
+  that will not stop. It stops through the same bounded path as `stop`, names
+  what holds the container up, then starts it.
+- **The `DIFF` cell no longer turns into `?` when a branch adds or removes a
+  submodule.** The gitlink counts as one changed line.
+- **`jailbee outbox show` renders Markdown bodies** like `review show` instead
+  of printing them raw.
 - **`jailbee git merge` can merge two containers on the same branch.** When
   both containers had their own commits on that branch, the merge always failed
   with git's "Not possible to fast-forward". It now works like `jailbee git push
