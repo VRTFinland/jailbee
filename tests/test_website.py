@@ -9,6 +9,7 @@ tests/test_docs_site.py and the strict build cover that half.
 
 from __future__ import annotations
 
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -510,132 +511,86 @@ def test_the_page_never_calls_a_container_a_machine() -> None:
     assert "machine" not in INDEX.read_text().lower()
 
 
-def test_every_demo_clip_is_click_to_play_with_a_poster() -> None:
-    """The guards the clips owed the page when they came back, paid.
-
-    Deliberately NOT the 1.0 contract, and the difference is the whole
-    point: `loop` and `autoplay` belonged to fifteen-second hero loops that
-    started on scroll. A real workflow recording is minutes long, so it
-    carries `controls` and `preload="none"` and starts only when the reader
-    asks — and asserting the ABSENCE of `loop`/`autoplay` is what stops a
-    future edit from "restoring" that regression out of git history.
-
-    `muted` and `playsinline` stay: they are what keeps a tap on iOS playing
-    the clip inline instead of taking over the screen.
-    """
-    videos = [attrs for tag, attrs in collect_elements(INDEX.read_text()) if tag == "video"]
-    assert videos, "the page ships no clip — see website/demo/render.sh"
-    for attrs in videos:
-        for flag in ("muted", "playsinline", "controls", "poster"):
-            assert flag in attrs, f"a <video> is missing {flag}"
-        assert attrs.get("preload") == "none", (
-            "a <video> does not set preload=none — a minutes-long clip must not "
-            "be fetched before the reader asks for it"
+def _demos(html: str) -> str:
+    return html[
+        html.index('<section id="demos">') : html.index(
+            "</section>", html.index('<section id="demos">')
         )
-        for banned in ("loop", "autoplay"):
-            assert banned not in attrs, (
-                f"a <video> has {banned} — these are click-to-play recordings, "
-                f"not the 1.0 hero loops"
-            )
-
-
-def test_every_clip_the_page_references_is_actually_committed() -> None:
-    """A `<video>` whose sources 404 is worse than no clip at all.
-
-    `test_every_local_reference_resolves_on_disk` exempts
-    `assets/media/*` because a clip could legitimately be unrendered while
-    the page waited for a host with vhs on it. That exemption is now the
-    only thing standing between a half-finished restoration and a public
-    page, so this closes it: whatever the page names, `render.sh` must have
-    produced and someone must have committed. The poster is checked by that
-    other test already — it was never exempt.
-    """
-    sources = [
-        attrs["src"]
-        for tag, attrs in collect_elements(INDEX.read_text())
-        if tag == "source" and attrs.get("src")
     ]
-    assert sources, "the clip references no media"
-    for src in sources:
-        assert src is not None
-        assert (SITE / src).is_file(), f"referenced clip is not committed: {src}"
 
 
-def test_the_clip_has_a_play_affordance_that_javascript_can_reveal() -> None:
-    """A terminal screenshot does not look playable, so the button matters.
+def test_the_tour_is_a_click_to_load_player() -> None:
+    """Nothing reaches YouTube until the reader presses play.
 
-    Three halves, and any one of them alone is an invisible failure: a button
-    with no script stays `hidden` forever, a script with no button does
-    nothing, and a button that ships *without* `hidden` is dead markup for a
-    reader with JavaScript off. Assert all three together.
+    The tour is a YouTube video, so the page carries a local thumbnail and a
+    button, and assets/lite-yt.js swaps in the player on click. An iframe or
+    an embed URL in the page itself would load YouTube for every visitor, and
+    a thumbnail fetched from i.ytimg.com would do the same.
     """
     html = INDEX.read_text()
-    buttons = [
-        attrs
-        for tag, attrs in collect_elements(html)
-        if tag == "button" and "demo__play" in (attrs.get("class") or "")
+    demos = _demos(html)
+    elements = collect_elements(demos)
+    players = [a for t, a in elements if t == "div" and "yt" in (a.get("class") or "").split()]
+    assert len(players) == 1, "the tour should be exactly one click-to-load player"
+    video_id = players[0].get("data-yt-id")
+    assert video_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
+    buttons = [a for t, a in elements if t == "button" and "yt__play" in (a.get("class") or "")]
+    assert len(buttons) == 1 and buttons[0].get("aria-label"), "the player needs a named button"
+    thumbnail = f"assets/videos/{video_id}.jpg"
+    assert any(t == "img" and a.get("src") == thumbnail for t, a in elements)
+    assert (SITE / thumbnail).is_file(), f"the tour's thumbnail is not committed: {thumbnail}"
+    assert "<iframe" not in html and "youtube-nocookie" not in html and "ytimg" not in html
+    assert f'href="https://www.youtube.com/watch?v={video_id}"' in demos, (
+        "no plain link to the video — a reader without JavaScript has no way to it"
+    )
+    import hashlib
+
+    script = SITE / "assets" / "lite-yt.js"
+    expected = hashlib.sha256(script.read_bytes()).hexdigest()[:8]
+    assert f'<script src="assets/lite-yt.js?v={expected}" defer></script>' in html, (
+        f"the player script is missing or its cache-buster is stale — use ?v={expected}"
+    )
+
+
+def test_the_demo_tabs_are_wired() -> None:
+    """A radio group fails silently: a label pointing at nothing, a panel with
+    no tab, or a tab the stylesheet has no :checked rule for all just show the
+    wrong panel, or none."""
+    elements = collect_elements(_demos(INDEX.read_text()))
+    css = (SITE / "assets" / "style.css").read_text()
+    radios = [a for t, a in elements if t == "input" and "tabs__radio" in (a.get("class") or "")]
+    panels = [
+        a.get("id") for t, a in elements if t == "figure" and "demo" in (a.get("class") or "")
     ]
-    videos = sum(1 for tag, _ in collect_elements(html) if tag == "video")
-    assert len(buttons) == videos, (
-        f"{videos} clips but {len(buttons)} play buttons — the poster is a screenshot "
-        f"and the native controls are a thin bar at the bottom edge"
-    )
-    for attrs in buttons:
-        assert "hidden" in attrs, (
-            "the play button must ship hidden and be revealed by script, or a reader "
-            "with JavaScript off gets a button that does nothing"
-        )
-        assert attrs.get("aria-label"), "the play button has no accessible name"
-    script = html.split("<script>")[-1]
-    assert "demo__play" in script, (
-        "no script reveals the play button — it would stay hidden forever"
-    )
-    # Mobile Chrome and iOS Safari draw their own centred play button over an
-    # unplayed video, so revealing this one there stacks two on top of each
-    # other — reported from a real phone. The gate must stay, and it must stay
-    # phrased as "hide on coarse" rather than "show on fine": a device that
-    # reports no pointer at all (headless Chrome, which renders this page's
-    # screenshots) should keep the button.
-    assert "pointer: coarse" in script, (
-        "the play button is no longer gated on pointer type — on a touch device "
-        "it lands on top of the browser's own play button"
-    )
-
-
-def test_a_second_clip_brings_the_demo_tabs_back() -> None:
-    """One clip needs no tabs; two do, and the wiring is silent when wrong.
-
-    The tabs were a radio group — a `for=` pointing at nothing, or a panel
-    with no tab, breaks nothing visibly: the section just shows the wrong
-    clip, or none at all. So the guard is kept alive rather than deleted
-    while there is only one clip, and it names where to restore the markup
-    from (a68553e, which pulled it).
-    """
-    elements = collect_elements(INDEX.read_text())
-    clips = sum(1 for tag, _ in elements if tag == "video")
-    radios = [
-        attrs
-        for tag, attrs in elements
-        if tag == "input" and "tabs__radio" in (attrs.get("class") or "")
-    ]
-    if clips < 2:
-        assert not radios, "demo tabs with a single clip — one clip needs no chooser"
-        return
-
-    assert len(radios) == clips, (
-        f"{clips} clips but {len(radios)} tabs — restore the tab markup from a68553e"
-    )
-    labelled = {attrs.get("for") for tag, attrs in elements if tag == "label"}
-    ids = {attrs.get("id") for _, attrs in elements}
+    assert len(radios) >= 2 and len(radios) == len(panels)
+    labelled = {a.get("for") for t, a in elements if t == "label"}
     for attrs in radios:
         tab_id = attrs.get("id")
-        assert tab_id, "a .tabs__radio has no id to point a label at"
-        assert tab_id in labelled, f"tab {tab_id} has no label"
+        assert tab_id and tab_id in labelled, f"tab {tab_id} has no label"
         panel_id = tab_id.replace("tab-", "demo-")
-        assert panel_id in ids, f"tab {tab_id} points at no panel"
-    assert sum(1 for attrs in radios if "checked" in attrs) == 1, (
-        "exactly one tab must start selected"
-    )
+        assert panel_id in panels, f"tab {tab_id} points at no panel"
+        assert f"#{tab_id}:checked ~ .tabs__panels > #{panel_id}" in css, (
+            f"style.css never shows #{panel_id} when #{tab_id} is checked"
+        )
+        assert f'#{tab_id}:checked ~ .tabs__bar .tabs__tab[for="{tab_id}"]' in css, (
+            f"style.css never highlights the tab for #{tab_id}"
+        )
+    assert sum(1 for a in radios if "checked" in a) == 1, "exactly one tab must start selected"
+
+
+def test_every_demo_panel_is_one_16_9_frame() -> None:
+    """Panels of different heights make the page jump under the reader on
+    every tab switch. Each picture declares 16:9 and the file really is."""
+    from scripts.news_site import _image_size
+
+    elements = collect_elements(_demos(INDEX.read_text()))
+    pictures = [a for t, a in elements if t == "img"]
+    assert len(pictures) >= 2
+    for attrs in pictures:
+        src = attrs.get("src") or ""
+        width, height = int(attrs.get("width") or 0), int(attrs.get("height") or 0)
+        assert width * 9 == height * 16, f"{src} is declared {width}x{height}, not 16:9"
+        assert _image_size(SITE / src) == (width, height), f"{src} is not {width}x{height}"
 
 
 def test_no_media_file_is_a_zero_byte_stand_in() -> None:

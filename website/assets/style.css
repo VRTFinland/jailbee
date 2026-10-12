@@ -1005,20 +1005,15 @@ footer p {
 }
 
 /* -----------------------------------------------------------------------
-   Demo — #demos, click-to-play clips behind a tab chooser.
+   Demo — #demos: the narrated tour and three stills, behind a tab chooser.
 
-   The 1.0 page had four fifteen-second reconstructions here, all autoplaying
-   on scroll, and the note that survived that round still applies: a 1200px
-   terminal is unreadable at 512px if you put two beside each other, and
-   several moving at once tells the eye nothing. What replaced them is real
-   recordings, minutes long, that start when the reader asks — so no autoplay
-   rule and no IntersectionObserver; the only script is the play affordance
-   and a pause for the clip a tab switch hides.
+   The tour is a YouTube video, loaded only on click (assets/lite-yt.js):
+   until then it is a local thumbnail and a button, and nothing is requested
+   from YouTube. The stills are frames of the same tour — real screenshots
+   laid out with labels — so every panel is one 16:9 frame and a switch never
+   moves the page under the reader (tests/test_website.py).
 
-   The tab state is a radio group, restored from a68553e when the second
-   recording landed, so the chooser works with JavaScript off. Every tape
-   renders the same 1200x900 frame (tests/test_website.py), which is what
-   keeps a switch from moving the page under the reader.
+   The tab state is a radio group, so the chooser works with JavaScript off.
    ----------------------------------------------------------------------- */
 .tabs {
   margin-top: 2rem;
@@ -1058,30 +1053,43 @@ footer p {
   border-color: var(--amber-dim);
 }
 
-#tab-feature-flow:checked ~ .tabs__bar .tabs__tab[for="tab-feature-flow"],
-#tab-dashboard:checked ~ .tabs__bar .tabs__tab[for="tab-dashboard"] {
+#tab-tour:checked ~ .tabs__bar .tabs__tab[for="tab-tour"],
+#tab-agents:checked ~ .tabs__bar .tabs__tab[for="tab-agents"],
+#tab-details:checked ~ .tabs__bar .tabs__tab[for="tab-details"],
+#tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"] {
   background: var(--surface-2);
   border-color: var(--amber);
   color: var(--amber);
 }
 
-#tab-feature-flow:focus-visible ~ .tabs__bar .tabs__tab[for="tab-feature-flow"],
-#tab-dashboard:focus-visible ~ .tabs__bar .tabs__tab[for="tab-dashboard"] {
+#tab-tour:focus-visible ~ .tabs__bar .tabs__tab[for="tab-tour"],
+#tab-agents:focus-visible ~ .tabs__bar .tabs__tab[for="tab-agents"],
+#tab-details:focus-visible ~ .tabs__bar .tabs__tab[for="tab-details"],
+#tab-bulk:focus-visible ~ .tabs__bar .tabs__tab[for="tab-bulk"] {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
 }
 
-/* Hidden by default, and no top margin of its own: the chooser above already
-   carries the spacing, and `.demo`'s own margin would push the clip away from
-   the tabs that select it. */
-.tabs__panels > .demo {
-  display: none;
-  margin-top: 0;
+/* Every panel sits in the same grid cell, so the section is always as tall
+   as the tallest one and a switch never moves the page, even where captions
+   wrap differently. `visibility` rather than `display` keeps that height and
+   still takes a hidden panel's button and links out of the tab order. No top
+   margin of its own: the chooser above already carries the spacing. */
+.tabs__panels {
+  display: grid;
 }
 
-#tab-feature-flow:checked ~ .tabs__panels > #demo-feature-flow,
-#tab-dashboard:checked ~ .tabs__panels > #demo-dashboard {
-  display: block;
+.tabs__panels > .demo {
+  grid-area: 1 / 1;
+  margin-top: 0;
+  visibility: hidden;
+}
+
+#tab-tour:checked ~ .tabs__panels > #demo-tour,
+#tab-agents:checked ~ .tabs__panels > #demo-agents,
+#tab-details:checked ~ .tabs__panels > #demo-details,
+#tab-bulk:checked ~ .tabs__panels > #demo-bulk {
+  visibility: visible;
 }
 
 .demo {
@@ -1092,73 +1100,38 @@ footer p {
   overflow: hidden;
 }
 
-/* The positioning context for the play affordance. */
-.demo__frame {
-  position: relative;
-  display: block;
-}
-
-/* Centred, and deliberately large: this is the only thing telling a reader
-   the terminal screenshot is a video. Sized in rem so it scales with the
-   reader's own text size rather than being pinned to the poster's pixels.
-   It sits well above the native control bar at the bottom edge. */
-.demo__play {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 5.5rem;
-  height: 5.5rem;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  /* No transition: the reduced-motion rule below would have to exempt it,
-     and an instant state change is the honest behaviour for a button. */
-}
-
-.demo__play svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.demo__play circle {
-  fill: rgb(11 12 14 / 62%);
-  stroke: var(--amber);
-  stroke-width: 3;
-}
-
-.demo__play path {
-  fill: var(--amber);
-}
-
-.demo__play:hover circle,
-.demo__play:focus-visible circle {
-  fill: rgb(11 12 14 / 82%);
-}
-
-.demo__play:focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: 4px;
-  border-radius: 50%;
-}
-
-.demo__media {
-  /* The tape's own frame: Width 1200 (demo/workflows/common.tape) by
-     Height 900 (demo/workflows/a.tape). The poster is cut from the same
-     render, so this must keep matching the tape — any other ratio
-     letterboxes or crops a clip that was already the right shape. */
-  aspect-ratio: 1200 / 900;
+/* Every panel's picture: one 16:9 frame, so switching tabs never changes
+   the section's height. */
+.demo__still,
+.demo .yt__play,
+.demo .yt__frame {
   display: block;
   width: 100%;
   height: auto;
-  margin: 0;
-  background: var(--surface-2);
+  aspect-ratio: 16 / 9;
   border-bottom: 1px solid var(--border);
 }
 
-/* Direct child only: the caption's prose mentions `×6`, and a descendant
-   selector would turn that into its own block. */
+.demo__still {
+  background: var(--ground);
+}
+
+/* On the landing page the tour sits on the demo card; the article card the
+   player wears in a news post would be a second frame inside it. */
+.demo .yt {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.demo .yt__play,
+.demo .yt__frame {
+  border-radius: 0;
+}
+
+/* Direct child only: a descendant selector would also catch inline code in
+   the prose below it. */
 .demo figcaption > code {
   display: block;
   color: var(--amber);
@@ -1183,25 +1156,115 @@ footer p {
 }
 
 /* The provenance line, not the story: same size, dimmer, so it reads as a
-   footnote to the clip rather than as part of the description. */
+   footnote to the picture rather than as part of the description. */
 .demo__note {
   color: var(--muted);
   opacity: 0.75;
 }
 
-/* Inline code inside the caption's prose, as opposed to the command line
-   above it, which the `> code` rule turns into its own block. */
 .demo figcaption p code {
   color: var(--text);
   font-size: 0.85em;
 }
 
 /* -----------------------------------------------------------------------
+   YouTube player — loaded on click (assets/lite-yt.js), shared by #demos
+   and news articles (scripts/news_site.py). Until the click it is a local
+   thumbnail with a play button and a plain link.
+   ----------------------------------------------------------------------- */
+.yt {
+  margin: 2.25rem 0;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.yt__play {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 16 / 9;
+}
+
+.yt__play img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.yt__icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5.5rem;
+  height: 5.5rem;
+  margin: -2.75rem 0 0 -2.75rem;
+  border-radius: 50%;
+  background: rgb(11 12 14 / 70%);
+  border: 3px solid var(--amber);
+  box-shadow: 0 0 30px rgb(240 169 43 / 45%);
+}
+
+.yt__icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -1rem 0 0 -0.55rem;
+  border-style: solid;
+  border-width: 1rem 0 1rem 1.7rem;
+  border-color: transparent transparent transparent var(--amber);
+}
+
+.yt__play:hover .yt__icon,
+.yt__play:focus-visible .yt__icon {
+  background: rgb(11 12 14 / 88%);
+}
+
+.yt__play:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.yt__frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 4px;
+}
+
+.yt--short {
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.yt--short .yt__play,
+.yt--short .yt__frame {
+  aspect-ratio: 9 / 16;
+  width: min(360px, 100%);
+}
+
+.yt__link {
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.875rem;
+}
+
+/* -----------------------------------------------------------------------
    Reduced motion — covers every transition/animation on the page. There
    happen to be none declared elsewhere yet, but a future hover/focus
    transition must not have to remember this rule exists. It does not
-   need to cover #demos: that clip is click-to-play, so nothing moves
-   until the reader asks it to.
+   need to cover #demos: nothing there moves until the reader presses play.
    ----------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   * {

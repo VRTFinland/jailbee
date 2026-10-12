@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=e304b99b" />
+    <link rel="stylesheet" href="assets/style.css?v=87c20166" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -251,98 +251,85 @@
       <div class="wrap">
         <h2>See it work.</h2>
         <div class="tabs">
-          <input class="tabs__radio" type="radio" name="demo" id="tab-feature-flow" checked />
-          <input class="tabs__radio" type="radio" name="demo" id="tab-dashboard" />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-tour" checked />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-agents" />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-details" />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-bulk" />
 
           <div class="tabs__bar">
-            <label class="tabs__tab" for="tab-feature-flow">One feature, start to finish</label>
-            <label class="tabs__tab" for="tab-dashboard">Several at once</label>
+            <label class="tabs__tab" for="tab-tour">The 3-minute tour</label>
+            <label class="tabs__tab" for="tab-agents">Which agent needs you</label>
+            <label class="tabs__tab" for="tab-details">What it is doing</label>
+            <label class="tabs__tab" for="tab-bulk">Act on many</label>
           </div>
 
           <div class="tabs__panels">
-        <figure class="demo" id="demo-feature-flow">
-          <!-- Click-to-play, not a hero loop: `controls` and `preload="none"`,
-               no `loop` and no `autoplay`. At 4.7 MB, autoplaying this on
-               scroll would spend a visitor's bandwidth on a clip that says
-               nothing in its first five seconds. `muted` and `playsinline`
-               stay so a reader who taps play on iOS gets it inline rather
-               than as a fullscreen takeover. -->
-          <div class="demo__frame">
-            <video
-              class="demo__media"
-              muted
-              playsinline
-              controls
-              preload="none"
-              poster="assets/media/a.poster.png"
-            >
-              <source src="assets/media/a.webm" type="video/webm" />
-              <source src="assets/media/a.mp4" type="video/mp4" />
-            </video>
-            <!-- The poster is a terminal screenshot, and a screenshot does not
-                 look playable: the native controls are a thin bar at the
-                 bottom edge that a reader has to notice first. This is the
-                 affordance. It ships `hidden` and the script at the end of the
-                 body reveals it, so with JavaScript off the interface is the
-                 native controls — exactly what it was before. -->
-            <button class="demo__play" type="button" hidden aria-label="Play the demo">
-              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                <circle cx="50" cy="50" r="47" />
-                <path d="M40 30 L74 50 L40 70 Z" />
-              </svg>
-            </button>
-          </div>
-          <figcaption>
-            <code>jb new &rarr; jb tmux &rarr; jb git pull &rarr; jb destroy</code>
-            <p>
-              <strong>One feature, start to finish.</strong> A branch gets a container of its
-              own — dependencies synced, database seeded, dev server already listening. An
-              agent works in it while the human checks the service from outside, and comes
-              back to find the commit made. Then the commit moves to the host and the
-              container goes away, each asking first.
-            </p>
-            <p class="demo__note">
-              Every command and every line of output is real. The two stretches marked
-              &times;6 are sped up; nothing else is edited.
-            </p>
-          </figcaption>
-        </figure>
+            <figure class="demo" id="demo-tour">
+              <!-- Click-to-load: nothing is requested from YouTube until the
+                   reader presses play (assets/lite-yt.js). The thumbnail is a
+                   frame of the video, served from here. -->
+              <div class="yt yt--video" data-yt-id="Gdmtfe6hlFU">
+                <button type="button" class="yt__play" aria-label="Play video: JailBee 1.7, the 3-minute tour">
+                  <img src="assets/videos/Gdmtfe6hlFU.jpg" alt="" width="1280" height="720" loading="lazy" />
+                  <span class="yt__icon" aria-hidden="true"></span>
+                </button>
+              </div>
+              <figcaption>
+                <code>jailbee 1.7 &middot; narrated &middot; 3:23</code>
+                <p>
+                  <strong>The 3-minute tour.</strong> What a container per branch gives an agent,
+                  how the dashboard tells you which of a dozen agents needs you, what to do with
+                  many containers at once, and the two layers that hold the network in.
+                </p>
+                <p class="demo__note">
+                  Every JailBee screen in it is a real screenshot; the voice is synthesized.
+                  Nothing loads from YouTube until you press play &middot;
+                  <a href="https://www.youtube.com/watch?v=Gdmtfe6hlFU" rel="noopener">Watch on YouTube</a>
+                </p>
+              </figcaption>
+            </figure>
 
-        <figure class="demo" id="demo-dashboard">
-          <div class="demo__frame">
-            <video
-              class="demo__media"
-              muted
-              playsinline
-              controls
-              preload="none"
-              poster="assets/media/d.poster.png"
-            >
-              <source src="assets/media/d.webm" type="video/webm" />
-              <source src="assets/media/d.mp4" type="video/mp4" />
-            </video>
-            <button class="demo__play" type="button" hidden aria-label="Play the demo">
-              <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                <circle cx="50" cy="50" r="47" />
-                <path d="M40 30 L74 50 L40 70 Z" />
-              </svg>
-            </button>
-          </div>
-          <figcaption>
-            <code>jb dashboard &middot; Enter &middot; t &middot; n</code>
-            <p>
-              <strong>Several agents, one view.</strong> Waiting on an agent is the normal
-              state. The table says which branch has something to look at &mdash; a commit
-              landed, a working tree went dirty &mdash; and one key attaches to it. Detach,
-              look at the next one, start a third.
-            </p>
-            <p class="demo__note">
-              Every command and every line of output is real. The two agents already at work
-              were given their tasks before recording started. The stretches marked
-              &times;3 and &times;6 are sped up; nothing else is edited.
-            </p>
-          </figcaption>
-        </figure>
+            <figure class="demo" id="demo-agents">
+              <img class="demo__still" src="assets/img/tour-agents.jpg" width="1920" height="1080" loading="lazy"
+                alt="The dashboard's container table with its AI column ringed: green dots for agents at work, hollow ones for idle agents, a half-filled one for an agent whose shell job is still running, and a legend explaining each mark" />
+              <figcaption>
+                <code>jailbee dashboard</code>
+                <p>
+                  <strong>Which agent needs you.</strong> One mark per container: working,
+                  waiting for you, idle, or idle with a shell job still running, and how long
+                  ago it last did anything. Scan the column, not the terminals.
+                </p>
+                <p class="demo__note">A real screenshot from daily use; one internal repository name is blurred.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="demo" id="demo-details">
+              <img class="demo__still" src="assets/img/tour-details.jpg" width="1920" height="1080" loading="lazy"
+                alt="The details panel for one container: its state, network and address, a git table for the branch and two submodules, and the agent's last activity, last shell command and the start of its last message, ringed" />
+              <figcaption>
+                <code>jailbee dashboard &middot; details panel</code>
+                <p>
+                  <strong>What it is doing.</strong> Under the table, the selected container: the
+                  branch and every submodule against its base, and the agent itself &mdash; how
+                  long it has been busy, its last tool call, its last message.
+                </p>
+                <p class="demo__note">A real screenshot from daily use.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="demo" id="demo-bulk">
+              <img class="demo__still" src="assets/img/tour-bulk.jpg" width="1920" height="1080" loading="lazy"
+                alt="Four containers marked in the dashboard, the top bar reading 4 selected, and the bulk menu: Merge into, Update from base, Send commits to host, Restart, Stop, Network, Clear name and Destroy, each with how many of the marked containers it applies to" />
+              <figcaption>
+                <code>Space &middot; Enter</code>
+                <p>
+                  <strong>Act on many.</strong> Mark containers and one menu acts on all of them,
+                  saying how many each action applies to: restart, stop and destroy in parallel,
+                  push and pull once per repo, or merge several agents' attempts into one branch.
+                </p>
+                <p class="demo__note">Real screenshots from daily use.</p>
+              </figcaption>
+            </figure>
           </div>
         </div>
       </div>
@@ -902,68 +889,8 @@
           });
         });
       })();
-
-      // Play affordance for the demo clip. The button is `hidden` in the
-      // markup and revealed here, so a reader without JavaScript gets the
-      // native controls and nothing broken — which is what the page shipped
-      // before this existed. Hidden again while playing so it never covers
-      // the picture, and back on pause so a second click is as easy as the
-      // first.
-      //
-      // NOT revealed on touch devices. Mobile Chrome (and iOS Safari) already
-      // draw their own large centred play button over an unplayed video, so
-      // this one lands on top of theirs — two stacked buttons, reported from a
-      // real phone. Desktop Chrome and Firefox draw only the thin control bar
-      // at the bottom edge, which is the whole reason this exists.
-      //
-      // The test is `(pointer: coarse)` rather than `(pointer: fine)` on
-      // purpose: it must hide only where a native overlay is known to appear.
-      // A device that reports no pointer at all — headless Chrome does, which
-      // is what renders the screenshots this page is checked with — should get
-      // the button, not lose it to a query it never answers.
-      (function () {
-        var touch =
-          typeof window.matchMedia === "function" &&
-          window.matchMedia("(pointer: coarse)").matches;
-        if (touch) {
-          return;
-        }
-        document.querySelectorAll(".demo__frame").forEach(function (frame) {
-          var video = frame.querySelector("video");
-          var button = frame.querySelector(".demo__play");
-          if (!video || !button) {
-            return;
-          }
-          button.hidden = false;
-          button.addEventListener("click", function () {
-            video.play();
-          });
-          video.addEventListener("play", function () {
-            button.hidden = true;
-          });
-          ["pause", "ended"].forEach(function (event) {
-            video.addEventListener(event, function () {
-              button.hidden = false;
-            });
-          });
-        });
-      })();
-
-      // A clip left playing inside a hidden tab panel keeps running where
-      // nobody can see it, burning bandwidth on a 2 MB file. The radio group
-      // does the showing and hiding; this only stops what it hid.
-      (function () {
-        document.querySelectorAll(".tabs__radio").forEach(function (radio) {
-          radio.addEventListener("change", function () {
-            document.querySelectorAll(".tabs__panels video").forEach(function (video) {
-              var panel = video.closest(".demo");
-              if (panel && getComputedStyle(panel).display === "none") {
-                video.pause();
-              }
-            });
-          });
-        });
-      })();
     </script>
+    <!-- The #demos player: nothing from YouTube until play is pressed. -->
+    <script src="assets/lite-yt.js?v=15236160" defer></script>
   </body>
 </html>
