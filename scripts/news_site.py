@@ -226,13 +226,28 @@ def _topbar(website_dir: Path, latest: Post | None = None) -> Markup:
     return Markup(_with_latest(header, latest, "/"))
 
 
-def _home(website_dir: Path, site_dir: Path, latest: Post | None) -> None:
-    """Write the home page with the newest title in its top bar."""
-    html = (website_dir / "index.html").read_text(encoding="utf-8")
-    match = re.search(r'<header class="topbar">.*?</header>', html, re.DOTALL)
-    if match is None or latest is None:
+_HOME_NEWS_MARKER = "<!-- news:latest -->"
+HOME_NEWS_POSTS = 3
+
+
+def _home(website_dir: Path, site_dir: Path, posts: list[Post], env: Environment) -> None:
+    """Write the home page with the newest title in its top bar and the newest
+    posts in its news section.
+
+    Both are build products: the source index.html carries only the marker
+    comment, so it stays a complete page without a build and nothing needs
+    editing per release.
+    """
+    if not posts:
         return
-    html = html.replace(match.group(0), _with_latest(match.group(0), latest, ""), 1)
+    html = (website_dir / "index.html").read_text(encoding="utf-8")
+    if _HOME_NEWS_MARKER not in html:
+        sys.exit(f"news_site: website/index.html has no {_HOME_NEWS_MARKER} marker")
+    section = env.get_template("home_news.html").render(posts=posts[:HOME_NEWS_POSTS])
+    html = html.replace(_HOME_NEWS_MARKER, section.strip(), 1)
+    match = re.search(r'<header class="topbar">.*?</header>', html, re.DOTALL)
+    if match is not None:
+        html = html.replace(match.group(0), _with_latest(match.group(0), posts[0], ""), 1)
     (site_dir / "index.html").write_text(html, encoding="utf-8")
 
 
@@ -251,7 +266,7 @@ def build(website_dir: Path, site_dir: Path) -> None:
         "style_hash": _hash(website_dir / "assets" / "style.css"),
         "news_hash": _hash(website_dir / "assets" / "news.css"),
     }
-    _home(website_dir, site_dir, posts[0] if posts else None)
+    _home(website_dir, site_dir, posts, env)
     sitemap_urls = []
 
     def write_archive(base: str, label: str | None, entries: list[Post]) -> None:

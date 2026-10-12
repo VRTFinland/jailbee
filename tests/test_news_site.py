@@ -125,6 +125,69 @@ def test_the_newest_title_is_in_the_bar_of_every_page_and_the_home_page(
     assert "topbar__latest" not in (website / "index.html").read_text()
 
 
+def _home_news(home: str) -> str:
+    match = re.search(r'<section id="news">.*?</section>', home, re.DOTALL)
+    assert match is not None, "the home page has no news section"
+    return match.group(0)
+
+
+def test_the_home_page_lists_the_three_newest_posts(site: tuple[Path, Path]) -> None:
+    website, output = site
+    for day in ("01", "02", "03", "04"):
+        _add(
+            website,
+            f"2026-09-{day}-post-{day}.md",
+            f"title: Post {day}\ndate: 2026-09-{day}\nsummary: Summary {day}\n"
+            "image: /assets/feature.png\nimage_alt: Feature <alt>\n",
+        )
+    build(website, output)
+
+    section = _home_news((output / "index.html").read_text())
+    titles = re.findall(r'<h3><a href="([^"]+)">([^<]+)</a></h3>', section)
+    assert titles == [
+        ("news/2026/09/04/post-04/", "Post 04"),
+        ("news/2026/09/03/post-03/", "Post 03"),
+        ("news/2026/09/02/post-02/", "Post 02"),
+    ]
+    assert "Summary 04" in section and "Summary 01" not in section
+    assert '<time datetime="2026-09-04">2026-09-04</time>' in section
+    # Relative like the rest of the home page, and escaped.
+    assert 'src="assets/feature.png"' in section and 'alt="Feature &lt;alt&gt;"' in section
+    assert 'href="news/"' in section and 'href="news/feed.xml"' in section
+    # It sits between the comparison and the requirements.
+    home = (output / "index.html").read_text()
+    assert home.index('id="compare"') < home.index('id="news"') < home.index('id="install"')
+
+
+def test_a_post_without_an_image_gets_a_card_without_one(site: tuple[Path, Path]) -> None:
+    website, output = site
+    _add(website, "2026-09-28-release.md", META)
+    build(website, output)
+
+    section = _home_news((output / "index.html").read_text())
+    assert "JailBee 1.5" in section and "<img" not in section
+
+
+def test_the_committed_home_page_carries_no_news_section(site: tuple[Path, Path]) -> None:
+    website, output = site
+    build(website, output)
+
+    # The section is a build product, like the chip; with no posts the home
+    # page is left as the source has it, which shows none.
+    assert 'id="news"' not in (website / "index.html").read_text()
+    assert not (output / "index.html").exists()
+
+
+def test_a_home_page_without_the_news_marker_fails_the_build(site: tuple[Path, Path]) -> None:
+    website, output = site
+    index = website / "index.html"
+    index.write_text(index.read_text().replace("<!-- news:latest -->", ""))
+    _add(website, "2026-09-28-release.md", META)
+
+    with pytest.raises(SystemExit, match="news:latest"):
+        build(website, output)
+
+
 def test_link_previews_get_a_sized_image_a_plain_title_and_the_right_type(
     site: tuple[Path, Path],
 ) -> None:

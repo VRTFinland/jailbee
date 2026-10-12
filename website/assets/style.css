@@ -925,6 +925,72 @@ button.copy[data-state="copied"] {
 }
 
 /* -----------------------------------------------------------------------
+   News — the newest posts, put on the home page by scripts/news_site.py
+   (website/news/templates/home_news.html). Built on .cards; the image runs
+   edge to edge, so the card's padding moves onto the text.
+   ----------------------------------------------------------------------- */
+.news-teasers__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+}
+
+.news-teaser {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 1.5rem;
+  overflow: hidden;
+}
+
+.news-teaser img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1200 / 630;
+  object-fit: cover;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.news-teaser time,
+.news-teaser h3,
+.news-teaser p {
+  margin-left: 1.5rem;
+  margin-right: 1.5rem;
+}
+
+.news-teaser time {
+  margin-top: 1.25rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.news-teaser h3 {
+  margin-top: 0.4rem;
+  margin-bottom: 0.5rem;
+  font-size: 1.1rem;
+  line-height: 1.35;
+}
+
+.news-teaser h3 a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.news-teaser h3 a:hover,
+.news-teaser h3 a:focus-visible {
+  color: var(--amber);
+}
+
+.news-teasers__feed {
+  margin: 1.5rem 0 0;
+  font-size: 0.9rem;
+}
+
+/* -----------------------------------------------------------------------
    Footer
    ----------------------------------------------------------------------- */
 footer {

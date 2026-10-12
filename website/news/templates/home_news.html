@@ -1,0 +1,24 @@
+{#- The home page's news section, put in place of `<!-- news:latest -->` in
+    website/index.html by scripts/news_site.py. Links are relative, like the
+    rest of the home page. -#}
+<section id="news">
+      <div class="wrap">
+        <div class="news-teasers__head">
+          <h2>News.</h2>
+          <a href="news/">All news →</a>
+        </div>
+        <div class="cards news-teasers">
+          {%- for post in posts %}
+          <article class="card news-teaser">
+            {%- if post.image %}
+            <a href="{{ post.path.removeprefix('/') }}" tabindex="-1" aria-hidden="true"><img src="{{ post.image.removeprefix('/') }}" alt="{{ post.image_alt }}" width="1200" height="630" loading="lazy" /></a>
+            {%- endif %}
+            <time datetime="{{ post.date.isoformat() }}">{{ post.date.isoformat() }}</time>
+            <h3><a href="{{ post.path.removeprefix('/') }}">{{ post.title }}</a></h3>
+            <p>{{ post.summary }}</p>
+          </article>
+          {%- endfor %}
+        </div>
+        <p class="news-teasers__feed"><a href="news/feed.xml">Subscribe via RSS</a></p>
+      </div>
+    </section>

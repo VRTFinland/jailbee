@@ -51,6 +51,8 @@ uv run python -m http.server -d _site 8099
 Open <http://localhost:8099/news/> to review the index and the article,
 including its feature image, narrow-screen layout, and link preview metadata.
 `make site` fails with the article path if metadata or a local image is invalid.
-The build generates the archive pages, `/news/feed.xml`, and sitemap entries;
+The build generates the archive pages, `/news/feed.xml`, sitemap entries, the
+newest title in the top bar and the home page's News section (the three newest
+articles, in place of `<!-- news:latest -->` in `website/index.html`);
 do not edit `_site/` directly. Articles, templates and this guide under
 `website/news/` are build inputs and are not copied into the published site.
