@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=93f40c74" />
+    <link rel="stylesheet" href="assets/style.css?v=bed31045" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -337,6 +337,7 @@
               <!-- Text, not a picture: every line is jailbee's real syntax
                    (checked against each command's --help), and no output is
                    shown because none is recorded here. -->
+              <div class="demo__cli">
               <div class="demo__term">
                 <pre><code><span class="p">$</span> jailbee new feat/login                   <span class="c"># a container for the branch</span>
 <span class="p">$</span> jailbee tmux feat-login                  <span class="c"># attach to its agent</span>
@@ -347,6 +348,12 @@
 <span class="p">$</span> jailbee pr feat-login                    <span class="c"># open or update the PR</span>
 <span class="p">$</span> jailbee destroy feat-login               <span class="c"># asks first if anything would be lost</span></code></pre>
               </div>
+              <!-- A real recording of the same flow (website/demo/, video A),
+                   fetched only on click. With JavaScript it plays in this
+                   frame; without, the link opens it in the browser's player. -->
+              <a class="demo__run" href="assets/media/a.mp4" data-webm="assets/media/a.webm"
+                data-poster="assets/media/a.poster.png">&#9654; Watch a real session</a>
+              </div>
               <figcaption>
                 <code>jailbee &middot; jb</code>
                 <p>
@@ -355,7 +362,11 @@
                   and asks for what it needs, and <code>jailbee console</code> is an interactive
                   prompt with completion and history.
                 </p>
-                <p class="demo__note">Container names are examples.</p>
+                <p class="demo__note">
+                  Container names in the list are examples. The session is a real recording:
+                  every command and every line of output is real, and the two stretches marked
+                  &times;6 are sped up.
+                </p>
               </figcaption>
             </figure>
           </div>
@@ -914,6 +925,41 @@
                 button.removeAttribute("data-state");
               }, 1500);
             });
+          });
+        });
+      })();
+      // The command-line panel's recording: played in its frame on click, and
+      // put away again when a tab switch hides the panel.
+      (function () {
+        document.querySelectorAll(".demo__run").forEach(function (link) {
+          link.addEventListener("click", function (event) {
+            event.preventDefault();
+            var frame = link.closest(".demo__cli");
+            var video = document.createElement("video");
+            video.className = "demo__rec";
+            video.controls = true;
+            video.muted = true;
+            video.playsInline = true;
+            video.poster = link.getAttribute("data-poster");
+            [[link.getAttribute("data-webm"), "video/webm"], [link.getAttribute("href"), "video/mp4"]]
+              .forEach(function (pair) {
+                var source = document.createElement("source");
+                source.src = pair[0];
+                source.type = pair[1];
+                video.append(source);
+              });
+            frame.setAttribute("data-state", "playing");
+            frame.append(video);
+            var played = video.play();
+            if (played && played.catch) played.catch(function () {});
+          });
+        });
+        document.addEventListener("change", function (event) {
+          if (!event.target.classList.contains("tabs__radio")) return;
+          document.querySelectorAll(".demo__rec").forEach(function (video) {
+            video.pause();
+            video.closest(".demo__cli").removeAttribute("data-state");
+            video.remove();
           });
         });
       })();

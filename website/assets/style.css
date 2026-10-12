@@ -1149,6 +1149,45 @@ footer p {
   color: var(--muted);
 }
 
+/* The recording of the same flow, played in the panel's frame on click. The
+   frame takes the recording's own background (its terminal, #090a0d), so the
+   side bars of its 4:3 picture disappear into it. */
+.demo__cli {
+  position: relative;
+}
+
+.demo__run {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: rgb(11 12 14 / 80%);
+  color: var(--amber);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.demo__run:hover,
+.demo__run:focus-visible {
+  background: var(--surface-2);
+}
+
+.demo__rec {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #090a0d;
+  object-fit: contain;
+  border-bottom: 1px solid var(--border);
+}
+
+.demo__cli[data-state="playing"] .demo__term,
+.demo__cli[data-state="playing"] .demo__run {
+  display: none;
+}
+
 /* Too narrow for the comments beside the commands: the commands alone. */
 @container (max-width: 560px) {
   .demo__term .c {

@@ -593,6 +593,18 @@ def test_every_demo_panel_is_one_16_9_frame() -> None:
         assert _image_size(SITE / src) == (width, height), f"{src} is not {width}x{height}"
 
 
+def test_the_command_line_recording_is_committed() -> None:
+    """The recording plays from data- attributes that no reference check
+    reads, so a renamed file would fail only when a reader clicks."""
+    elements = collect_elements(_demos(INDEX.read_text()))
+    runs = [a for t, a in elements if t == "a" and "demo__run" in (a.get("class") or "")]
+    assert len(runs) == 1, "the command-line panel has lost its recording link"
+    for attr in ("href", "data-webm", "data-poster"):
+        path = runs[0].get(attr) or ""
+        assert path.startswith("assets/media/"), f"{attr}={path!r} is not a committed clip"
+        assert (SITE / path).is_file(), f"{attr} points at a missing file: {path}"
+
+
 def test_no_media_file_is_a_zero_byte_stand_in() -> None:
     """An empty file that "exists" but plays nothing is worse than no file.
 
