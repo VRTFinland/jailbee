@@ -15,3 +15,31 @@
 .news-article__body pre { background: var(--surface); overflow-x: auto; padding: 1rem; border-radius: var(--radius); }
 .news-article__body img { border-radius: var(--radius); }
 @media (min-width: 700px) { .news-card:has(img) { grid-template-columns: minmax(0, 240px) minmax(0, 1fr); } }
+/* An image on its own line becomes a figure (scripts/news_site.py). It keeps
+   its natural size — a screenshot is never scaled up, so every one shows the
+   terminal font at the same size — sits centred on a card, and may run a
+   little wider than the text so a full dashboard shot does not shrink. The
+   caption takes the image's width rather than widening the card. */
+.news-article__body > .news-figure {
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: fit-content;
+  max-width: min(calc(100vw - 2 * var(--gap)), 900px);
+  margin: 2.25rem 0;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+}
+.news-figure img { display: block; max-width: 100%; height: auto; border-radius: 4px; }
+.news-figure figcaption {
+  width: 0;
+  min-width: 100%;
+  margin-top: .7rem;
+  color: var(--muted);
+  font-size: .875rem;
+  line-height: 1.45;
+  text-align: center;
+}

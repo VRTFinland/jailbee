@@ -35,7 +35,10 @@ exactly 1200×630 pixels, saved as a JPEG under ~300 KB: some social
 crawlers silently drop a larger file and fall back to a text-only preview. The
 same image appears in the article and archive. Without one, the site's default sharing card is used.
 Inline Markdown images also use local, existing `/assets/...` paths; never
-embed images from a third-party CDN. Do not use raw HTML, and start section
+embed images from a third-party CDN. An image on a line of its own is shown
+centred on a card at its natural size, never scaled up, so crop screenshots
+1:1 rather than enlarging them; its Markdown title becomes the caption:
+`![What the image shows](/assets/news/shot.png "Short caption")`. Do not use raw HTML, and start section
 headings with `##`: the page supplies its own title. Normal external links
 are fine; internal links should be root-relative (`/docs/`, `/news/`).
 

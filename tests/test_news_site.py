@@ -227,6 +227,66 @@ def test_link_previews_get_a_sized_image_a_plain_title_and_the_right_type(
     assert "article:published_time" not in index
 
 
+def _png(width: int, height: int) -> bytes:
+    """A PNG header: all the size reader looks at."""
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+    )
+
+
+def _article_body(output: Path) -> str:
+    html = (output / "news" / "2026" / "09" / "28" / "release" / "index.html").read_text()
+    return html[html.index('class="news-article__body"') :]
+
+
+def test_an_image_on_its_own_line_becomes_a_sized_figure_with_its_title_as_caption(
+    site: tuple[Path, Path],
+) -> None:
+    website, output = site
+    (website / "assets" / "shot.png").write_bytes(_png(496, 378))
+    _add(
+        website,
+        "2026-09-28-release.md",
+        META,
+        'Before.\n\n![The <AI> column](/assets/shot.png "Agents & their state")\n\nAfter.\n',
+    )
+    build(website, output)
+
+    body = _article_body(output)
+    figure = re.search(r'<figure class="news-figure">.*?</figure>', body, re.DOTALL)
+    assert figure is not None
+    html = figure.group(0)
+    # Its natural size, so the browser never scales a screenshot up.
+    assert 'width="496"' in html and 'height="378"' in html
+    assert 'src="/assets/shot.png"' in html and 'alt="The &lt;AI&gt; column"' in html
+    assert "<figcaption>Agents &amp; their state</figcaption>" in html
+    assert "title=" not in html
+    assert "<p><img" not in body
+
+
+def test_a_figure_without_a_title_has_no_caption(site: tuple[Path, Path]) -> None:
+    website, output = site
+    (website / "assets" / "shot.png").write_bytes(_png(10, 10))
+    _add(website, "2026-09-28-release.md", META, "![Alt](/assets/shot.png)\n")
+    build(website, output)
+
+    body = _article_body(output)
+    assert '<figure class="news-figure">' in body and "<figcaption" not in body
+
+
+def test_an_image_inside_a_sentence_stays_inline(site: tuple[Path, Path]) -> None:
+    website, output = site
+    (website / "assets" / "shot.png").write_bytes(_png(10, 10))
+    _add(website, "2026-09-28-release.md", META, "Look ![icon](/assets/shot.png) here.\n")
+    build(website, output)
+
+    body = _article_body(output)
+    assert "<figure" not in body and '<img alt="icon" src="/assets/shot.png"' in body
+
+
 def test_feature_image_and_metadata_are_escaped(site: tuple[Path, Path]) -> None:
     website, output = site
     _add(

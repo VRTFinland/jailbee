@@ -92,7 +92,34 @@ def _content(post: Post, assets_dir: Path) -> str:
         raise ValueError(f"{source}: use ## for article headings, not a second # title")
     for path in elements.images:
         asset_path(path, assets_dir, source)
-    return html
+    return _figures(html, assets_dir, source)
+
+
+_LONE_IMAGE = re.compile(r"<p>(<img [^>]*/?>)</p>")
+_ATTRIBUTE = re.compile(r'(\w+)="([^"]*)"')
+
+
+def _figures(html: str, assets_dir: Path, source: Path) -> str:
+    """Turn each image that is a paragraph of its own into a figure.
+
+    The image gets its natural size, so a screenshot is never scaled up and
+    every one shows its terminal font at the same size; its Markdown title
+    (`![alt](src "title")`) becomes the caption. The attribute values are
+    already escaped by Python-Markdown and are copied as they are.
+    """
+
+    def figure(match: re.Match[str]) -> str:
+        attrs = dict(_ATTRIBUTE.findall(match.group(1)))
+        src = attrs.get("src", "")
+        img = f'<img src="{src}" alt="{attrs.get("alt", "")}"'
+        size = _image_size(asset_path(src, assets_dir, source))
+        if size is not None:
+            img += f' width="{size[0]}" height="{size[1]}"'
+        img += ' loading="lazy" />'
+        caption = f"<figcaption>{attrs['title']}</figcaption>" if attrs.get("title") else ""
+        return f'<figure class="news-figure">{img}{caption}</figure>'
+
+    return _LONE_IMAGE.sub(figure, html)
 
 
 def _hash(path: Path) -> str:
