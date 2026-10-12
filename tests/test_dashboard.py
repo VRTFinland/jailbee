@@ -6841,13 +6841,13 @@ def test_mounts_column_cells_defaults_and_sorting():
     assert spec.sort(two) == (3600.0,)
     assert spec.sort(forever) == (float("inf"),)
     assert dfmt.dashboard_cell(spec, empty, now) == ""
-    assert dfmt.dashboard_cell(spec, one, now) == "[yellow]◆[/yellow] 5m"
-    assert dfmt.dashboard_cell(spec, two, now) == "[yellow]◆[/yellow] 1h"
-    assert dfmt.dashboard_cell(spec, forever, now) == "[yellow]◆[/yellow] ∞"
+    assert dfmt.dashboard_cell(spec, one, now) == "[red]●[/red] 5m"
+    assert dfmt.dashboard_cell(spec, two, now) == "[red]●[/red] 1h"
+    assert dfmt.dashboard_cell(spec, forever, now) == "[red]●[/red] ∞"
     assert dfmt.dashboard_header(spec) == "MOUNT"
     expired = dataclasses.replace(one, mount_until={"aws": now - timedelta(seconds=1)})
     assert spec.cell(expired) == "aws 0s"
-    assert dfmt.card_mounts(expired, now) == "[yellow]◆[/yellow] 0s"
+    assert dfmt.card_mounts(expired, now) == "[red]●[/red] 0s"
 
 
 def test_stored_view_gains_mounts_after_network_once():

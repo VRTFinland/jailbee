@@ -50,8 +50,8 @@ _MEM_SEPARATOR_RE = re.compile(r"\s*/\s*")
 RECENT_IDLE = timedelta(minutes=30)
 """An idle agent with a real event younger than this is highlighted in AI."""
 
-_LOOSE_MARK = "[red]●[/red]"
-_MOUNT_MARK = "[yellow]◆[/yellow]"
+# One flag for "on, and for how long": LOOSE and MOUNT both lead with it.
+_ON_MARK = "[red]●[/red]"
 
 
 def dashboard_header(field: FieldSpec[ContainerInfo]) -> str:
@@ -79,13 +79,13 @@ def _loose(container: ContainerInfo, now: datetime) -> str:
     if container.network != "loose":
         return escape(container.network or "-")
     if container.loose_until is None:
-        return f"{_LOOSE_MARK} ∞"
+        return f"{_ON_MARK} ∞"
     compact = format_duration_short(container.loose_until - now).replace(" ", "")
-    return f"{_LOOSE_MARK} {compact}"
+    return f"{_ON_MARK} {compact}"
 
 
 def card_network(container: ContainerInfo, now: datetime) -> str:
-    """Network label for cards: the table's LOOSE cell, so ● means one thing."""
+    """Network label for cards: the table's LOOSE cell."""
     return _loose(container, now)
 
 
@@ -95,9 +95,9 @@ def _mounts(container: ContainerInfo, now: datetime) -> str:
         return ""
     ends = [container.mount_until.get(k) for k in container.optional_mounts]
     if any(e is None for e in ends):
-        return f"{_MOUNT_MARK} ∞"
+        return f"{_ON_MARK} ∞"
     latest = max(e for e in ends if e is not None)
-    return f"{_MOUNT_MARK} {format_duration_short(latest - now).replace(' ', '')}"
+    return f"{_ON_MARK} {format_duration_short(latest - now).replace(' ', '')}"
 
 
 def card_mounts(container: ContainerInfo, now: datetime) -> str:

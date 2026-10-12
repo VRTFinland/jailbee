@@ -171,6 +171,6 @@ def test_terminal_help_explains_mount_deadline():
     from jailbee.dashboard.tui.frame import help_lines
 
     text = "\n".join(help_lines())
-    assert "MOUNT: ◆ attached" in text
+    assert "MOUNT: ● attached" in text
     assert "latest deadline" in text
     assert "∞ no auto-unmount" in text

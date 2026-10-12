@@ -1102,7 +1102,7 @@ add `-o ControlMaster=no` if your ssh config shares connections. See
   it from a fixed path), then ask the user to run, **on the host**,
   `jailbee mount <kind> <container>` — an agent inside the container cannot
   attach a mount. The MOUNT column in `jailbee ls` and the dashboards shows it
-  attached and its time left (`◆ 12m`). While attached, anything in the
+  attached and its time left (`● 12m`). While attached, anything in the
   container can read the secret; detaching removes the mount, not a copy made
   meanwhile, so do not copy it elsewhere. Guide:
   https://jailbee.gisgro.io/docs/security/#lending-a-container-a-credential

@@ -238,7 +238,7 @@ _FIELD_MEANINGS = {
         "∞ = loose with no auto-revert; empty = strict"
     ),
     "mounts": (
-        "Optional mounts: ◆ followed by when the last one is detached, "
+        "Optional mounts: ● followed by when the last one is detached, "
         "∞ = at least one never expires; empty = none"
     ),
     "ttl": "Remaining loose-network auto-revert time",

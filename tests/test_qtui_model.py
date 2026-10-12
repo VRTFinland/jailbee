@@ -102,9 +102,9 @@ def test_mount_card_and_tooltip_show_deadlines_without_markup():
     c.optional_mounts = ("aws", "docs")
     c.mount_until = {"aws": until}
     spec = next(f for f in ls_field_specs(now=now) if f.name == "mounts")
-    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "◆ ∞"
+    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "● ∞"
     c.optional_mounts = ("aws",)
-    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "◆ 12m"
+    assert m.card_field(m.card_content(c, [spec], now), "mounts") == "● 12m"
     c.optional_mounts = ("aws", "docs")
     tooltip = m.cell_tooltip(c, spec)
     assert f"aws: {until.isoformat()}" in tooltip

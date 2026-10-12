@@ -425,7 +425,7 @@ jailbee unmount aws feat-login            # done early
 ```
 
 The **MOUNT** column in `jailbee ls` and the dashboards shows that a container
-has one attached and how long until it detaches (`◆ 12m`, or `◆ ∞` for one
+has one attached and how long until it detaches (`● 12m`, or `● ∞` for one
 with no deadline); the details panel names which, and the dashboard's
 container menu has Mount… and Unmount…. An [autostart](project-config.md#5-define-autostart-steps) stage can attach one for its own
 duration only (`mounts: [aws]`).
