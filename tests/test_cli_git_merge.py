@@ -845,6 +845,7 @@ def merge_pickers(merge_repo, mocker):
 
 def test_git_merge_with_no_arguments_asks_for_sources_then_the_targets(merge_pickers, mocker):
     """A bare `jailbee git merge` prompts for both ends, sources first."""
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
     p = merge_pickers
     p.offer(_info("c1"), _info("c2"), _info("c4"))
     p.source_answer = ["sampleapp-c1", "sampleapp-c2"]
@@ -862,6 +863,7 @@ def test_git_merge_with_no_arguments_asks_for_sources_then_the_targets(merge_pic
 
 def test_git_merge_target_prompt_is_a_checkbox_too(merge_pickers, mocker):
     """Several targets can be ticked in one pass, and each takes every source."""
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
     p = merge_pickers
     p.offer(_info("c1"), _info("t1"), _info("t2"))
     p.source_answer = ["sampleapp-c1"]
@@ -968,6 +970,7 @@ def test_git_merge_target_prompt_hides_the_chosen_sources(merge_pickers, mocker)
     Hiding the row is how the rule is enforced interactively: the choice that
     the command would refuse is never presented.
     """
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
     p = merge_pickers
     p.offer(_info("c1"), _info("c2"), _info("c4"))
     p.source_answer = ["sampleapp-c1", "sampleapp-c2"]
@@ -1229,3 +1232,63 @@ def test_git_merge_typed_target_by_alias_or_full_name_is_not_offered_as_a_source
 
     assert result.exit_code == 0, result.output
     assert p.offered["sources"] == ["sampleapp-c1"]
+
+
+# -- the batch question ------------------------------------------------------
+
+
+def test_git_merge_asks_when_several_sources_are_involved(merge_repo, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_called_once()
+    assert "Merge c1, c2 into c4" in ask.call_args.args[0]
+    assert called.call_count == 2
+
+
+def test_git_merge_asks_when_several_targets_are_involved(merge_repo, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c3", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    assert "Merge c1 into c3, c4" in ask.call_args.args[0]
+
+
+def test_git_merge_declining_merges_nothing(merge_repo, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    called = mocker.patch("jailbee.sync.merge_container_into_container")
+
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+
+    assert result.exit_code != 0
+    called.assert_not_called()
+
+
+def test_git_merge_one_into_one_is_not_asked(merge_repo, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_not_called()
+
+
+def test_git_merge_no_confirm_skips_the_question(merge_repo, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
+
+    result = runner.invoke(app, ["git", "merge", "--no-confirm", "c1", "c2", "--into", "c4"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_not_called()

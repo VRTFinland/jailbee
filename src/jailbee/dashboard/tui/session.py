@@ -31,8 +31,11 @@ from jailbee.dashboard.bulk import (
     bulk_actions,
     bulk_argv,
     bulk_loose_default,
+    confirm_detail,
+    confirm_question,
     destroy_risk_lines,
     foreground_runs,
+    needs_confirm,
     nothing_to_do,
     plan_bulk,
     ttl_entries,
@@ -1698,6 +1701,11 @@ class DashboardSession:
             return self.submit_account_picker(picker, entry, picker.back)
         if picker.purpose == "bulk-action":
             return self.begin_bulk(entry.value)
+        if picker.purpose == "bulk-confirm":
+            if entry.value == "yes":
+                return self.begin_bulk(picker.carry[0], confirmed=True)
+            self.set_notice("Cancelled")
+            return None
         if picker.purpose == "bulk-destroy-confirm":
             if entry.value == "yes":
                 self._run_planned("destroy")
@@ -2261,16 +2269,25 @@ class DashboardSession:
             tuple(PickerEntry(a.label, a.verb) for a in actions),
         )
 
-    def begin_bulk(self, verb: str) -> Overlay | None:
+    def begin_bulk(self, verb: str, *, confirmed: bool = False) -> Overlay | None:
         """Start ``verb`` on the marked containers: its question, or the run itself.
 
         Planned again from the marks as they are now: a container may have
-        changed state since the menu was drawn.
+        changed state since the menu was drawn. ``confirmed`` is the "yes" to
+        the several-containers question, which comes back through here.
         """
         action = self._plan(verb)
         if not action.eligible:
             self.set_notice(nothing_to_do(action))
             return None
+        if not confirmed and needs_confirm(action):
+            return Picker(
+                "bulk-confirm",
+                confirm_question(action),
+                (PickerEntry("No", "no"), PickerEntry(f"Yes, {len(action.eligible)}", "yes")),
+                carry=(verb,),
+                detail=_cap_detail(confirm_detail(action)),
+            )
         if verb == "merge":
             self.begin_merge_pick(action.eligible)
             return None

@@ -121,6 +121,10 @@ the host's `origin/<branch>` remote-tracking ref — no container, no host
 branch, no working tree — so declining is still safe, just not a literal
 no-op on the push path.
 
+Separately, `push`, `pull` and `merge` ask once before acting on **two or more** containers
+(`merge`: several sources or several targets), whoever chose them; the answer defaults to
+No, `--no-confirm` skips it, and `confirm.auto_target` does not govern it.
+
 `--no-confirm` skips the prompt for one run, `--confirm` forces it when the
 config has it off, and `confirm.auto_target: false` turns it off for the
 repo or the user. Off a TTY, `pull` and `checkout` still print the block and

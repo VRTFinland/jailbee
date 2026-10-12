@@ -346,7 +346,12 @@ def test_build_bulk_action_puts_every_name_before_the_config(tmp_path):
         "p-b",
         "--config",
         str(tmp_path / "c.yaml"),
+        "--no-confirm",  # the dashboard has asked already
         "--merge",
     ]
     assert action.launch == "output"
-    assert a.build_bulk_action("merge", ["p-a"], target).launch == "terminal"
+    merge = a.build_bulk_action("merge", ["p-a"], target)
+    assert merge.launch == "terminal"
+    assert (
+        "--no-confirm" not in merge.argv
+    )  # merge's question is the CLI's, asked after the targets
