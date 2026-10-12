@@ -157,6 +157,13 @@ make docs-serve    # preview the docs alone
   `https://jailbee.gisgro.io/docs/<page>/`; `tests/docs_links.py` resolves each
   one against `docs/*.md` without running the generator.
 
+### Making narrated videos
+
+Before making or editing a YouTube video or Short, read
+[`website/video/README.md`](website/video/README.md). It covers the render
+pipeline, pinning scene beats to spoken words, the burned-in Short captions
+and the layout band they need, and the new-episode checklist.
+
 ### Writing news articles
 
 Before drafting or editing a blog or news article, read
