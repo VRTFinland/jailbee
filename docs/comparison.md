@@ -79,12 +79,15 @@ Genericity inside the container doesn't mean the container is open:
   kernel-level ACL. You write hostnames and ports — `api.example.com:443`,
   not an IP range — and JailBee resolves them, accumulates the addresses a
   rotating CDN hands out, and pins each container's `/etc/hosts` to the
-  same set so its resolver can't drift onto an address the ACL drops. It
-  filters at the network layer rather than in an HTTP proxy, so `ssh`,
-  `git+ssh` and a database connection are covered by the same list. A
-  wildcard such as `*.example.com` is the one exception: an IP ACL cannot
-  express it, so it goes through a Squid proxy JailBee runs in its own
-  container, and only tools that honour `HTTP_PROXY`/`HTTPS_PROXY` can use it.
+  same set so its resolver can't drift onto an address the ACL drops. The
+  ACL filters at the network layer, so `ssh`, `git+ssh` and a database
+  connection are covered by the same list. On the work network, HTTP(S) from
+  tools that honour `HTTP_PROXY`/`HTTPS_PROXY` also passes a Squid proxy
+  JailBee runs in its own container, which matches the hostname in the
+  request: a host that merely shares a CDN address with an allowed one is
+  refused there. The proxy is also what makes wildcards such as
+  `*.example.com` possible, which no IP ACL can express. TLS is not
+  intercepted, and a tool that ignores the proxy still meets the ACL.
   `github.com` is deliberately **not** in the default strict list, so an
   unattended agent can't surprise-push. Flip to `loose` for the minute you
   need it, with an auto-revert TTL.
@@ -147,7 +150,9 @@ That file is where the genericity above is actually spent:
 - **Bind mounts.** `host_mounts` declares what the container sees of the host,
   read-only by default. `optional_mounts` are declared but detached until you
   ask (`jailbee mount [<kind>] [<name>]`), so sensitive things like `~/.aws` stay out
-  of an unattended agent's reach unless you attach them deliberately.
+  of an unattended agent's reach unless you attach them deliberately — and
+  detach again on their own after a set time (`--for 2h`, 15 minutes by
+  default), the way loose mode reverts.
 - **Devices** (`host_devices`), **egress allowlist**, **shared caches** that
   every one of the repo's containers mounts at once and that survive
   `jailbee destroy` — a warm package cache and a configured tool are shared
@@ -188,7 +193,9 @@ cost of that is transport, so JailBee makes the container a git remote:
   [Git bridge](git-bridge.md#submodules).
 - **Containers merge into each other.** `jailbee git merge` takes one
   container's branch into another without the host's working tree in between,
-  and tags cross the bridge under an explicit policy.
+  and tags cross the bridge under an explicit policy. `jailbee fork` starts a
+  second container from another's committed state, so two attempts at the
+  same change can run side by side and the better one merges back.
 - `jailbee new --pr <N>` builds a container from a pull request for review;
   `jailbee pr` opens or updates a draft PR from a container, with any enabled
   agent writing the branch name and description to the repo's own standard,
@@ -215,7 +222,7 @@ status, CPU use and what each container's Claude Code session is doing right
 now — busy, waiting for you, idle — so you know which of five unattended runs
 needs you without attaching to each. They act on what they show: shell,
 tmux, IDE, browser, a new container from a PR, the PR itself, update from
-base, destroy.
+base, destroy — on one container or on every container you have marked.
 
 You don't have to sit at the host. An optional, key-only SSH service
 (`jailbee remote ssh`) opens the dashboard, a restricted console, policy-limited
@@ -246,7 +253,7 @@ apply to that model. Note the two rows where JailBee is the one with the ❌.
 | Two branches both listening on `:3000` | 🟡 each forwarded to a different host port | 🟡 a port range per feature | ❌ | ✅ | ✅ |
 | Run an emulator or a VM (`/dev/kvm`) | 🟡 if you pass the device in yourself | ❌ | ❌ | ❌ only an NVIDIA GPU, experimental | ✅ `host_devices` |
 | A browser and an IDE **inside** the boundary, on your own screen | ❌ community noVNC feature only | ❌ | n/a — they run on the host | ❌ | ✅ |
-| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ `host:port` rules, any protocol; wildcards through a proxy |
+| Restrict what the code inside can reach | ❌ | 🟡 the `local-vm` runtime blocks host and private networks | ✅ per tool, down to HTTP method and path | ✅ host rules for any TCP, HTTP method and path | ✅ `host:port` rules, any protocol; HTTP(S) also matched by hostname, wildcards included, through a proxy |
 | Agent's GitHub writes held for a human to publish | ❌ | ❌ | 🟡 a token proxy can block writes; nothing stages them | 🟡 method/path rules can block writes; nothing stages them | ✅ outbox, published with the host's own `gh` |
 | Keep an agent out of your real checkout | 🟡 opt-in clone into a volume | ❌ | 🟡 per-path grants | 🟡 `--clone` | ✅ always its own clone |
 | Move commits without a round trip through GitHub | n/a — same tree | n/a — same tree | n/a — same tree | n/a by default; a `--clone` copy stays in the VM | ✅ `jailbee git push/pull/diff` |
