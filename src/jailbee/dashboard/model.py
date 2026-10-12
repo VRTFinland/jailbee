@@ -144,7 +144,7 @@ class RepoGroup:
     (``lifecycle.agent_config_homes``), where an agent's transcripts live;
     orphan groups keep ``()``.
     ``optional_mounts`` lists the repo config's `optional_mounts:` kinds, which
-    the terminal menu's Mount…/Unmount… pickers choose from. Orphan groups keep
+    the terminal menu's Mounts… panel lists. Orphan groups keep
     it empty.
     ``mount_ttl_defaults`` maps each optional-mount kind to the TTL the Mount…
     flow pre-selects, None = attach without asking (policy off, `never`, or a

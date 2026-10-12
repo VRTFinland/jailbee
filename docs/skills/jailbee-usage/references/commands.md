@@ -761,7 +761,7 @@ as a notice — use `!` with `--force` to override, while a change that works
 closes the overlay. `Esc` backs out of each question to the overlay, and
 closes the overlay itself.
 
-The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mount…`/`Unmount…` for the repo's `optional_mounts` (only kinds not attached / attached), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
+The repo menu also carries `Apply config…` (runs `jailbee apply` in the terminal, optionally with `--no-restart`; its restart question is asked there), `Diagnostics →` (`doctor`, paged locally and printed with a pause over remote SSH; `disk-usage`) and `Prune stale containers…` (`jailbee prune`, which asks about each container). The container menu adds `Snapshots…` (create with a timestamp or a typed tag, restore or delete after a confirmation), `Mounts…` for the repo's `optional_mounts` (one panel listing every configured kind: choosing an unattached kind mounts it, an attached one unmounts it), and, while the container has an autostart run, `Autostart status` and `Cancel autostart…`. Over remote SSH an entry appears only when the session's policy permits its command; `apply` and `mount` manage the host, so `restrict_host: true` keeps them hidden.
 
 The menu, in order: `Attach tmux`, then `Launch →` with one "Launch
 `<name>`" entry per app the repo's GUI registry declares (browsers, the
@@ -775,7 +775,7 @@ submodule. Unresolved targets are not offered for creation. The menu also has
 `Browse actions & comments…` for the full `outbox browse`), then `job clear`, `job log`, then `Autostart status` / `Cancel autostart…` (only while the container has an autostart run; cancel only while its worker is alive, and it asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr --open`,
 `pr`), `Lifecycle →` (restart/stop/destroy), `Network →` with available mode
-switches and `Egress…`, then `Snapshots…`, `Mount…`, `Unmount…`,
+switches and `Egress…`, then `Snapshots…`, `Mounts…`,
 `Credential group…`, plus `[f] Fork…` (running clone-mode containers: asks
 for the new container's name, then runs `jailbee fork --background`) and
 `[R] Rename…` (running or stopped: edits the alias inline; empty clears it). A Stopped container leads with start, and its lone

@@ -104,7 +104,7 @@ def help_lines() -> list[str]:
         "Egress panel: a adds, r removes a scoped override; Esc backs to its menu.",
         "Accounts panel: Enter acts on a login or group, n creates a group.",
         "Repo menu: Apply config…, Diagnostics →, Prune stale containers…",
-        "Container menu: Snapshots…, Mount…/Unmount…, autostart status/cancel.",
+        "Container menu: Snapshots…, Mounts…, autostart status/cancel.",
         "Mouse: click selects; Ctrl-click marks; double- or right-click opens the menu;",
         "▾/▸ folds, ‹ › step columns; the wheel scrolls, Shift+wheel steps columns;",  # noqa: RUF001 - the arrows the frame draws
         "Shift-drag selects text.",

@@ -968,7 +968,7 @@ def test_outbox_hides_what_the_ssh_allowlist_does_not_permit(mocker, tmp_path):
     assert "Nothing can be done to pr/a.json here" in run.notices()
 
 
-# --- Mount… / Unmount… -------------------------------------------------------
+# --- Mounts… -------------------------------------------------------
 
 
 def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
@@ -980,10 +980,14 @@ def test_mount_offers_the_unattached_kinds_and_runs_quietly(mocker, tmp_path):
     )
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "enter"], [group])
     assert run.rc == 0
 
-    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == ["aws"]
+    # one panel for both directions: aws is free to mount, gcloud is attached
+    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == [
+        "mount:aws",
+        "unmount:gcloud",
+    ]
     quiet.assert_called_once_with(
         ["mount", "--config", str(group.config_path), "--", "aws", "alpha-x"], cwd=tmp_path
     )
@@ -998,7 +1002,7 @@ def test_mount_with_a_ttl_default_asks_and_passes_for(mocker, tmp_path, ttl_key,
     quiet = mocker.patch.object(
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "ok")
     )
-    keys = [*container_menu_keys(group, "mount-add"), "enter"]
+    keys = [*container_menu_keys(group, "mounts"), "enter"]
     keys += ["enter"] if ttl_key == "enter" else ["end", "enter"]
     run = drive(mocker, keys, [group])
     assert run.rc == 0
@@ -1027,7 +1031,7 @@ def test_mount_without_a_ttl_default_runs_immediately(mocker, tmp_path):
     quiet = mocker.patch.object(
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "ok")
     )
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "enter"], [group])
     assert run.rc == 0
     assert not any(p.purpose == "container-mount-ttl" for p in run.of_type(tsession.Picker))
     quiet.assert_called_once_with(
@@ -1039,7 +1043,7 @@ def test_mount_ttl_escape_runs_nothing(mocker, tmp_path):
     group = mount_group(tmp_path)
     group.mount_ttl_defaults = {"aws": "15m"}
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter", "escape"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "enter", "escape"], [group])
     assert run.rc == 0
     assert any(p.purpose == "container-mount-ttl" for p in run.of_type(tsession.Picker))
     quiet.assert_not_called()
@@ -1052,10 +1056,9 @@ def test_unmount_offers_the_attached_kinds(mocker, tmp_path):
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-remove"), "enter"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "j", "enter"], [group])
     assert run.rc == 0
 
-    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == ["gcloud"]
     quiet.assert_called_once_with(
         ["unmount", "--config", str(group.config_path), "--", "gcloud", "alpha-x"], cwd=tmp_path
     )
@@ -1068,11 +1071,12 @@ def test_unmount_over_ssh_offers_the_attached_kinds_without_config(mocker, tmp_p
     )
     kwargs = _kwargs(True, RemoteSSHConfig())
 
-    steps = [*container_menu_keys(group, "mount-remove", **kwargs), "enter"]
+    steps = [*container_menu_keys(group, "mounts", **kwargs), "enter"]
     run = drive(mocker, steps, [group], **kwargs)
     assert run.rc == 0
 
-    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == ["gcloud"]
+    # `mount` is a host command the default policy hides; only the unmount is offered
+    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == ["unmount:gcloud"]
     quiet.assert_called_once_with(["unmount", "--", "gcloud", "alpha-x"], cwd=tmp_path)
 
 
@@ -1085,7 +1089,7 @@ def test_a_refused_mount_is_a_long_notice(mocker, tmp_path):
     )
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "enter"], [group])
 
     # the CLI's own verdict, shown whole; the dashboard is still running (rc 0)
     assert run.rc == 0
@@ -1097,29 +1101,29 @@ def test_mount_picker_escape_runs_nothing(mocker, tmp_path):
     group = mount_group(tmp_path)
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "escape"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "escape"], [group])
     assert run.rc == 0
 
     assert run.of_type(tsession.Picker)  # it did open
     quiet.assert_not_called()
 
 
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
-def test_a_kind_spelled_like_an_option_stays_positional(mocker, tmp_path, verb):
+@pytest.mark.parametrize("remove", [False, True])
+def test_a_kind_spelled_like_an_option_stays_positional(mocker, tmp_path, remove):
     group = mount_group(tmp_path)
     group.optional_mounts = ("--yes", "gcloud")
     quiet = mocker.patch.object(
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
-    if verb == "mount-remove":
+    if remove:
         group.containers[0] = dataclasses.replace(
             group.containers[0], optional_mounts=("--yes", "gcloud")
         )
 
-    steps = [*container_menu_keys(group, verb), "enter"]  # the first entry: "--yes"
+    steps = [*container_menu_keys(group, "mounts"), "enter"]  # the first entry: "--yes"
     assert drive(mocker, steps, [group]).rc == 0
 
-    verb_word = "unmount" if verb == "mount-remove" else "mount"
+    verb_word = "unmount" if remove else "mount"
     quiet.assert_called_once_with(
         [verb_word, "--config", str(group.config_path), "--", "--yes", "alpha-x"], cwd=tmp_path
     )
@@ -1134,10 +1138,13 @@ def test_kinds_missing_from_the_config_are_not_offered_to_unmount(mocker, tmp_pa
         tsession.da, "run_cli_quiet", return_value=tsession.da.CliResult(True, "done")
     )
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-remove"), "escape"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "escape"], [group])
     assert run.rc == 0
 
-    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == ["gcloud"]
+    assert [e.value for e in run.of_type(tsession.Picker)[0].entries] == [
+        "mount:aws",
+        "unmount:gcloud",
+    ]
 
 
 def _drive_mount_menu_then(mocker, group, verb, change) -> Run:  # type: ignore[no-untyped-def]
@@ -1151,39 +1158,22 @@ def _drive_mount_menu_then(mocker, group, verb, change) -> Run:  # type: ignore[
     return run
 
 
-def test_mount_with_nothing_left_to_add_notices_instead_of_opening(mocker, tmp_path):
+def test_mounts_with_nothing_configured_any_more_notices_instead_of_opening(mocker, tmp_path):
     group = mount_group(tmp_path)
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
 
-    def attach_everything():  # type: ignore[no-untyped-def]
-        group.containers[0] = dataclasses.replace(
-            group.containers[0], optional_mounts=("aws", "gcloud")
-        )
+    def drop_every_kind():  # type: ignore[no-untyped-def]
+        group.optional_mounts = ()
 
-    run = _drive_mount_menu_then(mocker, group, "mount-add", attach_everything)
+    run = _drive_mount_menu_then(mocker, group, "mounts", drop_every_kind)
 
     assert not run.of_type(tsession.Picker)
-    assert "No optional mount to add" in run.notices()
+    assert "No optional mount to add or remove" in run.notices()
     quiet.assert_not_called()
 
 
-def test_unmount_with_nothing_attached_notices_instead_of_opening(mocker, tmp_path):
-    group = mount_group(tmp_path)
-    quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
-
-    def detach_everything():  # type: ignore[no-untyped-def]
-        group.containers[0] = dataclasses.replace(group.containers[0], optional_mounts=())
-
-    run = _drive_mount_menu_then(mocker, group, "mount-remove", detach_everything)
-
-    assert not run.of_type(tsession.Picker)
-    assert "No optional mount to remove" in run.notices()
-    quiet.assert_not_called()
-
-
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
 def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothing(
-    mocker, tmp_path, verb
+    mocker, tmp_path
 ):
     """The tick closes a menu whose row left the listing, so the container is
     "gone" only to the Enter's own lookup: that lookup is made to miss.
@@ -1202,7 +1192,7 @@ def test_container_vanishing_on_the_read_that_opens_the_mount_picker_runs_nothin
         nonlocal gone
         gone = True
 
-    run = _drive_mount_menu_then(mocker, group, verb, vanish)
+    run = _drive_mount_menu_then(mocker, group, "mounts", vanish)
 
     assert not run.of_type(tsession.Picker)
     quiet.assert_not_called()
@@ -1228,7 +1218,7 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
         side_effect=refuse,
     )
 
-    run = drive(mocker, [*container_menu_keys(group, "mount-add"), "enter"], [group])
+    run = drive(mocker, [*container_menu_keys(group, "mounts"), "enter"], [group])
     assert run.rc == 0
 
     assert run.of_type(tsession.Picker)
@@ -1237,20 +1227,18 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
 
 
 @_VANISH_WHEN
-@pytest.mark.parametrize("verb", ["mount-add", "mount-remove"])
 def test_container_vanishing_while_the_mount_picker_is_open_runs_nothing(
-    mocker, tmp_path, when, verb
+    mocker, tmp_path, when
 ):
     group = mount_group(tmp_path)
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    steps = [*container_menu_keys(group, verb), *_vanish_steps(group, when), "enter"]
+    steps = [*container_menu_keys(group, "mounts"), *_vanish_steps(group, when), "enter"]
     run = drive(mocker, steps, [group])
     assert run.rc == 0
 
-    purpose = "container-mount-remove" if verb == "mount-remove" else "container-mount-add"
-    assert {p.purpose for p in run.of_type(tsession.Picker)} == {purpose}
+    assert {p.purpose for p in run.of_type(tsession.Picker)} == {"container-mounts"}
     quiet.assert_not_called()
     child.assert_not_called()
     assert "'alpha-x' is gone" in " ".join(str(n) for n in run.notices())

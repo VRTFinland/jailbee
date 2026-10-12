@@ -151,7 +151,7 @@ def _container(state: str = "Running", **fields: Any) -> ContainerInfo:
 _AUTOSTART_LIVE = {"job_phase": "autostart", "job_pid": os.getpid(), "job_kind": "autostart"}
 _AUTOSTART_DONE = {"job_phase": "failed", "job_pid": os.getpid(), "job_kind": "autostart"}
 
-_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mount-add", "mount-remove"}
+_ALL_CONTAINER = {"autostart-status", "autostart-cancel", "snapshots", "mounts"}
 
 
 def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -> set[str]:
@@ -167,10 +167,10 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         (_LOCAL, _ALL_CONTAINER),
         (_LOCAL_DISABLED, _ALL_CONTAINER),
         # `mount` brings a host path into a container: a host command
-        (_SSH_DEFAULT, _ALL_CONTAINER - {"mount-add"}),
-        (_allow("mount", "unmount"), {"mount-remove"}),
-        (_allow("mount", restrict_host=False), {"mount-add"}),
-        (_allow("unmount"), {"mount-remove"}),
+        (_SSH_DEFAULT, _ALL_CONTAINER),
+        (_allow("mount", "unmount"), {"mounts"}),
+        (_allow("mount", restrict_host=False), {"mounts"}),
+        (_allow("unmount"), {"mounts"}),
         (_allow("autostart status"), {"autostart-status"}),
         (_allow("autostart cancel"), {"autostart-cancel"}),
         (_allow("snapshot ls"), {"snapshots"}),
@@ -210,8 +210,7 @@ def test_container_extras_order_and_labels():
     )
     assert extras.before_network == (
         ("Snapshots…", "snapshots"),
-        ("Mount…", "mount-add"),
-        ("Unmount…", "mount-remove"),
+        ("Mounts…", "mounts"),
     )
 
 
@@ -236,7 +235,7 @@ def test_autostart_entries_need_an_autostart_row_and_cancel_a_live_worker(fields
 )
 def test_snapshots_and_mounts_need_an_existing_container(state, offered):
     verbs = _container_verbs(_LOCAL, _container(state=state, optional_mounts=("gcloud",)))
-    assert bool(verbs & {"snapshots", "mount-add", "mount-remove"}) is offered
+    assert bool(verbs & {"snapshots", "mounts"}) is offered
 
 
 def test_mount_argv_puts_for_before_the_separator():
@@ -245,29 +244,53 @@ def test_mount_argv_puts_for_before_the_separator():
     assert dact.mount_argv("aws", "p-x", "never") == ["mount", "--for", "never", "--", "aws", "p-x"]
 
 
-def test_mount_choices_offer_only_configured_kinds_in_the_right_direction():
+def _mount_entries(info, kinds, policy=None, *, over_ssh=False):  # type: ignore[no-untyped-def]
+    return [(e.label, e.value) for e in dact.mount_entries(info, kinds, policy, over_ssh=over_ssh)]
+
+
+def test_mount_entries_merge_both_directions_in_config_order():
     info = _container(optional_mounts=("gcloud", "stale"))
-    assert dact.mount_choices(info, ("aws", "gcloud"), remove=False) == ("aws",)
     # `stale` is attached but no longer configured: the CLI would refuse it
-    assert dact.mount_choices(info, ("aws", "gcloud"), remove=True) == ("gcloud",)
+    assert _mount_entries(info, ("aws", "gcloud")) == [
+        ("○ aws — mount", "mount:aws"),
+        ("● gcloud — unmount", "unmount:gcloud"),
+    ]
+
+
+def test_mount_entries_gate_each_direction_on_the_ssh_policy():
+    info = _container(optional_mounts=("gcloud",))
+    kinds = ("aws", "gcloud")
+    # `mount` is a host command, so the default policy hides only the mount direction
+    assert [v for _l, v in _mount_entries(info, kinds, _policy({}), over_ssh=True)] == [
+        "unmount:gcloud"
+    ]
+    assert [v for _l, v in _mount_entries(info, kinds)] == ["mount:aws", "unmount:gcloud"]
+
+
+def test_mount_choice_reads_the_direction_back():
+    assert dact.mount_choice("mount:aws") == ("aws", False)
+    assert dact.mount_choice("unmount:aws") == ("aws", True)
+    # a kind that looks like the other direction's prefix is not misread
+    assert dact.mount_choice("mount:unmount:x") == ("unmount:x", False)
 
 
 @pytest.mark.parametrize(
-    ("attached", "kinds", "expected"),
+    ("attached", "kinds", "offered"),
     [
-        ((), (), set()),
-        ((), ("aws",), {"mount-add"}),
-        (("aws",), ("aws",), {"mount-remove"}),
-        (("stale",), ("aws",), {"mount-add"}),
+        ((), (), False),
+        ((), ("aws",), True),
+        (("aws",), ("aws",), True),
+        (("stale",), ("aws",), True),
+        (("stale",), (), False),
     ],
-    ids=["no-kinds", "none-attached", "all-attached", "only-a-stale-device"],
+    ids=["no-kinds", "none-attached", "all-attached", "only-a-stale-device", "stale-no-kinds"],
 )
-def test_mount_entries_appear_only_when_there_is_something_to_do(attached, kinds, expected):
+def test_mounts_entry_appears_only_when_there_is_something_to_do(attached, kinds, offered):
     extras = dact.container_extras(
         _container(optional_mounts=attached), kinds, None, over_ssh=False
     )
     verbs = {verb for _label, verb in extras.before_network}
-    assert verbs & {"mount-add", "mount-remove"} == expected
+    assert ("mounts" in verbs) is offered
 
 
 def _parsed(argv: list[str]) -> dict[str, object]:
@@ -312,14 +335,14 @@ def test_container_argv_shapes():
 
 
 def test_mount_and_autostart_pickers_are_container_questions():
-    add = dact.mount_picker("alpha-x", ("aws",), remove=False)
-    remove = dact.mount_picker("alpha-x", ("gcloud",), remove=True)
+    entries = (dact.PickerEntry("○ aws — mount", "mount:aws"),)
+    mounts = dact.mounts_picker("alpha-x", entries)
     cancel = dact.autostart_cancel_picker("alpha-x")
-    for picker in (add, remove, cancel):
+    for picker in (mounts, cancel):
         assert prompt_target_kind(picker.purpose) == "container"
         assert picker.target == "alpha-x"
-    assert (add.purpose, remove.purpose) == ("container-mount-add", "container-mount-remove")
-    assert [e.value for e in add.entries] == ["aws"]
+    assert mounts.purpose == "container-mounts"
+    assert [e.value for e in mounts.entries] == ["mount:aws"]
     # "No" first: a stray Enter must not cancel the run
     assert [e.value for e in cancel.entries] == ["no", "yes"]
 

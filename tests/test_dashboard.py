@@ -1787,8 +1787,7 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
     )
     before = (
         ("Snapshots…", tsession.dact.SNAPSHOTS),
-        ("Mount…", tsession.dact.MOUNT_ADD),
-        ("Unmount…", tsession.dact.MOUNT_REMOVE),
+        ("Mounts…", tsession.dact.MOUNTS),
     )
     for pr_number, pr_author, job, network, extras, pending in itertools.product(
         (None, 7),
@@ -5443,9 +5442,9 @@ def test_container_menu_autostart_entries_follow_the_ssh_policy(
 @pytest.mark.parametrize(
     ("over_ssh", "policy_kwargs", "expected"),
     [
-        (False, None, {"mount-add", "mount-remove"}),
-        (False, {"commands": {"mode": "disabled"}}, {"mount-add", "mount-remove"}),
-        (True, {}, {"mount-remove"}),
+        (False, None, {"mounts"}),
+        (False, {"commands": {"mode": "disabled"}}, {"mounts"}),
+        (True, {}, {"mounts"}),
         (True, {"commands": {"mode": "allowlist", "allow": ["shell", "mount"]}}, set()),
         (
             True,
@@ -5453,12 +5452,12 @@ def test_container_menu_autostart_entries_follow_the_ssh_policy(
                 "commands": {"mode": "allowlist", "allow": ["shell", "mount"]},
                 "restrict_host": False,
             },
-            {"mount-add"},
+            {"mounts"},
         ),
         (
             True,
             {"commands": {"mode": "allowlist", "allow": ["shell", "unmount"]}},
-            {"mount-remove"},
+            {"mounts"},
         ),
         (True, {"commands": {"mode": "allowlist", "allow": ["shell"]}}, set()),
         (True, {"excluded_repos": ["other"]}, set()),
@@ -5485,14 +5484,14 @@ def test_container_menu_mount_entries_follow_the_ssh_policy(
         ssh_policy=_ssh_policy(policy_kwargs),
     )
     assert menu is not None
-    assert {verb for _label, verb in menu.actions} & {"mount-add", "mount-remove"} == expected
+    assert {verb for _label, verb in menu.actions} & {"mounts"} == expected
 
 
 @pytest.mark.parametrize(
     ("group_factory", "allow", "expected"),
     [
         (lambda tp: _cfg_group(tp, (_ci("alpha-x", "alpha"),)), ["snapshot ls"], ["Snapshots…"]),
-        (_mount_group, ["unmount"], ["Unmount…"]),
+        (_mount_group, ["unmount"], ["Mounts…"]),
         (lambda tp: _cfg_group(tp, (_ci("alpha-x", "alpha"),)), ["snapshot create"], None),
         (_mount_group, ["stats"], None),
     ],

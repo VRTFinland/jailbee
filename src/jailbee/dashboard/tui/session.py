@@ -954,8 +954,8 @@ class DashboardSession:
             return dact.autostart_cancel_picker(container)
         if verb == dact.SNAPSHOTS:
             return self.open_snapshots(container)
-        if verb in (dact.MOUNT_ADD, dact.MOUNT_REMOVE):
-            return self.open_mount_picker(container, remove=verb == dact.MOUNT_REMOVE)
+        if verb == dact.MOUNTS:
+            return self.open_mount_picker(container)
         return None
 
     def open_retarget(self, container: str) -> TextPrompt | None:
@@ -1016,8 +1016,8 @@ class DashboardSession:
             target=container,
         )
 
-    def open_mount_picker(self, container: str, *, remove: bool) -> Picker | None:
-        """The kinds Mount… (Unmount…) can act on right now, or a notice."""
+    def open_mount_picker(self, container: str) -> Picker | None:
+        """Every optional mount of the container, attached or not, or a notice."""
         group = _find_group(self.groups, container)
         info = (
             next((c for c in group.containers if c.name == container), None)
@@ -1027,11 +1027,13 @@ class DashboardSession:
         if group is None or info is None:
             self.set_notice(f"'{container}' is gone")
             return None
-        kinds = dact.mount_choices(info, group.optional_mounts, remove=remove)
-        if not kinds:
-            self.set_notice("No optional mount to remove" if remove else "No optional mount to add")
+        entries = dact.mount_entries(
+            info, group.optional_mounts, self.ssh_policy, over_ssh=self.over_ssh
+        )
+        if not entries:
+            self.set_notice("No optional mount to add or remove")
             return None
-        return dact.mount_picker(container, kinds, remove=remove)
+        return dact.mounts_picker(container, entries)
 
     def open_snapshots(self, container: str) -> Picker | None:
         """List the container's snapshots quietly and offer them, or notice why not.
@@ -1670,25 +1672,26 @@ class DashboardSession:
             return self.submit_snapshot_picker(picker, entry)
         if picker.purpose.startswith("container-outbox"):
             return self.submit_outbox_picker(picker, entry)
-        if picker.purpose in ("container-mount-add", "container-mount-remove"):
+        if picker.purpose == "container-mounts":
             repo = self.repo_for(picker.target, "container")
             if repo is None:
                 self.set_notice(f"'{picker.target}' is gone")
                 return None
-            if picker.purpose == "container-mount-remove":
-                self.run_quiet_cli(repo, dact.unmount_argv(entry.value, picker.target))
+            kind, remove = dact.mount_choice(entry.value)
+            if remove:
+                self.run_quiet_cli(repo, dact.unmount_argv(kind, picker.target))
                 return None
             group = _find_group(self.groups, picker.target)
-            default = group.mount_ttl_defaults.get(entry.value) if group is not None else None
+            default = group.mount_ttl_defaults.get(kind) if group is not None else None
             if default is None:
-                self.run_quiet_cli(repo, dact.mount_argv(entry.value, picker.target))
+                self.run_quiet_cli(repo, dact.mount_argv(kind, picker.target))
                 return None
             return Picker(
                 "container-mount-ttl",
-                f"Keep '{entry.value}' mounted in {picker.target} for how long?",
+                f"Keep '{kind}' mounted in {picker.target} for how long?",
                 ttl_entries(default),
                 target=picker.target,
-                carry=(entry.value,),
+                carry=(kind,),
             )
         if picker.purpose == "container-mount-ttl":
             repo = self.repo_for(picker.target, "container")

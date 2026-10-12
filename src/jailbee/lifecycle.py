@@ -97,7 +97,7 @@ class ContainerInfo:
     job_error: str | None = None
     # The `optional_mounts` kinds attached right now, read from the instance's
     # own `optional-<kind>` disk devices (`mounts.DEVICE_NAME_PREFIX`). The
-    # dashboard's Mount…/Unmount… pickers offer from this.
+    # dashboard's Mounts… panel offers from this.
     optional_mounts: tuple[str, ...] = ()
     # Deadlines from mounts.mount_until; attached kinds without one never expire.
     mount_until: dict[str, datetime] = field(default_factory=dict)

@@ -128,11 +128,8 @@ def command_label(argv: Sequence[str]) -> str:
 AUTOSTART_STATUS = "autostart-status"
 AUTOSTART_CANCEL = "autostart-cancel"
 SNAPSHOTS = "snapshots"
-MOUNT_ADD = "mount-add"
-MOUNT_REMOVE = "mount-remove"
-CONTAINER_VERBS = frozenset(
-    {AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNT_ADD, MOUNT_REMOVE}
-)
+MOUNTS = "mounts"
+CONTAINER_VERBS = frozenset({AUTOSTART_STATUS, AUTOSTART_CANCEL, SNAPSHOTS, MOUNTS})
 
 SNAPSHOT_FIELDS = "name,created"
 
@@ -181,19 +178,6 @@ def mount_argv(kind: str, name: str, ttl: str | None = None) -> list[str]:
 
 def unmount_argv(kind: str, name: str) -> list[str]:
     return ["unmount", "--", kind, name]
-
-
-def mount_choices(
-    container: ContainerInfo, kinds: Sequence[str], *, remove: bool
-) -> tuple[str, ...]:
-    """The configured kinds Mount… (or, with ``remove``, Unmount…) can act on.
-
-    Only kinds the repo's config still defines. The CLI refuses any other kind
-    (`mounts.remove_optional_mount`), so a device left over from a removed
-    config entry is not offered.
-    """
-    attached = set(container.optional_mounts)
-    return tuple(kind for kind in kinds if (kind in attached) is remove)
 
 
 def autostart_worker_live(container: ContainerInfo) -> bool:
@@ -248,22 +232,48 @@ def container_extras(
     if container.state in _EXISTING_STATES:
         if allowed(snapshot_ls_argv(name)):
             before.append(("Snapshots…", SNAPSHOTS))
-        addable = mount_choices(container, mount_kinds, remove=False)
-        if addable and allowed(mount_argv(addable[0], name)):
-            before.append(("Mount…", MOUNT_ADD))
-        removable = mount_choices(container, mount_kinds, remove=True)
-        if removable and allowed(unmount_argv(removable[0], name)):
-            before.append(("Unmount…", MOUNT_REMOVE))
+        if mount_entries(container, mount_kinds, ssh_policy, over_ssh=over_ssh):
+            before.append(("Mounts…", MOUNTS))
     return ContainerExtras(tuple(after_job), tuple(before))
 
 
-def mount_picker(container: str, kinds: Sequence[str], *, remove: bool) -> Picker:
-    return Picker(
-        "container-mount-remove" if remove else "container-mount-add",
-        f"Unmount from {container}" if remove else f"Mount into {container}",
-        tuple(PickerEntry(kind, kind) for kind in kinds),
-        target=container,
-    )
+_MOUNT_VALUE = "mount:"
+_UNMOUNT_VALUE = "unmount:"
+
+
+def mount_entries(
+    container: ContainerInfo,
+    kinds: Sequence[str],
+    ssh_policy: RemoteSSHConfig | None,
+    *,
+    over_ssh: bool,
+) -> tuple[PickerEntry, ...]:
+    """One entry per configured kind: attached ones unmount, the rest mount.
+
+    Each direction is gated on its own argv, so an SSH allowlist that permits
+    `unmount` and not `mount` offers only the attached kinds.
+    """
+    can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
+    can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
+    entries: list[PickerEntry] = []
+    for kind in kinds:
+        if kind in container.optional_mounts:
+            if can_remove:
+                entries.append(PickerEntry(f"● {kind} — unmount", _UNMOUNT_VALUE + kind))
+        elif can_add:
+            entries.append(PickerEntry(f"○ {kind} — mount", _MOUNT_VALUE + kind))
+    return tuple(entries)
+
+
+def mount_choice(value: str) -> tuple[str, bool]:
+    """The kind a Mounts… entry names, and whether choosing it unmounts."""
+    if value.startswith(_UNMOUNT_VALUE):
+        return value.removeprefix(_UNMOUNT_VALUE), True
+    return value.removeprefix(_MOUNT_VALUE), False
+
+
+def mounts_picker(container: str, entries: Sequence[PickerEntry]) -> Picker:
+    return Picker("container-mounts", f"Mounts — {container}", tuple(entries), target=container)
 
 
 def autostart_cancel_picker(container: str) -> Picker:
