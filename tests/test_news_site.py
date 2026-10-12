@@ -154,9 +154,9 @@ def test_the_home_page_lists_the_three_newest_posts(site: tuple[Path, Path]) -> 
     # Relative like the rest of the home page, and escaped.
     assert 'src="assets/feature.png"' in section and 'alt="Feature &lt;alt&gt;"' in section
     assert 'href="news/"' in section and 'href="news/feed.xml"' in section
-    # It sits between the comparison and the requirements.
+    # It sits last, after the docs and before the footer.
     home = (output / "index.html").read_text()
-    assert home.index('id="compare"') < home.index('id="news"') < home.index('id="install"')
+    assert home.index('id="docs"') < home.index('id="news"') < home.index("<footer>")
 
 
 def test_a_post_without_an_image_gets_a_card_without_one(site: tuple[Path, Path]) -> None:
