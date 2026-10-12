@@ -59,8 +59,9 @@ scope.
 
 ## When not to use it
 
-- **Not on macOS or Windows.** Linux only; the macOS path runs JailBee inside
-  a Linux VM and is experimental.
+- **Not on macOS or Windows.** JailBee itself runs on Linux only. A Mac or a
+  Windows machine can use one as a client, over the SSH service and the
+  shared RDP display; running it in a Linux VM on a Mac is experimental.
 - **Not if you need a hypervisor boundary.** A system container shares the
   host kernel, so a kernel bug is an escape path. Docker Sandboxes (`docker
   sbx`) gives a microVM with its own kernel and is the stronger boundary.
@@ -92,7 +93,7 @@ scope.
 ## Optional
 
 - [Setting up JailBee in your own project](https://jailbee.gisgro.io/docs/project-config/): adapting it to your own repo and stack
-- [Running on macOS](https://jailbee.gisgro.io/docs/macos/): via a Linux VM, experimental
+- [Using JailBee from a Mac](https://jailbee.gisgro.io/docs/macos/): a Linux host with the Mac as client, or an experimental Linux VM on the Mac
 - [Troubleshooting](https://jailbee.gisgro.io/docs/troubleshooting/): common failures by symptom
 - [Source repository](https://github.com/VRTFinland/jailbee)
 - [PyPI package](https://pypi.org/project/jailbee/)

@@ -436,8 +436,9 @@ the runtime is the hard part *and* you want the whole runtime fenced.
 
 ## What JailBee costs you
 
-- **Linux only.** The macOS path runs JailBee inside a Linux VM and is
-  experimental.
+- **Linux only.** A Mac or a Windows machine can use a Linux host as a
+  client, over SSH and a shared RDP display; running JailBee in a Linux VM on
+  the Mac itself is experimental. See [Using JailBee from a Mac](macos.md).
 - **Host setup is real work.** Incus, UID delegation, firewall, kernel keyring
   limits — [Installation](installation.md) is an afternoon, once.
 - **A golden image build**, ~10–15 minutes, once per repo stack. After that

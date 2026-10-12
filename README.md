@@ -139,7 +139,8 @@ sped up and say so on screen; nothing else is edited.
   commands stay refused, and widening a container's network over SSH needs
   `remote.ssh.network: true`. With `remote.ssh.gui` on, GUI apps launched over SSH
   appear on a shared RDP display (`jailbee display`) you open in any RDP
-  client; see
+  client, or as native windows on your own desktop through `waypipe ssh`
+  (a Mac included, through Cocoa-Way); see
   [Remote GUI over SSH](https://jailbee.gisgro.io/docs/remote-gui/).
 - **Generic agent support** — `agents: {codex: {enabled: true}}` wires any
   terminal coding agent into the same mount/egress/install/autostart
