@@ -59,7 +59,7 @@ scenes:
     page: scenes/details.html
     formats: [main]
     narration: >-
-      Press V, and the details panel opens under the table. It shows the
+      Under the table, the details panel follows your selection. It shows the
       container's state and network; the branch and every submodule, with what
       is ahead of the base and what is still uncommitted; and then the agent
       itself: how long it has been busy, the last tool it called, and the last
@@ -144,8 +144,8 @@ scenes:
     page: scenes/details.html
     formats: [short]
     narration: >-
-      One key opens the details: the branch, its submodules, the agent's last
-      tool call and its last message.
+      Select one, and the details are right there: the branch, its
+      submodules, the agent's last tool call and its last message.
 
   - id: short-marks
     page: scenes/marks.html
