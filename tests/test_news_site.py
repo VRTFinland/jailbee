@@ -287,7 +287,7 @@ def test_an_image_inside_a_sentence_stays_inline(site: tuple[Path, Path]) -> Non
     assert "<figure" not in body and '<img alt="icon" src="/assets/shot.png"' in body
 
 
-VIDEO = "Gdmtfe6hlFU"
+VIDEO = "4FWhKtnBpXo"
 
 
 def _thumbnail(website: Path, video_id: str = VIDEO) -> None:
