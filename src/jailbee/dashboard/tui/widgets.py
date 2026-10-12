@@ -358,8 +358,9 @@ class _CropTop:
 class DashboardFrame(Vertical):
     """The whole dashboard inside one rounded border.
 
-    Title: the summary and clock; subtitle: a short notice. It fills the
-    terminal. Inside, top to bottom: the table, a long notice, the bottom area
+    Title: the summary and clock; subtitle: a short notice, centred as the
+    Rich panel drew it. It fills the terminal. Inside, top to bottom: the
+    table, a long notice, the bottom area
     (details and/or an overlay) and the hint — sized by
     :func:`jailbee.dashboard.tui.layout.frame_layout`; a blank filler sits above
     the bottom area while the details panel is drawn (the panel ends on the last
@@ -374,7 +375,7 @@ class DashboardFrame(Vertical):
         height: 100%;
         border: round ansi_default;
         border-title-align: left;
-        border-subtitle-align: left;
+        border-subtitle-align: center;
         padding: 0 1;
         background: ansi_default;
         color: ansi_default;
