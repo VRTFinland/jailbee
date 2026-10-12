@@ -156,3 +156,72 @@ def test_a_long_caption_wraps_onto_two_lines() -> None:
         == "word word word word word word\nword word word word word word"
     )
     assert pipeline.wrap_caption("Short.") == "Short."
+
+
+def _words(text: str, step: float = 0.3) -> list[pipeline.Word]:
+    return [
+        pipeline.Word(word, i * step, i * step + step - 0.05) for i, word in enumerate(text.split())
+    ]
+
+
+def test_group_words_keeps_every_word_in_order() -> None:
+    words = _words("Twelve AI agents. Twelve branches. Which one needs you right now?")
+    groups = pipeline.group_words(words)
+    assert [w for g in groups for w in g] == words
+
+
+def test_group_words_breaks_after_sentence_end() -> None:
+    groups = pipeline.group_words(_words("Twelve AI agents. Twelve branches."))
+    assert [" ".join(w.text for w in g) for g in groups] == [
+        "Twelve AI agents.",
+        "Twelve branches.",
+    ]
+
+
+def test_group_words_caps_group_size() -> None:
+    groups = pipeline.group_words(_words("one two three four five six seven"), max_words=3)
+    assert all(len(g) <= 3 for g in groups)
+
+
+def test_group_words_caps_characters() -> None:
+    groups = pipeline.group_words(_words("extraordinarily incomprehensible words"), max_chars=20)
+    assert [len(g) for g in groups] == [1, 1, 1]
+
+
+def test_group_words_empty() -> None:
+    assert pipeline.group_words([]) == []
+
+
+def _heard(text: str, step: float = 0.3) -> list[pipeline.Word]:
+    return _words(text, step)
+
+
+def test_align_words_restores_punctuation_and_spelling() -> None:
+    heard = _heard("twelve AI agents twelve branches")
+    aligned = pipeline.align_words("Twelve AI agents. Twelve branches.", heard)
+    assert [w.text for w in aligned] == ["Twelve", "AI", "agents.", "Twelve", "branches."]
+    assert [(w.start, w.end) for w in aligned] == [(w.start, w.end) for w in heard]
+
+
+def test_align_words_replaced_token_takes_narration_text() -> None:
+    aligned = pipeline.align_words("Twelve agents.", _heard("12 agents"))
+    assert [w.text for w in aligned] == ["Twelve", "agents."]
+    assert aligned[0].start == 0.0
+
+
+def test_align_words_spreads_spelled_out_number_over_its_span() -> None:
+    heard = [pipeline.Word("JailBee", 0.0, 0.5), pipeline.Word("1.7", 0.5, 1.4)]
+    aligned = pipeline.align_words("JailBee one point seven.", heard)
+    assert [w.text for w in aligned] == ["JailBee", "one", "point", "seven."]
+    assert aligned[1].start == pytest.approx(0.5)
+    assert aligned[3].end == pytest.approx(1.4)
+    assert [w.start for w in aligned] == sorted(w.start for w in aligned)
+
+
+def test_align_words_drops_words_the_script_lacks() -> None:
+    aligned = pipeline.align_words("Hello world.", _heard("hello there world"))
+    assert [w.text for w in aligned] == ["Hello", "world."]
+
+
+def test_align_words_empty_transcript_gives_no_words() -> None:
+    assert pipeline.align_words("Hello.", []) == []

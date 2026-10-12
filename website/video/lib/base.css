@@ -186,3 +186,34 @@ h2 {
   box-shadow: 0 30px 80px rgb(0 0 0 / 55%);
 }
 .term .prompt { color: var(--green); }
+
+/* Burned-in captions (short format only; runtime.js builds them). Kept above
+   the bottom fifth, which YouTube's Shorts controls cover. */
+.burned-captions {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 20%;
+  z-index: 100;
+  pointer-events: none;
+}
+.burned-caption {
+  position: absolute;
+  left: 48px;
+  right: 48px;
+  bottom: 0;
+  text-align: center;
+  font: 800 76px/1.1 var(--sans);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  text-shadow: 0 0 6px #000, 0 4px 18px #000, 0 0 2px #000;
+  -webkit-text-stroke: 10px #000;
+  paint-order: stroke fill;
+  opacity: 0;
+}
+.burned-caption span {
+  display: inline-block;
+  margin: 0 0.22em;
+}

@@ -32,7 +32,7 @@ yourself before destroying the container.
 - **Playwright and PyYAML**: declared inline at the top of `render.py`, so
   `uv run` fetches them into its own cache. The project's dependencies are
   untouched.
-- **An OpenAI API key** for narration: `OPENAI_API_KEY`, or the file
+- **An OpenAI API key** for narration and word timings: `OPENAI_API_KEY`, or the file
   `~/.config/openai/api-key`. It is never written to the repo, a log or the
   cache. Keep it on the host, in that same file, and attach it to the
   container for a render with `jailbee mount openai <container>` (an optional
@@ -60,6 +60,18 @@ either side of a scene's narration) and `fade` (the cross-fade between scenes).
 4. **Assembly.** Scenes are joined with cross-fades, the clips are laid under
    them at their offsets and loudness-normalised, and an SRT is written with
    one cue per sentence.
+
+5. **Word timings and burned-in captions.** `render.py tts` also sends each
+   clip to Whisper (`whisper-1`, word timestamps) once and caches the result
+   next to the clip, keyed by the same hash. The script's own words, with
+   their spelling and punctuation, are aligned to those timings
+   (`pipeline.align_words`). The short format gets them burned in: two or
+   three words at a time, the spoken one in amber (`runtime.js`'s `captions()`,
+   styled in `base.css`). A scene opts out with `params: {captions: false}`.
+   The main video has none, and the SRT files are unchanged.
+   A page can pin an animation to a word instead of a fraction of the
+   narration: `JB.word("waiting")` is the scene time that word starts, and
+   throws if the narration no longer contains it.
 
 Write narration as speech: "one point seven", "jailbee dot gisgro dot io",
 "star dot example dot com". The page shows the literal form. The captions are

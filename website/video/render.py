@@ -34,9 +34,12 @@ from pipeline import (
     MissingKeyError,
     Scene,
     Slot,
+    Word,
+    align_words,
     api_key,
     cache_key,
     captions,
+    group_words,
     load_episode,
     timeline,
     total_length,
@@ -50,6 +53,7 @@ OUT = HERE / "out"
 DEFAULT_EPISODE = HERE / "episodes" / "jailbee-1-7"
 VIEWPORTS = {"main": (1920, 1080), "short": (1080, 1920)}
 SPEECH_URL = "https://api.openai.com/v1/audio/speech"
+TRANSCRIBE_URL = "https://api.openai.com/v1/audio/transcriptions"
 ESTIMATED_CHARS_PER_SECOND = 15.0
 """Only for previewing a scene whose clip has not been generated yet."""
 
@@ -63,6 +67,82 @@ def chrome() -> str:
 
 def clip_path(episode: Episode, scene: Scene) -> Path:
     return CACHE / "tts" / f"{cache_key(episode.tts, scene.narration)}.wav"
+
+
+def words_path(episode: Episode, scene: Scene) -> Path:
+    """Word timings sit under the clip's own hash: new audio, new timings."""
+    return CACHE / "words" / f"{cache_key(episode.tts, scene.narration)}.json"
+
+
+def transcribe(scene: Scene, clip: Path, key: str) -> list[Word]:
+    """Whisper's word timestamps for one narration clip."""
+    boundary = hashlib.sha256(clip.read_bytes()[:4096]).hexdigest()[:24]
+    fields = {
+        "model": "whisper-1",
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": "word",
+        "language": "en",
+    }
+    body = b""
+    for name, value in fields.items():
+        body += (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+        ).encode()
+    body += (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="clip.wav"\r\n'
+        "Content-Type: audio/wav\r\n\r\n"
+    ).encode()
+    body += clip.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        TRANSCRIBE_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode(errors="replace")[:500]
+        sys.exit(f"render: transcribing {scene.id} failed: HTTP {error.code}: {detail}")
+    return [
+        Word(str(w["word"]).strip(), float(w["start"]), float(w["end"])) for w in payload["words"]
+    ]
+
+
+def ensure_words(episode: Episode, scenes: Sequence[Scene]) -> None:
+    """Transcribe every clip that has no cached word timings yet."""
+    missing = [
+        s
+        for s in scenes
+        if not words_path(episode, s).is_file() and clip_path(episode, s).is_file()
+    ]
+    print(f"words: {len(scenes) - len(missing)} cached, {len(missing)} to transcribe")
+    if not missing:
+        return
+    try:
+        key = api_key()
+    except MissingKeyError as error:
+        sys.exit(f"render: {error}")
+    for scene in missing:
+        print(f"words: {scene.id}")
+        words = transcribe(scene, clip_path(episode, scene), key)
+        target = words_path(episode, scene)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_suffix(".part")
+        partial.write_text(json.dumps([[w.text, w.start, w.end] for w in words]))
+        partial.replace(target)
+
+
+def load_words(episode: Episode, scene: Scene) -> list[Word]:
+    """Cached word timings, or none (a preview before `render.py tts`)."""
+    path = words_path(episode, scene)
+    if not path.is_file():
+        return []
+    heard = [Word(text, start, end) for text, start, end in json.loads(path.read_text())]
+    return align_words(scene.narration, heard)
 
 
 def probe_duration(path: Path) -> float:
@@ -132,7 +212,7 @@ def durations(
     return result
 
 
-def scene_url(slot: Slot, clip: float, fmt: str) -> str:
+def scene_url(slot: Slot, clip: float, fmt: str, words: Sequence[Word] = ()) -> str:
     query = urlencode(
         {
             "duration": f"{slot.length:.3f}",
@@ -140,17 +220,26 @@ def scene_url(slot: Slot, clip: float, fmt: str) -> str:
             "clip": f"{clip:.3f}",
             "format": fmt,
             "params": json.dumps(slot.scene.params),
+            "words": json.dumps([[w.text, round(w.start, 3), round(w.end, 3)] for w in words]),
+            "groups": json.dumps(
+                [
+                    [[w.text, round(w.start, 3), round(w.end, 3)] for w in g]
+                    for g in group_words(words)
+                ]
+            ),
         }
     )
     return f"{slot.scene.page.resolve().as_uri()}?{query}"
 
 
-def open_scene(browser, slot: Slot, clip: float, fmt: str, scale: float):
+def open_scene(
+    browser, slot: Slot, clip: float, fmt: str, scale: float, words: Sequence[Word] = ()
+):
     width, height = VIEWPORTS[fmt]
     page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(scene_url(slot, clip, fmt))
+    page.goto(scene_url(slot, clip, fmt, words))
     page.wait_for_function("window.JB && window.JB.isReady", timeout=30_000)
     if errors:
         sys.exit(f"render: scene {slot.scene.id} threw: {errors[0]}")
@@ -158,9 +247,16 @@ def open_scene(browser, slot: Slot, clip: float, fmt: str, scale: float):
 
 
 def render_slot(
-    browser, slot: Slot, clip: float, fmt: str, fps: int, target: Path, scale: float = 1.0
+    browser,
+    slot: Slot,
+    clip: float,
+    fmt: str,
+    fps: int,
+    target: Path,
+    scale: float = 1.0,
+    words: Sequence[Word] = (),
 ) -> None:
-    page = open_scene(browser, slot, clip, fmt, scale)
+    page = open_scene(browser, slot, clip, fmt, scale, words)
     frames = round(slot.length * fps)
     target.parent.mkdir(parents=True, exist_ok=True)
     encoder = subprocess.Popen(
@@ -260,6 +356,8 @@ def assemble(episode: Episode, slots: Sequence[Slot], parts: Sequence[Path], tar
 
 def command_tts(episode: Episode, args: argparse.Namespace) -> None:
     ensure_clips(episode, episode.scenes, dry_run=args.dry_run)
+    if not args.dry_run:
+        ensure_words(episode, episode.scenes)
 
 
 def command_preview(episode: Episode, args: argparse.Namespace) -> None:
@@ -272,22 +370,25 @@ def command_preview(episode: Episode, args: argparse.Namespace) -> None:
         )
     clip = durations(episode, [scene], estimate=True)
     slot = timeline([scene], clip, pad=episode.pad, fade=0.0)[0]
+    words = load_words(episode, scene)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chrome(), args=["--no-sandbox"])
         if args.at is not None:
-            page = open_scene(browser, slot, clip[scene.id], args.format, args.scale)
+            page = open_scene(browser, slot, clip[scene.id], args.format, args.scale, words)
             page.evaluate("t => JB.seek(t)", args.at)
             target = OUT / "preview" / f"{scene.id}-{args.format}-{args.at:g}s.png"
             target.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(target))
         else:
             target = OUT / "preview" / f"{scene.id}-{args.format}.mp4"
-            render_slot(browser, slot, clip[scene.id], args.format, args.fps, target, args.scale)
+            render_slot(
+                browser, slot, clip[scene.id], args.format, args.fps, target, args.scale, words
+            )
         browser.close()
     print(target)
 
 
-def part_key(episode: Episode, slot: Slot, clip: float, fmt: str) -> str:
+def part_key(episode: Episode, slot: Slot, clip: float, fmt: str, words: Sequence[Word]) -> str:
     """What a rendered scene depends on: its page, the shared runtime, the
     episode's assets, its timing and its params. Not the news crops a page
     may show from website/assets/; render with --fresh after changing one."""
@@ -303,21 +404,22 @@ def part_key(episode: Episode, slot: Slot, clip: float, fmt: str) -> str:
         round(slot.speech_at - slot.start, 3),
         round(clip, 3),
         json.dumps(slot.scene.params, sort_keys=True),
+        [(w.text, round(w.start, 3), round(w.end, 3)) for w in words],
     )
     digest.update(repr(timing).encode())
     return digest.hexdigest()[:16]
 
 
-def _render_part(job: tuple[Slot, float, str, int, Path]) -> str:
+def _render_part(job: tuple[Slot, float, str, int, Path, list[Word]]) -> str:
     """One scene in its own process with its own Chrome (fork: Playwright is
     never started in the parent)."""
     from playwright.sync_api import sync_playwright
 
-    slot, clip, fmt, fps, target = job
+    slot, clip, fmt, fps, target, words = job
     partial = target.with_suffix(".part.mp4")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=chrome(), args=["--no-sandbox"])
-        render_slot(browser, slot, clip, fmt, fps, partial)
+        render_slot(browser, slot, clip, fmt, fps, partial, words=words)
         browser.close()
     partial.replace(target)
     return slot.scene.id
@@ -326,16 +428,16 @@ def _render_part(job: tuple[Slot, float, str, int, Path]) -> str:
 def command_render(episode: Episode, args: argparse.Namespace) -> None:
     scenes = episode.for_format(args.format)
     ensure_clips(episode, scenes, dry_run=False)
+    ensure_words(episode, scenes)
     clips = durations(episode, scenes)
     slots = timeline(scenes, clips, pad=episode.pad, fade=episode.fade)
+    words = {s.id: load_words(episode, s) for s in scenes}
     parts_dir = CACHE / "parts" / args.format
     parts_dir.mkdir(parents=True, exist_ok=True)
-    parts = [
-        parts_dir / f"{s.scene.id}-{part_key(episode, s, clips[s.scene.id], args.format)}.mp4"
-        for s in slots
-    ]
+    keys = [part_key(episode, s, clips[s.scene.id], args.format, words[s.scene.id]) for s in slots]
+    parts = [parts_dir / f"{s.scene.id}-{key}.mp4" for s, key in zip(slots, keys, strict=True)]
     jobs = [
-        (slot, clips[slot.scene.id], args.format, episode.fps, part)
+        (slot, clips[slot.scene.id], args.format, episode.fps, part, words[slot.scene.id])
         for slot, part in zip(slots, parts, strict=True)
         if args.fresh or not part.is_file()
     ]

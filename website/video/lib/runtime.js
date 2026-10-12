@@ -8,7 +8,11 @@
 // A scene registers its animations with `JB.scene(fn)`; `fn` gets the runtime
 // and builds them with `JB.anim`. Times are seconds on the scene clock;
 // `JB.at(x)` maps a fraction of the narration (0 = first word, 1 = last) to
-// one, so animations follow the voice when the text is edited.
+// one, so animations follow the voice when the text is edited. `JB.word("some
+// words")` is finer: the scene time that phrase starts being spoken, from
+// Whisper's word timestamps (see render.py), for a highlight that must land on
+// one word. In the short format every scene also gets burned-in captions built
+// from the same timestamps; a scene opts out with `params.captions: false`.
 (() => {
   const q = new URLSearchParams(location.search);
   const num = (name, fallback) => {
@@ -22,12 +26,26 @@
     clip: num("clip", 4.8),
     format: q.get("format") || "main",
     params: JSON.parse(q.get("params") || "{}"),
+    words: JSON.parse(q.get("words") || "[]").map(([text, start, end]) => ({ text, start, end })),
+    groups: JSON.parse(q.get("groups") || "[]"),
     isReady: false,
     scene(fn) {
       builders.push(fn);
     },
     at(fraction) {
       return JB.speech + JB.clip * fraction;
+    },
+    // Scene time at which `phrase` starts being spoken. Throws if the narration
+    // does not contain it, so a stale script fails the render rather than
+    // drifting.
+    word(phrase) {
+      const norm = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+      const wanted = phrase.split(/\s+/).map(norm).filter(Boolean);
+      const spoken = JB.words.map((w) => norm(w.text));
+      for (let i = 0; i + wanted.length <= spoken.length; i++) {
+        if (wanted.every((w, j) => spoken[i + j] === w)) return JB.speech + JB.words[i].start;
+      }
+      throw new Error(`JB.word: "${phrase}" is not in the narration (${spoken.join(" ")})`);
     },
     // Animate `el` through `keyframes` between `from` and `to` (scene seconds).
     // `fill` is "both" for an element's first animation; a later one on the
@@ -87,12 +105,46 @@
   window.JB = JB;
   document.documentElement.dataset.format = JB.format;
 
+  // One group of words at a time, the spoken word in amber. Everything is a
+  // Web Animation, so JB.seek drives it like the rest of the page.
+  function captions() {
+    const layer = document.createElement("div");
+    layer.className = "burned-captions";
+    document.body.append(layer);
+    JB.groups.forEach((group, index) => {
+      const el = document.createElement("div");
+      el.className = "burned-caption";
+      const first = JB.speech + group[0][1];
+      const last = JB.speech + group[group.length - 1][2];
+      const next = JB.groups[index + 1];
+      const end = next ? Math.min(JB.speech + next[0][1], last + 0.3) : last + 0.3;
+      for (const [text, start, stop] of group) {
+        const span = document.createElement("span");
+        span.textContent = text;
+        el.append(span);
+        const from = JB.speech + start;
+        JB.anim(span, [{ color: "var(--text)", transform: "scale(1)" },
+                       { color: "var(--amber)", transform: "scale(1.12)" }],
+                from, from + 0.08, "ease-out");
+        JB.anim(span, [{ color: "var(--amber)", transform: "scale(1.12)" },
+                       { color: "var(--text)", transform: "scale(1)" }],
+                Math.max(from + 0.08, JB.speech + stop), JB.speech + stop + 0.1, "ease-in", "forwards");
+      }
+      layer.append(el);
+      // Hard cuts, ending exactly where the next group starts, so two groups
+      // are never on screen together.
+      JB.anim(el, [{ opacity: 0 }, { opacity: 1 }], first, first + 0.04, "linear");
+      JB.anim(el, [{ opacity: 1 }, { opacity: 0 }], end - 0.04, end, "linear", "forwards");
+    });
+  }
+
   window.addEventListener("load", async () => {
     await document.fonts.ready;
     await Promise.all(
       [...document.images].map((img) => (img.decode ? img.decode().catch(() => {}) : null)),
     );
     for (const fn of builders) fn(JB);
+    if (JB.format === "short" && JB.params.captions !== false && JB.groups.length) captions();
     JB.seek(0);
     JB.isReady = true;
   });

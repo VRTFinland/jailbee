@@ -6,6 +6,7 @@ import it (it has PyYAML but not Playwright). `render.py` does the I/O.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import os
 import re
@@ -22,6 +23,13 @@ CAPTION_LINE = 42
 """Characters per caption line before it wraps onto a second one."""
 
 
+CAPTION_WORDS = 3
+"""Most words on screen at once in a burned-in caption."""
+
+CAPTION_CHARS = 18
+"""Most characters in one burned-in caption group: it must fit a phone's width."""
+
+
 class MissingKeyError(Exception):
     """No OpenAI API key in the environment or in the key file."""
 
@@ -31,6 +39,15 @@ class TTS:
     model: str
     voice: str
     instructions: str
+
+
+@dataclass(frozen=True)
+class Word:
+    """One spoken word and when it is said, in seconds from the clip's start."""
+
+    text: str
+    start: float
+    end: float
 
 
 @dataclass(frozen=True)
@@ -198,3 +215,64 @@ def captions(slots: Sequence[Slot], durations: Mapping[str, float]) -> str:
             )
             at = end
     return "\n".join(cues)
+
+
+def group_words(
+    words: Sequence[Word], max_words: int = CAPTION_WORDS, max_chars: int = CAPTION_CHARS
+) -> list[list[Word]]:
+    """Words in order, split into the few at a time a burned-in caption shows:
+    a group ends at a sentence end, or when the next word would exceed
+    `max_words` or `max_chars`."""
+    groups: list[list[Word]] = []
+    current: list[Word] = []
+    for word in words:
+        size = sum(len(w.text) + 1 for w in current) + len(word.text)
+        if current and (len(current) >= max_words or size > max_chars):
+            groups.append(current)
+            current = []
+        current.append(word)
+        if word.text.endswith((".", "!", "?")):
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _norm(token: str) -> str:
+    return re.sub(r"[\W_]+", "", token.lower())
+
+
+def align_words(narration: str, heard: Sequence[Word]) -> list[Word]:
+    """Whisper's timings on the script's own words.
+
+    Whisper writes "12" for "twelve" and drops every full stop, so its text is
+    no caption. The narration's tokens keep their spelling and punctuation and
+    take the timing of the heard words they match; a stretch that does not
+    match one to one ("one point seven" heard as "1.7") is spread evenly over
+    the heard span, and a heard word the script lacks is dropped."""
+    tokens = narration.split()
+    if not heard:
+        return []
+    matcher = difflib.SequenceMatcher(
+        None, [_norm(t) for t in tokens], [_norm(w.text) for w in heard], autojunk=False
+    )
+    aligned: list[Word] = []
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
+        if op == "insert":
+            continue
+        if op == "delete":
+            at = aligned[-1].end if aligned else heard[0].start
+            aligned += [Word(t, at, at) for t in tokens[i1:i2]]
+            continue
+        start, end = heard[j1].start, heard[j2 - 1].end
+        if i2 - i1 == j2 - j1:
+            aligned += [
+                Word(t, w.start, w.end) for t, w in zip(tokens[i1:i2], heard[j1:j2], strict=True)
+            ]
+            continue
+        step = (end - start) / (i2 - i1)
+        aligned += [
+            Word(t, start + k * step, start + (k + 1) * step) for k, t in enumerate(tokens[i1:i2])
+        ]
+    return aligned
