@@ -70,6 +70,7 @@ from jailbee.state_service.client import StateClient
 from jailbee.tui import error
 
 if TYPE_CHECKING:
+    from jailbee.dashboard.bulk import BulkAction
     from jailbee.dashboard.model import RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.state_service.protocol import Snapshot
@@ -502,6 +503,7 @@ class AppController(QObject):
         from jailbee.dashboard.bulk import (
             bulk_loose_default,
             foreground_runs,
+            needs_confirm,
             nothing_to_do,
             plan_bulk,
         )
@@ -512,6 +514,8 @@ class AppController(QObject):
             QMessageBox.information(self._window, "Nothing to do", nothing_to_do(action))
             return
         skipped = "\n".join(f"{name}: {reason}" for name, reason in action.skipped)
+        if needs_confirm(action) and not self._confirm_bulk(action):
+            return
         if action.mode == "parallel":
             extra: list[str] = []
             if verb == "net loose":
@@ -551,8 +555,6 @@ class AppController(QObject):
                     lines += ["Skipped:", skipped]
                 QMessageBox.warning(self._window, "Bulk action", "\n".join(lines))
             return
-        if verb == "git pull" and not self._confirm_bulk_pull(action.eligible):
-            return
         for run in foreground_runs(groups, action):
             flags: list[str] = []
             if verb == "git push":
@@ -586,11 +588,15 @@ class AppController(QObject):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def _confirm_bulk_pull(self, names: tuple[str, ...]) -> bool:
+    def _confirm_bulk(self, action: BulkAction) -> bool:
+        """The one question before a verb runs over several containers."""
+        from jailbee.dashboard.bulk import confirm_detail, confirm_question
+
+        detail = "\n".join(confirm_detail(action))
         reply = QMessageBox.question(
             self._window,
             "Confirm",
-            confirm_text("git pull", ", ".join(names), None),
+            confirm_question(action) + (f"\n\n{detail}" if detail else ""),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

@@ -1022,7 +1022,7 @@ Several names are pulled in order, stopping at the first failure.
 | `--current` | Merge into the host's currently checked-out branch (= `--into <checked-out branch>`); mirrors `jailbee git push --current`. Mutually exclusive with `--into`; errors on detached HEAD. |
 | `--checkout` | If the target branch isn't checked out, check it out, merge, restore the original. Refuses on a dirty host tree. |
 | `--cleanup` / `--no-cleanup` | Force both / neither of the post-merge steps (destroy container, delete merged branch). Otherwise governed by the `pull:` config block (`destroy_container`, `delete_branch` ∈ `prompt|always|never`). Cleanup failures are warnings. |
-| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Off a TTY the block prints and nothing is asked. |
+| `--confirm` / `--no-confirm` | `--no-confirm` also skips the single question asked on a TTY before acting on two or more containers (default No). Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Off a TTY the block prints and nothing is asked. |
 | (no NAME, TTY) | Multi-select picker; pulls in order, **stops at the first failure** (remaining listed, not attempted). |
 
 Conflicts leave the host tree in merge state — resolve and `git commit` (or
@@ -1054,7 +1054,7 @@ Several names are pushed to in order with source and action resolved once; `--pr
 | `--from-local` | Push the host's local `refs/heads/<source>` and skip the host fetch. Use when the host has commits not yet pushed to origin. |
 | `--from-origin` | Force `refs/remotes/origin/<source>` (overrides `push.push_from: local` and the `--current` default). |
 | `--fetch` / `--no-fetch` | Run/skip `git fetch origin <source>` on the host before resolving. Default: `push.autofetch` (true). Only applies when pushing the origin ref. |
-| `--confirm` / `--no-confirm` | Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Unlike pull/checkout, this never triggers off a TTY: without an explicit NAME, `push` requires a TTY in the first place and errors before it lists containers, so the block is never reached there. |
+| `--confirm` / `--no-confirm` | `--no-confirm` also skips the single question asked on a TTY before acting on two or more containers (default No). Show / skip the plan-and-confirm block shown when JailBee picks the container itself (one candidate, no name). Default: `confirm.auto_target` (true). Unlike pull/checkout, this never triggers off a TTY: without an explicit NAME, `push` requires a TTY in the first place and errors before it lists containers, so the block is never reached there. |
 | (no NAME, TTY) | Multi-select picker; source/action chosen once, applied to all. Failures **don't** stop the batch — ✓/✗ summary at the end, non-zero exit if any failed. |
 
 `push.default_source` defaults to `base` (push the container's base branch in
@@ -1109,6 +1109,7 @@ target on whatever it has checked out, so conflicts are resolved there, in
 | `--into <name>` | Container to merge INTO. Never inferred, but asked for when omitted on a TTY. |
 | `-b` / `--branch <b>` | Read this branch from the source container. Only valid with exactly one SOURCE. **Not submodule-safe** — the transport enumerates the source's *checked-out* state, so a submodule that exists only on `<b>` never travels and the target's `submodule update` fails after the merge commit is written. Check the branch out in the container and merge without `-b` instead. |
 | `--plain` | Transport the refs only; run no merge. The report says "transported", not "merged" — `--plain` is not a kind of merge. |
+| `--no-confirm` | Skip the question asked on a TTY before merging with several sources or several targets (`Merge c1, c2 into c3?`, default No). |
 | `--ff` / `--no-ff` | How the merge runs; exit 2 with `--plain`. `--no-ff` always writes a merge commit; `--ff` demands a fast-forward and fails on divergence. Default is neither: a fast-forward when the target is on the branch read from the source, a merge commit otherwise — and when that fast-forward is impossible (both containers have commits of their own), JailBee prints both commit counts and asks whether to make a merge commit instead. Without a TTY it errors and names `--no-ff`. |
 
 Several sources are merged **one at a time, in the order given**. The run

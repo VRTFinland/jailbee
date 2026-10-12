@@ -181,6 +181,9 @@ def test_choosing_stop_in_the_bulk_picker_runs_the_batch(mocker, tmp_path):
     session.handle_key("enter")
 
     session.picker_chosen(PickerEntry("Stop (2)", "stop"))
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-confirm"
+    child.assert_not_called()
+    session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
     assert len(child.call_args_list) == 2
     assert session.overlay is None
@@ -257,7 +260,7 @@ def test_bulk_loose_asks_the_ttl_once_and_passes_it(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running", "Running", loose_ttl_default="5m")
     session.marked = frozenset({"alpha-a", "alpha-b"})
 
-    session.overlay = session.begin_bulk("net loose")
+    session.overlay = session.begin_bulk("net loose", confirmed=True)
     assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-loose-ttl"
     assert session.overlay.entries[0].value == "5m"
     session.picker_chosen(PickerEntry("2h", "2h"))
@@ -294,6 +297,7 @@ def test_u_with_marks_plans_git_push_over_the_marks_not_the_cursor(mocker, tmp_p
     run = mocker.patch.object(session, "run_bulk")
 
     session.handle_key("action:push")
+    session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
     run.assert_called_once()
     action = run.call_args.args[0]
@@ -392,10 +396,11 @@ def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
     session.handle_key("down")
 
     session.handle_key("action:push")
+    session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
     assert len(terminal.handed) == 1
     assert [c.args[0] for c in child.call_args_list] == [
-        ["jailbee", "git", "push", "alpha-a", "alpha-b"]
+        ["jailbee", "git", "push", "alpha-a", "alpha-b", "--no-confirm"]
     ]
     pause.assert_called_once()
 
@@ -426,14 +431,22 @@ def test_two_repos_get_one_run_each(mocker, tmp_path):
     session, terminal = bare_session(mocker, [alpha, beta])
     session.marked = frozenset({"alpha-a", "beta-a"})
 
-    session.begin_bulk("git pull")
+    session.begin_bulk("git pull", confirmed=True)
 
     assert len(terminal.handed) == 1
     calls = [(c.args[0], c.kwargs["cwd"]) for c in child.call_args_list]
     assert calls == [
-        (["jailbee", "git", "pull", "alpha-a"], tmp_path / "a"),
+        (["jailbee", "git", "pull", "alpha-a", "--no-confirm"], tmp_path / "a"),
         (
-            ["jailbee", "git", "pull", "beta-a", "--config", str(tmp_path / "b.yaml")],
+            [
+                "jailbee",
+                "git",
+                "pull",
+                "beta-a",
+                "--no-confirm",
+                "--config",
+                str(tmp_path / "b.yaml"),
+            ],
             tmp_path / "b",
         ),
     ]
@@ -450,7 +463,7 @@ def test_a_successful_run_unmarks_its_names_and_a_failed_one_keeps_them(mocker, 
     session, _ = bare_session(mocker, [alpha, beta])
     session.marked = frozenset({"alpha-a", "beta-a"})
 
-    session.begin_bulk("git push")
+    session.begin_bulk("git push", confirmed=True)
 
     assert session.marked == frozenset({"beta-a"})
     assert session.notice == "git push: 1 ok, 1 failed (beta: exited 1)"
@@ -474,7 +487,7 @@ def test_a_refused_argv_runs_nothing_for_any_repo(mocker, tmp_path):
         ddispatch, "check_dashboard_command", side_effect=[None, RouteError("not allowed here")]
     )
 
-    session.begin_bulk("git push")
+    session.begin_bulk("git push", confirmed=True)
 
     child.assert_not_called()
     pause.assert_not_called()
@@ -493,7 +506,7 @@ def test_a_run_that_cannot_start_still_pauses_once_and_keeps_earlier_results(moc
 
     mocker.patch.object(tsession.subprocess, "run", side_effect=run)
 
-    session.begin_bulk("git push")
+    session.begin_bulk("git push", confirmed=True)
 
     pause.assert_called_once()
     assert session.marked == frozenset({"beta-a"})
@@ -574,3 +587,105 @@ def test_marks_are_planned_in_listing_order_not_alphabetical(mocker, tmp_path):
     picker = session.begin_bulk("destroy")
     assert isinstance(picker, Picker)
     assert "alpha-c, alpha-a, alpha-b" in picker.title
+
+
+# -- the several-containers question ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verb", "state"),
+    [
+        ("start", "Stopped"),
+        ("stop", "Running"),
+        ("restart", "Running"),
+        ("net loose", "Running"),
+        ("git push", "Running"),
+    ],
+)
+def test_a_bulk_verb_over_several_containers_asks_first_and_runs_nothing(
+    mocker, tmp_path, verb, state
+):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, state, state)
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    run = mocker.patch.object(session, "run_bulk")
+
+    overlay = session.begin_bulk(verb)
+
+    assert isinstance(overlay, Picker) and overlay.purpose == "bulk-confirm"
+    assert overlay.carry == (verb,)
+    assert overlay.entries[0].value == "no"  # No is the first, default entry
+    assert "alpha-a, alpha-b" in overlay.title and "2 containers" in overlay.title
+    run.assert_not_called()
+    child.assert_not_called()
+
+
+def test_answering_yes_runs_the_verb_over_the_marks(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.overlay = session.begin_bulk("stop")
+
+    session.picker_chosen(PickerEntry("Yes, 2", "yes"))
+
+    assert [c.args[0] for c in child.call_args_list] == [
+        ["jailbee", "stop", "alpha-a"],
+        ["jailbee", "stop", "alpha-b"],
+    ]
+
+
+def test_answering_no_runs_nothing(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.overlay = session.begin_bulk("stop")
+
+    session.picker_chosen(PickerEntry("No", "no"))
+
+    child.assert_not_called()
+    assert session.notice == "Cancelled"
+    assert session.overlay is None
+
+
+def test_one_marked_container_is_not_asked(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+    session.marked = frozenset({"alpha-a"})
+
+    assert session.begin_bulk("stop") is None
+
+    assert child.call_args.args[0] == ["jailbee", "stop", "alpha-a"]
+
+
+def test_the_question_names_who_is_passed_over(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", "Stopped")
+    session.marked = frozenset({"alpha-a", "alpha-b", "alpha-c"})
+
+    overlay = session.begin_bulk("stop")
+
+    assert isinstance(overlay, Picker)
+    assert overlay.detail == ("skipped alpha-c: already stopped",)
+
+
+def test_loose_asks_to_confirm_before_it_asks_the_ttl(mocker, tmp_path):
+    child = _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", loose_ttl_default="5m")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+    session.overlay = session.begin_bulk("net loose")
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-confirm"
+
+    session.picker_chosen(PickerEntry("Yes, 2", "yes"))
+
+    assert isinstance(session.overlay, Picker) and session.overlay.purpose == "bulk-loose-ttl"
+    child.assert_not_called()
+
+
+def test_destroy_and_merge_keep_their_own_question(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running", "Running")
+    session.marked = frozenset({"alpha-a", "alpha-b"})
+
+    destroy = session.begin_bulk("destroy")
+
+    assert isinstance(destroy, Picker) and destroy.purpose == "bulk-destroy-confirm"
+    assert session.begin_bulk("merge") is None  # straight to picking the targets
+    assert session.merge_pick is not None

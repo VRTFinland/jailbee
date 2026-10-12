@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from jailbee.dashboard.bulk import DASHBOARD_CONFIRMED
 from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS, PRINTING_VERBS
 from jailbee.qtui.terminal import TerminalSpec, acknowledge_command, build_terminal_command
 
@@ -162,7 +163,9 @@ def build_bulk_action(
     `merge a b`): no ``--force`` (none of these takes one), no ``--into`` for
     merge (its target question is the point of the terminal).
     """
-    argv = ["jailbee", *verb.split(), *names, *target.flags(), *(extra_flags or [])]
+    # The dashboard's own several-containers question has been answered.
+    asked = ["--no-confirm"] if verb in DASHBOARD_CONFIRMED else []
+    argv = ["jailbee", *verb.split(), *names, *target.flags(), *asked, *(extra_flags or [])]
     return ActionCommand(
         argv=argv,
         launch=launch_mode(verb),

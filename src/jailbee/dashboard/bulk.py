@@ -57,6 +57,13 @@ BULK_LABELS: dict[str, str] = {
     "destroy": "Destroy…",
 }
 _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
+# Verbs that put their own question to the user. `destroy` shows its risk
+# summary; `merge` is asked by the CLI once the targets are picked, so the
+# question can name both ends.
+ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "merge"})
+# Foreground verbs the dashboard confirms itself: their CLI run is told not to
+# ask again (`--no-confirm`).
+DASHBOARD_CONFIRMED: frozenset[str] = frozenset({"git push", "git pull"})
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,25 @@ class BulkAction:
     @property
     def label(self) -> str:
         return f"{BULK_LABELS[self.verb]} ({len(self.eligible)})"
+
+
+def needs_confirm(action: BulkAction) -> bool:
+    """Whether the dashboard asks before ``action``: several containers, no question of its own."""
+    return len(action.eligible) >= 2 and action.verb not in ASKS_ITSELF
+
+
+def confirm_question(action: BulkAction) -> str:
+    """The one question every frontend puts before a multi-container ``action``."""
+    label = BULK_LABELS[action.verb].rstrip("…")
+    return f"{label}: {len(action.eligible)} containers — {', '.join(action.eligible)}?"
+
+
+def confirm_detail(action: BulkAction) -> tuple[str, ...]:
+    """What the question should say besides the names: a pull's reach, then who is passed over."""
+    # `git pull` is the one bridge verb that writes to the *host* repo, which
+    # is not obvious from a menu entry.
+    reach = ("Merges each container's commits into the host repo.",) * (action.verb == "git pull")
+    return (*reach, *(f"skipped {name}: {reason}" for name, reason in action.skipped))
 
 
 def _container(groups: Sequence[RepoGroup], name: str) -> ContainerInfo | None:
@@ -214,7 +240,10 @@ def foreground_runs(groups: Sequence[RepoGroup], action: BulkAction) -> list[For
         names = tuple(name for name in action.eligible if name in members)
         if target is None or not names:
             continue
-        runs.append(ForegroundRun(group.prefix, target, (*action.verb.split(), *names), names))
+        flags = ("--no-confirm",) if action.verb in DASHBOARD_CONFIRMED else ()
+        runs.append(
+            ForegroundRun(group.prefix, target, (*action.verb.split(), *names, *flags), names)
+        )
     return runs
 
 

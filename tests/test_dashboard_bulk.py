@@ -265,3 +265,32 @@ def test_a_busy_container_is_skipped_by_every_verb(tmp_path):
     assert action.eligible == ("alpha-b",)
     assert action.skipped == (("alpha-a", "busy"),)
     assert offered == []
+
+
+def test_foreground_git_verbs_tell_the_cli_the_dashboard_already_asked(tmp_path):
+    alpha = _group(tmp_path / "a", ci("alpha-a", "alpha"), ci("alpha-b", "alpha"))
+
+    for verb in ("git push", "git pull"):
+        (run,) = bulk.foreground_runs([alpha], bulk.BulkAction(verb, ("alpha-a", "alpha-b")))
+        assert run.argv == (*verb.split(), "alpha-a", "alpha-b", "--no-confirm")
+
+
+def test_needs_confirm_is_several_containers_and_no_question_of_its_own():
+    two = ("alpha-a", "alpha-b")
+
+    assert bulk.needs_confirm(bulk.BulkAction("stop", two))
+    assert not bulk.needs_confirm(bulk.BulkAction("stop", ("alpha-a",)))
+    assert not bulk.needs_confirm(bulk.BulkAction("destroy", two))
+    assert not bulk.needs_confirm(bulk.BulkAction("merge", two))
+
+
+def test_a_pull_question_says_it_writes_to_the_host_repo():
+    action = bulk.BulkAction("git pull", ("alpha-a", "alpha-b"), (("alpha-c", "mount mode"),))
+
+    assert bulk.confirm_detail(action) == (
+        "Merges each container's commits into the host repo.",
+        "skipped alpha-c: mount mode",
+    )
+    assert bulk.confirm_question(action) == (
+        "Send commits to host (git pull): 2 containers — alpha-a, alpha-b?"
+    )
