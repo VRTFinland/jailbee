@@ -34,7 +34,8 @@ scope.
   `github.com` is deliberately absent from the strict default so an
   unattended agent cannot surprise-push.
 - **The container is a git remote.** `jailbee git push/pull/fetch/checkout/diff`
-  move commits between host and container without a round trip through GitHub.
+  move commits between host and container without a round trip through GitHub,
+  and `jailbee git merge` merges one container's branch into another's.
   Submodules travel with the superproject. `jailbee pr` opens or updates the
   GitHub PR from a container's branch, with the title and body written by the
   in-container Claude — to the project's own standard when the repo states one

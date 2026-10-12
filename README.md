@@ -56,7 +56,9 @@ sped up and say so on screen; nothing else is edited.
   in parallel without port or Docker-name collisions.
 - **Host↔container git bridge** — the container acts as a git remote; move
   commits with `jailbee git push`/`pull`/`checkout` instead of round-tripping
-  through GitHub.
+  through GitHub, and merge one container's branch straight into another's
+  with `jailbee git merge` (`jailbee fork` starts a second attempt at the same
+  change).
 - **Submodules that travel** — sub-repos are initialised offline on
   `jailbee new` and their objects move with the superproject on every
   push/pull, so a repo with submodules needs no manual setup on either side.
