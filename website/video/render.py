@@ -14,7 +14,9 @@ See website/video/README.md. The pure parts live in pipeline.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -186,7 +188,9 @@ def render_slot(
     assert encoder.stdin is not None
     for index in range(frames):
         page.evaluate("t => JB.seek(t)", index / fps)
-        encoder.stdin.write(page.screenshot(type="png"))
+        # JPEG at this quality is indistinguishable after H.264, and Chrome
+        # encodes it several times faster than PNG.
+        encoder.stdin.write(page.screenshot(type="jpeg", quality=95))
         if index % (fps * 5) == 0:
             print(f"  {slot.scene.id}: {index}/{frames}", flush=True)
     encoder.stdin.close()
@@ -281,22 +285,64 @@ def command_preview(episode: Episode, args: argparse.Namespace) -> None:
     print(target)
 
 
-def command_render(episode: Episode, args: argparse.Namespace) -> None:
+def part_key(episode: Episode, slot: Slot, clip: float, fmt: str) -> str:
+    """What a rendered scene depends on: its page, the shared runtime, the
+    episode's assets, its timing and its params. Not the news crops a page
+    may show from website/assets/; render with --fresh after changing one."""
+    digest = hashlib.sha256()
+    files = [slot.scene.page, *sorted((HERE / "lib").iterdir())]
+    files += sorted((slot.scene.page.parent.parent / "assets").iterdir())
+    for path in files:
+        digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    timing = (
+        fmt,
+        episode.fps,
+        round(slot.length, 3),
+        round(slot.speech_at - slot.start, 3),
+        round(clip, 3),
+        json.dumps(slot.scene.params, sort_keys=True),
+    )
+    digest.update(repr(timing).encode())
+    return digest.hexdigest()[:16]
+
+
+def _render_part(job: tuple[Slot, float, str, int, Path]) -> str:
+    """One scene in its own process with its own Chrome (fork: Playwright is
+    never started in the parent)."""
     from playwright.sync_api import sync_playwright
 
+    slot, clip, fmt, fps, target = job
+    partial = target.with_suffix(".part.mp4")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=chrome(), args=["--no-sandbox"])
+        render_slot(browser, slot, clip, fmt, fps, partial)
+        browser.close()
+    partial.replace(target)
+    return slot.scene.id
+
+
+def command_render(episode: Episode, args: argparse.Namespace) -> None:
     scenes = episode.for_format(args.format)
     ensure_clips(episode, scenes, dry_run=False)
     clips = durations(episode, scenes)
     slots = timeline(scenes, clips, pad=episode.pad, fade=episode.fade)
+    parts_dir = CACHE / "parts" / args.format
+    parts_dir.mkdir(parents=True, exist_ok=True)
     parts = [
-        CACHE / "parts" / args.format / f"{i:02}-{s.scene.id}.mp4" for i, s in enumerate(slots)
+        parts_dir / f"{s.scene.id}-{part_key(episode, s, clips[s.scene.id], args.format)}.mp4"
+        for s in slots
     ]
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path=chrome(), args=["--no-sandbox"])
-        for slot, part in zip(slots, parts, strict=True):
-            print(f"render: {slot.scene.id} ({slot.length:.1f}s)", flush=True)
-            render_slot(browser, slot, clips[slot.scene.id], args.format, episode.fps, part)
-        browser.close()
+    jobs = [
+        (slot, clips[slot.scene.id], args.format, episode.fps, part)
+        for slot, part in zip(slots, parts, strict=True)
+        if args.fresh or not part.is_file()
+    ]
+    print(f"render: {len(slots) - len(jobs)} scenes unchanged, {len(jobs)} to render", flush=True)
+    if jobs:
+        workers = max(1, min(args.jobs, len(jobs)))
+        with multiprocessing.get_context("fork").Pool(workers) as pool:
+            for scene_id in pool.imap_unordered(_render_part, jobs):
+                print(f"render: {scene_id} done", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
     target = OUT / f"{args.format}.mp4"
     assemble(episode, slots, parts, target)
@@ -320,6 +366,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     preview.add_argument("--scale", type=float, default=0.5)
     render = commands.add_parser("render", help="render a whole format")
     render.add_argument("format", choices=sorted(VIEWPORTS))
+    render.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    render.add_argument("--fresh", action="store_true", help="re-render unchanged scenes too")
     args = parser.parse_args(argv)
     try:
         episode = load_episode(args.episode / "script.yaml")
