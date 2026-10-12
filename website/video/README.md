@@ -16,7 +16,13 @@ uv run website/video/render.py render short         # out/short.mp4 + out/short.
 ```
 
 `--episode DIR` picks another episode (default `episodes/jailbee-1-7`). Output
-lands in `out/`; clips and per-scene renders in `.cache/`. Both are gitignored.
+lands in `out/`; narration clips and per-scene renders in the repo's
+`.local/video-cache/`. Both are gitignored. The cache lives under `.local/`
+because narration costs money: in the maintainer's setup `.local/` is a
+host mount, so it survives `jailbee destroy`, where `out/` goes with the
+container. Copy anything from `out/` you want to keep (the uploaded
+`main.mp4`, say) to `.local/` too. Without such a mount, back the cache up
+yourself before destroying the container.
 
 ## What it needs
 
