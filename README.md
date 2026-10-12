@@ -28,19 +28,6 @@ its origin, not its scope.
 ## See it work
 
 <p align="center">
-  <a href="https://youtu.be/rjkssscOuBk"><img
-    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/videos/rjkssscOuBk-play.jpg"
-    width="760"
-    alt="Play the JailBee 1.7 tour on YouTube: the dashboard listing a dozen branch containers, several with an AI agent at work."></a>
-</p>
-
-<p align="center">
-  <a href="https://youtu.be/rjkssscOuBk"><strong>▶ JailBee 1.7: the 3-minute tour</strong></a>
-  — what a container per branch gives an agent, and how the dashboard tells you
-  which of a dozen agents needs you.
-</p>
-
-<p align="center">
   <a href="https://jailbee.gisgro.io/#demos"><img
     src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/media/a-teaser.gif"
     width="760"
@@ -62,6 +49,19 @@ as its own deliberate step.
 
 Every command and every line of output is real. Two stretches of the clip are
 sped up and say so on screen; nothing else is edited.
+
+<p align="center">
+  <a href="https://youtu.be/rjkssscOuBk"><img
+    src="https://raw.githubusercontent.com/VRTFinland/jailbee/main/website/assets/videos/rjkssscOuBk-play.jpg"
+    width="760"
+    alt="Play the JailBee 1.7 tour on YouTube: the dashboard listing a dozen branch containers, several with an AI agent at work."></a>
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/rjkssscOuBk"><strong>▶ JailBee 1.7: the 3-minute tour</strong></a>
+  — what a container per branch gives an agent, and how the dashboard tells you
+  which of a dozen agents needs you.
+</p>
 
 ## Key features
 
