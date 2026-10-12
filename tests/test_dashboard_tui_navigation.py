@@ -676,7 +676,7 @@ def test_every_saved_view_state_keeps_a_stored_details_preference(mocker, tmp_pa
 # --- optimized columns -------------------------------------------------------------
 
 
-def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path):
+def test_run_a_column_that_gains_content_appears_on_refresh(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
 
     def gain_a_pr(_app) -> None:
@@ -684,14 +684,33 @@ def test_run_nonempty_snapshot_survives_refresh_until_optimize(mocker, tmp_path)
 
     run = drive(
         mocker,
-        [gain_a_pr, "r", "o"],
+        [gain_a_pr, "r"],
         [group],
         view_state=ViewState(columns=("name", "pr")),
     )
     shown = [view.shown_columns for view in run.trace]
-    # the new PR column stays hidden through the refresh, until `o` optimizes
-    assert shown[0] == shown[1] == shown[2] == ("name",)
-    assert "pr" in shown[3]
+    assert shown[0] == ("name",)
+    # no `o` needed: the refresh that brings the PR brings its column
+    assert shown[-1] == ("name", "pr")
+
+
+def test_run_a_column_that_empties_stays_until_optimize(mocker, tmp_path):
+    with_pr = dataclasses.replace(ci("alpha-one", "alpha"), pr_number=42)
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [with_pr])
+
+    def lose_the_pr(_app) -> None:
+        group.containers[0].pr_number = None
+
+    run = drive(
+        mocker,
+        [lose_the_pr, "r", "o"],
+        [group],
+        view_state=ViewState(columns=("name", "pr")),
+    )
+    shown = [view.shown_columns for view in run.trace]
+    # columns never vanish under the cursor on a refresh; `o` drops the empty one
+    assert shown[0] == shown[-2] == ("name", "pr")
+    assert shown[-1] == ("name",)
 
 
 def test_run_space_unfold_restores_nonempty_columns_without_reoptimizing(mocker, tmp_path):

@@ -174,9 +174,7 @@ def test_a_pruned_sort_column_sorts_again_once_it_is_shown(mocker):
     session, _ = _session_with(mocker, _AGENT_VIEW, group)
     assert _names(session) == ["p-b", "p-a"]
     _agent_on_older(group)
-    session.tick()
-    assert _names(session) == ["p-b", "p-a"]  # shown_columns is not recomputed on a tick
-    session.handle_key("optimize")
+    session.tick()  # a column that gains content is shown again on the tick itself
     assert "agent_compact" in session.shown_columns
     assert session.sort == SortSpec("agent_compact", False)  # kept, never cleared
     assert _names(session) == ["p-a", "p-b"]
