@@ -112,6 +112,13 @@ class PrText:
 # it uses its own default unless `pr.model` names one.
 _CLAUDE_PR_MODEL = "sonnet"
 
+# Opens a timed-out run's transcript by the session id jailbee assigned.
+_RESUME = {
+    "claude": "claude --resume {id}",
+    "claude-jb": "claude --resume {id}",
+    "pi": "pi --session {id}",
+}
+
 
 @dataclass(frozen=True)
 class PrAgent:
@@ -123,8 +130,8 @@ class PrAgent:
     """The shell command line to run (the agent's `headless` setting)."""
     model: str | None
     """What to pass as `$JAILBEE_PR_MODEL`; None leaves the agent on its own default."""
-    resumable: bool
-    """Whether a timed-out run leaves a transcript `claude --resume` can open."""
+    resume: str | None
+    """The command that opens a timed-out run's transcript, with `{id}` for the session."""
 
 
 @dataclass(frozen=True)
@@ -157,7 +164,7 @@ def _usable(cfg: Config, name: str) -> PrAgent | None:
         name=name,
         headless=agent.headless,
         model=_pr_model(cfg, name),
-        resumable=name == "claude",
+        resume=_RESUME.get(name),
     )
 
 
@@ -172,7 +179,7 @@ def _through_claude_jb(agent: PrAgent) -> PrAgent | None:
         name="claude-jb",
         headless=rewritten,
         model=agent.model,  # the same value `claude` would have used
-        resumable=True,
+        resume=_RESUME["claude-jb"],
     )
 
 
@@ -357,17 +364,17 @@ def generate_pr_text(
     except IncusTimeoutError as exc:
         warn(f"In-container {agent.name} could not generate the PR text: {exc}")
         budget_hint = f"Raise `pr.timeout` (currently {budget}s) if it was simply still working."
-        if agent.resumable:
-            # A timeout is the one failure that leaves something to read: Claude
-            # writes its transcript as it goes, so the run that ran out of
+        if agent.resume:
+            # A timeout is the one failure that leaves something to read: the
+            # agent writes its transcript as it goes, so the run that ran out of
             # budget is on disk and resumable even though jailbee received no
             # bytes. Naming the container and the session is the difference
-            # between a dead end and a diagnosis — `claude --resume` alone lists
+            # between a dead end and a diagnosis — a bare resume picker lists
             # only the sessions of whatever directory it is run from.
             warn(
                 f"That attempt left a transcript in the container. To see how far it got: "
                 f"`jailbee shell {short_name(cfg, full_name)}`, then "
-                f"`claude --resume {session_id}`. {budget_hint}"
+                f"`{agent.resume.format(id=session_id)}`. {budget_hint}"
             )
         else:
             warn(budget_hint)

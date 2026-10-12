@@ -516,8 +516,8 @@ def test_repo_template_agents_comment_names_every_preset_and_docs():
     so a future edit can't quietly soften or drop it."""
     from jailbee.config_init import _TEMPLATE
 
-    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
-        assert preset in _TEMPLATE
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "pi", "grok"):
+        assert f" {preset}," in _TEMPLATE or f" {preset}." in _TEMPLATE
     assert "docs/agents.md" in _TEMPLATE
     assert "untested templates" in _TEMPLATE
     assert "agents.claude" in _TEMPLATE
@@ -558,8 +558,9 @@ def test_global_template_agents_comment_names_every_preset():
     schema counterpart, not real behaviour to re-express here.)"""
     text = render_global_template()
 
-    for preset in ("claude", "codex", "gemini", "aider", "opencode", "grok"):
+    for preset in ("claude", "codex", "gemini", "aider", "opencode", "pi", "grok"):
         assert preset in text
+    assert "`pi`" in text
     assert "untested templates" in text
 
 

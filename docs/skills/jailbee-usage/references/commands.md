@@ -1106,10 +1106,10 @@ is fixed while a suite's cost is the repository's. `pr.timeout`
 (default 600 s) bounds the run; on expiry you get a warning plus a placeholder
 description, fixable afterwards with `jailbee pr --description`. The warning also
 names the container and the session id of the attempt, so you can see how far it
-got: `jailbee shell <name>`, then `claude --resume <id>` — Claude writes its
-transcript as it works, so a run that ran out of budget is still on disk. (Only
-Claude and `claude-jb` leave one; for any other agent the warning just says to
-raise `pr.timeout`.)
+got: `jailbee shell <name>`, then `claude --resume <id>` (pi: `pi --session <id>`)
+— the agent writes its transcript as it works, so a run that ran out of budget is
+still on disk. (Only Claude, `claude-jb` and pi leave one; for any other agent the
+warning just says to raise `pr.timeout`.)
 
 ## PR review outbox
 

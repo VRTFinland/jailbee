@@ -503,9 +503,9 @@ not. Stay in `strict` and snapshot before a long run.
 ### Can I use an agent other than Claude Code?
 
 Yes — `agents:` is a mapping keyed by agent name and wires any terminal coding
-agent into the same mount/egress/install/autostart pipeline. Six presets ship
-(`claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`), but **only `claude`
-is exercised in production** — the other five are untested starting points you
+agent into the same mount/egress/install/autostart pipeline. Seven presets ship
+(`claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `grok`), but **only `claude`
+is exercised in production** — the other six are untested starting points you
 are expected to correct. You can also define an agent from scratch.
 
 → [Generic agent support](agents.md),

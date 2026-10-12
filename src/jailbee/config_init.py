@@ -106,7 +106,7 @@ host_ports: []
 
 # Coding agents. Each entry is merged over a shipped preset, so enabling one
 # is usually two lines. Every preset field is overridable here — see
-# docs/agents.md. Presets: claude, codex, gemini, aider, opencode, grok.
+# docs/agents.md. Presets: claude, codex, gemini, aider, opencode, pi, grok.
 # Only `claude` is exercised in production; the others are untested templates
 # — package names, config paths and host lists are best-effort.
 #

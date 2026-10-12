@@ -165,7 +165,7 @@ def test_headless_must_not_be_blank():
         AgentConfig(headless="   ")
 
 
-@pytest.mark.parametrize("name", ["codex", "gemini", "opencode"])
+@pytest.mark.parametrize("name", ["codex", "gemini", "opencode", "pi"])
 def test_presets_with_a_headless_command_read_the_prompt_from_the_environment(name):
     headless = AGENT_PRESETS[name]["headless"]
     assert isinstance(headless, str)

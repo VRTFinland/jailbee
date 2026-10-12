@@ -313,6 +313,31 @@ def test_claude_auto_update_flag_reflects_config_off(tmp_path, mocker):
     assert step.env["JAILBEE_CLAUDE_AUTO_UPDATE"] == "false"
 
 
+@pytest.mark.parametrize("auto_update", [True, False])
+def test_install_step_carries_the_generic_auto_update_flag(tmp_path, mocker, auto_update):
+    """ensure-pi.sh runs as `install` in every fresh container and decides
+    about updating itself. The flag is on the step, not the spec, so it does
+    not leak into the agent's own autostart window."""
+    from jailbee.agents import ensure_agents
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        make_cfg(tmp_path, agents={"pi": {"enabled": True}}, shared_dir=tmp_path / "shared"),
+        "pi",
+        auto_update=auto_update,
+    )
+    incus = mocker.MagicMock()
+    incus.exec.side_effect = Exception("not found")
+    apply_step = mocker.patch("jailbee.autostart._apply_step")
+
+    ensure_agents(cfg, incus, "c1", "/home/dev/repo")
+
+    (step,) = [c.args[3] for c in apply_step.call_args_list]
+    assert step.env["JAILBEE_AUTO_UPDATE"] == ("true" if auto_update else "false")
+    (spec,) = enabled_agent_specs(cfg)
+    assert "JAILBEE_AUTO_UPDATE" not in dict(spec.env)
+
+
 def test_step_failure_is_warned_not_raised(tmp_path, mocker):
     """The `_apply_step` failure itself must be caught and warned — not
     merely "some warning happened", since `ensure_session`'s own best-effort
