@@ -16,7 +16,7 @@ from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.dashboard.tui.overlay import NativeState
 from jailbee.db.view_prefs import ViewState
 from tests.dashboard_fixtures import WIDE, ci, named_rows_group, wide_group
-from tests.dashboard_pilot import NATIVE_LIST, Resize, Wheel, drive, paint, view_of
+from tests.dashboard_pilot import NATIVE_LIST, Resize, Wheel, bare_session, drive, paint, view_of
 
 Row = dmodel.Row
 
@@ -383,3 +383,20 @@ def test_short_notice_is_centred_on_the_bottom_border(tmp_path):
     left = bottom.index(notice)
     right = len(bottom) - left - len(notice)
     assert abs(left - right) <= 2, bottom
+
+
+def test_long_status_notice_is_on_the_bottom_border_not_below_the_table(tmp_path):
+    notice = "gisgro/vaaka-combined: local target behind fetched refs/remotes/origin/vaaka-combined"
+    lines = paint(view_of([_long(tmp_path, 3)], notice=notice, notice_wraps=False), size=(120, 25))
+    assert lines[-1].startswith("╰") and notice in lines[-1]
+    assert not any(notice in line for line in lines[:-1])
+
+
+def test_tracking_and_job_notices_never_wrap_but_a_refusal_does(mocker, tmp_path):
+    long = "y" * 100
+    mocker.patch.object(tsession, "tracking_notices", return_value=[long])
+    session, _ = bare_session(mocker, [_long(tmp_path, 3)])
+    view = session.view()
+    assert view.notice == long and view.notice_wraps is False
+    session.set_notice(long)
+    assert session.view().notice_wraps is True
