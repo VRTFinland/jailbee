@@ -36,6 +36,8 @@ def _wire(mocker, tmp_path, *, containers, picked, action="plain", source="defau
         return_value=containers,
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    # The batch question is `test_*_asks_before_*`'s subject; everywhere else it is answered yes.
+    mocker.patch("jailbee.cli.default_confirm", return_value=True)
     mocker.patch(
         "jailbee.tui.pick_containers_multi",
         return_value=picked,
@@ -820,3 +822,55 @@ def test_push_one_name_still_takes_the_single_path(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     summary.assert_not_called()
+
+
+# -- the batch question ------------------------------------------------------
+
+
+def test_push_asks_before_pushing_to_several_containers(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
+    do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_called_once()
+    question = ask.call_args.args[0]
+    assert "Push to 2 containers" in question and "feat-a" in question and "feat-b" in question
+    assert do_push.call_count == 2
+
+
+def test_push_declining_the_batch_question_pushes_nothing(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    do_push = mocker.patch("jailbee.cli._do_single_push")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code != 0
+    do_push.assert_not_called()
+
+
+def test_push_no_confirm_skips_the_batch_question(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "--no-confirm", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_not_called()
+    assert do_push.call_count == 2
+
+
+def test_push_off_a_tty_does_not_ask_about_the_batch(mocker, tmp_path):
+    _wire_named(mocker, tmp_path, action="plain")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
+    mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
+
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
+
+    assert result.exit_code == 0, result.output
+    ask.assert_not_called()
