@@ -12,7 +12,8 @@
 // words")` is finer: the scene time that phrase starts being spoken, from
 // Whisper's word timestamps (see render.py), for a highlight that must land on
 // one word. In the short format every scene also gets burned-in captions built
-// from the same timestamps; a scene opts out with `params.captions: false`.
+// from the same timestamps; a scene opts out with `params.captions: false`, or lifts them with
+// `params.caption_bottom` (a CSS length) when its own text sits low.
 (() => {
   const q = new URLSearchParams(location.search);
   const num = (name, fallback) => {
@@ -110,6 +111,8 @@
   function captions() {
     const layer = document.createElement("div");
     layer.className = "burned-captions";
+    // A scene whose own text sits low can lift the captions clear of it.
+    if (JB.params.caption_bottom) layer.style.setProperty("--caption-bottom", JB.params.caption_bottom);
     document.body.append(layer);
     JB.groups.forEach((group, index) => {
       const el = document.createElement("div");

@@ -188,12 +188,12 @@ h2 {
 .term .prompt { color: var(--green); }
 
 /* Burned-in captions (short format only; runtime.js builds them). Kept above
-   the bottom fifth, which YouTube's Shorts controls cover. */
+   the bottom 15%; YouTube's Shorts controls cover the last stretch of it. */
 .burned-captions {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 20%;
+  bottom: var(--caption-bottom, 15%);
   z-index: 100;
   pointer-events: none;
 }

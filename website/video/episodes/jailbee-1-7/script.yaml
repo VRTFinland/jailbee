@@ -131,6 +131,7 @@ scenes:
       title: Which one needs you <span class="amber">right now?</span>
       shot_at: 0.45
       title_at: 0.62
+      caption_bottom: 24%
     narration: >-
       Twelve AI agents. Twelve branches. Which one needs you right now?
 
