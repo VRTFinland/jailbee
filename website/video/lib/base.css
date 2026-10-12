@@ -199,21 +199,28 @@ h2 {
 }
 .burned-caption {
   position: absolute;
-  left: 48px;
-  right: 48px;
+  left: 50%;
   bottom: 0;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 64px);
+  padding: 22px 26px;
   text-align: center;
-  font: 800 76px/1.1 var(--sans);
+  font: 800 72px/1.1 var(--sans);
   white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 0.01em;
   color: var(--text);
-  text-shadow: 0 0 6px #000, 0 4px 18px #000, 0 0 2px #000;
-  -webkit-text-stroke: 10px #000;
-  paint-order: stroke fill;
+  /* A plate and a filled chip, not just a colour: the scenes' own text is
+     white and amber too, and must never be mistaken for a caption. */
+  background: rgba(0, 0, 0, 0.88);
+  border-radius: 28px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
   opacity: 0;
 }
 .burned-caption span {
   display: inline-block;
-  margin: 0 0.22em;
+  padding: 0 0.16em;
+  margin: 0 0.04em;
+  border-radius: 14px;
 }

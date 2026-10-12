@@ -123,12 +123,11 @@
         span.textContent = text;
         el.append(span);
         const from = JB.speech + start;
-        JB.anim(span, [{ color: "var(--text)", transform: "scale(1)" },
-                       { color: "var(--amber)", transform: "scale(1.12)" }],
-                from, from + 0.08, "ease-out");
-        JB.anim(span, [{ color: "var(--amber)", transform: "scale(1.12)" },
-                       { color: "var(--text)", transform: "scale(1)" }],
-                Math.max(from + 0.08, JB.speech + stop), JB.speech + stop + 0.1, "ease-in", "forwards");
+        const idle = { color: "var(--text)", backgroundColor: "rgba(240, 169, 43, 0)" };
+        const spoken = { color: "var(--ground)", backgroundColor: "var(--amber)" };
+        JB.anim(span, [idle, spoken], from, from + 0.06, "ease-out");
+        JB.anim(span, [spoken, idle], Math.max(from + 0.06, JB.speech + stop),
+                JB.speech + stop + 0.06, "ease-in", "forwards");
       }
       layer.append(el);
       // Hard cuts, ending exactly where the next group starts, so two groups
