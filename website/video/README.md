@@ -94,6 +94,37 @@ reason: the videos are worth making only if they show the real thing.
 - Example host and container names in diagrams are examples
   (`example.com`, `feat-login`), not anyone's real setup.
 
+## Publishing an episode
+
+After `render main` and `render short`, in this order:
+
+1. **Watch both, end to end.** Frame checks catch layout, not pacing.
+2. **Thumbnails.** YouTube wants 1280×720 for the main video. Scale the
+   episode's feature image to that width and pad top and bottom with its own
+   background colour rather than cropping (the image is near-black, so the
+   bands do not show). A Short's cover is picked in the YouTube app; a full-size
+   frame of its hook is `render.py preview <hook> --format short --at <t> --scale 1`.
+3. **Upload** in YouTube Studio: video language English; subtitles from
+   `out/<format>.srt` via *Upload file → With timing*; the chapter list in the
+   description comes from the scene start times
+   (`pipeline.timeline(...)` — each slot's `start`). Upload unlisted and publish
+   with the release.
+4. **Embed in the release post.** The video ID alone on its own line in the
+   article (`https://youtu.be/<id>`) becomes a click-to-load player; its
+   thumbnail goes to `website/assets/videos/<id>.jpg`. Use a frame of the video
+   (`ffmpeg -ss <t> -i out/main.mp4 -frames:v 1 -vf scale=1280:720 …`), not the
+   post's feature image, which already heads the article. See
+   `website/news/README.md`.
+5. **The landing page.** `#demos` in `website/index.html` carries the tour as
+   the same player (update its `data-yt-id`, thumbnail, `aria-label` and
+   caption) and three stills cut from the episode's scenes
+   (`render.py preview <scene> --at <t> --scale 1`, saved as JPEG under
+   `website/assets/img/tour-*.jpg`). Pick a `<t>` where every label and ring of
+   the scene is showing.
+
+Each episode's own facts — its video IDs, the illustration prompts used, the
+frames picked for stills — live in `episodes/<name>/NOTES.md`.
+
 ## Illustrations
 
 The episode's illustrations were generated in ChatGPT with the 1.6 and 1.7
