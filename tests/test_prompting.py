@@ -268,6 +268,49 @@ def test_ask_with_no_completions_falls_back_to_plain_text(mocker):
     auto.assert_not_called()
 
 
+@pytest.mark.parametrize("completions", [None, ["login"]])
+def test_ask_clear_shortcut_exits_with_empty_text(mocker, completions):
+    factory = mocker.patch("questionary.autocomplete" if completions else "questionary.text")
+    factory.return_value.ask.return_value = "login"
+    assert prompting._ask("alias", "login", completions, clear_shortcut=True) == "login"
+    kwargs = factory.call_args.kwargs
+    assert "Ctrl-R" in factory.call_args.args[0]
+    # Ordinary empty submissions must not masquerade as the clear shortcut.
+    assert not kwargs["validate"]("")
+    assert not kwargs["validate"]("   ")
+    assert kwargs["validate"]("login")
+    bindings = kwargs["key_bindings"].get_bindings_for_keys(("c-r",))
+    assert len(bindings) == 1
+    event = mocker.Mock()
+    bindings[0].handler(event)
+    event.app.exit.assert_called_once_with(result="")
+
+
+def test_ask_text_clear_shortcut_bypasses_empty_validation(mocker):
+    mocker.patch("jailbee.prompting._ask", return_value="")
+    assert (
+        ask_text(
+            "alias",
+            validate=lambda text: "empty" if not text else None,
+            clear_shortcut=True,
+            is_interactive=_yes,
+        )
+        == ""
+    )
+
+
+def test_ask_text_without_shortcut_rejects_empty_text(mocker):
+    mocker.patch("jailbee.prompting._ask", side_effect=["", "login"])
+    assert (
+        ask_text(
+            "alias",
+            validate=lambda text: "empty" if not text else None,
+            is_interactive=_yes,
+        )
+        == "login"
+    )
+
+
 def test_ask_text_passes_completions_through(mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     ask = mocker.patch("jailbee.prompting._ask", return_value="main")

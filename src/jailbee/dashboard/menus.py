@@ -116,6 +116,9 @@ def group_menu_actions(
     seen: set[str] = set()
     for action in actions:
         verb = action[1]
+        # Single-container Rename owns clearing; retain the leaf for bulk eligibility.
+        if verb == "rename --clear":
+            continue
         if action[0].startswith("Launch "):
             if "launch" not in seen:
                 result.append(MenuGroup("Launch →", launch_actions))

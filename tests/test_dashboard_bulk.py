@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from jailbee.config.models_remote import RemoteSSHConfig
@@ -108,15 +109,38 @@ def test_bulk_actions_lists_only_what_some_mark_can_take_in_menu_order(tmp_path)
     verbs = [a.verb for a in bulk.bulk_actions(groups, ["alpha-a", "alpha-b"])]
 
     assert verbs == [
-        "start",
-        "stop",
-        "restart",
-        "net loose",
+        "merge",
         "git push",
         "git pull",
-        "merge",
+        "start",
+        "restart",
+        "stop",
+        "net loose",
         "destroy",
     ]
+
+
+def test_clear_name_is_parallel_and_skips_unaliased_containers(tmp_path):
+    groups = [
+        _group(
+            tmp_path,
+            replace(ci("alpha-a", "alpha"), alias="first"),
+            replace(ci("alpha-b", "alpha", "Stopped"), alias="second"),
+            ci("alpha-c", "alpha", "Stopped"),
+        )
+    ]
+    names = ["alpha-a", "alpha-b", "alpha-c"]
+
+    action = bulk.plan_bulk(groups, names, "rename --clear")
+
+    assert action.eligible == ("alpha-a", "alpha-b")
+    assert action.skipped == (("alpha-c", "no alias"),)
+    assert action.mode == "parallel"
+    assert action.label == "Clear name (2)"
+    verbs = [a.verb for a in bulk.bulk_actions(groups, names)]
+    assert verbs[0] == "merge"
+    assert verbs[-2:] == ["rename --clear", "destroy"]
+    assert bulk.bulk_argv(action.verb, "alpha-a") == ["rename", "--clear", "alpha-a"]
 
 
 def test_bulk_argv_forces_destroy_and_appends_answers():

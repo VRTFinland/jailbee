@@ -83,3 +83,41 @@ def test_rename_prompt_starts_on_the_alias_or_the_short_name(
     assert result.exit_code == 0, result.output
     assert ask.call_args.args[1] == default
     assert set_alias.call_args.args[1:] == (incus, "myrepo-a", "a-login")
+    assert ask.call_args.kwargs.get("clear_shortcut", False) is (alias is not None)
+
+
+def test_rename_ctrl_r_clears_the_current_alias(rig, mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path).model_copy(update={"container_prefix": "myrepo"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus, set_alias, clear_alias = rig
+    incus.config_get.return_value = "login"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", side_effect=["", None])
+    result = runner.invoke(app, ["rename", "a", "--config", CFG])
+    assert result.exit_code == 0, result.output
+    clear_alias.assert_called_once_with(incus, "myrepo-a")
+    set_alias.assert_not_called()
+    assert "has no alias now" in result.output
+
+
+def test_rename_without_alias_does_not_treat_empty_input_as_clear(rig, mocker, make_cfg, tmp_path):
+    cfg = make_cfg(tmp_path).model_copy(update={"container_prefix": "myrepo"})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus, set_alias, clear_alias = rig
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._ask", side_effect=["", "login"])
+    result = runner.invoke(app, ["rename", "a", "--config", CFG])
+    assert result.exit_code == 0, result.output
+    assert set_alias.call_args.args[1:] == (incus, "myrepo-a", "login")
+    clear_alias.assert_not_called()
+
+
+def test_rename_explicit_empty_alias_is_not_clear(mocker):
+    incus = mocker.Mock()
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-a"))
+    result = runner.invoke(app, ["rename", "a", "", "--config", CFG])
+    assert result.exit_code == 2
+    assert "invalid alias" in result.output
+    incus.config_unset.assert_not_called()
+    incus.config_set.assert_not_called()

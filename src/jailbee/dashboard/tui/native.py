@@ -558,6 +558,12 @@ class PromptBox(TextBox):
         self._error_for: str | None = None  # the text the error answers
         self.border_title = _one_line(spec.title, "bold")
 
+    async def handle_key(self, event: events.Key) -> KeyOutcome:  # type: ignore[override]  # see OverlayBox.handle_key
+        if event.key == "ctrl+r" and self.prompt.purpose == "container-rename":
+            self.input.value = ""
+            return self.answer()
+        return await super().handle_key(event)
+
     def _options(self) -> list[Option]:
         return [Option(_one_line(m)) for m in self._matches] or [
             Option(_one_line("(no matching branch)", "dim"), disabled=True)

@@ -28,20 +28,21 @@ BulkMode = Literal["parallel", "foreground"]
 
 # The "N selected" menu, in this order.
 BULK_VERBS: tuple[str, ...] = (
-    "start",
-    "stop",
-    "restart",
-    "net strict",
-    "net loose",
+    "merge",
     "git push",
     "git pull",
-    "merge",
+    "start",
+    "restart",
+    "stop",
+    "net strict",
+    "net loose",
+    "rename --clear",
     "destroy",
 )
 # One detached child per container. The rest run once per repo, in the
 # terminal, over every name: their CLI asks questions and prints a roll-up.
 PARALLEL_VERBS: frozenset[str] = frozenset(
-    {"start", "stop", "restart", "net strict", "net loose", "destroy"}
+    {"start", "stop", "restart", "net strict", "net loose", "rename --clear", "destroy"}
 )
 BULK_LABELS: dict[str, str] = {
     "start": "Start",
@@ -52,6 +53,7 @@ BULK_LABELS: dict[str, str] = {
     "git push": "Update from base (git push)",
     "git pull": "Send commits to host (git pull)",
     "merge": "Merge into…",
+    "rename --clear": "Clear name",
     "destroy": "Destroy…",
 }
 _GIT_VERBS = frozenset({"git push", "git pull", "merge"})
@@ -102,6 +104,8 @@ def _skip_reason(container: ContainerInfo | None, verb: str) -> str:
     if container is None:
         return "gone"
     state = container.state
+    if verb == "rename --clear" and not container.alias:
+        return "no alias"
     if verb == "start":
         return "already running" if state == "Running" else state.lower()
     if verb in _GIT_VERBS and container.mode == "mount":

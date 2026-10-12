@@ -4952,20 +4952,26 @@ def rename_cmd(
         error("--clear and ALIAS are mutually exclusive.")
         raise typer.Exit(2)
     incus, full = _resolve_existing(cfg, name)
-    if clear:
-        aliases.clear_alias(incus, full)
-        info(f"'{short_name(cfg, full)}' has no alias now.")
-        return
-    if alias is None:
+    if not clear and alias is None:
 
         def _problem(text: str) -> str | None:
             return None if text.strip() else "an alias cannot be empty"
 
         # Start on the current name: a new one is usually built on it.
-        current = incus.config_get(full, aliases.ALIAS_LABEL) or short_name(cfg, full)
+        current_alias = incus.config_get(full, aliases.ALIAS_LABEL)
         alias = prompting.ask_text(
-            "alias", validate=_problem, default=current, alternative="--clear"
+            "alias",
+            validate=_problem,
+            default=current_alias or short_name(cfg, full),
+            alternative="--clear",
+            clear_shortcut=bool(current_alias),
         ).strip()
+        clear = bool(current_alias) and alias == ""
+    if clear:
+        aliases.clear_alias(incus, full)
+        info(f"'{short_name(cfg, full)}' has no alias now.")
+        return
+    assert alias is not None
     try:
         aliases.set_alias(cfg, incus, full, alias)
     except aliases.AliasError as e:

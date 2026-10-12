@@ -226,15 +226,34 @@ def test_rename_prompt_without_an_alias_starts_on_the_short_name(mocker, tmp_pat
     assert child.call_args.args[0][-2:] == ["--", "x-login"]
 
 
-def test_clear_name_runs_rename_clear(mocker, tmp_path):
+def test_ctrl_r_in_rename_runs_clear_without_submitting_the_prefilled_alias(mocker, tmp_path):
     info = dataclasses.replace(ci("alpha-x", "alpha"), alias="old")
     group = cfg_group(tmp_path, (info,))
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     patch_pause(mocker)
 
-    run = drive(mocker, ["j", "enter", "E"], [group])
+    run = drive(mocker, ["j", "enter", "R", "ctrl+r"], [group])
     assert run.rc == 0
 
     cfg = str(tmp_path / ".jailbee" / "config.yaml")
-    assert child.call_args.args[0] == ["jailbee", "rename", "--clear", "alpha-x", "--config", cfg]
+    child.assert_called_once()
+    assert child.call_args.args[0] == ["jailbee", "rename", "alpha-x", "--clear", "--config", cfg]
+    assert "Ctrl-R" in _prompts(run)[0].title
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_single_container_menu_hides_clear_but_retains_bulk_eligibility(terminal):
+    leaves = dmenus.menu_actions(dmenus.MenuContext(has_repo=True, state="Running", alias="old"))
+    assert ("Clear name", "rename --clear") in leaves
+    visible = dmenus.group_menu_actions(leaves, terminal_order=terminal)
+    assert ("Rename…", "rename") in visible
+    assert ("Clear name", "rename --clear") not in visible
+
+
+def test_ctrl_r_does_not_submit_a_fork_prompt(mocker, tmp_path):
+    group, _ = _target(tmp_path)
+    child = mocker.patch.object(tsession.subprocess, "run")
+    patch_pause(mocker)
+    drive(mocker, ["j", "enter", "f", "ctrl+r", "escape"], [group])
+    child.assert_not_called()

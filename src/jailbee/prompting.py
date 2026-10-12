@@ -19,7 +19,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from rich.text import Text
 from typer._click.exceptions import ClickException
@@ -109,18 +109,41 @@ def _select(noun: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
 
 
-def _ask(noun: str, default: str | None, completions: Sequence[str] | None = None) -> str | None:
+def _ask(
+    noun: str,
+    default: str | None,
+    completions: Sequence[str] | None = None,
+    *,
+    clear_shortcut: bool = False,
+) -> str | None:
     """The default text prompt; Tab completes from `completions`. None on Ctrl-C / Esc."""
     import questionary
 
     # Not str.capitalize(): it lowercases the rest ("GitHub" -> "Github").
     label = noun[:1].upper() + noun[1:]
+    kwargs: dict[str, Any] = {}
+    if clear_shortcut:
+        from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
+
+        bindings = KeyBindings()
+
+        @bindings.add("c-r")
+        def clear(event: KeyPressEvent) -> None:
+            event.app.exit(result="")
+
+        label += " (Ctrl-R to clear)"
+        # Reserve an empty result for Ctrl-R, not deleting the text and pressing Enter.
+        kwargs = {"key_bindings": bindings, "validate": lambda text: bool(text.strip())}
     if completions:  # autocomplete refuses an empty choice list
         result = questionary.autocomplete(
-            f"{label}:", choices=list(completions), default=default or "", match_middle=True
+            f"{label}:",
+            choices=list(completions),
+            default=default or "",
+            match_middle=True,
+            **kwargs,
         ).ask()
     else:
-        result = questionary.text(f"{label}:", default=default or "").ask()
+        result = questionary.text(f"{label}:", default=default or "", **kwargs).ask()
     return None if result is None else str(result)
 
 
@@ -172,20 +195,29 @@ def ask_text(
     alternative: str | None = None,
     is_interactive: Callable[[], bool] | None = None,
     completions: Sequence[str] | None = None,
+    clear_shortcut: bool = False,
 ) -> str:
     """Resolve a missing free-text value; re-ask while `validate` objects.
 
     `validate` returns an error message, or None when the text is acceptable.
     `completions` are offered for Tab completion; the answer is still free
     text, so `validate` decides whether it must be one of them.
+    `clear_shortcut` offers Ctrl-R and returns "" without validation when
+    pressed; ordinary empty submissions are blocked by the text prompt.
     """
     interactive = is_interactive if is_interactive is not None else globals()["is_interactive"]
     if not interactive():
         raise MissingValue(noun, alternative=alternative, free_text=True)
     while True:
-        answer = _ask(noun, default, completions)
+        answer = (
+            _ask(noun, default, completions, clear_shortcut=True)
+            if clear_shortcut
+            else _ask(noun, default, completions)
+        )
         if answer is None:
             raise Cancelled()
+        if clear_shortcut and answer == "":
+            return answer
         problem = validate(answer)
         if problem is None:
             return answer

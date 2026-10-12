@@ -154,12 +154,12 @@ def test_enter_with_marks_opens_the_bulk_picker(mocker, tmp_path):
     assert session.overlay.purpose == "bulk-action"
     assert session.overlay.title == "2 selected"
     assert [e.value for e in session.overlay.entries] == [
-        "stop",
-        "restart",
-        "net loose",
+        "merge",
         "git push",
         "git pull",
-        "merge",
+        "restart",
+        "stop",
+        "net loose",
         "destroy",
     ]
 

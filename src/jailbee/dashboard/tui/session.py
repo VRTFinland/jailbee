@@ -1000,7 +1000,7 @@ class DashboardSession:
             return None
         return TextPrompt(
             "container-rename",
-            f"Rename '{info.display_name}' (empty clears the alias)",
+            f"Rename '{info.display_name}' (Ctrl-R clears the name)",
             "Alias",
             # The short name, not empty: a new name is usually built on it.
             initial=info.alias or info.display_name,
