@@ -1056,7 +1056,8 @@ footer p {
 #tab-tour:checked ~ .tabs__bar .tabs__tab[for="tab-tour"],
 #tab-agents:checked ~ .tabs__bar .tabs__tab[for="tab-agents"],
 #tab-details:checked ~ .tabs__bar .tabs__tab[for="tab-details"],
-#tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"] {
+#tab-bulk:checked ~ .tabs__bar .tabs__tab[for="tab-bulk"],
+#tab-cli:checked ~ .tabs__bar .tabs__tab[for="tab-cli"] {
   background: var(--surface-2);
   border-color: var(--amber);
   color: var(--amber);
@@ -1065,7 +1066,8 @@ footer p {
 #tab-tour:focus-visible ~ .tabs__bar .tabs__tab[for="tab-tour"],
 #tab-agents:focus-visible ~ .tabs__bar .tabs__tab[for="tab-agents"],
 #tab-details:focus-visible ~ .tabs__bar .tabs__tab[for="tab-details"],
-#tab-bulk:focus-visible ~ .tabs__bar .tabs__tab[for="tab-bulk"] {
+#tab-bulk:focus-visible ~ .tabs__bar .tabs__tab[for="tab-bulk"],
+#tab-cli:focus-visible ~ .tabs__bar .tabs__tab[for="tab-cli"] {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
 }
@@ -1088,7 +1090,8 @@ footer p {
 #tab-tour:checked ~ .tabs__panels > #demo-tour,
 #tab-agents:checked ~ .tabs__panels > #demo-agents,
 #tab-details:checked ~ .tabs__panels > #demo-details,
-#tab-bulk:checked ~ .tabs__panels > #demo-bulk {
+#tab-bulk:checked ~ .tabs__panels > #demo-bulk,
+#tab-cli:checked ~ .tabs__panels > #demo-cli {
   visibility: visible;
 }
 
@@ -1114,6 +1117,43 @@ footer p {
 
 .demo__still {
   background: var(--ground);
+}
+
+/* The command-line panel: text in the same 16:9 frame as the pictures. The
+   type scales with the frame (container units), down to a floor below which
+   the lines scroll sideways inside the frame instead of shrinking further. */
+.demo__term {
+  container-type: inline-size;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  background: #000;
+  border-bottom: 1px solid var(--border);
+}
+
+.demo__term pre {
+  margin: 0 auto;
+  padding: 0 4cqw;
+  font-family: var(--mono);
+  font-size: max(1.75cqw, 11px);
+  line-height: 1.9;
+  color: var(--text);
+}
+
+.demo__term .p {
+  color: var(--green);
+}
+
+.demo__term .c {
+  color: var(--muted);
+}
+
+/* Too narrow for the comments beside the commands: the commands alone. */
+@container (max-width: 560px) {
+  .demo__term .c {
+    display: none;
+  }
 }
 
 /* On the landing page the tour sits on the demo card; the article card the

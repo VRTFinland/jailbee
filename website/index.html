@@ -47,7 +47,7 @@
          serves assets with a cache lifetime long enough that an edited
          stylesheet reaches readers stale. test_website recomputes this and
          fails with the value to paste, so it can't drift unnoticed. -->
-    <link rel="stylesheet" href="assets/style.css?v=87c20166" />
+    <link rel="stylesheet" href="assets/style.css?v=93f40c74" />
     <!-- Search engines and LLM crawlers read this structurally; the prose
          above it they only read as prose. softwareVersion is pinned to
          pyproject.toml by test_website, so a release can't leave it stale. -->
@@ -255,12 +255,14 @@
           <input class="tabs__radio" type="radio" name="demo" id="tab-agents" />
           <input class="tabs__radio" type="radio" name="demo" id="tab-details" />
           <input class="tabs__radio" type="radio" name="demo" id="tab-bulk" />
+          <input class="tabs__radio" type="radio" name="demo" id="tab-cli" />
 
           <div class="tabs__bar">
             <label class="tabs__tab" for="tab-tour">The 3-minute tour</label>
             <label class="tabs__tab" for="tab-agents">Which agent needs you</label>
             <label class="tabs__tab" for="tab-details">What it is doing</label>
             <label class="tabs__tab" for="tab-bulk">Act on many</label>
+            <label class="tabs__tab" for="tab-cli">Or from the command line</label>
           </div>
 
           <div class="tabs__panels">
@@ -328,6 +330,32 @@
                   push and pull once per repo, or merge several agents' attempts into one branch.
                 </p>
                 <p class="demo__note">Real screenshots from daily use.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="demo" id="demo-cli">
+              <!-- Text, not a picture: every line is jailbee's real syntax
+                   (checked against each command's --help), and no output is
+                   shown because none is recorded here. -->
+              <div class="demo__term">
+                <pre><code><span class="p">$</span> jailbee new feat/login                   <span class="c"># a container for the branch</span>
+<span class="p">$</span> jailbee tmux feat-login                  <span class="c"># attach to its agent</span>
+<span class="p">$</span> jailbee ls                               <span class="c"># every container, every agent</span>
+<span class="p">$</span> jailbee fork feat-login feat-login-2     <span class="c"># a second attempt</span>
+<span class="p">$</span> jailbee merge feat-login-2 --into feat-login
+<span class="p">$</span> jailbee git pull feat-login feat-ui      <span class="c"># commits home, several at once</span>
+<span class="p">$</span> jailbee pr feat-login                    <span class="c"># open or update the PR</span>
+<span class="p">$</span> jailbee destroy feat-login               <span class="c"># asks first if anything would be lost</span></code></pre>
+              </div>
+              <figcaption>
+                <code>jailbee &middot; jb</code>
+                <p>
+                  <strong>Or from the command line.</strong> Everything the dashboard does is a
+                  command, so it scripts and works over SSH. Every command runs without arguments
+                  and asks for what it needs, and <code>jailbee console</code> is an interactive
+                  prompt with completion and history.
+                </p>
+                <p class="demo__note">Container names are examples.</p>
               </figcaption>
             </figure>
           </div>
