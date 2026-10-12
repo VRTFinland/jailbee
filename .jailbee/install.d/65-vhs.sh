@@ -7,7 +7,8 @@
 # golden.extra_apt_packages in .jailbee/config.yaml — plain apt handles those.
 # The two below cannot: see the notes on each.
 #
-# Only needed to re-render website/assets/media/*. Costs ~150 MB in the golden
+# Only needed to re-render website/assets/media/* and the narrated videos
+# (website/video/render.py drives the same Chrome). Costs ~150 MB in the golden
 # image; drop this snippet and the two apt packages if the website is ever
 # split out of this repo.
 set -euo pipefail

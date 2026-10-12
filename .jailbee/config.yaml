@@ -105,6 +105,10 @@ egress_allow:
   # `uv sync` (the sync-deps autostart step) inside a nested container.
   - pypi.org:443
   - files.pythonhosted.org:443
+  # Narration for the narrated feature videos (website/video/render.py):
+  # OpenAI's /v1/audio/speech. The key is the maintainer's own and never lives
+  # in the repo; see website/video/README.md.
+  - api.openai.com:443
 
 
 # Container resource defaults applied at create time.
@@ -143,7 +147,9 @@ golden:
   # ttyd + ffmpeg are two of VHS's three dependencies, used to render the
   # website's terminal demos (website/demo/render.sh). The third, vhs itself,
   # plus a system Chrome, are installed by .jailbee/install.d/65-vhs.sh —
-  # neither can come from apt here, and that snippet explains why.
+  # neither can come from apt here, and that snippet explains why. ffmpeg and
+  # that Chrome also render the narrated videos (website/video/render.py),
+  # whose Python dependencies `uv run` fetches on demand.
   #
   # Nor does the nested Incus daemon used to verify jailbee's device and
   # command generation against a real daemon from inside a container: that is

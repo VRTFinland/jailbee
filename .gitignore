@@ -41,3 +41,7 @@ website/demo/workflows/*.webm
 website/demo/workflows/*.mp4
 # Boundary frames render.sh dumps for eyeballing a cut list's timing.
 website/demo/workflows/*.boundaries/
+# Narrated videos: the TTS clip cache and the rendered output. Only the
+# episode sources are committed; the finished videos go to YouTube.
+website/video/.cache/
+website/video/out/
