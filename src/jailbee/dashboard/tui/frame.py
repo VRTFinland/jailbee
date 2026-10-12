@@ -49,12 +49,16 @@ def frame_title(
     )
 
 
-def notice_parts(notice: str | None) -> tuple[Text | None, Text | None]:
-    """Plain yellow notice as (border subtitle, wrapped inline text)."""
+def notice_parts(notice: str | None, *, wraps: bool = True) -> tuple[Text | None, Text | None]:
+    """Plain yellow notice as (border subtitle, wrapped inline text).
+
+    ``wraps`` False keeps even a long notice on the border: a standing status
+    line (a running job, a stale target) has no remedy to lose to the ellipsis.
+    """
     # Long refusals keep their remedy intact below the table. Never parse CLI markup.
     if not notice:
         return None, None
-    if len(notice) > INLINE_NOTICE_MAX:
+    if wraps and len(notice) > INLINE_NOTICE_MAX:
         return None, Text(notice, style="yellow")
     # Keep the verdict at the start when the border is narrower than the notice.
     return Text(notice, style="yellow", no_wrap=True, overflow="ellipsis"), None
@@ -173,3 +177,5 @@ class DashboardView:
     # The merge-target mode's roles (see `fleet.table_model`); empty outside it.
     sources: frozenset[str] = frozenset()
     ineligible: frozenset[str] = frozenset()
+    # False for a standing status line, kept on the border however long (`notice_parts`).
+    notice_wraps: bool = True
