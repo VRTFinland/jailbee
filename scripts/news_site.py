@@ -11,9 +11,10 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, time
 from email.utils import format_datetime
-from html import escape
+from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import markdown
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -92,7 +93,7 @@ def _content(post: Post, assets_dir: Path) -> str:
         raise ValueError(f"{source}: use ## for article headings, not a second # title")
     for path in elements.images:
         asset_path(path, assets_dir, source)
-    return _figures(html, assets_dir, source)
+    return _videos(_figures(html, assets_dir, source), post, assets_dir, source)
 
 
 _LONE_IMAGE = re.compile(r"<p>(<img [^>]*/?>)</p>")
@@ -120,6 +121,63 @@ def _figures(html: str, assets_dir: Path, source: Path) -> str:
         return f'<figure class="news-figure">{img}{caption}</figure>'
 
     return _LONE_IMAGE.sub(figure, html)
+
+
+_LONE_URL = re.compile(r'<p>(?:<a href="([^"]+)">[^<]*</a>|(https?://[^\s<]+))</p>')
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+
+
+def youtube_video(url: str) -> tuple[str, str] | None:
+    """(video id, "video" or "short") for a YouTube watch, share, embed or
+    Shorts URL; None for anything else."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = parsed.netloc.lower()
+    candidate, kind = None, "video"
+    if host == "youtu.be":
+        candidate = parsed.path.lstrip("/")
+    elif host in _YOUTUBE_HOSTS:
+        if parsed.path == "/watch":
+            candidate = parse_qs(parsed.query).get("v", [""])[0]
+        elif parsed.path.startswith("/shorts/"):
+            candidate, kind = parsed.path.removeprefix("/shorts/"), "short"
+        elif parsed.path.startswith("/embed/"):
+            candidate = parsed.path.removeprefix("/embed/")
+    candidate = (candidate or "").strip("/")
+    return (candidate, kind) if _VIDEO_ID.fullmatch(candidate) else None
+
+
+def _videos(html: str, post: Post, assets_dir: Path, source: Path) -> str:
+    """Turn a YouTube URL that is a paragraph of its own into a click-to-load
+    player: a local thumbnail and a button, plus a plain link. Nothing reaches
+    YouTube until the reader presses play (assets/lite-yt.js)."""
+
+    def player(match: re.Match[str]) -> str:
+        url = unescape(match.group(1) or match.group(2))
+        found = youtube_video(url)
+        if found is None:
+            return match.group(0)
+        video_id, kind = found
+        thumbnail = assets_dir / "videos" / f"{video_id}.jpg"
+        if not thumbnail.is_file():
+            raise ValueError(
+                f"{source}: no thumbnail for video {video_id}: "
+                f"add it as website/assets/videos/{video_id}.jpg"
+            )
+        size = _image_size(thumbnail)
+        dims = f' width="{size[0]}" height="{size[1]}"' if size else ""
+        return (
+            f'<figure class="yt yt--{kind}" data-yt-id="{video_id}">'
+            f'<button type="button" class="yt__play" aria-label="Play video: {escape(post.title)}">'
+            f'<img src="/assets/videos/{video_id}.jpg" alt=""{dims} loading="lazy" />'
+            f'<span class="yt__icon" aria-hidden="true"></span></button>'
+            f'<a class="yt__link" href="https://www.youtube.com/watch?v={video_id}" rel="noopener">'
+            f"Watch on YouTube</a></figure>"
+        )
+
+    return _LONE_URL.sub(player, html)
 
 
 def _hash(path: Path) -> str:
@@ -330,10 +388,13 @@ def build(website_dir: Path, site_dir: Path) -> None:
         sitemap_urls.append(post.path)
         target = site_dir / post.path.removeprefix("/")
         target.mkdir(parents=True, exist_ok=True)
+        body_html = _content(post, website_dir / "assets")
+        player = website_dir / "assets" / "lite-yt.js"
         (target / "index.html").write_text(
             env.get_template("article.html").render(
                 post=post,
-                body_html=_content(post, website_dir / "assets"),
+                body_html=body_html,
+                video_hash=_hash(player) if 'class="yt ' in body_html else None,
                 canonical=f"{URL}{post.path}",
                 title=f"{post.title} — JailBee",
                 og_title=post.title,

@@ -287,6 +287,83 @@ def test_an_image_inside_a_sentence_stays_inline(site: tuple[Path, Path]) -> Non
     assert "<figure" not in body and '<img alt="icon" src="/assets/shot.png"' in body
 
 
+VIDEO = "Gdmtfe6hlFU"
+
+
+def _thumbnail(website: Path, video_id: str = VIDEO) -> None:
+    videos = website / "assets" / "videos"
+    videos.mkdir(parents=True, exist_ok=True)
+    (videos / f"{video_id}.jpg").write_bytes(_png(1280, 720))
+
+
+def _article(output: Path) -> str:
+    return (output / "news" / "2026" / "09" / "28" / "release" / "index.html").read_text()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"https://youtu.be/{VIDEO}",
+        f"<https://www.youtube.com/watch?v={VIDEO}>",
+        f"https://youtube.com/embed/{VIDEO}",
+    ],
+)
+def test_a_youtube_url_on_its_own_line_becomes_a_click_to_load_player(
+    site: tuple[Path, Path], line: str
+) -> None:
+    website, output = site
+    _thumbnail(website)
+    (website / "assets" / "lite-yt.js").write_text("// player")
+    _add(website, "2026-09-28-release.md", META, f"Intro.\n\n{line}\n\nAfter.\n")
+    build(website, output)
+
+    html = _article(output)
+    player = re.search(r'<figure class="yt yt--video" data-yt-id="([^"]+)">.*?</figure>', html, re.S)
+    assert player is not None and player.group(1) == VIDEO
+    block = player.group(0)
+    # Nothing from YouTube until the click: a local thumbnail, a button, and a
+    # plain link for readers without JavaScript.
+    assert f'src="/assets/videos/{VIDEO}.jpg"' in block and 'width="1280"' in block
+    assert '<button type="button" class="yt__play" aria-label="Play video: JailBee 1.5">' in block
+    assert f'<a class="yt__link" href="https://www.youtube.com/watch?v={VIDEO}"' in block
+    assert "youtube.com/embed" not in block and "youtube-nocookie" not in block
+    assert re.search(r'<script src="/assets/lite-yt\.js\?v=[0-9a-f]{8}" defer></script>', html)
+
+
+def test_a_short_gets_the_portrait_player(site: tuple[Path, Path]) -> None:
+    website, output = site
+    _thumbnail(website, "4HqNJCPtfws")
+    (website / "assets" / "lite-yt.js").write_text("// player")
+    _add(website, "2026-09-28-release.md", META, "https://youtube.com/shorts/4HqNJCPtfws\n")
+    build(website, output)
+
+    assert '<figure class="yt yt--short" data-yt-id="4HqNJCPtfws">' in _article(output)
+
+
+def test_a_page_without_a_video_loads_no_script(site: tuple[Path, Path]) -> None:
+    website, output = site
+    _add(
+        website,
+        "2026-09-28-release.md",
+        META,
+        f"See https://youtu.be/{VIDEO} for more.\n\n```\nhttps://youtu.be/{VIDEO}\n```\n",
+    )
+    build(website, output)
+
+    html = _article(output)
+    assert "<script" not in html and 'class="yt' not in html
+
+
+def test_a_video_without_its_thumbnail_fails_the_build_naming_the_file(
+    site: tuple[Path, Path],
+) -> None:
+    website, output = site
+    _add(website, "2026-09-28-release.md", META, f"https://youtu.be/{VIDEO}\n")
+
+    with pytest.raises(ValueError, match=f"assets/videos/{VIDEO}.jpg"):
+        build(website, output)
+
+
 def test_feature_image_and_metadata_are_escaped(site: tuple[Path, Path]) -> None:
     website, output = site
     _add(

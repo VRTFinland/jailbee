@@ -46,6 +46,16 @@ centred on a card at its natural size, never scaled up, so crop screenshots
 headings with `##`: the page supplies its own title. Normal external links
 are fine; internal links should be root-relative (`/docs/`, `/news/`).
 
+A YouTube URL alone on its own line (`https://youtu.be/<id>`, a `watch?v=`,
+`/embed/` or `/shorts/` URL) becomes a click-to-load player: a local thumbnail
+with a play button and a plain "Watch on YouTube" link. Nothing is requested
+from YouTube until the reader presses play; `website/assets/lite-yt.js` then
+swaps in a `youtube-nocookie.com` player, and is loaded only on pages that
+embed a video. The thumbnail is yours to provide, at
+`website/assets/videos/<id>.jpg` (16:9; the build fails naming the file when
+it is missing). Prefer a frame from the video over the post's feature image,
+which already heads the article.
+
 Run from the repository root:
 
 ```bash
