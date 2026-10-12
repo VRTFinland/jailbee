@@ -19,19 +19,19 @@
   <div class="copy">
     <div class="kicker">The container menu</div>
     <h2>Every entry keeps <span class="amber">its own key</span></h2>
-    <div class="combo" data-at="0.45"><span class="key">g</span><span class="key">u</span><span class="then">update from base</span></div>
-    <div class="combo" data-at="0.62"><span class="key">l</span><span class="key">D</span><span class="then">destroy</span></div>
+    <div class="combo" data-word="own key"><span class="key">g</span><span class="key">u</span><span class="then">update from base</span></div>
+    <div class="combo" data-word="same keystrokes"><span class="key">l</span><span class="key">D</span><span class="then">destroy</span></div>
   </div>
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ at, show, zoom, ring }) => {
+  JB.scene(({ at, word, show, zoom, ring }) => {
     const img = zoom(document.querySelector(".shot"), 3);
     show(".frame", 0.1, null, 30);
     show(".copy .kicker", 0.3);
     show(".copy h2", at(0.0));
-    show(ring(img, [12, 18, 34, 200]), at(0.3), null, 0);
-    for (const combo of document.querySelectorAll(".combo")) show(combo, at(Number(combo.dataset.at)));
+    show(ring(img, [12, 18, 34, 200]), word("every entry"), null, 0);
+    for (const combo of document.querySelectorAll(".combo")) show(combo, word(combo.dataset.word));
   });
 </script>
 </body>

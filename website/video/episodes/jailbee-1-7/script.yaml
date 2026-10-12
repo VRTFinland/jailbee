@@ -25,8 +25,9 @@ scenes:
     params:
       lines: [A dozen AI agents., A dozen branches., One screen.]
       title: JailBee <span class="amber">1.7</span>
-      shot_at: 0.3
-      title_at: 0.42
+      lines_at: [a dozen AI agents, a dozen branches, one screen]
+      shot_at: this is
+      title_at: jailbee one point seven
     narration: >-
       A dozen AI agents. A dozen branches. One screen. This is JailBee one
       point seven. And if you have never seen JailBee before, here is the idea.

@@ -68,7 +68,7 @@
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ params, duration, at, anim, format }) => {
+  JB.scene(({ params, duration, at, when, anim, format }) => {
     const lines = params.lines || [];
     const holder = document.querySelector(".lines");
     for (const text of lines) {
@@ -84,20 +84,23 @@
       ? ["scale(1.0)", "scale(1.08)"]
       : ["translateX(-6%) scale(1.14)", "translateX(-6%) scale(1.22)"];
     anim(".bg", [{ transform: from }, { transform: to }], 0, duration, "linear");
-    const step = (params.shot_at ?? 0.45) / Math.max(1, lines.length);
+    // shot_at, title_at and lines_at[i] are each a fraction of the narration or
+    // a phrase from it; without lines_at the lines are spread evenly up to shot_at.
+    const step = (typeof params.shot_at === "number" ? params.shot_at : 0.45) / Math.max(1, lines.length);
+    const lineAt = (i) => (params.lines_at ? when(params.lines_at[i]) : at(i * step));
     holder.querySelectorAll("h1").forEach((h1, i) => {
       anim(h1, [{ opacity: 0, transform: "translateY(24px)" }, { opacity: 1, transform: "none" }],
-           at(i * step), at(i * step) + 0.5);
+           lineAt(i), lineAt(i) + 0.5);
     });
 
-    const shotAt = at(params.shot_at ?? 0.45);
+    const shotAt = when(params.shot_at ?? 0.45);
     const lift = format === "short" ? "translateY(-120px) scale(.8)" : "translateY(-200px) scale(.62)";
     anim(holder, [{ transform: "none", opacity: 1 }, { transform: lift, opacity: 0.0 }],
          shotAt, shotAt + 0.6);
     anim(".shot", [{ opacity: 0, transform: "translateY(60px)" }, { opacity: 1, transform: "none" }],
          shotAt, shotAt + 0.8);
 
-    const titleAt = at(params.title_at ?? 0.62);
+    const titleAt = when(params.title_at ?? 0.62);
     anim(".title", [{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1, transform: "none" }],
          titleAt, titleAt + 0.6);
   });

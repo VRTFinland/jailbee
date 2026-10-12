@@ -40,11 +40,11 @@
   document.querySelector(".bg").src =
     JB.format === "short" ? "../assets/outro-tall.jpg" : "../assets/outro.jpg";
   document.querySelector(JB.format === "short" ? ".main-only" : ".short-only").remove();
-  JB.scene(({ duration, anim, show, at }) => {
+  JB.scene(({ duration, anim, show, at, word }) => {
     anim(".bg", [{ transform: "scale(1.06)" }, { transform: "scale(1.0)" }], 0, duration, "ease-out");
     show(".copy .kicker", at(0.0));
     show(".copy h1", 0.3);
-    for (const el of document.querySelectorAll(".install, .links, .sub")) show(el, at(0.3));
+    for (const el of document.querySelectorAll(".install, .links, .sub")) show(el, JB.format === "short" ? at(0.3) : word("install it with"));
   });
 </script>
 </body>

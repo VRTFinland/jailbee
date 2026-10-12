@@ -25,31 +25,31 @@
     <h2>One command after every update</h2>
   </div>
   <div class="term">
-    <div class="line" data-at="0.1"><span class="prompt">$ </span><span class="typed">uv tool upgrade jailbee</span></div>
-    <div class="line" data-at="0.2"><span class="prompt">$ </span><span class="typed">jailbee upgrade</span></div>
+    <div class="line" data-word="after you update"><span class="prompt">$ </span><span class="typed">uv tool upgrade jailbee</span></div>
+    <div class="line" data-word="jailbee upgrade"><span class="prompt">$ </span><span class="typed">jailbee upgrade</span></div>
     <div class="gap"></div>
-    <div class="line" data-at="0.76"><span class="prompt">$ </span><span class="typed">jailbee console</span></div>
+    <div class="line" data-word="jailbee console"><span class="prompt">$ </span><span class="typed">jailbee console</span></div>
   </div>
   <div class="copy">
-    <div class="point" data-at="0.32">An image rebuild or a config apply, where the release needs one</div>
-    <div class="point" data-at="0.52">In every repository you use</div>
-    <div class="point" data-at="0.63">No container restarted</div>
-    <div class="point console" data-at="0.82">An interactive prompt, with completion and history</div>
+    <div class="point" data-word="an image rebuild">An image rebuild or a config apply, where the release needs one</div>
+    <div class="point" data-word="in every repository">In every repository you use</div>
+    <div class="point" data-word="without restarting">No container restarted</div>
+    <div class="point console" data-word="an interactive prompt">An interactive prompt, with completion and history</div>
   </div>
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ at, anim, show }) => {
+  JB.scene(({ word, anim, show }) => {
     show(".head", 0.15);
     show(".term", 0.3, null, 20);
     for (const line of document.querySelectorAll(".term .line")) {
       const typed = line.querySelector(".typed");
       const n = typed.textContent.length;
-      const from = at(Number(line.dataset.at));
+      const from = word(line.dataset.word);
       show(line, from - 0.05, null, 0);
       anim(typed, [{ width: "0ch" }, { width: `${n}ch` }], from, from + n * 0.045, `steps(${n}, end)`);
     }
-    for (const point of document.querySelectorAll(".copy .point")) show(point, at(Number(point.dataset.at)));
+    for (const point of document.querySelectorAll(".copy .point")) show(point, word(point.dataset.word));
   });
 </script>
 </body>

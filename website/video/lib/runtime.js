@@ -36,17 +36,25 @@
     at(fraction) {
       return JB.speech + JB.clip * fraction;
     },
-    // Scene time at which `phrase` starts being spoken. Throws if the narration
+    // Scene time at which `phrase` starts being spoken (`end`: finishes). Throws if the narration
     // does not contain it, so a stale script fails the render rather than
     // drifting.
-    word(phrase) {
+    word(phrase, { end = false } = {}) {
       const norm = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
       const wanted = phrase.split(/\s+/).map(norm).filter(Boolean);
       const spoken = JB.words.map((w) => norm(w.text));
       for (let i = 0; i + wanted.length <= spoken.length; i++) {
-        if (wanted.every((w, j) => spoken[i + j] === w)) return JB.speech + JB.words[i].start;
+        if (wanted.every((w, j) => spoken[i + j] === w)) {
+          const hit = end ? JB.words[i + wanted.length - 1].end : JB.words[i].start;
+          return JB.speech + hit;
+        }
       }
       throw new Error(`JB.word: "${phrase}" is not in the narration (${spoken.join(" ")})`);
+    },
+    // A moment given either way: a number is a fraction of the narration
+    // (`at`), a string is the phrase whose first word starts it (`word`).
+    when(x, options) {
+      return typeof x === "string" ? JB.word(x, options) : JB.at(x);
     },
     // Animate `el` through `keyframes` between `from` and `to` (scene seconds).
     // `fill` is "both" for an element's first animation; a later one on the

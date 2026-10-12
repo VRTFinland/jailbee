@@ -52,22 +52,22 @@
     <div class="kicker">What JailBee is</div>
     <h2>A Linux machine <span class="amber">per branch</span></h2>
     <ul class="points">
-      <li data-at="0.13">Its own Docker daemon, <span class="muted">if the repo uses one</span></li>
-      <li data-at="0.27">Its own browser and IDE, on your desktop</li>
-      <li data-at="0.4">Its own clone: <span class="muted">your checkout is untouched</span></li>
-      <li data-at="0.62">The container is the fence</li>
-      <li data-at="0.82">Commits come home over git</li>
+      <li data-word="Docker daemon">Its own Docker daemon, <span class="muted">if the repo uses one</span></li>
+      <li data-word="its own browser">Its own browser and IDE, on your desktop</li>
+      <li data-word="holds its own clone">Its own clone: <span class="muted">your checkout is untouched</span></li>
+      <li data-word="the container is the fence">The container is the fence</li>
+      <li data-word="moves the commits">Commits come home over git</li>
     </ul>
   </div>
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ duration, at, anim, show }) => {
+  JB.scene(({ duration, at, word, anim, show }) => {
     anim(".bg", [{ transform: "scale(1.0)" }, { transform: "scale(1.06)" }],
          0, duration, "linear");
     show(".copy .kicker", 0.2);
     show(".copy h2", at(0.0));
-    for (const li of document.querySelectorAll(".points li")) show(li, at(Number(li.dataset.at)));
+    for (const li of document.querySelectorAll(".points li")) show(li, word(li.dataset.word));
   });
 </script>
 </body>

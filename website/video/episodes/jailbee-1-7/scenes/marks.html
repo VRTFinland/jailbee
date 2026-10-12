@@ -28,19 +28,23 @@
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ params, format, at, show, zoom, ring }) => {
-    const t = { rows: 0.33, counts: 0.4, menu: 0.45, menuring: 0.62, ...(params.at || {}) };
+  JB.scene(({ params, format, at, when, show, zoom, ring }) => {
+    // Each a fraction of the narration or a phrase from it (see runtime.js).
+    const t = {
+      rows: "Space marks", counts: "a container", menu: "the menu then acts",
+      menuring: "each entry says", ...(params.at || {}),
+    };
     const marks = zoom(document.querySelector(".marks img"), format === "short" ? 1.5 : 2);
     const bulk = zoom(document.querySelector(".bulk img"), 2);
     show(".head", 0.15);
     show(".marks", 0.25, null, 30);
-    show(ring(marks, [0, 139, 694, 66]), at(t.rows), at(t.menu), 0);
+    show(ring(marks, [0, 139, 694, 66]), when(t.rows), when(t.menu), 0);
     if (t.counts != null) {
-      show(ring(marks, [390, 2, 66, 16]), at(t.counts), at(t.menu), 0);
-      show(ring(marks, [168, 36, 22, 16]), at(t.counts), at(t.menu), 0);
+      show(ring(marks, [390, 2, 66, 16]), when(t.counts), when(t.menu), 0);
+      show(ring(marks, [168, 36, 22, 16]), when(t.counts), when(t.menu), 0);
     }
-    show(".bulk", at(t.menu), null, 40);
-    if (t.menuring != null) show(ring(bulk, [6, 16, 266, 138]), at(t.menuring), null, 0);
+    show(".bulk", when(t.menu), null, 40);
+    if (t.menuring != null) show(ring(bulk, [6, 16, 266, 138]), when(t.menuring), null, 0);
   });
 </script>
 </body>

@@ -81,7 +81,7 @@
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ at, anim, show }) => {
+  JB.scene(({ word, anim, show }) => {
     const stage = document.querySelector(".stage");
     // A packet travelling a polyline between `from` and `to`, at a constant
     // speed along it; it fades in at the start and stays where it stopped.
@@ -114,40 +114,41 @@
     const fadeOut = (el, when) => anim(el, [{ opacity: 1 }, { opacity: 0 }], when, when + 0.4, "ease-in", "forwards");
 
     show(".head", 0.15);
-    show(".allow", at(0.06));
-    for (const e of [".e1", ".e2", ".e3"]) show(e, at(0.08));
-    show(".e4", at(0.72));
-    show(".container", at(0.0), null, 0);
-    show(".wall", at(0.2), null, 0);
-    show(".wall-label", at(0.2));
-    for (const h of [".h-git", ".h-db", ".net-label"]) show(h, at(0.24), null, 0);
+    // Each beat is pinned to the phrase it illustrates (runtime.js `word`).
+    show(".allow", word("egress allowlist"));
+    for (const e of [".e1", ".e2", ".e3"]) show(e, word("you write host names"));
+    show(".e4", word("makes wildcards"));
+    show(".container", word("every container"), null, 0);
+    show(".wall", word("kernel-level ACL"), null, 0);
+    show(".wall-label", word("kernel-level ACL"));
+    for (const h of [".h-git", ".h-db", ".net-label"]) show(h, word("it sees every packet"), null, 0);
 
     // 1. ssh and psql leave through the ACL.
-    const ssh = travel("ssh", [[560, 800], [1510, 800]], at(0.26), at(0.33));
-    verdict(true, [1545, 800], at(0.33));
-    const psql = travel("psql :5432", [[560, 900], [1510, 900]], at(0.29), at(0.36));
-    verdict(true, [1545, 900], at(0.36));
-    fadeOut(ssh, at(0.42)); fadeOut(psql, at(0.42));
+    const ssh = travel("ssh", [[560, 800], [1510, 800]], word("ssh"), word("database"));
+    verdict(true, [1545, 800], word("database"));
+    const psql = travel("psql :5432", [[560, 900], [1510, 900]], word("database"), word("included"));
+    verdict(true, [1545, 900], word("included"));
+    fadeOut(ssh, word("the only way out")); fadeOut(psql, word("the only way out"));
 
     // 2. The proxy: HTTPS matched by name.
-    show(".proxy", at(0.44));
-    show(".h-api", at(0.5), null, 0);
-    const api = travel("api.example.com", [[560, 475], [1360, 475], [1510, 480]], at(0.5), at(0.58));
-    verdict(true, [1545, 480], at(0.58));
+    show(".proxy", word("the second"));
+    show(".h-api", word("http and https"), null, 0);
+    const api = travel("api.example.com", [[560, 475], [1360, 475], [1510, 480]], word("http and https"), word("matched by"));
+    verdict(true, [1545, 480], word("matched by"));
     // An unlisted host that shares an allowed address: the ACL lets it
     // through, the proxy does not.
-    const look = travel("other.example.net", [[560, 475], [990, 475]], at(0.58), at(0.63));
-    verdict(false, [1000, 475], at(0.63));
-    fadeOut(api, at(0.68)); fadeOut(look, at(0.68));
+    const look = travel("other.example.net", [[560, 475], [990, 475]], word("a host that"), word("with an allowed"));
+    verdict(false, [1000, 475], word("is refused"));
+    fadeOut(api, word("the proxy is also")); fadeOut(look, word("the proxy is also"));
 
     // 3. A wildcard, possible only in the proxy.
-    show(".h-docs", at(0.73), null, 0);
-    const docs = travel("docs.example.com", [[560, 475], [1360, 475], [1510, 560]], at(0.74), at(0.82));
-    verdict(true, [1545, 560], at(0.82));
+    show(".h-docs", word("wildcards possible"), null, 0);
+    const docs = travel("docs.example.com", [[560, 475], [1360, 475], [1510, 560]], word("like star dot"), word("example dot com", { end: true }));
+    verdict(true, [1545, 560], word("example dot com", { end: true }));
 
     // 4. A tool that ignores the proxy meets the ACL.
-    travel("docs.example.com", [[560, 660], [694, 660]], at(0.86), at(0.92));
-    verdict(false, [708, 660], at(0.93));
+    travel("docs.example.com", [[560, 660], [694, 660]], word("a tool that ignores"), word("does not slip"));
+    verdict(false, [708, 660], word("it meets"));
   });
 </script>
 </body>

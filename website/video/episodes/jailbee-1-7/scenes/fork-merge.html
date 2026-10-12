@@ -77,7 +77,7 @@
 </div>
 <script src="../../../lib/runtime.js"></script>
 <script>
-  JB.scene(({ at, anim, show }) => {
+  JB.scene(({ word, anim, show }) => {
     const draw = (el, from, to) => {
       const length = el.getTotalLength();
       el.style.strokeDasharray = `${length}`;
@@ -85,16 +85,17 @@
     };
     show(".head", 0.15);
     show(".cell.a", 0.3, null, 20);
-    show(".cf", at(0.05));
-    draw(document.querySelector(".fork"), at(0.12), at(0.3));
-    show(".cell.b", at(0.24), null, 20);
-    for (const agent of document.querySelectorAll(".cell .agent")) show(agent, at(0.42), null, 0);
-    show(".ma", at(0.62), null, 0);
-    show(".mb", at(0.64), null, 0);
-    show(".cm", at(0.66));
-    show(".cell.c", at(0.72), null, 20);
-    draw(document.querySelector(".merge-a"), at(0.78), at(0.95));
-    draw(document.querySelector(".merge-b"), at(0.78), at(0.95));
+    // Each beat is pinned to the phrase it illustrates (runtime.js `word`).
+    show(".cf", word("fork starts"));
+    draw(document.querySelector(".fork"), word("a second container"), word("committed state"));
+    show(".cell.b", word("another one's committed"), null, 20);
+    for (const agent of document.querySelectorAll(".cell .agent")) show(agent, word("two agents"), null, 0);
+    show(".cm", word("merge into takes"));
+    show(".ma", word("the containers you marked"), null, 0);
+    show(".mb", word("you marked"), null, 0);
+    show(".cell.c", word("the one you pick"), null, 20);
+    draw(document.querySelector(".merge-a"), word("merges them into"), word("the one you pick", { end: true }));
+    draw(document.querySelector(".merge-b"), word("merges them into"), word("the one you pick", { end: true }));
   });
 </script>
 </body>
