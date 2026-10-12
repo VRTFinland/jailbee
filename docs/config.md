@@ -582,6 +582,10 @@ optional_mounts:
 `auto_unmount_after` accepts `30s`, `15m`, `2h`, an integer number of
 minutes, or `never`.
 
+An optional mount is also the way to lend a container a credential for a
+while — an API key, `~/.aws` — without writing it into the container. See
+[Lending a container a credential](security.md#lending-a-container-a-credential).
+
 ### `host_devices`
 
 Pass arbitrary host character/block devices into every container as Incus

@@ -395,6 +395,57 @@ The practical shape, then: stay in `strict`, bind read-only what the build
 genuinely needs, leave sensitive `optional_mounts` detached, and take a
 snapshot (`jailbee snapshot create`) before a long unattended run.
 
+### Lending a container a credential
+
+Some work needs a secret for a while: an API key for one tool, cloud
+credentials for one deploy. Writing it into the container leaves it there for
+as long as the container lives, readable by every agent run that follows.
+Declare it as an [`optional_mounts`](config.md#optional_mounts) entry instead
+and keep the secret on the host: it reaches a container only when you attach
+it, and leaves on its own.
+
+```yaml
+optional_mounts:
+  openai:
+    host: ~/.config/openai          # holds api-key; stays on the host
+    container: /home/dev/.config/openai
+    readonly: true                  # the default, stated for the reader
+    description: "OpenAI API key"
+    auto_unmount_after: 1h
+  aws:
+    host: ~/.aws
+    container: /home/dev/.aws
+    auto_unmount_after: 15m
+```
+
+```bash
+jailbee mount openai feat-login           # attach, until auto_unmount_after
+jailbee mount aws feat-login --for 30m    # or say how long this time
+jailbee unmount aws feat-login            # done early
+```
+
+`jailbee ls`, the dashboards and the details panel show what is attached to a
+container and for how long, and the dashboard's container menu has Mount… and
+Unmount…. An [autostart](project-config.md#5-define-autostart-steps) stage can attach one for its own
+duration only (`mounts: [aws]`).
+
+- **Mount the directory, not the file.** A bind mount of a single file pins
+  that file's inode, so a host editor or tool that replaces it atomically —
+  most of them — leaves the container reading the old one.
+- **Read-only** keeps the container from rewriting the secret or the
+  directory it sits in; it can still read and use it.
+- **Where to declare it:** in `~/.config/jailbee/global.yaml` for a
+  credential that is yours on every repo; in the repo's own config when a tool
+  in the repo reads it from a fixed path, as `website/video/render.py` does
+  with `~/.config/openai/api-key` in JailBee's own repository. The secret
+  itself never goes in either file.
+
+What this buys is a window, not a broker. While the mount is attached,
+anything running in the container can read the secret and use it, and in
+`strict` mode only towards the hosts the allowlist names. Detaching removes
+the mount, not a copy something inside made while it was there. Attach it for
+the task that needs it, and keep `auto_unmount_after` short.
+
 ### Git remote & push
 
 After `jailbee new` clones the source repo into the container, the clone's

@@ -505,6 +505,16 @@ not. Stay in `strict` and snapshot before a long run.
 
 → [Running an agent without prompts](security.md#running-an-agent-without-prompts)
 
+### How do I give a container an API key without leaving it there?
+
+Keep the key on the host and declare its directory as an `optional_mounts`
+entry, read-only and with a short `auto_unmount_after`. `jailbee mount <kind>
+<container>` attaches it for the task that needs it, and it detaches on its
+own. Mount the directory rather than the file, so a host tool that replaces
+the file still reaches the container.
+
+→ [Lending a container a credential](security.md#lending-a-container-a-credential)
+
 ### Can I use an agent other than Claude Code?
 
 Yes — `agents:` is a mapping keyed by agent name and wires any terminal coding
