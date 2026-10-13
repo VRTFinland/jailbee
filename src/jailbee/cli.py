@@ -14193,7 +14193,7 @@ def issue_resolve_cmd(
     except ValueError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e
-    repo = targets.get(resolved_action.repo)
+    repo = issue_outbox.target_for(targets, resolved_action.repo, cfg.repo_root)
     if repo is None:
         error_plain(f"{manifest} action {action}: forbidden repo path {resolved_action.repo!r}")
         raise typer.Exit(1)

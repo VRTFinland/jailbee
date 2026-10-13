@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, assert_never
+from typing import TYPE_CHECKING, Final, Literal, assert_never
 
 from jailbee import git, issue_github, submodules
 from jailbee.config import CONTAINER_USERNAME
@@ -23,6 +23,7 @@ from jailbee.issue_github import (
 )
 from jailbee.issue_manifest import (
     MAX_MANIFEST_BYTES,
+    foreign_slug,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     CommentAction,
@@ -71,6 +72,7 @@ class RepoTarget:
     path: str
     repo_root: Path
     slug: str
+    foreign: bool = False
 
     @property
     def identity(self) -> str:
@@ -118,6 +120,28 @@ def resolve_repo_targets(cfg: Config) -> Mapping[str, RepoTarget]:
         remote_urls[declared.path] = remote_url
 
     return targets
+
+
+def target_for(
+    targets: Mapping[str, RepoTarget], repo: str, host_repo_root: Path
+) -> RepoTarget | None:
+    """The target an action's ``repo`` names, or None when the host does not authorize it.
+
+    ``.`` and submodule paths come from ``targets``. ``github:<owner>/<name>``
+    names a slug directly: the authorized target with that slug when there is
+    one, otherwise a foreign target. ``host_repo_root`` is only the working
+    directory of the host's ``gh`` calls, which name the slug explicitly.
+    """
+    known = targets.get(repo)
+    if known is not None:
+        return known
+    slug = foreign_slug(repo)
+    if slug is None:
+        return None
+    for target in targets.values():
+        if target.identity == slug.casefold():
+            return target
+    return RepoTarget(path=repo, repo_root=host_repo_root, slug=slug, foreign=True)
 
 
 class IssueGateError(Exception):
@@ -183,6 +207,23 @@ class PreparedBatch:
     manifests: tuple[PreparedManifest, ...]
     initial_issues: Mapping[tuple[str, int], IssueSnapshot]
 
+    def _foreign_actions(self) -> list[ResolvedAction]:
+        return [
+            a for m in self.manifests for a in m.actions if a.repo.foreign and a.status == "pending"
+        ]
+
+    @property
+    def foreign_slugs(self) -> tuple[str, ...]:
+        """Display slugs of foreign repositories that still have a pending action."""
+        slugs: dict[str, str] = {}
+        for action in self._foreign_actions():
+            slugs.setdefault(action.repo.identity, action.repo.slug)
+        return tuple(sorted(slugs.values(), key=str.casefold))
+
+    @property
+    def foreign_pending(self) -> int:
+        return len(self._foreign_actions())
+
 
 ISSUE_OUTBOX_SUBPATH = ".jailbee/issue-outbox"
 
@@ -241,6 +282,7 @@ def _load_proposals(
     outbox: OutboxSnapshot,
     names: Sequence[str],
     targets: Mapping[str, RepoTarget],
+    host_repo_root: Path,
     identity: ContainerIdentity,
     store: JournalStore,
     refusals: list[str],
@@ -262,11 +304,11 @@ def _load_proposals(
             continue
         count += len(manifest.actions)
         for index, action in enumerate(manifest.actions):
-            if action.repo not in targets:
+            if target_for(targets, action.repo, host_repo_root) is None:
                 known = ", ".join(repr(path) for path in sorted(targets)) or "[none]"
                 refusals.append(
                     f"{name} action {index}: forbidden repo path {action.repo!r}; "
-                    f"known paths: {known}"
+                    f"known paths: {known}, or github:<owner>/<name>"
                 )
         try:
             key = journal_key(identity, name)
@@ -287,7 +329,7 @@ def _load_proposals(
                 if journal is not None:
                     for receipt in journal.actions:
                         action = manifest.actions[receipt.index]
-                        target = targets.get(action.repo)
+                        target = target_for(targets, action.repo, host_repo_root)
                         if target is not None and target.identity != receipt.repo.casefold():
                             raise JournalError("journal repo differs from the host-resolved repo")
                         if (
@@ -359,7 +401,9 @@ def prepare_batch(
     except ValueError as exc:
         refusals.append(str(exc))
         targets = {}
-    proposals = _load_proposals(outbox, selected_names, targets, identity, journal_store, refusals)
+    proposals = _load_proposals(
+        outbox, selected_names, targets, cfg.repo_root, identity, journal_store, refusals
+    )
     if refusals:
         raise IssueGateError("\n".join(refusals))
 
@@ -382,7 +426,8 @@ def prepare_batch(
         actions = []
         for index, action in enumerate(manifest.actions):
             context = f"{manifest.name} action {index}"
-            repo = targets[action.repo]
+            repo = target_for(targets, action.repo, cfg.repo_root)
+            assert repo is not None, "_load_proposals refused unauthorized repos"
             receipt = receipts.get(index)
             status = _status(receipt)
             if isinstance(action, CreateAction):
@@ -571,6 +616,35 @@ def _action_lines(
     return lines
 
 
+FOREIGN_WARNING: Final = "  ⚠ foreign repository: not this repo or one of its submodules"
+
+
+class ForeignRepoRefused(Exception):
+    """Pending actions target foreign repositories and nothing consented."""
+
+
+def foreign_consent(
+    batch: PreparedBatch, *, allowed: bool, ask: Callable[[str], bool] | None
+) -> bool:
+    """Whether publication may reach the batch's foreign repositories.
+
+    True when no pending action is foreign or ``allowed`` (``--foreign``).
+    Otherwise ``ask`` gets the question, and its answer decides. ``ask=None``
+    (``-y``, or no terminal) raises ForeignRepoRefused.
+    """
+    slugs = batch.foreign_slugs
+    if not slugs or allowed:
+        return True
+    names = ", ".join(slugs)
+    if ask is None:
+        raise ForeignRepoRefused(
+            f"Refusing to publish to foreign repositories ({names}) without --foreign."
+        )
+    count = batch.foreign_pending
+    noun = "action" if count == 1 else "actions"
+    return ask(f"Publish {count} {noun} to foreign repositories {names}?")
+
+
 def plan_lines(batch: PreparedBatch) -> list[str]:
     """Return the complete approval text in execution order, without markup."""
     lines = [f"Host GitHub login: {batch.login}", f"Container: {batch.container}"]
@@ -581,6 +655,8 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
         for resolved in prepared.actions:
             if resolved.repo != previous:
                 lines.append(f"Repository: {resolved.repo.path} ({resolved.repo.slug})")
+                if resolved.repo.foreign:
+                    lines.append(FOREIGN_WARNING)
                 previous = resolved.repo
             lines.extend(
                 _action_lines(
