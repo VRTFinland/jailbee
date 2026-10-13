@@ -11,7 +11,7 @@ narration `gpt-4o-mini-tts-2025-12-15`, voice `marin`.
 | Short | `4HqNJCPtfws` | https://youtube.com/shorts/4HqNJCPtfws |
 
 Uploaded unlisted, to go public with the 1.7.0 release. The main video is
-embedded in `website/news/posts/2026-10-12-jailbee-1-7.md` and in the landing
+embedded in `website/news/posts/2026-10-13-jailbee-1-7.md` and in the landing
 page's `#demos`; the Short is not embedded anywhere.
 
 Title: *JailBee 1.7: run a dozen AI coding agents from one dashboard*. Short:
