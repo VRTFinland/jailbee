@@ -295,7 +295,9 @@ def test_a_grok_only_setup_needs_no_chatgpt_login():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {"grok": {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}},
-            "profiles": {"codex": {"fable": "grok", "opus": "grok", "sonnet": "grok", "haiku": "grok"}},
+            "profiles": {
+                "codex": {"fable": "grok", "opus": "grok", "sonnet": "grok", "haiku": "grok"}
+            },
         }
     )
     assert account_login_providers(cfg, "default") == ("xai",)
