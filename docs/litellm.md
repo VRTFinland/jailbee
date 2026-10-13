@@ -92,7 +92,7 @@ litellm:
   profiles:
     openrouter: {fable: kimi, opus: kimi, sonnet: kimi, haiku: kimi}
     # Without a ChatGPT subscription, point the built-in profile here as well:
-    # while it maps chatgpt/ routes, the account that serves them waits for a ChatGPT login.
+    # while it maps chatgpt/ routes, only the account a mapped route names waits for a ChatGPT login.
     codex: {fable: kimi, opus: kimi, sonnet: kimi, haiku: kimi}
 ```
 
