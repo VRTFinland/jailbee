@@ -4165,6 +4165,7 @@ if TYPE_CHECKING:
     from jailbee.pr_outbox import Manifest, Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.setup_command import StepKey
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
@@ -12113,7 +12114,9 @@ def registry_verify_cmd(
 # ---- Mount commands ----
 
 
-def _pick_mount_kind(cfg: "Config", incus: "IncusType", name: str, *, attached: bool) -> str:
+def _pick_mount_kind(
+    cfg: "Config", incus: "IncusType", name: str, *, attached: bool, policy: "RemoteSSHConfig | None" = None
+) -> str:
     """The optional mount to add (attached=False) or remove (attached=True)."""
     from jailbee import prompting
     from jailbee.lifecycle import short_name
@@ -12128,9 +12131,29 @@ def _pick_mount_kind(cfg: "Config", incus: "IncusType", name: str, *, attached: 
         if attached
         else f"no optional mount left to add to {short} (`optional_mounts:` in the repo config)"
     )
+    if not attached and policy is not None:
+        from jailbee.remote_ssh.mount_policy import grantable_kinds
+
+        allowed = set(grantable_kinds(policy, cfg))
+        kinds = [k for k in kinds if k in allowed]
+        reason = (
+            f"no optional mount this remote session may add to {short} "
+            "(remote.ssh.mount_roots in the host's global.yaml)"
+        )
     return prompting.choose_one(
         "optional mount", [prompting.Option(k, k, k) for k in kinds], empty_reason=reason
     )
+
+
+def _remote_mount_policy() -> "RemoteSSHConfig | None":
+    """The `remote.ssh` policy `mount` answers to in a restricted session; None locally.
+
+    Read from `global.yaml` on every call, so a root removed there stops the
+    next `mount` even inside an SSH session that opened before the edit.
+    """
+    from jailbee.remote_ssh.session import is_remote_session
+
+    return _load_global().remote.ssh if is_remote_session() else None
 
 
 @app.command("mount")
@@ -12190,11 +12213,21 @@ def mount_cmd(
 
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
+    policy = _remote_mount_policy()
     if kind is None:
-        kind = _pick_mount_kind(cfg, incus, name, attached=False)
+        kind = _pick_mount_kind(cfg, incus, name, attached=False, policy=policy)
     if kind not in cfg.optional_mounts:
         error(f"Unknown optional mount '{kind}'. Available: {list(cfg.optional_mounts)}")
         raise typer.Exit(2)
+    grant = None
+    if policy is not None:
+        from jailbee.remote_ssh.mount_policy import remote_mount_grant
+
+        decision = remote_mount_grant(policy, cfg, kind)
+        if isinstance(decision, str):
+            error_plain(decision)
+            raise typer.Exit(2)
+        grant = decision
 
     if ttl is None:
         try:
@@ -12217,7 +12250,7 @@ def mount_cmd(
             ttl = _Ttl(duration=parse_ttl(default))
 
     until = None if ttl.duration is None else _now() + ttl.duration
-    added = attach(cfg, incus, name, kind, until)
+    added = attach(cfg, incus, name, kind, until, grant)
     short = short_name(cfg, name)
     tail = (
         "" if ttl.duration is None else f" (auto-unmount in {format_duration_short(ttl.duration)})"
@@ -12227,6 +12260,11 @@ def mount_cmd(
     else:
         success(
             f"'{kind}' already mounted in '{short}' — TTL updated{tail or ' (no auto-unmount)'}"
+        )
+    if grant is not None and grant.forced_readonly:
+        info(
+            f"'{kind}' is attached read-only: remote.ssh.mount_roots allows "
+            f"{grant.source} read-only"
         )
 
 

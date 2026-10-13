@@ -137,6 +137,38 @@ def test_remove_optional_mount_clears_the_label_after_the_device():
     incus.config_unset_checked.assert_called_once_with("c", "user.jailbee.mount_until.aws")
 
 
+def test_add_optional_mount_with_a_grant_uses_its_source_and_readonly():
+    from jailbee.remote_ssh.mount_policy import MountGrant
+
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    grant = MountGrant(Path("/data/real"), readonly=True)
+    add_optional_mount(cfg, incus, "feat-foo", "aws", grant)
+    props = incus.config_device_add.call_args.args[3]
+    assert props["source"] == "/data/real"
+    assert props["readonly"] == "true"
+    assert props["path"] == "/home/dev/.aws"
+
+
+def test_add_optional_mount_with_a_writable_grant_sets_no_readonly():
+    from jailbee.remote_ssh.mount_policy import MountGrant
+
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    add_optional_mount(cfg, incus, "feat-foo", "aws", MountGrant(Path("/data/real"), False))
+    assert "readonly" not in incus.config_device_add.call_args.args[3]
+
+
+def test_attach_passes_the_grant_through():
+    from jailbee.remote_ssh.mount_policy import MountGrant
+
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.config_device_get.return_value = None
+    attach(cfg, incus, "feat-foo", "aws", None, MountGrant(Path("/data/real"), True))
+    assert incus.config_device_add.call_args.args[3]["source"] == "/data/real"
+
+
 def test_add_failure_does_not_write_or_clear_deadline():
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = MagicMock()

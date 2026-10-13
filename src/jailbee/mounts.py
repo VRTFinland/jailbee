@@ -6,10 +6,16 @@ import fcntl
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from jailbee.config import Config
 from jailbee.db import state_dir
 from jailbee.incus import Incus, IncusError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from jailbee.remote_ssh.mount_policy import MountGrant
 
 DEVICE_NAME_PREFIX = "optional-"
 MOUNT_UNTIL_PREFIX = "user.jailbee.mount_until."
@@ -54,16 +60,21 @@ def is_attached(incus: Incus, container: str, kind: str) -> bool:
     return incus.config_device_get(container, f"{DEVICE_NAME_PREFIX}{kind}", "source") is not None
 
 
-def add_optional_mount(cfg: Config, incus: Incus, container: str, kind: str) -> None:
-    """Add an optional bind mount to the container."""
+def add_optional_mount(
+    cfg: Config, incus: Incus, container: str, kind: str, grant: MountGrant | None = None
+) -> None:
+    """Add an optional bind mount to the container.
+
+    ``grant`` (a restricted remote session's, `remote_ssh.mount_policy`)
+    replaces the configured host path and readonly flag.
+    """
     if kind not in cfg.optional_mounts:
         raise ValueError(f"Unknown optional mount '{kind}'. Available: {list(cfg.optional_mounts)}")
     mount = cfg.optional_mounts[kind]
-    props: dict[str, str] = {
-        "source": str(mount.host),
-        "path": mount.container,
-    }
-    if mount.readonly:
+    source = str(mount.host) if grant is None else str(grant.source)
+    readonly = mount.readonly if grant is None else grant.readonly
+    props: dict[str, str] = {"source": source, "path": mount.container}
+    if readonly:
         props["readonly"] = "true"
     incus.config_device_add(container, f"{DEVICE_NAME_PREFIX}{kind}", "disk", props)
 
@@ -77,7 +88,14 @@ def remove_optional_mount(cfg: Config, incus: Incus, container: str, kind: str) 
         incus.config_unset_checked(container, until_key(kind))
 
 
-def attach(cfg: Config, incus: Incus, container: str, kind: str, until: datetime | None) -> bool:
+def attach(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    kind: str,
+    until: datetime | None,
+    grant: MountGrant | None = None,
+) -> bool:
     """Attach ``kind`` if needed and set or clear its deadline label.
 
     Returns True when the device was added, or False when it was already
@@ -88,7 +106,7 @@ def attach(cfg: Config, incus: Incus, container: str, kind: str, until: datetime
     with mount_lock():
         added = not is_attached(incus, container, kind)
         if added:
-            add_optional_mount(cfg, incus, container, kind)
+            add_optional_mount(cfg, incus, container, kind, grant)
         try:
             if until is None:
                 incus.config_unset_checked(container, until_key(kind))
