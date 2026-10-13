@@ -1478,3 +1478,84 @@ def test_resolve_rejects_issue_on_a_non_create_before_asking_for_the_url(mocker,
     assert result.exit_code == 2
     assert "--issue is only valid" in panel_text(result.output)
     ask.assert_not_called()
+
+
+# ---- foreign repositories (apply) -------------------------------------------
+
+
+def _foreign_batch(tmp_path):
+    from dataclasses import replace
+
+    batch = _prepared_batch(tmp_path)
+    manifest = batch.manifests[0]
+    foreign = RepoTarget("github:BerriAI/litellm", tmp_path, "BerriAI/litellm", foreign=True)
+    action = replace(manifest.actions[0], repo=foreign)
+    return replace(batch, manifests=(replace(manifest, actions=(action,)),))
+
+
+def _patch_apply(mocker, tmp_path):
+    from jailbee.issue_outbox import ApplyReport
+
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch("jailbee.issue_outbox.prepare_batch", return_value=_foreign_batch(tmp_path))
+    mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
+    revalidate = mocker.patch("jailbee.issue_outbox.revalidate_batch")
+    apply_batch = mocker.patch(
+        "jailbee.issue_outbox.apply_batch",
+        return_value=ApplyReport(applied=(), skipped=(), cleaned=("001.json",), failure=None),
+    )
+    return revalidate, apply_batch
+
+
+def test_apply_help_shows_foreign():
+    result = runner.invoke(app, ["issue", "apply", "--help"])
+    assert "--foreign" in result.output
+
+
+@pytest.mark.parametrize(("answer", "applied"), [("y\nn\n", False), ("y\ny\n", True)])
+def test_apply_asks_a_second_question_for_foreign_repositories(mocker, tmp_path, answer, applied):
+    revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+
+    result = runner.invoke(app, ["issue", "apply", "feat-foo"], input=answer)
+
+    assert result.exit_code == 0, result.output
+    assert "Publish 1 action to foreign repositories BerriAI/litellm?" in result.output
+    assert apply_batch.called is applied
+    assert revalidate.called is applied
+
+
+def test_apply_yes_without_foreign_refuses_before_the_stale_pass(mocker, tmp_path):
+    revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+
+    # error_plain prints to its own stderr console, whose default width of 80
+    # wraps the refusal between "without" and "--foreign". CliRunner's
+    # terminal_width does not reach that console.
+    from jailbee.tui import err_console
+
+    err_console.width = 120
+    result = runner.invoke(app, ["issue", "apply", "feat-foo", "-y"])
+
+    assert result.exit_code == 2, result.output
+    assert "without --foreign" in result.output
+    revalidate.assert_not_called()
+    apply_batch.assert_not_called()
+
+
+def test_apply_yes_with_foreign_publishes_without_asking(mocker, tmp_path):
+    _revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+
+    result = runner.invoke(app, ["issue", "apply", "feat-foo", "-y", "--foreign"])
+
+    assert result.exit_code == 0, result.output
+    assert "foreign repositories" not in result.output
+    apply_batch.assert_called_once()
+
+
+def test_apply_dry_run_with_foreign_asks_nothing(mocker, tmp_path):
+    _revalidate, apply_batch = _patch_apply(mocker, tmp_path)
+
+    result = runner.invoke(app, ["issue", "apply", "feat-foo", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "foreign repositories" not in result.output
+    apply_batch.assert_not_called()

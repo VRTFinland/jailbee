@@ -13794,6 +13794,16 @@ def issue_apply_cmd(
         typer.Option("--manifest", help="One manifest file name. Default: every pending manifest."),
     ] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
+    foreign: Annotated[
+        bool,
+        typer.Option(
+            "--foreign",
+            help=(
+                "Allow publishing to repositories outside this repo and its "
+                "submodules (github:<owner>/<name>); needed with -y."
+            ),
+        ),
+    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
     config: ConfigOption = None,
 ) -> None:
@@ -13805,7 +13815,8 @@ def issue_apply_cmd(
     anything mutate GitHub. `--dry-run` stops right after the plan is
     printed — no confirmation, no stale recheck, no journal write, no
     mutation. `--yes` skips only the confirmation: the stale recheck always
-    runs.
+    runs. Actions on a foreign repository (`github:<owner>/<name>`) are warned
+    about in the plan and need a second confirmation, or `--foreign` with `-y`.
     """
     from jailbee import issue_outbox, prompting
     from jailbee.lifecycle import short_name
@@ -13848,6 +13859,19 @@ def issue_apply_cmd(
         if not typer.confirm("Proceed?"):
             info("Nothing applied.")
             return
+
+    try:
+        consented = issue_outbox.foreign_consent(
+            batch,
+            allowed=foreign,
+            ask=None if yes else (lambda question: typer.confirm(question, default=False)),
+        )
+    except issue_outbox.ForeignRepoRefused as e:
+        error_plain(str(e))
+        raise typer.Exit(2) from e
+    if not consented:
+        info("Nothing applied.")
+        return
 
     try:
         issue_outbox.revalidate_batch(batch)
