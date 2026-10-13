@@ -13804,7 +13804,7 @@ def issue_apply_cmd(
     printed — no confirmation, no stale recheck, no journal write, no
     mutation. `--yes` skips only the confirmation: the stale recheck always
     runs. Actions on a foreign repository (`github:<owner>/<name>`) are warned
-    about in the plan and need a second confirmation, or `--foreign` with `-y`.
+    about in the plan and named in the confirmation, or need `--foreign` with `-y`.
     """
     from jailbee import issue_outbox, prompting
     from jailbee.lifecycle import short_name
@@ -13844,22 +13844,21 @@ def issue_apply_cmd(
                 "Re-run with -y, or from a terminal."
             )
             raise typer.Exit(2)
-        if not typer.confirm("Proceed?"):
+        # One question: when foreign repositories are involved it names them.
+        combined = None if foreign else issue_outbox.foreign_question(batch)
+        if combined is not None:
+            if not typer.confirm(combined, default=False):
+                info("Nothing applied.")
+                return
+        elif not typer.confirm("Proceed?"):
             info("Nothing applied.")
             return
-
-    try:
-        consented = issue_outbox.foreign_consent(
-            batch,
-            allowed=foreign,
-            ask=None if yes else (lambda question: typer.confirm(question, default=False)),
-        )
-    except issue_outbox.ForeignRepoRefused as e:
-        error_plain(str(e))
-        raise typer.Exit(2) from e
-    if not consented:
-        info("Nothing applied.")
-        return
+    else:
+        try:
+            issue_outbox.foreign_consent(batch, allowed=foreign, ask=None)
+        except issue_outbox.ForeignRepoRefused as e:
+            error_plain(str(e))
+            raise typer.Exit(2) from e
 
     try:
         issue_outbox.revalidate_batch(batch)

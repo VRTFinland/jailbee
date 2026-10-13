@@ -1211,32 +1211,25 @@ class DashboardSession:
                     return None
                 self.run_dashboard_command(container, "container", argv)
                 return None
-            if entry.value in (dob.PUBLISH, dob.DELETE):
-                row = next((r for r in self.outbox_rows.get(container, ()) if r.id == pid), None)
-                return dob.outbox_confirm_picker(
-                    container,
-                    entry.value,
-                    pid,
-                    revision,
-                    int(count),
-                    foreign=row.foreign_repos if row is not None else (),
+            if entry.value == dob.PUBLISH:
+                # The terminal shows the plan and asks once, under it.
+                self.run_dashboard_command(
+                    container, "container", dob.outbox_apply_argv(container, pid, revision)
                 )
+                return None
+            if entry.value == dob.DELETE:
+                return dob.outbox_delete_confirm_picker(container, pid, revision, int(count))
             return None
         if picker.purpose == "container-outbox-confirm":
             if entry.value != "yes":
                 self.set_notice("Cancelled")
                 return None
-            action, pid, revision = picker.carry
-            if action == dob.PUBLISH:
-                self.run_dashboard_command(
-                    container, "container", dob.outbox_apply_argv(container, pid, revision)
-                )
-            elif action == dob.DELETE:
-                repo = self.repo_for(container, "container")
-                if repo is None:
-                    self.set_notice(f"'{container}' is gone")
-                elif self.run_quiet_cli(repo, dob.outbox_drop_argv(container, pid, revision)):
-                    self.client.refresh()
+            pid, revision = picker.carry
+            repo = self.repo_for(container, "container")
+            if repo is None:
+                self.set_notice(f"'{container}' is gone")
+            elif self.run_quiet_cli(repo, dob.outbox_drop_argv(container, pid, revision)):
+                self.client.refresh()
             return None
         return None
 

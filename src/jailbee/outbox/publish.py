@@ -231,17 +231,29 @@ def publish_selected(
                 info_plain("Dry run: nothing was published.")
                 return 0
             total = sum(a.status == "pending" for m in batch.manifests for a in m.actions)
-            if total and not confirm(total):
-                info_plain("Nothing published.")
-                return 0
-            try:
-                if not issue_outbox.foreign_consent(
-                    batch, allowed=options.foreign, ask=confirm_foreign
-                ):
+            # One question under the plan: when it reaches foreign repositories
+            # interactively, the publish question names them and is the consent.
+            combined = (
+                issue_outbox.foreign_question(batch)
+                if total and not options.foreign and confirm_foreign is not None
+                else None
+            )
+            if combined is not None and confirm_foreign is not None:
+                if not confirm_foreign(combined):
                     info_plain("Nothing published.")
                     return 0
-            except issue_outbox.ForeignRepoRefused as exc:
-                raise OutboxError(str(exc)) from exc
+            else:
+                if total and not confirm(total):
+                    info_plain("Nothing published.")
+                    return 0
+                try:
+                    if not issue_outbox.foreign_consent(
+                        batch, allowed=options.foreign, ask=confirm_foreign
+                    ):
+                        info_plain("Nothing published.")
+                        return 0
+                except issue_outbox.ForeignRepoRefused as exc:
+                    raise OutboxError(str(exc)) from exc
             _checked(
                 cfg,
                 incus,
