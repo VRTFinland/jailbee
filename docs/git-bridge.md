@@ -121,9 +121,12 @@ the host's `origin/<branch>` remote-tracking ref — no container, no host
 branch, no working tree — so declining is still safe, just not a literal
 no-op on the push path.
 
-Separately, `push`, `pull` and `merge` ask once before acting on **two or more** containers
-(`merge`: several sources or several targets), whoever chose them; the answer defaults to
-No, `--no-confirm` skips it, and `confirm.auto_target` does not govern it.
+Containers named on the command line or ticked in the picker are never
+confirmed as a batch: choosing them is the decision. The dashboards ask once
+themselves before a bulk push, pull or merge over two or more containers
+(default No); for merge they pass `--confirm`, so the CLI asks once the
+targets are picked and can name both ends. `confirm.auto_target` does not
+govern that question.
 
 `--no-confirm` skips the prompt for one run, `--confirm` forces it when the
 config has it off, and `confirm.auto_target: false` turns it off for the

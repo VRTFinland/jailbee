@@ -827,37 +827,14 @@ def test_push_one_name_still_takes_the_single_path(mocker, tmp_path):
 # -- the batch question ------------------------------------------------------
 
 
-def test_push_asks_before_pushing_to_several_containers(mocker, tmp_path):
-    _wire_named(mocker, tmp_path, action="plain")
-    ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
-    do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
-
-    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
-
-    assert result.exit_code == 0, result.output
-    ask.assert_called_once()
-    question = ask.call_args.args[0]
-    assert "Push to 2 containers" in question and "feat-a" in question and "feat-b" in question
-    assert do_push.call_count == 2
-
-
-def test_push_declining_the_batch_question_pushes_nothing(mocker, tmp_path):
-    _wire_named(mocker, tmp_path, action="plain")
-    mocker.patch("jailbee.cli.default_confirm", return_value=False)
-    do_push = mocker.patch("jailbee.cli._do_single_push")
-
-    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
-
-    assert result.exit_code != 0
-    do_push.assert_not_called()
-
-
-def test_push_no_confirm_skips_the_batch_question(mocker, tmp_path):
+def test_push_to_several_containers_is_not_asked(mocker, tmp_path):
+    # Naming or picking them on the command line is the decision; only the
+    # dashboard asks about a batch (and passes --no-confirm).
     _wire_named(mocker, tmp_path, action="plain")
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
     do_push = mocker.patch("jailbee.cli._do_single_push", return_value="pushed")
 
-    result = CliRunner().invoke(app, ["git", "push", "--no-confirm", "feat-a", "feat-b"])
+    result = CliRunner().invoke(app, ["git", "push", "feat-a", "feat-b"])
 
     assert result.exit_code == 0, result.output
     ask.assert_not_called()

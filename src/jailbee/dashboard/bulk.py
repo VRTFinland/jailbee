@@ -79,6 +79,18 @@ ASKS_ITSELF: frozenset[str] = frozenset({"destroy", "merge"})
 # Foreground verbs the dashboard confirms itself: their CLI run is told not to
 # ask again (`--no-confirm`).
 DASHBOARD_CONFIRMED: frozenset[str] = frozenset({"git push", "git pull"})
+# Verbs whose CLI asks about several containers only when told to: the
+# question is the dashboard's, not the command line's.
+CLI_CONFIRMED: frozenset[str] = frozenset({"merge"})
+
+
+def confirm_flags(verb: str) -> tuple[str, ...]:
+    """The flag that settles who asks about ``verb`` over several containers."""
+    if verb in DASHBOARD_CONFIRMED:
+        return ("--no-confirm",)
+    if verb in CLI_CONFIRMED:
+        return ("--confirm",)
+    return ()
 
 
 @dataclass(frozen=True)
@@ -255,7 +267,7 @@ def foreground_runs(groups: Sequence[RepoGroup], action: BulkAction) -> list[For
         names = tuple(name for name in action.eligible if name in members)
         if target is None or not names:
             continue
-        flags = ("--no-confirm",) if action.verb in DASHBOARD_CONFIRMED else ()
+        flags = confirm_flags(action.verb)
         runs.append(
             ForegroundRun(group.prefix, target, (*action.verb.split(), *names, *flags), names)
         )

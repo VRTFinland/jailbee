@@ -352,6 +352,5 @@ def test_build_bulk_action_puts_every_name_before_the_config(tmp_path):
     assert action.launch == "output"
     merge = a.build_bulk_action("merge", ["p-a"], target)
     assert merge.launch == "terminal"
-    assert (
-        "--no-confirm" not in merge.argv
-    )  # merge's question is the CLI's, asked after the targets
+    # merge's question is the CLI's, asked after the targets are picked
+    assert "--confirm" in merge.argv and "--no-confirm" not in merge.argv

@@ -246,7 +246,7 @@ def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
     session.handle_key("enter")
 
     run.assert_called_once_with(
-        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--into", "r-c"]
+        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--confirm"]
     )
     assert session.merge_pick is None
 
@@ -258,7 +258,9 @@ def test_merge_mode_enter_without_marks_uses_cursor_row(mocker, tmp_path):
 
     session.handle_key("enter")
 
-    run.assert_called_once_with("r-b", "container", ["merge", "r-b", "--into", "r-a"])
+    run.assert_called_once_with(
+        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--confirm"]
+    )
     assert session.merge_pick is None
 
 
@@ -327,7 +329,7 @@ def test_merge_targets_marked_out_of_listing_order_run_in_listing_order(mocker, 
     session.handle_key("enter")
 
     run.assert_called_once_with(
-        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--into", "r-c"]
+        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--confirm"]
     )
 
 
@@ -355,7 +357,7 @@ def test_the_merge_runs_in_the_terminal_with_every_into(mocker, tmp_path):
 
     session.handle_key("enter")
 
-    assert child.call_args.args[0] == ["jailbee", "merge", "r-b", "--into", "r-a"]
+    assert child.call_args.args[0] == ["jailbee", "merge", "r-b", "--into", "r-a", "--confirm"]
 
 
 def test_merge_mode_esc_restores_bulk_marks(mocker, tmp_path):
