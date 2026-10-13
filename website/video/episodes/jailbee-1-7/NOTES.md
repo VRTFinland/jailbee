@@ -18,6 +18,21 @@ Title: *JailBee 1.7: run a dozen AI coding agents from one dashboard*. Short:
 *Which of your 12 AI agents needs you right now? #shorts*. Description
 hashtags: `#AIagents #ClaudeCode #DevTools`.
 
+Description chapters, from the scene start times (`pipeline.timeline`):
+
+```
+0:00 JailBee 1.7
+0:11 What JailBee is
+0:47 The AI column: which agent needs you
+1:10 The details panel
+1:31 The container menu
+1:41 Bulk actions with marks
+2:00 Fork and Merge into
+2:14 Egress allowlist, two layers
+2:55 jailbee upgrade
+3:14 Get JailBee
+```
+
 ## Frames used elsewhere
 
 - Player thumbnail (`website/assets/videos/XIu-REiLms4.jpg`): `out/main.mp4`
