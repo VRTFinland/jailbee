@@ -4150,6 +4150,7 @@ if TYPE_CHECKING:
     from jailbee.background import ClearOutcome
     from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
+    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.doctor import CheckResult
@@ -4165,7 +4166,6 @@ if TYPE_CHECKING:
     from jailbee.pr_outbox import Manifest, Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-    from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.setup_command import StepKey
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import (
@@ -12115,7 +12115,12 @@ def registry_verify_cmd(
 
 
 def _pick_mount_kind(
-    cfg: "Config", incus: "IncusType", name: str, *, attached: bool, policy: "RemoteSSHConfig | None" = None
+    cfg: "Config",
+    incus: "IncusType",
+    name: str,
+    *,
+    attached: bool,
+    policy: "RemoteSSHConfig | None" = None,
 ) -> str:
     """The optional mount to add (attached=False) or remove (attached=True)."""
     from jailbee import prompting
@@ -12257,14 +12262,14 @@ def mount_cmd(
     )
     if added:
         success(f"Mounted '{kind}' in container '{short}'{tail}")
+        if grant is not None and grant.forced_readonly:
+            info(
+                f"'{kind}' is attached read-only: remote.ssh.mount_roots allows "
+                f"{grant.source} read-only"
+            )
     else:
         success(
             f"'{kind}' already mounted in '{short}' — TTL updated{tail or ' (no auto-unmount)'}"
-        )
-    if grant is not None and grant.forced_readonly:
-        info(
-            f"'{kind}' is attached read-only: remote.ssh.mount_roots allows "
-            f"{grant.source} read-only"
         )
 
 

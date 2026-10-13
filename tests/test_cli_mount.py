@@ -142,7 +142,6 @@ def test_mount_no_revert_and_for_never_write_no_label(mocker, tmp_path, make_cfg
 
 
 def _remote(monkeypatch, mocker, tmp_path, make_cfg, *, roots, mounts, attached=()):
-    from jailbee.config.models_remote import RemoteMountRoot
     from jailbee.global_config import GlobalConfig
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -172,7 +171,10 @@ def test_remote_mount_of_a_listed_root_attaches_the_root(monkeypatch, mocker, tm
 
     t = _tree(tmp_path)
     incus = _remote(
-        monkeypatch, mocker, tmp_path, make_cfg,
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
         roots=[RemoteMountRoot(path=t / "data")],
         mounts={"d": {"host": f"{t}/other/../data", "container": "/d"}},
     )
@@ -190,7 +192,10 @@ def test_remote_mount_of_an_unlisted_path_exits_2_without_a_device(
 
     t = _tree(tmp_path)
     incus = _remote(
-        monkeypatch, mocker, tmp_path, make_cfg,
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
         roots=[RemoteMountRoot(path=t / "data")],
         mounts={"o": {"host": str(t / "other"), "container": "/o"}},
     )
@@ -205,7 +210,10 @@ def test_remote_mount_forced_readonly_says_so(monkeypatch, mocker, tmp_path, mak
 
     t = _tree(tmp_path)
     incus = _remote(
-        monkeypatch, mocker, tmp_path, make_cfg,
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
         roots=[RemoteMountRoot(path=t / "data")],
         mounts={"d": {"host": str(t / "data"), "container": "/d", "readonly": False}},
     )
@@ -215,12 +223,37 @@ def test_remote_mount_forced_readonly_says_so(monkeypatch, mocker, tmp_path, mak
     assert "read-only" in panel_text(result.output)
 
 
+def test_remote_mount_forced_readonly_info_only_on_first_attach(
+    monkeypatch, mocker, tmp_path, make_cfg
+):
+    from jailbee.config.models_remote import RemoteMountRoot
+
+    t = _tree(tmp_path)
+    incus = _remote(
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
+        roots=[RemoteMountRoot(path=t / "data")],
+        mounts={"d": {"host": str(t / "data"), "container": "/d", "readonly": False}},
+        attached=("d",),
+    )
+    config_device_add = mocker.patch("jailbee.mounts.add_optional_mount")
+    result = runner.invoke(app, ["mount", "d", "x", "--no-revert"])
+    assert result.exit_code == 0, result.output
+    config_device_add.assert_not_called()
+    assert "read-only" not in panel_text(result.output)
+
+
 def test_remote_mount_picker_offers_only_grantable_kinds(monkeypatch, mocker, tmp_path, make_cfg):
     from jailbee.config.models_remote import RemoteMountRoot
 
     t = _tree(tmp_path)
     incus = _remote(
-        monkeypatch, mocker, tmp_path, make_cfg,
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
         roots=[RemoteMountRoot(path=t / "data")],
         mounts={
             "d": {"host": str(t / "data"), "container": "/d"},
@@ -238,7 +271,10 @@ def test_remote_mount_picker_with_nothing_grantable_names_the_setting(
 ):
     t = _tree(tmp_path)
     _remote(
-        monkeypatch, mocker, tmp_path, make_cfg,
+        monkeypatch,
+        mocker,
+        tmp_path,
+        make_cfg,
         roots=[],
         mounts={"o": {"host": str(t / "other"), "container": "/o"}},
     )
@@ -252,7 +288,9 @@ def test_local_mount_ignores_mount_roots(monkeypatch, mocker, tmp_path, make_cfg
     monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     incus = _ttl_env(
-        mocker, tmp_path, make_cfg,
+        mocker,
+        tmp_path,
+        make_cfg,
         optional_mounts={"o": {"host": str(t / "other"), "container": "/o"}},
     )
     result = runner.invoke(app, ["mount", "o", "x", "--no-revert"])
