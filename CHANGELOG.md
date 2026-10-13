@@ -8,6 +8,10 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.2 - 2026-10-13
+
+No user-facing changes in this range, so there are no entries to add under Unreleased. Both commits are internal: a docs comparison note and a flaky-test fix.
+
 ## 1.7.1 - 2026-10-13
 
 ### Fixed
