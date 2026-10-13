@@ -176,27 +176,33 @@ take precedence over the subscription).
 
 ### One profile, two subscriptions
 
-The recipes above send every tier to one provider. A profile may instead mix
-them: keep the built-in `codex` profile's ChatGPT routes for the tiers you want
-on the ChatGPT subscription, and point the rest at an `oauth` Grok route. Both
-logins belong to the same account (`default`, the only one here), which is the
-one constraint — a profile is served by one proxy instance, so its subscription
-routes cannot span two accounts. See
+The recipes above send every tier to one provider. A profile of your own can
+mix them instead, which keeps the built-in `codex` profile untouched. `mix`
+below sends fable and opus to the ChatGPT subscription and sonnet and haiku to
+the SuperGrok one. A new profile inherits nothing, so every tier names its
+route — the ChatGPT ones are the built-in routes from the table in
 [Routes and profiles](#routes-and-profiles).
+
+Both logins belong to the same account (`default`, the only one here), which
+is the one constraint: a profile is served by one proxy instance, so its
+subscription routes cannot span two accounts.
 
 ```yaml
 litellm:
   enabled: true
+  default_profile: mix
   routes:
     grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}
   profiles:
-    # fable and opus keep the built-in chatgpt/ routes (astra, sol-high);
-    # sonnet and haiku move to the SuperGrok subscription.
-    codex: {sonnet: grok, haiku: grok}
+    mix:
+      fable: astra       # chatgpt/gpt-6-astra, ChatGPT subscription
+      opus: sol-high     # chatgpt/gpt-6.1-sol, ChatGPT subscription
+      sonnet: grok       # xai/grok-4.3, SuperGrok subscription
+      haiku: grok
 ```
 
-`jailbee litellm up`, then both logins — the account's mapped routes use both
-providers, so each needs its flag:
+`jailbee litellm up`, then both logins — `mix`'s routes use both providers, so
+each needs its flag:
 
 ```sh
 jailbee litellm login --provider chatgpt
@@ -205,10 +211,12 @@ jailbee litellm up
 ```
 
 `claude-jb --model opus` then runs on the ChatGPT subscription and
-`claude-jb --model haiku` on the xAI one. `jailbee litellm ls` shows which
-model each tier resolves to. The profile's window is the smaller of its
-routes', so this profile's ceiling is `grok`'s 256,000 tokens, not the ChatGPT
-routes' 272,000 — see [Choosing the context window](#choosing-the-context-window).
+`claude-jb --model haiku` on the xAI one; with `default_profile: mix` that is
+what a plain `claude-jb` uses. `jailbee litellm ls` shows which model each tier
+resolves to. The profile's window is the smaller of its routes', so `mix`'s
+ceiling is `grok`'s 256,000 tokens, not the ChatGPT routes' 272,000 — see
+[Choosing the context window](#choosing-the-context-window). The built-in
+`codex` profile is still there, all on ChatGPT, via `claude-jb -P codex`.
 
 ## Routes and profiles
 
