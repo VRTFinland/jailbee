@@ -32,7 +32,8 @@ from jailbee.registry import (
     registry_status,
 )
 
-from jailbee.registry_cache import CacheProgress
+if TYPE_CHECKING:
+    from jailbee.registry_cache import CacheProgress
 
 # Default Incus subuid mapping puts the container's root at host uid 1000000.
 # runc creates a session keyring per container under this uid; the per-uid
