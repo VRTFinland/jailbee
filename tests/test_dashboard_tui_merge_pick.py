@@ -258,9 +258,7 @@ def test_merge_mode_enter_without_marks_uses_cursor_row(mocker, tmp_path):
 
     session.handle_key("enter")
 
-    run.assert_called_once_with(
-        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--confirm"]
-    )
+    run.assert_called_once_with("r-b", "container", ["merge", "r-b", "--into", "r-a", "--confirm"])
     assert session.merge_pick is None
 
 
