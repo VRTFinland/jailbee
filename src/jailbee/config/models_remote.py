@@ -1,15 +1,85 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jailbee.config.models_host import _PREFIX_RE
+from jailbee.paths import xdg_data_home
 
 CommandMode = Literal["disabled", "allowlist", "full"]
 _COMMAND_PATH_RE = re.compile(r"^[a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*$")
+
+
+def _jailbee_dirs() -> tuple[Path, ...]:
+    """JailBee's own config, data and state dirs, resolved.
+
+    Spelled out here rather than imported: `global_config` imports this
+    module, and `db.state_dir` drags in the database layer.
+    """
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    config = (Path(xdg_config) if xdg_config else Path.home() / ".config") / "jailbee"
+    state = (Path(xdg_state) if xdg_state else Path.home() / ".local" / "state") / "jailbee"
+    data = xdg_data_home() / "jailbee"
+    return tuple(Path(os.path.realpath(p)) for p in (config, data, state))
+
+
+class RemoteMountRoot(BaseModel):
+    """One host directory a restricted remote session may bind into a container."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: Path = Field(
+        description=(
+            "Host directory, absolute and fully resolved (no symlinks). An "
+            "`optional_mounts` entry is attachable over remote SSH only when its "
+            "host path resolves to exactly this path; subdirectories are not."
+        ),
+    )
+    readonly: bool = Field(
+        default=True,
+        description="Attach read-only over remote SSH whatever the mount itself says.",
+    )
+    repos: list[str] = Field(
+        default_factory=list,
+        description="Container prefixes allowed to attach it; empty means every repo.",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _path_is_a_safe_resolved_root(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("remote.ssh.mount_roots paths must be absolute")
+        resolved = Path(os.path.realpath(value))
+        if str(value) != str(resolved):
+            raise ValueError(
+                f"remote.ssh.mount_roots path {value} is not fully resolved; write {resolved}"
+            )
+        home = Path(os.path.realpath(Path.home()))
+        if resolved == Path("/") or home.is_relative_to(resolved):
+            raise ValueError(
+                f"remote.ssh.mount_roots path {resolved} is too broad: it is /, your home "
+                "directory or one of its parents"
+            )
+        for own in _jailbee_dirs():
+            if own.is_relative_to(resolved):
+                raise ValueError(
+                    f"remote.ssh.mount_roots path {resolved} holds JailBee's own directory {own}"
+                )
+        return value
+
+    @field_validator("repos")
+    @classmethod
+    def _repos_are_prefixes(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("remote.ssh.mount_roots repos contains duplicates")
+        if any(not _PREFIX_RE.fullmatch(v) for v in values):
+            raise ValueError("remote.ssh.mount_roots repos entries must be valid container prefixes")
+        return values
 
 
 class RemoteCommandPolicy(BaseModel):
@@ -110,6 +180,22 @@ class RemoteSSHConfig(BaseModel):
             "container). Off by default; changing it needs a restart."
         ),
     )
+    mount_roots: list[RemoteMountRoot] = Field(
+        default_factory=list,
+        description=(
+            "Host directories a restricted session may attach with `mount`: an "
+            "`optional_mounts` entry whose host path resolves to exactly one of "
+            "them. Requires restrict_host=true."
+        ),
+    )
+    mounts: bool = Field(
+        default=False,
+        description=(
+            "Let remote sessions attach every `optional_mounts` entry as defined, "
+            "with no path check. The repo config then decides which host path a "
+            "remote session can reach. Off by default; prefer `mount_roots`."
+        ),
+    )
     excluded_repos: list[str] = Field(
         default_factory=list,
         description="Registered repository prefixes unavailable through remote SSH.",
@@ -125,6 +211,11 @@ class RemoteSSHConfig(BaseModel):
     def _entrypoints_are_usable(self) -> Self:
         if self.excluded_repos and not self.restrict_host:
             raise ValueError("remote.ssh.excluded_repos requires restrict_host=true")
+        if self.mount_roots and not self.restrict_host:
+            raise ValueError("remote.ssh.mount_roots requires restrict_host=true")
+        paths = [root.path for root in self.mount_roots]
+        if len(paths) != len(set(paths)):
+            raise ValueError("remote.ssh.mount_roots contains duplicate paths")
         if not (self.dashboard or self.console or self.exec):
             raise ValueError("remote.ssh must enable at least one entry point")
         if self.default_entrypoint != "help" and not getattr(self, self.default_entrypoint):

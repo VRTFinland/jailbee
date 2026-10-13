@@ -286,11 +286,12 @@ def test_build_specs_covers_every_config_leaf():
     `dashboard.refresh.agent_activity` makes 46. `dashboard.mouse` makes 47.
     The two `mount_auto_revert` policy leaves (`enabled`, `after`) bring both
     models to 105 repo and 49 global leaves.
+    `remote.ssh.mount_roots` and `remote.ssh.mounts` make 51.
     """
     from jailbee.config_edit.schema import build_specs
 
     assert len(build_specs(Config)) == 105
-    assert len(build_specs(GlobalConfig)) == 49
+    assert len(build_specs(GlobalConfig)) == 51
 
 
 def test_a_default_factory_field_reports_its_real_default():
