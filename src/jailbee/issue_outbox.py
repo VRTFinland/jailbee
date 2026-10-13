@@ -23,7 +23,6 @@ from jailbee.issue_github import (
 )
 from jailbee.issue_manifest import (
     MAX_MANIFEST_BYTES,
-    foreign_slug,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     CommentAction,
@@ -36,6 +35,7 @@ from jailbee.issue_manifest import (
     IssueManifestError,
     LabelsAction,
     StateAction,
+    foreign_slug,
     parse_manifest,
 )
 from jailbee.outbox import io as store_io
@@ -619,7 +619,7 @@ def _action_lines(
 FOREIGN_WARNING: Final = "  ⚠ foreign repository: not this repo or one of its submodules"
 
 
-class ForeignRepoRefused(Exception):
+class ForeignRepoRefused(Exception):  # noqa: N818 - name specified by the foreign-repo plan.
     """Pending actions target foreign repositories and nothing consented."""
 
 
