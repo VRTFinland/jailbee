@@ -238,10 +238,9 @@ def test_remote_mount_forced_readonly_info_only_on_first_attach(
         mounts={"d": {"host": str(t / "data"), "container": "/d", "readonly": False}},
         attached=("d",),
     )
-    config_device_add = mocker.patch("jailbee.mounts.add_optional_mount")
     result = runner.invoke(app, ["mount", "d", "x", "--no-revert"])
     assert result.exit_code == 0, result.output
-    config_device_add.assert_not_called()
+    incus.config_device_add.assert_not_called()
     assert "read-only" not in panel_text(result.output)
 
 
