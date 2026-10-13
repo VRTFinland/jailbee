@@ -72,6 +72,12 @@ repository. If you are unsure whether a path is a submodule the host will
 accept, check `git submodule status --recursive` from the superproject
 root — a path that isn't listed there is not a valid `repo` value.
 
+Use `github:<owner>/<name>` only for a repository outside this project (an
+upstream bug report). The human sees a foreign-repository warning and
+confirms it separately. Leave `labels` empty, because GitHub silently drops
+labels from users without triage rights. `issue_ref` works only within the
+same `repo` value.
+
 ## Writing a manifest
 
 - Fixed path: `~/.jailbee/issue-outbox/` inside this container.
