@@ -337,6 +337,18 @@ def test_an_unknown_route_account_is_rejected_naming_the_route():
         LiteLLMConfig.model_validate({"routes": {"sol-high": {"account": "work"}}})
 
 
+def test_an_explicit_null_route_account_is_rejected():
+    with pytest.raises(ValidationError, match=r"route 'sol-high': `account` cannot be null"):
+        LiteLLMConfig.model_validate({"routes": {"sol-high": {"account": None}}})
+
+
+def test_an_overlay_cannot_clear_a_pinned_route_account_with_null():
+    pinned = {n: {"account": "work"} for n in ("astra", "sol-high", "sol-medium", "luna-high")}
+    host = LiteLLMConfig.model_validate({"accounts": ["default", "work"], "routes": pinned})
+    with pytest.raises(ValidationError, match=r"route 'sol-high': `account` cannot be null"):
+        host.with_overlay(_overlay(routes={"sol-high": {"account": None}}))
+
+
 def test_a_profile_spanning_two_accounts_is_rejected():
     with pytest.raises(
         ValidationError, match=r"more than one account \(default: sol-high; work: sol-work\)"
@@ -360,9 +372,10 @@ def test_grok_oauth_and_chatgpt_tiers_share_one_account():
 
 @pytest.mark.parametrize("block", [{}, {"opus": "sol-high"}])
 def test_a_profile_account_is_rejected_with_the_new_location(block):
-    with pytest.raises(ValidationError, match=r"litellm\.routes\.<route>\.account"):
+    moved = r"(?s)litellm\.routes\.<route>\.account.*delete this line.*docs/litellm\.md#accounts"
+    with pytest.raises(ValidationError, match=moved):
         LiteLLMConfig.model_validate({"profiles": {"codex": {"account": "default", **block}}})
-    with pytest.raises(ValidationError, match=r"litellm\.routes\.<route>\.account"):
+    with pytest.raises(ValidationError, match=moved):
         LiteLLMRepoOverlay.model_validate({"profiles": {"codex": {"account": "default"}}})
 
 

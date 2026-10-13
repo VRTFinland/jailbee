@@ -498,6 +498,30 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _profile_account(
+    name: str, tiers: dict[str, str], routes: dict[str, ResolvedRoute], fallback: str
+) -> str:
+    """The one account that serves `name`: its subscription routes', else `fallback`.
+
+    Unknown routes are skipped — the caller reports them. Two accounts is the
+    same rejection whether this runs from validation or from a direct caller.
+    """
+    by_account: dict[str, set[str]] = {}
+    for route in tiers.values():
+        if route not in routes:
+            continue
+        owner = routes[route].account
+        if owner is not None:
+            by_account.setdefault(owner, set()).add(route)
+    if len(by_account) > 1:
+        detail = "; ".join(f"{a}: {', '.join(sorted(rs))}" for a, rs in sorted(by_account.items()))
+        raise ValueError(
+            f"profile '{name}' maps subscription routes on more than one "
+            f"account ({detail}); a profile is served by one account's instance"
+        )
+    return next(iter(by_account)) if by_account else fallback
+
+
 class LiteLLMConfig(BaseModel):
     """Host-level `litellm:` block."""
 
@@ -664,6 +688,13 @@ class LiteLLMConfig(BaseModel):
                     "--provider xai`; `api_key` and `api_base` are not allowed on them"
                 )
             subscription = provider in SUBSCRIPTION_PROVIDERS or oauth
+            # Absent means the first account; an explicit null is not "back to
+            # default" — a subscription route's account is never optional.
+            if "account" in raw and raw["account"] is None:
+                raise ValueError(
+                    f"route '{name}': `account` cannot be null; delete the line to "
+                    "use the first account"
+                )
             account = _optional_str(raw.get("account"))
             if account is not None and not subscription:
                 raise ValueError(
@@ -728,12 +759,11 @@ class LiteLLMConfig(BaseModel):
         for name in [*_BUILTIN_PROFILES, *(n for n in self.profiles if n not in _BUILTIN_PROFILES)]:
             raw = _overlay(_BUILTIN_PROFILES.get(name, {}), self.profiles.get(name))
             tiers = {t: str(raw[t]) for t in TIERS if raw.get(t) is not None}
-            owners = sorted({a for r in tiers.values() if r in routes and (a := routes[r].account)})
             out[name] = ResolvedProfile(
                 name=name,
                 tiers=tiers,
                 effort=_optional_str(raw.get("effort")),
-                account=owners[0] if owners else self.accounts[0],
+                account=_profile_account(name, tiers, routes, self.accounts[0]),
                 instructions=_optional_str(raw.get("instructions")),
             )
         return out
@@ -750,19 +780,6 @@ class LiteLLMConfig(BaseModel):
                     raise ValueError(
                         f"profile '{profile.name}' tier '{tier}' names unknown route '{route}'"
                     )
-            by_account: dict[str, set[str]] = {}
-            for route in profile.tiers.values():
-                owner = routes[route].account
-                if owner is not None:
-                    by_account.setdefault(owner, set()).add(route)
-            if len(by_account) > 1:
-                detail = "; ".join(
-                    f"{a}: {', '.join(sorted(rs))}" for a, rs in sorted(by_account.items())
-                )
-                raise ValueError(
-                    f"profile '{profile.name}' maps subscription routes on more than one "
-                    f"account ({detail}); a profile is served by one account's instance"
-                )
         if self.default_profile not in profiles:
             raise ValueError(f"default_profile '{self.default_profile}' is not a profile")
         return self
