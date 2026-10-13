@@ -37,9 +37,16 @@ class Spawner:
         paths.ensure_runtime_dir()
         server = StateServer(self.gatherer_factory(), version=self.version)
         self.servers.append(server)
-        thread = threading.Thread(
-            target=lambda: asyncio.run(server.serve(paths.socket_path())), daemon=True
-        )
+
+        def run():
+            # As `run_service` does: Python 3.12's asyncio leaves the socket
+            # file behind on close (`cleanup_socket` arrived in 3.13).
+            try:
+                asyncio.run(server.serve(paths.socket_path()))
+            finally:
+                paths.socket_path().unlink(missing_ok=True)
+
+        thread = threading.Thread(target=run, daemon=True)
         thread.start()
         self.threads.append(thread)
         track_server(server, thread)
