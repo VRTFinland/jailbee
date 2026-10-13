@@ -66,11 +66,19 @@ submodule's own upstream remote when it is checked out on the host — detected
 by a five-step fallback (the sole remote, then `origin`, then
 `remote.pushDefault`, then the current branch's tracked remote, then a
 uniquely-identifiable `refs/remotes/<r>/HEAD`), or, if it isn't checked out
-on the host, the URL `.gitmodules` declares for it. A manifest can only
-target `.` or a path the host recognizes there, never an arbitrary GitHub
-repository. If you are unsure whether a path is a submodule the host will
-accept, check `git submodule status --recursive` from the superproject
-root — a path that isn't listed there is not a valid `repo` value.
+on the host, the URL `.gitmodules` declares for it. `.` and submodule paths
+are the trusted resolution path. Use `github:<owner>/<name>` for a repository
+outside this project (the named exception, not an arbitrary GitHub slug). If
+you are unsure whether a path is a submodule the host will accept, check `git
+submodule status --recursive` from the superproject root — a path that isn't
+listed there is not a valid `repo` value (unless you intend the `github:`
+form).
+
+Use `github:<owner>/<name>` only for a repository outside this project (an
+upstream bug report). The human sees a foreign-repository warning and
+confirms it separately. Leave `labels` empty, because GitHub silently drops
+labels from users without triage rights. `issue_ref` works only within the
+same `repo` value.
 
 ## Writing a manifest
 

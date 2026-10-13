@@ -2186,3 +2186,95 @@ def test_drop_rechecks_after_lock_wait_without_losing_progress(execution, mocker
     execution["remove"].assert_not_called()
     if change == "progress":
         assert store.load(key).actions[0].state == "uncertain"
+
+
+def test_github_repo_resolves_to_a_foreign_target_and_reads_through_its_slug(preflight):
+    batch = preflight["prepare"]({"a.json": [_comment("github:BerriAI/litellm", issue=9)]})
+
+    target = batch.manifests[0].actions[0].repo
+    assert (target.path, target.slug, target.foreign) == (
+        "github:BerriAI/litellm",
+        "BerriAI/litellm",
+        True,
+    )
+    assert preflight["fetch"].call_args.args[1:] == ("BerriAI/litellm", 9)
+    assert batch.foreign_slugs == ("BerriAI/litellm",)
+    assert batch.foreign_pending == 1
+
+
+def test_github_repo_naming_the_superproject_is_not_foreign(preflight):
+    batch = preflight["prepare"]({"a.json": [_comment("github:ACME/App")]})
+
+    assert batch.manifests[0].actions[0].repo is preflight["targets"]["."]
+    assert batch.foreign_slugs == ()
+
+
+def test_unknown_plain_path_is_still_forbidden_and_names_the_github_form(preflight):
+    from jailbee.issue_outbox import IssueGateError
+
+    with pytest.raises(IssueGateError, match="forbidden repo path 'acme/other'") as caught:
+        preflight["prepare"]({"a.json": [_comment("acme/other")]})
+    assert "github:<owner>/<name>" in str(caught.value)
+
+
+def test_plan_lines_warn_under_a_foreign_repository_header_only(preflight):
+    from jailbee.issue_outbox import FOREIGN_WARNING, plan_lines
+
+    batch = preflight["prepare"](
+        {"a.json": [_comment(), _comment("github:BerriAI/litellm", issue=9)]}
+    )
+    lines = plan_lines(batch)
+
+    header = lines.index("Repository: github:BerriAI/litellm (BerriAI/litellm)")
+    assert lines[header + 1] == FOREIGN_WARNING
+    assert lines.count(FOREIGN_WARNING) == 1
+
+
+def test_foreign_slugs_ignore_applied_foreign_actions(preflight):
+    actions = [_comment("github:BerriAI/litellm", issue=9), _comment()]
+    _record(preflight, actions, repo="BerriAI/litellm", issue=9)  # receipt for action 0
+
+    batch = preflight["prepare"]({"a.json": actions})
+    assert batch.manifests[0].actions[0].status == "applied"
+    assert batch.foreign_slugs == ()
+
+
+def test_target_for_covers_known_foreign_aliased_and_forbidden(tmp_path):
+    from jailbee.issue_outbox import RepoTarget, target_for
+
+    root = RepoTarget(".", tmp_path, "acme/app")
+    targets = {".": root}
+    assert target_for(targets, ".", tmp_path) is root
+    assert target_for(targets, "github:acme/APP", tmp_path) is root
+    assert target_for(targets, "lib", tmp_path) is None
+    foreign = target_for(targets, "github:o/r", tmp_path)
+    assert foreign == RepoTarget("github:o/r", tmp_path, "o/r", foreign=True)
+
+
+@pytest.mark.parametrize(
+    ("allowed", "ask", "expected"),
+    [(True, None, True), (False, lambda q: True, True), (False, lambda q: False, False)],
+)
+def test_foreign_consent_allows_asks_or_declines(preflight, allowed, ask, expected):
+    from jailbee.issue_outbox import foreign_consent
+
+    batch = preflight["prepare"]({"a.json": [_comment("github:BerriAI/litellm", issue=9)]})
+    assert foreign_consent(batch, allowed=allowed, ask=ask) is expected
+
+
+def test_foreign_consent_question_and_refusal_text(preflight):
+    from jailbee.issue_outbox import ForeignRepoRefused, foreign_consent
+
+    batch = preflight["prepare"]({"a.json": [_comment("github:BerriAI/litellm", issue=9)]})
+    asked = []
+    foreign_consent(batch, allowed=False, ask=lambda q: asked.append(q) or True)
+    assert asked == ["Publish 1 action to foreign repositories BerriAI/litellm?"]
+    with pytest.raises(ForeignRepoRefused, match=r"\(BerriAI/litellm\) without --foreign"):
+        foreign_consent(batch, allowed=False, ask=None)
+
+
+def test_foreign_consent_is_silent_without_foreign_actions(preflight):
+    from jailbee.issue_outbox import foreign_consent
+
+    batch = preflight["prepare"]({"a.json": [_comment()]})
+    assert foreign_consent(batch, allowed=False, ask=None) is True
