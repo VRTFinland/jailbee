@@ -206,13 +206,7 @@ def run_browser(actions: BrowserActions, initial_container: str | None = None) -
                     for line in actions.delete(container.name, plan):
                         show(line)
                 elif choice == "publish" and actions.publish is not None:
-                    if not actions.confirm(
-                        safe_text(
-                            f"Publish all pending actions in {proposal.id}? "
-                            "This publishes the whole manifest, not the selected child."
-                        )
-                    ):
-                        continue
+                    # publish shows the whole manifest's plan and asks once under it.
                     status = actions.publish(container.name, proposal.id, proposal.revision)
                     if status:
                         show(f"Publication returned status {status}; refresh required.")

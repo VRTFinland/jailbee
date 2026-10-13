@@ -474,8 +474,8 @@ def _foreign_issue(env):
     )
 
 
-@pytest.mark.parametrize(("answer", "published"), [("y\nn\n", False), ("y\ny\n", True)])
-def test_apply_at_a_terminal_asks_again_for_a_foreign_issue_repo(
+@pytest.mark.parametrize(("answer", "published"), [("n\n", False), ("y\n", True)])
+def test_apply_at_a_terminal_asks_once_for_a_foreign_issue_repo(
     publication_env, mocker, answer, published
 ):
     env, create, _comment, _review = publication_env
@@ -485,8 +485,9 @@ def test_apply_at_a_terminal_asks_again_for_a_foreign_issue_repo(
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"], input=answer)
 
     assert result.exit_code == 0, result.output
-    assert result.output.index("⚠ foreign repository") < result.output.index("Publish 1 pending")
-    assert "Publish 1 action to foreign repositories BerriAI/litellm?" in result.output
+    question = "Publish 1 pending action to foreign repositories BerriAI/litellm?"
+    assert result.output.index("⚠ foreign repository") < result.output.index(question)
+    assert result.output.count("Publish ") == 1
     assert create.called is published
     assert ("001.json" in env[2]["issue"].as_dict()) is not published
     if published:

@@ -2326,3 +2326,26 @@ def test_foreign_consent_is_silent_without_foreign_actions(preflight):
 
     batch = preflight["prepare"]({"a.json": [_comment()]})
     assert foreign_consent(batch, allowed=False, ask=None) is True
+
+
+def test_foreign_question_names_the_foreign_repositories_in_the_one_publish_question(
+    preflight,
+):
+    from jailbee.issue_outbox import foreign_question
+
+    only = preflight["prepare"]({"a.json": [_comment("github:BerriAI/litellm", issue=9)]})
+    assert foreign_question(only) == (
+        "Publish 1 pending action to foreign repositories BerriAI/litellm?"
+    )
+    mixed = preflight["prepare"](
+        {"a.json": [_comment(), _comment("github:BerriAI/litellm", issue=9)]}
+    )
+    assert foreign_question(mixed) == (
+        "Publish 2 pending actions, 1 of them to foreign repositories BerriAI/litellm?"
+    )
+
+
+def test_foreign_question_is_none_without_foreign_actions(preflight):
+    from jailbee.issue_outbox import foreign_question
+
+    assert foreign_question(preflight["prepare"]({"a.json": [_comment()]})) is None

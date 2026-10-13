@@ -819,7 +819,7 @@ def test_outbox_proposal_show_is_paged_in_the_terminal(mocker, tmp_path):
     assert run_cli.call_args.kwargs["style"] == "paged"
 
 
-def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_path):
+def test_outbox_publish_leaves_the_only_confirmation_to_the_terminal(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
@@ -829,12 +829,12 @@ def test_outbox_publish_leaves_plan_confirmation_to_the_terminal(mocker, tmp_pat
     steps = [
         *container_menu_keys(group, "outbox browse"),
         *_TO_PROPOSAL,
-        "j",  # Publish…
-        "enter",
-        "j",  # "Yes, publish"
+        "j",  # Publish…: the terminal asks once, under the plan
         "enter",
     ]
-    assert drive(mocker, steps, [group]).rc == 0
+    run = drive(mocker, steps, [group])
+    assert run.rc == 0
+    assert not [p for p in run.of_type(tsession.Picker) if p.purpose.endswith("confirm")]
 
     child.assert_called_once_with(
         [
@@ -878,8 +878,7 @@ def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
     child.assert_not_called()
 
 
-@pytest.mark.parametrize("downs", [1, 2], ids=["publish", "delete"])
-def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
+def test_outbox_delete_confirm_no_runs_nothing(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     quiet = _fake_outbox_ls(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
@@ -887,7 +886,8 @@ def test_outbox_confirm_no_runs_nothing(mocker, tmp_path, downs):
     steps = [
         *container_menu_keys(group, "outbox browse"),
         *_TO_PROPOSAL,
-        *["j"] * downs,
+        "j",
+        "j",  # Delete…
         "enter",
         "enter",  # a stray Enter lands on "No"
     ]
