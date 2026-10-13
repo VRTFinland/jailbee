@@ -479,7 +479,8 @@ def loose_net_profile_yaml(prefix: str) -> str:
             "eth0": {
                 "type": "nic",
                 # Dedicated bridge with no ACL attached.
-                # `jailbee init` creates it via ensure_loose_bridge().
+                # Created by ensure_loose_bridge(): `jailbee init`, `run_apply`
+                # and the image build each call it.
                 "network": LOOSE_BRIDGE,
             }
         },

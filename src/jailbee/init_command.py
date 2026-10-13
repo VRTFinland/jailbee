@@ -558,7 +558,7 @@ def ensure_acl_attached_to_bridge(cfg: Config, incus: Incus) -> None:
     attach_acl_to_bridge(incus, SERVICES_ACL)
 
 
-def ensure_loose_bridge(incus: Incus) -> None:
+def ensure_loose_bridge(incus: Incus, *, quiet: bool = False) -> None:
     """Ensure the shared `jailbee-loose` bridge exists. Idempotent.
 
     Shared across all jailbee-managed repos on the host. Carries no ACL —
@@ -568,9 +568,15 @@ def ensure_loose_bridge(incus: Incus) -> None:
     Skipped if a network with this name already exists. Does not verify
     the existing network's type or config — user-managed differences are
     respected.
+
+    Not only `jailbee init`'s: a scratch directory never runs init, so the
+    image build (which launches on this bridge) and `run_apply` (whose
+    loose net profile names it) ensure it too, with ``quiet=True`` to skip
+    the "already exists" line on every run.
     """
     if incus.network_exists(LOOSE_BRIDGE):
-        info(f"Network {LOOSE_BRIDGE} already exists")
+        if not quiet:
+            info(f"Network {LOOSE_BRIDGE} already exists")
         return
     incus.network_create(LOOSE_BRIDGE)
     success(f"Created network {LOOSE_BRIDGE}")
