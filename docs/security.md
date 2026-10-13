@@ -290,8 +290,9 @@ A match qualifies only when `os.path.realpath(mount.host)` equals the root's
 Incus is the root's own spelling, not the repo config's. A root entry may
 declare `readonly: true` (the default), in which case the mount is attached
 read-only even if the `optional_mounts` entry says otherwise. The effective
-readonly flag is `mount.readonly or root.readonly`. A non-empty `repos` list
-restricts the root to those container prefixes and requires `restrict_host: true`.
+readonly flag is `mount.readonly or root.readonly`. A non-empty `mount_roots`
+requires `restrict_host: true`; a `repos` list (when present) only scopes which
+registered repos may attach that root.
 
 `remote.ssh.mounts: true` grants every `optional_mounts` entry as defined,
 with no path check and no readonly override; the repo config alone decides
