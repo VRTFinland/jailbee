@@ -643,7 +643,8 @@ def test_allows_multiple_comments_and_disjoint_edits_to_one_target() -> None:
 
 
 @pytest.mark.parametrize(
-    "repo", ["github:BerriAI/litellm", "github:a/b", "github:a-b/c.d_e", "github:" + "o" * 39 + "/r"]
+    "repo",
+    ["github:BerriAI/litellm", "github:a/b", "github:a-b/c.d_e", "github:" + "o" * 39 + "/r"],
 )
 def test_accepts_github_repository_values_as_written(repo: str) -> None:
     manifest = _parse_action(_create(repo=repo))
@@ -690,7 +691,12 @@ def test_issue_ref_cannot_cross_from_a_github_repo_to_the_superproject() -> None
 
 @pytest.mark.parametrize(
     ("repo", "slug"),
-    [("github:BerriAI/litellm", "BerriAI/litellm"), (".", None), ("libs/x", None), ("github:a", None)],
+    [
+        ("github:BerriAI/litellm", "BerriAI/litellm"),
+        (".", None),
+        ("libs/x", None),
+        ("github:a", None),
+    ],
 )
 def test_foreign_slug(repo: str, slug: str | None) -> None:
     from jailbee.issue_manifest import foreign_slug
