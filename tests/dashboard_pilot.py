@@ -39,7 +39,7 @@ from jailbee.state_service.protocol import Snapshot
 from tests.conftest import memory_engine
 
 _MAX_PADDING = 5  # trailing Ctrl-Cs before a run that will not quit fails
-_MAX_CALLBACK_PAUSES = 50  # pauses after a callable step before the run moves on regardless
+_MAX_CALLBACK_PAUSES = 50  # pauses after a key or callable step before the run moves on regardless
 _MAX_SETTLE_PAUSES = 20  # pauses before a resize whose layout keeps changing fails
 # Pilot's wait_for_idle sleeps this long per poll (20 ms by default, twice per
 # key press); the session is synchronous, so a poll of 1 ms is as deterministic.
@@ -343,12 +343,25 @@ async def _settle_resize(pilot, app: tapp.DashboardApp) -> None:  # type: ignore
     raise AssertionError("the resized layout did not settle")
 
 
+async def _settle(pilot, app: tapp.DashboardApp) -> None:  # type: ignore[no-untyped-def]
+    """Pause (bounded) until nothing is pending, then let the run move on regardless.
+
+    Under load one pause is not enough for a key to be handled and a box it
+    opens to mount and lay out: `j` in a help box not yet laid out has no
+    scroll range, and the scroll clamps to 0.
+    """
+    for _ in range(_MAX_CALLBACK_PAUSES):
+        await pilot.pause()
+        if not _in_flight(app):
+            return
+
+
 async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ignore[no-untyped-def]
     if isinstance(step, bytes):
         raise TypeError(f"ported tests press key names, not legacy bytes: {step!r}")
     if isinstance(step, str):
         await pilot.press(step)
-        await pilot.pause()
+        await _settle(pilot, app)
     elif isinstance(step, Resize):
         await pilot.resize_terminal(step.width, step.height)
         await _settle_resize(pilot, app)
@@ -384,12 +397,7 @@ async def _apply(pilot, app: tapp.DashboardApp, step: Step) -> None:  # type: ig
     else:
         step(app)
         app.refresh_frame()
-        # Under load one pause is not enough for posted keys to be handled and a
-        # box they open to mount; wait (bounded) until nothing is pending.
-        for _ in range(_MAX_CALLBACK_PAUSES):
-            await pilot.pause()
-            if not _in_flight(app):
-                break
+        await _settle(pilot, app)
 
 
 def make_app(  # type: ignore[no-untyped-def]
