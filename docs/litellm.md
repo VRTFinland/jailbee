@@ -174,6 +174,42 @@ local model map does not list as reasoning models drop the `effort` setting.
 starting with `XAI_` are reserved (an `XAI_API_KEY` in the proxy would silently
 take precedence over the subscription).
 
+### One profile, two subscriptions
+
+The recipes above send every tier to one provider. A profile may instead mix
+them: keep the built-in `codex` profile's ChatGPT routes for the tiers you want
+on the ChatGPT subscription, and point the rest at an `oauth` Grok route. Both
+logins belong to the same account (`default`, the only one here), which is the
+one constraint — a profile is served by one proxy instance, so its subscription
+routes cannot span two accounts. See
+[Routes and profiles](#routes-and-profiles).
+
+```yaml
+litellm:
+  enabled: true
+  routes:
+    grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}
+  profiles:
+    # fable and opus keep the built-in chatgpt/ routes (astra, sol-high);
+    # sonnet and haiku move to the SuperGrok subscription.
+    codex: {sonnet: grok, haiku: grok}
+```
+
+`jailbee litellm up`, then both logins — the account's mapped routes use both
+providers, so each needs its flag:
+
+```sh
+jailbee litellm login --provider chatgpt
+jailbee litellm login --provider xai
+jailbee litellm up
+```
+
+`claude-jb --model opus` then runs on the ChatGPT subscription and
+`claude-jb --model haiku` on the xAI one. `jailbee litellm ls` shows which
+model each tier resolves to. The profile's window is the smaller of its
+routes', so this profile's ceiling is `grok`'s 256,000 tokens, not the ChatGPT
+routes' 272,000 — see [Choosing the context window](#choosing-the-context-window).
+
 ## Routes and profiles
 
 The built-in `codex` profile maps Claude Code tiers to these routes:
