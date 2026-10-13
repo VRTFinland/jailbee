@@ -120,10 +120,43 @@ def test_profile_equals_form(script, env):
     assert "ANTHROPIC_DEFAULT_OPUS_MODEL=jb-default-astra" in _lines(r.stdout)
 
 
+@pytest.mark.parametrize("args", [("-P", "deep"), ("-Pdeep",)])
+def test_short_profile_flag_selects_and_is_stripped(script, env, args):
+    r = _run(script, env, *args, "-p", "hi")
+    assert r.returncode == 0, r.stderr
+    lines = _lines(r.stdout)
+    assert "ANTHROPIC_DEFAULT_OPUS_MODEL=jb-default-astra" in lines
+    assert [line for line in lines if line.startswith("ARGV:")] == [
+        "ARGV:--effort",
+        "ARGV:max",
+        "ARGV:-p",
+        "ARGV:hi",
+    ]
+
+
+def test_last_profile_flag_wins_across_spellings(script, env):
+    r = _run(script, env, "--profile", "deep", "-P", "codex")
+    assert "ANTHROPIC_DEFAULT_OPUS_MODEL=jb-default-sol-high" in _lines(r.stdout)
+    r = _run(script, env, "-P", "codex", "--profile=deep")
+    assert "ANTHROPIC_DEFAULT_OPUS_MODEL=jb-default-astra" in _lines(r.stdout)
+
+
+def test_short_profile_flag_after_double_dash_is_not_ours(script, argv_env):
+    tail = ["--", "-P", "nope"]
+    assert _argv(_run(script, argv_env, *tail)) == tail
+
+
 def test_explicit_empty_profile_is_rejected(script, env):
     r = _run(script, env, "--profile=")
     assert r.returncode != 0 and "--profile needs a name" in r.stderr
     assert "ANTHROPIC_AUTH_TOKEN" not in r.stdout
+
+
+@pytest.mark.parametrize("args", [("-P",), ("-P", "")])
+def test_short_profile_flag_without_a_name_is_rejected(script, env, args):
+    r = _run(script, env, *args)
+    assert r.returncode == 2 and "-P needs a name" in r.stderr
+    assert "ARGV:" not in r.stdout
 
 
 def test_env_var_selects_profile(script, env):
@@ -148,10 +181,17 @@ def test_user_effort_equals_form_also_wins(script, env):
     assert argv == ["ARGV:--effort=low"]
 
 
-def test_unknown_profile_errors(script, env):
-    r = _run(script, env, "--profile", "nope")
-    assert r.returncode != 0
-    assert "unknown profile 'nope'" in r.stderr and "codex" in r.stderr
+@pytest.mark.parametrize("args", [("--profile", "nope"), ("-P", "nope")])
+def test_unknown_profile_lists_each_profile(script, env, args):
+    r = _run(script, env, *args)
+    assert r.returncode == 2 and r.stdout == ""
+    assert "unknown profile 'nope'" in r.stderr
+    listed = [line for line in r.stderr.splitlines() if line.startswith("  ")]
+    assert listed == [
+        "  codex (default): window 272000, up to 1050000",
+        "  deep: window 272000, up to 272000",
+        "  old: window 272000",
+    ]
 
 
 def test_missing_config_errors_with_fix(script, env, tmp_path):
@@ -431,7 +471,7 @@ def test_help_prints_claude_jb_options_then_claudes_own_help(script, env):
     assert r.returncode == 0, r.stderr
     out = r.stdout
     assert out.index("claude-jb") < out.index("ARGV:--help")
-    for needle in ("--profile", "--context", "-C", "codex", "deep", "272000", "1050000"):
+    for needle in ("--profile", "-P", "--context", "-C", "codex", "deep", "272000", "1050000"):
         assert needle in out
     assert "(default)" in out  # the profile in use is marked
 

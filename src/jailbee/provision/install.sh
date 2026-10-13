@@ -152,7 +152,7 @@ chmod 0644 /etc/profile.d/jailbee-claude.sh
 # `claude` stays native; this is a separate name so Claude's auto-updater and
 # PATH order can never break either. It reads /etc/jailbee/litellm.json
 # (written by `jailbee new` / `jailbee apply`), picks a profile —
-# --profile, then $JAILBEE_LITELLM_PROFILE, then the file's default — sets the
+# --profile/-P, then $JAILBEE_LITELLM_PROFILE, then the file's default — sets the
 # variables Claude Code reads for a gateway, and execs `claude`. It writes
 # nothing and never falls back to native: a missing proxy is an error.
 # With the profile's `instructions` set it also appends them to Claude Code's system prompt.
@@ -173,8 +173,9 @@ want_help=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --) args+=("$@"); plain+=("$@"); break ;;
-        --profile) [ $# -ge 2 ] && [ -n "$2" ] || die "--profile needs a name"; profile="$2"; shift 2 ;;
+        --profile|-P) [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a name"; profile="$2"; shift 2 ;;
         --profile=*) profile="${1#--profile=}"; [ -n "$profile" ] || die "--profile needs a name"; shift ;;
+        -P?*) profile="${1#-P}"; shift ;;
         # -C, never -c: that is Claude's own --continue and passes through.
         --context|-C) [ $# -ge 2 ] || die "--context needs a value"; have_context=1; context="$2"; shift 2 ;;
         --context=*) have_context=1; context="${1#--context=}"; shift ;;
@@ -199,7 +200,7 @@ claude-jb: Claude Code through the jailbee LiteLLM proxy.
 Everything not listed here is passed to claude unchanged.
 
 claude-jb options:
-  --profile NAME      gateway profile (default: $JAILBEE_LITELLM_PROFILE,
+  -P, --profile NAME  gateway profile (default: $JAILBEE_LITELLM_PROFILE,
                       then the config's default profile)
   -C, --context SIZE  context window for this session: 272k, 1m, a token
                       count, 'max' (the profile's ceiling) or 'default'.
@@ -219,8 +220,14 @@ fi
 [ -r "$config" ] || die "no LiteLLM proxy configured for this container ($config missing). On the host: \`jailbee litellm up\`, then \`jailbee apply\` in this repo."
 jq -e . "$config" >/dev/null 2>&1 || die "cannot read $config (not valid JSON); re-run \`jailbee apply\` on the host."
 [ -n "$profile" ] || profile="$(jq -r '.default_profile' "$config")"
-jq -e --arg p "$profile" '.profiles[$p]' "$config" >/dev/null \
-    || die "unknown profile '$profile'. Known: $(jq -r '.profiles | keys | join(", ")' "$config")"
+if ! jq -e --arg p "$profile" '.profiles[$p]' "$config" >/dev/null; then
+    # One profile per line, as --help lists them: a wrong name is also how
+    # someone finds the names. A profile written before max_context_window
+    # has no ceiling, so that half is left out rather than invented.
+    known="$(jq -r '. as $c | .profiles | to_entries[]
+        | "  \(.key)\(if .key == $c.default_profile then " (default)" else "" end): window \(.value.context_window)\(if .value.max_context_window then ", up to \(.value.max_context_window)" else "" end)"' "$config")"
+    die "unknown profile '$profile'. Profiles:"$'\n'"$known"
+fi
 
 get() { jq -r --arg p "$profile" ".profiles[\$p]$1" "$config"; }
 key_file="$(get .key_file)"

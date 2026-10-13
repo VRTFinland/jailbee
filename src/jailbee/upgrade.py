@@ -296,9 +296,9 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         version=(1, 7, 0),
         actions=frozenset({"base_build"}),
         reason=(
-            "`claude-jb` takes `--context`/`-C` to raise the session's context window "
-            "and prints its own options in `--help` — nothing to rebuild unless you "
-            "use `jailbee litellm`"
+            "`claude-jb` takes `--context`/`-C` to raise the session's context window, "
+            "`-P` as the short form of `--profile`, and prints its own options in "
+            "`--help` — nothing to rebuild unless you use `jailbee litellm`"
         ),
     ),
 )
