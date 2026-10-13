@@ -2751,6 +2751,11 @@ remote:
     restrict_host: true
     gui: false
     files: false
+    mounts: false
+    # mount_roots:
+    #   - path: /mnt/scratch
+    #     readonly: true
+    #     repos: []
     excluded_repos: [private-app]
 ```
 
@@ -2799,10 +2804,12 @@ remote:
 | `exec` | bool | `true` | Permit one-shot `COMMAND [ARGS...] [--repo PREFIX]` execution and `repos`. This switch affects only the one-shot entry point. |
 | `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. In every mode a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount` — see [Security](security.md#remote-ssh). |
-| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
+| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `gui` on, `ide`, the browsers and `apps run` draw on the shared RDP display instead); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `net loose`, `net egress add`, `port to-container`, `mount`, `gui`, ...) in any `commands.mode`, `full` included. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `gui` | bool | `false` | Lets remote sessions launch GUI apps onto a shared RDP display (see [Remote GUI](remote-gui.md)). Opens SSH port forwarding to that display's port and nothing else. |
 | `network` | bool | `false` | Let remote sessions widen a container's network: `net loose`, `new --net loose` and container-scope `net egress add`. Either can open the host's LAN to the container, which is why it is opt-in. Narrowing (`net strict`, `net egress rm`) is always allowed; `--repo` on `net egress add`/`rm` never is, since it writes the host-local repo layer and affects every container of the repo. See [Security](security.md#remote-ssh). |
 | `files` | bool | `false` | Let remote sessions use `sftp` and `scp` against a container's repo directory. The tree is `/<container>/…`, rooted at that container's repository; the host and the rest of the container are never reachable, and symlinks that leave the repo are refused. One switch covers both reading and writing. Changing it needs `jb remote ssh restart`. See [Security](security.md#file-transfer). |
+| `mounts` | bool | `false` | Let remote sessions attach every `optional_mounts` entry as defined, with no path check. The repo config then decides which host path a remote session reaches; prefer `mount_roots`. |
+| `mount_roots` | list | `[]` | "Host directories a restricted session may attach with `jailbee mount`: an `optional_mounts` entry qualifies only when its host path resolves to exactly one of them (no subdirectories). Each entry: `path` (absolute, fully resolved), `readonly` (default `true`: attached read-only whatever the mount says), `repos` (container prefixes; empty = all). Requires `restrict_host: true`. See [Security](security.md#remote-ssh)." |
 | `excluded_repos` | list[string] | `[]` | Host-controlled exact registered `container_prefix` values unavailable through SSH. Filters repo routes, dashboard/console listings and supported aggregate views. Requires `restrict_host: true`; see [Security](security.md#remote-ssh). |
 | `commands.allow` | list[str] | `[]` | Public command leaves retained for allowlist mode, for example `ls` or `git pull`. Entries must be unique lowercase command paths made of letters, digits and hyphens, separated by single spaces. Every entry is validated against the current public CLI even when another mode is active. |
 
@@ -2849,6 +2856,10 @@ Validation rejects all of these combinations:
   `listen` value; and a port outside `1..65535`.
 - malformed or duplicate `excluded_repos` prefixes, or a nonempty
   `excluded_repos` list with `restrict_host: false`.
+- a `mount_roots` entry whose `path` is not absolute or not fully resolved,
+  is `/` or the user's home or a parent of either, is a JailBee config/data/state
+  directory or a parent of it, duplicates another root's path, names an invalid
+  `repos` prefix, or is non-empty while `restrict_host: false`.
 
 The `allow` list may remain populated in `disabled` or `full` mode so a later
 switch back to `allowlist` does not discard policy. Listener address and port

@@ -119,13 +119,13 @@ refused in every mode, `full` and an allowlist naming them included:
 `net loose` and `net egress add` (either can open the host's own and its
 LAN's addresses to the container), `registry up`/`down`, `display up`/`down`,
 `litellm
-up`/`down`/`login`/`logout`/`logs`, the `account` commands that write, `mount`,
+up`/`down`/`login`/`logout`/`logs`, the `account` commands that write,
 `port to-container`, and the GUI launchers (`gui`, `ide`, the browsers, `apps
-run`). With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
+run`). `mount` is host-only unless `remote.ssh.mount_roots` or
+`remote.ssh.mounts` unlocks it. With `remote.ssh.gui` on, `ide`, the browsers and `apps run` are
 permitted and draw on the shared display instead; `gui` stays host-only.
-With `remote.ssh.network` on, `net loose` and container-scope
-`net egress add` are permitted too, and so is `new --net loose` (which
-creates a container in loose mode); without it `new` is refused only when
+With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
+`net egress add` are permitted too; without it `new` is refused only when
 `--net` names `loose`, in any spelling of the case. `net strict` and container-scope
 `net egress rm` only narrow a container and are always permitted; `--repo` on
 `net egress add`/`rm` is refused regardless, because it writes the host-local
@@ -279,6 +279,35 @@ reach:
 
 Submodules and anything mounted inside the repository directory are part of it
 and are reachable. Rsync is not supported.
+
+### Remote mounts
+
+Over a restricted SSH session (`restrict_host: true`), `jailbee mount` is
+refused unless the resolved host path of the mount matches exactly one entry
+in `remote.ssh.mount_roots` (a host-global list in `~/.config/jailbee/global.yaml`).
+A match qualifies only when `os.path.realpath(mount.host)` equals the root's
+`path` exactly; no subdirectory, no prefix match. The device source passed to
+Incus is the root's own spelling, not the repo config's. A root entry may
+declare `readonly: true` (the default), in which case the mount is attached
+read-only even if the `optional_mounts` entry says otherwise. The effective
+readonly flag is `mount.readonly or root.readonly`. A non-empty `repos` list
+restricts the root to those container prefixes and requires `restrict_host: true`.
+
+`remote.ssh.mounts: true` grants every `optional_mounts` entry as defined,
+with no path check and no readonly override; the repo config alone decides
+the host path. It does not require `restrict_host`.
+
+A root is refused at `jb apply` time when a *different* read-write
+`host_mounts` or `optional_mounts` entry resolves to the root or an ancestor
+of it. `jailbee doctor` warns when any registered repo has a writable mount
+covering a root, and when a listed root directory does not exist on disk.
+Removing a root does not detach a mount already attached.
+
+The decision rests on the resolved host path against a host-global list;
+neither a repo's `.jailbee/config.yaml` nor a branch autostart config can
+set `mount_roots`. Exact-match only is deliberate: no path inside a root is
+ever resolved, so a writable root cannot be used to plant a symlink that
+would reach outside the declared directory.
 
 ### Remote GUI
 
