@@ -125,8 +125,9 @@ doesn't either:
 - **Any terminal agent.** `agents:` wires an agent into the same
   install, mount, egress and autostart pipeline Claude Code uses. Presets ship
   for `codex`, `gemini`, `aider`, `opencode` and `grok`, or you write your
-  own. Claude Code is the one exercised in production; the presets are
-  starting points — see [Generic agent support](agents.md).
+  own. Claude Code is the one exercised in production and the recommended
+  setup; the presets are starting points — see
+  [Generic agent support](agents.md).
 - **One login, many containers.** Claude Code's login is shared across a
   repo's containers, and a credential group shares it across repos, so a new
   container doesn't ask you to sign in again; another agent shares whatever
@@ -139,8 +140,10 @@ doesn't either:
 - **Other models, without handing over the token.** `claude-jb` runs Claude
   Code against a LiteLLM proxy that JailBee keeps in its own container, so the
   same agent can work on a ChatGPT subscription or any provider you hold an
-  API key for. The provider logins stay in the proxy's volume; a dev container
-  gets only a proxy key — see [Claude Code through LiteLLM](litellm.md).
+  API key for — tested with ChatGPT (Codex) and SuperGrok subscriptions, and
+  the recommended way to use non-Anthropic models. The provider logins stay
+  in the proxy's volume; a dev container gets only a proxy key — see
+  [Claude Code through LiteLLM](litellm.md).
 
 ## The repo decides how its containers run
 
@@ -482,7 +485,8 @@ the runtime is the hard part *and* you want the whole runtime fenced.
   repo needs.
 - **Most agent presets are untested.** Claude Code is the agent JailBee is
   used with every day; the `codex`, `gemini`, `aider`, `opencode` and `grok`
-  presets are starting points you should expect to correct.
+  presets are starting points you should expect to correct. For other
+  vendors' models, Claude Code through LiteLLM is the tested path.
 - **It's young.** JailBee is developed at GISGRO for its own use, released
   publicly at 1.0.0 in August 2026 and shipping a release every week or two
   since. It's on PyPI, but there is no community around it yet and the

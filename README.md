@@ -145,8 +145,10 @@ sped up and say so on screen; nothing else is edited.
 - **Claude Code on other models** — `claude-jb` runs Claude Code against a
   LiteLLM proxy that JailBee keeps in its own container, so the same agent
   can work on a ChatGPT subscription or on any provider you have an API key
-  for, while plain `claude` stays native. One proxy per account, per-repo
-  route overrides, live route reloads; see
+  for, while plain `claude` stays native. Tested with ChatGPT (Codex) and
+  SuperGrok subscriptions, it is the recommended way to use non-Anthropic
+  models. One proxy per account, per-repo route overrides, live route
+  reloads; see
   [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/).
 - **Remote access over SSH** — an optional, key-only SSH service
   (`jailbee remote ssh enable`) opens the dashboard, a restricted console or
@@ -163,7 +165,8 @@ sped up and say so on screen; nothing else is edited.
   An agent that declares a skills directory gets JailBee's skills, and one
   with a headless command can write `jailbee pr`'s title and body
   (`pr.agent`). Five presets beyond Claude (`codex`, `gemini`, `aider`,
-  `opencode`, `grok`) ship as untested starting points — see
+  `opencode`, `grok`) ship as untested starting points; for other models,
+  the recommended route is Claude Code through LiteLLM above — see
   [Generic agent support](https://jailbee.gisgro.io/docs/agents/).
 - **One shared state layer per repo** — package-manager caches, the JetBrains
   config, `~/.ssh` and Claude's login live in a shared dir outside the

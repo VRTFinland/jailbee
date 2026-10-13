@@ -259,8 +259,11 @@ If the user wants a terminal coding agent installed and (optionally)
 auto-started in every container of this repo, add an `agents:` block.
 Six presets ship built in — `claude`, `codex`, `gemini`, `aider`,
 `opencode`, `grok` — each a starting point covering the install command,
-the shared auth/settings mount, and the egress hosts it needs. Turning one
-on is usually two lines:
+the shared auth/settings mount, and the egress hosts it needs. Recommend
+`claude`: it is the only preset exercised in production, and a user who wants
+non-Anthropic models or subscriptions should run it through the host's LiteLLM
+proxy (`claude-jb`, tested with ChatGPT and SuperGrok subscriptions) rather
+than switch agents. Turning one on is usually two lines:
 
 ```yaml
 agents:

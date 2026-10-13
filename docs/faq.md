@@ -517,7 +517,12 @@ the file still reaches the container.
 
 ### Can I use an agent other than Claude Code?
 
-Yes — `agents:` is a mapping keyed by agent name and wires any terminal coding
+The recommended setup is Claude Code. If you want models or a subscription
+other than Anthropic's, run Claude Code through the LiteLLM proxy
+(`claude-jb`) — tested with ChatGPT (Codex) and SuperGrok subscriptions —
+rather than switching agents.
+
+If you do want another agent, `agents:` is a mapping keyed by agent name and wires any terminal coding
 agent into the same mount/egress/install/autostart pipeline. Six presets ship
 (`claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`), but **only `claude`
 is exercised in production** — the other five are untested starting points you
@@ -551,9 +556,9 @@ Yes. A route names any LiteLLM model string and the *name* of a variable in
 `~/.config/jailbee/litellm/secrets.env`; a profile maps tiers to routes. No
 ChatGPT subscription is needed once the built-in `codex` profile points at your
 routes too. An xAI API key serves routes, and a SuperGrok or X Premium+
-subscription can too, experimentally (`oauth: true`).
+subscription can too (`oauth: true`).
 
-→ [Quick start by provider](litellm.md#quick-start-by-provider), [xAI subscription](litellm.md#xai-subscription-experimental)
+→ [Quick start by provider](litellm.md#quick-start-by-provider), [xAI subscription](litellm.md#xai-subscription)
 
 ### A new model came out — do I wait for a JailBee release?
 

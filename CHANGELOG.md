@@ -128,6 +128,11 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- **The xAI subscription route is no longer experimental.** An `xai/` route
+  with `oauth: true` (`jailbee litellm login --provider xai`) is now tested
+  against a live SuperGrok subscription. The docs also name Claude Code as the
+  recommended agent, and `claude-jb` through LiteLLM as the recommended way to
+  use non-Anthropic models (tested with ChatGPT and SuperGrok subscriptions).
 - **A menu's letters work in the terminal dashboard's table, without Enter.**
   With a container highlighted `g` opens `Git →`, `l` `Lifecycle →`, `t` attaches
   tmux, and so on; a repo header answers the repo menu's letters the same way.

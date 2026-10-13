@@ -11881,7 +11881,7 @@ def litellm_login_cmd(
     ] = None,
     provider: _ProviderOption = None,
 ) -> None:
-    """Log an account in: ChatGPT by device code, xAI (experimental) in the host's browser."""
+    """Log an account in: ChatGPT by device code, xAI in the host's browser."""
     from jailbee import litellm as ll
     from jailbee.incus import IncusError
 
