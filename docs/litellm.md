@@ -179,8 +179,13 @@ take precedence over the subscription).
 The recipes above send every tier to one provider. A profile of your own can
 mix them instead, which keeps the built-in `codex` profile untouched. `mix`
 below sends fable and opus to the ChatGPT subscription and sonnet and haiku to
-the SuperGrok one. A new profile inherits nothing, so every tier names its
-route — the ChatGPT ones are the built-in routes from the table in
+the SuperGrok one.
+
+A new profile inherits nothing, so every tier names its route. The routes
+themselves are different: the four ChatGPT routes (`astra`, `sol-high`,
+`sol-medium`, `luna-high`) are built in and exist without being written here —
+naming one is enough. Only `grok` is new, so only it needs a `model`. The
+built-in routes and the models and efforts they carry are listed in
 [Routes and profiles](#routes-and-profiles).
 
 Both logins belong to the same account (`default`, the only one here), which
@@ -195,11 +200,37 @@ litellm:
     grok: {model: xai/grok-4.3, oauth: true, context_window: 256000}
   profiles:
     mix:
-      fable: astra       # chatgpt/gpt-6-astra, ChatGPT subscription
-      opus: sol-high     # chatgpt/gpt-6.1-sol, ChatGPT subscription
-      sonnet: grok       # xai/grok-4.3, SuperGrok subscription
+      fable: astra       # built-in route: chatgpt/gpt-6-astra
+      opus: sol-high     # built-in route: chatgpt/gpt-6.1-sol
+      sonnet: grok       # the route above: xai/grok-4.3
       haiku: grok
 ```
+
+Written out in full — the same configuration, with the built-in routes repeated
+instead of relied on. A same-named route overlays the built-in one field by
+field, so restating `model` and `effort` changes nothing; it only makes the
+file readable on its own:
+
+```yaml
+litellm:
+  enabled: true
+  default_profile: mix
+  routes:
+    astra:     {model: chatgpt/gpt-6-astra, effort: high}             # built in
+    sol-high:  {model: chatgpt/gpt-6.1-sol, effort: high}             # built in
+    grok:      {model: xai/grok-4.3, oauth: true, context_window: 256000}
+  profiles:
+    mix:
+      fable: astra
+      opus: sol-high
+      sonnet: grok
+      haiku: grok
+```
+
+The two ChatGPT routes need no `context_window`: jailbee already knows those
+models' window (272,000). `grok` does, because `xai/grok-4.3` is not in that
+table. `sol-medium` and `luna-high` are built in too, but `mix` maps no tier to
+them, so there is nothing to repeat.
 
 `jailbee litellm up`, then both logins — `mix`'s routes use both providers, so
 each needs its flag:
