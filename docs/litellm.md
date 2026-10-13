@@ -6,6 +6,10 @@ and uses your Claude subscription; both commands can run side by side in the
 same dev container. Gateway sessions share Claude Code's per-repo configuration
 and history, but neither command changes the other's environment.
 
+This is the recommended way to use models or subscriptions other than
+Anthropic's in JailBee, and it is tested with both a ChatGPT (Codex) and a
+SuperGrok subscription.
+
 Several ChatGPT accounts can run side by side (one proxy instance each), and
 routes can use any LiteLLM provider with an API key. LiteLLM settings belong in
 the host's `global.yaml`; a repo may override routes and profiles in its
@@ -123,10 +127,10 @@ litellm:
 ```
 
 The request is billed to the API key at xAI's token prices. A SuperGrok or
-X Premium+ subscription can serve routes too, as
-[an experimental option](#xai-subscription-experimental).
+X Premium+ subscription can serve routes too — see
+[xAI subscription](#xai-subscription).
 
-## xAI subscription (experimental)
+## xAI subscription
 
 A SuperGrok or X Premium+ subscription can serve routes through LiteLLM's xAI
 OAuth provider. Mark the route `oauth: true`:
@@ -163,8 +167,8 @@ fail, and `jailbee litellm up`, `status` and `doctor` say so. `--provider` may
 be left out here, since no route of `default` needs a ChatGPT login; an account
 whose routes use both providers needs `--provider chatgpt` or `--provider xai`.
 
-This is experimental: it follows LiteLLM's xAI OAuth provider and has not yet
-been verified by jailbee against a live subscription. Grok models LiteLLM's
+This uses LiteLLM's xAI OAuth provider and is tested against a live SuperGrok
+subscription. Grok models LiteLLM's
 local model map does not list as reasoning models drop the `effort` setting.
 `oauth` is refused together with `api_key` or `api_base`, and secret names
 starting with `XAI_` are reserved (an `XAI_API_KEY` in the proxy would silently

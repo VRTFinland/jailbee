@@ -15,6 +15,14 @@ Six presets ship built in (`claude`, `codex`, `gemini`, `aider`, `opencode`,
 **Only `claude` is exercised in production.** The other five are untested
 templates — see [The five templates](#8-the-five-templates) below.
 
+> **Recommended setup.** Run Claude Code (the `claude` preset). To use models or
+> subscriptions other than Anthropic's, keep Claude Code and point it at them
+> through the LiteLLM proxy with `claude-jb` — see
+> [Claude Code through LiteLLM](litellm.md). That path is tested with both a
+> ChatGPT (Codex) and a SuperGrok subscription. The other presets are for
+> when you specifically want another vendor's agent and are ready to correct
+> its template.
+
 ## 1. What this does
 
 For every agent with `enabled: true`, `jailbee`:

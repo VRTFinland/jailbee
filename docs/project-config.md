@@ -186,7 +186,8 @@ agents:
 
 Six presets ship (`claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`);
 only `claude` is exercised in production, the rest are untested starting
-points. See [Generic agent support](agents.md) for the full mechanism, the
+points. The recommended setup is `claude`; for non-Anthropic models, run it
+through [LiteLLM](litellm.md) rather than switching agents. See [Generic agent support](agents.md) for the full mechanism, the
 preset table, and how to write your own agent entry.
 
 If your project has rules for PR descriptions that no template or

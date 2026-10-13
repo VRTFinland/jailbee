@@ -86,7 +86,7 @@ security and the `claude-jb` wrapper are described in [LiteLLM](../../../litellm
 | `jailbee litellm up --recreate` | Delete the proxy container and build it again (e.g. on another storage pool); the state volume is kept. |
 | `jailbee litellm status` | Show container, IP, version, and per account the service health and login presence; nonzero when absent or unhealthy. |
 | `jailbee litellm ls` | List profiles as `claude-jb` uses them (default profile, autostart, aliases, per tier route/model/effort/context window), globally and for each repo with a LiteLLM override. Read-only; allowed over remote SSH in the default commands mode, but refused when `remote.ssh.excluded_repos` is set (it lists every repo). |
-| `jailbee litellm login [ACCOUNT] [--provider chatgpt\|xai]` | Login for an account in `litellm.accounts` (`ACCOUNT` is asked for on a terminal when omitted and there is more than one; exit 2 without one — pass it): ChatGPT by device code, xAI (experimental) in the host's browser. `--provider` is optional while the account's routes need one kind. |
+| `jailbee litellm login [ACCOUNT] [--provider chatgpt\|xai]` | Login for an account in `litellm.accounts` (`ACCOUNT` is asked for on a terminal when omitted and there is more than one; exit 2 without one — pass it): ChatGPT by device code, xAI in the host's browser. `--provider` is optional while the account's routes need one kind. |
 | `jailbee litellm logout [ACCOUNT] [--provider chatgpt\|xai]` | Delete that account's token for the provider in the proxy's state volume (the proxy must be running). |
 | `jailbee litellm logs [ACCOUNT] [-f]` | Show the instance's last 200 journal lines; optionally follow. |
 

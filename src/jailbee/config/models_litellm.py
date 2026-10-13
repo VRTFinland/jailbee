@@ -318,7 +318,7 @@ class LiteLLMRoute(BaseModel):
         default=None,
         description=(
             "Use the account's xAI subscription login (`jailbee litellm login --provider "
-            "xai`) instead of an API key. Only on `xai/` models; experimental."
+            "xai`) instead of an API key. Only on `xai/` models."
         ),
     )
     account: str | None = Field(
