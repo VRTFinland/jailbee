@@ -8,6 +8,12 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.1 - 2026-10-13
+
+### Fixed
+
+- **`jb base build` and the scratch first run work on a host that never ran `jailbee init`.** The missing `jailbee-loose` bridge is now created before the build container launches or the scratch profile is applied. Before, both failed with "Network not found". Declining the build still exits before changing anything.
+
 ## 1.7.0 - 2026-10-13
 
 ### Added
