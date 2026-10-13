@@ -163,10 +163,15 @@ jb config init              # generate .jailbee/config.yaml
 # Edit the config: enable the stacks and integrations your project needs.
 jb doctor                   # check host prerequisites and config
 jb init                     # create the repo's profiles, ACLs and shared dirs
+jb registry up              # Docker users only: start the registry mirror
 jb base build               # build its reusable image; allow several minutes
 jb new feat/my-branch       # create the branch environment
 jb                          # manage it in the terminal dashboard
 ```
+
+With the default mirror settings, Docker-enabled projects need the mirror
+running before their first strict-mode `jb new`. Projects without Docker
+skip `jb registry up`.
 
 Add provisioning and autostart steps for your dependencies, database and dev
 server; those are project-specific, not inferred by JailBee. See

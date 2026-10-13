@@ -377,11 +377,13 @@ The point of the trade is that you size the blast radius *before* the run,
 with the container's config, instead of adjudicating it prompt by prompt.
 So it is worth knowing exactly what you sized:
 
-**Reachable by an unattended agent.** The container's own clone of the repo.
-Everything in `host_mounts` — read-only entries can be read and used, and a
-read-only `~/.gnupg` plus the host gpg-agent socket means the agent can ask
-for signatures for as long as the container runs, even though it can never
-take the key. The shared state layer, which is *shared*: `<shared_dir>/claude`
+**Reachable by an unattended agent.** The container's own clone of the repo,
+or the host working tree itself in `--mount` mode. By default, an existing
+repo `.local/` directory is also shared read-write. Everything in
+`host_mounts` — read-only entries can be read and used, and the host
+gpg-agent socket lets the agent request signatures without receiving the
+private key through the socket. This does not protect key files exposed by
+a mount. The shared state layer, which is *shared*: `<shared_dir>/claude`
 holds Claude's settings and the shared `~/.ssh` holds whatever you put there,
 and damage to either is not contained to one container. Claude's login lives
 in that directory too, unless the repo is in a credential group — then it is
@@ -411,10 +413,20 @@ An issue manifest may target a repository outside this project
 dashboard and publishes to it only after a separate confirmation or an
 explicit `--foreign`, since the write uses the host's own GitHub identity.
 
-**Out of reach.** Your host's filesystem and dotfiles. Other repos'
-containers and their shared dirs. `optional_mounts` you haven't attached with
-`jailbee mount`. Private keys, which never leave the host agent. In `strict`
-mode, every host not on the allowlist.
+**Outside the filesystem boundary.** Host paths that have not been mounted
+into the container, including unattached `optional_mounts`, are not exposed
+through its filesystem. This is not a separate-kernel guarantee, and shared
+mounts and credential groups cross container and repo boundaries deliberately.
+Forwarding an SSH or GPG agent socket does not copy its private keys into the
+container, but lets processes request authentication or signatures. A private
+key placed in a shared directory or mounted explicitly is a readable file,
+not protected by socket forwarding.
+
+**Network limits.** In `strict` mode, direct NIC traffic is restricted by
+IP-and-port ACL rules, not an exclusive hostname identity: different hosts
+can share an allowed IP. Wildcard names are checked by the HTTP(S)
+[egress proxy](#egress-proxy), not by the NIC ACL. Host sockets and declared
+[port forwards](#port-forwards) are separate access paths outside that ACL.
 
 **Shared across repos, by design.** Two things deliberately cross the
 per-repo line. A credential group shares one agent login between every repo

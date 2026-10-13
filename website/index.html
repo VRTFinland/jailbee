@@ -555,12 +555,17 @@
           <h2>A guarded entrance, not a sealed box.</h2>
           <p>
             The question was never whether a container reaches the network — it is how wide you
-            leave the opening. <code>jailbee net strict</code> allows the hosts your build
-            actually needs, by name or as a <code>*.example.com</code> wildcard, and follows them as their addresses rotate underneath. The
-            filtering sits below the application, so an <code>ssh</code> or a database connection
-            is covered by the same list as a web request. <code>jailbee net loose</code> widens it
-            for a set time and reverts on its own, so nobody leaves it open by forgetting. It
-            shields the host from what runs inside — not the code inside from the world.
+            leave the opening. <code>jailbee net strict</code> resolves explicit host names
+            into IP-and-port rules for direct traffic, including <code>ssh</code> and database
+            connections, and refreshes them as addresses change. Those rules allow an address,
+            not an exclusive host identity: other hosts can share the same IP.
+          </p>
+          <p>
+            Wildcards such as <code>*.example.com</code> take a different route: an HTTP(S)
+            proxy, for tools that honour <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code>.
+            They do not grant arbitrary protocols access to every matching host.
+            <code>jailbee net loose</code> widens access temporarily; the host's network-refresh
+            timer restores strict mode when the configured time expires.
           </p>
           <p>
             Some of what a container needs sits on the host rather than out on the network —
@@ -743,7 +748,7 @@
               <th scope="row">JailBee</th>
               <td data-label="What it is">
                 An unprivileged system container per branch — services, Docker, IDE and browser,
-                all inside one kernel-enforced boundary.
+                sharing the host's kernel rather than booting a separate one.
               </td>
               <td data-label="Pick it instead when">
                 the runtime is the hard part: a stack that boots, listens and renders, several of
@@ -752,6 +757,12 @@
             </tr>
           </tbody>
         </table>
+        <p class="compare__more">
+          JailBee is not a hostile multi-tenant isolation boundary: a host-kernel vulnerability
+          can allow an escape. Shared mounts, credentials, devices and host sockets also expose
+          capabilities beyond the private runtime. Review what you attach before leaving an
+          agent unattended — <a href="docs/security/">read the security model</a>.
+        </p>
         <p class="compare__more">
           <a href="docs/comparison/">Read the full comparison</a>
           — what each tool does with your working tree, your credentials and the network, and what
