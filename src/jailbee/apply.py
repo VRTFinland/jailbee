@@ -222,6 +222,11 @@ def run_apply(
     # configured repo's ACL comes from, but a scratch directory never runs it:
     # `jailbee new` bootstraps one straight through `run_apply`.
     _ensure_repo_acl(cfg, incus)
+    # Same bootstrap gap: `<prefix>-net-loose`, written below, names the
+    # shared loose bridge, which only `jailbee init` used to create.
+    from jailbee.init_command import ensure_loose_bridge
+
+    ensure_loose_bridge(incus, quiet=True)
 
     raw_all = incus.list_containers()
     repo_prefix = f"{cfg.container_prefix}-"

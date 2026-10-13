@@ -11,7 +11,7 @@ from pathlib import Path
 
 from jailbee.config import Config
 from jailbee.incus import Incus, IncusError
-from jailbee.init_command import LOOSE_BRIDGE
+from jailbee.init_command import LOOSE_BRIDGE, ensure_loose_bridge
 from jailbee.stopping import stop_container
 from jailbee.tui import info, status_with_elapsed, success, warn
 
@@ -349,7 +349,10 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
     # network=jailbee-loose bypasses incusbr0's strict ACL — the build needs
     # unrestricted egress to fetch packages from archive.ubuntu.com,
     # NodeSource, Amazon Corretto, etc. The runtime ACL applies only to
-    # working containers, not the one-time image build.
+    # working containers, not the one-time image build. A host that never
+    # ran `jailbee init` (a scratch directory's first build) has no such
+    # bridge yet, so create it here rather than fail on "Network not found".
+    ensure_loose_bridge(incus, quiet=True)
     incus.launch(
         image,
         build_container,

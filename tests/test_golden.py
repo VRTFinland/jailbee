@@ -958,3 +958,35 @@ def test_image_sourced_browser_is_staged_after_gui_libs(tmp_path, make_cfg):
     names = [p.name for p in resolved_snippet_paths(cfg)]
     assert "70-firefox.sh" in names
     assert names.index("60-gui-libs.sh") < names.index("70-firefox.sh")
+
+
+# ---------- Loose bridge prerequisite -----------------------------------------
+
+
+def test_build_creates_the_missing_loose_bridge_before_launch():
+    """A host that never ran `jailbee init` (the scratch first run) has no
+    `jailbee-loose`; launching the build container on it failed with
+    "Network not found". The build must create it first."""
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    incus.network_exists.return_value = False
+
+    build_golden_image(cfg, incus)
+
+    incus.network_create.assert_called_once_with("jailbee-loose")
+    timeline = [c[0] for c in incus.mock_calls]
+    assert timeline.index("network_create") < timeline.index("launch")
+
+
+def test_build_leaves_an_existing_loose_bridge_alone():
+    cfg = load_config(FIXTURES / "full_config.yaml")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.image_exists.return_value = False
+    incus.network_exists.return_value = True
+
+    build_golden_image(cfg, incus)
+
+    incus.network_create.assert_not_called()

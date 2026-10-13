@@ -3160,3 +3160,53 @@ def test_ensure_egress_proxy_follows_proxy_needed(make_cfg, tmp_path, mocker, ne
     up = mocker.patch.object(egress_proxy, "proxy_up_or_warn")
     apply._ensure_egress_proxy_or_warn(make_cfg(tmp_path), MagicMock())
     assert up.called is needed
+
+
+def test_run_apply_creates_the_missing_loose_bridge_before_the_loose_profile(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A scratch directory on a host that never ran `jailbee init` has no
+    `jailbee-loose`, yet `<prefix>-net-loose` names it as its NIC's network.
+    `run_apply` must create the bridge before writing that profile."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.profiles import profile_names
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.network_exists.return_value = False
+    incus.profile_exists.return_value = False
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    incus.network_create.assert_called_once_with("jailbee-loose")
+    timeline = [(c[0], c.args) for c in incus.mock_calls]
+    loose_profile = profile_names(cfg).net_loose
+    assert timeline.index(("network_create", ("jailbee-loose",))) < timeline.index(
+        ("profile_create", (loose_profile,))
+    )
+
+
+def test_run_apply_leaves_an_existing_loose_bridge_alone(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_acl_exists.return_value = True
+    incus.network_get.return_value = ""
+    incus.network_exists.return_value = True
+    incus.profile_exists.return_value = True
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+
+    run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    incus.network_create.assert_not_called()
