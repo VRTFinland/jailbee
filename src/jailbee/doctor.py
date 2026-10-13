@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
 from sqlmodel import Session, select
@@ -32,10 +32,7 @@ from jailbee.registry import (
     registry_status,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jailbee.registry_cache import CacheProgress
+from jailbee.registry_cache import CacheProgress
 
 # Default Incus subuid mapping puts the container's root at host uid 1000000.
 # runc creates a session keyring per container under this uid; the per-uid
@@ -1332,6 +1329,7 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # sit outside the `incus_available` gate — and a missing one is silent
     # otherwise: the first-run hint fires once and then never again.
     results.extend(_check_user_setup(gcfg))
+    results.extend(_check_remote_mount_roots(gcfg))
 
     # 11. The one surviving piece of pre-1.0 compatibility: a repo whose config
     # still lives in `.gie/`. Everything else `gie`-era — the migrator, the
@@ -1938,6 +1936,52 @@ def _check_egress_pool(cfg: Config) -> list[CheckResult]:
         )
     )
     return results
+
+
+def _check_remote_mount_roots(
+    gcfg: GlobalConfig, roots: Callable[[], list[Path]] | None = None
+) -> list[CheckResult]:
+    """One row for `remote.ssh.mount_roots`, or none when it is empty.
+
+    `jailbee mount` refuses a root that a read-write mount of the *current*
+    repo covers; it cannot see the other repos. A container of any repo
+    holding such a mount could swap the root for a symlink, so this walks
+    every registered repo. ``roots`` is injectable for tests.
+    """
+    from jailbee import config as config_mod
+    from jailbee.remote_ssh.mount_policy import writable_cover
+
+    mount_roots = gcfg.remote.ssh.mount_roots
+    if not mount_roots:
+        return []
+    if roots is None:
+        from jailbee.dashboard.model import registered_repo_roots
+
+        roots = registered_repo_roots
+    problems: list[str] = []
+    for root in mount_roots:
+        if not root.path.exists():
+            problems.append(f"{root.path} does not exist")
+    for repo_root in roots():
+        try:
+            cfg = config_mod.load_repo_config(repo_root)
+        except Exception:  # a repo whose config does not load is reported elsewhere
+            continue
+        for root in mount_roots:
+            cover = writable_cover(cfg, root.path)
+            if cover is not None:
+                problems.append(f"{root.path} is covered by {cfg.container_prefix}'s {cover}")
+    if problems:
+        return [
+            CheckResult(
+                "remote SSH mount roots",
+                False,
+                "; ".join(problems)
+                + " — a container with write access above a root can redirect it; "
+                "make that mount read-only or drop the root",
+            )
+        ]
+    return [CheckResult("remote SSH mount roots", True, f"{len(mount_roots)} listed, none covered")]
 
 
 def _check_user_setup(gcfg: GlobalConfig) -> list[CheckResult]:
