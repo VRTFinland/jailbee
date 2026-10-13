@@ -33,6 +33,7 @@ from jailbee.dashboard.bulk import (
     bulk_argv,
     bulk_loose_default,
     confirm_detail,
+    confirm_flags,
     confirm_question,
     destroy_risk_lines,
     foreground_runs,
@@ -2704,7 +2705,12 @@ class DashboardSession:
                 return
             targets = frozenset({name})
         ordered = [name for name in self._listed_names() if name in targets]
-        argv = ["merge", *pick.sources, *[a for t in ordered for a in ("--into", t)]]
+        argv = [
+            "merge",
+            *pick.sources,
+            *[a for t in ordered for a in ("--into", t)],
+            *confirm_flags("merge"),
+        ]
         self.merge_pick = None
         self.marked = pick.saved_marks
         if self.run_dashboard_command(pick.sources[0], "container", argv) == 0:

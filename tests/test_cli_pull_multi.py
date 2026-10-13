@@ -545,33 +545,12 @@ def _pull_two(mocker, tmp_path):
     return mocker.patch("jailbee.cli._do_single_pull")
 
 
-def test_pull_asks_before_pulling_from_several_containers(mocker, tmp_path):
-    do_pull = _pull_two(mocker, tmp_path)
-    ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
-
-    result = CliRunner().invoke(app, ["git", "pull"])
-
-    assert result.exit_code == 0, result.output
-    ask.assert_called_once()
-    assert "Pull from 2 containers" in ask.call_args.args[0]
-    assert do_pull.call_count == 2
-
-
-def test_pull_declining_the_batch_question_pulls_nothing(mocker, tmp_path):
-    do_pull = _pull_two(mocker, tmp_path)
-    mocker.patch("jailbee.cli.default_confirm", return_value=False)
-
-    result = CliRunner().invoke(app, ["git", "pull"])
-
-    assert result.exit_code != 0
-    do_pull.assert_not_called()
-
-
-def test_pull_no_confirm_skips_the_batch_question(mocker, tmp_path):
+def test_pull_from_several_picked_containers_is_not_asked(mocker, tmp_path):
+    # Ticking them in the picker is the decision; only the dashboard asks.
     do_pull = _pull_two(mocker, tmp_path)
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
 
-    result = CliRunner().invoke(app, ["git", "pull", "--no-confirm"])
+    result = CliRunner().invoke(app, ["git", "pull"])
 
     assert result.exit_code == 0, result.output
     ask.assert_not_called()

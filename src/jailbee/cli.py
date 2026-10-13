@@ -4308,29 +4308,20 @@ def _confirm_attach(*, force: bool) -> bool:
 def _confirm_batch(question: str, *, flag: bool | None) -> None:
     """Ask `question` before a command acts on several containers; declining aborts.
 
-    Only a person at a terminal is asked: a script that named its containers
-    has already decided. `--no-confirm` (`flag` False) skips the question.
-    Deliberately blind to `confirm.auto_target`, which governs the single
-    auto-picked target, not a batch the user assembled. Declining raises
-    `typer.Abort()` — nothing has run yet. The caller decides what counts as
-    "several".
+    Asked only on `--confirm` (`flag` True) at a terminal: a person who named
+    or picked the containers on the command line has already decided, so the
+    question is for callers that collected the choice elsewhere — the
+    dashboards' merge, whose targets are picked in the table. Deliberately
+    blind to `confirm.auto_target`, which governs the single auto-picked
+    target, not a batch. Declining raises `typer.Abort()` — nothing has run
+    yet. The caller decides what counts as "several".
     """
     from jailbee import prompting
 
-    if flag is False or not prompting.is_interactive():
+    if flag is not True or not prompting.is_interactive():
         return
     if not default_confirm(question):
         raise typer.Abort()
-
-
-def _confirm_many(cfg: "Config", verb: str, names: Sequence[str], *, flag: bool | None) -> None:
-    """`_confirm_batch` for ``verb`` over two or more containers; one is never asked."""
-    from jailbee.lifecycle import short_name
-
-    if len(names) < 2:
-        return
-    shorts = ", ".join(short_name(cfg, n) for n in names)
-    _confirm_batch(f"{verb} {len(names)} containers: {shorts}?", flag=flag)
 
 
 def _resolve_attachable(
@@ -6016,7 +6007,6 @@ def pull(
     if names is not None and len(names) > 1:
         # Named explicitly, so there is no auto-selected target to confirm.
         incus, named = _resolve_many(cfg, names)
-        _confirm_many(cfg, "Pull from", named, flag=confirm)
         _pull_batch(
             cfg,
             incus,
@@ -6072,7 +6062,6 @@ def pull(
                     )
                 )
 
-            _confirm_many(cfg, "Pull from", selected, flag=confirm)
             _pull_batch(
                 cfg,
                 incus,
@@ -7387,8 +7376,6 @@ def push(
                 selected = picked
             auto_selected = len(pushable) == 1
 
-        _confirm_many(cfg, "Push to", selected, flag=confirm)
-
         # Resolve source + action ONCE, applied to every container. A PR head
         # selected in the picker also fixes the exact host ref to push.
         pr_source_ref: str | None = None
@@ -8124,8 +8111,9 @@ def git_merge(
         bool | None,
         typer.Option(
             "--confirm/--no-confirm",
-            help="Ask before merging when several containers are involved "
-            "(several sources or several targets). --no-confirm skips the question.",
+            help="Ask once before merging when several containers are involved "
+            "(several sources or several targets). Off by default: the "
+            "dashboards pass --confirm after picking the targets in the table.",
         ),
     ] = None,
     config: ConfigOption = None,

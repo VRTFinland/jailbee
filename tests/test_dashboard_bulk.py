@@ -163,8 +163,8 @@ def test_foreground_runs_are_one_per_repo_in_listing_order(tmp_path):
     runs = bulk.foreground_runs([alpha, beta], action)
 
     assert [(r.prefix, r.argv, r.names) for r in runs] == [
-        ("alpha", ("merge", "alpha-b", "alpha-a"), ("alpha-b", "alpha-a")),
-        ("beta", ("merge", "beta-a"), ("beta-a",)),
+        ("alpha", ("merge", "alpha-b", "alpha-a", "--confirm"), ("alpha-b", "alpha-a")),
+        ("beta", ("merge", "beta-a", "--confirm"), ("beta-a",)),
     ]
     assert runs[1].target.flags() == ["--config", "/b/c.yaml"]
 
@@ -273,6 +273,14 @@ def test_foreground_git_verbs_tell_the_cli_the_dashboard_already_asked(tmp_path)
     for verb in ("git push", "git pull"):
         (run,) = bulk.foreground_runs([alpha], bulk.BulkAction(verb, ("alpha-a", "alpha-b")))
         assert run.argv == (*verb.split(), "alpha-a", "alpha-b", "--no-confirm")
+
+
+def test_merge_tells_the_cli_to_ask_once_the_targets_are_picked(tmp_path):
+    alpha = _group(tmp_path / "a", ci("alpha-a", "alpha"), ci("alpha-b", "alpha"))
+
+    (run,) = bulk.foreground_runs([alpha], bulk.BulkAction("merge", ("alpha-a", "alpha-b")))
+
+    assert run.argv == ("merge", "alpha-a", "alpha-b", "--confirm")
 
 
 def test_needs_confirm_is_several_containers_and_no_question_of_its_own():

@@ -1242,7 +1242,7 @@ def test_git_merge_asks_when_several_sources_are_involved(merge_repo, mocker):
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
     called = mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
-    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "--confirm", "c1", "c2", "--into", "c4"])
 
     assert result.exit_code == 0, result.output
     ask.assert_called_once()
@@ -1255,7 +1255,7 @@ def test_git_merge_asks_when_several_targets_are_involved(merge_repo, mocker):
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=True)
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
-    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c3", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "--confirm", "c1", "--into", "c3", "--into", "c4"])
 
     assert result.exit_code == 0, result.output
     assert "Merge c1 into c3, c4" in ask.call_args.args[0]
@@ -1266,7 +1266,7 @@ def test_git_merge_declining_merges_nothing(merge_repo, mocker):
     mocker.patch("jailbee.cli.default_confirm", return_value=False)
     called = mocker.patch("jailbee.sync.merge_container_into_container")
 
-    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "--confirm", "c1", "c2", "--into", "c4"])
 
     assert result.exit_code != 0
     called.assert_not_called()
@@ -1277,18 +1277,20 @@ def test_git_merge_one_into_one_is_not_asked(merge_repo, mocker):
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
-    result = runner.invoke(app, ["git", "merge", "c1", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "--confirm", "c1", "--into", "c4"])
 
     assert result.exit_code == 0, result.output
     ask.assert_not_called()
 
 
-def test_git_merge_no_confirm_skips_the_question(merge_repo, mocker):
+def test_git_merge_without_confirm_is_not_asked(merge_repo, mocker):
+    # On the command line the named containers are the decision; --confirm
+    # is for the dashboards, which pick merge's targets in the table.
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     ask = mocker.patch("jailbee.cli.default_confirm", return_value=False)
     mocker.patch("jailbee.sync.merge_container_into_container", return_value=_result())
 
-    result = runner.invoke(app, ["git", "merge", "--no-confirm", "c1", "c2", "--into", "c4"])
+    result = runner.invoke(app, ["git", "merge", "c1", "c2", "--into", "c4"])
 
     assert result.exit_code == 0, result.output
     ask.assert_not_called()
