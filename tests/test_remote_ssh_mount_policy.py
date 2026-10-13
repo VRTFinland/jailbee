@@ -95,15 +95,25 @@ def test_repos_scope_refuses_another_repo(tree, make_cfg, tmp_path) -> None:
     other = RemoteMountRoot(path=tree / "data", repos=["someone-else"])
     refusal = remote_mount_grant(_policy(other), cfg, "d")
     assert isinstance(refusal, str) and cfg.container_prefix in refusal
-    # Use a valid explicit prefix instead of cfg.container_prefix (tmp dirs may not match _PREFIX_RE)
+    # Use a valid explicit prefix (tmp dirs may not match _PREFIX_RE)
     mine = RemoteMountRoot(path=tree / "data", repos=["testrepo"])
-    cfg2 = _cfg(make_cfg, tmp_path, {"d": {"host": str(tree / "data"), "container": "/d"}}, container_prefix="testrepo")
+    cfg2 = _cfg(
+        make_cfg,
+        tmp_path,
+        {"d": {"host": str(tree / "data"), "container": "/d"}},
+        container_prefix="testrepo",
+    )
     assert isinstance(remote_mount_grant(_policy(mine), cfg2, "d"), MountGrant)
 
 
 def test_excluded_repo_is_refused(tree, make_cfg, tmp_path) -> None:
     # Use an explicit valid prefix; tmp dirs may contain invalid characters
-    cfg = _cfg(make_cfg, tmp_path, {"d": {"host": str(tree / "data"), "container": "/d"}}, container_prefix="testrepo")
+    cfg = _cfg(
+        make_cfg,
+        tmp_path,
+        {"d": {"host": str(tree / "data"), "container": "/d"}},
+        container_prefix="testrepo",
+    )
     policy = _policy(RemoteMountRoot(path=tree / "data"), excluded_repos=["testrepo"])
     assert isinstance(remote_mount_grant(policy, cfg, "d"), str)
 
@@ -121,9 +131,7 @@ def test_unknown_kind_is_refused(tree, make_cfg, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("cover", ["data", ""])  # the root itself, and its parent
-def test_writable_host_mount_covering_the_root_is_refused(
-    tree, make_cfg, tmp_path, cover
-) -> None:
+def test_writable_host_mount_covering_the_root_is_refused(tree, make_cfg, tmp_path, cover) -> None:
     cfg = _cfg(
         make_cfg,
         tmp_path,
