@@ -208,9 +208,25 @@ class PreparedBatch:
     initial_issues: Mapping[tuple[str, int], IssueSnapshot]
 
     def _foreign_actions(self) -> list[ResolvedAction]:
-        return [
-            a for m in self.manifests for a in m.actions if a.repo.foreign and a.status == "pending"
-        ]
+        # A receipt in any state means the action was already dispatched.
+        # "uncertain" still maps to status "pending" via _status, so status
+        # alone would count a refused-to-reconcile action as fresh foreign
+        # work and a later refusal would write a journal first.
+        pending = []
+        for manifest in self.manifests:
+            receipts = (
+                {receipt.index for receipt in manifest.journal.actions}
+                if manifest.journal is not None
+                else set()
+            )
+            pending.extend(
+                action
+                for action in manifest.actions
+                if action.repo.foreign
+                and action.status == "pending"
+                and action.index not in receipts
+            )
+        return pending
 
     @property
     def foreign_slugs(self) -> tuple[str, ...]:
@@ -473,11 +489,33 @@ def prepare_batch(
                             cfg.repo_root, repo.slug
                         )
                     except IssueGithubReadError as exc:
-                        execution_errors.append(exc)
+                        # A foreign repo's label list is advisory: GitHub
+                        # drops labels the publisher cannot set, so a failed
+                        # read must not refuse this action or the batch.
+                        if not repo.foreign:
+                            execution_errors.append(exc)
                         label_errors[repo.identity] = str(exc)
-                if repo.identity in label_errors:
+                if repo.identity in label_errors and not repo.foreign:
                     refusals.append(f"{context}: {label_errors[repo.identity]}")
-                labels = _resolve_labels(action, label_maps.get(repo.identity), context, refusals)
+                # A foreign label list the host user cannot read is not a
+                # refusal. Skip pre-validation and send the action's own
+                # labels; GitHub drops any the publisher cannot set.
+                # _execute_one treats None as no labels, so None is wrong here.
+                if repo.foreign and repo.identity in label_errors:
+                    labels = (
+                        action.labels
+                        if isinstance(action, CreateAction)
+                        else tuple(
+                            label
+                            for label in action.expected_labels
+                            if label.casefold() not in {item.casefold() for item in action.remove}
+                        )
+                        + action.add
+                    )
+                else:
+                    labels = _resolve_labels(
+                        action, label_maps.get(repo.identity), context, refusals
+                    )
 
             if status == "pending":
                 for field in _expected_fields(action):

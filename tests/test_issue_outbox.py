@@ -2230,6 +2230,41 @@ def test_plan_lines_warn_under_a_foreign_repository_header_only(preflight):
     assert lines.count(FOREIGN_WARNING) == 1
 
 
+def test_foreign_label_read_failure_does_not_refuse_the_batch(preflight):
+    from jailbee.issue_github import IssueGithubReadError
+
+    preflight["labels"].side_effect = IssueGithubReadError("label listing failed")
+    batch = preflight["prepare"](
+        {
+            "a.json": [_create("github:BerriAI/litellm", labels=["bug"])],
+            "b.json": [_comment()],
+        }
+    )
+
+    foreign, local = batch.manifests
+    assert foreign.actions[0].status == "pending"
+    assert foreign.actions[0].labels == ("bug",)
+    assert local.actions[0].status == "pending"
+    assert preflight["labels"].call_count == 1
+
+
+def test_foreign_labels_action_keeps_its_own_labels_when_listing_fails(preflight):
+    from jailbee.issue_github import IssueGithubReadError
+
+    preflight["labels"].side_effect = IssueGithubReadError("label listing failed")
+    batch = preflight["prepare"]({"a.json": [_labels(repo="github:BerriAI/litellm", issue=9)]})
+    assert batch.manifests[0].actions[0].labels == ("feature",)
+
+
+def test_non_foreign_label_read_failure_still_refuses_the_batch(preflight):
+    from jailbee.issue_github import IssueGithubReadError
+    from jailbee.issue_outbox import IssueExecutionError
+
+    preflight["labels"].side_effect = IssueGithubReadError("label listing failed")
+    with pytest.raises(IssueExecutionError, match="label listing failed"):
+        preflight["prepare"]({"a.json": [_create(labels=["bug"])]})
+
+
 def test_foreign_slugs_ignore_applied_foreign_actions(preflight):
     actions = [_comment("github:BerriAI/litellm", issue=9), _comment()]
     _record(preflight, actions, repo="BerriAI/litellm", issue=9)  # receipt for action 0
@@ -2237,6 +2272,19 @@ def test_foreign_slugs_ignore_applied_foreign_actions(preflight):
     batch = preflight["prepare"]({"a.json": actions})
     assert batch.manifests[0].actions[0].status == "applied"
     assert batch.foreign_slugs == ()
+
+
+def test_foreign_slugs_ignore_uncertain_foreign_actions(preflight):
+    from jailbee.issue_outbox import foreign_consent
+
+    actions = [_create("github:BerriAI/litellm", labels=["bug"])]
+    _record(preflight, actions, state="uncertain", repo="BerriAI/litellm")
+
+    batch = preflight["prepare"]({"a.json": actions})
+    assert batch.manifests[0].actions[0].status == "uncertain"
+    assert batch.foreign_slugs == ()
+    assert batch.foreign_pending == 0
+    assert foreign_consent(batch, allowed=False, ask=None) is True
 
 
 def test_target_for_covers_known_foreign_aliased_and_forbidden(tmp_path):
