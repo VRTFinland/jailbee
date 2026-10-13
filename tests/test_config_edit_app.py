@@ -1684,7 +1684,7 @@ def _global_editor(tmp_path, global_):
     return editor
 
 
-_PROFILE = {"litellm": {"profiles": {"mine": {"account": "default", "opus": "sol-high"}}}}
+_PROFILE = {"litellm": {"profiles": {"mine": {"opus": "sol-high"}}}}
 
 
 def test_a_multiline_str_field_opens_a_multiline_prompt_and_commits_the_text(tmp_path):
@@ -1705,7 +1705,7 @@ def test_a_multiline_str_field_opens_a_multiline_prompt_and_commits_the_text(tmp
 def test_an_unchanged_multiline_text_is_not_restaged(tmp_path):
     """A `|` block ends in a newline the prompt's text does not keep; committing
     it untouched must not turn `|` into `|-` in the diff."""
-    profile = {"account": "default", "opus": "sol-high", "instructions": "a\nb\n"}
+    profile = {"opus": "sol-high", "instructions": "a\nb\n"}
     editor = _global_editor(tmp_path, {"litellm": {"profiles": {"mine": profile}}})
     _descend(editor, "litellm", "profiles", "mine")
     _cursor_to(editor, "instructions")
@@ -1718,7 +1718,7 @@ def test_an_unchanged_multiline_text_is_not_restaged(tmp_path):
 
 
 def test_clearing_a_multiline_text_stages_null(tmp_path):
-    profile = {"account": "default", "opus": "sol-high", "instructions": "keep me"}
+    profile = {"opus": "sol-high", "instructions": "keep me"}
     editor = _global_editor(tmp_path, {"litellm": {"profiles": {"mine": profile}}})
     _descend(editor, "litellm", "profiles", "mine")
     _cursor_to(editor, "instructions")

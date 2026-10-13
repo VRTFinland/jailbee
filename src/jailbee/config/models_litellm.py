@@ -4,7 +4,8 @@ Host-level only (`common._HOST_LEVEL_KEYS`): routes name this host's proxy,
 subscription logins and secrets file, which a teammate does not have.
 
 A **route** is one model with its settings. A **profile** maps Claude Code's
-four tiers to routes and names the **account** whose proxy instance serves it.
+four tiers to routes. A subscription route names the **account** whose login
+serves it (default: the first); a profile is served by its routes' account.
 An account is one subscription login and one LiteLLM process: LiteLLM reads
 `CHATGPT_TOKEN_DIR` once per process (spike, spec §3). Jailbee ships the
 `codex` profile, its routes and the `default` account; a user entry with the
@@ -129,6 +130,12 @@ _RESERVED_SECRET_NAMES = frozenset({"PORT", "PATH", "HOME"})
 # would send the OAuth token to another host.
 _RESERVED_SECRET_PREFIXES = ("LITELLM_", "JAILBEE_", "CHATGPT_", "XAI_", "PYTHON", "LD_")
 
+_PROFILE_ACCOUNT_MOVED = (
+    "`account` has moved to the route: set `litellm.routes.<route>.account` on the "
+    "subscription routes this profile maps (with one account, just delete this line); "
+    "see docs/litellm.md#accounts"
+)
+
 INSTRUCTIONS_MAX_BYTES = 64 * 1024
 """Cap on `LiteLLMProfile.instructions`, in UTF-8 bytes. Linux limits one argv
 string to 128 KiB (`MAX_ARG_STRLEN`) and `claude-jb` passes the text as one
@@ -143,7 +150,6 @@ _BUILTIN_ROUTES: dict[str, dict[str, object]] = {
 }
 _BUILTIN_PROFILES: dict[str, dict[str, object]] = {
     "codex": {
-        "account": DEFAULT_ACCOUNT,
         "fable": "astra",
         "opus": "sol-high",
         "sonnet": "sol-medium",
@@ -315,6 +321,14 @@ class LiteLLMRoute(BaseModel):
             "xai`) instead of an API key. Only on `xai/` models; experimental."
         ),
     )
+    account: str | None = Field(
+        default=None,
+        description=(
+            "Account (from `litellm.accounts`) whose login serves this route. Defaults to "
+            "the first account. Only on subscription routes (`chatgpt/` models and "
+            "`oauth: true`); API-key routes are served by every account."
+        ),
+    )
 
     @field_validator("api_key")
     @classmethod
@@ -338,14 +352,14 @@ class LiteLLMProfile(BaseModel):
     """Claude Code tier → route. An explicit `null` unmaps a built-in tier."""
 
     model_config = ConfigDict(extra="forbid")
-    account: str | None = Field(
-        default=None,
-        description=(
-            "Account (from `litellm.accounts`) whose proxy instance serves this profile. "
-            "Required when the profile maps a `chatgpt/` route; a profile of API-key "
-            "routes only is served by the first account's instance when unset."
-        ),
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _account_moved(cls, data: object) -> object:
+        if isinstance(data, dict) and "account" in data:
+            raise ValueError(_PROFILE_ACCOUNT_MOVED)
+        return data
+
     fable: str | None = Field(default=None, description="Route for Claude Code's Fable tier.")
     opus: str | None = Field(default=None, description="Route for Claude Code's Opus tier.")
     sonnet: str | None = Field(default=None, description="Route for Claude Code's Sonnet tier.")
@@ -440,6 +454,7 @@ class ResolvedRoute:
     api_base: str | None = None
     egress: tuple[str, ...] = ()
     oauth: bool = False
+    account: str | None = None
 
     @property
     def provider(self) -> str:
@@ -467,7 +482,7 @@ class ResolvedProfile:
     name: str
     tiers: dict[str, str]
     effort: str | None
-    account: str | None = None
+    account: str
     instructions: str | None = None
 
 
@@ -506,8 +521,7 @@ class LiteLLMConfig(BaseModel):
         min_length=1,
         description=(
             "Subscription logins, one LiteLLM instance each (`jailbee litellm login "
-            "<account>`). The built-in `codex` profile uses `default`: set "
-            "`profiles.codex.account` when you rename or drop it."
+            "<account>`). Subscription routes use the first unless they set `account`."
         ),
     )
     default_profile: str = Field(
@@ -621,8 +635,8 @@ class LiteLLMConfig(BaseModel):
         return LiteLLMConfig.model_validate(data)
 
     def instance_account(self, profile: ResolvedProfile) -> str:
-        """The account whose instance serves `profile`; API-key-only profiles use the first."""
-        return profile.account or self.accounts[0]
+        """The account whose instance serves `profile` (derived from its routes)."""
+        return profile.account
 
     def effective_routes(self) -> dict[str, ResolvedRoute]:
         out: dict[str, ResolvedRoute] = {}
@@ -648,6 +662,18 @@ class LiteLLMConfig(BaseModel):
                 raise ValueError(
                     f"route '{name}': `oauth` routes log in with `jailbee litellm login "
                     "--provider xai`; `api_key` and `api_base` are not allowed on them"
+                )
+            subscription = provider in SUBSCRIPTION_PROVIDERS or oauth
+            account = _optional_str(raw.get("account"))
+            if account is not None and not subscription:
+                raise ValueError(
+                    f"route '{name}': `account` is only for subscription routes (`chatgpt/` "
+                    "or `oauth: true`); API-key routes are served by every account"
+                )
+            if account is not None and account not in self.accounts:
+                raise ValueError(
+                    f"route '{name}' uses account '{account}', which is not in "
+                    f"`litellm.accounts` ({', '.join(self.accounts)})"
                 )
             if provider not in PROVIDER_HOSTS and not api_base and not egress:
                 what = f"provider {provider!r}" if provider else f"model {model!r}"
@@ -692,19 +718,22 @@ class LiteLLMConfig(BaseModel):
                 api_base=api_base,
                 egress=tuple(str(e) for e in egress),
                 oauth=oauth,
+                account=(account or self.accounts[0]) if subscription else None,
             )
         return out
 
     def effective_profiles(self) -> dict[str, ResolvedProfile]:
+        routes = self.effective_routes()
         out: dict[str, ResolvedProfile] = {}
         for name in [*_BUILTIN_PROFILES, *(n for n in self.profiles if n not in _BUILTIN_PROFILES)]:
             raw = _overlay(_BUILTIN_PROFILES.get(name, {}), self.profiles.get(name))
             tiers = {t: str(raw[t]) for t in TIERS if raw.get(t) is not None}
+            owners = sorted({a for r in tiers.values() if r in routes and (a := routes[r].account)})
             out[name] = ResolvedProfile(
                 name=name,
                 tiers=tiers,
                 effort=_optional_str(raw.get("effort")),
-                account=_optional_str(raw.get("account")),
+                account=owners[0] if owners else self.accounts[0],
                 instructions=_optional_str(raw.get("instructions")),
             )
         return out
@@ -721,18 +750,18 @@ class LiteLLMConfig(BaseModel):
                     raise ValueError(
                         f"profile '{profile.name}' tier '{tier}' names unknown route '{route}'"
                     )
-            if profile.account is not None and profile.account not in self.accounts:
-                raise ValueError(
-                    f"profile '{profile.name}' uses account '{profile.account}', which is not "
-                    f"in `litellm.accounts` ({', '.join(self.accounts)}): add it there or set "
-                    f"`profiles.{profile.name}.account`"
+            by_account: dict[str, set[str]] = {}
+            for route in profile.tiers.values():
+                owner = routes[route].account
+                if owner is not None:
+                    by_account.setdefault(owner, set()).add(route)
+            if len(by_account) > 1:
+                detail = "; ".join(
+                    f"{a}: {', '.join(sorted(rs))}" for a, rs in sorted(by_account.items())
                 )
-            if profile.account is None and any(
-                routes[r].subscription for r in profile.tiers.values()
-            ):
                 raise ValueError(
-                    f"profile '{profile.name}' maps a subscription route (`chatgpt/` or "
-                    "`oauth: true`), so it must name an `account`"
+                    f"profile '{profile.name}' maps subscription routes on more than one "
+                    f"account ({detail}); a profile is served by one account's instance"
                 )
         if self.default_profile not in profiles:
             raise ValueError(f"default_profile '{self.default_profile}' is not a profile")

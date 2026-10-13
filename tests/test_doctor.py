@@ -256,8 +256,8 @@ def test_missing_login_blocks_only_the_default_profiles_account(mocker):
             ll.InstanceStatus("work", 4101, True, True, "missing"),
         ],
         accounts=["personal", "work"],
-        routes={"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low"}},
-        profiles={"codex": {"account": "personal"}, "w": {"account": "work", "opus": "sol-low"}},
+        routes={"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low", "account": "work"}},
+        profiles={"w": {"opus": "sol-low"}},
     )
     mocker.patch("jailbee.litellm.upstream_reachable", return_value=True)
     rows = _rows(gcfg)
@@ -290,7 +290,7 @@ def test_an_unreadable_login_fails(mocker):
 
 _GROK_DOCTOR = {
     "routes": {"grok": {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}},
-    "profiles": {"g": {"account": "default", "opus": "grok"}},
+    "profiles": {"g": {"opus": "grok"}},
 }
 
 
@@ -348,7 +348,6 @@ def test_the_version_row_appears_once_for_several_instances(mocker):
             ll.InstanceStatus("work", 4101, True, True, "present"),
         ],
         accounts=["personal", "work"],
-        profiles={"codex": {"account": "personal"}},
         version="1.103.1",
     )
     mocker.patch("jailbee.litellm.upstream_reachable", return_value=True)

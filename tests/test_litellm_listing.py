@@ -34,7 +34,7 @@ def test_a_raisable_route_shows_its_ceiling_and_a_fixed_one_does_not():
                     "api_base": "https://llm.example.com/v1",
                 }
             },
-            "profiles": {"p": {"account": "default", "opus": "fixed", "haiku": "luna-high"}},
+            "profiles": {"p": {"opus": "fixed", "haiku": "luna-high"}},
         }
     )
     lines = listing_lines(cfg.model_copy(update={"enabled": True}), [], global_origin="/c/g.yaml")
@@ -87,7 +87,7 @@ def test_an_oauth_route_is_marked_as_a_subscription():
         {
             "enabled": True,
             "routes": {"grok": {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}},
-            "profiles": {"g": {"account": "default", "opus": "grok"}},
+            "profiles": {"g": {"opus": "grok"}},
         }
     )
     text = "\n".join(listing_lines(cfg, [], global_origin="/c/global.yaml"))

@@ -217,7 +217,7 @@ def test_status_exits_nonzero_when_proxy_is_unavailable(mocker, context, status)
         assert "jailbee litellm login" in result.output
 
 
-_TWO = {"accounts": ["personal", "work"], "profiles": {"codex": {"account": "personal"}}}
+_TWO = {"accounts": ["personal", "work"]}
 
 
 @pytest.mark.parametrize("command", ["login", "logout", "logs"])
@@ -256,7 +256,7 @@ def test_several_accounts_on_a_tty_pick_one(mocker, context):
 
 
 def test_a_single_account_is_taken_and_announced(mocker, context):
-    _accounts(context, accounts=["only"], profiles={"codex": {"account": "only"}})
+    _accounts(context, accounts=["only"])
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     logs = mocker.patch("jailbee.litellm.litellm_logs", return_value=0)
     result = runner.invoke(app, ["litellm", "logs"])

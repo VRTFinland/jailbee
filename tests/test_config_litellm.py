@@ -43,6 +43,7 @@ def test_builtin_routes_carry_spec_models_and_efforts():
         context_window=272_000,
         max_context_window=1_050_000,
         params={},
+        account="default",
     )
     assert (routes["sol-high"].model, routes["sol-high"].effort) == ("chatgpt/gpt-6.1-sol", "high")
     assert (routes["sol-medium"].model, routes["sol-medium"].effort) == (
@@ -244,7 +245,7 @@ def test_custom_route_and_profile_with_params_and_effort():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {"custom": {"model": "chatgpt/gpt-6.1-sol", "params": {"temperature": 0.6}}},
-            "profiles": {"mine": {"account": "default", "opus": "custom", "effort": "max"}},
+            "profiles": {"mine": {"opus": "custom", "effort": "max"}},
             "default_profile": "mine",
         }
     )
@@ -259,6 +260,8 @@ _KIMI = {
     "context_window": 262144,
     "api_key": "OPENROUTER_API_KEY",
 }
+
+_GROK = {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}
 
 
 def test_accounts_default_to_one_and_codex_is_bound_to_it():
@@ -285,18 +288,99 @@ def test_at_least_one_account():
         LiteLLMConfig.model_validate({"accounts": []})
 
 
-def test_renaming_the_only_account_asks_to_rebind_codex():
-    with pytest.raises(ValidationError, match=r"profiles\.codex\.account"):
-        LiteLLMConfig.model_validate({"accounts": ["personal"]})
-    cfg = LiteLLMConfig.model_validate(
-        {"accounts": ["personal"], "profiles": {"codex": {"account": "personal"}}}
-    )
+def test_renaming_the_only_account_needs_no_profile_override():
+    cfg = LiteLLMConfig.model_validate({"accounts": ["personal"]})
     assert cfg.effective_profiles()["codex"].account == "personal"
+    assert cfg.effective_routes()["sol-high"].account == "personal"
 
 
-def test_subscription_profile_without_account_is_rejected():
-    with pytest.raises(ValidationError, match="must name an `account`"):
-        LiteLLMConfig.model_validate({"profiles": {"codex": {"account": None}}})
+def test_subscription_routes_default_to_the_first_account():
+    cfg = LiteLLMConfig.model_validate({"accounts": ["personal", "work"]})
+    routes = cfg.effective_routes()
+    assert {routes[n].account for n in ("astra", "sol-high", "sol-medium", "luna-high")} == {
+        "personal"
+    }
+
+
+def test_a_route_account_moves_its_profile_to_that_account():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "accounts": ["personal", "work"],
+            "routes": {"sol-work": {"model": "chatgpt/gpt-6.1-sol", "account": "work"}},
+            "profiles": {"w": {"opus": "sol-work"}},
+        }
+    )
+    assert cfg.effective_routes()["sol-work"].account == "work"
+    assert cfg.effective_profiles()["w"].account == "work"
+    assert cfg.instance_account(cfg.effective_profiles()["w"]) == "work"
+
+
+def test_api_key_routes_have_no_account_and_key_only_profiles_use_the_first():
+    cfg = LiteLLMConfig.model_validate(
+        {
+            "accounts": ["personal", "work"],
+            "routes": {"kimi": _KIMI},
+            "profiles": {"k": {"opus": "kimi"}},
+        }
+    )
+    assert cfg.effective_routes()["kimi"].account is None
+    assert cfg.effective_profiles()["k"].account == "personal"
+
+
+def test_account_on_an_api_key_route_is_rejected():
+    with pytest.raises(ValidationError, match="only for subscription routes"):
+        LiteLLMConfig.model_validate({"routes": {"kimi": {**_KIMI, "account": "default"}}})
+
+
+def test_an_unknown_route_account_is_rejected_naming_the_route():
+    with pytest.raises(ValidationError, match=r"route 'sol-high' uses account 'work'"):
+        LiteLLMConfig.model_validate({"routes": {"sol-high": {"account": "work"}}})
+
+
+def test_a_profile_spanning_two_accounts_is_rejected():
+    with pytest.raises(
+        ValidationError, match=r"more than one account \(default: sol-high; work: sol-work\)"
+    ):
+        LiteLLMConfig.model_validate(
+            {
+                "accounts": ["default", "work"],
+                "routes": {"sol-work": {"model": "chatgpt/gpt-6.1-sol", "account": "work"}},
+                "profiles": {"x": {"opus": "sol-work", "sonnet": "sol-high"}},
+            }
+        )
+
+
+def test_grok_oauth_and_chatgpt_tiers_share_one_account():
+    cfg = LiteLLMConfig.model_validate(
+        {"routes": {"grok": _GROK}, "profiles": {"mix": {"opus": "sol-high", "haiku": "grok"}}}
+    )
+    assert cfg.effective_routes()["grok"].account == "default"
+    assert cfg.effective_profiles()["mix"].account == "default"
+
+
+@pytest.mark.parametrize("block", [{}, {"opus": "sol-high"}])
+def test_a_profile_account_is_rejected_with_the_new_location(block):
+    with pytest.raises(ValidationError, match=r"litellm\.routes\.<route>\.account"):
+        LiteLLMConfig.model_validate({"profiles": {"codex": {"account": "default", **block}}})
+    with pytest.raises(ValidationError, match=r"litellm\.routes\.<route>\.account"):
+        LiteLLMRepoOverlay.model_validate({"profiles": {"codex": {"account": "default"}}})
+
+
+def test_the_global_load_path_reports_the_moved_profile_account():
+    raw = {"litellm": {"profiles": {"codex": {"account": "default"}}}}
+    with pytest.raises(ConfigError, match=r"litellm\.routes\.<route>\.account"):
+        validate_global_raw(raw, Path("global.yaml"))
+
+
+def test_a_repo_overlay_route_account_is_validated_against_host_accounts():
+    host = LiteLLMConfig.model_validate({"accounts": ["default", "work"]})
+    with pytest.raises(ValidationError, match=r"route 'sol-high' uses account 'nope'"):
+        host.with_overlay(_overlay(routes={"sol-high": {"account": "nope"}}))
+    with pytest.raises(ValidationError, match="more than one account"):
+        host.with_overlay(_overlay(routes={"sol-high": {"account": "work"}}))
+    moved = {n: {"account": "work"} for n in ("astra", "sol-high", "sol-medium", "luna-high")}
+    merged = host.with_overlay(_overlay(routes=moved))
+    assert merged.effective_profiles()["codex"].account == "work"
 
 
 def test_api_key_profile_needs_no_account_and_uses_the_first():
@@ -308,7 +392,7 @@ def test_api_key_profile_needs_no_account_and_uses_the_first():
         }
     )
     kimi = cfg.effective_profiles()["kimi"]
-    assert kimi.account is None
+    assert kimi.account == "default"
     assert cfg.instance_account(kimi) == "default"
     route = cfg.effective_routes()["kimi"]
     assert (route.provider, route.subscription, route.api_key) == (
@@ -476,7 +560,7 @@ def test_overlay_adds_routes_profiles_and_overrides_default_profile_and_autostar
     merged = host.with_overlay(
         _overlay(
             routes={"luna-low": {"model": "chatgpt/gpt-6-luna", "effort": "low"}},
-            profiles={"cheap": {"account": "default", "opus": "luna-low", "haiku": "luna-low"}},
+            profiles={"cheap": {"opus": "luna-low", "haiku": "luna-low"}},
             default_profile="cheap",
             autostart=False,
         )
@@ -487,9 +571,7 @@ def test_overlay_adds_routes_profiles_and_overrides_default_profile_and_autostar
 
 
 def test_an_empty_overlay_keeps_every_host_value():
-    host = LiteLLMConfig.model_validate(
-        {"autostart": True, "accounts": ["a"], "profiles": {"codex": {"account": "a"}}}
-    )
+    host = LiteLLMConfig.model_validate({"autostart": True, "accounts": ["a"]})
     merged = host.with_overlay(_overlay())
     assert (merged.autostart, merged.accounts, merged.default_profile) == (True, ["a"], "codex")
 
@@ -499,8 +581,8 @@ def test_overlay_is_validated_in_the_merged_view():
         LiteLLMConfig().with_overlay(_overlay(profiles={"codex": {"opus": "nope"}}))
     with pytest.raises(ValidationError, match="default_profile 'nope'"):
         LiteLLMConfig().with_overlay(_overlay(default_profile="nope"))
-    with pytest.raises(ValidationError, match=r"not in `litellm\.accounts`"):
-        LiteLLMConfig().with_overlay(_overlay(profiles={"codex": {"account": "work"}}))
+    with pytest.raises(ValidationError, match=r"route 'sol-high' uses account 'work'"):
+        LiteLLMConfig().with_overlay(_overlay(routes={"sol-high": {"account": "work"}}))
 
 
 @pytest.mark.parametrize("key", ["enabled", "version", "accounts", "egress", "extra"])
@@ -571,12 +653,9 @@ def test_instructions_are_capped_at_64_kib_of_utf8():
         LiteLLMConfig.model_validate({"profiles": {"codex": {"instructions": "ä" * 32769}}})
 
 
-_GROK = {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}
-
-
 def test_an_oauth_route_is_an_xai_subscription_route():
     cfg = LiteLLMConfig.model_validate(
-        {"routes": {"grok": _GROK}, "profiles": {"g": {"account": "default", "opus": "grok"}}}
+        {"routes": {"grok": _GROK}, "profiles": {"g": {"opus": "grok"}}}
     )
     route = cfg.effective_routes()["grok"]
     assert route.oauth is True
@@ -616,11 +695,11 @@ def test_oauth_refuses_api_key_and_api_base(extra):
         LiteLLMConfig.model_validate({"routes": {"grok": {**_GROK, **extra}}})
 
 
-def test_a_profile_of_oauth_routes_must_name_an_account():
-    with pytest.raises(ValidationError, match="must name an `account`"):
-        LiteLLMConfig.model_validate(
-            {"routes": {"grok": _GROK}, "profiles": {"g": {"opus": "grok"}}}
-        )
+def test_a_profile_of_oauth_routes_uses_the_first_account():
+    cfg = LiteLLMConfig.model_validate(
+        {"routes": {"grok": _GROK}, "profiles": {"g": {"opus": "grok"}}}
+    )
+    assert cfg.effective_profiles()["g"].account == "default"
 
 
 def test_use_xai_oauth_is_refused_in_params():

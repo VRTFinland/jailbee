@@ -53,8 +53,8 @@ _KIMI = {
 }
 _TWO = {
     "accounts": ["personal", "work"],
-    "routes": {"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low"}},
-    "profiles": {"codex": {"account": "personal"}, "work": {"account": "work", "opus": "sol-low"}},
+    "routes": {"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low", "account": "work"}},
+    "profiles": {"work": {"opus": "sol-low"}},
 }
 
 
@@ -367,7 +367,7 @@ def test_up_holds_back_only_the_account_that_serves_chatgpt(xdg):
     cfg = _gcfg(
         accounts=["default", "keys"],
         routes={"kimi": _KIMI},
-        profiles={"kimi": {"account": "keys", "opus": "kimi"}},
+        profiles={"kimi": {"opus": "kimi"}},
     )
     result = ll.litellm_up(_incus(present=True, login="missing"), cfg)
     assert result.awaiting_login == ["default"] and result.restarted == ["keys"]
@@ -1343,7 +1343,7 @@ def test_a_removed_accounts_port_leaves_both_acls():
     ll.litellm_up(incus, _gcfg(**_TWO))
     assert ll.litellm_state.known_port("work") == 4101
     incus.network_acl_set_yaml.reset_mock()
-    ll.litellm_up(incus, _gcfg(accounts=["personal"], profiles={"codex": {"account": "personal"}}))
+    ll.litellm_up(incus, _gcfg(accounts=["personal"]))
     services = _last_acl(incus, "jailbee-services")
     assert {r["destination_port"] for r in services["egress"]} == {"4100"}
     listen = {r.get("destination_port") for r in _last_acl(incus, ll.EGRESS_ACL)["ingress"]}
@@ -1506,8 +1506,8 @@ def test_sync_payload_names_profiles_whose_account_has_no_instance():
     ll.litellm_up(incus, _gcfg())  # only `default` exists
     cfg = _gcfg(
         accounts=["default", "work"],
-        routes={"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low"}},
-        profiles={"work": {"account": "work", "opus": "sol-low"}},
+        routes={"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low", "account": "work"}},
+        profiles={"work": {"opus": "sol-low"}},
     )
     payload = ll.container_sync_payload(incus, cfg)
     assert set(payload["json"]["profiles"]) == {"codex"}
@@ -1599,7 +1599,7 @@ def test_sync_payload_for_a_repo_view_uses_its_scope_and_default_profile():
             LiteLLMRepoOverlay.model_validate(
                 {
                     "routes": {"sol-high": {"effort": "max"}},
-                    "profiles": {"lean": {"account": "default", "opus": "sol-medium"}},
+                    "profiles": {"lean": {"opus": "sol-medium"}},
                     "default_profile": "lean",
                 }
             )
@@ -1822,11 +1822,19 @@ def test_a_restart_records_the_hot_stamp_so_the_next_run_is_quiet(xdg):
 
 
 def test_reconcile_reloads_only_the_account_whose_routes_changed(xdg):
-    two = {**_TWO, "routes": {"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low"}}}
+    two = {
+        **_TWO,
+        "routes": {"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low", "account": "work"}},
+    }
     incus = _incus(present=True)
     ll.litellm_up(incus, _gcfg(**two))
     incus.reset_mock(return_value=False, side_effect=False)
-    changed = {**two, "routes": {"sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "high"}}}
+    changed = {
+        **two,
+        "routes": {
+            "sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "high", "account": "work"}
+        },
+    }
     result = ll.litellm_reconcile(incus, _gcfg(**changed))
     assert (result.reloaded, result.restarted) == (["work"], [])
     assert _restarts(incus) == []
@@ -1893,7 +1901,6 @@ _GROK_ONLY = {
     "routes": _GROK_ROUTES,
     "profiles": {
         "codex": {
-            "account": "default",
             "fable": None,
             "opus": None,
             "sonnet": None,
@@ -1923,7 +1930,7 @@ def test_up_starts_an_xai_account_without_its_login_and_says_so():
 
 
 def test_up_holds_back_a_mixed_account_without_either_login():
-    mixed = {**_GROK_ONLY, "profiles": {"codex": {"account": "default", "haiku": "grok"}}}
+    mixed = {**_GROK_ONLY, "profiles": {"codex": {"haiku": "grok"}}}
     incus = _incus(present=True, login="missing")
     _xai_state(incus, "missing")
     result = ll.litellm_up(incus, _gcfg(**mixed))

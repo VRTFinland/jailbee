@@ -205,7 +205,7 @@ def test_profile_context_window_is_the_smallest_of_the_profiles_routes():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {"luna-high": {"context_window": 1_050_000}},
-            "profiles": {"wide": {"account": "default", "haiku": "luna-high"}},
+            "profiles": {"wide": {"haiku": "luna-high"}},
         }
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
@@ -217,7 +217,7 @@ def test_profile_ceiling_is_the_smallest_ceiling_of_the_profiles_routes():
     cfg = LiteLLMConfig.model_validate(
         {
             "routes": {"luna-high": {"max_context_window": 400_000}},
-            "profiles": {"mixed": {"account": "default", "opus": "sol-high", "haiku": "luna-high"}},
+            "profiles": {"mixed": {"opus": "sol-high", "haiku": "luna-high"}},
         }
     )
     profiles = container_profiles(cfg, base_urls={"default": "u"})
@@ -250,10 +250,12 @@ def _two_accounts() -> LiteLLMConfig:
         {
             "accounts": ["personal", "work"],
             "default_profile": "codex",
-            "routes": {"kimi": _KIMI, "sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low"}},
+            "routes": {
+                "kimi": _KIMI,
+                "sol-low": {"model": "chatgpt/gpt-6.1-sol", "effort": "low", "account": "work"},
+            },
             "profiles": {
-                "codex": {"account": "personal"},
-                "work": {"account": "work", "opus": "sol-low", "haiku": "kimi"},
+                "work": {"opus": "sol-low", "haiku": "kimi"},
                 "kimi": {"opus": "kimi", "sonnet": "kimi", "haiku": "kimi"},
             },
         }
@@ -475,7 +477,14 @@ def test_a_scope_serves_its_subscription_routes_only_on_its_profiles_account():
     host = LiteLLMConfig.model_validate({"accounts": ["default", "work"]})
     scopes = {
         "myrepo": host.with_overlay(
-            LiteLLMRepoOverlay.model_validate({"profiles": {"codex": {"account": "work"}}})
+            LiteLLMRepoOverlay.model_validate(
+                {
+                    "routes": {
+                        n: {"account": "work"}
+                        for n in ("astra", "sol-high", "sol-medium", "luna-high")
+                    }
+                }
+            )
         )
     }
     on_work = _by_name(render_instance_config(host, "work", scopes=scopes))
@@ -712,7 +721,7 @@ _KEYS_ONLY = {
             "api_key": "OPENROUTER_API_KEY",
         }
     },
-    "profiles": {"kimi": {"account": "keys", "opus": "kimi"}},
+    "profiles": {"kimi": {"opus": "kimi"}},
 }
 
 
@@ -730,14 +739,21 @@ def test_login_providers_follow_the_routes_an_account_serves():
 def test_a_repo_scope_can_make_an_account_need_a_login():
     host = LiteLLMConfig.model_validate(_KEYS_ONLY)
     scoped = host.with_overlay(
-        LiteLLMRepoOverlay.model_validate({"profiles": {"kimi": {"opus": "luna-high"}}})
+        LiteLLMRepoOverlay.model_validate(
+            {
+                "routes": {
+                    n: {"account": "keys"} for n in ("astra", "sol-high", "sol-medium", "luna-high")
+                },
+                "profiles": {"kimi": {"opus": "luna-high"}},
+            }
+        )
     )
     assert account_login_providers(host, "keys", {"myrepo": scoped}) == ("chatgpt",)
 
 
 _GROK_CFG = {
     "routes": {"grok": {"model": "xai/grok-4.3", "oauth": True, "context_window": 256_000}},
-    "profiles": {"grok": {"account": "default", "opus": "grok", "haiku": "grok"}},
+    "profiles": {"grok": {"opus": "grok", "haiku": "grok"}},
 }
 
 
@@ -783,7 +799,7 @@ def test_a_mixed_account_needs_both_logins_and_both_token_dirs():
     cfg = LiteLLMConfig.model_validate(
         {
             **_GROK_CFG,
-            "profiles": {"mix": {"account": "default", "opus": "grok", "haiku": "luna-high"}},
+            "profiles": {"mix": {"opus": "grok", "haiku": "luna-high"}},
         }
     )
     assert account_login_providers(cfg, "default") == ("chatgpt", "xai")
@@ -802,7 +818,7 @@ def test_an_api_key_only_account_needs_no_login():
                     "api_key": "OPENROUTER_API_KEY",
                 }
             },
-            "profiles": {"kimi": {"account": "keys", "opus": "kimi"}},
+            "profiles": {"kimi": {"opus": "kimi"}},
         }
     )
     assert account_login_providers(cfg, "keys") == ()
