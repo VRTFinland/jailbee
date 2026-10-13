@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.7.0 - 2026-10-13
+
 ### Added
 
 - An issue-outbox action can target any GitHub repository with
